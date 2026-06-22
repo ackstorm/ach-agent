@@ -1,0 +1,17 @@
+.planning/
+.uv-cache/
+.claude/
+CLAUDE.md
+docs/plan/
+docs/spec/
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/

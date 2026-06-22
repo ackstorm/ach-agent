@@ -1,0 +1,19 @@
+# ach-agent development services
+# Usage: docker compose up mock-model
+# The mock-model server is used by the round-trip integration test.
+
+services:
+  mock-model:
+    build:
+      context: ./docker/mock-model
+      dockerfile: Dockerfile
+    ports:
+      - "18080:8080"
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s

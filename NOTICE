@@ -1,0 +1,19 @@
+ach-agent
+Copyright 2026 ACKstorm
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file for the full license text.
+
+The CI workflows, community files, and release scaffolding in this repository
+are adapted from ackstorm/alitellm-auth (Apache-2.0).
+
+This product depends, at install/runtime, on third-party software that is
+distributed under its own license and is NOT included in this repository:
+
+  - hermes-agent (https://github.com/NousResearch/hermes-agent), MIT License,
+    Copyright (c) NousResearch. ach-agent reuses its channel adapters via a
+    pinned pip dependency.
+
+  - opencode (https://github.com/sst/opencode). ach-agent launches the opencode
+    binary as a subprocess and drives it over HTTP/SSE; it does not incorporate
+    opencode source code.

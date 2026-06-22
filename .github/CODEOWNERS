@@ -1,0 +1,25 @@
+# CODEOWNERS file for ach-agent
+# See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Global ownership
+* @ackstorm/ach-agent-maintainers
+
+# Python source
+/src/ @ackstorm/ach-agent-maintainers
+
+# CI/CD and GitHub workflows
+/.github/ @ackstorm/ach-agent-maintainers
+
+# Container images
+/Dockerfile* @ackstorm/ach-agent-maintainers
+/docker/ @ackstorm/ach-agent-maintainers
+
+# Build system
+/Makefile @ackstorm/ach-agent-maintainers
+
+# Kubernetes manifests
+/deploy/ @ackstorm/ach-agent-maintainers
+
+# Documentation
+/README.md @ackstorm/ach-agent-maintainers
+*.md @ackstorm/ach-agent-maintainers

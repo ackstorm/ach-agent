@@ -1,0 +1,83 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    if: "${{ startsWith(github.event.head_commit.message, 'chore(release): v') }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: ver
+        run: |
+          V=$(echo "${{ github.event.head_commit.message }}" \
+            | sed -nE "s/^chore\(release\): v([0-9]+\.[0-9]+\.[0-9]+([-.A-Za-z0-9]+)?).*/\1/p")
+          test -n "$V" || { echo "no version parsed"; exit 1; }
+          echo "v=$V" >> "$GITHUB_OUTPUT"
+
+      - id: owner
+        run: echo "lc=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.lc }}/ach-agent:v${{ steps.ver.outputs.v }}
+            ghcr.io/${{ steps.owner.outputs.lc }}/ach-agent:latest
+
+      - uses: azure/setup-helm@v4
+      - name: Package and push Helm chart (OCI)
+        run: |
+          V="${{ steps.ver.outputs.v }}"
+          helm registry login ghcr.io -u "${{ github.actor }}" --password "${{ secrets.GITHUB_TOKEN }}"
+          helm package deploy/helm/ach-agent --version "$V" --app-version "v$V"
+          helm push "ach-agent-$V.tgz" "oci://ghcr.io/${{ steps.owner.outputs.lc }}/charts"
+
+      - name: Tag the release commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          V="${{ steps.ver.outputs.v }}"
+          if git rev-parse "v$V" >/dev/null 2>&1; then
+            echo "tag v$V already exists, skipping"
+          else
+            git tag -a "v$V" -m "v$V"
+            git push origin "v$V"
+          fi
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="${{ steps.ver.outputs.v }}"
+          awk -v v="$V" '
+            $0 ~ "^## \\[" v "\\]" {f=1; next}
+            /^## \[/ {f=0}
+            f {print}
+          ' CHANGELOG.md > NOTES.md
+          if [ -s NOTES.md ]; then
+            gh release create "v$V" --title "v$V" --notes-file NOTES.md
+          else
+            echo "no CHANGELOG section for v$V — falling back to auto-generated notes"
+            gh release create "v$V" --title "v$V" --generate-notes
+          fi

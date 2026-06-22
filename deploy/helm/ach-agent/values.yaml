@@ -1,0 +1,57 @@
+# deploy/helm/ach-agent/values.yaml
+#
+# Parameterized surfaces for the ach-agent chart.
+
+replicaCount: 1
+
+image:
+  repo: ghcr.io/ackstorm/ach-agent
+  # Tag to deploy. Bumped by `make release-bump VERSION=X.Y.Z`.
+  tag: "v0.1.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Config file mount — the operator renders config.json and mounts it here.
+# ach-agent reads ACH_CONFIG_PATH (default: /etc/ach-agent/config.json).
+config:
+  mountPath: /etc/ach-agent
+  secretName: ach-agent-config  # Secret containing config.json
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

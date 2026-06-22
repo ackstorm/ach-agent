@@ -1,0 +1,64 @@
+{
+  "schemaVersion": "1",
+  "agent": {
+    "name": "cron-test-agent",
+    "namespace": "engineering",
+    "generation": 1
+  },
+  "engine": {
+    "type": "opencode",
+    "binaryPath": "opencode",
+    "workDir": "/workspace",
+    "sessionDir": "/var/lib/ach-agent/opencode/sessions",
+    "thinkingLevel": "medium",
+    "steps": 50,
+    "startupTimeoutSeconds": 30,
+    "shared": {
+      "enabled": false,
+      "ttlSeconds": 0
+    }
+  },
+  "model": {
+    "default": "gpt-4o-mini",
+    "provider": "openai"
+  },
+  "limits": {
+    "maxConcurrentInvocations": 1,
+    "maxInvocationSeconds": 1800,
+    "maxQueuedTotal": 10,
+    "idempotencyWindowSeconds": 3600
+  },
+  "channels": [
+    {
+      "name": "heartbeat",
+      "type": "cron",
+      "concurrency": 1,
+      "expire": 60,
+      "session": {
+        "mode": "auto",
+        "continuity": "durable",
+        "ttlSeconds": 86400
+      },
+      "response": {
+        "mode": "actionRequired",
+        "fallback": "fail"
+      },
+      "cron": {
+        "schedule": "* * * * *"
+      },
+      "responseActions": [
+        {
+          "name": "reply",
+          "kind": "reply",
+          "inputSchema": {
+            "type": "object",
+            "required": ["text"],
+            "properties": {
+              "text": {"type": "string"}
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

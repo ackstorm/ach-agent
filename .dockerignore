@@ -1,0 +1,52 @@
+# .dockerignore for ach-agent
+# Prevents accidentally shipping dev artifacts, secrets, and .git into Docker images.
+
+# Version control
+.git
+.gitignore
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+*.xml
+
+# Type checking
+.mypy_cache/
+
+# uv download cache (host-owned, created by scripts/dev.sh)
+.uv-cache/
+
+# Planning artifacts (dev only)
+.planning/
+
+# IDE/editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Documentation
+docs/
+
+# Tests (not needed in runtime image)
+tests/

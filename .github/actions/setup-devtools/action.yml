@@ -1,0 +1,42 @@
+name: "Setup devtools image"
+description: "Pull or build the content-addressed ach-agent devtools image"
+
+outputs:
+  hash:
+    description: "12-char sha256 prefix of docker/devtools/Dockerfile"
+    value: ${{ steps.ref.outputs.hash }}
+  image:
+    description: "Full image reference (ghcr.io/owner/ach-agent-devtools:<hash>)"
+    value: ${{ steps.ref.outputs.image }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Compute devtools image reference
+      id: ref
+      shell: bash
+      run: |
+        HASH=$(sha256sum docker/devtools/Dockerfile | cut -c1-12)
+        OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+        echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+        echo "image=ghcr.io/$OWNER/ach-agent-devtools:$HASH" >> "$GITHUB_OUTPUT"
+
+    - name: Log in to GHCR
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+    - name: Pull pre-built devtools image (best-effort)
+      shell: bash
+      run: |
+        if docker pull "${{ steps.ref.outputs.image }}" 2>/dev/null; then
+          docker tag "${{ steps.ref.outputs.image }}" ach-agent-devtools:latest
+          echo "::notice::Pulled pre-built devtools image ${{ steps.ref.outputs.hash }}"
+        else
+          echo "::notice::No pre-built devtools image for hash ${{ steps.ref.outputs.hash }} — will build locally"
+        fi
+
+    - name: Ensure devtools image exists (build locally if pull missed)
+      shell: bash
+      run: ./scripts/dev.sh true

@@ -1,0 +1,19 @@
+site_name: ach-agent
+site_description: ACH Agent — execution plane harness for the ACH ecosystem
+repo_url: https://github.com/ackstorm/ach-agent
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: black
+nav:
+  - Home: index.md
+exclude_docs: |
+  plan/
+  plans/
+  spec/
+  requirements.txt
+markdown_extensions:
+  - admonition
+  - pymdownx.superfences
+  - tables

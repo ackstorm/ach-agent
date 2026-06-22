@@ -1,0 +1,34 @@
+# gitleaks configuration for ach-agent
+# Extends the default ruleset and allowlists deliberate test fixtures.
+
+title = "gitleaks config"
+
+[extend]
+# Extend the built-in default ruleset (gitleaks detects 160+ secret patterns by default)
+useDefault = true
+
+[[allowlists]]
+description = "Allow deliberate test sentinel ek_ fixture in tests/"
+regexes = ["ek_test_sentinel_do_not_log"]
+paths = ["tests/"]
+
+[[allowlists]]
+description = "Allow example values in documentation and fixtures"
+paths = [
+  "docs/",
+  "deploy/",
+  "tests/",
+]
+regexes = [
+  "ek_test_",
+]
+
+[[allowlists]]
+description = "Documented placeholder values in the env example (never real secrets)"
+paths = [
+  '''\.env\.example''',
+]
+regexes = [
+  "ek_REPLACE_ME",
+  "REPLACE_ME",
+]

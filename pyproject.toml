@@ -56,7 +56,7 @@ dev = [
     "fastapi==0.137.2",
     "uvicorn[standard]==0.49.0",
     "httpx>=0.27.0",
-    "mkdocs-material==9.5.49",
+    "mkdocs-material==9.7.6",
     "mike==2.1.3",
 ]
 

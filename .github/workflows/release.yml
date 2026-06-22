@@ -45,7 +45,7 @@ jobs:
             ghcr.io/${{ steps.owner.outputs.lc }}/ach-agent:v${{ steps.ver.outputs.v }}
             ghcr.io/${{ steps.owner.outputs.lc }}/ach-agent:latest
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
       - name: Package and push Helm chart (OCI)
         run: |
           V="${{ steps.ver.outputs.v }}"

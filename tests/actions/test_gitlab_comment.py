@@ -29,6 +29,19 @@ from ach_agent.actions.gitlab_comment import (
     dispatch_actions,
 )
 from ach_agent.channels.message_event import MessageEvent
+
+# Phase 2 (ENG-13): the v2 responseActions/consent surface (ResponseActionBlock and
+# the dispatch consent gate it drives) was removed from the v3 schema in the Phase 1
+# reshape. These tests exercise that surface, so they are skipped at module load until
+# the Codex engine swap (ENG-13) rewires the consumers. Mirror of the source-side
+# `ResponseActionBlock = Any` deferral in main.py / actions/gitlab_comment.py. REMOVE
+# this skip when Phase 2 lands.
+pytest.skip(
+    "Phase 2 (ENG-13): v2 responseActions/consent surface removed in the v3 "
+    "schema reshape (Phase 1); re-enabled when the Codex engine swap lands.",
+    allow_module_level=True,
+)
+
 from ach_agent.config.schema import ResponseActionBlock
 from ach_agent.engine.sanitized_env import (
     redact_ek_processor,

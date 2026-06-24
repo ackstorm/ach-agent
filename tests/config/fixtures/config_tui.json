@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1",
   "agent": {
-    "name": "cron-test-agent",
+    "name": "tui-test-agent",
     "namespace": "engineering",
     "generation": 1
   },
@@ -42,18 +42,14 @@
   },
   "channels": [
     {
-      "name": "heartbeat",
-      "type": "cron",
+      "name": "terminal",
+      "type": "tui",
       "concurrency": 1,
-      "expire": 60,
+      "expire": 120,
       "session": {
         "mode": "auto",
-        "continuity": "durable",
+        "continuity": "ephemeral",
         "ttlSeconds": 86400
-      },
-      "cron": {
-        "schedule": "* * * * *",
-        "timezone": "Europe/Madrid"
       }
     }
   ]

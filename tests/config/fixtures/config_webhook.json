@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1",
   "agent": {
-    "name": "cron-test-agent",
+    "name": "webhook-test-agent",
     "namespace": "engineering",
     "generation": 1
   },
@@ -42,18 +42,21 @@
   },
   "channels": [
     {
-      "name": "heartbeat",
-      "type": "cron",
+      "name": "gitlab-events",
+      "type": "webhook",
+      "source": "gitlab",
       "concurrency": 1,
-      "expire": 60,
+      "expire": 120,
       "session": {
         "mode": "auto",
-        "continuity": "durable",
+        "continuity": "ephemeral",
         "ttlSeconds": 86400
       },
-      "cron": {
-        "schedule": "* * * * *",
-        "timezone": "Europe/Madrid"
+      "webhook": {
+        "auth": {
+          "type": "gitlab_token",
+          "secretPath": "/etc/ach-agent/secrets/gitlab-webhook/secret"
+        }
       }
     }
   ]

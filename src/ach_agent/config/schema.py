@@ -120,9 +120,7 @@ class CapabilityFilterBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    exclude: CapabilityFilterExcludeBlock = Field(
-        default_factory=CapabilityFilterExcludeBlock
-    )
+    exclude: CapabilityFilterExcludeBlock = Field(default_factory=CapabilityFilterExcludeBlock)
 
 
 class CapabilityBlock(BaseModel):
@@ -231,7 +229,7 @@ class ChannelConfig(BaseModel):
     a2a: A2ABlock | None = None
 
     @model_validator(mode="after")
-    def check_type_block_coherence(self) -> "ChannelConfig":
+    def check_type_block_coherence(self) -> ChannelConfig:
         """D-04: enforce channel type↔sub-block coherence at config load time.
 
         Each channel type requires its sub-block and forbids foreign sub-blocks.
@@ -244,9 +242,7 @@ class ChannelConfig(BaseModel):
                     f"channel '{self.name}': type='webhook' requires a 'webhook' block"
                 )
             if self.source is None:
-                raise ValueError(
-                    f"channel '{self.name}': type='webhook' requires 'source' field"
-                )
+                raise ValueError(f"channel '{self.name}': type='webhook' requires 'source' field")
             for foreign in ("cron", "queue", "a2a"):
                 if getattr(self, foreign) is not None:
                     raise ValueError(
@@ -254,9 +250,7 @@ class ChannelConfig(BaseModel):
                     )
         elif t == "cron":
             if self.cron is None:
-                raise ValueError(
-                    f"channel '{self.name}': type='cron' requires a 'cron' block"
-                )
+                raise ValueError(f"channel '{self.name}': type='cron' requires a 'cron' block")
             for foreign in ("webhook", "queue", "a2a"):
                 if getattr(self, foreign) is not None:
                     raise ValueError(
@@ -264,9 +258,7 @@ class ChannelConfig(BaseModel):
                     )
         elif t == "queue":
             if self.queue is None:
-                raise ValueError(
-                    f"channel '{self.name}': type='queue' requires a 'queue' block"
-                )
+                raise ValueError(f"channel '{self.name}': type='queue' requires a 'queue' block")
             for foreign in ("webhook", "cron", "a2a"):
                 if getattr(self, foreign) is not None:
                     raise ValueError(
@@ -274,24 +266,16 @@ class ChannelConfig(BaseModel):
                     )
         elif t == "a2a":
             if self.a2a is None:
-                raise ValueError(
-                    f"channel '{self.name}': type='a2a' requires an 'a2a' block"
-                )
+                raise ValueError(f"channel '{self.name}': type='a2a' requires an 'a2a' block")
             for foreign in ("webhook", "cron", "queue"):
                 if getattr(self, foreign) is not None:
-                    raise ValueError(
-                        f"channel '{self.name}': type='a2a' forbids '{foreign}' block"
-                    )
+                    raise ValueError(f"channel '{self.name}': type='a2a' forbids '{foreign}' block")
         elif t == "tui":
             if self.source is not None:
-                raise ValueError(
-                    f"channel '{self.name}': type='tui' forbids 'source' field"
-                )
+                raise ValueError(f"channel '{self.name}': type='tui' forbids 'source' field")
             for foreign in ("webhook", "cron", "queue", "a2a"):
                 if getattr(self, foreign) is not None:
-                    raise ValueError(
-                        f"channel '{self.name}': type='tui' forbids '{foreign}' block"
-                    )
+                    raise ValueError(f"channel '{self.name}': type='tui' forbids '{foreign}' block")
         return self
 
 

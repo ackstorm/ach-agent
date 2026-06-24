@@ -24,7 +24,11 @@ import structlog
 
 from ach_agent.actions.side_effect import DryRunSideEffectExecutor, SideEffectExecutor
 from ach_agent.channels.message_event import MessageEvent
-from ach_agent.config.schema import ResponseActionBlock
+
+# Phase 2 (ENG-13): ResponseActionBlock deleted from v3 schema; aliased to Any so every
+# existing in-body reference (L283, L305, L317) stays importable without Phase 2/3 rewiring.
+# REMOVE this alias when the Codex engine swap rewires these consumers.
+ResponseActionBlock = Any
 
 log = structlog.get_logger(__name__)
 

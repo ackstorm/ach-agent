@@ -181,9 +181,9 @@ def create_app(
         headers: dict[str, str] = dict(request.headers)
 
         # 3. Determine deliver.type — determines whether to hold the connection (D-08)
+        # v3: webhook.deliver removed; deliver_type is always None in this phase.
+        # Phase 2 (ENG-13) will rewire this when the Codex engine swap lands.
         deliver_type: str | None = None
-        if channel_cfg.webhook is not None and channel_cfg.webhook.deliver is not None:
-            deliver_type = channel_cfg.webhook.deliver.type
 
         # 4. Dispatch — webhook adapter attaches reply_future to the event when
         #    deliver_type == "reply" BEFORE handler.handle() is called (CR-01).

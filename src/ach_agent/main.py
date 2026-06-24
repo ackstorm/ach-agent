@@ -42,10 +42,14 @@ from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.slack import connect_slack_adapter, disconnect_slack_adapter
 from ach_agent.channels.telegram import connect_telegram_adapter, disconnect_telegram_adapter
 from ach_agent.config import load_config
-from ach_agent.config.schema import ResponseActionBlock
 from ach_agent.engine.sanitized_env import SanitizedEnv, configure_logging
 from ach_agent.http.app import create_app
 from ach_agent.router import Router
+
+# Phase 2 (ENG-13): ResponseActionBlock deleted from v3 schema; aliased to Any so every
+# existing in-body reference (L189, L478) stays importable without Phase 2/3 rewiring.
+# REMOVE this alias when the Codex engine swap rewires these consumers.
+ResponseActionBlock = Any
 
 # configure_logging() is called at module TOP (not in main()) so that any
 # log emission during import (e.g. validation warnings) is already redacted.

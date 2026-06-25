@@ -13,7 +13,7 @@ async def _start_fake_ach(seen_auth: list[str | None]) -> tuple[web.AppRunner, s
     """Start a real aiohttp ACH upstream on 127.0.0.1:0 that streams an SSE body."""
 
     async def handler(request: web.Request) -> web.StreamResponse:
-        seen_auth.append(request.headers.get("Authorization"))
+        seen_auth.append(request.headers.get("x-ach-key"))
         resp = web.StreamResponse(
             status=200, headers={"Content-Type": "text/event-stream"}
         )
@@ -51,7 +51,7 @@ async def test_model_proxy_injects_ek_and_streams_sse() -> None:
         assert b"data: b\n\n" in body
         assert b"data: c\n\n" in body
         assert body.index(b"data: a") < body.index(b"data: b") < body.index(b"data: c")
-        assert seen_auth == ["Bearer ek-model-1"]
+        assert seen_auth == ["ek-model-1"]
     finally:
         await stop_model_proxies()
         await ach_runner.cleanup()

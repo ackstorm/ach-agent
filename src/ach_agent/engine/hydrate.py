@@ -10,6 +10,17 @@ from pydantic import BaseModel, Field
 log = structlog.get_logger(__name__)
 
 
+class ModelEntry(BaseModel):
+    """A hydrated model: ACH returns objects ``{id, endpoint}``, not bare strings.
+
+    ``endpoint`` is the ACH compat URL serving this model (e.g. ``…/v1``); the
+    localhost model proxy fronts it.
+    """
+
+    id: str
+    endpoint: str = ""
+
+
 class McpServer(BaseModel):
     id: str
     endpoint: str
@@ -33,7 +44,7 @@ class Context(BaseModel):
 
 
 class _Runtime(BaseModel):
-    models: list[str] = Field(default_factory=list)
+    models: list[ModelEntry] = Field(default_factory=list)
     mcpServers: list[McpServer] = Field(default_factory=list)
     a2aAgents: list[A2AAgent] = Field(default_factory=list)
 
@@ -45,7 +56,13 @@ class HydrationManifest(BaseModel):
 
     @property
     def models(self) -> list[str]:
-        return self.runtime.models
+        """The hydrated model ids (for membership checks / logging)."""
+        return [m.id for m in self.runtime.models]
+
+    @property
+    def model_entries(self) -> list[ModelEntry]:
+        """The full hydrated model objects (id + endpoint)."""
+        return list(self.runtime.models)
 
     @property
     def mcp_servers(self) -> list[McpServer]:
@@ -69,7 +86,17 @@ async def hydrate(base_url: str, ek: str) -> HydrationManifest:
     return HydrationManifest.model_validate(data)
 
 
-def resolve_model(manifest: HydrationManifest, name: str) -> None:
-    if manifest.models and name not in manifest.models:
+def resolve_model(manifest: HydrationManifest, name: str) -> ModelEntry | None:
+    """Resolve a configured model name against the hydrated models.
+
+    Returns the matching ``ModelEntry`` (so the caller can use its real endpoint).
+    Hard-fail ``sys.exit(1)`` if the hydrated set is non-empty but ``name`` is absent.
+    Returns ``None`` when the hydrated set is empty (local dev without ACH).
+    """
+    for entry in manifest.runtime.models:
+        if entry.id == name:
+            return entry
+    if manifest.runtime.models:
         log.error("model not in hydrated models — exiting", name=name, available=manifest.models)
         sys.exit(1)
+    return None

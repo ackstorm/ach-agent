@@ -28,8 +28,8 @@ async def _start_fake_mcp_upstream(seen_auth: list[str | None]) -> tuple[web.App
     """Start a real aiohttp MCP upstream on 127.0.0.1:0 recording Authorization."""
 
     async def handler(request: web.Request) -> web.Response:
-        seen_auth.append(request.headers.get("Authorization"))
-        return web.json_response({"auth": request.headers.get("Authorization")})
+        seen_auth.append(request.headers.get("x-ach-key"))
+        return web.json_response({"auth": request.headers.get("x-ach-key")})
 
     app = web.Application()
     app.router.add_route("*", "/{tail:.*}", handler)
@@ -49,7 +49,7 @@ async def _start_fake_ach_model(seen_auth: list[str | None]) -> tuple[web.AppRun
     """
 
     async def handler(request: web.Request) -> web.StreamResponse:
-        seen_auth.append(request.headers.get("Authorization"))
+        seen_auth.append(request.headers.get("x-ach-key"))
         resp = web.StreamResponse(status=200, headers={"Content-Type": "text/event-stream"})
         await resp.prepare(request)
         for chunk in (
@@ -79,7 +79,8 @@ async def test_hydration_returns_model_and_mcp_server(monkeypatch: Any) -> None:
             return {
                 "environment": "guard",
                 "runtime": {
-                    "models": ["openai.gpt-5"],
+                    # Real ACH shape: models are objects {id, endpoint}, not strings.
+                    "models": [{"id": "openai.gpt-5", "endpoint": "https://ach.example/v1"}],
                     "mcpServers": [{"id": "mcp-gofetch", "endpoint": mcp_url}],
                 },
             }
@@ -116,8 +117,8 @@ async def test_mcp_via_proxy_carries_ek() -> None:
                 assert resp.status == 200
                 data = await resp.json()
 
-        assert seen_auth == ["Bearer ek_guard_secret"]
-        assert data["auth"] == "Bearer ek_guard_secret"
+        assert seen_auth == ["ek_guard_secret"]
+        assert data["auth"] == "ek_guard_secret"
     finally:
         await proxy.stop()
         await mcp_runner.cleanup()
@@ -143,7 +144,7 @@ async def test_model_proxy_sse_and_terminal_parse() -> None:
         assert tool_chunk in body
         assert term_chunk in body
         assert body.index(tool_chunk) < body.index(term_chunk)
-        assert seen_auth == ["Bearer ek_guard_secret"]
+        assert seen_auth == ["ek_guard_secret"]
 
         # Leg 4: accumulate the SSE text and parse the structured terminal object.
         accumulated = body.decode()

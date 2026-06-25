@@ -45,9 +45,16 @@ def test_ek_redacted_in_logs(capsys: Any) -> None:
     from ach_agent.engine.sanitized_env import configure_logging
 
     configure_logging()
-    structlog.get_logger("conformance").info("boot", token="ek_should_be_redacted_xyz")
+    # Both separators must be redacted: real ACH keys use `ek-` (dash); earlier code
+    # only matched `ek_` (underscore) and leaked the live bearer (confirmed vs real ACH).
+    structlog.get_logger("conformance").info(
+        "boot", token="ek_underscore_secret", bearer="ek-DASH-real-format-secret"
+    )
 
     captured = capsys.readouterr()
     combined = captured.out + captured.err
-    assert "ek_should_be_redacted_xyz" not in combined, "§6.10: ek_ token must be redacted in logs"
+    assert "ek_underscore_secret" not in combined, "§6.10: ek_ token must be redacted in logs"
+    assert "ek-DASH-real-format-secret" not in combined, (
+        "§6.10: real ACH ek- (dash) key must be redacted in logs"
+    )
     assert "[REDACTED]" in combined, "§6.10: the redaction marker must be present"

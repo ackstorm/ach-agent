@@ -135,9 +135,10 @@ class A2AAgentClient:
 
             headers: dict[str, str] = {}
             if self._api_key:
-                # The api_key is the ACH ek_; injected as the peer auth header so
-                # the SECRET STAYS IN THE HARNESS (opencode never sees it).
-                headers["Authorization"] = f"Bearer {self._api_key}"
+                # The api_key is the ACH ek_; injected as the ACH `x-ach-key` header
+                # (ACH's auth scheme — Authorization: Bearer 401s) so the SECRET STAYS
+                # IN THE HARNESS (opencode never sees it). Untested vs a live a2a peer.
+                headers["x-ach-key"] = self._api_key
             self._httpx_client = httpx.AsyncClient(
                 headers=headers,
                 timeout=httpx.Timeout(timeout=300.0),  # slow peer startup

@@ -13,7 +13,9 @@ _KINDS = ("skills", "prompts", "artifacts")
 
 async def _get_bytes(url: str, ek: str) -> bytes:
     async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.get(url, headers={"Authorization": f"Bearer {ek}"})
+        # ACH auth is the `x-ach-key` header, NOT `Authorization: Bearer` (the latter
+        # returns 400 "malformed bearer key" — confirmed vs real ACH content endpoint).
+        r = await c.get(url, headers={"x-ach-key": ek})
         r.raise_for_status()
         return r.content
 

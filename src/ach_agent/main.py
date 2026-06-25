@@ -29,6 +29,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import structlog
 import uvicorn
@@ -418,7 +419,8 @@ async def main() -> None:
     mcp_proxy: McpProxy | None = None
     if ek:
         manifest = await hydrate(cfg.capability.ach.base_url, ek)
-        resolve_model(manifest, cfg.model.name)  # hard-fail (sys.exit 1) if model absent
+        # hard-fail (sys.exit 1) if model absent; returns the entry (with its real endpoint).
+        model_entry = resolve_model(manifest, cfg.model.name)
         await fetch_context(manifest.context, ek, Path(cfg.persistence.mount_path))
         mcp_proxy = McpProxy()
         # NOTE: CONTRACT_v3 capability.filter.exclude only carries `tools` (opencode-side,
@@ -426,7 +428,14 @@ async def main() -> None:
         # hydrated servers are fronted.
         mcp_local_urls = await mcp_proxy.start(manifest.mcp_servers, ek, exclude=set())
         model_proxy_base = await start_model_proxy(cfg.capability.ach.base_url, ek)
+        # Use the hydrated model's REAL endpoint path (ACH may serve a gemini.* model at
+        # /v1, not /gemini). Fall back to the type→prefix map only when the hydrated set is
+        # empty (local dev) or carries no endpoint.
         prefix = _MODEL_ENDPOINT_PREFIX[cfg.model.type]
+        if model_entry is not None and model_entry.endpoint:
+            endpoint_path = urlsplit(model_entry.endpoint).path.strip("/")
+            if endpoint_path:
+                prefix = endpoint_path
         model_base_url = f"{model_proxy_base}/{prefix}"
         log.info(
             "hydrated + localhost proxies started",

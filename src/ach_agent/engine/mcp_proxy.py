@@ -3,8 +3,8 @@
 
 Fronts each ACH MCP server on 127.0.0.1 so opencode points only at localhost and
 NEVER sees the ``ek_`` or the real ACH endpoint. Each localhost request to
-``/mcp/<id>`` is forwarded to that server's real endpoint with
-``Authorization: Bearer {ek}`` ADDED, and the upstream response is streamed back
+``/mcp/<id>`` is forwarded to that server's real endpoint with the ACH
+``x-ach-key: {ek}`` header ADDED, and the upstream response is streamed back
 (SSE / ``text/event-stream`` safe — the body is never fully buffered).
 
 Security: the ``ek`` lives ONLY inside the per-server handler closure. It is never
@@ -24,8 +24,10 @@ from ach_agent.engine.hydrate import McpServer
 log = structlog.get_logger(__name__)
 
 # Hop-by-hop / connection-specific headers that must not be forwarded verbatim.
-# Authorization is dropped from the inbound request because the proxy injects its own.
-_DROP_REQUEST_HEADERS = frozenset({"host", "content-length", "authorization"})
+# Inbound auth headers are dropped because the proxy injects ACH's own (`x-ach-key`):
+# opencode sends a dummy `Authorization` bearer; we strip it and any client-supplied
+# `x-ach-key`, then add the real ek_ as `x-ach-key` (ACH's auth scheme — Bearer 401s).
+_DROP_REQUEST_HEADERS = frozenset({"host", "content-length", "authorization", "x-ach-key"})
 _DROP_RESPONSE_HEADERS = frozenset({"content-length", "transfer-encoding", "content-encoding"})
 
 _Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
@@ -47,7 +49,7 @@ async def _forward(
     (caller keeps it in a closure) and is never logged.
     """
     headers = {k: v for k, v in request.headers.items() if k.lower() not in _DROP_REQUEST_HEADERS}
-    headers["Authorization"] = f"Bearer {ek}"
+    headers["x-ach-key"] = ek
 
     body = await request.read()
     async with session.request(
@@ -143,7 +145,7 @@ class ModelProxy:
     """aiohttp reverse-proxy that fronts the ACH model wires on 127.0.0.1.
 
     Routes ``/v1``, ``/gemini`` and ``/anthropic`` (and their subpaths) to
-    ``{ach_base_url}/<same path>`` with ``Authorization: Bearer {ek}`` injected,
+    ``{ach_base_url}/<same path>`` with the ACH ``x-ach-key: {ek}`` header injected,
     streaming the response so SSE (``/v1/responses``) is never buffered.
 
     Lifecycle::

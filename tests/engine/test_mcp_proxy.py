@@ -14,9 +14,9 @@ async def _start_fake_upstream(seen_auth: list[str | None]) -> tuple[web.AppRunn
     """Start a real aiohttp upstream on 127.0.0.1:0 that records the Authorization header."""
 
     async def handler(request: web.Request) -> web.Response:
-        seen_auth.append(request.headers.get("Authorization"))
+        seen_auth.append(request.headers.get("x-ach-key"))
         body = await request.read()
-        return web.json_response({"auth": request.headers.get("Authorization"), "echo": body.decode()})
+        return web.json_response({"auth": request.headers.get("x-ach-key"), "echo": body.decode()})
 
     app = web.Application()
     app.router.add_route("*", "/{tail:.*}", handler)
@@ -46,8 +46,8 @@ async def test_proxy_injects_ek_and_returns_localhost_url() -> None:
                 assert resp.status == 200
                 data = await resp.json()
 
-        assert seen_auth == ["Bearer ek-xyz"]
-        assert data["auth"] == "Bearer ek-xyz"
+        assert seen_auth == ["ek-xyz"]
+        assert data["auth"] == "ek-xyz"
     finally:
         await proxy.stop()
         await upstream_runner.cleanup()

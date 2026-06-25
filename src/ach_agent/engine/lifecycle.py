@@ -60,6 +60,7 @@ class EngineConfig:
     session_dir: str = "/var/lib/ach-agent/opencode/sessions"
     provider: str = "openai"
     model: str = "gpt-4o-mini"  # opencode validates model names; must be a known OpenAI model ID
+    params: dict[str, object] = field(default_factory=dict)  # model params (temperature, thinking_level, …)
     system_prompt: str = ""
     steps: int = 50
     startup_timeout_seconds: int = 30
@@ -163,6 +164,7 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
                 "options": {
                     "apiKey": "{env:ACH_API_KEY}",  # ek_ dereferenced at runtime only
                     "baseURL": "{env:ACH_BASE_URL}",  # Hub/mock endpoint
+                    **config.params,
                 }
             }
         },

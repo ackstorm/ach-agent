@@ -39,8 +39,6 @@ from ach_agent.actions.gitlab_comment import GitlabCommentAdapter, dispatch_acti
 from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a2a_agent_card
 from ach_agent.channels.cron import CronScheduler
 from ach_agent.channels.message_event import MessageEvent
-from ach_agent.channels.slack import connect_slack_adapter, disconnect_slack_adapter
-from ach_agent.channels.telegram import connect_telegram_adapter, disconnect_telegram_adapter
 from ach_agent.config import load_config
 from ach_agent.engine.sanitized_env import SanitizedEnv, configure_logging
 from ach_agent.http.app import create_app
@@ -59,7 +57,7 @@ configure_logging()
 log = structlog.get_logger(__name__)
 
 # D-02: only channel types wired in this build
-WIRED_CHANNEL_TYPES: frozenset[str] = frozenset({"cron", "webhook", "slack", "telegram", "a2a"})
+WIRED_CHANNEL_TYPES: frozenset[str] = frozenset({"cron", "webhook", "a2a"})
 
 CONFIG_PATH_ENV = "ACH_CONFIG_PATH"
 DEFAULT_CONFIG_PATH = "/etc/ach-agent/config.json"
@@ -351,8 +349,6 @@ async def _drain(
     router: Any,
     gitlab_adapter: GitlabCommentAdapter,
     dedup_store: Any,
-    slack_adapters: list[Any] | None = None,
-    telegram_adapters: list[Any] | None = None,
 ) -> None:
     """D-09/D-10/D-11: graceful drain sequence on SIGTERM.
 
@@ -381,20 +377,6 @@ async def _drain(
     # 3. Stop CronScheduler (D-06 intake-stop): cancels its single asyncio task cleanly.
     if cron_scheduler is not None:
         await cron_scheduler.stop()
-
-    # 3b. Disconnect Slack adapters — stop Socket Mode intake (D-06)
-    for adapter in slack_adapters or []:
-        try:
-            await disconnect_slack_adapter(adapter)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("drain: slack adapter disconnect error", error=str(exc))
-
-    # 3c. Disconnect Telegram adapters — stop PTB polling intake (D-06)
-    for adapter in telegram_adapters or []:
-        try:
-            await disconnect_telegram_adapter(adapter)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("drain: telegram adapter disconnect error", error=str(exc))
 
     # 4. Drain queued + in-flight lane work (D-11)
     # Step 4a: wait for in-flight + queued events to finish processing.
@@ -463,37 +445,25 @@ async def main() -> None:
     from ach_agent.engine.pool import EnginePool
 
     engine_cfg = EngineConfig(
-        binary_path=cfg.engine.binary_path,
-        work_dir=cfg.engine.work_dir,
-        session_dir=cfg.engine.session_dir,
-        model=cfg.model.default,
-        provider=cfg.model.provider,
-        startup_timeout_seconds=cfg.engine.startup_timeout_seconds,
-        shared_enabled=cfg.engine.shared.enabled,
-        shared_ttl_seconds=cfg.engine.shared.ttl_seconds,
+        work_dir=cfg.work_dir,
+        session_dir=f"{cfg.persistence.mount_path}/opencode/sessions",
+        provider=cfg.model.type,
+        model=cfg.model.name,
+        params=cfg.model.params,
+        startup_timeout_seconds=cfg.startup_timeout_seconds,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
+        shared_ttl_seconds=0,
     )
     pool = EnginePool()
 
-    # ACT-03/A3: build boot-time response_action_config_by_channel mapping.
-    # Config is immutable at runtime (A3) — safe to build once here.
-    # Maps: channel_name → {action_name → ResponseActionBlock}
-    # Used by dispatch_actions consent gate for per-event lookup (Open Question 1).
-    response_action_config_by_channel: dict[str, dict[str, ResponseActionBlock]] = {
-        channel.name: {block.name: block for block in channel.response_actions}
-        for channel in cfg.channels
-    }
-
     # 6b. Build engine_runner wired to GitlabCommentAdapter (gitlab_comment path).
     # MEM-01/D-02: pass memory_cfg so engine_runner probes before pool.acquire (Pitfall 3).
-    # ACT-03: pass response_action_config_by_channel for sideEffect consent gate.
     engine_runner = _make_engine_runner(
         pool=pool,
         engine_cfg=engine_cfg,
         delivery_adapter=gitlab_adapter,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
         memory_cfg=cfg.memory,
-        response_action_config_by_channel=response_action_config_by_channel,
     )
 
     # Step 6 (cont.): construct Router with all limits from config (RTR-03/04)
@@ -578,8 +548,6 @@ async def main() -> None:
     # Step 7: wire channel adapters (D-08: one CronScheduler for ALL cron channels, SC#3)
     seen_channel_names: set[str] = set()
     tasks: list[asyncio.Task[None]] = []
-    slack_adapters: list[Any] = []  # tracked for drain disconnection (D-06)
-    telegram_adapters: list[Any] = []  # tracked for drain disconnection (D-06)
     has_webhook = False
     uv_server: Any = None  # captured below if webhook channels exist
 
@@ -616,17 +584,6 @@ async def main() -> None:
                 "webhook channel registered",
                 channel_name=channel.name,
             )
-        elif channel.type == "slack":
-            # Connect Hermes SlackAdapter and register shim (D-04/D-06).
-            # connect() starts Socket Mode background task internally — non-blocking.
-            adapter = await connect_slack_adapter(channel, router, pool=pool)
-            slack_adapters.append(adapter)
-            log.info("slack channel connected", channel_name=channel.name)
-        elif channel.type == "telegram":
-            # Connect Hermes TelegramAdapter and register shim (D-04/D-06).
-            # connect() starts PTB polling background task internally — non-blocking.
-            adapter = await connect_telegram_adapter(channel, router, pool=pool)
-            telegram_adapters.append(adapter)
         elif channel.type == "a2a":
             # A2A channel: bridge + sub-app already built above and mounted in create_app.
             # uvicorn must be started to serve A2A HTTP requests (topology A, T-04-17).
@@ -677,8 +634,8 @@ async def main() -> None:
             return_when=asyncio.FIRST_COMPLETED,
         )
     else:
-        # CR-03: no uvicorn task (Slack/Telegram/cron-only config) — still wait for SIGTERM.
-        # Without this, the event loop exits immediately, orphaning Hermes background tasks.
+        # CR-03: no uvicorn task (cron-only config) — still wait for SIGTERM.
+        # Without this, the event loop exits immediately, orphaning background tasks.
         await shutdown_event.wait()
 
     if shutdown_event.is_set():
@@ -691,8 +648,6 @@ async def main() -> None:
             router=router,
             gitlab_adapter=gitlab_adapter,
             dedup_store=dedup_store,
-            slack_adapters=slack_adapters,
-            telegram_adapters=telegram_adapters,
         )
         if tasks:
             # uvicorn's serve() task returns on its own once should_exit=True; await it

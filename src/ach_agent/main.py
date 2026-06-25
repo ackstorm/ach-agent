@@ -424,6 +424,29 @@ async def main() -> None:
             mcp_count=len(mcp_local_urls),
         )
 
+        # A2A egress (Plan 3): expose peer agents as harness-hosted MCP tools so
+        # opencode can call them. The ek_ stays in the harness (injected as the
+        # peer auth header by A2AAgentClient). RTR-06: a2a_egress imports a2a-sdk
+        # only inside its functions, and we import the builder lazily here so the
+        # no-a2a-agents path (all current tests) imports nothing new and is a no-op.
+        if manifest.a2a_agents:
+            from ach_agent.engine.a2a_egress import (
+                build_a2a_mcp_server,
+                build_a2a_tools,
+            )
+
+            a2a_tools = build_a2a_tools(manifest.a2a_agents, ek=ek)
+            # Plan 3/4 follow-up: host build_a2a_mcp_server(a2a_tools) on a
+            # localhost port and add it to the opencode.json mcp block so opencode
+            # discovers these tools. The server is built here (validates wiring)
+            # but NOT started — no listener is opened (VERIFICATION DEBT).
+            _a2a_egress_server = build_a2a_mcp_server(a2a_tools)
+            log.info(
+                "a2a egress tools built (server not yet hosted — Plan 3/4)",
+                agent_count=len(manifest.a2a_agents),
+                tool_count=len(a2a_tools),
+            )
+
     # Step 5: build the engine pool. Egress is the agent's via external MCP tools —
     # the harness has no delivery adapter (it never posts on the model's behalf).
     from ach_agent.engine.lifecycle import EngineConfig

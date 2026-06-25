@@ -364,6 +364,10 @@ async def test_a2a_full_queue_enqueues_failed_event(tmp_path: pytest.TempPath) -
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(
+    reason="v3 schema rejects a2a channel with a2a=None at config-load "
+    "(model_validator), so this runtime-layer case is unconstructable — Plan 3"
+)
 @pytest.mark.asyncio
 async def test_cr01_no_auth_block_rejects_request() -> None:
     """CR-01: A2A channel with no a2a sub-block (a2a=None) must REJECT, not admit.

@@ -115,9 +115,8 @@ def test_unknown_key_boot_hard_fail(tmp_path: Path) -> None:
 def test_unwired_channel_hard_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """D-02: config declaring an unwired channel type hard-fails at boot (WIRED_CHANNEL_TYPES gate).
 
-    Plan 04-04 wires all 5 channel types (cron, webhook, slack, telegram, a2a). To verify
-    the D-02 gate still fires correctly for any future genuinely unsupported type, this test
-    monkeypatches WIRED_CHANNEL_TYPES to exclude 'a2a' and confirms the gate trips.
+    To verify the D-02 gate still fires correctly for any genuinely unsupported type,
+    this test monkeypatches WIRED_CHANNEL_TYPES to exclude 'a2a' and confirms the gate trips.
     """
     import sys
 
@@ -125,7 +124,7 @@ def test_unwired_channel_hard_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
     # Monkeypatch WIRED_CHANNEL_TYPES to simulate a build where 'a2a' is not yet wired.
     # This exercises the D-02 gate without requiring a new schema literal.
-    monkeypatch.setattr(main_module, "WIRED_CHANNEL_TYPES", frozenset({"cron", "webhook", "slack", "telegram"}))
+    monkeypatch.setattr(main_module, "WIRED_CHANNEL_TYPES", frozenset({"cron", "webhook"}))
 
     a2a_config: dict[str, Any] = {
         "schemaVersion": "1",

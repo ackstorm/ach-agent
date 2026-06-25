@@ -19,9 +19,8 @@ def test_inv01_idempotency_key_derivation() -> None:
     from datetime import UTC, datetime
 
     from ach_agent.router.dedup import (
+        derive_a2a_idempotency_key,
         derive_cron_idempotency_key,
-        derive_slack_idempotency_key,
-        derive_telegram_idempotency_key,
         derive_webhook_idempotency_key,
     )
 
@@ -30,18 +29,15 @@ def test_inv01_idempotency_key_derivation() -> None:
     assert wh_key, "webhook idempotency key must be non-empty"
     assert wh_key == "gl-uuid-001"
 
-    slack_key = derive_slack_idempotency_key({"ts": "1234567890.123456"})
-    assert slack_key, "slack idempotency key must be non-empty"
-
-    tg_key = derive_telegram_idempotency_key({"update_id": 42})
-    assert tg_key, "telegram idempotency key must be non-empty"
+    a2a_key = derive_a2a_idempotency_key("task-001")
+    assert a2a_key, "a2a idempotency key must be non-empty"
 
     tick = datetime(2026, 6, 20, 9, 0, 0, tzinfo=UTC)
     cron_key = derive_cron_idempotency_key("heartbeat", tick)
     assert cron_key, "cron idempotency key must be non-empty"
 
     # Keys across distinct events must differ (uniqueness per distinct event).
-    keys = [wh_key, slack_key, tg_key, cron_key]
+    keys = [wh_key, a2a_key, cron_key]
     assert len(set(keys)) == len(keys), (
         "§6.1: distinct events must yield distinct idempotency keys"
     )

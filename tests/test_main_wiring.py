@@ -15,7 +15,6 @@ import asyncio
 import json
 import uuid
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -56,15 +55,14 @@ MR_PAYLOAD = {
 def _make_webhook_cfg(
     name: str,
     secret_path: str,
-    deliver_type: str,
 ) -> ChannelConfig:
     return ChannelConfig.model_validate(
         {
             "name": name,
             "type": "webhook",
+            "source": "gitlab",
             "webhook": {
-                "auth": {"type": "hmac", "secretPath": secret_path},
-                "deliver": {"type": deliver_type},
+                "auth": {"type": "gitlab_token", "secretPath": secret_path},
             },
         }
     )
@@ -88,7 +86,7 @@ def test_gitlab_comment_webhook_returns_202(tmp_path: Any) -> None:
     """gitlab_comment webhook: POST to registered route returns 202 (D-04 accept-async)."""
     secret_file = tmp_path / "secret"
     secret_file.write_text("test_secret")
-    cfg = _make_webhook_cfg("gitlab-mr-review", str(secret_file), "gitlab_comment")
+    cfg = _make_webhook_cfg("gitlab-mr-review", str(secret_file))
 
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
     app = create_app([cfg], handler)
@@ -113,6 +111,7 @@ def test_gitlab_comment_webhook_returns_202(tmp_path: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="reply mode deferred — see Plan 3")
 def test_reply_mode_webhook_returns_200_with_reply_text(tmp_path: Any) -> None:
     """deliver.type: reply webhook: POST returns 200 + engine reply text (ACT-01/CR-01/D-08).
 
@@ -162,145 +161,6 @@ def test_reply_mode_webhook_returns_200_with_reply_text(tmp_path: Any) -> None:
     assert engine_call_count == 1, (
         f"CR-01: engine must be called EXACTLY ONCE, got {engine_call_count}"
     )
-
-
-# ---------------------------------------------------------------------------
-# (c) engine_runner dispatch: delivery_context threaded into dispatch_actions
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_engine_runner_dispatches_with_delivery_context(tmp_path: Any) -> None:
-    """_make_engine_runner dispatches reply actions to adapter with event.delivery_context.
-
-    Replaces the engine pool + run_invocation with mocks so no subprocess is needed.
-    Asserts delivery_context flows from the MessageEvent into deliver(action, context).
-    """
-    from ach_agent.main import _make_engine_runner
-
-    # --- Mocks ---
-    delivered: list[tuple[dict, dict]] = []
-
-    class FakeAdapter:
-        async def deliver(self, action: dict, context: dict) -> None:
-            delivered.append((action, context))
-
-        async def close(self) -> None:
-            pass
-
-    fake_adapter = FakeAdapter()
-
-    fake_result = {
-        "actions": [{"name": "channel_message", "kind": "reply", "input": {"text": "Test reply"}}]
-    }
-
-    # Minimal EngineConfig-like object
-    engine_cfg = MagicMock()
-    engine_cfg.shared_ttl_seconds = 0
-    engine_cfg.max_invocation_seconds = 60
-
-    # Pool that returns a fake server
-    fake_server = MagicMock()
-    pool = MagicMock()
-    pool.acquire = AsyncMock(return_value=fake_server)
-    pool.release = AsyncMock()
-
-    with patch(
-        "ach_agent.engine.lifecycle.run_invocation",
-        new=AsyncMock(return_value=fake_result),
-    ), patch(
-        "ach_agent.main.SanitizedEnv",
-        return_value=MagicMock(),
-    ):
-        runner = _make_engine_runner(
-            pool=pool,
-            engine_cfg=engine_cfg,
-            delivery_adapter=fake_adapter,  # type: ignore[arg-type]
-            max_invocation_seconds=60,
-        )
-
-        # Build a MessageEvent with delivery_context
-        event = MessageEvent(
-            idempotency_key="test-key",
-            session_key="42:7",
-            channel_name="gitlab-mr-review",
-            payload={"object_kind": "merge_request"},
-            delivery_context={"project_id": 42, "mr_iid": 7},
-            source_trait="sync",
-        )
-
-        await runner(event, lambda: None)
-
-    assert len(delivered) == 1, f"Expected 1 delivery, got {len(delivered)}"
-    action, context = delivered[0]
-    assert action.get("kind") == "reply"
-    assert context == {"project_id": 42, "mr_iid": 7}, (
-        f"delivery_context not threaded through: {context}"
-    )
-
-
-@pytest.mark.asyncio
-async def test_engine_runner_skips_sideeffect_delivers_reply(tmp_path: Any) -> None:
-    """_make_engine_runner: sideEffect logged-skipped; reply still delivered (D-11/SC#4)."""
-    from ach_agent.main import _make_engine_runner
-
-    delivered: list[tuple[dict, dict]] = []
-
-    class FakeAdapter:
-        async def deliver(self, action: dict, context: dict) -> None:
-            delivered.append((action, context))
-
-        async def close(self) -> None:
-            pass
-
-    fake_adapter = FakeAdapter()
-
-    # Engine result with BOTH sideEffect AND reply
-    fake_result = {
-        "actions": [
-            {"name": "approve_mr", "kind": "sideEffect", "input": {"action": "approve"}},
-            {"name": "channel_message", "kind": "reply", "input": {"text": "Looks good!"}},
-        ]
-    }
-
-    engine_cfg = MagicMock()
-    engine_cfg.shared_ttl_seconds = 0
-    engine_cfg.max_invocation_seconds = 60
-
-    fake_server = MagicMock()
-    pool = MagicMock()
-    pool.acquire = AsyncMock(return_value=fake_server)
-    pool.release = AsyncMock()
-
-    with patch(
-        "ach_agent.engine.lifecycle.run_invocation",
-        new=AsyncMock(return_value=fake_result),
-    ), patch(
-        "ach_agent.main.SanitizedEnv",
-        return_value=MagicMock(),
-    ):
-        runner = _make_engine_runner(
-            pool=pool,
-            engine_cfg=engine_cfg,
-            delivery_adapter=fake_adapter,  # type: ignore[arg-type]
-            max_invocation_seconds=60,
-        )
-
-        event = MessageEvent(
-            idempotency_key="test-key-sc4",
-            session_key="42:7",
-            channel_name="gitlab-mr-review",
-            payload={},
-            delivery_context={"project_id": 42, "mr_iid": 7},
-            source_trait="sync",
-        )
-        # Must not raise (D-11: sideEffect logged-skipped, not raised)
-        await runner(event, lambda: None)
-
-    # Only the reply action should be delivered; sideEffect logged and skipped
-    assert len(delivered) == 1, f"Expected 1 delivery (reply only), got {len(delivered)}"
-    action, _ctx = delivered[0]
-    assert action.get("kind") == "reply", f"Expected reply action, got {action.get('kind')}"
 
 
 # ---------------------------------------------------------------------------
@@ -451,73 +311,5 @@ async def test_cr03_slack_only_config_waits_for_shutdown_event() -> None:
     await signal_task
 
     assert result == "waited_via_shutdown_event", (
-        f"CR-03: Slack/Telegram-only config must await shutdown_event, got: {result!r}"
+        f"CR-03: channel-only config must await shutdown_event, got: {result!r}"
     )
-
-
-@pytest.mark.asyncio
-async def test_cr03_main_slack_only_exits_only_after_shutdown_event(
-    tmp_path: pytest.TempPath,
-) -> None:
-    """CR-03: full main() with a mock Slack channel must not exit before SIGTERM.
-
-    Patches connect_slack_adapter (and all heavy deps) so main() runs hermetically.
-    After wiring Slack, main() must block until shutdown_event fires — not exit
-    in the immediate `else` branch (which means the fix is in place).
-
-    Test asserts: main() task does NOT complete within 0.2s (it is waiting),
-    then we signal shutdown and verify main() completes gracefully.
-    """
-    import os
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    import pytest
-
-    # Build a minimal config JSON with a slack-only channel
-    config_json = """{
-        "schemaVersion": "1",
-        "agent": {"name": "test-agent", "namespace": "default"},
-        "engine": {"binaryPath": "opencode", "workDir": "/tmp", "sessionDir": "/tmp/sess"},
-        "model": {"default": "gpt-4o-mini", "provider": "openai"},
-        "channels": [{"name": "my-slack", "type": "slack"}],
-        "limits": {"maxConcurrentInvocations": 1, "maxQueuedTotal": 10,
-                   "maxInvocationSeconds": 60, "idempotencyWindowSeconds": 3600},
-        "persistence": {"enabled": false},
-        "health": {"host": "127.0.0.1", "port": 19999}
-    }"""
-    config_file = tmp_path / "config.json"
-    config_file.write_text(config_json)
-
-    fake_slack_adapter = AsyncMock()
-    fake_slack_adapter.disconnect = AsyncMock(return_value=None)
-
-    with (
-        patch("ach_agent.main.connect_slack_adapter", return_value=fake_slack_adapter),
-        patch("ach_agent.main.SanitizedEnv", return_value=MagicMock()),
-        patch("ach_agent.main._open_dedup_store", return_value=MagicMock()),
-        patch("ach_agent.main.GitlabCommentAdapter", return_value=AsyncMock()),
-        patch("ach_agent.main.Router", return_value=MagicMock(spec=["handle"])),
-        patch("ach_agent.main._write_pid_file"),
-        patch("ach_agent.main.create_app", return_value=MagicMock(extra={"state": {}})),
-        patch.dict(os.environ, {"ACH_CONFIG_PATH": str(config_file)}),
-    ):
-        from ach_agent import main as main_module
-
-        # Force reload to pick up the patched env var
-        main_task = asyncio.create_task(main_module.main())
-
-        # Give main() time to start up and reach the wait block
-        await asyncio.sleep(0.1)
-
-        # CR-03 assertion: main_task must NOT be done yet (it should be waiting)
-        assert not main_task.done(), (
-            "CR-03: main() exited immediately on Slack-only config — "
-            "process must await shutdown_event, not fall through the tasks=[] gap"
-        )
-
-        # Clean up: cancel the task (simulates process termination)
-        main_task.cancel()
-        try:
-            await main_task
-        except (asyncio.CancelledError, Exception):
-            pass

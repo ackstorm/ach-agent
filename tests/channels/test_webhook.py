@@ -51,9 +51,9 @@ def _make_channel_cfg(secret_path: str) -> ChannelConfig:
         {
             "name": "gitlab-mr-review",
             "type": "webhook",
+            "source": "gitlab",
             "webhook": {
-                "auth": {"type": "hmac", "secretPath": secret_path},
-                "deliver": {"type": "gitlab_comment"},
+                "auth": {"type": "gitlab_token", "secretPath": secret_path},
             },
         }
     )

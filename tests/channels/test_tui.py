@@ -1,19 +1,19 @@
-"""TUI channel runtime unit tests (stdin/stdout free-form, no terminal contract).
+"""TUI console-runner unit tests — the `--tui` modifier (stdin/stdout, no contract).
 
-Fast suite — drives the channel via the exposed `_handle_line()` helper against a
-fake handler that resolves the event's reply_future, and a capturing writer.
+Drives run_tui_console with a fake reader (queued lines, "" = EOF) against a fake
+handler that resolves the event's reply_future, and a capturing writer.
 
 Verifies:
   - The engine's free-form reply text is written to the writer (no terminal contract).
-  - The MessageEvent passed to the handler has source_trait == "sync", a non-empty
-    idempotency_key, channel_name == <cfg name>, and a non-None reply_future.
+  - Blank lines are skipped; EOF ends the session.
+  - The MessageEvent carries source_trait="sync", a non-empty idempotency_key, the
+    console channel_name/session_key, a reply_future, and payload["text"] == the line.
 """
 
 from __future__ import annotations
 
 from ach_agent.channels.message_event import MessageEvent
-from ach_agent.channels.tui import TuiChannel
-from ach_agent.config.schema import ChannelConfig
+from ach_agent.channels.tui import run_tui_console
 from ach_agent.router.router import RouterAdmitResult
 
 
@@ -31,35 +31,39 @@ class FakeHandler:
         return RouterAdmitResult.ACCEPTED
 
 
-def _make_channel_cfg() -> ChannelConfig:
-    return ChannelConfig.model_validate({"name": "console", "type": "tui"})
+class FakeReader:
+    """Async readline over a queue of raw lines; returns "" (EOF) when exhausted."""
+
+    def __init__(self, lines: list[str]) -> None:
+        self._lines = list(lines)
+
+    async def readline(self) -> str:
+        return self._lines.pop(0) if self._lines else ""
 
 
-async def test_handle_line_writes_engine_reply() -> None:
-    """A line read from stdin → engine reply text written to the writer."""
-    cfg = _make_channel_cfg()
+async def test_console_writes_engine_reply() -> None:
+    """A console line → engine reply text written to the writer (no terminal contract)."""
     handler = FakeHandler("ENGINE REPLY")
     captured: list[str] = []
 
-    tui = TuiChannel(cfg, handler=handler, writer=captured.append)
-    await tui._handle_line("hello")
+    await run_tui_console(handler, reader=FakeReader(["hello\n"]), writer=captured.append)
 
     assert any("ENGINE REPLY" in line for line in captured)
 
 
-async def test_message_event_fields() -> None:
-    """The MessageEvent crossing the seam carries the expected TUI fields."""
-    cfg = _make_channel_cfg()
+async def test_blank_lines_skipped_and_event_fields() -> None:
+    """Blank lines are skipped; the routed event carries the expected console fields."""
     handler = FakeHandler()
     captured: list[str] = []
 
-    tui = TuiChannel(cfg, handler=handler, writer=captured.append)
-    await tui._handle_line("hello")
+    # "\n" (blank → skipped), then "hi\n" (routed), then EOF.
+    await run_tui_console(handler, reader=FakeReader(["\n", "hi\n"]), writer=captured.append)
 
-    assert len(handler.events) == 1
+    assert len(handler.events) == 1, "blank line must be skipped — only 'hi' routed"
     event = handler.events[0]
     assert event.source_trait == "sync"
     assert event.idempotency_key != ""
-    assert event.channel_name == "console"
+    assert event.channel_name == "tui-console"
+    assert event.session_key == "tui-console"
     assert event.reply_future is not None
-    assert event.payload == {"text": "hello"}
+    assert event.payload == {"text": "hi"}

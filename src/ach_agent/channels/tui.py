@@ -1,23 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
-"""TUI channel adapter — stdin/stdout free-form (no terminal contract).
+"""TUI console runner — the `--tui` launch modifier (NOT a channel).
 
-A line-oriented console channel: each line read from stdin becomes a MessageEvent
-with source_trait="sync" and a fresh reply_future. The router runs the engine on the
-bounded lane; engine_runner resolves the future with the engine's free-form text. The
-channel writes that text (+ newline) back to stdout — there is NO terminal contract, so
-even an `action:none` reply is printed verbatim.
+`--tui` is a launch modifier, not a channel: when set, the harness boots fully
+(config, hydration, localhost proxies, opencode) but IGNORES the configured
+channels and opens a console REPL instead. Each line you type/paste IS the prompt
+sent straight to the agent — so you can simulate a cron tick by pasting its prompt,
+a webhook/hook by pasting that instruction, etc.
 
-Mirrors CronScheduler/QueueConsumer lifecycle: start() creates a single asyncio
-read-loop task; stop() cancels + awaits it.
+Each line becomes a MessageEvent (source_trait="sync") with a fresh reply_future on a
+single stable session (conversational continuity), routed through the bounded lane;
+engine_runner resolves the future with the engine's free-form text, which is printed
+verbatim — there is NO terminal contract.
 
-Testability: __init__ accepts optional reader/writer. The default reader wraps
-sys.stdin; the default writer writes to sys.stdout. start() loops over the reader
-calling the exposed _handle_line() helper so tests can drive a single line directly.
+Testability: run_tui_console accepts optional reader/writer. The default reader wraps
+sys.stdin (blocking readline in a thread executor); the default writer writes to stdout.
 
 RTR-06: NEVER import from hermes_agent.* or engine.* here.
-
-Boot-order: imported after configure_logging() (Pitfall 8). main.py constructs one
-TuiChannel per tui channel and owns its start()/stop() lifecycle (like cron).
 """
 
 from __future__ import annotations
@@ -34,9 +32,12 @@ from ach_agent.channels.message_event import MessageEvent
 
 if TYPE_CHECKING:
     from ach_agent.channels.seam import MessageHandler
-    from ach_agent.config.schema import ChannelConfig
 
 log = structlog.get_logger(__name__)
+
+# Stable session for the whole console session → all lines share one FIFO lane
+# (serialized) and one logical session for continuity.
+_CONSOLE_SESSION_KEY = "tui-console"
 
 
 def _default_write(text: str) -> None:
@@ -57,66 +58,60 @@ class _StdinReader:
         return await loop.run_in_executor(None, sys.stdin.readline)
 
 
-class TuiChannel:
-    """Free-form stdin/stdout channel for one tui channel (no terminal contract)."""
+async def _handle_line(
+    handler: MessageHandler,
+    line: str,
+    writer: Callable[[str], None],
+    session_key: str,
+) -> None:
+    """Dispatch one console line to the router and write the engine reply.
 
-    def __init__(
-        self,
-        channel_cfg: ChannelConfig,
-        handler: MessageHandler,
-        pool: Any = None,  # EnginePool — accepted for symmetry with cron/queue; unused
-        reader: Any = None,
-        writer: Callable[[str], None] | None = None,
-    ) -> None:
-        self._cfg = channel_cfg
-        self._handler = handler
-        self._reader = reader if reader is not None else _StdinReader()
-        self._writer: Callable[[str], None] = writer if writer is not None else _default_write
-        self._task: asyncio.Task[None] | None = None
+    Builds a MessageEvent (source_trait="sync") with a fresh reply_future, routes it,
+    then awaits the future for the engine's free-form text. The line IS the prompt
+    (payload['text']); build_engine_prompt returns it verbatim. idempotency_key is a
+    ms-timestamp string (unique per line, never empty).
+    """
+    reply_future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+    event = MessageEvent(
+        idempotency_key=str(int(time.time() * 1000)),
+        session_key=session_key,
+        channel_name="tui-console",
+        payload={"text": line},
+        delivery_context={},
+        source_trait="sync",
+        reply_future=reply_future,
+    )
+    await handler.handle(event)
+    text = await reply_future
+    writer(text)
 
-    async def start(self) -> None:
-        """Create the single asyncio read-loop task."""
-        self._task = asyncio.create_task(self._run())
 
-    async def stop(self) -> None:
-        """Cancel + await the read-loop task."""
-        if self._task is not None and not self._task.done():
-            self._task.cancel()
-            await asyncio.gather(self._task, return_exceptions=True)
+async def run_tui_console(
+    handler: MessageHandler,
+    *,
+    reader: Any = None,
+    writer: Callable[[str], None] | None = None,
+    session_key: str = _CONSOLE_SESSION_KEY,
+) -> None:
+    """Run the console REPL until EOF (Ctrl-D) or cancellation.
 
-    async def _run(self) -> None:
-        """Read lines until EOF or cancellation, dispatching each via _handle_line."""
-        try:
-            while True:
-                raw = await self._reader.readline()
-                if isinstance(raw, bytes):
-                    raw = raw.decode("utf-8", errors="replace")
-                if raw == "":
-                    # EOF — stop the loop cleanly.
-                    return
-                await self._handle_line(raw.rstrip("\n"))
-        except asyncio.CancelledError:
-            # Clean exit on stop().
-            return
-
-    async def _handle_line(self, line: str) -> None:
-        """Dispatch one line to the router and write the engine reply to the writer.
-
-        Builds a MessageEvent (source_trait="sync") with a fresh reply_future, routes
-        it, then awaits the future to obtain the engine's free-form text and writes it.
-        idempotency_key is a ms-timestamp string (never empty — mirrors the webhook
-        fallback).
-        """
-        reply_future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-        event = MessageEvent(
-            idempotency_key=str(int(time.time() * 1000)),
-            session_key=self._cfg.name,
-            channel_name=self._cfg.name,
-            payload={"text": line},
-            delivery_context={},
-            source_trait="sync",
-            reply_future=reply_future,
-        )
-        await self._handler.handle(event)
-        text = await reply_future
-        self._writer(text)
+    Reads stdin lines; each non-blank line is routed to the engine and the reply is
+    written back. Blank lines are skipped. EOF or CancelledError ends the session.
+    """
+    rdr = reader if reader is not None else _StdinReader()
+    wrt = writer if writer is not None else _default_write
+    log.info("tui console started — type a prompt, Ctrl-D to exit")
+    try:
+        while True:
+            raw = await rdr.readline()
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8", errors="replace")
+            if raw == "":
+                # EOF — end the session cleanly.
+                return
+            line = raw.rstrip("\n")
+            if not line:
+                continue
+            await _handle_line(handler, line, wrt, session_key)
+    except asyncio.CancelledError:
+        return

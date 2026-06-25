@@ -87,6 +87,10 @@ class ManagedServer:
     # process and client are None until launch() populates them
     _process: object | None = field(default=None, repr=False)
     _client: object | None = field(default=None, repr=False)
+    # logical session_key → opencode session id (ses_…). opencode requires a session
+    # created via POST /session before POST /session/{id}/message; we create one per
+    # logical key on first use and reuse it for conversational continuity.
+    _sessions: dict[str, str] = field(default_factory=dict, repr=False)
     # 50-line tail buffers for diagnostics (H-05)
     _stdout_tail: collections.deque[str] = field(
         default_factory=lambda: collections.deque(maxlen=_LOG_TAIL_SIZE), repr=False
@@ -195,18 +199,20 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
     }
 
     # Register MCP servers in opencode.json pre-launch (no runtime tool-registration API).
+    # opencode 1.16 schema (verified live): `mcp.<id> = {type:"remote", url, enabled:true}`
+    # — NOT nested under a `servers` key, and the type is "remote" (not "streamable-http").
     # Two sources, never colliding on key:
     #   - memory server(s) from mcp_servers (MEM-02; present iff the backend was reachable)
     #   - proxied external MCP servers from mcp_local_urls (Plan 2; localhost URLs only)
     # SEC (T-04-22 / §6.10): only URLs are written — the ek_ bearer is never in config files.
-    mcp_block: dict[str, dict[str, str]] = {
-        f"memory-{i}": {"type": "streamable-http", "url": url}
+    mcp_block: dict[str, dict[str, object]] = {
+        f"memory-{i}": {"type": "remote", "url": url, "enabled": True}
         for i, url in enumerate(config.mcp_servers)
     }
     for sid, url in config.mcp_local_urls.items():
-        mcp_block[sid] = {"type": "streamable-http", "url": url}
+        mcp_block[sid] = {"type": "remote", "url": url, "enabled": True}
     if mcp_block:
-        oc_config["mcp"] = {"servers": mcp_block}
+        oc_config["mcp"] = mcp_block
     (config_dir / "opencode.json").write_text(json.dumps(oc_config, indent=2), encoding="utf-8")
     log.debug(
         "opencode.json written",
@@ -383,11 +389,22 @@ async def run_invocation(
     if not isinstance(client, OpenCodeClient):
         raise RuntimeError("ManagedServer has no client")
 
+    # opencode requires a session created via POST /session before /session/{id}/message
+    # (sending to an arbitrary id → 500). Map the logical session_key → an opencode
+    # session id, created once per key and reused for conversational continuity.
+    oc_session_id = server._sessions.get(session_id)
+    if oc_session_id is None:
+        created = await client.create_session()
+        oc_session_id = str(created.get("id", ""))
+        if not oc_session_id:
+            raise RuntimeError(f"opencode create_session returned no id: {created!r}")
+        server._sessions[session_id] = oc_session_id
+
     try:
         async with asyncio.timeout(max_invocation_seconds):
             # Subscribe to SSE FIRST, then send the message.
             # This ensures we don't miss the session.idle event.
-            accumulated_text = await consume_sse_after_send(client, session_id, prompt)
+            accumulated_text = await consume_sse_after_send(client, oc_session_id, prompt)
     except TimeoutError:
         # D-03: must genuinely kill the subprocess
         log.warning(
@@ -421,7 +438,7 @@ async def run_invocation(
             "Reply with ONLY a terminal JSON object: "
             '{"action":"none","text":"..."} or {"action":"a2a_reply","text":"..."}.'
         )
-        accumulated_text = await consume_sse_after_send(client, session_id, repair)
+        accumulated_text = await consume_sse_after_send(client, oc_session_id, repair)
         obj = extract_terminal(accumulated_text)
     return obj if obj is not None else {"action": "none", "text": accumulated_text}
 

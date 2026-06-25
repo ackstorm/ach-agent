@@ -156,20 +156,6 @@ def test_load_valid_queue_config() -> None:
     assert ch.queue.ack_mode == "onComplete"
 
 
-def test_load_valid_tui_config() -> None:
-    """CFG-06: valid v3 tui fixture loads; no sub-block fields (D-04 clean)."""
-    from ach_agent.config import load_config
-
-    config = load_config(str(FIXTURES_DIR / "config_tui.json"))
-    assert len(config.channels) == 1
-    ch = config.channels[0]
-    assert ch.type == "tui"
-    assert ch.webhook is None
-    assert ch.cron is None
-    assert ch.queue is None
-    assert ch.a2a is None
-
-
 def test_load_valid_a2a_config() -> None:
     """CFG-06: valid v3 a2a fixture loads; mode and secretPath asserted."""
     from ach_agent.config import load_config
@@ -583,21 +569,15 @@ def test_cron_channel_with_webhook_block_hard_fails(tmp_path: Path) -> None:
     assert exc_info.value.code != 0
 
 
-def test_tui_channel_with_cron_block_hard_fails(tmp_path: Path) -> None:
-    """D-04: tui channel carrying a cron block → @model_validator → sys.exit(1)."""
+def test_tui_is_not_a_channel_type(tmp_path: Path) -> None:
+    """`tui` is the --tui launch modifier, NOT a channel type → unknown type hard-fails."""
     from ach_agent.config import load_config
 
     bad = {
         **_VALID_WEBHOOK_BASE,
-        "channels": [
-            {
-                "name": "bad-tui",
-                "type": "tui",
-                "cron": {"schedule": "* * * * *", "timezone": "UTC"},
-            }
-        ],
+        "channels": [{"name": "console", "type": "tui"}],
     }
-    config_file = tmp_path / "bad_tui_cron.json"
+    config_file = tmp_path / "bad_tui_type.json"
     config_file.write_text(json.dumps(bad), encoding="utf-8")
 
     with pytest.raises(SystemExit) as exc_info:

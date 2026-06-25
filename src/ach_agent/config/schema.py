@@ -208,8 +208,10 @@ class QueueBlock(BaseModel):
 # ---------------------------------------------------------------------------
 
 # D-02/D-06: unrecognized channel type → ValidationError → hard-fail
-# slack/telegram removed; queue/tui added per CONTRACT_v3 §2
-ChannelType = Literal["webhook", "cron", "queue", "tui", "a2a"]
+# slack/telegram removed; queue added per CONTRACT_v3 §2.
+# NOTE: `tui` is NOT a channel — it is the `--tui` launch modifier (console mode that
+# ignores configured channels). See main.py. So it is intentionally absent here.
+ChannelType = Literal["webhook", "cron", "queue", "a2a"]
 
 
 class ChannelConfig(BaseModel):
@@ -271,12 +273,6 @@ class ChannelConfig(BaseModel):
             for foreign in ("webhook", "cron", "queue"):
                 if getattr(self, foreign) is not None:
                     raise ValueError(f"channel '{self.name}': type='a2a' forbids '{foreign}' block")
-        elif t == "tui":
-            if self.source is not None:
-                raise ValueError(f"channel '{self.name}': type='tui' forbids 'source' field")
-            for foreign in ("webhook", "cron", "queue", "a2a"):
-                if getattr(self, foreign) is not None:
-                    raise ValueError(f"channel '{self.name}': type='tui' forbids '{foreign}' block")
         return self
 
 

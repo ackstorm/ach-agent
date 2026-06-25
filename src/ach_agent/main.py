@@ -38,7 +38,7 @@ from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a
 from ach_agent.channels.cron import CronScheduler
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.queue import QueueConsumer
-from ach_agent.channels.tui import TuiChannel
+from ach_agent.channels.tui import run_tui_console
 from ach_agent.config import load_config
 from ach_agent.engine.context import fetch_context
 from ach_agent.engine.hydrate import hydrate, resolve_model
@@ -55,7 +55,7 @@ configure_logging()
 log = structlog.get_logger(__name__)
 
 # D-02: only channel types wired in this build
-WIRED_CHANNEL_TYPES: frozenset[str] = frozenset({"cron", "webhook", "a2a", "queue", "tui"})
+WIRED_CHANNEL_TYPES: frozenset[str] = frozenset({"cron", "webhook", "a2a", "queue"})
 
 # Plan 2: model.type → ACH compat-endpoint path prefix fronted by the model proxy.
 # opencode's baseURL becomes "http://127.0.0.1:<port>/<prefix>".
@@ -164,6 +164,12 @@ def build_engine_prompt(event: MessageEvent) -> str:
     scheduled_tick = event.payload.get("scheduled_tick")
     if scheduled_tick is not None:
         return str(scheduled_tick)
+
+    # Free-form text path: the --tui console (and queue/a2a) carry the prompt verbatim
+    # in payload['text']. In console mode the typed line IS the prompt.
+    text = event.payload.get("text")
+    if text:
+        return str(text)
 
     # Webhook MR path: build prompt from delivery_context + MR fields
     project_id = event.delivery_context.get("project_id", "")
@@ -384,15 +390,20 @@ async def _drain(
     log.info("drain: complete")
 
 
-async def main() -> None:
-    """Async entrypoint: load config, boot router, start channel adapters + uvicorn."""
+async def main(tui_mode: bool = False) -> None:
+    """Async entrypoint: load config, boot router, start channel adapters + uvicorn.
+
+    tui_mode (the `--tui` launch modifier): boot the engine/proxies/hydration but ignore
+    the configured channels and run a console REPL instead (see run_tui_console).
+    """
     config_path = os.environ.get(CONFIG_PATH_ENV, DEFAULT_CONFIG_PATH)
 
     # Step 2: load config (hard-fail on schema mismatch — CFG-02)
     cfg = load_config(config_path)
 
-    # Step 3: D-02 gate — reject unwired channel types before serving
-    for channel in cfg.channels:
+    # Step 3: D-02 gate — reject unwired channel types before serving.
+    # Skipped under --tui: configured channels are ignored in console mode.
+    for channel in cfg.channels if not tui_mode else []:
         if channel.type not in WIRED_CHANNEL_TYPES:
             log.error(
                 "channel type configured but not supported in this build — exiting",
@@ -508,6 +519,22 @@ async def main() -> None:
         max_invocation_seconds=float(cfg.limits.max_invocation_seconds),
     )
 
+    # --tui launch modifier: ignore the configured channels and run a console REPL.
+    # The engine + proxies + hydration are already wired above; the first typed line
+    # warms the engine via the router→pool path (no HTTP A′ gate involved).
+    if tui_mode:
+        log.info("ach-agent: --tui console mode (configured channels ignored)")
+        try:
+            await run_tui_console(router)
+        finally:
+            await stop_model_proxies()
+            if mcp_proxy is not None:
+                await mcp_proxy.stop()
+            if hasattr(dedup_store, "close"):
+                dedup_store.close()
+        log.info("ach-agent: console session ended")
+        return
+
     # Collect webhook channels to wire; build FastAPI app if any exist
     webhook_channels = [ch for ch in cfg.channels if ch.type == "webhook"]
 
@@ -615,17 +642,6 @@ async def main() -> None:
         queue_consumers.append(consumer)
         log.info("queue consumer started", channel_name=channel.name, stream=channel.queue.key)  # type: ignore[union-attr]
 
-    # TUI channels (stdin/stdout free-form, no terminal contract): one TuiChannel each.
-    # Like cron, each owns a single background asyncio task; started outside `tasks`,
-    # stopped in the drain branch. A tui-only config still waits via shutdown_event.
-    tui_channels = [ch for ch in cfg.channels if ch.type == "tui"]
-    tui_consumers: list[TuiChannel] = []
-    for channel in tui_channels:
-        tui = TuiChannel(channel, handler=router, pool=pool)
-        await tui.start()
-        tui_consumers.append(tui)
-        log.info("tui channel started", channel_name=channel.name)
-
     for channel in cfg.channels:
         if channel.name in seen_channel_names:
             log.error(
@@ -641,9 +657,6 @@ async def main() -> None:
         elif channel.type == "queue":
             # Already handled above by its QueueConsumer — skip per-channel task.
             log.info("queue channel registered", channel_name=channel.name)
-        elif channel.type == "tui":
-            # Already handled above by its TuiChannel (background task like cron).
-            log.info("tui channel registered", channel_name=channel.name)
         elif channel.type == "webhook":
             # Webhook channels are served by uvicorn via the FastAPI app (started below).
             # Route is already registered in create_app() for all webhook_channels.
@@ -720,9 +733,6 @@ async def main() -> None:
         # Done after _drain so in-flight lane work routed from the queue can complete.
         for consumer in queue_consumers:
             await consumer.stop()
-        # Stop TUI channels (cancel their read-loop tasks) — like cron/queue intake-stop.
-        for tui in tui_consumers:
-            await tui.stop()
         # Plan 2: tear down the localhost proxies (closes their aiohttp runners/sessions).
         await stop_model_proxies()
         if mcp_proxy is not None:
@@ -740,4 +750,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # `--tui` launch modifier: console REPL, configured channels ignored.
+    asyncio.run(main(tui_mode="--tui" in sys.argv))

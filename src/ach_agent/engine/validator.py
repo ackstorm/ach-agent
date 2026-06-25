@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Literal
+from typing import Any, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict
@@ -78,7 +78,7 @@ def _find_matching_brace(text: str, start: int) -> int:
     return -1
 
 
-def extract_terminal(accumulated_text: str) -> dict | None:
+def extract_terminal(accumulated_text: str) -> dict[str, Any] | None:
     """Find the last {"action": ...} object in the model's text output.
 
     Algorithm:
@@ -100,6 +100,7 @@ def extract_terminal(accumulated_text: str) -> dict | None:
     if end == -1:
         return None
     try:
-        return json.loads(text[pos : end + 1])
+        result: dict[str, Any] = json.loads(text[pos : end + 1])
+        return result
     except json.JSONDecodeError:
         return None

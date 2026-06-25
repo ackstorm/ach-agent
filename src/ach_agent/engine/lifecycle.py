@@ -24,6 +24,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -54,7 +55,7 @@ class EngineConfig:
     session_dir: str = "/var/lib/ach-agent/opencode/sessions"
     provider: str = "openai"
     model: str = "gpt-4o-mini"  # opencode validates model names; must be a known OpenAI model ID
-    params: dict[str, object] = field(default_factory=dict)  # model params (temperature, thinking_level, …)
+    params: dict[str, object] = field(default_factory=dict)  # model params (temperature, …)
     system_prompt: str = ""
     steps: int = 50
     startup_timeout_seconds: int = 30
@@ -334,7 +335,7 @@ async def run_invocation(
     terminal_retries: int,
     max_invocation_seconds: int,
     on_kill: Callable[[], None],
-) -> dict:
+) -> dict[str, Any]:
     """Orchestrate: subscribe SSE → send prompt → consume → return the terminal object.
 
     ENG-07 / D-02 / D-03: Wrapped in asyncio.timeout(max_invocation_seconds).

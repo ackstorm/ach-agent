@@ -6,10 +6,10 @@ Four plans implement the v3 opencode re-scope. **They are a dependency chain, no
 Plan 1  de-cruft & reconnect      ✅ DONE  (branch feat/v1.1-opencode-rescope, make lint green, 140/3 non-e2e)
    │
    ▼
-Plan 2  proxy + hydration + context   (new code; reuses memory MCP-inject seam)
+Plan 2  proxy + hydration + context ✅ DONE  (hydrate/context/mcp_proxy/model_proxy + boot wiring; lint green, 149/3 non-e2e)
    │
    ▼
-Plan 3  channel redraw                (webhook source / queue / tui / a2a egress)
+Plan 3  channel redraw                (webhook source / queue / tui / a2a egress) ← fork from here
    │
    ▼
 Plan 4  conformance re-green + guard   (depends on 2 AND 3)
@@ -51,6 +51,24 @@ These are marked in the plans as explicit steps, not placeholders:
 - The opencode `opencode.json` model string + `baseURL` behavior under litellm, and whether `params` (temperature/thinking_level) pass through cleanly.
 - That the `opencode serve` HTTP `/message` path streams correctly through the localhost model proxy (SSE).
 - redis consume model for `queue` (use `XREADGROUP` + `XACK` for `ackMode:onComplete` + message-id idempotency).
+
+## Plan 2 as-built deviations (read before Plan 3/4)
+
+- **No per-MCP-server exclude.** The plan's `exclude=set(cfg.capability.filter.exclude.mcp_servers)`
+  references a field that does NOT exist — `CapabilityFilterExcludeBlock` only carries `tools`
+  (opencode-side, still deferred to Plan 3/4). Boot calls `McpProxy().start(..., exclude=set())`;
+  all hydrated MCP servers are fronted.
+- **Hydration is gated on `ACH_TOKEN`.** The ek_ is read from env `ACH_TOKEN` (not a config path).
+  When unset (local dev, hand-written config, no ACH), boot SKIPS hydration/proxies and
+  `opencode.json` falls back to `{env:ACH_API_KEY}`/`{env:ACH_BASE_URL}` refs. When set, it hydrates,
+  starts both proxies, and writes localhost URLs + a dummy `apiKey` (no ek_, no ACH URL).
+- **Memory MCP path preserved.** `EngineConfig.mcp_servers` (the MEM-01 memory list) is untouched and
+  still tested; `write_opencode_config` now merges it with `mcp_local_urls` into one `mcp.servers`
+  block (`memory-<i>` keys ∪ `<server_id>` keys — no collision). Plan 3/4 may later fold memory into
+  the hydrated MCP set, but that convergence is out of Plan 2 scope.
+- **`start_model_proxy(ach_base_url, ek) -> str`** keeps the mandated free-function signature; the
+  instance is tracked in a module registry and torn down by `stop_model_proxies()` (called in the
+  boot shutdown path after `_drain`).
 
 ## New dependencies to add (`pyproject.toml`)
 

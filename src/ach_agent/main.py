@@ -266,6 +266,9 @@ def _make_engine_runner(
                 # MEM-01: append ## Memory section (summaries or unavailable note) to prompt.
                 base_prompt = build_engine_prompt(event)
                 full_prompt = f"{base_prompt}\n\n{memory_prompt}" if memory_prompt else base_prompt
+                # Free-form channels (--tui console) carry no terminal contract: return
+                # the raw reply, no terminal extraction/repair (delivery_context marker).
+                free_form = bool(event.delivery_context.get("free_form"))
                 obj = await run_invocation(
                     server=server,
                     session_id=event.session_key,
@@ -273,6 +276,7 @@ def _make_engine_runner(
                     terminal_retries=1,
                     max_invocation_seconds=max_invocation_seconds,
                     on_kill=on_kill,
+                    free_form=free_form,
                 )
             except Exception as exc:
                 if future is not None and not future.done():

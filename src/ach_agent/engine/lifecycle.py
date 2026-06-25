@@ -175,6 +175,10 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
         "share": "disabled",
         "logLevel": "WARN",
         "model": f"{config.provider}/{config.model}",
+        # opencode uses a "small model" for side tasks (session titles, summaries).
+        # It defaults to a hardcoded gpt-5-nano which 400s on ACH (not in the catalog),
+        # so pin it to the configured model (registered + working) to avoid the error.
+        "small_model": f"{config.provider}/{config.model}",
         "enabled_providers": [config.provider],
         "provider": {
             config.provider: {
@@ -365,6 +369,7 @@ async def run_invocation(
     terminal_retries: int,
     max_invocation_seconds: int,
     on_kill: Callable[[], None],
+    free_form: bool = False,
 ) -> dict[str, Any]:
     """Orchestrate: subscribe SSE → send prompt → consume → return the terminal object.
 
@@ -426,6 +431,13 @@ async def run_invocation(
         session_id=session_id,
         text_length=len(accumulated_text),
     )
+
+    # Free-form mode (--tui console): no terminal contract — return the raw reply text
+    # verbatim. The terminal-extraction + repair turn below is for the structured
+    # channels (a2a_reply / none); applying it to a console chat reply would fire a
+    # pointless extra model turn and could print the repair output instead of the reply.
+    if free_form:
+        return {"action": "none", "text": accumulated_text}
 
     # Extract the single terminal object from accumulated SSE text. One backstop
     # repair turn if absent — then fall back to a synthetic none-action carrying the

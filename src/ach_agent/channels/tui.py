@@ -77,7 +77,8 @@ async def _handle_line(
         session_key=session_key,
         channel_name="tui-console",
         payload={"text": line},
-        delivery_context={},
+        # free_form: console replies are raw text — no terminal contract / repair turn.
+        delivery_context={"free_form": True},
         source_trait="sync",
         reply_future=reply_future,
     )

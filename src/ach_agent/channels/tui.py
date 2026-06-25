@@ -87,6 +87,23 @@ async def _handle_line(
     writer(text)
 
 
+async def run_one_shot(
+    handler: MessageHandler,
+    prompt: str,
+    *,
+    writer: Callable[[str], None] | None = None,
+    session_key: str = _CONSOLE_SESSION_KEY,
+) -> None:
+    """Run a single free-form prompt (the `--prompt` one-shot modifier) and write the reply.
+
+    Same routing path as run_tui_console (one free-form MessageEvent, no terminal
+    contract) but non-interactive: route once, write the reply, return. Lets you script a
+    pre-prod dry-run or simulate a cron/hook tick by passing that prompt — no TTY needed.
+    """
+    wrt = writer if writer is not None else _default_write
+    await _handle_line(handler, prompt, wrt, session_key)
+
+
 async def run_tui_console(
     handler: MessageHandler,
     *,

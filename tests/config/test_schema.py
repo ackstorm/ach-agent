@@ -244,6 +244,76 @@ def test_model_params_is_open_dict(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Positive/Negative: YAML-authored contracts (local dev convenience)
+# ---------------------------------------------------------------------------
+
+
+def test_load_valid_yaml_config(tmp_path: Path) -> None:
+    """A .yaml contract validates against the SAME schema as JSON (aliases honored)."""
+    from ach_agent.config import load_config
+
+    yaml_text = """
+schemaVersion: "1"
+agent:
+  name: yaml-agent
+  namespace: default
+model:
+  name: gemini.gemini-flash-latest
+  type: openai
+capability:
+  type: ach
+  ach:
+    baseUrl: https://ach.example.com
+    environment: platform
+prompt:
+  base: "You are a concise assistant."
+  compose: append
+channels: []
+"""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml_text, encoding="utf-8")
+
+    cfg = load_config(str(config_file))
+    assert cfg.schema_version == "1"
+    assert cfg.model.name == "gemini.gemini-flash-latest"
+    assert cfg.model.type == "openai"
+    assert cfg.capability.ach.base_url == "https://ach.example.com"
+    assert cfg.prompt is not None
+    assert cfg.prompt.base == "You are a concise assistant."
+
+
+def test_yaml_unknown_key_hard_fails(tmp_path: Path) -> None:
+    """A .yaml contract is held to the same extra='forbid' rule → sys.exit(1)."""
+    from ach_agent.config import load_config
+
+    yaml_text = """
+schemaVersion: "1"
+agent: {name: x, namespace: default}
+model: {name: openai.gpt-5, type: openai}
+capability: {type: ach, ach: {baseUrl: https://ach.example.com, environment: test}}
+unexpectedKey: true
+"""
+    config_file = tmp_path / "bad.yaml"
+    config_file.write_text(yaml_text, encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+def test_malformed_yaml_hard_fails(tmp_path: Path) -> None:
+    """Malformed YAML → parse error → sys.exit(1) (mirrors JSON schema-mismatch path)."""
+    from ach_agent.config import load_config
+
+    config_file = tmp_path / "broken.yml"
+    config_file.write_text("schemaVersion: \"1\"\n  bad: : indentation:\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+# ---------------------------------------------------------------------------
 # Negative: CFG-02 — unknown top-level key → sys.exit(1)
 # ---------------------------------------------------------------------------
 

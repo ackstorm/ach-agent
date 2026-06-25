@@ -13,7 +13,7 @@ Verifies:
 from __future__ import annotations
 
 from ach_agent.channels.message_event import MessageEvent
-from ach_agent.channels.tui import run_tui_console
+from ach_agent.channels.tui import run_one_shot, run_tui_console
 from ach_agent.router.router import RouterAdmitResult
 
 
@@ -67,3 +67,19 @@ async def test_blank_lines_skipped_and_event_fields() -> None:
     assert event.session_key == "tui-console"
     assert event.reply_future is not None
     assert event.payload == {"text": "hi"}
+
+
+async def test_one_shot_writes_engine_reply_and_event_fields() -> None:
+    """run_one_shot routes exactly one free-form prompt and writes the reply (no contract)."""
+    handler = FakeHandler("ONE SHOT REPLY")
+    captured: list[str] = []
+
+    await run_one_shot(handler, "review this", writer=captured.append)
+
+    assert captured == ["ONE SHOT REPLY"]
+    assert len(handler.events) == 1, "one-shot routes exactly one event"
+    event = handler.events[0]
+    assert event.source_trait == "sync"
+    assert event.payload == {"text": "review this"}
+    # free_form marker → engine_runner skips terminal extraction / repair turn
+    assert event.delivery_context.get("free_form") is True

@@ -310,18 +310,42 @@ class AgentConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _load_yaml(raw: str) -> Any:
+    """Parse a YAML-authored contract into a plain dict (local dev convenience).
+
+    Production always renders the contract to JSON via the operator; YAML is only a
+    hand-authoring affordance for local dry-runs. Hard-fails (sys.exit 1) on malformed
+    YAML, mirroring the JSON path's schema-mismatch behavior.
+    """
+    import yaml  # lazy: only needed when a .yaml/.yml contract is loaded
+
+    try:
+        return yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        log.error("config YAML parse error — exiting", error=str(exc))
+        sys.exit(1)
+
+
 def load_config(path: str) -> AgentConfig:
     """Load and validate the rendered runtime config (CFG-01/02/03).
+
+    Accepts JSON (the rendered contract the operator emits) or, for local hand-authored
+    dry-runs, YAML (`.yaml`/`.yml`) — both validate against the SAME schema, so a YAML
+    file that loads will render to an equivalent JSON contract.
 
     Hard-fails with sys.exit(1) on schema mismatch or file-not-found.
     Never raises to the caller.
     """
     try:
         raw = Path(path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        log.error("config file not found — exiting", path=path)
+        sys.exit(1)
+
+    try:
+        if path.endswith((".yaml", ".yml")):
+            return AgentConfig.model_validate(_load_yaml(raw))
         return AgentConfig.model_validate_json(raw)
     except ValidationError as exc:
         log.error("config schema mismatch — exiting", errors=exc.errors())
-        sys.exit(1)
-    except FileNotFoundError:
-        log.error("config file not found — exiting", path=path)
         sys.exit(1)

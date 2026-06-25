@@ -39,6 +39,13 @@ COPY --from=builder /app/deps /app/deps
 COPY --from=opencode-bin /usr/local/bin/opencode /usr/local/bin/opencode
 COPY src/ ./src/
 
+# Bake a minimal default contract so a collaborator can run the image with ZERO files:
+#   docker run -it -e ACH_TOKEN=ek-... ghcr.io/ackstorm/ach-agent:latest --tui
+# It points at https://ach.ackstorm.ai; the EK scopes which environment/tools are hydrated.
+# Override by mounting your own YAML/JSON and setting ACH_CONFIG_PATH (helm does this in prod).
+COPY docker/sample-config.yaml /etc/ach-agent/config.yaml
+ENV ACH_CONFIG_PATH=/etc/ach-agent/config.yaml
+
 EXPOSE 8080
 
 # non-root: uid 10001 (numeric USER so kubelet runAsNonRoot can verify without /etc/passwd).
@@ -49,6 +56,9 @@ RUN useradd -u 10001 -m appuser \
  && chown -R 10001 /tmp/workspace /tmp/ach-state
 USER 10001
 
+# ENTRYPOINT (not CMD) so launch modifiers append cleanly:
+#   docker run IMAGE              → channels mode (prod default; helm sets no command/args)
+#   docker run -it IMAGE --tui    → interactive console REPL
+#   docker run -i  IMAGE --prompt "hello"  → one-shot, print reply, exit
 # invoke via `python -m` so we don't depend on console-script shebangs or PATH.
-# Override with `--tui` (console REPL) via compose `command:` or `docker run ... --tui`.
-CMD ["python", "-m", "ach_agent.main"]
+ENTRYPOINT ["python", "-m", "ach_agent.main"]

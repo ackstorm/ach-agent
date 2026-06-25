@@ -38,7 +38,7 @@ from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a
 from ach_agent.channels.cron import CronScheduler
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.queue import QueueConsumer
-from ach_agent.channels.tui import run_tui_console
+from ach_agent.channels.tui import run_one_shot, run_tui_console
 from ach_agent.config import load_config
 from ach_agent.engine.context import fetch_context
 from ach_agent.engine.hydrate import hydrate, resolve_model
@@ -394,20 +394,24 @@ async def _drain(
     log.info("drain: complete")
 
 
-async def main(tui_mode: bool = False) -> None:
+async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> None:
     """Async entrypoint: load config, boot router, start channel adapters + uvicorn.
 
-    tui_mode (the `--tui` launch modifier): boot the engine/proxies/hydration but ignore
-    the configured channels and run a console REPL instead (see run_tui_console).
+    Two launch modifiers boot the engine/proxies/hydration but IGNORE the configured
+    channels (the typed/passed line IS the prompt — no terminal contract):
+      - tui_mode (`--tui`): run an interactive console REPL (see run_tui_console).
+      - one_shot_prompt (`--prompt TEXT`): run a single prompt non-interactively, print
+        the reply, and exit (see run_one_shot). Takes precedence over tui_mode.
     """
+    console_mode = tui_mode or one_shot_prompt is not None
     config_path = os.environ.get(CONFIG_PATH_ENV, DEFAULT_CONFIG_PATH)
 
     # Step 2: load config (hard-fail on schema mismatch — CFG-02)
     cfg = load_config(config_path)
 
     # Step 3: D-02 gate — reject unwired channel types before serving.
-    # Skipped under --tui: configured channels are ignored in console mode.
-    for channel in cfg.channels if not tui_mode else []:
+    # Skipped under --tui/--prompt: configured channels are ignored in console mode.
+    for channel in cfg.channels if not console_mode else []:
         if channel.type not in WIRED_CHANNEL_TYPES:
             log.error(
                 "channel type configured but not supported in this build — exiting",
@@ -493,6 +497,9 @@ async def main(tui_mode: bool = False) -> None:
         provider=cfg.model.type,
         model=cfg.model.name,
         params=cfg.model.params,
+        # prompt.base = the inline agent persona; written to opencode's append-mode
+        # `instructions` (layered on ACH-hydrated skills/prompts). Empty when absent.
+        system_prompt=cfg.prompt.base if cfg.prompt else "",
         startup_timeout_seconds=cfg.startup_timeout_seconds,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
         shared_ttl_seconds=0,
@@ -523,20 +530,26 @@ async def main(tui_mode: bool = False) -> None:
         max_invocation_seconds=float(cfg.limits.max_invocation_seconds),
     )
 
-    # --tui launch modifier: ignore the configured channels and run a console REPL.
-    # The engine + proxies + hydration are already wired above; the first typed line
-    # warms the engine via the router→pool path (no HTTP A′ gate involved).
-    if tui_mode:
-        log.info("ach-agent: --tui console mode (configured channels ignored)")
+    # --tui / --prompt launch modifiers: ignore the configured channels and drive the
+    # engine directly. The engine + proxies + hydration are already wired above; the
+    # first prompt warms the engine via the router→pool path (no HTTP A′ gate involved).
+    if console_mode:
+        if one_shot_prompt is not None:
+            log.info("ach-agent: --prompt one-shot mode (configured channels ignored)")
+        else:
+            log.info("ach-agent: --tui console mode (configured channels ignored)")
         try:
-            await run_tui_console(router)
+            if one_shot_prompt is not None:
+                await run_one_shot(router, one_shot_prompt)
+            else:
+                await run_tui_console(router)
         finally:
             await stop_model_proxies()
             if mcp_proxy is not None:
                 await mcp_proxy.stop()
             if hasattr(dedup_store, "close"):
                 dedup_store.close()
-        log.info("ach-agent: console session ended")
+        log.info("ach-agent: session ended")
         return
 
     # Collect webhook channels to wire; build FastAPI app if any exist
@@ -753,6 +766,26 @@ async def main(tui_mode: bool = False) -> None:
         log.info("ach-agent shutdown complete")
 
 
+def _parse_cli(argv: list[str]) -> tuple[bool, str | None]:
+    """Parse launch modifiers from argv.
+
+    `--tui` → interactive console REPL. `--prompt TEXT` (or `--prompt=TEXT`) → single
+    non-interactive prompt then exit. Both ignore the configured channels; `--prompt`
+    takes precedence when both are present.
+    """
+    tui = "--tui" in argv
+    prompt: str | None = None
+    for i, arg in enumerate(argv):
+        if arg == "--prompt" and i + 1 < len(argv):
+            prompt = argv[i + 1]
+            break
+        if arg.startswith("--prompt="):
+            prompt = arg[len("--prompt=") :]
+            break
+    return tui, prompt
+
+
 if __name__ == "__main__":
-    # `--tui` launch modifier: console REPL, configured channels ignored.
-    asyncio.run(main(tui_mode="--tui" in sys.argv))
+    # `--tui` / `--prompt` launch modifiers: drive the engine directly, channels ignored.
+    _tui_mode, _one_shot = _parse_cli(sys.argv[1:])
+    asyncio.run(main(tui_mode=_tui_mode, one_shot_prompt=_one_shot))

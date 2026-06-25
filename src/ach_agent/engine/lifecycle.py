@@ -24,14 +24,8 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import structlog
-
-if TYPE_CHECKING:
-    # client/events imported lazily inside functions to avoid top-level dep;
-    # InvocationResult is type-only here (constructed via a lazy import in run_invocation).
-    from ach_agent.engine.validator import InvocationResult
 
 log = structlog.get_logger(__name__)
 
@@ -337,11 +331,11 @@ async def run_invocation(
     server: ManagedServer,
     session_id: str,
     prompt: str,
-    response_actions_schema: list[dict[str, object]],
+    terminal_retries: int,
     max_invocation_seconds: int,
     on_kill: Callable[[], None],
-) -> InvocationResult:
-    """Orchestrate: subscribe SSE → send prompt → consume → return InvocationResult.
+) -> dict:
+    """Orchestrate: subscribe SSE → send prompt → consume → return the terminal object.
 
     ENG-07 / D-02 / D-03: Wrapped in asyncio.timeout(max_invocation_seconds).
     On TimeoutError:
@@ -359,7 +353,6 @@ async def run_invocation(
     from ach_agent.engine.client import OpenCodeClient
     from ach_agent.engine.events import InvocationTimeout
     from ach_agent.engine.metrics import ENGINE_WATCHDOG_KILLS
-    from ach_agent.engine.validator import InvocationResult
 
     client = server._client
     if not isinstance(client, OpenCodeClient):
@@ -392,45 +385,20 @@ async def run_invocation(
         text_length=len(accumulated_text),
     )
 
-    # ENG-05: extract actions from accumulated SSE text and validate + repair
-    from ach_agent.engine.validator import (
-        extract_actions,
-        repair_turn,
-        validate_actions,
-    )
+    # Extract the single terminal object from accumulated SSE text. One backstop
+    # repair turn if absent — then fall back to a synthetic none-action carrying the
+    # raw text so the caller always receives a dict with an "action" key.
+    from ach_agent.engine.validator import extract_terminal
 
-    actions = extract_actions(accumulated_text)
-    if actions is None:
-        validation_errors = ['Could not extract {"actions":[...]} from model output']
-    else:
-        validation_errors = validate_actions(actions, response_actions_schema)
-
-    if validation_errors:
-        # Issue a repair turn via send_fn wrapping send_message + consume_sse_after_send
-        log.info(
-            "actions invalid — attempting repair turn",
-            session_id=session_id,
-            errors=validation_errors,
+    obj = extract_terminal(accumulated_text)
+    if obj is None and terminal_retries > 0:
+        repair = (
+            "Reply with ONLY a terminal JSON object: "
+            '{"action":"none","text":"..."} or {"action":"a2a_reply","text":"..."}.'
         )
-
-        async def repair_fn(repair_prompt: str) -> str:
-            return await consume_sse_after_send(client, session_id, repair_prompt)
-
-        actions = await repair_turn(
-            send_fn=repair_fn,
-            accumulated_text=accumulated_text,
-            response_actions_schema=response_actions_schema,
-            max_attempts=2,
-        )
-
-    if actions is None:
-        log.warning(
-            "run_invocation: actions extraction/validation failed after repair",
-            session_id=session_id,
-        )
-        actions = []
-
-    return InvocationResult(actions=actions)
+        accumulated_text = await consume_sse_after_send(client, session_id, repair)
+        obj = extract_terminal(accumulated_text)
+    return obj if obj is not None else {"action": "none", "text": accumulated_text}
 
 
 async def consume_sse_after_send(

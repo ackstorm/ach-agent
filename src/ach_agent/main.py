@@ -8,17 +8,15 @@ that may emit a log line):
   3. D-02 gate: reject unwired channel types (hard-fail, non-zero exit)
   4. Write PID file             <- Pitfall 11: single-replica guard
   5. Construct Router (wraps SanitizedEnv engine launch)
-  6a. Construct GitlabCommentAdapter (base_url from GITLAB_BASE_URL env)
   6b. Build engine_runner (CR-01: branches on event.reply_future for reply mode;
-      dispatch_actions for gitlab_comment mode)
+      relays the terminal text — egress is the agent's via external MCP tools)
   6c. Create FastAPI app via create_app(channels, router)
   7. asyncio.run(main()) — starts uvicorn + cron tasks on the SAME event loop
 
 RTR-06: router must not import from hermes_agent.*; engine injected as callable.
-D-04: gitlab_comment delivery is accept-and-process-async (202 + out-of-band lane).
 D-08: deliver.type: reply → event.reply_future resolved by engine_runner on the lane,
       awaited by the route (CR-01: exactly one engine execution per event).
-      deliver.type: gitlab_comment → dispatch_actions posts the MR note out-of-band.
+      async channels → engine_runner relays nothing; the agent already acted via MCP.
 """
 
 from __future__ import annotations
@@ -30,12 +28,11 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import structlog
 import uvicorn
 
-from ach_agent.actions.gitlab_comment import GitlabCommentAdapter, dispatch_actions
 from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a2a_agent_card
 from ach_agent.channels.cron import CronScheduler
 from ach_agent.channels.message_event import MessageEvent
@@ -185,33 +182,27 @@ def build_engine_prompt(event: MessageEvent) -> str:
 def _make_engine_runner(
     pool: Any,
     engine_cfg: Any,
-    delivery_adapter: GitlabCommentAdapter,
     max_invocation_seconds: int,
     memory_cfg: Any = None,
-    response_action_config_by_channel: dict[str, dict[str, ResponseActionBlock]] | None = None,
 ) -> Callable[..., Any]:
     """Build the engine_runner callable injected into the Router.
 
     The runner is called by Lane as: engine_runner(event, on_kill).
-    It acquires a ManagedServer from the pool, calls run_invocation,
-    then branches on event.reply_future (CR-01 / ACT-01):
+    It acquires a ManagedServer from the pool, calls run_invocation (which returns
+    the single terminal object), then relays the terminal `text`:
 
     - reply mode (event.reply_future is not None):
-        Extract the first 'reply' action's text and call set_result on the future.
-        The route is awaiting this future to return 200 + body to the client.
-        dispatch_actions is NOT called — no gitlab_comment is posted.
+        set_result(text) on the future. The route is awaiting this future to return
+        200 + body to the client.
         CRITICAL: the future MUST always be resolved (set_result or set_exception)
-        even on error, otherwise the route hangs indefinitely. A try/finally
-        around run_invocation guarantees resolution before any exception escapes.
+        even on error, otherwise the route hangs indefinitely. A try/except sets the
+        exception on error before re-raising.
 
-    - async/gitlab_comment mode (event.reply_future is None):
-        Route actions through dispatch_actions with event + per-channel
-        response_action_config (ACT-03: sideEffect consent gate enforced here;
-        reply delivered to GitlabCommentAdapter with event.delivery_context).
-        Delivery stays on the router lane — NOT create_task from route (Pitfall 4).
+    - on_complete mode (event.delivery_context['on_complete'] present, e.g. a2a):
+        call on_complete(session_key, text) — the channel wiring relays the reply.
 
-    D-08 / D-04: for gitlab_comment channels, delivery is out-of-band on the lane
-    (NOT via asyncio.create_task from the route handler — Pitfall 4).
+    - async mode (neither): nothing to deliver. Egress already happened via the
+        agent's external MCP tool calls — the harness never posts on the model's behalf.
 
     SanitizedEnv is used to build the subprocess launch env (SEC-01 /
     T-01-EK folded todo): the engine_cfg carries paths, never ek_ values.
@@ -220,11 +211,6 @@ def _make_engine_runner(
     When present, prepare_memory is called BEFORE pool.acquire so the opencode.json
     written for that server includes or excludes the memory MCP server (Pitfall 3).
     Fail-open: unreachable backend → exclude MCP server, log WARN + metric, run anyway.
-
-    response_action_config_by_channel (ACT-03/A3): boot-time mapping of channel name
-    → {action name → ResponseActionBlock}. Built once from cfg.channels[].response_actions
-    (config is immutable at runtime — A3). Per-event lookup: channel_name → per-action map.
-    DryRunSideEffectExecutor is the v1 default (D-01/D-02 — no real executor wired).
     """
     from ach_agent.engine.lifecycle import run_invocation
 
@@ -257,77 +243,45 @@ def _make_engine_runner(
 
         server = await pool.acquire(invocation_engine_cfg)
         try:
-            # CR-01: if this is a reply-mode event, we must resolve reply_future
-            # before any exception can escape to the lane catch (which would swallow it
-            # and leave the route waiting forever). Use try/finally for guaranteed resolution.
+            # CR-01: in reply mode the future MUST always be resolved (set_result or
+            # set_exception), otherwise the awaiting route hangs forever. The try/except
+            # sets the exception on error before re-raising.
             future = event.reply_future
-            result: dict[str, Any] = {}
             try:
                 # MEM-01: append ## Memory section (summaries or unavailable note) to prompt.
                 base_prompt = build_engine_prompt(event)
                 full_prompt = f"{base_prompt}\n\n{memory_prompt}" if memory_prompt else base_prompt
-                result = cast(
-                    dict[str, Any],
-                    await run_invocation(
-                        server=server,
-                        session_id=event.session_key,
-                        prompt=full_prompt,
-                        response_actions_schema=[],
-                        max_invocation_seconds=max_invocation_seconds,
-                        on_kill=on_kill,
-                    ),
+                obj = await run_invocation(
+                    server=server,
+                    session_id=event.session_key,
+                    prompt=full_prompt,
+                    terminal_retries=1,
+                    max_invocation_seconds=max_invocation_seconds,
+                    on_kill=on_kill,
                 )
             except Exception as exc:
                 if future is not None and not future.done():
                     future.set_exception(exc)
                 raise
-            finally:
-                # Ensure reply_future is always resolved on the happy path too
-                if future is not None and not future.done():
-                    # Extract first reply action's text (same as old sync_invoke logic)
-                    reply_text = ""
-                    for action in result.get("actions", []):
-                        if action.get("kind") == "reply":
-                            reply_text = str(action.get("input", {}).get("text", ""))
-                            break
-                    future.set_result(reply_text)
+
+            text = str(obj.get("text", ""))
 
             if future is not None:
-                # Reply mode: future is resolved above; do NOT call dispatch_actions
-                # (no gitlab_comment — CR-01). Return here so dispatch block is skipped.
+                # Reply mode: resolve the future the route is awaiting.
+                if not future.done():
+                    future.set_result(text)
                 return
 
             # A2A completion path (W9 — engine_runner does NOT import channels.a2a):
             # The on_complete callable is injected by the A2A wiring closure in main.py
             # into event.delivery_context['on_complete'] before handler.handle() is called.
-            # engine_runner just calls it if present — no channel-type-specific logic here.
             on_complete = event.delivery_context.get("on_complete")
             if on_complete is not None:
-                # Extract reply text from the first 'reply' action
-                reply_text = ""
-                for action in result.get("actions", []):
-                    if action.get("kind") == "reply":
-                        reply_text = str(action.get("input", {}).get("text", ""))
-                        break
-                on_complete(event.session_key, reply_text)
+                on_complete(event.session_key, text)
                 return
 
-            # Async/gitlab_comment mode (D-08 / ACT-02/03/04/D-05):
-            # Route actions through dispatch_actions with event + per-channel
-            # response_action_config for the consent gate (ACT-03):
-            #   sideEffect → consent gate (auto: always dry-run; consent: check
-            #     event.user_consented; denied → ConsentDenied caught in loop → audit).
-            #   reply → GitlabCommentAdapter.deliver(action, event.delivery_context).
-            # side_effect_executor left at default (DryRunSideEffectExecutor — D-01/D-02).
-            # Delivery stays on the router lane — NOT create_task from route (Pitfall 4).
-            _rac = response_action_config_by_channel or {}
-            await dispatch_actions(
-                actions=result.get("actions", []),
-                adapter=delivery_adapter,
-                context=event.delivery_context,
-                event=event,
-                response_action_config=_rac.get(event.channel_name, {}),
-            )
+            # Async mode: nothing to deliver. Egress already happened via the agent's
+            # external MCP tool calls — the harness never posts on the model's behalf.
         finally:
             # Return the engine server to the pool. Slot release is owned by the
             # lane: its `async with` blocks free the semaphores and its finally
@@ -347,7 +301,6 @@ async def _drain(
     uv_server: Any,
     cron_scheduler: CronScheduler | None,
     router: Any,
-    gitlab_adapter: GitlabCommentAdapter,
     dedup_store: Any,
 ) -> None:
     """D-09/D-10/D-11: graceful drain sequence on SIGTERM.
@@ -358,7 +311,7 @@ async def _drain(
     4. Drain queued + in-flight lane work (D-11):
        Lane tasks blocked on empty queue.get() are cancelled via Lane.cancel()
        (RESEARCH Pitfall 4). In-flight runs bounded by maxInvocationSeconds watchdog (D-10).
-    5. Cleanup: close dedup store, close gitlab adapter, inc DRAIN_COMPLETED, sys.exit(0).
+    5. Cleanup: close dedup store, inc DRAIN_COMPLETED, sys.exit(0).
 
     No grace-deadline timer (D-10): maxInvocationSeconds watchdog + K8s SIGKILL backstop.
     Never logs ek_/GITLAB_TOKEN (T-03-07): log emits only path/count/reason fields.
@@ -399,7 +352,7 @@ async def _drain(
             *(lane.wait_closed() for lane in lanes_snapshot), return_exceptions=True
         )
 
-    # 5. Cleanup: close dedup store, adapter, increment metric, return cleanly.
+    # 5. Cleanup: close dedup store, increment metric, return cleanly.
     # Do NOT sys.exit(0) here: this runs inside an asyncio task, so SystemExit
     # force-cancels the still-pending uvicorn serve task and dumps a CancelledError
     # traceback to stderr (even though the exit code is 0). Instead we return; main()
@@ -407,7 +360,6 @@ async def _drain(
     # process exits 0 naturally with no traceback.
     if hasattr(dedup_store, "close"):
         dedup_store.close()
-    await gitlab_adapter.close()
     DRAIN_COMPLETED.inc()
     log.info("drain: complete")
 
@@ -433,14 +385,8 @@ async def main() -> None:
     # Step 4: PID file (Pitfall 11 — tolerate non-writable in dev)
     _write_pid_file(PID_FILE)
 
-    # Step 5: build delivery adapter and engine pool
-    # 6a. GitlabCommentAdapter — base_url from GITLAB_BASE_URL env (D-12 deviation).
-    # Falls back to https://gitlab.com; GITLAB_TOKEN is read at deliver() call time,
-    # never stored (SEC-02 spirit). For reply-mode channels this adapter is unused;
-    # delivery returns synchronously on the held connection instead.
-    gitlab_base_url = os.environ.get("GITLAB_BASE_URL", "https://gitlab.com")
-    gitlab_adapter = GitlabCommentAdapter(base_url=gitlab_base_url)
-
+    # Step 5: build the engine pool. Egress is the agent's via external MCP tools —
+    # the harness has no delivery adapter (it never posts on the model's behalf).
     from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.engine.pool import EnginePool
 
@@ -456,12 +402,11 @@ async def main() -> None:
     )
     pool = EnginePool()
 
-    # 6b. Build engine_runner wired to GitlabCommentAdapter (gitlab_comment path).
-    # MEM-01/D-02: pass memory_cfg so engine_runner probes before pool.acquire (Pitfall 3).
+    # 6b. Build engine_runner. MEM-01/D-02: pass memory_cfg so engine_runner probes
+    # before pool.acquire (Pitfall 3).
     engine_runner = _make_engine_runner(
         pool=pool,
         engine_cfg=engine_cfg,
-        delivery_adapter=gitlab_adapter,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
         memory_cfg=cfg.memory,
     )
@@ -646,7 +591,6 @@ async def main() -> None:
             uv_server=uv_server,
             cron_scheduler=cron_scheduler,
             router=router,
-            gitlab_adapter=gitlab_adapter,
             dedup_store=dedup_store,
         )
         if tasks:
@@ -658,7 +602,6 @@ async def main() -> None:
         log.info("ach-agent shutdown complete")
     else:
         # Normal termination (all tasks completed without SIGTERM — rare in prod)
-        await gitlab_adapter.close()
         log.info("ach-agent shutdown complete")
 
 

@@ -18,7 +18,6 @@ from ach_agent.engine.lifecycle import (
 )
 from ach_agent.engine.pool import EnginePool
 from ach_agent.engine.sanitized_env import SanitizedEnv
-from ach_agent.engine.validator import InvocationResult
 
 # OnKillCallback: injected at invocation time.
 # Phase 0: FakeSlotManager.on_kill (records call).
@@ -29,7 +28,6 @@ __all__ = [
     "EngineConfig",
     "ManagedServer",
     "EnginePool",
-    "InvocationResult",
     "OnKillCallback",
     "SanitizedEnv",
     "run_invocation",

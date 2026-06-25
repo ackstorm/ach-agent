@@ -9,10 +9,10 @@ Plan 1  de-cruft & reconnect      ✅ DONE  (branch feat/v1.1-opencode-rescope, 
 Plan 2  proxy + hydration + context ✅ DONE  (hydrate/context/mcp_proxy/model_proxy + boot wiring; lint green, 149/3 non-e2e)
    │
    ▼
-Plan 3  channel redraw                (webhook source / queue / tui / a2a egress) ← fork from here
+Plan 3  channel redraw              ✅ DONE  (webhook source / queue / tui / a2a egress + a2a FAILED; lint green, 175/3 non-e2e)
    │
    ▼
-Plan 4  conformance re-green + guard   (depends on 2 AND 3)
+Plan 4  conformance re-green + guard   (depends on 2 AND 3) ← fork from here
 ```
 
 ## Safe execution models (pick one)
@@ -69,6 +69,31 @@ These are marked in the plans as explicit steps, not placeholders:
 - **`start_model_proxy(ach_base_url, ek) -> str`** keeps the mandated free-function signature; the
   instance is tracked in a module registry and torn down by `stop_model_proxies()` (called in the
   boot shutdown path after `_drain`).
+
+## Plan 3 as-built deviations (read before Plan 4)
+
+- **queue redis URL from env.** `QueueBlock` carries only `key`/`ackMode` (no connection URL), so
+  `QueueConsumer` reads `REDIS_URL` (default `redis://localhost:6379`). Consume model = redis Streams
+  consumer group: `XGROUP CREATE … MKSTREAM` → `XREADGROUP` → dispatch → `XACK` only after `handle()`
+  returns (onComplete); handler raise → no ack (stays pending); FULL_QUEUE → ack+drop+warn (async_no_retry,
+  cron parity). `idempotency_key` = redis message id (§6.1).
+- **tui** uses the webhook `reply_future` seam (sync): builds an event with a fresh future, routes it,
+  awaits the engine's free-form `text`, writes it to stdout. No terminal contract. Started as a
+  background task (cron precedent), stopped in the shutdown branch.
+- **a2a egress (`engine/a2a_egress.py`)**: `build_a2a_tools(agents, ek)` → 3 `ToolSpec`s per agent
+  (`a2a_<id>` / `_async` / `_status`), errors returned as `{"ok": False, "error": …}` (never raise).
+  The `ek_` is held in the harness-hosted tool layer (opencode→localhost a2a-tools MCP→harness w/ek→peer),
+  NOT routed through `McpProxy` — so no new proxy routes were needed and ek-hygiene still holds.
+  **VERIFICATION DEBTS:** (1) the ported `A2AAgentClient` wire code was adapted to the *installed*
+  a2a-sdk **protobuf** API (`a2a.types.a2a_pb2`, same as `channels/a2a.py`) — NOT ackbot's pydantic API;
+  it is covered only by import+lint (tests inject a `FakeClient`), so a live-peer round-trip is unverified.
+  (2) `build_a2a_mcp_server(tools)` (FastMCP, `server.add_tool(...)`) is built but **not hosted** — the
+  boot branch (gated on `manifest.a2a_agents`, a no-op when empty) builds tools+server and logs, with a
+  `# Plan 3/4 follow-up` seam to host it on localhost + add to opencode.json. Hosting + opencode wiring
+  is outstanding.
+- **a2a ingress FAILED**: `signal_failure(session_key, reason)` + `_fail_async` mirror `signal_completion`;
+  engine_runner routes to `on_complete` only when `action=="a2a_reply"` and `text.strip()`, else `on_fail`
+  (FAILED `TaskStatusUpdateEvent`). Boot W9 injects both `on_complete` and `on_fail` into delivery_context.
 
 ## New dependencies to add (`pyproject.toml`)
 

@@ -10,6 +10,8 @@ Tests cover:
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import uuid
 
@@ -19,7 +21,6 @@ from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.webhook import handle_webhook_request
 from ach_agent.config.schema import ChannelConfig
 from ach_agent.router.router import RouterAdmitResult
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -244,3 +245,118 @@ async def test_secret_read_per_request(tmp_path: pytest.TempPathFactory) -> None
     assert r3.status_code == 202, (
         "New token must be accepted after rotation (SEC-02: per-request read)"
     )
+
+
+# ---------------------------------------------------------------------------
+# source-selected parser + auth.type-selected verification
+# ---------------------------------------------------------------------------
+
+GITHUB_PR_PAYLOAD = {
+    "action": "opened",
+    "number": 7,
+    "pull_request": {"number": 7, "title": "X"},
+    "repository": {"full_name": "acme/repo", "id": 123},
+}
+
+
+@pytest.mark.asyncio
+async def test_github_source_parses_pr_and_hmac_auth(tmp_path: pytest.TempPathFactory) -> None:
+    """github source: PR parse + HMAC-SHA256 auth → 202."""
+    secret_file = tmp_path / "secret"
+    secret_file.write_text("gh-hmac-secret")
+
+    cfg = ChannelConfig.model_validate(
+        {
+            "name": "gh",
+            "type": "webhook",
+            "source": "github",
+            "webhook": {"auth": {"type": "hmac", "secretPath": str(secret_file)}},
+        }
+    )
+    handler = FakeHandler(RouterAdmitResult.ACCEPTED)
+    raw_body = json.dumps(GITHUB_PR_PAYLOAD).encode()
+    signature = hmac.new(b"gh-hmac-secret", raw_body, hashlib.sha256).hexdigest()
+    delivery = str(uuid.uuid4())
+    headers = {
+        "X-Hub-Signature-256": f"sha256={signature}",
+        "X-GitHub-Delivery": delivery,
+        "Content-Type": "application/json",
+    }
+
+    result = await handle_webhook_request(raw_body, headers, cfg, handler)
+
+    assert result.status_code == 202
+    assert handler._call_count == 1
+    event = handler.events[0]
+    assert event.delivery_context == {"repo": "acme/repo", "pr_number": 7}
+    assert event.session_key == "acme/repo:7"
+    assert event.idempotency_key == delivery
+
+
+@pytest.mark.asyncio
+async def test_hmac_auth_rejects_bad_signature(tmp_path: pytest.TempPathFactory) -> None:
+    """github source: wrong HMAC signature → 401, handler NOT called."""
+    secret_file = tmp_path / "secret"
+    secret_file.write_text("gh-hmac-secret")
+
+    cfg = ChannelConfig.model_validate(
+        {
+            "name": "gh",
+            "type": "webhook",
+            "source": "github",
+            "webhook": {"auth": {"type": "hmac", "secretPath": str(secret_file)}},
+        }
+    )
+    handler = FakeHandler(RouterAdmitResult.ACCEPTED)
+    raw_body = json.dumps(GITHUB_PR_PAYLOAD).encode()
+    headers = {
+        "X-Hub-Signature-256": "sha256=deadbeef",
+        "X-GitHub-Delivery": str(uuid.uuid4()),
+        "Content-Type": "application/json",
+    }
+
+    result = await handle_webhook_request(raw_body, headers, cfg, handler)
+
+    assert result.status_code == 401
+    assert handler._call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_generic_source_uses_request_id_key(tmp_path: pytest.TempPathFactory) -> None:
+    """generic source: no payload requirements; session_key == idempotency_key."""
+    cfg = ChannelConfig.model_validate(
+        {
+            "name": "g",
+            "type": "webhook",
+            "source": "generic",
+            "webhook": {"auth": {"type": "none"}},
+        }
+    )
+    handler = FakeHandler(RouterAdmitResult.ACCEPTED)
+    raw_body = json.dumps({"event": "ping"}).encode()
+    headers = {"X-Request-ID": "req-123", "Content-Type": "application/json"}
+
+    result = await handle_webhook_request(raw_body, headers, cfg, handler)
+
+    assert result.status_code == 202
+    event = handler.events[0]
+    assert event.idempotency_key == "req-123"
+    assert event.delivery_context == {}
+    assert event.session_key == "req-123"
+
+
+@pytest.mark.asyncio
+async def test_gitlab_token_auth_rejects_bad_token(tmp_path: pytest.TempPathFactory) -> None:
+    """gitlab source + gitlab_token auth: wrong X-Gitlab-Token → 401."""
+    secret_file = tmp_path / "secret"
+    secret_file.write_text("real-secret")
+
+    cfg = _make_channel_cfg(str(secret_file))
+    handler = FakeHandler(RouterAdmitResult.ACCEPTED)
+    headers = _make_headers("wrong-secret", event_uuid=str(uuid.uuid4()))
+    raw_body = json.dumps(MR_PAYLOAD).encode()
+
+    result = await handle_webhook_request(raw_body, headers, cfg, handler)
+
+    assert result.status_code == 401
+    assert handler._call_count == 0

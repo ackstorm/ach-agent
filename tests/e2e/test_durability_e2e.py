@@ -20,17 +20,15 @@ Task 2 (drain, RED gate):
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-import structlog
 
 from ach_agent.config.schema import ChannelConfig
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -48,8 +46,8 @@ def _make_persistence_cfg(
     raw = {
         "schemaVersion": "1",
         "agent": {"name": "test", "namespace": "default"},
-        "engine": {"binaryPath": "opencode", "workDir": "/tmp", "sessionDir": "/tmp"},
-        "model": {"default": "gpt-4o-mini", "provider": "openai"},
+        "model": {"name": "openai.gpt-5", "type": "openai"},
+        "capability": {"ach": {"baseUrl": "https://ach.example", "environment": "test"}},
         "persistence": {
             "enabled": enabled,
             "mountPath": mount_path,
@@ -66,9 +64,9 @@ def _make_webhook_cfg(
         {
             "name": name,
             "type": "webhook",
+            "source": "gitlab",
             "webhook": {
-                "auth": {"type": "hmac", "secretPath": secret_path},
-                "deliver": {"type": "gitlab_comment"},
+                "auth": {"type": "gitlab_token", "secretPath": secret_path},
             },
         }
     )
@@ -127,9 +125,7 @@ def test_missing_mount_exits() -> None:
     cfg = _make_persistence_cfg(enabled=True, mount_path="/nonexistent/ach-agent-test-dir")
     with pytest.raises(SystemExit) as exc_info:
         _open_dedup_store(cfg)
-    assert exc_info.value.code == 1, (
-        f"Expected sys.exit(1), got exit code {exc_info.value.code}"
-    )
+    assert exc_info.value.code == 1, f"Expected sys.exit(1), got exit code {exc_info.value.code}"
 
 
 def test_corrupt_db_fail_open(tmp_path: Path) -> None:
@@ -182,10 +178,6 @@ def test_corrupt_db_fail_open(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-import json
-import uuid
-
-
 MR_PAYLOAD: dict[str, Any] = {
     "object_kind": "merge_request",
     "project": {"id": 42, "name": "my-repo"},
@@ -207,10 +199,10 @@ async def test_sigterm_flips_readyz(tmp_path: Path) -> None:
     Tests via the shared state dict (app.extra['state']) directly — same path
     the drain handler uses — without sending an actual OS signal.
     """
+    from ach_agent.channels.message_event import MessageEvent
     from ach_agent.http.app import create_app
     from ach_agent.router import Router
     from ach_agent.router.dedup import InMemoryDedupStore
-    from ach_agent.channels.message_event import MessageEvent
 
     secret_file = tmp_path / "hmac_secret"
     secret_file.write_text("s3cr3t")
@@ -263,10 +255,10 @@ async def test_sigterm_stops_intake(tmp_path: Path) -> None:
 
     No router handler should be invoked.
     """
+    from ach_agent.channels.message_event import MessageEvent
     from ach_agent.http.app import create_app
     from ach_agent.router import Router
     from ach_agent.router.dedup import InMemoryDedupStore
-    from ach_agent.channels.message_event import MessageEvent
 
     handler_called = False
 
@@ -322,13 +314,14 @@ async def test_sigterm_drain_completes_inflight(tmp_path: Path) -> None:
 
     Uses asyncio.Event + asyncio.timeout(5.0) — no naked sleep polling (CLAUDE.md).
     """
-    from ach_agent.main import _drain
+    from unittest.mock import MagicMock
+
+    from ach_agent.channels.message_event import MessageEvent
     from ach_agent.engine.metrics import DRAIN_COMPLETED
     from ach_agent.http.app import create_app
+    from ach_agent.main import _drain
     from ach_agent.router import Router
     from ach_agent.router.dedup import InMemoryDedupStore
-    from ach_agent.channels.message_event import MessageEvent
-    from unittest.mock import MagicMock
 
     inflight_done: asyncio.Event = asyncio.Event()
     work_started: asyncio.Event = asyncio.Event()
@@ -364,10 +357,6 @@ async def test_sigterm_drain_completes_inflight(tmp_path: Path) -> None:
     fake_uv_server = MagicMock()
     fake_uv_server.should_exit = False
 
-    # Build a fake gitlab adapter stub
-    fake_adapter = MagicMock()
-    fake_adapter.close = AsyncMock()
-
     # Post an event to start the in-flight invocation
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -393,7 +382,6 @@ async def test_sigterm_drain_completes_inflight(tmp_path: Path) -> None:
         uv_server=fake_uv_server,
         cron_scheduler=None,
         router=router,
-        gitlab_adapter=fake_adapter,
         dedup_store=InMemoryDedupStore(),
     )
 
@@ -403,9 +391,7 @@ async def test_sigterm_drain_completes_inflight(tmp_path: Path) -> None:
     )
 
     # In-flight work must have completed before _drain returned
-    assert inflight_done.is_set(), (
-        "D-11: _drain must wait for in-flight invocation to complete"
-    )
+    assert inflight_done.is_set(), "D-11: _drain must wait for in-flight invocation to complete"
 
     # DRAIN_COMPLETED must be incremented
     after_val = list(DRAIN_COMPLETED.collect())[0].samples[0].value

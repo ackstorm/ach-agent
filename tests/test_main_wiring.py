@@ -164,6 +164,36 @@ def test_reply_mode_webhook_returns_200_with_reply_text(tmp_path: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Plan 2 Task 5: opencode.json ek-hygiene (the headline invariant, CONTRACT §6.10)
+# ---------------------------------------------------------------------------
+
+
+def test_opencode_json_never_contains_ek(tmp_path: Any, monkeypatch: Any) -> None:
+    """opencode.json points ONLY at the localhost proxies and carries no ek / ACH URL.
+
+    With model_base_url + mcp_local_urls set (the hydrated/proxied boot path), the
+    written config must contain neither the ek_ (even if ACH_TOKEN is set) nor the
+    real ACH base URL — opencode sees localhost only; the proxy injects the ek.
+    """
+    monkeypatch.setenv("ACH_TOKEN", "ek-secret-xyz")
+    from ach_agent.engine.lifecycle import EngineConfig, write_opencode_config
+
+    cfg = EngineConfig(
+        model="openai.gpt-5",
+        provider="openai",
+        model_base_url="http://127.0.0.1:9001/v1",
+        mcp_local_urls={"mcp-gofetch": "http://127.0.0.1:9002/mcp/mcp-gofetch"},
+    )
+    write_opencode_config(tmp_path, cfg)
+    blob = (tmp_path / ".config" / "opencode" / "opencode.json").read_text(encoding="utf-8")
+
+    assert "ek-secret-xyz" not in blob
+    assert "ach.ackstorm.ai" not in blob
+    assert "127.0.0.1" in blob
+    assert "mcp-gofetch" in blob  # proxied MCP server is registered at its localhost URL
+
+
+# ---------------------------------------------------------------------------
 # WR-07: build_engine_prompt produces a real MR prompt (gap-closure 02-05)
 # ---------------------------------------------------------------------------
 

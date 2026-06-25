@@ -66,6 +66,13 @@ class EngineConfig:
     # Written to opencode.json before subprocess launch so the model either has memory tools
     # or does not — no runtime tool-registration API exists.
     mcp_servers: list[str] = field(default_factory=list)
+    # Plan 2 (localhost-proxy / ek-hygiene): when set, opencode.json points the model at
+    # this localhost model-proxy baseURL (no ek_; the proxy injects it) instead of
+    # {env:ACH_BASE_URL}. Empty → legacy {env:...} behavior (local dev without ACH).
+    model_base_url: str = ""
+    # {server_id: "http://127.0.0.1:<port>/mcp/<id>"} from McpProxy — proxied external MCP
+    # servers written into opencode.json's mcp block alongside any memory server.
+    mcp_local_urls: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -145,8 +152,19 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_path.write_text(config.system_prompt or "", encoding="utf-8")
 
-    # {env:VAR} interpolation confirmed working in opencode v1.16.0 (RESEARCH Unknown 3)
-    # ACH_API_KEY value never assigned to a Python variable — only the reference string.
+    # Plan 2 (CONTRACT §6.10 ek-hygiene): when a localhost model-proxy baseURL is set,
+    # opencode points at 127.0.0.1 and the proxy injects the ek_ — so opencode.json carries
+    # NO ek_ and NO real ACH URL. apiKey is a dummy placeholder (the proxy ignores inbound
+    # auth and adds its own). When unset (local dev without ACH), fall back to the legacy
+    # {env:...} refs: the ACH_API_KEY value is never read into a Python variable — only the
+    # reference string is written; opencode dereferences it at runtime.
+    if config.model_base_url:
+        api_key: str = "local-proxy"  # placeholder; real ek_ injected by the localhost proxy
+        base_url = config.model_base_url
+    else:
+        api_key = "{env:ACH_API_KEY}"  # ek_ dereferenced at runtime only
+        base_url = "{env:ACH_BASE_URL}"  # Hub/mock endpoint
+
     oc_config: dict[str, object] = {
         "autoupdate": False,
         "permission": "allow",
@@ -157,8 +175,8 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
         "provider": {
             config.provider: {
                 "options": {
-                    "apiKey": "{env:ACH_API_KEY}",  # ek_ dereferenced at runtime only
-                    "baseURL": "{env:ACH_BASE_URL}",  # Hub/mock endpoint
+                    "apiKey": api_key,
+                    "baseURL": base_url,
                     **config.params,
                 }
             }
@@ -172,17 +190,19 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
         },
     }
 
-    # D-02 / MEM-02: conditionally register memory MCP server ONLY when reachable.
-    # Written pre-launch so the model either has memory tools or does not — never
-    # receives a tool that can fail (harness-side enforcement of fail-open invariant).
-    # SEC (T-04-22): endpoint URL only — ek_ bearer is never written to config files.
-    if config.mcp_servers:
-        oc_config["mcp"] = {
-            "servers": {
-                f"memory-{i}": {"type": "streamable-http", "url": url}
-                for i, url in enumerate(config.mcp_servers)
-            }
-        }
+    # Register MCP servers in opencode.json pre-launch (no runtime tool-registration API).
+    # Two sources, never colliding on key:
+    #   - memory server(s) from mcp_servers (MEM-02; present iff the backend was reachable)
+    #   - proxied external MCP servers from mcp_local_urls (Plan 2; localhost URLs only)
+    # SEC (T-04-22 / §6.10): only URLs are written — the ek_ bearer is never in config files.
+    mcp_block: dict[str, dict[str, str]] = {
+        f"memory-{i}": {"type": "streamable-http", "url": url}
+        for i, url in enumerate(config.mcp_servers)
+    }
+    for sid, url in config.mcp_local_urls.items():
+        mcp_block[sid] = {"type": "streamable-http", "url": url}
+    if mcp_block:
+        oc_config["mcp"] = {"servers": mcp_block}
     (config_dir / "opencode.json").write_text(json.dumps(oc_config, indent=2), encoding="utf-8")
     log.debug(
         "opencode.json written",

@@ -37,6 +37,9 @@ from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a
 from ach_agent.channels.cron import CronScheduler
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config import load_config
+from ach_agent.engine.context import fetch_context
+from ach_agent.engine.hydrate import hydrate, resolve_model
+from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
 from ach_agent.engine.sanitized_env import SanitizedEnv, configure_logging
 from ach_agent.http.app import create_app
 from ach_agent.router import Router
@@ -50,6 +53,14 @@ log = structlog.get_logger(__name__)
 
 # D-02: only channel types wired in this build
 WIRED_CHANNEL_TYPES: frozenset[str] = frozenset({"cron", "webhook", "a2a"})
+
+# Plan 2: model.type → ACH compat-endpoint path prefix fronted by the model proxy.
+# opencode's baseURL becomes "http://127.0.0.1:<port>/<prefix>".
+_MODEL_ENDPOINT_PREFIX: dict[str, str] = {
+    "openai": "v1",
+    "gemini": "gemini",
+    "anthropic": "anthropic",
+}
 
 CONFIG_PATH_ENV = "ACH_CONFIG_PATH"
 DEFAULT_CONFIG_PATH = "/etc/ach-agent/config.json"
@@ -380,6 +391,37 @@ async def main() -> None:
     # Step 4: PID file (Pitfall 11 — tolerate non-writable in dev)
     _write_pid_file(PID_FILE)
 
+    # Plan 2 (CONTRACT §6.10): self-hydrate from ACH, then front the model + MCP traffic
+    # via localhost reverse-proxies that inject the ek_. opencode points ONLY at localhost
+    # and never sees the ek_ or the real ACH URL.
+    #
+    # The ek_ (ACH_TOKEN) is read here solely to pass to hydration + the proxies; it is
+    # NEVER logged and NEVER written to opencode.json (the proxies hold it in a closure).
+    # When ACH_TOKEN is unset (local dev with a hand-written config + no ACH), hydration is
+    # skipped and opencode.json falls back to {env:...} refs — the harness stays runnable.
+    ek = os.environ.get("ACH_TOKEN")
+    model_base_url: str = ""
+    mcp_local_urls: dict[str, str] = {}
+    mcp_proxy: McpProxy | None = None
+    if ek:
+        manifest = await hydrate(cfg.capability.ach.base_url, ek)
+        resolve_model(manifest, cfg.model.name)  # hard-fail (sys.exit 1) if model absent
+        await fetch_context(manifest.context, ek, Path(cfg.persistence.mount_path))
+        mcp_proxy = McpProxy()
+        # NOTE: CONTRACT_v3 capability.filter.exclude only carries `tools` (opencode-side,
+        # deferred to Plan 3/4) — there is no per-MCP-server exclude in the schema, so all
+        # hydrated servers are fronted.
+        mcp_local_urls = await mcp_proxy.start(manifest.mcp_servers, ek, exclude=set())
+        model_proxy_base = await start_model_proxy(cfg.capability.ach.base_url, ek)
+        prefix = _MODEL_ENDPOINT_PREFIX[cfg.model.type]
+        model_base_url = f"{model_proxy_base}/{prefix}"
+        log.info(
+            "hydrated + localhost proxies started",
+            environment=manifest.environment,
+            model_count=len(manifest.models),
+            mcp_count=len(mcp_local_urls),
+        )
+
     # Step 5: build the engine pool. Egress is the agent's via external MCP tools —
     # the harness has no delivery adapter (it never posts on the model's behalf).
     from ach_agent.engine.lifecycle import EngineConfig
@@ -394,6 +436,8 @@ async def main() -> None:
         startup_timeout_seconds=cfg.startup_timeout_seconds,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
         shared_ttl_seconds=0,
+        model_base_url=model_base_url,
+        mcp_local_urls=mcp_local_urls,
     )
     pool = EnginePool()
 
@@ -588,6 +632,10 @@ async def main() -> None:
             router=router,
             dedup_store=dedup_store,
         )
+        # Plan 2: tear down the localhost proxies (closes their aiohttp runners/sessions).
+        await stop_model_proxies()
+        if mcp_proxy is not None:
+            await mcp_proxy.stop()
         if tasks:
             # uvicorn's serve() task returns on its own once should_exit=True; await it
             # so its lifespan shutdown completes before asyncio.run tears the loop down.

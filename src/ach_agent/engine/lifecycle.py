@@ -178,7 +178,11 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
                     "apiKey": api_key,
                     "baseURL": base_url,
                     **config.params,
-                }
+                },
+                # Register the hydrated model id explicitly. ACH model ids
+                # (e.g. "gemini.gemini-flash-latest") are not in opencode's built-in
+                # provider catalog; without this opencode raises ProviderModelNotFoundError.
+                "models": {config.model: {}},
             }
         },
         "instructions": [str(prompt_path.resolve())],  # append-mode system prompt

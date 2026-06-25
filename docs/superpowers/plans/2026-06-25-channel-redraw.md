@@ -3,6 +3,8 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
 >
 > **Design-forward plan.** Prereqs: Plan 1 + Plan 2 merged.
+>
+> **Execution (see `README.md`).** Owns: `channels/webhook.py` (source-select), `channels/queue.py`, `channels/tui.py`, `engine/a2a_egress.py` (new) + edits `channels/a2a.py` and **`main.py boot()`**. ⚠ Forks from the **merged** result of Plan 2 (needs its `EngineConfig`/proxy seam; shares `main.py boot()`). Parallel-safe *within* this plan: Tasks 1 (webhook) + 2 (queue) + 3 (tui) + 4 (a2a egress) are largely independent modules; the `main.py` registration + Task 5 (a2a ingress) serialize at the end.
 
 **Goal:** Complete the v3 channel set — webhook becomes `source`-selected (gitlab|github|generic), implement `queue` (redis) and `tui`, and add **a2a egress** (peer agents as MCP tools) plus the a2a-ingress FAILED-on-invalid-terminal path.
 

@@ -3,6 +3,8 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
 >
 > **Design-forward plan (new code).** Prereq: Plan 1 merged (tree green on opencode + v3 config).
+>
+> **Execution (see `README.md`).** Owns: `engine/hydrate.py`, `engine/context.py`, `engine/mcp_proxy.py` (new) + edits `engine/lifecycle.py` (`write_opencode_config`/`EngineConfig`) and **`main.py boot()`**. ⚠ Plan 3 also edits `main.py boot()` — **do NOT run Plan 2 and Plan 3 concurrently against the same base** (merge order 2→3→4). Parallel-safe *within* this plan: Tasks 1 (hydrate) + 2 (context) are independent standalone modules; Tasks 3-4 (proxy) then Task 5 (boot wiring) serialize after.
 
 **Goal:** The harness self-hydrates from ACH and fronts the model + MCP traffic via a **localhost reverse-proxy** that injects the `ek_`, so opencode never sees the `ek_` or real ACH URLs.
 

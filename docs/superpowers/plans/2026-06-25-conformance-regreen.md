@@ -3,6 +3,8 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
 >
 > **Design-forward plan.** Prereqs: Plans 1–3 merged.
+>
+> **Execution (see `README.md`).** Owns: `tests/conformance/*` (new INV-12/13 + INV-01 extension) and `tests/e2e/*`. Test-only — no `src/` conflict with siblings; forks from the **merge of Plan 3**. Parallel-safe *within* this plan: Tasks 1-3 (independent conformance test files) can run concurrently; Tasks 4 (integration guard) + 5 (e2e re-green / `make verify`) after.
 
 **Goal:** Bring the full gate green on the v3 harness — the CONTRACT §6 behavioral invariants (router IP untouched) plus the two new ones (§6.9 egress, §6.10 secret-hygiene), idempotency for queue/a2a, an opencode+MCP+structured-output integration guard, and green e2e. `make verify` passes.
 

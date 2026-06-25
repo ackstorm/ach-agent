@@ -284,8 +284,19 @@ def _make_engine_runner(
             # The on_complete callable is injected by the A2A wiring closure in main.py
             # into event.delivery_context['on_complete'] before handler.handle() is called.
             on_complete = event.delivery_context.get("on_complete")
-            if on_complete is not None:
-                on_complete(event.session_key, text)
+            on_fail = event.delivery_context.get("on_fail")
+            if on_complete is not None or on_fail is not None:
+                action = obj.get("action")
+                if action == "a2a_reply" and text.strip():
+                    if on_complete is not None:
+                        on_complete(event.session_key, text)
+                else:
+                    reason = (
+                        f"invalid terminal output (action={action!r}, "
+                        f"empty_text={not text.strip()})"
+                    )
+                    if on_fail is not None:
+                        on_fail(event.session_key, reason)
                 return
 
             # Async mode: nothing to deliver. Egress already happened via the agent's
@@ -517,19 +528,31 @@ async def main() -> None:
 
         _on_complete = _make_on_complete(bridge)
 
-        # Wrap the router to inject on_complete into delivery_context (W9 pattern).
-        class _A2AHandler:
-            """Handler wrapper that injects on_complete into delivery_context."""
+        # on_fail closure mirrors on_complete: emits a FAILED event when the terminal
+        # output is unusable (action != a2a_reply, or empty reply text).
+        def _make_on_fail(b: A2AAgentExecutorBridge) -> Any:
+            def on_fail(session_key: str, reason: str) -> None:
+                b.signal_failure(session_key, reason)
 
-            def __init__(self, rtr: Any, fn: Any) -> None:
+            return on_fail
+
+        _on_fail = _make_on_fail(bridge)
+
+        # Wrap the router to inject on_complete + on_fail into delivery_context (W9 pattern).
+        class _A2AHandler:
+            """Handler wrapper that injects on_complete/on_fail into delivery_context."""
+
+            def __init__(self, rtr: Any, fn: Any, fn_fail: Any) -> None:
                 self._rtr = rtr
                 self._fn = fn
+                self._fn_fail = fn_fail
 
             async def handle(self, event: MessageEvent) -> Any:
                 event.delivery_context["on_complete"] = self._fn
+                event.delivery_context["on_fail"] = self._fn_fail
                 return await self._rtr.handle(event)
 
-        bridge._handler = _A2AHandler(router, _on_complete)
+        bridge._handler = _A2AHandler(router, _on_complete, _on_fail)
 
         # Build the A2A AgentCard from channel config (minimal — receiver-only v1, spec §14.6).
         # make_a2a_agent_card keeps a2a.* imports inside channels/a2a.py (RTR-06 fence).

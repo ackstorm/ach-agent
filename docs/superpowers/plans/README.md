@@ -12,7 +12,9 @@ Plan 2  proxy + hydration + context ✅ DONE  (hydrate/context/mcp_proxy/model_p
 Plan 3  channel redraw              ✅ DONE  (webhook source / queue / tui / a2a egress + a2a FAILED; lint green, 175/3 non-e2e)
    │
    ▼
-Plan 4  conformance re-green + guard   (depends on 2 AND 3) ← fork from here
+Plan 4  conformance re-green + guard ✅ DONE  (INV-12/13 + queue/a2a idempotency + e2e re-green + integration guard; `make verify` green, exit 0)
+
+ALL FOUR PLANS DONE — `make verify` (lint + test + conformance + secrets) passes. e2e: 18 passed.
 ```
 
 ## Safe execution models (pick one)
@@ -69,6 +71,23 @@ These are marked in the plans as explicit steps, not placeholders:
 - **`start_model_proxy(ach_base_url, ek) -> str`** keeps the mandated free-function signature; the
   instance is tracked in a module registry and torn down by `stop_model_proxies()` (called in the
   boot shutdown path after `_drain`).
+
+## Plan 4 as-built notes
+
+- **`make verify` = `lint test conformance secrets`** — it does NOT run e2e (`test` ignores `tests/e2e`).
+  The e2e suite (Tasks 4-5) is re-greened separately (`uv run pytest tests/e2e`, 18 passed).
+- Conformance added: **INV-12** (§6.10 ek never in opencode.json/logs — note the redact pattern is
+  `ek_[A-Za-z0-9_\-]+`, underscore prefix), **INV-13** (§6.9 no harness-side delivery: `actions.*` gone,
+  the only egress seam is the injected `on_complete`), and **INV-01** extended with queue (redis msg id)
+  + a2a (task id). No `test_inv09` (retired dual-delivery, deleted in Plan 1).
+- **e2e migration:** `test_gitlab_e2e.py` DELETED (v2 comment-posting; webhook-202 coverage lives in
+  `test_main_wiring.py` + `test_webhook.py`). Slack/Telegram mocks removed from `conftest.py`
+  (`MockEventQueue` kept). durability/skeleton configs migrated to the v3 schema (no `engine:` block).
+- **Integration guard** (`test_opencode_mcp_structured_e2e.py`) is hermetic: it wires `hydrate` +
+  `McpProxy` (ek) + `start_model_proxy` (SSE+ek) + `extract_terminal` against mock upstreams. The REAL
+  opencode-binary round-trip stays in `scripts/e2e.sh` (`make e2e`) — not run here.
+- **Lint gap noted (not fixed):** `make lint` only lints `src` (ruff+mypy); `tests/` is never linted by
+  the gate, so latent ruff issues may exist outside touched files.
 
 ## Plan 3 as-built deviations (read before Plan 4)
 

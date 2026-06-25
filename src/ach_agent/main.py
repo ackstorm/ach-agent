@@ -36,6 +36,7 @@ import uvicorn
 from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a2a_agent_card
 from ach_agent.channels.cron import CronScheduler
 from ach_agent.channels.message_event import MessageEvent
+from ach_agent.channels.queue import QueueConsumer
 from ach_agent.config import load_config
 from ach_agent.engine.context import fetch_context
 from ach_agent.engine.hydrate import hydrate, resolve_model
@@ -52,7 +53,7 @@ configure_logging()
 log = structlog.get_logger(__name__)
 
 # D-02: only channel types wired in this build
-WIRED_CHANNEL_TYPES: frozenset[str] = frozenset({"cron", "webhook", "a2a"})
+WIRED_CHANNEL_TYPES: frozenset[str] = frozenset({"cron", "webhook", "a2a", "queue"})
 
 # Plan 2: model.type → ACH compat-endpoint path prefix fronted by the model proxy.
 # opencode's baseURL becomes "http://127.0.0.1:<port>/<prefix>".
@@ -548,6 +549,16 @@ async def main() -> None:
             channel_names=[ch.name for ch in cron_channels],
         )
 
+    # Queue channels (redis Streams, ackMode:onComplete): one QueueConsumer each.
+    # Each consumer owns a single asyncio consume task; stopped in the drain branch.
+    queue_channels = [ch for ch in cfg.channels if ch.type == "queue"]
+    queue_consumers: list[QueueConsumer] = []
+    for channel in queue_channels:
+        consumer = QueueConsumer(channel, handler=router, pool=pool)
+        await consumer.start()
+        queue_consumers.append(consumer)
+        log.info("queue consumer started", channel_name=channel.name, stream=channel.queue.key)  # type: ignore[union-attr]
+
     for channel in cfg.channels:
         if channel.name in seen_channel_names:
             log.error(
@@ -560,6 +571,9 @@ async def main() -> None:
         if channel.type == "cron":
             # Already handled above by CronScheduler (D-08/SC#3) — skip per-channel task.
             pass
+        elif channel.type == "queue":
+            # Already handled above by its QueueConsumer — skip per-channel task.
+            log.info("queue channel registered", channel_name=channel.name)
         elif channel.type == "webhook":
             # Webhook channels are served by uvicorn via the FastAPI app (started below).
             # Route is already registered in create_app() for all webhook_channels.
@@ -632,6 +646,10 @@ async def main() -> None:
             router=router,
             dedup_store=dedup_store,
         )
+        # Stop queue consumers (cancel their consume tasks; close clients we created).
+        # Done after _drain so in-flight lane work routed from the queue can complete.
+        for consumer in queue_consumers:
+            await consumer.stop()
         # Plan 2: tear down the localhost proxies (closes their aiohttp runners/sessions).
         await stop_model_proxies()
         if mcp_proxy is not None:

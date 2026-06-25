@@ -1,8 +1,29 @@
 # ach-agent development services
-# Usage: docker compose up mock-model
-# The mock-model server is used by the round-trip integration test.
+#
+# Try the agent in TUI console mode against real ACH:
+#   ACH_TOKEN=ek-... docker compose run --rm harness
+# (reads docker/sample-config.json as the contract; the typed line is the prompt).
+# Swap the channel block in the config + drop the `--tui` command to run a real channel.
+#
+# mock-model is used by the round-trip integration test (docker compose up mock-model).
 
 services:
+  harness:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # --tui launch modifier: ignore configured channels, run a console REPL.
+    command: ["python", "-m", "ach_agent.main", "--tui"]
+    environment:
+      # The ek_ (passed from your shell env; never baked into the image).
+      - ACH_TOKEN=${ACH_TOKEN:?set ACH_TOKEN=ek-... in your env}
+      - ACH_CONFIG_PATH=/etc/ach-agent/config.json
+    volumes:
+      - ./docker/sample-config.json:/etc/ach-agent/config.json:ro
+    stdin_open: true   # keep STDIN open for the TUI REPL
+    tty: true          # allocate a TTY (interactive console)
+
+
   mock-model:
     build:
       context: ./docker/mock-model

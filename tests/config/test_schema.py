@@ -3,6 +3,7 @@
 Each test function imports the module under test inside the function body
 (not at module level) to allow monkeypatching and avoid cross-test pollution.
 """
+
 from __future__ import annotations
 
 import json
@@ -13,6 +14,31 @@ import pytest
 # Path to the fixtures directory relative to this file
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
+
+# ---------------------------------------------------------------------------
+# Fixture-loading helpers
+# ---------------------------------------------------------------------------
+
+
+def _read_fixture(name: str) -> dict:
+    """Read a fixture file into a mutable dict (for negative-test mutation)."""
+    return json.loads((FIXTURES_DIR / name).read_text(encoding="utf-8"))
+
+
+def _load_raw(tmp_path: Path, raw: dict):
+    """Write a raw config dict to a temp file and load it via load_config."""
+    from ach_agent.config import load_config
+
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps(raw), encoding="utf-8")
+    return load_config(str(config_file))
+
+
+def _load_fixture(tmp_path: Path, name: str):
+    """Load a named fixture via load_config (round-tripping through a temp file)."""
+    return _load_raw(tmp_path, _read_fixture(name))
+
+
 # ---------------------------------------------------------------------------
 # Shared valid v3 base dict (mutated minimally in negative tests so each test
 # isolates a single rejection cause).
@@ -21,7 +47,7 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 _VALID_WEBHOOK_BASE: dict = {
     "schemaVersion": "1",
     "agent": {"name": "test-agent", "namespace": "default", "generation": 0},
-    "model": {"selected": "codex-1", "reasoningEffort": "medium"},
+    "model": {"name": "openai.gpt-5", "type": "openai", "params": {"temperature": 1}},
     "workDir": "/workspace",
     "startupTimeoutSeconds": 30,
     "governed": True,
@@ -51,7 +77,7 @@ _VALID_WEBHOOK_BASE: dict = {
 _VALID_CRON_BASE: dict = {
     "schemaVersion": "1",
     "agent": {"name": "test-agent", "namespace": "default", "generation": 0},
-    "model": {"selected": "codex-1", "reasoningEffort": "medium"},
+    "model": {"name": "openai.gpt-5", "type": "openai", "params": {"temperature": 1}},
     "workDir": "/workspace",
     "startupTimeoutSeconds": 30,
     "governed": False,
@@ -163,7 +189,7 @@ def test_load_valid_a2a_config() -> None:
 
 
 def test_v3_fields_parse(tmp_path: Path) -> None:
-    """CFG-05: all v3 fields parse — model.reasoning_effort, work_dir,
+    """CFG-05: all v3 fields parse — model.name/type/params, work_dir,
     startup_timeout_seconds, limits.max_steps, limits.terminal_output_retries,
     capability.filter.exclude.tools, governed."""
     from ach_agent.config.schema import AgentConfig
@@ -171,7 +197,7 @@ def test_v3_fields_parse(tmp_path: Path) -> None:
     cfg = {
         "schemaVersion": "1",
         "agent": {"name": "field-test", "namespace": "test", "generation": 2},
-        "model": {"selected": "codex-1", "reasoningEffort": "high"},
+        "model": {"name": "openai.gpt-5", "type": "openai", "params": {"temperature": 1}},
         "workDir": "/custom/work",
         "startupTimeoutSeconds": 60,
         "governed": True,
@@ -191,13 +217,44 @@ def test_v3_fields_parse(tmp_path: Path) -> None:
         "channels": [],
     }
     config = AgentConfig.model_validate_json(json.dumps(cfg))
-    assert config.model.reasoning_effort == "high"
+    assert config.model.name == "openai.gpt-5"
+    assert config.model.type == "openai"
+    assert config.model.params == {"temperature": 1}
     assert config.work_dir == "/custom/work"
     assert config.startup_timeout_seconds == 60
     assert config.limits.max_steps == 25
     assert config.limits.terminal_output_retries == 3
     assert config.capability.filter.exclude.tools == ["dangerous-tool", "restricted-tool"]
     assert config.governed is True
+
+
+# ---------------------------------------------------------------------------
+# Positive/Negative: ModelBlock {name, type, params} shape
+# ---------------------------------------------------------------------------
+
+
+def test_model_block_name_type_params(tmp_path: Path) -> None:
+    """CFG-05: model block parses as {name, type, params}."""
+    cfg = _load_fixture(tmp_path, "config_webhook.json")
+    assert cfg.model.name == "openai.gpt-5"
+    assert cfg.model.type == "openai"
+    assert cfg.model.params == {"temperature": 1}
+
+
+def test_model_type_rejects_unknown_provider(tmp_path: Path) -> None:
+    """D-06: model.type outside the closed provider Literal → sys.exit(1)."""
+    raw = _read_fixture("config_webhook.json")
+    raw["model"] = {"name": "x", "type": "bedrock", "params": {}}
+    with pytest.raises(SystemExit):
+        _load_raw(tmp_path, raw)
+
+
+def test_model_params_is_open_dict(tmp_path: Path) -> None:
+    """model.params is an open, unvalidated dict (arbitrary keys allowed)."""
+    raw = _read_fixture("config_webhook.json")
+    raw["model"] = {"name": "g", "type": "gemini", "params": {"thinking_level": "medium", "x": 1}}
+    cfg = _load_raw(tmp_path, raw)
+    assert cfg.model.params["thinking_level"] == "medium"
 
 
 # ---------------------------------------------------------------------------
@@ -279,9 +336,7 @@ def test_response_actions_hard_fails(tmp_path: Path) -> None:
         "channels": [
             {
                 **_VALID_WEBHOOK_BASE["channels"][0],
-                "responseActions": [
-                    {"name": "reply", "kind": "reply", "inputSchema": {}}
-                ],
+                "responseActions": [{"name": "reply", "kind": "reply", "inputSchema": {}}],
             }
         ],
     }

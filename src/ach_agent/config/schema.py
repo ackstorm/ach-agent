@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -34,12 +34,13 @@ class AgentBlock(BaseModel):
 
 
 class ModelBlock(BaseModel):
-    """CONTRACT_v3 §2 model block (selected + reasoningEffort; provider removed)."""
+    """CONTRACT_v3 §2 model block: provider-selecting name + open params."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    selected: str
-    reasoning_effort: str = Field(default="medium", alias="reasoningEffort")
+    name: str  # e.g. "openai.gpt-5"; passed verbatim
+    type: Literal["openai", "gemini", "anthropic"]  # selects the ACH compat endpoint
+    params: dict[str, Any] = Field(default_factory=dict)  # open, unvalidated, splatted to client
 
 
 class LimitsBlock(BaseModel):

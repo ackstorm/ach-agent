@@ -19,10 +19,12 @@ def test_ek_never_in_opencode_json(tmp_path: Path, monkeypatch: Any) -> None:
     The proxy injects the ek_; opencode.json must point only at 127.0.0.1.
     """
     monkeypatch.setenv("ACH_TOKEN", "ek_conformance_secret_value")
+    import json
+
     from ach_agent.engine.lifecycle import EngineConfig, write_opencode_config
 
     cfg = EngineConfig(
-        model="openai.gpt-5",
+        model="gemini.gemini-flash-latest",
         provider="openai",
         model_base_url="http://127.0.0.1:9001/v1",
         mcp_local_urls={"m": "http://127.0.0.1:9002/mcp/m"},
@@ -32,6 +34,13 @@ def test_ek_never_in_opencode_json(tmp_path: Path, monkeypatch: Any) -> None:
 
     assert "ek_conformance_secret_value" not in blob, "§6.10: ek_ must never be in opencode.json"
     assert "127.0.0.1" in blob, "§6.10: opencode must point at the local proxy"
+    # The hydrated model id must be registered under provider.<id>.models, else opencode
+    # raises ProviderModelNotFoundError for an ACH model id not in its built-in catalog
+    # (verified live vs opencode 1.16.0 + real ACH).
+    oc = json.loads(blob)
+    assert "gemini.gemini-flash-latest" in oc["provider"]["openai"]["models"], (
+        "opencode.json must register the hydrated model id under provider.<id>.models"
+    )
 
 
 def test_ek_redacted_in_logs(capsys: Any) -> None:

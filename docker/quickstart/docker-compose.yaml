@@ -1,0 +1,32 @@
+# Quickstart — run the ach-agent harness as a TUI console on your machine.
+#
+#   cd docker/quickstart
+#   ACH_TOKEN=ek-<your-key> docker compose run --rm agent
+#
+# The line you type IS the prompt; Ctrl-D exits. Edit config.yaml to change the
+# model / persona / ACH environment. For a one-shot instead of the REPL:
+#   ACH_TOKEN=ek-... docker compose run --rm agent --prompt "Review MR !42 in project 7"
+
+services:
+  agent:
+    # Public image — nothing to build, runs anywhere. To test LOCAL changes from the
+    # repo instead, comment `image:` and uncomment the `build:` block below.
+    image: ghcr.io/ackstorm/ach-agent:latest
+    # build:
+    #   context: ../..          # repo root (has the Dockerfile + src/)
+    #   dockerfile: Dockerfile
+
+    # --tui launch modifier (appended to the image ENTRYPOINT): console REPL.
+    command: ["--tui"]
+
+    environment:
+      # The EK — taken from your shell env, NEVER baked into the image.
+      - ACH_TOKEN=${ACH_TOKEN:?set ACH_TOKEN=ek-... in your shell}
+      - ACH_CONFIG_PATH=/etc/ach-agent/config.yaml
+
+    volumes:
+      # Your hand-authored contract, mounted over the image's baked default.
+      - ./config.yaml:/etc/ach-agent/config.yaml:ro
+
+    stdin_open: true   # keep STDIN open for the REPL
+    tty: true          # allocate a TTY (interactive console)

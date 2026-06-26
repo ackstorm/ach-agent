@@ -105,7 +105,10 @@ class CapabilityAchBlock(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     base_url: str = Field(alias="baseUrl")
-    environment: str
+    # Optional: the EK already scopes the ACH environment server-side, so this is implicit
+    # for hand-authored configs. The harness never reads it (it logs the environment from the
+    # hydrate response, manifest.environment); the operator still renders it in production.
+    environment: str = "platform"
 
 
 class CapabilityFilterExcludeBlock(BaseModel):

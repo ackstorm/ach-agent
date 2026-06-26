@@ -9,12 +9,12 @@ SAMPLE = {
     "environment": "platform",
     "runtime": {
         "models": [
-            {"id": "gemini.gemini-flash-latest", "endpoint": "https://ach.ackstorm.ai/v1"}
+            {"id": "gemini.gemini-flash-latest", "endpoint": "https://ach.example.com/v1"}
         ],
         "mcpServers": [
             {
                 "id": "mcp-google-calendar-ro",
-                "endpoint": "https://ach.ackstorm.ai/mcp/mcp-google-calendar-ro",
+                "endpoint": "https://ach.example.com/mcp/mcp-google-calendar-ro",
             }
         ],
         "a2aAgents": [],
@@ -27,7 +27,7 @@ SAMPLE = {
             {
                 "name": "frontend-design@anthropics-skills",
                 "id": "frontend-design@anthropics-skills",
-                "downloadUrl": "https://ach.ackstorm.ai/content/skill/frontend-design@anthropics-skills",
+                "downloadUrl": "https://ach.example.com/content/skill/frontend-design@anthropics-skills",
             }
         ],
     },
@@ -40,9 +40,9 @@ async def test_hydrate_parses_manifest(monkeypatch):
         return SAMPLE
 
     monkeypatch.setattr("ach_agent.engine.hydrate._post_hydrate", fake_post)
-    m = await hydrate("https://ach.ackstorm.ai", "ek-abc")
+    m = await hydrate("https://ach.example.com", "ek-abc")
     assert m.models == ["gemini.gemini-flash-latest"]  # property exposes the ids
-    assert m.model_entries[0].endpoint == "https://ach.ackstorm.ai/v1"  # real endpoint kept
+    assert m.model_entries[0].endpoint == "https://ach.example.com/v1"  # real endpoint kept
     assert m.mcp_servers[0].id == "mcp-google-calendar-ro"
     assert m.context.skills[0].download_url.endswith("/skill/frontend-design@anthropics-skills")
 
@@ -57,4 +57,4 @@ def test_resolve_model_ok_returns_entry_when_present():
     m = HydrationManifest.model_validate(SAMPLE)
     entry = resolve_model(m, "gemini.gemini-flash-latest")  # no raise
     assert entry is not None
-    assert entry.endpoint == "https://ach.ackstorm.ai/v1"
+    assert entry.endpoint == "https://ach.example.com/v1"

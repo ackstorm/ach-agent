@@ -188,7 +188,7 @@ def test_opencode_json_never_contains_ek(tmp_path: Any, monkeypatch: Any) -> Non
     blob = (tmp_path / ".config" / "opencode" / "opencode.json").read_text(encoding="utf-8")
 
     assert "ek-secret-xyz" not in blob
-    assert "ach.ackstorm.ai" not in blob
+    assert "ach.example.com" not in blob
     assert "127.0.0.1" in blob
     assert "mcp-gofetch" in blob  # proxied MCP server is registered at its localhost URL
 

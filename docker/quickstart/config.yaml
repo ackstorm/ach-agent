@@ -1,0 +1,29 @@
+schemaVersion: "1"
+
+agent:
+  name: juan-dev-agent
+  namespace: default
+
+model:
+  name: gemini.gemini-flash-latest   # an ACH-served model id
+  type: openai                       # the ACH compat WIRE (gemini.* is served on /v1)
+
+capability:
+  type: ach
+  ach:
+    baseUrl: https://ach.ackstorm.ai
+    # environment is implicit — your EK scopes which env + tools get hydrated.
+
+# Inline agent persona (append-layered on the ACH-hydrated skills/prompts).
+prompt:
+  base: "You are a concise software-engineering assistant."
+  compose: append
+
+# Writable scratch for the non-root container user (uid 10001).
+workDir: /tmp/workspace
+persistence:
+  enabled: false
+  mountPath: /tmp/ach-state
+
+# No channels under --tui/--prompt: the typed/passed line IS the prompt.
+channels: []

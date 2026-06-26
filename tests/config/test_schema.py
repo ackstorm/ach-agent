@@ -1,8 +1,9 @@
-"""Config schema tests: CFG-01/02/03 (Pydantic v2 validation).
+"""Config schema tests: CFG-04/05/06 + D-01/D-04/D-05/D-06 regression suite.
 
 Each test function imports the module under test inside the function body
 (not at module level) to allow monkeypatching and avoid cross-test pollution.
 """
+
 from __future__ import annotations
 
 import json
@@ -14,8 +15,102 @@ import pytest
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
+# ---------------------------------------------------------------------------
+# Fixture-loading helpers
+# ---------------------------------------------------------------------------
+
+
+def _read_fixture(name: str) -> dict:
+    """Read a fixture file into a mutable dict (for negative-test mutation)."""
+    return json.loads((FIXTURES_DIR / name).read_text(encoding="utf-8"))
+
+
+def _load_raw(tmp_path: Path, raw: dict):
+    """Write a raw config dict to a temp file and load it via load_config."""
+    from ach_agent.config import load_config
+
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps(raw), encoding="utf-8")
+    return load_config(str(config_file))
+
+
+def _load_fixture(tmp_path: Path, name: str):
+    """Load a named fixture via load_config (round-tripping through a temp file)."""
+    return _load_raw(tmp_path, _read_fixture(name))
+
+
+# ---------------------------------------------------------------------------
+# Shared valid v3 base dict (mutated minimally in negative tests so each test
+# isolates a single rejection cause).
+# ---------------------------------------------------------------------------
+
+_VALID_WEBHOOK_BASE: dict = {
+    "schemaVersion": "1",
+    "agent": {"name": "test-agent", "namespace": "default", "generation": 0},
+    "model": {"name": "openai.gpt-5", "type": "openai", "params": {"temperature": 1}},
+    "workDir": "/workspace",
+    "startupTimeoutSeconds": 30,
+    "governed": True,
+    "capability": {
+        "type": "ach",
+        "ach": {"baseUrl": "https://ach.example.com", "environment": "test"},
+        "filter": {"exclude": {"tools": []}},
+    },
+    "limits": {
+        "maxConcurrentInvocations": 1,
+        "maxInvocationSeconds": 1800,
+        "maxQueuedTotal": 100,
+        "idempotencyWindowSeconds": 3600,
+        "maxSteps": 50,
+        "terminalOutputRetries": 1,
+    },
+    "channels": [
+        {
+            "name": "test-webhook",
+            "type": "webhook",
+            "source": "gitlab",
+            "webhook": {"auth": {"type": "gitlab_token", "secretPath": "/etc/secret"}},
+        }
+    ],
+}
+
+_VALID_CRON_BASE: dict = {
+    "schemaVersion": "1",
+    "agent": {"name": "test-agent", "namespace": "default", "generation": 0},
+    "model": {"name": "openai.gpt-5", "type": "openai", "params": {"temperature": 1}},
+    "workDir": "/workspace",
+    "startupTimeoutSeconds": 30,
+    "governed": False,
+    "capability": {
+        "type": "ach",
+        "ach": {"baseUrl": "https://ach.example.com", "environment": "test"},
+        "filter": {"exclude": {"tools": []}},
+    },
+    "limits": {
+        "maxConcurrentInvocations": 1,
+        "maxInvocationSeconds": 1800,
+        "maxQueuedTotal": 100,
+        "idempotencyWindowSeconds": 3600,
+        "maxSteps": 50,
+        "terminalOutputRetries": 1,
+    },
+    "channels": [
+        {
+            "name": "heartbeat",
+            "type": "cron",
+            "cron": {"schedule": "* * * * *", "timezone": "UTC"},
+        }
+    ],
+}
+
+
+# ---------------------------------------------------------------------------
+# Positive: CFG-06 — each fixture loads, type + representative sub-field verified
+# ---------------------------------------------------------------------------
+
+
 def test_load_valid_cron_config() -> None:
-    """CFG-01: load a valid hand-written cron-only config without error."""
+    """CFG-01/06: load a valid v3 cron config without error."""
     from ach_agent.config import load_config
 
     config = load_config(str(FIXTURES_DIR / "config_cron.json"))
@@ -23,23 +118,213 @@ def test_load_valid_cron_config() -> None:
     assert config.channels[0].type == "cron"
 
 
+def test_cron_channel_config() -> None:
+    """CHN-02 / CFG-06: cron channel parses schedule, session.continuity, and timezone."""
+    from ach_agent.config import load_config
+
+    config = load_config(str(FIXTURES_DIR / "config_cron.json"))
+    channel = config.channels[0]
+    assert channel.type == "cron"
+    assert channel.cron is not None
+    assert channel.cron.schedule == "* * * * *"
+    assert channel.session.continuity == "durable"
+    assert channel.cron.timezone == "Europe/Madrid"
+
+
+def test_load_valid_webhook_config() -> None:
+    """CFG-06: valid v3 webhook fixture loads; source and auth.type asserted."""
+    from ach_agent.config import load_config
+
+    config = load_config(str(FIXTURES_DIR / "config_webhook.json"))
+    assert len(config.channels) == 1
+    ch = config.channels[0]
+    assert ch.type == "webhook"
+    assert ch.source == "gitlab"
+    assert ch.webhook is not None
+    assert ch.webhook.auth.type == "gitlab_token"
+
+
+def test_load_valid_queue_config() -> None:
+    """CFG-06: valid v3 queue fixture loads; ackMode asserted."""
+    from ach_agent.config import load_config
+
+    config = load_config(str(FIXTURES_DIR / "config_queue.json"))
+    assert len(config.channels) == 1
+    ch = config.channels[0]
+    assert ch.type == "queue"
+    assert ch.queue is not None
+    assert ch.queue.ack_mode == "onComplete"
+
+
+def test_load_valid_a2a_config() -> None:
+    """CFG-06: valid v3 a2a fixture loads; mode and secretPath asserted."""
+    from ach_agent.config import load_config
+
+    config = load_config(str(FIXTURES_DIR / "config_a2a.json"))
+    assert len(config.channels) == 1
+    ch = config.channels[0]
+    assert ch.type == "a2a"
+    assert ch.a2a is not None
+    assert ch.a2a.mode == "async"
+    assert ch.a2a.auth.secret_path == "/etc/ach-agent/secrets/a2a/key"
+
+
+# ---------------------------------------------------------------------------
+# Positive: CFG-05 — every new v3 field parses correctly
+# ---------------------------------------------------------------------------
+
+
+def test_v3_fields_parse(tmp_path: Path) -> None:
+    """CFG-05: all v3 fields parse — model.name/type/params, work_dir,
+    startup_timeout_seconds, limits.max_steps, limits.terminal_output_retries,
+    capability.filter.exclude.tools, governed."""
+    from ach_agent.config.schema import AgentConfig
+
+    cfg = {
+        "schemaVersion": "1",
+        "agent": {"name": "field-test", "namespace": "test", "generation": 2},
+        "model": {"name": "openai.gpt-5", "type": "openai", "params": {"temperature": 1}},
+        "workDir": "/custom/work",
+        "startupTimeoutSeconds": 60,
+        "governed": True,
+        "capability": {
+            "type": "ach",
+            "ach": {"baseUrl": "https://ach.example.com", "environment": "staging"},
+            "filter": {"exclude": {"tools": ["dangerous-tool", "restricted-tool"]}},
+        },
+        "limits": {
+            "maxConcurrentInvocations": 2,
+            "maxInvocationSeconds": 900,
+            "maxQueuedTotal": 50,
+            "idempotencyWindowSeconds": 7200,
+            "maxSteps": 25,
+            "terminalOutputRetries": 3,
+        },
+        "channels": [],
+    }
+    config = AgentConfig.model_validate_json(json.dumps(cfg))
+    assert config.model.name == "openai.gpt-5"
+    assert config.model.type == "openai"
+    assert config.model.params == {"temperature": 1}
+    assert config.work_dir == "/custom/work"
+    assert config.startup_timeout_seconds == 60
+    assert config.limits.max_steps == 25
+    assert config.limits.terminal_output_retries == 3
+    assert config.capability.filter.exclude.tools == ["dangerous-tool", "restricted-tool"]
+    assert config.governed is True
+
+
+# ---------------------------------------------------------------------------
+# Positive/Negative: ModelBlock {name, type, params} shape
+# ---------------------------------------------------------------------------
+
+
+def test_model_block_name_type_params(tmp_path: Path) -> None:
+    """CFG-05: model block parses as {name, type, params}."""
+    cfg = _load_fixture(tmp_path, "config_webhook.json")
+    assert cfg.model.name == "openai.gpt-5"
+    assert cfg.model.type == "openai"
+    assert cfg.model.params == {"temperature": 1}
+
+
+def test_model_type_rejects_unknown_provider(tmp_path: Path) -> None:
+    """D-06: model.type outside the closed provider Literal → sys.exit(1)."""
+    raw = _read_fixture("config_webhook.json")
+    raw["model"] = {"name": "x", "type": "bedrock", "params": {}}
+    with pytest.raises(SystemExit):
+        _load_raw(tmp_path, raw)
+
+
+def test_model_params_is_open_dict(tmp_path: Path) -> None:
+    """model.params is an open, unvalidated dict (arbitrary keys allowed)."""
+    raw = _read_fixture("config_webhook.json")
+    raw["model"] = {"name": "g", "type": "gemini", "params": {"thinking_level": "medium", "x": 1}}
+    cfg = _load_raw(tmp_path, raw)
+    assert cfg.model.params["thinking_level"] == "medium"
+
+
+# ---------------------------------------------------------------------------
+# Positive/Negative: YAML-authored contracts (local dev convenience)
+# ---------------------------------------------------------------------------
+
+
+def test_load_valid_yaml_config(tmp_path: Path) -> None:
+    """A .yaml contract validates against the SAME schema as JSON (aliases honored)."""
+    from ach_agent.config import load_config
+
+    yaml_text = """
+schemaVersion: "1"
+agent:
+  name: yaml-agent
+  namespace: default
+model:
+  name: gemini.gemini-flash-latest
+  type: openai
+capability:
+  type: ach
+  ach:
+    baseUrl: https://ach.example.com
+    environment: platform
+prompt:
+  base: "You are a concise assistant."
+  compose: append
+channels: []
+"""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml_text, encoding="utf-8")
+
+    cfg = load_config(str(config_file))
+    assert cfg.schema_version == "1"
+    assert cfg.model.name == "gemini.gemini-flash-latest"
+    assert cfg.model.type == "openai"
+    assert cfg.capability.ach.base_url == "https://ach.example.com"
+    assert cfg.prompt is not None
+    assert cfg.prompt.base == "You are a concise assistant."
+
+
+def test_yaml_unknown_key_hard_fails(tmp_path: Path) -> None:
+    """A .yaml contract is held to the same extra='forbid' rule → sys.exit(1)."""
+    from ach_agent.config import load_config
+
+    yaml_text = """
+schemaVersion: "1"
+agent: {name: x, namespace: default}
+model: {name: openai.gpt-5, type: openai}
+capability: {type: ach, ach: {baseUrl: https://ach.example.com, environment: test}}
+unexpectedKey: true
+"""
+    config_file = tmp_path / "bad.yaml"
+    config_file.write_text(yaml_text, encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+def test_malformed_yaml_hard_fails(tmp_path: Path) -> None:
+    """Malformed YAML → parse error → sys.exit(1) (mirrors JSON schema-mismatch path)."""
+    from ach_agent.config import load_config
+
+    config_file = tmp_path / "broken.yml"
+    config_file.write_text("schemaVersion: \"1\"\n  bad: : indentation:\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+# ---------------------------------------------------------------------------
+# Negative: CFG-02 — unknown top-level key → sys.exit(1)
+# ---------------------------------------------------------------------------
+
+
 def test_unknown_key_hard_fail(tmp_path: Path) -> None:
     """CFG-02: unknown top-level key → sys.exit(1) (non-zero exit)."""
     from ach_agent.config import load_config
 
     bad = {
-        "schemaVersion": "1",
+        **_VALID_WEBHOOK_BASE,
         "unexpectedKey": True,
-        "agent": {"name": "test-agent", "namespace": "test"},
-        "engine": {
-            "type": "opencode",
-            "binaryPath": "opencode",
-            "workDir": "/workspace",
-            "sessionDir": "/var/lib/ach-agent/opencode/sessions",
-        },
-        "model": {"default": "gpt-4o-mini", "provider": "openai"},
-        "limits": {},
-        "channels": [],
     }
     config_file = tmp_path / "bad.json"
     config_file.write_text(json.dumps(bad), encoding="utf-8")
@@ -49,27 +334,18 @@ def test_unknown_key_hard_fail(tmp_path: Path) -> None:
     assert exc_info.value.code != 0
 
 
+# ---------------------------------------------------------------------------
+# Negative: CFG-03 — unknown channel type → sys.exit(1)
+# ---------------------------------------------------------------------------
+
+
 def test_unknown_channel_type_rejected(tmp_path: Path) -> None:
     """CFG-03: unknown channel type → ValidationError → sys.exit(1)."""
     from ach_agent.config import load_config
 
     bad = {
-        "schemaVersion": "1",
-        "agent": {"name": "test-agent", "namespace": "test"},
-        "engine": {
-            "type": "opencode",
-            "binaryPath": "opencode",
-            "workDir": "/workspace",
-            "sessionDir": "/var/lib/ach-agent/opencode/sessions",
-        },
-        "model": {"default": "gpt-4o-mini", "provider": "openai"},
-        "limits": {},
-        "channels": [
-            {
-                "name": "pigeon-post",
-                "type": "carrierpigeon",
-            }
-        ],
+        **_VALID_WEBHOOK_BASE,
+        "channels": [{"name": "pigeon-post", "type": "carrierpigeon"}],
     }
     config_file = tmp_path / "bad_channel.json"
     config_file.write_text(json.dumps(bad), encoding="utf-8")
@@ -79,43 +355,149 @@ def test_unknown_channel_type_rejected(tmp_path: Path) -> None:
     assert exc_info.value.code != 0
 
 
-def test_cron_channel_config() -> None:
-    """CHN-02 config half: cron channel block parses schedule + session.continuity."""
+# ---------------------------------------------------------------------------
+# Negative: CFG-04 — removed v2 blocks hard-fail
+# ---------------------------------------------------------------------------
+
+
+def test_engine_block_hard_fails(tmp_path: Path) -> None:
+    """CFG-04: top-level engine block → extra='forbid' → sys.exit(1)."""
     from ach_agent.config import load_config
 
-    config = load_config(str(FIXTURES_DIR / "config_cron.json"))
-    channel = config.channels[0]
-    assert channel.type == "cron"
-    assert channel.cron is not None
-    assert channel.cron.schedule == "* * * * *"
-    assert channel.session.continuity == "durable"
-
-
-# ---------------------------------------------------------------------------
-# D-04 / consent_tier tests (Phase 5 additive revision)
-# ---------------------------------------------------------------------------
-
-
-def test_consent_tier_explicit_auto(tmp_path: Path) -> None:
-    """D-04: responseActions entry with consentTier="auto" loads and parses correctly."""
-    import json
-
-    from ach_agent.config.schema import AgentConfig
-
-    cfg_data = {
-        "schemaVersion": "1",
-        "agent": {"name": "test-agent", "namespace": "test"},
+    bad = {
+        **_VALID_WEBHOOK_BASE,
         "engine": {
             "type": "opencode",
             "binaryPath": "opencode",
             "workDir": "/workspace",
-            "sessionDir": "/var/lib/ach-agent/opencode/sessions",
         },
-        "model": {"default": "gpt-4o-mini", "provider": "openai"},
+    }
+    config_file = tmp_path / "bad_engine.json"
+    config_file.write_text(json.dumps(bad), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+def test_response_actions_hard_fails(tmp_path: Path) -> None:
+    """CFG-04: channel with responseActions → extra='forbid' → sys.exit(1).
+
+    Mirrors a realistic v2 config shape.
+    """
+    from ach_agent.config import load_config
+
+    bad = {
+        **_VALID_WEBHOOK_BASE,
         "channels": [
             {
-                "name": "test-channel",
-                "type": "webhook",
+                **_VALID_WEBHOOK_BASE["channels"][0],
+                "responseActions": [{"name": "reply", "kind": "reply", "inputSchema": {}}],
+            }
+        ],
+    }
+    config_file = tmp_path / "bad_response_actions.json"
+    config_file.write_text(json.dumps(bad), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+def test_response_block_hard_fails(tmp_path: Path) -> None:
+    """CFG-04: channel with response block → extra='forbid' → sys.exit(1)."""
+    from ach_agent.config import load_config
+
+    bad = {
+        **_VALID_WEBHOOK_BASE,
+        "channels": [
+            {
+                **_VALID_WEBHOOK_BASE["channels"][0],
+                "response": {"mode": "actionRequired", "fallback": "fail"},
+            }
+        ],
+    }
+    config_file = tmp_path / "bad_response.json"
+    config_file.write_text(json.dumps(bad), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+def test_webhook_deliver_hard_fails(tmp_path: Path) -> None:
+    """CFG-04: webhook block with deliver → extra='forbid' → sys.exit(1)."""
+    from ach_agent.config import load_config
+
+    bad = {
+        **_VALID_WEBHOOK_BASE,
+        "channels": [
+            {
+                **_VALID_WEBHOOK_BASE["channels"][0],
+                "webhook": {
+                    "auth": {"type": "gitlab_token", "secretPath": "/etc/secret"},
+                    "deliver": {"mode": "post", "url": "https://example.com"},
+                },
+            }
+        ],
+    }
+    config_file = tmp_path / "bad_deliver.json"
+    config_file.write_text(json.dumps(bad), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+def test_input_schema_in_response_actions_hard_fails(tmp_path: Path) -> None:
+    """CFG-04: inputSchema nested inside responseActions → hard-fails.
+
+    Mirrors realistic v2 nesting: the channel carries responseActions with inputSchema
+    on the action entry. extra='forbid' rejects the removed responseActions key (or
+    the nested inputSchema), proving the legacy v2 shape is rejected.
+    """
+    from ach_agent.config import load_config
+
+    bad = {
+        **_VALID_WEBHOOK_BASE,
+        "channels": [
+            {
+                **_VALID_WEBHOOK_BASE["channels"][0],
+                "responseActions": [
+                    {
+                        "name": "create_issue",
+                        "kind": "sideEffect",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {"title": {"type": "string"}},
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    config_file = tmp_path / "bad_input_schema.json"
+    config_file.write_text(json.dumps(bad), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+def test_consent_tier_in_response_actions_hard_fails(tmp_path: Path) -> None:
+    """CFG-04: consentTier nested inside responseActions → hard-fails.
+
+    Mirrors realistic v2 nesting: the channel carries responseActions with consentTier
+    on the action entry. extra='forbid' rejects the removed responseActions key (or
+    the nested consentTier), proving the legacy v2 shape is rejected.
+    """
+    from ach_agent.config import load_config
+
+    bad = {
+        **_VALID_WEBHOOK_BASE,
+        "channels": [
+            {
+                **_VALID_WEBHOOK_BASE["channels"][0],
                 "responseActions": [
                     {
                         "name": "create_issue",
@@ -127,86 +509,214 @@ def test_consent_tier_explicit_auto(tmp_path: Path) -> None:
             }
         ],
     }
-    config = AgentConfig.model_validate_json(json.dumps(cfg_data))
-    block = config.channels[0].response_actions[0]
-    assert block.consent_tier == "auto", (
-        f"Expected consent_tier='auto', got {block.consent_tier!r}"
-    )
+    config_file = tmp_path / "bad_consent_tier.json"
+    config_file.write_text(json.dumps(bad), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
 
 
-def test_consent_tier_default_when_absent(tmp_path: Path) -> None:
-    """D-04 / Pitfall 2: omitting consentTier resolves to 'consent' (backward-compat).
+# ---------------------------------------------------------------------------
+# Negative: D-06 — closed Literal bad enum values hard-fail
+# ---------------------------------------------------------------------------
 
-    Existing Phase 1–4 configs without consentTier must still validate and default
-    to "consent" — the safe tier — without any schema failure.
-    """
-    import json
 
-    from ach_agent.config.schema import AgentConfig
+def test_bad_webhook_source_hard_fails(tmp_path: Path) -> None:
+    """D-06: webhook.source:'slack' (removed) → ValidationError → sys.exit(1)."""
+    from ach_agent.config import load_config
 
-    cfg_data = {
-        "schemaVersion": "1",
-        "agent": {"name": "test-agent", "namespace": "test"},
-        "engine": {
-            "type": "opencode",
-            "binaryPath": "opencode",
-            "workDir": "/workspace",
-            "sessionDir": "/var/lib/ach-agent/opencode/sessions",
-        },
-        "model": {"default": "gpt-4o-mini", "provider": "openai"},
+    bad = {
+        **_VALID_WEBHOOK_BASE,
         "channels": [
             {
-                "name": "test-channel",
-                "type": "webhook",
-                "responseActions": [
-                    {
-                        "name": "channel_message",
-                        "kind": "reply",
-                        "inputSchema": {},
-                    }
-                ],
+                **_VALID_WEBHOOK_BASE["channels"][0],
+                "source": "slack",
             }
         ],
     }
-    config = AgentConfig.model_validate_json(json.dumps(cfg_data))
-    block = config.channels[0].response_actions[0]
-    assert block.consent_tier == "consent", (
-        f"Expected default consent_tier='consent' when absent, got {block.consent_tier!r}"
-    )
+    config_file = tmp_path / "bad_source.json"
+    config_file.write_text(json.dumps(bad), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
 
 
-def test_consent_tier_invalid_value_rejected(tmp_path: Path) -> None:
-    """D-04: an invalid consentTier value raises ValidationError (Pydantic rejects it)."""
-    import json
+def test_bad_webhook_auth_type_hard_fails(tmp_path: Path) -> None:
+    """D-06: webhook.auth.type:'bearer' → ValidationError → sys.exit(1)."""
+    from ach_agent.config import load_config
 
-    from pydantic import ValidationError
-
-    from ach_agent.config.schema import AgentConfig
-
-    cfg_data = {
-        "schemaVersion": "1",
-        "agent": {"name": "test-agent", "namespace": "test"},
-        "engine": {
-            "type": "opencode",
-            "binaryPath": "opencode",
-            "workDir": "/workspace",
-            "sessionDir": "/var/lib/ach-agent/opencode/sessions",
-        },
-        "model": {"default": "gpt-4o-mini", "provider": "openai"},
+    bad = {
+        **_VALID_WEBHOOK_BASE,
         "channels": [
             {
-                "name": "test-channel",
-                "type": "webhook",
-                "responseActions": [
-                    {
-                        "name": "create_issue",
-                        "kind": "sideEffect",
-                        "consentTier": "forced",
-                        "inputSchema": {},
-                    }
-                ],
+                **_VALID_WEBHOOK_BASE["channels"][0],
+                "webhook": {"auth": {"type": "bearer", "secretPath": "/etc/secret"}},
             }
         ],
     }
-    with pytest.raises(ValidationError):
-        AgentConfig.model_validate_json(json.dumps(cfg_data))
+    config_file = tmp_path / "bad_auth_type.json"
+    config_file.write_text(json.dumps(bad), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+def test_bad_queue_ack_mode_hard_fails(tmp_path: Path) -> None:
+    """D-06: queue.ackMode:'onReceive' → ValidationError → sys.exit(1)."""
+    from ach_agent.config import load_config
+
+    bad = {
+        **_VALID_WEBHOOK_BASE,
+        "channels": [
+            {
+                "name": "bad-queue",
+                "type": "queue",
+                "queue": {"type": "redis", "key": "ach:test", "ackMode": "onReceive"},
+            }
+        ],
+    }
+    config_file = tmp_path / "bad_ack_mode.json"
+    config_file.write_text(json.dumps(bad), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+def test_bad_a2a_mode_hard_fails(tmp_path: Path) -> None:
+    """D-06: a2a.mode:'sync' → ValidationError → sys.exit(1)."""
+    from ach_agent.config import load_config
+
+    bad = {
+        **_VALID_WEBHOOK_BASE,
+        "channels": [
+            {
+                "name": "bad-a2a",
+                "type": "a2a",
+                "a2a": {
+                    "mode": "sync",
+                    "auth": {"header": "x-api-key", "secretPath": "/etc/secret"},
+                },
+            }
+        ],
+    }
+    config_file = tmp_path / "bad_a2a_mode.json"
+    config_file.write_text(json.dumps(bad), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+# ---------------------------------------------------------------------------
+# Negative: D-04 — channel type↔block coherence validator
+# ---------------------------------------------------------------------------
+
+
+def test_cron_channel_with_webhook_block_hard_fails(tmp_path: Path) -> None:
+    """D-04: cron channel carrying a webhook block → @model_validator → sys.exit(1)."""
+    from ach_agent.config import load_config
+
+    bad = {
+        **_VALID_WEBHOOK_BASE,
+        "channels": [
+            {
+                "name": "bad-cron",
+                "type": "cron",
+                "cron": {"schedule": "* * * * *", "timezone": "UTC"},
+                "webhook": {"auth": {"type": "hmac", "secretPath": "/etc/secret"}},
+            }
+        ],
+    }
+    config_file = tmp_path / "bad_cron_webhook.json"
+    config_file.write_text(json.dumps(bad), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+def test_tui_is_not_a_channel_type(tmp_path: Path) -> None:
+    """`tui` is the --tui launch modifier, NOT a channel type → unknown type hard-fails."""
+    from ach_agent.config import load_config
+
+    bad = {
+        **_VALID_WEBHOOK_BASE,
+        "channels": [{"name": "console", "type": "tui"}],
+    }
+    config_file = tmp_path / "bad_tui_type.json"
+    config_file.write_text(json.dumps(bad), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+def test_webhook_channel_missing_source_hard_fails(tmp_path: Path) -> None:
+    """D-04: webhook channel missing source field → @model_validator → sys.exit(1)."""
+    from ach_agent.config import load_config
+
+    bad = {
+        **_VALID_WEBHOOK_BASE,
+        "channels": [
+            {
+                "name": "no-source-webhook",
+                "type": "webhook",
+                "webhook": {"auth": {"type": "hmac", "secretPath": "/etc/secret"}},
+            }
+        ],
+    }
+    config_file = tmp_path / "bad_no_source.json"
+    config_file.write_text(json.dumps(bad), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+# ---------------------------------------------------------------------------
+# Negative: D-05 — capability.type:'direct' hard-fails
+# ---------------------------------------------------------------------------
+
+
+def test_capability_type_direct_hard_fails(tmp_path: Path) -> None:
+    """D-05: capability.type:'direct' → Literal['ach'] rejects → sys.exit(1)."""
+    from ach_agent.config import load_config
+
+    bad = {
+        **_VALID_WEBHOOK_BASE,
+        "capability": {
+            "type": "direct",
+            "ach": {"baseUrl": "https://ach.example.com", "environment": "test"},
+        },
+    }
+    config_file = tmp_path / "bad_direct.json"
+    config_file.write_text(json.dumps(bad), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+# ---------------------------------------------------------------------------
+# Negative: D-01 — schemaVersion != "1" hard-fails
+# ---------------------------------------------------------------------------
+
+
+def test_schema_version_wrong_hard_fails(tmp_path: Path) -> None:
+    """D-01: schemaVersion:'3' → Literal['1'] rejects → sys.exit(1)."""
+    from ach_agent.config import load_config
+
+    bad = {
+        **_VALID_WEBHOOK_BASE,
+        "schemaVersion": "3",
+    }
+    config_file = tmp_path / "bad_schema_version.json"
+    config_file.write_text(json.dumps(bad), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0

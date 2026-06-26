@@ -213,7 +213,7 @@ async def test_watchdog_kills_and_releases(
                 server=server,
                 session_id="ses_test",
                 prompt="test prompt",
-                response_actions_schema=[],
+                terminal_retries=1,
                 max_invocation_seconds=1,
                 on_kill=fake_slot_manager.on_kill,
             )
@@ -265,10 +265,52 @@ async def test_watchdog_metric(
                 server=server,
                 session_id="ses_test_metric",
                 prompt="metric test",
-                response_actions_schema=[],
+                terminal_retries=1,
                 max_invocation_seconds=1,
                 on_kill=fake_slot_manager.on_kill,
             )
 
     after = ENGINE_WATCHDOG_KILLS._value.get()
     assert after - before == 1.0, f"Expected counter increment of 1, got {after - before}"
+
+
+# ---------------------------------------------------------------------------
+# Terminal contract: run_invocation returns the single terminal object
+# ---------------------------------------------------------------------------
+
+
+async def test_run_invocation_returns_terminal_object() -> None:
+    """run_invocation extracts the single terminal object and returns it as a dict.
+
+    Uses a fake ManagedServer + mocked consume_sse_after_send so no real opencode
+    binary is needed. Asserts the returned dict has an "action" key.
+    """
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.lifecycle import ManagedServer, run_invocation
+
+    fake_server = ManagedServer(port=19882)
+    fake_client = MagicMock(spec=OpenCodeClient)
+    fake_server._client = fake_client
+    fake_process = MagicMock()
+    fake_process.returncode = None
+    fake_server._process = fake_process
+
+    canned_text = 'thinking...\n{"action":"none","text":"done","thoughts":"ok"}'
+
+    with patch(
+        "ach_agent.engine.lifecycle.consume_sse_after_send",
+        new_callable=AsyncMock,
+        return_value=canned_text,
+    ):
+        result = await run_invocation(
+            server=fake_server,
+            session_id="ses_test",
+            prompt="hello",
+            terminal_retries=1,
+            max_invocation_seconds=30,
+            on_kill=lambda: None,
+        )
+
+    assert isinstance(result, dict)
+    assert result["action"] == "none"
+    assert result["text"] == "done"

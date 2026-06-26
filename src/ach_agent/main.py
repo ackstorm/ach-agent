@@ -8,17 +8,15 @@ that may emit a log line):
   3. D-02 gate: reject unwired channel types (hard-fail, non-zero exit)
   4. Write PID file             <- Pitfall 11: single-replica guard
   5. Construct Router (wraps SanitizedEnv engine launch)
-  6a. Construct GitlabCommentAdapter (base_url from GITLAB_BASE_URL env)
   6b. Build engine_runner (CR-01: branches on event.reply_future for reply mode;
-      dispatch_actions for gitlab_comment mode)
+      relays the terminal text — egress is the agent's via external MCP tools)
   6c. Create FastAPI app via create_app(channels, router)
   7. asyncio.run(main()) — starts uvicorn + cron tasks on the SAME event loop
 
 RTR-06: router must not import from hermes_agent.*; engine injected as callable.
-D-04: gitlab_comment delivery is accept-and-process-async (202 + out-of-band lane).
 D-08: deliver.type: reply → event.reply_future resolved by engine_runner on the lane,
       awaited by the route (CR-01: exactly one engine execution per event).
-      deliver.type: gitlab_comment → dispatch_actions posts the MR note out-of-band.
+      async channels → engine_runner relays nothing; the agent already acted via MCP.
 """
 
 from __future__ import annotations
@@ -30,19 +28,21 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
+from urllib.parse import urlsplit
 
 import structlog
 import uvicorn
 
-from ach_agent.actions.gitlab_comment import GitlabCommentAdapter, dispatch_actions
 from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a2a_agent_card
 from ach_agent.channels.cron import CronScheduler
 from ach_agent.channels.message_event import MessageEvent
-from ach_agent.channels.slack import connect_slack_adapter, disconnect_slack_adapter
-from ach_agent.channels.telegram import connect_telegram_adapter, disconnect_telegram_adapter
+from ach_agent.channels.queue import QueueConsumer
+from ach_agent.channels.tui import run_one_shot, run_tui_console
 from ach_agent.config import load_config
-from ach_agent.config.schema import ResponseActionBlock
+from ach_agent.engine.context import fetch_context
+from ach_agent.engine.hydrate import hydrate, resolve_model
+from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
 from ach_agent.engine.sanitized_env import SanitizedEnv, configure_logging
 from ach_agent.http.app import create_app
 from ach_agent.router import Router
@@ -55,7 +55,15 @@ configure_logging()
 log = structlog.get_logger(__name__)
 
 # D-02: only channel types wired in this build
-WIRED_CHANNEL_TYPES: frozenset[str] = frozenset({"cron", "webhook", "slack", "telegram", "a2a"})
+WIRED_CHANNEL_TYPES: frozenset[str] = frozenset({"cron", "webhook", "a2a", "queue"})
+
+# Plan 2: model.type → ACH compat-endpoint path prefix fronted by the model proxy.
+# opencode's baseURL becomes "http://127.0.0.1:<port>/<prefix>".
+_MODEL_ENDPOINT_PREFIX: dict[str, str] = {
+    "openai": "v1",
+    "gemini": "gemini",
+    "anthropic": "anthropic",
+}
 
 CONFIG_PATH_ENV = "ACH_CONFIG_PATH"
 DEFAULT_CONFIG_PATH = "/etc/ach-agent/config.json"
@@ -157,6 +165,12 @@ def build_engine_prompt(event: MessageEvent) -> str:
     if scheduled_tick is not None:
         return str(scheduled_tick)
 
+    # Free-form text path: the --tui console (and queue/a2a) carry the prompt verbatim
+    # in payload['text']. In console mode the typed line IS the prompt.
+    text = event.payload.get("text")
+    if text:
+        return str(text)
+
     # Webhook MR path: build prompt from delivery_context + MR fields
     project_id = event.delivery_context.get("project_id", "")
     mr_iid = event.delivery_context.get("mr_iid", "")
@@ -183,33 +197,27 @@ def build_engine_prompt(event: MessageEvent) -> str:
 def _make_engine_runner(
     pool: Any,
     engine_cfg: Any,
-    delivery_adapter: GitlabCommentAdapter,
     max_invocation_seconds: int,
     memory_cfg: Any = None,
-    response_action_config_by_channel: dict[str, dict[str, ResponseActionBlock]] | None = None,
 ) -> Callable[..., Any]:
     """Build the engine_runner callable injected into the Router.
 
     The runner is called by Lane as: engine_runner(event, on_kill).
-    It acquires a ManagedServer from the pool, calls run_invocation,
-    then branches on event.reply_future (CR-01 / ACT-01):
+    It acquires a ManagedServer from the pool, calls run_invocation (which returns
+    the single terminal object), then relays the terminal `text`:
 
     - reply mode (event.reply_future is not None):
-        Extract the first 'reply' action's text and call set_result on the future.
-        The route is awaiting this future to return 200 + body to the client.
-        dispatch_actions is NOT called — no gitlab_comment is posted.
+        set_result(text) on the future. The route is awaiting this future to return
+        200 + body to the client.
         CRITICAL: the future MUST always be resolved (set_result or set_exception)
-        even on error, otherwise the route hangs indefinitely. A try/finally
-        around run_invocation guarantees resolution before any exception escapes.
+        even on error, otherwise the route hangs indefinitely. A try/except sets the
+        exception on error before re-raising.
 
-    - async/gitlab_comment mode (event.reply_future is None):
-        Route actions through dispatch_actions with event + per-channel
-        response_action_config (ACT-03: sideEffect consent gate enforced here;
-        reply delivered to GitlabCommentAdapter with event.delivery_context).
-        Delivery stays on the router lane — NOT create_task from route (Pitfall 4).
+    - on_complete mode (event.delivery_context['on_complete'] present, e.g. a2a):
+        call on_complete(session_key, text) — the channel wiring relays the reply.
 
-    D-08 / D-04: for gitlab_comment channels, delivery is out-of-band on the lane
-    (NOT via asyncio.create_task from the route handler — Pitfall 4).
+    - async mode (neither): nothing to deliver. Egress already happened via the
+        agent's external MCP tool calls — the harness never posts on the model's behalf.
 
     SanitizedEnv is used to build the subprocess launch env (SEC-01 /
     T-01-EK folded todo): the engine_cfg carries paths, never ek_ values.
@@ -218,11 +226,6 @@ def _make_engine_runner(
     When present, prepare_memory is called BEFORE pool.acquire so the opencode.json
     written for that server includes or excludes the memory MCP server (Pitfall 3).
     Fail-open: unreachable backend → exclude MCP server, log WARN + metric, run anyway.
-
-    response_action_config_by_channel (ACT-03/A3): boot-time mapping of channel name
-    → {action name → ResponseActionBlock}. Built once from cfg.channels[].response_actions
-    (config is immutable at runtime — A3). Per-event lookup: channel_name → per-action map.
-    DryRunSideEffectExecutor is the v1 default (D-01/D-02 — no real executor wired).
     """
     from ach_agent.engine.lifecycle import run_invocation
 
@@ -255,77 +258,60 @@ def _make_engine_runner(
 
         server = await pool.acquire(invocation_engine_cfg)
         try:
-            # CR-01: if this is a reply-mode event, we must resolve reply_future
-            # before any exception can escape to the lane catch (which would swallow it
-            # and leave the route waiting forever). Use try/finally for guaranteed resolution.
+            # CR-01: in reply mode the future MUST always be resolved (set_result or
+            # set_exception), otherwise the awaiting route hangs forever. The try/except
+            # sets the exception on error before re-raising.
             future = event.reply_future
-            result: dict[str, Any] = {}
             try:
                 # MEM-01: append ## Memory section (summaries or unavailable note) to prompt.
                 base_prompt = build_engine_prompt(event)
                 full_prompt = f"{base_prompt}\n\n{memory_prompt}" if memory_prompt else base_prompt
-                result = cast(
-                    dict[str, Any],
-                    await run_invocation(
-                        server=server,
-                        session_id=event.session_key,
-                        prompt=full_prompt,
-                        response_actions_schema=[],
-                        max_invocation_seconds=max_invocation_seconds,
-                        on_kill=on_kill,
-                    ),
+                # Free-form channels (--tui console) carry no terminal contract: return
+                # the raw reply, no terminal extraction/repair (delivery_context marker).
+                free_form = bool(event.delivery_context.get("free_form"))
+                obj = await run_invocation(
+                    server=server,
+                    session_id=event.session_key,
+                    prompt=full_prompt,
+                    terminal_retries=1,
+                    max_invocation_seconds=max_invocation_seconds,
+                    on_kill=on_kill,
+                    free_form=free_form,
                 )
             except Exception as exc:
                 if future is not None and not future.done():
                     future.set_exception(exc)
                 raise
-            finally:
-                # Ensure reply_future is always resolved on the happy path too
-                if future is not None and not future.done():
-                    # Extract first reply action's text (same as old sync_invoke logic)
-                    reply_text = ""
-                    for action in result.get("actions", []):
-                        if action.get("kind") == "reply":
-                            reply_text = str(action.get("input", {}).get("text", ""))
-                            break
-                    future.set_result(reply_text)
+
+            text = str(obj.get("text", ""))
 
             if future is not None:
-                # Reply mode: future is resolved above; do NOT call dispatch_actions
-                # (no gitlab_comment — CR-01). Return here so dispatch block is skipped.
+                # Reply mode: resolve the future the route is awaiting.
+                if not future.done():
+                    future.set_result(text)
                 return
 
             # A2A completion path (W9 — engine_runner does NOT import channels.a2a):
             # The on_complete callable is injected by the A2A wiring closure in main.py
             # into event.delivery_context['on_complete'] before handler.handle() is called.
-            # engine_runner just calls it if present — no channel-type-specific logic here.
             on_complete = event.delivery_context.get("on_complete")
-            if on_complete is not None:
-                # Extract reply text from the first 'reply' action
-                reply_text = ""
-                for action in result.get("actions", []):
-                    if action.get("kind") == "reply":
-                        reply_text = str(action.get("input", {}).get("text", ""))
-                        break
-                on_complete(event.session_key, reply_text)
+            on_fail = event.delivery_context.get("on_fail")
+            if on_complete is not None or on_fail is not None:
+                action = obj.get("action")
+                if action == "a2a_reply" and text.strip():
+                    if on_complete is not None:
+                        on_complete(event.session_key, text)
+                else:
+                    reason = (
+                        f"invalid terminal output (action={action!r}, "
+                        f"empty_text={not text.strip()})"
+                    )
+                    if on_fail is not None:
+                        on_fail(event.session_key, reason)
                 return
 
-            # Async/gitlab_comment mode (D-08 / ACT-02/03/04/D-05):
-            # Route actions through dispatch_actions with event + per-channel
-            # response_action_config for the consent gate (ACT-03):
-            #   sideEffect → consent gate (auto: always dry-run; consent: check
-            #     event.user_consented; denied → ConsentDenied caught in loop → audit).
-            #   reply → GitlabCommentAdapter.deliver(action, event.delivery_context).
-            # side_effect_executor left at default (DryRunSideEffectExecutor — D-01/D-02).
-            # Delivery stays on the router lane — NOT create_task from route (Pitfall 4).
-            _rac = response_action_config_by_channel or {}
-            await dispatch_actions(
-                actions=result.get("actions", []),
-                adapter=delivery_adapter,
-                context=event.delivery_context,
-                event=event,
-                response_action_config=_rac.get(event.channel_name, {}),
-            )
+            # Async mode: nothing to deliver. Egress already happened via the agent's
+            # external MCP tool calls — the harness never posts on the model's behalf.
         finally:
             # Return the engine server to the pool. Slot release is owned by the
             # lane: its `async with` blocks free the semaphores and its finally
@@ -345,10 +331,7 @@ async def _drain(
     uv_server: Any,
     cron_scheduler: CronScheduler | None,
     router: Any,
-    gitlab_adapter: GitlabCommentAdapter,
     dedup_store: Any,
-    slack_adapters: list[Any] | None = None,
-    telegram_adapters: list[Any] | None = None,
 ) -> None:
     """D-09/D-10/D-11: graceful drain sequence on SIGTERM.
 
@@ -358,7 +341,7 @@ async def _drain(
     4. Drain queued + in-flight lane work (D-11):
        Lane tasks blocked on empty queue.get() are cancelled via Lane.cancel()
        (RESEARCH Pitfall 4). In-flight runs bounded by maxInvocationSeconds watchdog (D-10).
-    5. Cleanup: close dedup store, close gitlab adapter, inc DRAIN_COMPLETED, sys.exit(0).
+    5. Cleanup: close dedup store, inc DRAIN_COMPLETED, sys.exit(0).
 
     No grace-deadline timer (D-10): maxInvocationSeconds watchdog + K8s SIGKILL backstop.
     Never logs ek_/GITLAB_TOKEN (T-03-07): log emits only path/count/reason fields.
@@ -377,20 +360,6 @@ async def _drain(
     # 3. Stop CronScheduler (D-06 intake-stop): cancels its single asyncio task cleanly.
     if cron_scheduler is not None:
         await cron_scheduler.stop()
-
-    # 3b. Disconnect Slack adapters — stop Socket Mode intake (D-06)
-    for adapter in slack_adapters or []:
-        try:
-            await disconnect_slack_adapter(adapter)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("drain: slack adapter disconnect error", error=str(exc))
-
-    # 3c. Disconnect Telegram adapters — stop PTB polling intake (D-06)
-    for adapter in telegram_adapters or []:
-        try:
-            await disconnect_telegram_adapter(adapter)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("drain: telegram adapter disconnect error", error=str(exc))
 
     # 4. Drain queued + in-flight lane work (D-11)
     # Step 4a: wait for in-flight + queued events to finish processing.
@@ -413,7 +382,7 @@ async def _drain(
             *(lane.wait_closed() for lane in lanes_snapshot), return_exceptions=True
         )
 
-    # 5. Cleanup: close dedup store, adapter, increment metric, return cleanly.
+    # 5. Cleanup: close dedup store, increment metric, return cleanly.
     # Do NOT sys.exit(0) here: this runs inside an asyncio task, so SystemExit
     # force-cancels the still-pending uvicorn serve task and dumps a CancelledError
     # traceback to stderr (even though the exit code is 0). Instead we return; main()
@@ -421,20 +390,28 @@ async def _drain(
     # process exits 0 naturally with no traceback.
     if hasattr(dedup_store, "close"):
         dedup_store.close()
-    await gitlab_adapter.close()
     DRAIN_COMPLETED.inc()
     log.info("drain: complete")
 
 
-async def main() -> None:
-    """Async entrypoint: load config, boot router, start channel adapters + uvicorn."""
+async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> None:
+    """Async entrypoint: load config, boot router, start channel adapters + uvicorn.
+
+    Two launch modifiers boot the engine/proxies/hydration but IGNORE the configured
+    channels (the typed/passed line IS the prompt — no terminal contract):
+      - tui_mode (`--tui`): run an interactive console REPL (see run_tui_console).
+      - one_shot_prompt (`--prompt TEXT`): run a single prompt non-interactively, print
+        the reply, and exit (see run_one_shot). Takes precedence over tui_mode.
+    """
+    console_mode = tui_mode or one_shot_prompt is not None
     config_path = os.environ.get(CONFIG_PATH_ENV, DEFAULT_CONFIG_PATH)
 
     # Step 2: load config (hard-fail on schema mismatch — CFG-02)
     cfg = load_config(config_path)
 
-    # Step 3: D-02 gate — reject unwired channel types before serving
-    for channel in cfg.channels:
+    # Step 3: D-02 gate — reject unwired channel types before serving.
+    # Skipped under --tui/--prompt: configured channels are ignored in console mode.
+    for channel in cfg.channels if not console_mode else []:
         if channel.type not in WIRED_CHANNEL_TYPES:
             log.error(
                 "channel type configured but not supported in this build — exiting",
@@ -447,49 +424,97 @@ async def main() -> None:
     # Step 4: PID file (Pitfall 11 — tolerate non-writable in dev)
     _write_pid_file(PID_FILE)
 
-    # Step 5: build delivery adapter and engine pool
-    # 6a. GitlabCommentAdapter — base_url from GITLAB_BASE_URL env (D-12 deviation).
-    # Falls back to https://gitlab.com; GITLAB_TOKEN is read at deliver() call time,
-    # never stored (SEC-02 spirit). For reply-mode channels this adapter is unused;
-    # delivery returns synchronously on the held connection instead.
-    gitlab_base_url = os.environ.get("GITLAB_BASE_URL", "https://gitlab.com")
-    gitlab_adapter = GitlabCommentAdapter(base_url=gitlab_base_url)
+    # Plan 2 (CONTRACT §6.10): self-hydrate from ACH, then front the model + MCP traffic
+    # via localhost reverse-proxies that inject the ek_. opencode points ONLY at localhost
+    # and never sees the ek_ or the real ACH URL.
+    #
+    # The ek_ (ACH_TOKEN) is read here solely to pass to hydration + the proxies; it is
+    # NEVER logged and NEVER written to opencode.json (the proxies hold it in a closure).
+    # When ACH_TOKEN is unset (local dev with a hand-written config + no ACH), hydration is
+    # skipped and opencode.json falls back to {env:...} refs — the harness stays runnable.
+    ek = os.environ.get("ACH_TOKEN")
+    model_base_url: str = ""
+    mcp_local_urls: dict[str, str] = {}
+    mcp_proxy: McpProxy | None = None
+    if ek:
+        manifest = await hydrate(cfg.capability.ach.base_url, ek)
+        # hard-fail (sys.exit 1) if model absent; returns the entry (with its real endpoint).
+        model_entry = resolve_model(manifest, cfg.model.name)
+        await fetch_context(manifest.context, ek, Path(cfg.persistence.mount_path))
+        mcp_proxy = McpProxy()
+        # NOTE: CONTRACT_v3 capability.filter.exclude only carries `tools` (opencode-side,
+        # deferred to Plan 3/4) — there is no per-MCP-server exclude in the schema, so all
+        # hydrated servers are fronted.
+        mcp_local_urls = await mcp_proxy.start(manifest.mcp_servers, ek, exclude=set())
+        model_proxy_base = await start_model_proxy(cfg.capability.ach.base_url, ek)
+        # Use the hydrated model's REAL endpoint path (ACH may serve a gemini.* model at
+        # /v1, not /gemini). Fall back to the type→prefix map only when the hydrated set is
+        # empty (local dev) or carries no endpoint.
+        prefix = _MODEL_ENDPOINT_PREFIX[cfg.model.type]
+        if model_entry is not None and model_entry.endpoint:
+            endpoint_path = urlsplit(model_entry.endpoint).path.strip("/")
+            if endpoint_path:
+                prefix = endpoint_path
+        model_base_url = f"{model_proxy_base}/{prefix}"
+        log.info(
+            "hydrated + localhost proxies started",
+            environment=manifest.environment,
+            model_count=len(manifest.models),
+            mcp_count=len(mcp_local_urls),
+        )
 
+        # A2A egress (Plan 3): expose peer agents as harness-hosted MCP tools so
+        # opencode can call them. The ek_ stays in the harness (injected as the
+        # peer auth header by A2AAgentClient). RTR-06: a2a_egress imports a2a-sdk
+        # only inside its functions, and we import the builder lazily here so the
+        # no-a2a-agents path (all current tests) imports nothing new and is a no-op.
+        if manifest.a2a_agents:
+            from ach_agent.engine.a2a_egress import (
+                build_a2a_mcp_server,
+                build_a2a_tools,
+            )
+
+            a2a_tools = build_a2a_tools(manifest.a2a_agents, ek=ek)
+            # Plan 3/4 follow-up: host build_a2a_mcp_server(a2a_tools) on a
+            # localhost port and add it to the opencode.json mcp block so opencode
+            # discovers these tools. The server is built here (validates wiring)
+            # but NOT started — no listener is opened (VERIFICATION DEBT).
+            _a2a_egress_server = build_a2a_mcp_server(a2a_tools)
+            log.info(
+                "a2a egress tools built (server not yet hosted — Plan 3/4)",
+                agent_count=len(manifest.a2a_agents),
+                tool_count=len(a2a_tools),
+            )
+
+    # Step 5: build the engine pool. Egress is the agent's via external MCP tools —
+    # the harness has no delivery adapter (it never posts on the model's behalf).
     from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.engine.pool import EnginePool
 
     engine_cfg = EngineConfig(
-        binary_path=cfg.engine.binary_path,
-        work_dir=cfg.engine.work_dir,
-        session_dir=cfg.engine.session_dir,
-        model=cfg.model.default,
-        provider=cfg.model.provider,
-        startup_timeout_seconds=cfg.engine.startup_timeout_seconds,
-        shared_enabled=cfg.engine.shared.enabled,
-        shared_ttl_seconds=cfg.engine.shared.ttl_seconds,
+        work_dir=cfg.work_dir,
+        session_dir=f"{cfg.persistence.mount_path}/opencode/sessions",
+        provider=cfg.model.type,
+        model=cfg.model.name,
+        params=cfg.model.params,
+        # prompt.base = the inline agent persona; written to opencode's append-mode
+        # `instructions` (layered on ACH-hydrated skills/prompts). Empty when absent.
+        system_prompt=cfg.prompt.base if cfg.prompt else "",
+        startup_timeout_seconds=cfg.startup_timeout_seconds,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
+        shared_ttl_seconds=0,
+        model_base_url=model_base_url,
+        mcp_local_urls=mcp_local_urls,
     )
     pool = EnginePool()
 
-    # ACT-03/A3: build boot-time response_action_config_by_channel mapping.
-    # Config is immutable at runtime (A3) — safe to build once here.
-    # Maps: channel_name → {action_name → ResponseActionBlock}
-    # Used by dispatch_actions consent gate for per-event lookup (Open Question 1).
-    response_action_config_by_channel: dict[str, dict[str, ResponseActionBlock]] = {
-        channel.name: {block.name: block for block in channel.response_actions}
-        for channel in cfg.channels
-    }
-
-    # 6b. Build engine_runner wired to GitlabCommentAdapter (gitlab_comment path).
-    # MEM-01/D-02: pass memory_cfg so engine_runner probes before pool.acquire (Pitfall 3).
-    # ACT-03: pass response_action_config_by_channel for sideEffect consent gate.
+    # 6b. Build engine_runner. MEM-01/D-02: pass memory_cfg so engine_runner probes
+    # before pool.acquire (Pitfall 3).
     engine_runner = _make_engine_runner(
         pool=pool,
         engine_cfg=engine_cfg,
-        delivery_adapter=gitlab_adapter,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
         memory_cfg=cfg.memory,
-        response_action_config_by_channel=response_action_config_by_channel,
     )
 
     # Step 6 (cont.): construct Router with all limits from config (RTR-03/04)
@@ -504,6 +529,28 @@ async def main() -> None:
         delivery_adapter=None,
         max_invocation_seconds=float(cfg.limits.max_invocation_seconds),
     )
+
+    # --tui / --prompt launch modifiers: ignore the configured channels and drive the
+    # engine directly. The engine + proxies + hydration are already wired above; the
+    # first prompt warms the engine via the router→pool path (no HTTP A′ gate involved).
+    if console_mode:
+        if one_shot_prompt is not None:
+            log.info("ach-agent: --prompt one-shot mode (configured channels ignored)")
+        else:
+            log.info("ach-agent: --tui console mode (configured channels ignored)")
+        try:
+            if one_shot_prompt is not None:
+                await run_one_shot(router, one_shot_prompt)
+            else:
+                await run_tui_console(router)
+        finally:
+            await stop_model_proxies()
+            if mcp_proxy is not None:
+                await mcp_proxy.stop()
+            if hasattr(dedup_store, "close"):
+                dedup_store.close()
+        log.info("ach-agent: session ended")
+        return
 
     # Collect webhook channels to wire; build FastAPI app if any exist
     webhook_channels = [ch for ch in cfg.channels if ch.type == "webhook"]
@@ -534,19 +581,31 @@ async def main() -> None:
 
         _on_complete = _make_on_complete(bridge)
 
-        # Wrap the router to inject on_complete into delivery_context (W9 pattern).
-        class _A2AHandler:
-            """Handler wrapper that injects on_complete into delivery_context."""
+        # on_fail closure mirrors on_complete: emits a FAILED event when the terminal
+        # output is unusable (action != a2a_reply, or empty reply text).
+        def _make_on_fail(b: A2AAgentExecutorBridge) -> Any:
+            def on_fail(session_key: str, reason: str) -> None:
+                b.signal_failure(session_key, reason)
 
-            def __init__(self, rtr: Any, fn: Any) -> None:
+            return on_fail
+
+        _on_fail = _make_on_fail(bridge)
+
+        # Wrap the router to inject on_complete + on_fail into delivery_context (W9 pattern).
+        class _A2AHandler:
+            """Handler wrapper that injects on_complete/on_fail into delivery_context."""
+
+            def __init__(self, rtr: Any, fn: Any, fn_fail: Any) -> None:
                 self._rtr = rtr
                 self._fn = fn
+                self._fn_fail = fn_fail
 
             async def handle(self, event: MessageEvent) -> Any:
                 event.delivery_context["on_complete"] = self._fn
+                event.delivery_context["on_fail"] = self._fn_fail
                 return await self._rtr.handle(event)
 
-        bridge._handler = _A2AHandler(router, _on_complete)
+        bridge._handler = _A2AHandler(router, _on_complete, _on_fail)
 
         # Build the A2A AgentCard from channel config (minimal — receiver-only v1, spec §14.6).
         # make_a2a_agent_card keeps a2a.* imports inside channels/a2a.py (RTR-06 fence).
@@ -574,8 +633,6 @@ async def main() -> None:
     # Step 7: wire channel adapters (D-08: one CronScheduler for ALL cron channels, SC#3)
     seen_channel_names: set[str] = set()
     tasks: list[asyncio.Task[None]] = []
-    slack_adapters: list[Any] = []  # tracked for drain disconnection (D-06)
-    telegram_adapters: list[Any] = []  # tracked for drain disconnection (D-06)
     has_webhook = False
     uv_server: Any = None  # captured below if webhook channels exist
 
@@ -592,6 +649,16 @@ async def main() -> None:
             channel_names=[ch.name for ch in cron_channels],
         )
 
+    # Queue channels (redis Streams, ackMode:onComplete): one QueueConsumer each.
+    # Each consumer owns a single asyncio consume task; stopped in the drain branch.
+    queue_channels = [ch for ch in cfg.channels if ch.type == "queue"]
+    queue_consumers: list[QueueConsumer] = []
+    for channel in queue_channels:
+        consumer = QueueConsumer(channel, handler=router, pool=pool)
+        await consumer.start()
+        queue_consumers.append(consumer)
+        log.info("queue consumer started", channel_name=channel.name, stream=channel.queue.key)  # type: ignore[union-attr]
+
     for channel in cfg.channels:
         if channel.name in seen_channel_names:
             log.error(
@@ -604,6 +671,9 @@ async def main() -> None:
         if channel.type == "cron":
             # Already handled above by CronScheduler (D-08/SC#3) — skip per-channel task.
             pass
+        elif channel.type == "queue":
+            # Already handled above by its QueueConsumer — skip per-channel task.
+            log.info("queue channel registered", channel_name=channel.name)
         elif channel.type == "webhook":
             # Webhook channels are served by uvicorn via the FastAPI app (started below).
             # Route is already registered in create_app() for all webhook_channels.
@@ -612,17 +682,6 @@ async def main() -> None:
                 "webhook channel registered",
                 channel_name=channel.name,
             )
-        elif channel.type == "slack":
-            # Connect Hermes SlackAdapter and register shim (D-04/D-06).
-            # connect() starts Socket Mode background task internally — non-blocking.
-            adapter = await connect_slack_adapter(channel, router, pool=pool)
-            slack_adapters.append(adapter)
-            log.info("slack channel connected", channel_name=channel.name)
-        elif channel.type == "telegram":
-            # Connect Hermes TelegramAdapter and register shim (D-04/D-06).
-            # connect() starts PTB polling background task internally — non-blocking.
-            adapter = await connect_telegram_adapter(channel, router, pool=pool)
-            telegram_adapters.append(adapter)
         elif channel.type == "a2a":
             # A2A channel: bridge + sub-app already built above and mounted in create_app.
             # uvicorn must be started to serve A2A HTTP requests (topology A, T-04-17).
@@ -673,8 +732,8 @@ async def main() -> None:
             return_when=asyncio.FIRST_COMPLETED,
         )
     else:
-        # CR-03: no uvicorn task (Slack/Telegram/cron-only config) — still wait for SIGTERM.
-        # Without this, the event loop exits immediately, orphaning Hermes background tasks.
+        # CR-03: no uvicorn task (cron-only config) — still wait for SIGTERM.
+        # Without this, the event loop exits immediately, orphaning background tasks.
         await shutdown_event.wait()
 
     if shutdown_event.is_set():
@@ -685,11 +744,16 @@ async def main() -> None:
             uv_server=uv_server,
             cron_scheduler=cron_scheduler,
             router=router,
-            gitlab_adapter=gitlab_adapter,
             dedup_store=dedup_store,
-            slack_adapters=slack_adapters,
-            telegram_adapters=telegram_adapters,
         )
+        # Stop queue consumers (cancel their consume tasks; close clients we created).
+        # Done after _drain so in-flight lane work routed from the queue can complete.
+        for consumer in queue_consumers:
+            await consumer.stop()
+        # Plan 2: tear down the localhost proxies (closes their aiohttp runners/sessions).
+        await stop_model_proxies()
+        if mcp_proxy is not None:
+            await mcp_proxy.stop()
         if tasks:
             # uvicorn's serve() task returns on its own once should_exit=True; await it
             # so its lifespan shutdown completes before asyncio.run tears the loop down.
@@ -699,9 +763,29 @@ async def main() -> None:
         log.info("ach-agent shutdown complete")
     else:
         # Normal termination (all tasks completed without SIGTERM — rare in prod)
-        await gitlab_adapter.close()
         log.info("ach-agent shutdown complete")
 
 
+def _parse_cli(argv: list[str]) -> tuple[bool, str | None]:
+    """Parse launch modifiers from argv.
+
+    `--tui` → interactive console REPL. `--prompt TEXT` (or `--prompt=TEXT`) → single
+    non-interactive prompt then exit. Both ignore the configured channels; `--prompt`
+    takes precedence when both are present.
+    """
+    tui = "--tui" in argv
+    prompt: str | None = None
+    for i, arg in enumerate(argv):
+        if arg == "--prompt" and i + 1 < len(argv):
+            prompt = argv[i + 1]
+            break
+        if arg.startswith("--prompt="):
+            prompt = arg[len("--prompt=") :]
+            break
+    return tui, prompt
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    # `--tui` / `--prompt` launch modifiers: drive the engine directly, channels ignored.
+    _tui_mode, _one_shot = _parse_cli(sys.argv[1:])
+    asyncio.run(main(tui_mode=_tui_mode, one_shot_prompt=_one_shot))

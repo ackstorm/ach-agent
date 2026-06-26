@@ -20,9 +20,9 @@ def _make_webhook_cfg(secret_path: str, name: str = "test-channel") -> ChannelCo
         {
             "name": name,
             "type": "webhook",
+            "source": "gitlab",
             "webhook": {
-                "auth": {"type": "hmac", "secretPath": secret_path},
-                "deliver": {"type": "gitlab_comment"},
+                "auth": {"type": "gitlab_token", "secretPath": secret_path},
             },
         }
     )

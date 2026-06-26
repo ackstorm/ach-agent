@@ -131,7 +131,6 @@ async def test_engine_runner_reachable_branch() -> None:
     """Task 2 / MEM-01 / D-02: engine_runner passes EngineConfig with memory MCP server
     to pool.acquire when memory backend is reachable, and ## Memory summaries in prompt."""
     from ach_agent.main import _make_engine_runner, build_engine_prompt
-    from ach_agent.actions.gitlab_comment import GitlabCommentAdapter
     from ach_agent.config.schema import MemoryBlock
     from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.channels.message_event import MessageEvent
@@ -180,8 +179,6 @@ async def test_engine_runner_reachable_branch() -> None:
     )
     on_kill = lambda: None  # noqa: E731
 
-    delivery_adapter = GitlabCommentAdapter(base_url="http://gitlab.example.com")
-
     with (
         patch(
             "ach_agent.memory.adapter.prepare_memory",
@@ -192,7 +189,6 @@ async def test_engine_runner_reachable_branch() -> None:
         runner = _make_engine_runner(
             pool=fake_pool,
             engine_cfg=base_engine_cfg,
-            delivery_adapter=delivery_adapter,
             max_invocation_seconds=60,
             memory_cfg=memory_cfg,
         )
@@ -217,7 +213,6 @@ async def test_engine_runner_degraded_path() -> None:
     """Task 2 / MEM-02 / D-02: engine_runner excludes memory MCP server from pool.acquire
     when memory backend is unreachable, invocation still completes (no exception, no retry)."""
     from ach_agent.main import _make_engine_runner
-    from ach_agent.actions.gitlab_comment import GitlabCommentAdapter
     from ach_agent.config.schema import MemoryBlock
     from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.channels.message_event import MessageEvent
@@ -265,8 +260,6 @@ async def test_engine_runner_degraded_path() -> None:
     )
     on_kill = lambda: None  # noqa: E731
 
-    delivery_adapter = GitlabCommentAdapter(base_url="http://gitlab.example.com")
-
     # No exception must propagate (MEM-02 fail-open)
     with (
         patch(
@@ -278,7 +271,6 @@ async def test_engine_runner_degraded_path() -> None:
         runner = _make_engine_runner(
             pool=fake_pool,
             engine_cfg=base_engine_cfg,
-            delivery_adapter=delivery_adapter,
             max_invocation_seconds=60,
             memory_cfg=memory_cfg,
         )

@@ -24,14 +24,9 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 
 import structlog
-
-if TYPE_CHECKING:
-    # client/events imported lazily inside functions to avoid top-level dep;
-    # InvocationResult is type-only here (constructed via a lazy import in run_invocation).
-    from ach_agent.engine.validator import InvocationResult
 
 log = structlog.get_logger(__name__)
 
@@ -60,6 +55,7 @@ class EngineConfig:
     session_dir: str = "/var/lib/ach-agent/opencode/sessions"
     provider: str = "openai"
     model: str = "gpt-4o-mini"  # opencode validates model names; must be a known OpenAI model ID
+    params: dict[str, object] = field(default_factory=dict)  # model params (temperature, …)
     system_prompt: str = ""
     steps: int = 50
     startup_timeout_seconds: int = 30
@@ -70,6 +66,13 @@ class EngineConfig:
     # Written to opencode.json before subprocess launch so the model either has memory tools
     # or does not — no runtime tool-registration API exists.
     mcp_servers: list[str] = field(default_factory=list)
+    # Plan 2 (localhost-proxy / ek-hygiene): when set, opencode.json points the model at
+    # this localhost model-proxy baseURL (no ek_; the proxy injects it) instead of
+    # {env:ACH_BASE_URL}. Empty → legacy {env:...} behavior (local dev without ACH).
+    model_base_url: str = ""
+    # {server_id: "http://127.0.0.1:<port>/mcp/<id>"} from McpProxy — proxied external MCP
+    # servers written into opencode.json's mcp block alongside any memory server.
+    mcp_local_urls: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -84,6 +87,10 @@ class ManagedServer:
     # process and client are None until launch() populates them
     _process: object | None = field(default=None, repr=False)
     _client: object | None = field(default=None, repr=False)
+    # logical session_key → opencode session id (ses_…). opencode requires a session
+    # created via POST /session before POST /session/{id}/message; we create one per
+    # logical key on first use and reuse it for conversational continuity.
+    _sessions: dict[str, str] = field(default_factory=dict, repr=False)
     # 50-line tail buffers for diagnostics (H-05)
     _stdout_tail: collections.deque[str] = field(
         default_factory=lambda: collections.deque(maxlen=_LOG_TAIL_SIZE), repr=False
@@ -149,21 +156,41 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_path.write_text(config.system_prompt or "", encoding="utf-8")
 
-    # {env:VAR} interpolation confirmed working in opencode v1.16.0 (RESEARCH Unknown 3)
-    # ACH_API_KEY value never assigned to a Python variable — only the reference string.
+    # Plan 2 (CONTRACT §6.10 ek-hygiene): when a localhost model-proxy baseURL is set,
+    # opencode points at 127.0.0.1 and the proxy injects the ek_ — so opencode.json carries
+    # NO ek_ and NO real ACH URL. apiKey is a dummy placeholder (the proxy ignores inbound
+    # auth and adds its own). When unset (local dev without ACH), fall back to the legacy
+    # {env:...} refs: the ACH_API_KEY value is never read into a Python variable — only the
+    # reference string is written; opencode dereferences it at runtime.
+    if config.model_base_url:
+        api_key: str = "local-proxy"  # placeholder; real ek_ injected by the localhost proxy
+        base_url = config.model_base_url
+    else:
+        api_key = "{env:ACH_API_KEY}"  # ek_ dereferenced at runtime only
+        base_url = "{env:ACH_BASE_URL}"  # Hub/mock endpoint
+
     oc_config: dict[str, object] = {
         "autoupdate": False,
         "permission": "allow",
         "share": "disabled",
         "logLevel": "WARN",
         "model": f"{config.provider}/{config.model}",
+        # opencode uses a "small model" for side tasks (session titles, summaries).
+        # It defaults to a hardcoded gpt-5-nano which 400s on ACH (not in the catalog),
+        # so pin it to the configured model (registered + working) to avoid the error.
+        "small_model": f"{config.provider}/{config.model}",
         "enabled_providers": [config.provider],
         "provider": {
             config.provider: {
                 "options": {
-                    "apiKey": "{env:ACH_API_KEY}",  # ek_ dereferenced at runtime only
-                    "baseURL": "{env:ACH_BASE_URL}",  # Hub/mock endpoint
-                }
+                    "apiKey": api_key,
+                    "baseURL": base_url,
+                    **config.params,
+                },
+                # Register the hydrated model id explicitly. ACH model ids
+                # (e.g. "gemini.gemini-flash-latest") are not in opencode's built-in
+                # provider catalog; without this opencode raises ProviderModelNotFoundError.
+                "models": {config.model: {}},
             }
         },
         "instructions": [str(prompt_path.resolve())],  # append-mode system prompt
@@ -175,17 +202,21 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
         },
     }
 
-    # D-02 / MEM-02: conditionally register memory MCP server ONLY when reachable.
-    # Written pre-launch so the model either has memory tools or does not — never
-    # receives a tool that can fail (harness-side enforcement of fail-open invariant).
-    # SEC (T-04-22): endpoint URL only — ek_ bearer is never written to config files.
-    if config.mcp_servers:
-        oc_config["mcp"] = {
-            "servers": {
-                f"memory-{i}": {"type": "streamable-http", "url": url}
-                for i, url in enumerate(config.mcp_servers)
-            }
-        }
+    # Register MCP servers in opencode.json pre-launch (no runtime tool-registration API).
+    # opencode 1.16 schema (verified live): `mcp.<id> = {type:"remote", url, enabled:true}`
+    # — NOT nested under a `servers` key, and the type is "remote" (not "streamable-http").
+    # Two sources, never colliding on key:
+    #   - memory server(s) from mcp_servers (MEM-02; present iff the backend was reachable)
+    #   - proxied external MCP servers from mcp_local_urls (Plan 2; localhost URLs only)
+    # SEC (T-04-22 / §6.10): only URLs are written — the ek_ bearer is never in config files.
+    mcp_block: dict[str, dict[str, object]] = {
+        f"memory-{i}": {"type": "remote", "url": url, "enabled": True}
+        for i, url in enumerate(config.mcp_servers)
+    }
+    for sid, url in config.mcp_local_urls.items():
+        mcp_block[sid] = {"type": "remote", "url": url, "enabled": True}
+    if mcp_block:
+        oc_config["mcp"] = mcp_block
     (config_dir / "opencode.json").write_text(json.dumps(oc_config, indent=2), encoding="utf-8")
     log.debug(
         "opencode.json written",
@@ -335,11 +366,12 @@ async def run_invocation(
     server: ManagedServer,
     session_id: str,
     prompt: str,
-    response_actions_schema: list[dict[str, object]],
+    terminal_retries: int,
     max_invocation_seconds: int,
     on_kill: Callable[[], None],
-) -> InvocationResult:
-    """Orchestrate: subscribe SSE → send prompt → consume → return InvocationResult.
+    free_form: bool = False,
+) -> dict[str, Any]:
+    """Orchestrate: subscribe SSE → send prompt → consume → return the terminal object.
 
     ENG-07 / D-02 / D-03: Wrapped in asyncio.timeout(max_invocation_seconds).
     On TimeoutError:
@@ -357,17 +389,27 @@ async def run_invocation(
     from ach_agent.engine.client import OpenCodeClient
     from ach_agent.engine.events import InvocationTimeout
     from ach_agent.engine.metrics import ENGINE_WATCHDOG_KILLS
-    from ach_agent.engine.validator import InvocationResult
 
     client = server._client
     if not isinstance(client, OpenCodeClient):
         raise RuntimeError("ManagedServer has no client")
 
+    # opencode requires a session created via POST /session before /session/{id}/message
+    # (sending to an arbitrary id → 500). Map the logical session_key → an opencode
+    # session id, created once per key and reused for conversational continuity.
+    oc_session_id = server._sessions.get(session_id)
+    if oc_session_id is None:
+        created = await client.create_session()
+        oc_session_id = str(created.get("id", ""))
+        if not oc_session_id:
+            raise RuntimeError(f"opencode create_session returned no id: {created!r}")
+        server._sessions[session_id] = oc_session_id
+
     try:
         async with asyncio.timeout(max_invocation_seconds):
             # Subscribe to SSE FIRST, then send the message.
             # This ensures we don't miss the session.idle event.
-            accumulated_text = await consume_sse_after_send(client, session_id, prompt)
+            accumulated_text = await consume_sse_after_send(client, oc_session_id, prompt)
     except TimeoutError:
         # D-03: must genuinely kill the subprocess
         log.warning(
@@ -390,45 +432,27 @@ async def run_invocation(
         text_length=len(accumulated_text),
     )
 
-    # ENG-05: extract actions from accumulated SSE text and validate + repair
-    from ach_agent.engine.validator import (
-        extract_actions,
-        repair_turn,
-        validate_actions,
-    )
+    # Free-form mode (--tui console): no terminal contract — return the raw reply text
+    # verbatim. The terminal-extraction + repair turn below is for the structured
+    # channels (a2a_reply / none); applying it to a console chat reply would fire a
+    # pointless extra model turn and could print the repair output instead of the reply.
+    if free_form:
+        return {"action": "none", "text": accumulated_text}
 
-    actions = extract_actions(accumulated_text)
-    if actions is None:
-        validation_errors = ['Could not extract {"actions":[...]} from model output']
-    else:
-        validation_errors = validate_actions(actions, response_actions_schema)
+    # Extract the single terminal object from accumulated SSE text. One backstop
+    # repair turn if absent — then fall back to a synthetic none-action carrying the
+    # raw text so the caller always receives a dict with an "action" key.
+    from ach_agent.engine.validator import extract_terminal
 
-    if validation_errors:
-        # Issue a repair turn via send_fn wrapping send_message + consume_sse_after_send
-        log.info(
-            "actions invalid — attempting repair turn",
-            session_id=session_id,
-            errors=validation_errors,
+    obj = extract_terminal(accumulated_text)
+    if obj is None and terminal_retries > 0:
+        repair = (
+            "Reply with ONLY a terminal JSON object: "
+            '{"action":"none","text":"..."} or {"action":"a2a_reply","text":"..."}.'
         )
-
-        async def repair_fn(repair_prompt: str) -> str:
-            return await consume_sse_after_send(client, session_id, repair_prompt)
-
-        actions = await repair_turn(
-            send_fn=repair_fn,
-            accumulated_text=accumulated_text,
-            response_actions_schema=response_actions_schema,
-            max_attempts=2,
-        )
-
-    if actions is None:
-        log.warning(
-            "run_invocation: actions extraction/validation failed after repair",
-            session_id=session_id,
-        )
-        actions = []
-
-    return InvocationResult(actions=actions)
+        accumulated_text = await consume_sse_after_send(client, oc_session_id, repair)
+        obj = extract_terminal(accumulated_text)
+    return obj if obj is not None else {"action": "none", "text": accumulated_text}
 
 
 async def consume_sse_after_send(

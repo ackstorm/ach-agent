@@ -69,6 +69,23 @@ conformance: ## Run CONTRACT §6 conformance suite (11 named invariants, D-10)
 _conformance:
 	uv run pytest tests/conformance/ -v
 
+##@ Maintenance (containerized)
+.PHONY: clean _clean
+clean: ## Prune stale uv cache + remove local caches (conservative)
+	$(call container_target,_clean)
+_clean:
+	uv cache prune
+	find $(APP_DIR) tests -type d -name __pycache__ -prune -exec rm -rf {} +
+	rm -rf .ruff_cache .mypy_cache .pytest_cache
+
+.PHONY: clean-all _clean-all
+clean-all: ## Wipe the entire uv cache + remove local caches
+	$(call container_target,_clean-all)
+_clean-all:
+	uv cache clean
+	find $(APP_DIR) tests -type d -name __pycache__ -prune -exec rm -rf {} +
+	rm -rf .ruff_cache .mypy_cache .pytest_cache
+
 ##@ Security (host docker — secret scanning)
 .PHONY: secrets
 secrets: ## gitleaks + trufflehog over the working tree

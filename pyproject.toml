@@ -28,9 +28,13 @@ dependencies = [
     "jsonschema>=4.26.0",
     "pydantic==2.13.4",
     "croniter>=6.0.0,<7",
-    "hermes-agent[messaging] @ git+https://github.com/NousResearch/hermes-agent@5378b941209d8f62a65455041658ce8ce8144cc9",
     "a2a-sdk>=1.1.0,<2",
     "mcp>=1.28.0,<2",
+    "httpx>=0.27.0",
+    "redis>=5,<6",
+    "fastapi==0.137.2",
+    "uvicorn[standard]==0.49.0",
+    "pyyaml>=6,<7",
 ]
 
 [project.urls]
@@ -45,6 +49,7 @@ dev = [
     "pytest-asyncio==1.4.0",
     "ruff==0.15.18",
     "mypy==2.1.0",
+    "types-pyyaml>=6,<7",
 ]
 
 [dependency-groups]
@@ -53,9 +58,7 @@ dev = [
     "pytest-asyncio==1.4.0",
     "ruff==0.15.18",
     "mypy==2.1.0",
-    "fastapi==0.137.2",
-    "uvicorn[standard]==0.49.0",
-    "httpx>=0.27.0",
+    "types-pyyaml>=6,<7",
     "mkdocs-material==9.5.49",
     "mike==2.1.3",
 ]

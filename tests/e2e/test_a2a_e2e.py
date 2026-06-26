@@ -30,7 +30,6 @@ from ach_agent.router.dedup import InMemoryDedupStore
 from ach_agent.router.router import RouterAdmitResult
 from tests.e2e.conftest import MockEventQueue
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -99,7 +98,7 @@ def _build_bridge_with_router(
     router: Router,
     pool: Any,
     channel_cfg: Any,
-) -> "tuple[A2AAgentExecutorBridge, Any]":
+) -> tuple[A2AAgentExecutorBridge, Any]:
     """Build a bridge + handler wrapper that injects on_complete into delivery_context.
 
     Returns (bridge, handler_wrapper).
@@ -165,10 +164,7 @@ async def test_a2a_task_routes_to_engine_and_enqueues_completed_event(
         await bridge.execute(ctx, eq)
 
     # Assert: completed event was enqueued
-    from a2a.types.a2a_pb2 import TASK_STATE_COMPLETED
-    completed_events = [
-        e for e in eq.events if e.status.state == TASK_STATE_COMPLETED
-    ]
+    completed_events = [e for e in eq.events if e.status.state == TASK_STATE_COMPLETED]
     assert len(completed_events) == 1, f"Expected completed event, got: {eq.events}"
     assert _REPLY_TEXT in completed_events[0].status.message.parts[0].text
 

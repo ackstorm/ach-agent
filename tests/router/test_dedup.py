@@ -12,8 +12,6 @@ def test_idempotency_all_channels() -> None:
     """IDM-01: per-channel idempotency derivation returns expected key."""
     from ach_agent.router.dedup import (
         derive_cron_idempotency_key,
-        derive_slack_idempotency_key,
-        derive_telegram_idempotency_key,
         derive_webhook_idempotency_key,
     )
 
@@ -23,13 +21,6 @@ def test_idempotency_all_channels() -> None:
     assert derive_webhook_idempotency_key({"svix-id": "svix-123"}) == "svix-123"
     assert derive_webhook_idempotency_key({"X-Request-ID": "req-456"}) == "req-456"
     assert derive_webhook_idempotency_key({"Idempotency-Key": "idem-789"}) == "idem-789"
-
-    # Slack: ts field
-    assert derive_slack_idempotency_key({"ts": "1234567890.123456"}) == "1234567890.123456"
-
-    # Telegram: update_id
-    assert derive_telegram_idempotency_key({"update_id": 99}) == "99"
-    assert derive_telegram_idempotency_key({"update_id": 0}) == "0"
 
     # Cron: {channel}:{scheduled_tick_iso} using the PASSED datetime (D-09)
     tick = datetime(2026, 6, 19, 10, 30, 0, tzinfo=UTC)

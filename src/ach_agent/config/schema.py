@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Full CONTRACT §2 Pydantic v2 config schema + hard-fail loader (CFG-01/02/03, D-01).
+"""Full CONTRACT_v3 §2 Pydantic v2 config schema + hard-fail loader (CFG-01/02/03, D-01).
 
 Models every block from the rendered runtime config. All blocks carry
 ConfigDict(extra='forbid') so unknown keys cause a hard-fail at load time.
@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 log = structlog.get_logger(__name__)
 
@@ -33,39 +33,14 @@ class AgentBlock(BaseModel):
     generation: int = 0
 
 
-class SharedEngineBlock(BaseModel):
-    """CONTRACT §2 engine.shared sub-block."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    ttl_seconds: int = Field(default=0, alias="ttlSeconds")
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-
-class EngineBlock(BaseModel):
-    """CONTRACT §2 engine block."""
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    type: str = "opencode"
-    binary_path: str = Field(default="opencode", alias="binaryPath")
-    work_dir: str = Field(default="/workspace", alias="workDir")
-    session_dir: str = Field(default="/var/lib/ach-agent/opencode/sessions", alias="sessionDir")
-    thinking_level: str = Field(default="medium", alias="thinkingLevel")
-    steps: int = 50
-    startup_timeout_seconds: int = Field(default=30, alias="startupTimeoutSeconds")
-    shared: SharedEngineBlock = Field(default_factory=SharedEngineBlock)
-
-
 class ModelBlock(BaseModel):
-    """CONTRACT §2 model block."""
+    """CONTRACT_v3 §2 model block: provider-selecting name + open params."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    default: str = "gpt-4o-mini"
-    provider: str = "openai"
+    name: str  # e.g. "openai.gpt-5"; passed verbatim
+    type: Literal["openai", "gemini", "anthropic"]  # selects the ACH compat endpoint
+    params: dict[str, Any] = Field(default_factory=dict)  # open, unvalidated, splatted to client
 
 
 class LimitsBlock(BaseModel):
@@ -77,6 +52,8 @@ class LimitsBlock(BaseModel):
     max_invocation_seconds: int = Field(default=1800, alias="maxInvocationSeconds")
     max_queued_total: int = Field(default=100, alias="maxQueuedTotal")
     idempotency_window_seconds: int = Field(default=3600, alias="idempotencyWindowSeconds")
+    max_steps: int = Field(default=50, alias="maxSteps")
+    terminal_output_retries: int = Field(default=1, alias="terminalOutputRetries")
 
 
 class PersistenceBlock(BaseModel):
@@ -118,6 +95,46 @@ class MemoryBlock(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Capability blocks (CONTRACT_v3 §2, D-05: ach-only)
+# ---------------------------------------------------------------------------
+
+
+class CapabilityAchBlock(BaseModel):
+    """CONTRACT_v3 §2 capability.ach sub-block."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    base_url: str = Field(alias="baseUrl")
+    environment: str
+
+
+class CapabilityFilterExcludeBlock(BaseModel):
+    """CONTRACT_v3 §2 capability.filter.exclude sub-block."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tools: list[str] = Field(default_factory=list)
+
+
+class CapabilityFilterBlock(BaseModel):
+    """CONTRACT_v3 §2 capability.filter sub-block."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    exclude: CapabilityFilterExcludeBlock = Field(default_factory=CapabilityFilterExcludeBlock)
+
+
+class CapabilityBlock(BaseModel):
+    """CONTRACT_v3 §2 capability block (D-05: ach-only; direct → hard-fail)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["ach"] = "ach"
+    ach: CapabilityAchBlock
+    filter: CapabilityFilterBlock = Field(default_factory=CapabilityFilterBlock)
+
+
+# ---------------------------------------------------------------------------
 # Channel sub-blocks
 # ---------------------------------------------------------------------------
 
@@ -132,41 +149,21 @@ class SessionBlock(BaseModel):
     ttl_seconds: int = Field(default=86400, alias="ttlSeconds")
 
 
-class ResponseBlock(BaseModel):
-    """CONTRACT §2 channel response block."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    mode: str = "actionRequired"
-    fallback: str = "fail"
-
-
 class WebhookAuthBlock(BaseModel):
-    """CONTRACT §2 webhook.auth sub-block."""
+    """CONTRACT_v3 §2 webhook.auth sub-block."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    type: str = "hmac"
+    type: Literal["gitlab_token", "hmac", "none"] = "hmac"
     secret_path: str = Field(default="", alias="secretPath")
 
 
-class WebhookDeliverBlock(BaseModel):
-    """CONTRACT §2 webhook.deliver sub-block."""
+class WebhookBlock(BaseModel):
+    """CONTRACT_v3 §2 webhook channel sub-block (deliver/deliverOnly removed)."""
 
     model_config = ConfigDict(extra="forbid")
 
-    type: str
-    config: dict[str, Any] = Field(default_factory=dict)
-
-
-class WebhookBlock(BaseModel):
-    """CONTRACT §2 webhook channel sub-block."""
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
     auth: WebhookAuthBlock = Field(default_factory=WebhookAuthBlock)
-    deliver: WebhookDeliverBlock | None = None
-    deliver_only: bool = Field(default=False, alias="deliverOnly")
 
 
 class A2AAuthBlock(BaseModel):
@@ -179,45 +176,46 @@ class A2AAuthBlock(BaseModel):
 
 
 class A2ABlock(BaseModel):
-    """CONTRACT §2 a2a channel sub-block (CHN-05)."""
+    """CONTRACT_v3 §2 a2a channel sub-block (CHN-05; async-only in v1)."""
 
     model_config = ConfigDict(extra="forbid")
 
+    mode: Literal["async"] = "async"
     auth: A2AAuthBlock = Field(default_factory=A2AAuthBlock)
 
 
 class CronBlock(BaseModel):
-    """CONTRACT §2 cron channel sub-block (CHN-02)."""
+    """CONTRACT_v3 §2 cron channel sub-block (CHN-02)."""
 
     model_config = ConfigDict(extra="forbid")
 
     schedule: str  # cron expression, e.g. "* * * * *"
+    timezone: str = "UTC"  # IANA tz, e.g. "Europe/Madrid"
 
 
-class ResponseActionBlock(BaseModel):
-    """CONTRACT §2 responseActions entry."""
+class QueueBlock(BaseModel):
+    """CONTRACT_v3 §2 queue channel sub-block (redis-only in v1, §7)."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    name: str
-    kind: str
-    input_schema: dict[str, Any] = Field(default_factory=dict, alias="inputSchema")
-    # D-04: Phase 5 frozen-seam revision — consentTier is OPTIONAL, default "consent" (safe).
-    # Backward-compatible: existing configs without consentTier resolve to "consent".
-    # Absent → same as "consent". extra="forbid" still holds.
-    consent_tier: Literal["auto", "consent"] = Field(default="consent", alias="consentTier")
+    type: Literal["redis"] = "redis"
+    key: str
+    ack_mode: Literal["onComplete"] = Field(default="onComplete", alias="ackMode")
 
 
 # ---------------------------------------------------------------------------
 # ChannelType + ChannelConfig
 # ---------------------------------------------------------------------------
 
-# D-02: unrecognized channel type → ValidationError → hard-fail
-ChannelType = Literal["webhook", "slack", "telegram", "a2a", "cron"]
+# D-02/D-06: unrecognized channel type → ValidationError → hard-fail
+# slack/telegram removed; queue added per CONTRACT_v3 §2.
+# NOTE: `tui` is NOT a channel — it is the `--tui` launch modifier (console mode that
+# ignores configured channels). See main.py. So it is intentionally absent here.
+ChannelType = Literal["webhook", "cron", "queue", "a2a"]
 
 
 class ChannelConfig(BaseModel):
-    """CONTRACT §2 channel entry. extra=forbid catches unknown channel-level keys."""
+    """CONTRACT_v3 §2 channel entry. extra=forbid catches unknown channel-level keys."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -226,14 +224,56 @@ class ChannelConfig(BaseModel):
     concurrency: int = 1
     expire: int = 120
     session: SessionBlock = Field(default_factory=SessionBlock)
-    response: ResponseBlock = Field(default_factory=ResponseBlock)
     prompt: str | None = None
+    source: Literal["gitlab", "github", "generic"] | None = None
     webhook: WebhookBlock | None = None
     cron: CronBlock | None = None
+    queue: QueueBlock | None = None
     a2a: A2ABlock | None = None
-    response_actions: list[ResponseActionBlock] = Field(
-        default_factory=list, alias="responseActions"
-    )
+
+    @model_validator(mode="after")
+    def check_type_block_coherence(self) -> ChannelConfig:
+        """D-04: enforce channel type↔sub-block coherence at config load time.
+
+        Each channel type requires its sub-block and forbids foreign sub-blocks.
+        Raises ValueError (wrapped by Pydantic into ValidationError → sys.exit(1)).
+        """
+        t = self.type
+        if t == "webhook":
+            if self.webhook is None:
+                raise ValueError(
+                    f"channel '{self.name}': type='webhook' requires a 'webhook' block"
+                )
+            if self.source is None:
+                raise ValueError(f"channel '{self.name}': type='webhook' requires 'source' field")
+            for foreign in ("cron", "queue", "a2a"):
+                if getattr(self, foreign) is not None:
+                    raise ValueError(
+                        f"channel '{self.name}': type='webhook' forbids '{foreign}' block"
+                    )
+        elif t == "cron":
+            if self.cron is None:
+                raise ValueError(f"channel '{self.name}': type='cron' requires a 'cron' block")
+            for foreign in ("webhook", "queue", "a2a"):
+                if getattr(self, foreign) is not None:
+                    raise ValueError(
+                        f"channel '{self.name}': type='cron' forbids '{foreign}' block"
+                    )
+        elif t == "queue":
+            if self.queue is None:
+                raise ValueError(f"channel '{self.name}': type='queue' requires a 'queue' block")
+            for foreign in ("webhook", "cron", "a2a"):
+                if getattr(self, foreign) is not None:
+                    raise ValueError(
+                        f"channel '{self.name}': type='queue' forbids '{foreign}' block"
+                    )
+        elif t == "a2a":
+            if self.a2a is None:
+                raise ValueError(f"channel '{self.name}': type='a2a' requires an 'a2a' block")
+            for foreign in ("webhook", "cron", "queue"):
+                if getattr(self, foreign) is not None:
+                    raise ValueError(f"channel '{self.name}': type='a2a' forbids '{foreign}' block")
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +282,7 @@ class ChannelConfig(BaseModel):
 
 
 class AgentConfig(BaseModel):
-    """Full CONTRACT §2 rendered runtime config (D-01: modeled in one pass).
+    """Full CONTRACT_v3 §2 rendered runtime config (D-01: modeled in one pass).
 
     ConfigDict(extra='forbid', strict=True) ensures unknown top-level keys
     cause a ValidationError that hard-fails the process (CFG-02).
@@ -252,15 +292,17 @@ class AgentConfig(BaseModel):
 
     schema_version: Literal["1"] = Field(alias="schemaVersion")
     agent: AgentBlock
-    engine: EngineBlock
     model: ModelBlock
-    limits: LimitsBlock = Field(default_factory=LimitsBlock)
-    channels: list[ChannelConfig] = Field(default_factory=list)
+    work_dir: str = Field(default="/workspace", alias="workDir")
+    startup_timeout_seconds: int = Field(default=30, alias="startupTimeoutSeconds")
     governed: bool = False
+    capability: CapabilityBlock
     prompt: PromptBlock | None = None
     memory: MemoryBlock | None = None
+    limits: LimitsBlock = Field(default_factory=LimitsBlock)
     persistence: PersistenceBlock = Field(default_factory=PersistenceBlock)
     health: HealthBlock = Field(default_factory=HealthBlock)
+    channels: list[ChannelConfig] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -268,18 +310,42 @@ class AgentConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _load_yaml(raw: str) -> Any:
+    """Parse a YAML-authored contract into a plain dict (local dev convenience).
+
+    Production always renders the contract to JSON via the operator; YAML is only a
+    hand-authoring affordance for local dry-runs. Hard-fails (sys.exit 1) on malformed
+    YAML, mirroring the JSON path's schema-mismatch behavior.
+    """
+    import yaml  # lazy: only needed when a .yaml/.yml contract is loaded
+
+    try:
+        return yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        log.error("config YAML parse error — exiting", error=str(exc))
+        sys.exit(1)
+
+
 def load_config(path: str) -> AgentConfig:
     """Load and validate the rendered runtime config (CFG-01/02/03).
+
+    Accepts JSON (the rendered contract the operator emits) or, for local hand-authored
+    dry-runs, YAML (`.yaml`/`.yml`) — both validate against the SAME schema, so a YAML
+    file that loads will render to an equivalent JSON contract.
 
     Hard-fails with sys.exit(1) on schema mismatch or file-not-found.
     Never raises to the caller.
     """
     try:
         raw = Path(path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        log.error("config file not found — exiting", path=path)
+        sys.exit(1)
+
+    try:
+        if path.endswith((".yaml", ".yml")):
+            return AgentConfig.model_validate(_load_yaml(raw))
         return AgentConfig.model_validate_json(raw)
     except ValidationError as exc:
         log.error("config schema mismatch — exiting", errors=exc.errors())
-        sys.exit(1)
-    except FileNotFoundError:
-        log.error("config file not found — exiting", path=path)
         sys.exit(1)

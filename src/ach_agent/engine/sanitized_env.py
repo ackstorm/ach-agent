@@ -24,10 +24,12 @@ import re
 import structlog
 from structlog.typing import EventDict, WrappedLogger
 
-# Pattern matches the ek_ bearer token prefix (SEC-01)
-# Matches: ek_ followed by one or more alphanumeric, underscore, or dash chars.
-# No leading \b — ek_ must be caught even when embedded mid-word (CR-03).
-_EK_PATTERN = re.compile(r"ek_[A-Za-z0-9_\-]+")
+# Pattern matches the ek bearer token prefix (SEC-01).
+# Real ACH keys use the `ek-` (dash) prefix; earlier code assumed `ek_` (underscore).
+# Match BOTH separators so the live bearer is redacted (confirmed vs real ACH).
+# Matches: ek, then `-` or `_`, then one or more alphanumeric / underscore / dash.
+# No leading \b — must be caught even when embedded mid-word (CR-03).
+_EK_PATTERN = re.compile(r"ek[-_][A-Za-z0-9_\-]+")
 
 
 def redact_ek_processor(

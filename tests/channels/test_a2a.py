@@ -364,6 +364,10 @@ async def test_a2a_full_queue_enqueues_failed_event(tmp_path: pytest.TempPath) -
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(
+    reason="v3 schema rejects a2a channel with a2a=None at config-load "
+    "(model_validator), so this runtime-layer case is unconstructable — Plan 3"
+)
 @pytest.mark.asyncio
 async def test_cr01_no_auth_block_rejects_request() -> None:
     """CR-01: A2A channel with no a2a sub-block (a2a=None) must REJECT, not admit.
@@ -532,3 +536,56 @@ def test_build_a2a_app_constructs_sub_app(tmp_path: pytest.TempPath) -> None:
 
     sub_app = build_a2a_app(agent_card, bridge, rpc_prefix="/")
     assert isinstance(sub_app, FastAPI)
+
+
+# ---------------------------------------------------------------------------
+# signal_failure — FAILED callback on invalid terminal output
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a2a_signal_failure_enqueues_failed_event_and_unblocks(
+    tmp_path: pytest.TempPath,
+) -> None:
+    """signal_failure pops pending, enqueues a FAILED event, and sets the completion Event.
+
+    Mirrors signal_completion: the executor blocked on completion.wait() must unblock
+    (Pitfall 5 — never hang), the peer must receive a FAILED TaskStatusUpdateEvent (not a
+    COMPLETED one), and the session_key must no longer be pending.
+    """
+    from a2a.types.a2a_pb2 import TASK_STATE_FAILED
+
+    handler = _make_accepted_handler()
+    channel_cfg = _make_authed_channel_cfg(tmp_path)
+    bridge = A2AAgentExecutorBridge(handler=handler, pool=_make_ready_pool(), channel_cfg=channel_cfg)
+
+    # Populate _pending exactly the way execute() would (mirror signal_completion setup).
+    session_key = "ctx-fail"
+    eq = MockEventQueue()
+    completion = asyncio.Event()
+    bridge._pending[session_key] = (eq, completion)
+
+    bridge.signal_failure(session_key, "bad terminal")
+
+    # The async task scheduled by signal_failure runs on the next loop tick.
+    await asyncio.wait_for(completion.wait(), timeout=2.0)
+
+    assert completion.is_set()
+    assert len(eq.events) == 1
+    assert eq.events[0].status.state == TASK_STATE_FAILED
+    # session_key must be popped from pending
+    assert not bridge.lookup_session_key_for_event(session_key)
+
+
+@pytest.mark.asyncio
+async def test_a2a_signal_failure_unknown_session_key_is_noop(
+    tmp_path: pytest.TempPath,
+) -> None:
+    """signal_failure for an unknown session_key must not raise (mirror signal_completion)."""
+    channel_cfg = _make_authed_channel_cfg(tmp_path)
+    bridge = A2AAgentExecutorBridge(
+        handler=_make_accepted_handler(), pool=_make_ready_pool(), channel_cfg=channel_cfg
+    )
+
+    # Should log a warning and return without error.
+    bridge.signal_failure("does-not-exist", "reason")

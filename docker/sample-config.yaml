@@ -1,0 +1,46 @@
+# Minimal ACH agent contract — hand-authored for LOCAL dry-runs.
+#
+# In production the operator renders this SAME schema to JSON from your CRD. Locally
+# you skip k8s + the operator and write it by hand, then drive the engine directly:
+#
+#   ACH_TOKEN=ek-... python -m ach_agent.main --tui            # interactive console
+#   ACH_TOKEN=ek-... python -m ach_agent.main --prompt "hi"    # one-shot, then exit
+#
+# Only FOUR blocks are strictly required (everything else has safe defaults):
+#   schemaVersion, agent, model, capability.ach
+# The "deployment profile" (cpu/mem, replicas, scaling) is NOT here — the operator
+# consumes that to build the Deployment; it never reaches the harness contract.
+
+schemaVersion: "1"          # must be the quoted string "1" (unquoted 1 is rejected)
+
+agent:
+  name: local-dev-agent
+  namespace: default
+
+model:
+  name: gemini.gemini-flash-latest   # an ACH-served model id
+  type: openai                       # the ACH compat WIRE, not the vendor:
+                                     #   gemini.* models are served on the /v1 (openai) wire
+
+capability:
+  type: ach
+  ach:
+    baseUrl: https://ach.ackstorm.ai
+    environment: platform
+
+# Optional — the inline agent persona. Layered (append) on top of the skills/prompts
+# hydrated from ACH. Drop this block to rely solely on ACH-provisioned context.
+prompt:
+  base: "You are a concise software-engineering assistant."
+  compose: append
+
+# Local writable scratch dirs (uid 10001 inside the container). persistence.enabled:false
+# keeps the dry-run volume-free.
+workDir: /tmp/workspace
+persistence:
+  enabled: false
+  mountPath: /tmp/ach-state
+
+# No channels under --tui/--prompt: the typed/passed line IS the prompt. To exercise a
+# real channel instead, add it here and launch WITHOUT --tui/--prompt.
+channels: []

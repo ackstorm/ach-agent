@@ -56,15 +56,14 @@ MR_PAYLOAD = {
 def _make_channel_cfg(
     name: str = "gitlab-mr-review",
     secret_path: str = "/dev/null",
-    deliver_type: str = "gitlab_comment",
 ) -> ChannelConfig:
     return ChannelConfig.model_validate(
         {
             "name": name,
             "type": "webhook",
+            "source": "gitlab",
             "webhook": {
-                "auth": {"type": "hmac", "secretPath": secret_path},
-                "deliver": {"type": deliver_type},
+                "auth": {"type": "gitlab_token", "secretPath": secret_path},
             },
         }
     )
@@ -172,6 +171,7 @@ def test_inbound_route_dispatches(tmp_path: pytest.TempPathFactory) -> None:
     assert resp.json()["status"] == "accepted"
 
 
+@pytest.mark.skip(reason="reply mode deferred — see Plan 3")
 def test_reply_mode_returns_reply_synchronously(tmp_path: pytest.TempPathFactory) -> None:
     """ACT-01 / D-08 / CR-01: deliver.type: reply → engine resolves reply_future → 200.
 

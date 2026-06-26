@@ -25,6 +25,7 @@ Boot-order: imported after configure_logging().
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import json
 from dataclasses import dataclass, field
@@ -39,7 +40,7 @@ from ach_agent.router.router import RouterAdmitResult
 
 if TYPE_CHECKING:
     from ach_agent.channels.seam import MessageHandler
-    from ach_agent.config.schema import ChannelConfig
+    from ach_agent.config.schema import ChannelConfig, WebhookAuthBlock
 
 log = structlog.get_logger(__name__)
 
@@ -72,18 +73,69 @@ def _verify_gitlab_token(header_token: str, secret_path: str) -> bool:
     return hmac.compare_digest(header_token, secret)
 
 
-def _extract_mr_context(body: dict[str, Any]) -> dict[str, Any]:
-    """Extract project_id and MR iid for delivery_context (D-07).
+def _verify_hmac(signature: str, secret_path: str, raw_body: bytes) -> bool:
+    """Verify GitHub-style HMAC-SHA256 body signature (X-Hub-Signature-256).
 
-    For Merge Request Hook events:
+    The header value is `sha256=<hexdigest>`; we strip the prefix and compare in
+    constant time against HMAC-SHA256(secret, raw_body). Secret read per-request
+    from secret_path (SEC-02), never cached.
+    """
+    if not signature:
+        return False
+    sig = signature[len("sha256=") :] if signature.startswith("sha256=") else signature
+    # SEC-02: read per-request, discard after use — NEVER assigned to long-lived attr
+    secret_bytes = Path(secret_path).read_text(encoding="utf-8").strip().encode("utf-8")
+    expected = hmac.new(secret_bytes, raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(sig, expected)
+
+
+def _verify_auth(auth: WebhookAuthBlock, lower_headers: dict[str, str], raw_body: bytes) -> bool:
+    """Dispatch auth verification by auth.type (gitlab_token | hmac | none)."""
+    match auth.type:
+        case "gitlab_token":
+            return _verify_gitlab_token(lower_headers.get("x-gitlab-token", ""), auth.secret_path)
+        case "hmac":
+            return _verify_hmac(
+                lower_headers.get("x-hub-signature-256", ""), auth.secret_path, raw_body
+            )
+        case "none":
+            return True
+
+
+def _parse_gitlab(body: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """Parse a GitLab Merge Request Hook payload (D-07).
+
       body.project.id              → project_id (numeric, always int in GitLab)
       body.object_attributes.iid   → mr_iid (MR internal ID, project-scoped)
 
-    Raises ValueError if values cannot be cast to int.
+    Returns (delivery_context, session_key). Raises KeyError/TypeError/ValueError
+    on missing/non-castable fields (mapped to 422 by the caller).
     """
     project_id = int(body["project"]["id"])
     mr_iid = int(body["object_attributes"]["iid"])
-    return {"project_id": project_id, "mr_iid": mr_iid}
+    return {"project_id": project_id, "mr_iid": mr_iid}, f"{project_id}:{mr_iid}"
+
+
+def _parse_github(body: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """Parse a GitHub pull_request webhook payload.
+
+      body.repository.full_name                          → repo
+      body.number (fallback body.pull_request.number)    → pr_number
+
+    Returns (delivery_context, session_key). Raises KeyError/TypeError/ValueError
+    on missing/non-castable fields (mapped to 422 by the caller).
+    """
+    repo = body["repository"]["full_name"]
+    pr_number = int(body.get("number") or body["pull_request"]["number"])
+    return {"repo": repo, "pr_number": pr_number}, f"{repo}:{pr_number}"
+
+
+def _parse_generic(idempotency_key: str) -> tuple[dict[str, Any], str]:
+    """Parse a generic webhook payload — no required fields, never 422s.
+
+    delivery_context is empty; session_key is the idempotency key.
+    """
+    return {}, idempotency_key
 
 
 def _status_map(result: RouterAdmitResult) -> WebhookResult:
@@ -130,7 +182,9 @@ async def handle_webhook_request(
         WebhookResult with status_code, body dict, and (reply mode only) reply_future.
     """
     assert channel_cfg.webhook is not None, "webhook block required on channel config"
-    secret_path = channel_cfg.webhook.auth.secret_path
+    auth = channel_cfg.webhook.auth
+    # None source defaults to gitlab for back-compat (schema requires source for webhooks).
+    source = channel_cfg.source or "gitlab"
 
     # Normalise headers to lowercase — ASGI spec (PEP 3333) mandates lowercase header
     # names; FastAPI/Starlette preserve this. The unit tests pass mixed-case dicts, so
@@ -138,30 +192,20 @@ async def handle_webhook_request(
     lower_headers: dict[str, str] = {k.lower(): v for k, v in headers.items()}
 
     # 1. AUTH — 401 before any router call (T-02-02; CHN-01; SEC-02)
-    header_token = lower_headers.get("x-gitlab-token", "")
-    if not _verify_gitlab_token(header_token, secret_path):
+    if not _verify_auth(auth, lower_headers, raw_body):
         log.warning(
-            "webhook: invalid X-Gitlab-Token — rejected",
+            "webhook: auth verification failed — rejected",
             channel=channel_cfg.name,
+            auth_type=auth.type,
         )
         return WebhookResult(status_code=401, body={"detail": "Invalid signature"})
 
-    # 2. PARSE
+    # 2. PARSE JSON
     try:
         body: dict[str, Any] = json.loads(raw_body)
     except (json.JSONDecodeError, ValueError) as exc:
         log.warning("webhook: invalid JSON body", channel=channel_cfg.name, error=str(exc))
         return WebhookResult(status_code=400, body={"detail": "Invalid JSON"})
-
-    try:
-        delivery_context = _extract_mr_context(body)
-    except (KeyError, TypeError, ValueError) as exc:
-        log.warning(
-            "webhook: MR payload missing required fields",
-            channel=channel_cfg.name,
-            error=str(exc),
-        )
-        return WebhookResult(status_code=422, body={"detail": "Missing MR fields"})
 
     # 3. IDEMPOTENCY KEY (IDM-01, D-06)
     # derive_webhook_idempotency_key uses canonical-cased header names; re-case the
@@ -175,10 +219,23 @@ async def handle_webhook_request(
     }
     idempotency_key = derive_webhook_idempotency_key(canonical_headers)
 
-    # 4. SESSION KEY — stable per MR (project_id + mr_iid uniquely identify an MR)
-    project_id = delivery_context["project_id"]
-    mr_iid = delivery_context["mr_iid"]
-    session_key = f"{project_id}:{mr_iid}"
+    # 4. DISPATCH PARSE by source → (delivery_context, session_key).
+    # gitlab/github raise on missing payload fields → 422; generic never 422s.
+    try:
+        if source == "github":
+            delivery_context, session_key = _parse_github(body)
+        elif source == "generic":
+            delivery_context, session_key = _parse_generic(idempotency_key)
+        else:
+            delivery_context, session_key = _parse_gitlab(body)
+    except (KeyError, TypeError, ValueError) as exc:
+        log.warning(
+            "webhook: payload missing required fields",
+            channel=channel_cfg.name,
+            source=source,
+            error=str(exc),
+        )
+        return WebhookResult(status_code=422, body={"detail": "Missing required fields"})
 
     # 5. BUILD MessageEvent
     # For reply mode: create reply_future BEFORE handler.handle() so the lane
@@ -200,9 +257,9 @@ async def handle_webhook_request(
     log.info(
         "webhook: dispatching event",
         channel=channel_cfg.name,
+        source=source,
         idempotency_key=idempotency_key,
-        project_id=project_id,
-        mr_iid=mr_iid,
+        session_key=session_key,
     )
 
     # 6. DISPATCH → router → D-05 status map

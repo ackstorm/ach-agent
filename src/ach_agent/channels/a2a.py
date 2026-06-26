@@ -257,6 +257,23 @@ class A2AAgentExecutorBridge:
         loop = asyncio.get_running_loop()
         loop.create_task(_complete_async(event_queue, completion, reply_text))
 
+    def signal_failure(self, session_key: str, reason: str) -> None:
+        """Called by the on_fail closure (boot) when the terminal output is unusable.
+
+        Pops pending, enqueues a FAILED TaskStatusUpdateEvent, sets the Event so execute()
+        unblocks (mirror of signal_completion — the executor must never hang, Pitfall 5).
+        """
+        entry = self._pending.pop(session_key, None)
+        if entry is None:
+            log.warning(
+                "a2a: signal_failure called for unknown session_key",
+                session_key=session_key,
+            )
+            return
+        event_queue, completion = entry
+        loop = asyncio.get_running_loop()
+        loop.create_task(_fail_async(event_queue, completion, reason))
+
     def lookup_session_key_for_event(self, session_key: str) -> bool:
         """Test helper: check if a session_key is currently pending."""
         return session_key in self._pending
@@ -265,6 +282,12 @@ class A2AAgentExecutorBridge:
 async def _complete_async(event_queue: Any, completion: asyncio.Event, reply_text: str) -> None:
     """Schedule completed event and set the completion event from an async context."""
     await event_queue.enqueue_event(_make_completed_status(reply_text))
+    completion.set()
+
+
+async def _fail_async(event_queue: Any, completion: asyncio.Event, reason: str) -> None:
+    """Schedule a failed event and set the completion event from an async context."""
+    await event_queue.enqueue_event(_make_failed_status(reason))
     completion.set()
 
 

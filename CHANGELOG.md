@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.2.1] - 2026-06-26
+
+### Fixed
+- **Proxy teardown latency**: bounded the localhost MCP/model proxy `shutdown_timeout` to 1s.
+  aiohttp's 60s default made shutdown hang ~60s after the reply when a long-lived MCP/SSE
+  stream was still open.
+
+### Changed
+- **Slimmer image (−21MB, 339→318)**: dropped `uvicorn[standard]` (the uvloop/httptools/
+  websockets/watchfiles extras aren't needed for this single-replica surface) and pruned
+  `__pycache__`/`*.pyi`/bundled test suites from deps.
+- **`capability.ach.environment` is now optional** (defaults to `"platform"`): the EK scopes
+  the environment server-side, so hand-authored configs can omit it.
+
+### Added
+- `docker/quickstart/` — standalone `docker-compose.yaml` + `config.yaml` using the public
+  image (`docker compose run --rm agent`).
+
 ## [0.2.0] - 2026-06-26
 
 The v1.1 milestone — engine rescoped to **opencode** with localhost-proxy ek-hygiene,

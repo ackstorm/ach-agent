@@ -26,7 +26,7 @@ capability:
   type: ach
   ach:
     baseUrl: https://ach.ackstorm.ai
-    environment: platform
+    # environment is implicit — your EK scopes it server-side (defaults to "platform").
 
 # Optional — the inline agent persona. Layered (append) on top of the skills/prompts
 # hydrated from ACH. Drop this block to rely solely on ACH-provisioned context.

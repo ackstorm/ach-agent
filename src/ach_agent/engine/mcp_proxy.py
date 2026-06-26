@@ -35,6 +35,13 @@ _Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 # Path prefixes the model proxy forwards to ACH (OpenAI / Gemini / Anthropic wires).
 _MODEL_PREFIXES = ("/v1", "/gemini", "/anthropic")
 
+# aiohttp's AppRunner defaults shutdown_timeout to 60s: cleanup() waits that long for
+# in-flight handlers to finish. A proxied long-lived MCP/SSE stream (blocked in the
+# upstream iter_any loop) never returns on its own, so the default makes teardown hang
+# ~60s after the reply. At shutdown the reply is already delivered and opencode is dead,
+# so there is nothing worth waiting for — force-close lingering streams promptly.
+_SHUTDOWN_TIMEOUT_S = 1.0
+
 
 async def _forward(
     session: aiohttp.ClientSession,
@@ -103,7 +110,7 @@ class McpProxy:
             app.router.add_route("*", f"/mcp/{server.id}/{{tail:.*}}", handler)
             routed.append(server.id)
 
-        self._runner = web.AppRunner(app)
+        self._runner = web.AppRunner(app, shutdown_timeout=_SHUTDOWN_TIMEOUT_S)
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, host="127.0.0.1", port=0)
         await self._site.start()
@@ -172,7 +179,7 @@ class ModelProxy:
             app.router.add_route("*", prefix, handler)
             app.router.add_route("*", f"{prefix}/{{tail:.*}}", handler)
 
-        self._runner = web.AppRunner(app)
+        self._runner = web.AppRunner(app, shutdown_timeout=_SHUTDOWN_TIMEOUT_S)
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, host="127.0.0.1", port=0)
         await self._site.start()

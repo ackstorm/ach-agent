@@ -313,6 +313,24 @@ def test_malformed_yaml_hard_fails(tmp_path: Path) -> None:
     assert exc_info.value.code != 0
 
 
+def test_capability_ach_environment_is_optional(tmp_path: Path) -> None:
+    """capability.ach.environment is implicit (EK scopes it) → defaults to 'platform'."""
+    from ach_agent.config import load_config
+
+    raw = {
+        "schemaVersion": "1",
+        "agent": {"name": "x", "namespace": "default"},
+        "model": {"name": "gemini.gemini-flash-latest", "type": "openai"},
+        "capability": {"type": "ach", "ach": {"baseUrl": "https://ach.example.com"}},
+    }
+    config_file = tmp_path / "no_env.json"
+    config_file.write_text(json.dumps(raw), encoding="utf-8")
+
+    cfg = load_config(str(config_file))
+    assert cfg.capability.ach.environment == "platform"
+    assert cfg.capability.ach.base_url == "https://ach.example.com"
+
+
 # ---------------------------------------------------------------------------
 # Negative: CFG-02 — unknown top-level key → sys.exit(1)
 # ---------------------------------------------------------------------------

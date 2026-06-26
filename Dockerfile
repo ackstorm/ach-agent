@@ -26,7 +26,12 @@ COPY README.md ./README.md
 COPY LICENSE ./LICENSE
 COPY src/ ./src/
 
-RUN uv pip install --system --no-cache-dir --target=/app/deps .
+RUN uv pip install --system --no-cache-dir --target=/app/deps . \
+ # Lipo: drop bytecode caches, type stubs and bundled test suites from the deps —
+ # none are needed at runtime (we run `python -m`, never import package test modules).
+ && find /app/deps -type d -name "__pycache__" -prune -exec rm -rf {} + \
+ && find /app/deps -type d \( -name tests -o -name test \) -prune -exec rm -rf {} + \
+ && find /app/deps -name "*.pyi" -delete
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM python:3.12-slim
@@ -41,8 +46,9 @@ COPY src/ ./src/
 
 # Bake a minimal default contract so a collaborator can run the image with ZERO files:
 #   docker run -it -e ACH_TOKEN=ek-... ghcr.io/ackstorm/ach-agent:latest --tui
-# It points at https://ach.ackstorm.ai; the EK scopes which environment/tools are hydrated.
-# Override by mounting your own YAML/JSON and setting ACH_CONFIG_PATH (helm does this in prod).
+# It points at the ACH endpoint set in the baked config; the EK scopes which
+# environment/tools are hydrated. Override by mounting your own YAML/JSON and setting
+# ACH_CONFIG_PATH (helm does this in prod).
 COPY docker/sample-config.yaml /etc/ach-agent/config.yaml
 ENV ACH_CONFIG_PATH=/etc/ach-agent/config.yaml
 

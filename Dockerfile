@@ -40,15 +40,25 @@ WORKDIR /app
 # PYTHONPATH points at the install target so deps are version-agnostic.
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/app/deps
 
+# ripgrep on PATH: opencode's grep/glob tools shell out to `rg`. Without it opencode
+# fetches a pinned musl build from GitHub on first use — slow, and re-fetched every
+# invocation (each opencode runs under a fresh ephemeral HOME). Baking it avoids the
+# download (and works offline). Calendar-only agents rarely hit it, but code agents do.
+RUN apt-get update -qq \
+ && apt-get install -y --no-install-recommends ripgrep \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /app/deps /app/deps
 COPY --from=opencode-bin /usr/local/bin/opencode /usr/local/bin/opencode
 COPY src/ ./src/
 
-# Bake a minimal default contract so a collaborator can run the image with ZERO files:
-#   docker run -it -e ACH_TOKEN=ek-... ghcr.io/ackstorm/ach-agent:latest --tui
-# It points at the ACH endpoint set in the baked config; the EK scopes which
-# environment/tools are hydrated. Override by mounting your own YAML/JSON and setting
-# ACH_CONFIG_PATH (helm does this in prod).
+# Bake a minimal default contract so a collaborator can run the image with only an EK
+# and an ACH endpoint (no mounted files):
+#   docker run -it -e ACH_TOKEN=ek-... -e ACH_BASE_URL=https://your-ach-host \
+#       ghcr.io/ackstorm/ach-agent:latest --tui
+# The baked config carries NO host — ACH_BASE_URL supplies it at runtime; the EK scopes
+# which environment/tools are hydrated. Override the whole contract by mounting your own
+# YAML/JSON and setting ACH_CONFIG_PATH (helm does this in prod).
 COPY docker/sample-config.yaml /etc/ach-agent/config.yaml
 ENV ACH_CONFIG_PATH=/etc/ach-agent/config.yaml
 

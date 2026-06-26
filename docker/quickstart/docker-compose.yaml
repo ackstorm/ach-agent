@@ -1,7 +1,7 @@
 # Quickstart — run the ach-agent harness as a TUI console on your machine.
 #
 #   cd docker/quickstart
-#   ACH_TOKEN=ek-<your-key> docker compose run --rm agent
+#   ACH_TOKEN=ek-<your-key> ACH_BASE_URL=https://<your-ach-host> docker compose run --rm agent
 #
 # The line you type IS the prompt; Ctrl-D exits. Edit config.yaml to change the
 # model / persona / ACH environment. For a one-shot instead of the REPL:
@@ -22,6 +22,8 @@ services:
     environment:
       # The EK — taken from your shell env, NEVER baked into the image.
       - ACH_TOKEN=${ACH_TOKEN:?set ACH_TOKEN=ek-... in your shell}
+      # Your ACH endpoint — supplied at runtime so no host is baked into the repo/image.
+      - ACH_BASE_URL=${ACH_BASE_URL:?set ACH_BASE_URL=https://your-ach-host in your shell}
       - ACH_CONFIG_PATH=/etc/ach-agent/config.yaml
 
     volumes:

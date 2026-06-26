@@ -63,7 +63,7 @@ into the pod by `ach-runtime`; for local runs you provide them yourself.
 | Variable | Purpose |
 |----------|---------|
 | `ACH_CONFIG_PATH` | Path to the rendered runtime config (default `/etc/ach-agent/config.json`). |
-| `ACH_BASE_URL` | opencode engine endpoint. |
+| `ACH_BASE_URL` | ACH endpoint. Overrides `capability.ach.baseUrl` when set, so a config can ship without a hardcoded host (required if the config omits `baseUrl`). |
 | `ACH_API_KEY` | `ek_` bearer for the engine — never logged; dereferenced only at runtime. |
 
 Channel credentials (`GITLAB_TOKEN`, `SLACK_BOT_TOKEN`, `TELEGRAM_BOT_TOKEN`, …) are supplied

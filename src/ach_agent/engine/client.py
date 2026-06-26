@@ -28,6 +28,20 @@ from ach_agent.engine.events import OpenCodeEvent, parse_opencode_event
 
 log = structlog.get_logger(__name__)
 
+
+def _trace_sse(data_str: str) -> None:
+    """Raw SSE event trace at DEBUG level (enable with ``ACH_LOG_LEVEL=debug``).
+
+    Logs EVERY opencode event — including tool calls / step events that parse to None and
+    the final EOF-flushed event — so the complete engine↔harness wire is visible with
+    nothing truncated or dropped. The raw ``data:`` JSON is logged as-is (the redact
+    processors still scrub any ek_/token); ``length`` flags the size of giant events
+    (e.g. gemini thought-signatures) without hiding their tail. Gated solely by the log
+    level: ``log.debug`` is a no-op below DEBUG, so there is no separate opt-in flag.
+    """
+    log.debug("sse event", length=len(data_str), raw=data_str)
+
+
 # ---------------------------------------------------------------------------
 # Port allocation
 # ---------------------------------------------------------------------------
@@ -226,6 +240,7 @@ class OpenCodeClient:
                     # Empty line = SSE event boundary
                     if data_lines:
                         data_str = "\n".join(data_lines)
+                        _trace_sse(data_str)
                         try:
                             data = json.loads(data_str)
                             event = parse_opencode_event(data)
@@ -241,9 +256,12 @@ class OpenCodeClient:
                 if line.startswith("data:"):
                     data_lines.append(line[5:].strip())
 
-        # Flush any remaining buffered data lines after stream ends
+        # Flush any remaining buffered data lines after stream ends. This is a real event
+        # (e.g. the final session.idle when the stream closes without a trailing blank line);
+        # it must be traced too — otherwise the LAST SSE message is silently missing.
         if data_lines:
             data_str = "\n".join(data_lines)
+            _trace_sse(data_str)
             try:
                 data = json.loads(data_str)
                 event = parse_opencode_event(data)

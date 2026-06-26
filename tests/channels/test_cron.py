@@ -162,9 +162,13 @@ async def test_cron_full_queue_logs_and_never_silent(
     CronScheduler._instance_count = 0
 
     assert len(handler.events) == 1, "Handler must have been called (to emit FULL_QUEUE)"
-    out, _ = capfd.readouterr()
-    assert "full" in out.lower() or "drop" in out.lower(), (
-        f"RTR-05 cron path: FULL_QUEUE must emit a warning log (never silent). Got stdout: {out!r}"
+    # Logs go to STDERR (STDOUT carries only the agent reply); check both so the test
+    # asserts intent ("never silent") regardless of stream.
+    out, err = capfd.readouterr()
+    combined = (out + err).lower()
+    assert "full" in combined or "drop" in combined, (
+        "RTR-05 cron path: FULL_QUEUE must emit a warning log (never silent). "
+        f"Got stdout: {out!r} stderr: {err!r}"
     )
 
 

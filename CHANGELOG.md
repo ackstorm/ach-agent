@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.3.0] - 2026-06-26
+
+### Added
+- **Live streaming console**: the `--tui`/`--prompt` console now streams the assistant's
+  text as it is produced and shows one-line tool-lifecycle chrome (`⚙ running` / `⚠ error`),
+  so a long-blocking tool (e.g. a calendar `auth_wait`) is no longer dead air. Text comes
+  from opencode's cumulative `message.part.updated` snapshots (suffix-diffed per part).
+- **Model-proxy upstream override (dev/test only)** via `ACH_MODEL_BASE_URL` /
+  `ACH_MODEL_HEADER` / `ACH_MODEL_TOKEN`: swap just the model backend (hydration + MCP stay
+  on `ACH_BASE_URL`) to A/B a different gateway. The token is injected verbatim as the header
+  value. Uses a raw provider key, not the `ek_` — bypasses ACH governance; never for production.
+- **`ACH_DEBUG_SSE=1`** raw per-event SSE trace and **`ACH_LOG_LEVEL`** console verbosity knob.
+- **Boot-time MCP tool probe**: lists the tools each hydrated MCP server exposes and warns when
+  a server returns zero (surfaces an unauthorized/unconsented server at boot, not mid-invocation).
+
+### Changed
+- **`capability.ach.baseUrl` is now optional and overridable via `ACH_BASE_URL`**: the env var,
+  when set, wins over the contract's `baseUrl` (and supplies it when the contract omits it).
+  `load_config` hard-fails only if neither provides a host. The shipped `docker/` sample +
+  quickstart configs no longer carry a hardcoded ACH host — they expect `ACH_BASE_URL` at runtime.
+
+### Fixed
+- **Clear boot failure on an unresolvable model endpoint**: when neither an `ek_` (`ACH_TOKEN`)
+  nor `ACH_BASE_URL` is set, the harness now exits at boot with an actionable message instead
+  of letting opencode fail every invocation with the opaque
+  `"/chat/completions" cannot be parsed as a URL`. Also warns when `ACH_MODEL_TOKEN` carries an
+  empty credential (e.g. an unexpanded `${...}` var).
+
 ## [0.2.1] - 2026-06-26
 
 ### Fixed

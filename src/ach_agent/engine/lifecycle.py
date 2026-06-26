@@ -24,9 +24,12 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
+
+if TYPE_CHECKING:
+    from ach_agent.engine.events import OpenCodeToolUpdate
 
 log = structlog.get_logger(__name__)
 
@@ -169,19 +172,28 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
         api_key = "{env:ACH_API_KEY}"  # ek_ dereferenced at runtime only
         base_url = "{env:ACH_BASE_URL}"  # Hub/mock endpoint
 
+    # opencode provider: a CUSTOM provider id backed by @ai-sdk/openai-compatible (lenient
+    # parser) instead of opencode's bundled @ai-sdk/openai (strict). The strict provider
+    # crashes ("text part not found") on ACH/litellm's gemini compat wire, which leaks
+    # gemini thought-signatures into tool_call ids and sends tool_calls with null content.
+    # @ai-sdk/openai-compatible tolerates it (verified against real ACH). A custom id is
+    # required — opencode honors the `npm` field only for non-builtin provider ids.
+    provider_id = "ach"
     oc_config: dict[str, object] = {
         "autoupdate": False,
         "permission": "allow",
         "share": "disabled",
         "logLevel": "WARN",
-        "model": f"{config.provider}/{config.model}",
+        "model": f"{provider_id}/{config.model}",
         # opencode uses a "small model" for side tasks (session titles, summaries).
         # It defaults to a hardcoded gpt-5-nano which 400s on ACH (not in the catalog),
         # so pin it to the configured model (registered + working) to avoid the error.
-        "small_model": f"{config.provider}/{config.model}",
-        "enabled_providers": [config.provider],
+        "small_model": f"{provider_id}/{config.model}",
+        "enabled_providers": [provider_id],
         "provider": {
-            config.provider: {
+            provider_id: {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "ACH",
                 "options": {
                     "apiKey": api_key,
                     "baseURL": base_url,
@@ -197,6 +209,11 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
         "agent": {
             "build": {
                 "steps": config.steps,
+                # Disable opencode's interactive `question` tool. The harness runs a single
+                # prompt→reply turn with no channel to feed an answer back into a running
+                # opencode turn, so an asked question dead-ends (blocks, then times out).
+                # Removing it forces the agent to answer in text instead.
+                "tools": {"question": False},
             },
             "plan": {"disable": True},
         },
@@ -370,6 +387,8 @@ async def run_invocation(
     max_invocation_seconds: int,
     on_kill: Callable[[], None],
     free_form: bool = False,
+    on_text: Callable[[str], None] | None = None,
+    on_tool: Callable[[OpenCodeToolUpdate], None] | None = None,
 ) -> dict[str, Any]:
     """Orchestrate: subscribe SSE → send prompt → consume → return the terminal object.
 
@@ -409,7 +428,9 @@ async def run_invocation(
         async with asyncio.timeout(max_invocation_seconds):
             # Subscribe to SSE FIRST, then send the message.
             # This ensures we don't miss the session.idle event.
-            accumulated_text = await consume_sse_after_send(client, oc_session_id, prompt)
+            accumulated_text = await consume_sse_after_send(
+                client, oc_session_id, prompt, on_text=on_text, on_tool=on_tool
+            )
     except TimeoutError:
         # D-03: must genuinely kill the subprocess
         log.warning(
@@ -426,7 +447,9 @@ async def run_invocation(
         on_kill()
         raise InvocationTimeout(max_invocation_seconds)
 
-    log.info(
+    # debug (not info): at INFO this line lands on stderr right as the streamed reply
+    # finishes on stdout, gluing onto the last reply char on a shared TTY.
+    log.debug(
         "invocation complete",
         session_id=session_id,
         text_length=len(accumulated_text),
@@ -459,11 +482,21 @@ async def consume_sse_after_send(
     client: object,
     session_id: str,
     prompt: str,
+    on_text: Callable[[str], None] | None = None,
+    on_tool: Callable[[OpenCodeToolUpdate], None] | None = None,
 ) -> str:
     """Subscribe to SSE, send the prompt, then consume to session.idle.
 
     The SSE subscription must happen before send_message because opencode emits
     events in real-time. This helper ensures correct ordering.
+
+    ``on_text``: optional sink called with each new text suffix as the assistant's
+    message.part.updated snapshots grow (so a console prints the reply live instead of
+    waiting for the whole invocation).
+    ``on_tool``: optional sink called with each tool-part lifecycle update (running /
+    completed / error). Lets a channel show "running a tool" — important when a tool
+    such as calendar auth_wait blocks for minutes after the visible text is produced,
+    which otherwise looks like a frozen, unfinished reply.
     """
     from ach_agent.engine.client import OpenCodeClient
     from ach_agent.engine.events import (
@@ -471,13 +504,15 @@ async def consume_sse_after_send(
         OpenCodeSessionError,
         OpenCodeSessionIdle,
         OpenCodeTextUpdate,
+        OpenCodeToolUpdate,
         OpenCodeUserMessage,
+        ReplyAccumulator,
         _consume_events_from_response,
     )
 
     assert isinstance(client, OpenCodeClient), "client must be OpenCodeClient"
 
-    accumulated: list[str] = []
+    acc = ReplyAccumulator(on_text, on_tool)
     user_message_ids: set[str] = set()
 
     # Subscribe to SSE first
@@ -486,14 +521,32 @@ async def consume_sse_after_send(
 
     # Start SSE reader task (listens from now)
     sse_task = asyncio.create_task(_consume_events_from_response(client, resp, result_queue))
+    # send_task is created only after the readiness gate; declare it up-front so the finally
+    # can clean up whether or not we got that far (e.g. the gate raises an early SSE error).
+    send_task: asyncio.Task[None] | None = None
 
     terminal_error: EngineError | None = None
     terminal_idle = False
 
     try:
-        # CR-03: send_message is now inside the try block so the finally clause
-        # always cancels sse_task and releases resp — even if send_message raises.
-        await client.send_message(session_id, prompt)
+        # Gate the send on a confirmed-live subscription (inside the try so the finally still
+        # cancels sse_task + releases resp if the gate hits an early SSE error — CR-03).
+        await _await_subscription_ready(result_queue, session_id)
+
+        # opencode's POST /session/{id}/message is SYNCHRONOUS — it returns only when the whole
+        # turn has finished. Awaiting it before draining the queue would mean every event
+        # (received live by sse_task) sits in the queue and is replayed in ONE burst after the
+        # turn ends — so on_text/on_tool fire all at once at the end, and a blocking tool like
+        # calendar auth_wait (~120s) freezes ALL output until then. Fire it concurrently and
+        # consume the SSE stream live; session.idle (on the stream) is the real done signal.
+        # A send failure is surfaced by pushing the exception onto the queue (handled below).
+        send_task = asyncio.create_task(client.send_message(session_id, prompt))
+
+        def _on_send_done(t: asyncio.Task) -> None:  # type: ignore[type-arg]
+            if not t.cancelled() and t.exception() is not None:
+                result_queue.put_nowait(t.exception())
+
+        send_task.add_done_callback(_on_send_done)
 
         while True:
             try:
@@ -509,7 +562,9 @@ async def consume_sse_after_send(
                 user_message_ids.add(event.message_id)
             elif isinstance(event, OpenCodeTextUpdate):
                 if event.message_id not in user_message_ids:
-                    accumulated.append(event.text)
+                    acc.add_text(event.part_id, event.text)
+            elif isinstance(event, OpenCodeToolUpdate):
+                acc.add_tool(event)
             elif isinstance(event, OpenCodeSessionIdle):
                 log.debug("session.idle received", session_id=session_id)
                 terminal_idle = True
@@ -524,11 +579,15 @@ async def consume_sse_after_send(
                 terminal_error = EngineError(event.error_type, event.message)
                 break
     finally:
-        sse_task.cancel()
-        try:
-            await asyncio.wait_for(asyncio.shield(sse_task), timeout=2.0)
-        except (TimeoutError, asyncio.CancelledError):
-            pass
+        # Cancel both background tasks and drain them CONCURRENTLY under a single 2s budget
+        # (not 2s each) — the send task is normally already complete by session.idle but may
+        # be left hanging by a slow tool. asyncio.wait never raises task exceptions; the send
+        # exception was already retrieved by _on_send_done, the sse task swallows its own.
+        pending = [t for t in (sse_task, send_task) if t is not None]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.wait(pending, timeout=2.0)
         try:
             await resp.release()
         except Exception:  # noqa: BLE001
@@ -537,9 +596,34 @@ async def consume_sse_after_send(
     if terminal_error is not None:
         raise terminal_error
     if terminal_idle:
-        return "".join(accumulated)
+        return acc.text()
 
     raise EngineError("sse_exhausted", "SSE stream ended without session.idle")
+
+
+async def _await_subscription_ready(result_queue: asyncio.Queue, session_id: str) -> None:  # type: ignore[type-arg]
+    """Block until opencode confirms the SSE subscription is live, before the turn is sent.
+
+    opencode emits ``server.connected`` (OpenCodeStreamReady) as the first event on a fresh
+    GET /event connection. Waiting for it ensures the turn's first events can't race ahead of
+    server-side subscriber registration and be lost — an intermittent "no text appeared" that
+    extra logging latency happens to hide. Bounded so a missing/renamed event can never hang
+    the invocation: log and let the caller send anyway after 5s. An early SSE error surfaces
+    as the first queued item and is re-raised (the caller's finally then cleans up).
+    """
+    from ach_agent.engine.events import OpenCodeStreamReady
+
+    try:
+        first = await asyncio.wait_for(result_queue.get(), timeout=5.0)
+    except TimeoutError:
+        log.warning("SSE not confirmed within 5s — sending anyway", session_id=session_id)
+        return
+    if isinstance(first, Exception):
+        raise first
+    # server.connected carries nothing to render and is consumed here; any other event
+    # (shouldn't precede it) is preserved for the main loop.
+    if not isinstance(first, OpenCodeStreamReady):
+        result_queue.put_nowait(first)
 
 
 # ---------------------------------------------------------------------------

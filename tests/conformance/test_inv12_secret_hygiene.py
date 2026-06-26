@@ -38,8 +38,12 @@ def test_ek_never_in_opencode_json(tmp_path: Path, monkeypatch: Any) -> None:
     # raises ProviderModelNotFoundError for an ACH model id not in its built-in catalog
     # (verified live vs opencode 1.16.0 + real ACH).
     oc = json.loads(blob)
-    assert "gemini.gemini-flash-latest" in oc["provider"]["openai"]["models"], (
+    # Custom provider id "ach" (npm @ai-sdk/openai-compatible) — NOT the bundled "openai".
+    assert "gemini.gemini-flash-latest" in oc["provider"]["ach"]["models"], (
         "opencode.json must register the hydrated model id under provider.<id>.models"
+    )
+    assert oc["provider"]["ach"]["npm"] == "@ai-sdk/openai-compatible", (
+        "must use the lenient openai-compatible provider, not the strict bundled openai"
     )
 
 

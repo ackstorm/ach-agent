@@ -9,6 +9,7 @@ Constraint: NEVER import the router or any Hermes type here (RTR-06).
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any, Literal
@@ -54,6 +55,21 @@ class LimitsBlock(BaseModel):
     idempotency_window_seconds: int = Field(default=3600, alias="idempotencyWindowSeconds")
     max_steps: int = Field(default=50, alias="maxSteps")
     terminal_output_retries: int = Field(default=1, alias="terminalOutputRetries")
+
+
+class EngineBlock(BaseModel):
+    """Engine server lifecycle knobs (harness-local; operator may render or omit).
+
+    ``idle_ttl_seconds`` keeps the opencode server (and its session) warm for this many
+    seconds after an invocation finishes, so a follow-up prompt reuses it instead of cold-
+    starting a fresh server (which also loses conversational continuity). 0 = stop the
+    server immediately after each invocation (spawn-per-invocation). The ``--tui`` REPL
+    defaults to a warm value when this is 0; ``ACH_ENGINE_IDLE_TTL_SECONDS`` overrides both.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    idle_ttl_seconds: int = Field(default=0, alias="idleTtlSeconds")
 
 
 class PersistenceBlock(BaseModel):
@@ -104,7 +120,11 @@ class CapabilityAchBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    base_url: str = Field(alias="baseUrl")
+    # Optional in the schema so a hand-authored / baked sample config can ship WITHOUT a
+    # hardcoded ACH endpoint and have it supplied at runtime via the ACH_BASE_URL env var
+    # (see load_config). Production always renders a concrete baseUrl from the CRD, and
+    # load_config still hard-fails if neither the contract nor the env provides one.
+    base_url: str = Field(default="", alias="baseUrl")
     # Optional: the EK already scopes the ACH environment server-side, so this is implicit
     # for hand-authored configs. The harness never reads it (it logs the environment from the
     # hydrate response, manifest.environment); the operator still renders it in production.
@@ -303,6 +323,7 @@ class AgentConfig(BaseModel):
     prompt: PromptBlock | None = None
     memory: MemoryBlock | None = None
     limits: LimitsBlock = Field(default_factory=LimitsBlock)
+    engine: EngineBlock = Field(default_factory=EngineBlock)
     persistence: PersistenceBlock = Field(default_factory=PersistenceBlock)
     health: HealthBlock = Field(default_factory=HealthBlock)
     channels: list[ChannelConfig] = Field(default_factory=list)
@@ -347,8 +368,23 @@ def load_config(path: str) -> AgentConfig:
 
     try:
         if path.endswith((".yaml", ".yml")):
-            return AgentConfig.model_validate(_load_yaml(raw))
-        return AgentConfig.model_validate_json(raw)
+            cfg = AgentConfig.model_validate(_load_yaml(raw))
+        else:
+            cfg = AgentConfig.model_validate_json(raw)
     except ValidationError as exc:
         log.error("config schema mismatch — exiting", errors=exc.errors())
         sys.exit(1)
+
+    # ACH_BASE_URL env override (local-dev convenience). Lets the shipped sample/baked
+    # configs omit a concrete ACH endpoint: the env var supplies it at runtime, and wins
+    # if set so the same contract can be pointed at staging vs prod. In production the
+    # operator renders baseUrl into the JSON contract and this env is simply absent.
+    env_base = os.environ.get("ACH_BASE_URL", "").strip()
+    if env_base:
+        cfg.capability.ach.base_url = env_base
+    if not cfg.capability.ach.base_url:
+        log.error(
+            "capability.ach.baseUrl is unset and ACH_BASE_URL is not in the environment — exiting"
+        )
+        sys.exit(1)
+    return cfg

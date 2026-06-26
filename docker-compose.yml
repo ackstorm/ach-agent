@@ -1,10 +1,10 @@
 # ach-agent development services
 #
 # Try the agent in TUI console mode against real ACH:
-#   ACH_TOKEN=ek-... docker compose run --rm harness
+#   ACH_TOKEN=ek-... ACH_BASE_URL=https://your-ach-host docker compose run --rm harness
 # (reads docker/sample-config.yaml as the contract; the typed line is the prompt).
 # For a non-interactive one-shot, override the command:
-#   ACH_TOKEN=ek-... docker compose run --rm harness python -m ach_agent.main --prompt "hello"
+#   ACH_TOKEN=ek-... ACH_BASE_URL=https://your-ach-host docker compose run --rm harness python -m ach_agent.main --prompt "hello"
 # Swap the channel block in the config + drop the `--tui` command to run a real channel.
 #
 # mock-model is used by the round-trip integration test (docker compose up mock-model).
@@ -19,7 +19,17 @@ services:
     environment:
       # The ek_ (passed from your shell env; never baked into the image).
       - ACH_TOKEN=${ACH_TOKEN:?set ACH_TOKEN=ek-... in your env}
+      # ACH endpoint, supplied at runtime (no host baked into the repo/image).
+      - ACH_BASE_URL=${ACH_BASE_URL:?set ACH_BASE_URL=https://your-ach-host in your env}
       - ACH_CONFIG_PATH=/etc/ach-agent/config.yaml
+      # Model-proxy upstream override (DEV/TEST ONLY) — swap just the model backend
+      # (hydration + MCP stay on ACH_BASE_URL) to A/B a different gateway, e.g. litellm
+      # direct, and isolate forwarder buffering. Token is injected VERBATIM as the header
+      # value, so include `Bearer ` if the backend needs it. Uses a RAW provider key, not
+      # the ek_ — bypasses ACH governance; never use in production.
+      # - ACH_MODEL_BASE_URL=https://your-model-gateway.example.com
+      # - ACH_MODEL_HEADER=Authorization
+      # - ACH_MODEL_TOKEN=Bearer ${MODEL_API_KEY}
     volumes:
       - ./docker/sample-config.yaml:/etc/ach-agent/config.yaml:ro
     stdin_open: true   # keep STDIN open for the TUI REPL

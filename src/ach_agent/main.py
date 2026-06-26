@@ -22,6 +22,7 @@ D-08: deliver.type: reply → event.reply_future resolved by engine_runner on th
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import signal
 import sys
@@ -40,6 +41,7 @@ from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.queue import QueueConsumer
 from ach_agent.channels.tui import run_one_shot, run_tui_console
 from ach_agent.config import load_config
+from ach_agent.config.schema import AgentConfig
 from ach_agent.engine.context import fetch_context
 from ach_agent.engine.hydrate import hydrate, resolve_model
 from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
@@ -269,6 +271,12 @@ def _make_engine_runner(
                 # Free-form channels (--tui console) carry no terminal contract: return
                 # the raw reply, no terminal extraction/repair (delivery_context marker).
                 free_form = bool(event.delivery_context.get("free_form"))
+                # Optional live-text sink (the --tui console sets this to stream the reply
+                # as it's produced, so a slow trailing tool call doesn't hide the text).
+                on_text = event.delivery_context.get("on_text")
+                # Optional tool-lifecycle sink (the --tui console shows "⚙ running <tool>"
+                # so a long-blocking tool call isn't dead air).
+                on_tool = event.delivery_context.get("on_tool")
                 obj = await run_invocation(
                     server=server,
                     session_id=event.session_key,
@@ -277,6 +285,8 @@ def _make_engine_runner(
                     max_invocation_seconds=max_invocation_seconds,
                     on_kill=on_kill,
                     free_form=free_form,
+                    on_text=on_text,
+                    on_tool=on_tool,
                 )
             except Exception as exc:
                 if future is not None and not future.done():
@@ -394,6 +404,34 @@ async def _drain(
     log.info("drain: complete")
 
 
+# Default warm-server TTL for the --tui REPL when neither the contract nor the env sets one:
+# interactive prompts should reuse the same server+session instead of cold-starting each line.
+_DEFAULT_TUI_IDLE_TTL_S = 60
+
+
+def _resolve_idle_ttl(cfg: AgentConfig, tui_mode: bool) -> float:
+    """Resolve the engine idle-TTL (seconds the server stays warm after an invocation).
+
+    Precedence: ACH_ENGINE_IDLE_TTL_SECONDS env > contract engine.idleTtlSeconds >
+    TUI default (60s, only when unset and in --tui REPL) > 0 (spawn-per-invocation).
+    """
+    env = os.environ.get("ACH_ENGINE_IDLE_TTL_SECONDS", "").strip()
+    if env:
+        try:
+            val = float(env)
+        except ValueError:
+            val = math.nan
+        # Reject inf/nan too: float() accepts them but the caller's int(...) would crash boot
+        # (OverflowError/ValueError). Treat any non-finite/unparseable value as "unset".
+        if math.isfinite(val):
+            return max(0.0, val)
+        log.warning("invalid ACH_ENGINE_IDLE_TTL_SECONDS — ignoring", value=env)
+    ttl = cfg.engine.idle_ttl_seconds
+    if ttl == 0 and tui_mode:
+        return float(_DEFAULT_TUI_IDLE_TTL_S)
+    return float(ttl)
+
+
 async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> None:
     """Async entrypoint: load config, boot router, start channel adapters + uvicorn.
 
@@ -446,7 +484,36 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
         # deferred to Plan 3/4) — there is no per-MCP-server exclude in the schema, so all
         # hydrated servers are fronted.
         mcp_local_urls = await mcp_proxy.start(manifest.mcp_servers, ek, exclude=set())
-        model_proxy_base = await start_model_proxy(cfg.capability.ach.base_url, ek)
+        # Model-proxy upstream override (dev/test only — A/B a different model backend,
+        # e.g. litellm direct, to isolate forwarder buffering). MODEL-ONLY: hydration + MCP
+        # stay on the ACH coords above; only the model proxy's upstream + auth swap. The
+        # token is injected VERBATIM as the header value (carry `Bearer ` in it if the
+        # backend needs it). SECURITY: this path uses a raw provider key, NOT the ek_ — it
+        # bypasses ACH governance/ek-hygiene and is for local testing, never production.
+        model_up_base = os.environ.get("ACH_MODEL_BASE_URL") or cfg.capability.ach.base_url
+        model_up_header = os.environ.get("ACH_MODEL_HEADER", "x-ach-key")
+        model_up_token = os.environ.get("ACH_MODEL_TOKEN") or ek
+        if os.environ.get("ACH_MODEL_BASE_URL") or os.environ.get("ACH_MODEL_HEADER"):
+            log.info(
+                "model proxy upstream override (dev/test)",
+                base_url=model_up_base,
+                auth_header=model_up_header,
+            )
+            # Catch the classic 'No api key passed in' 401: ACH_MODEL_TOKEN set but its
+            # credential is empty — e.g. `Bearer ${LITELLM_API_KEY}` where LITELLM_API_KEY
+            # was never exported, so it expanded to a bare scheme. Strip a leading scheme
+            # word (Bearer/Token/…) + whitespace; warn if nothing is left. The credential
+            # itself is NEVER logged.
+            _raw = os.environ.get("ACH_MODEL_TOKEN", "")
+            _cred = _raw.split(" ", 1)[1] if " " in _raw.strip() else _raw
+            if _raw and not _cred.strip():
+                log.warning(
+                    "ACH_MODEL_TOKEN has an empty credential — only a scheme word, no key. "
+                    "Likely an unexpanded ${...} var. The upstream will 401 'No api key "
+                    "passed in.' Export the key in the env that launches the container.",
+                    auth_header=model_up_header,
+                )
+        model_proxy_base = await start_model_proxy(model_up_base, model_up_token, model_up_header)
         # Use the hydrated model's REAL endpoint path (ACH may serve a gemini.* model at
         # /v1, not /gemini). Fall back to the type→prefix map only when the hydrated set is
         # empty (local dev) or carries no endpoint.
@@ -456,12 +523,33 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
             if endpoint_path:
                 prefix = endpoint_path
         model_base_url = f"{model_proxy_base}/{prefix}"
+        _ctx = manifest.context
         log.info(
             "hydrated + localhost proxies started",
             environment=manifest.environment,
             model_count=len(manifest.models),
+            models=manifest.models,
             mcp_count=len(mcp_local_urls),
+            mcp_servers=list(mcp_local_urls.keys()),
+            skills=[s.name for s in _ctx.skills],
+            prompts=[p.name for p in _ctx.prompts],
+            artifacts=[a.name for a in _ctx.artifacts],
         )
+        # Boot-time tool probe (best-effort): list the tools each MCP server actually
+        # exposes for this ek and warn on empty. Surfaces an empty/unauthorized server
+        # (e.g. OAuth not granted) at boot instead of letting the model discover it
+        # mid-invocation and flail. Never breaks boot (list_mcp_tools swallows errors).
+        from ach_agent.engine.hydrate import list_mcp_tools
+
+        for _srv in manifest.mcp_servers:
+            _tools = await list_mcp_tools(_srv.endpoint, ek)
+            if _tools:
+                log.info("mcp tools", server=_srv.id, count=len(_tools), tools=_tools)
+            else:
+                log.warning(
+                    "mcp server exposes 0 tools — check ACH provisioning / OAuth consent",
+                    server=_srv.id,
+                )
 
         # A2A egress (Plan 3): expose peer agents as harness-hosted MCP tools so
         # opencode can call them. The ek_ stays in the harness (injected as the
@@ -486,6 +574,21 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
                 tool_count=len(a2a_tools),
             )
 
+    # Fail fast on an unresolvable model endpoint. With an ek_ the model proxy gives
+    # opencode a concrete localhost baseURL; without one, opencode.json falls back to
+    # {env:ACH_BASE_URL} and opencode dereferences it from its env. If THAT is empty too,
+    # opencode builds an empty baseURL and only fails mid-invocation with the opaque
+    # '"/chat/completions" cannot be parsed as a URL'. Catch it here with an actionable
+    # message instead. (model_base_url is set only inside the `if ek:` block above.)
+    if not model_base_url and not os.environ.get("ACH_BASE_URL"):
+        log.error(
+            "no model endpoint — set ACH_TOKEN (ek_) to hydrate + front the model via "
+            "the localhost proxy, or set ACH_BASE_URL so opencode can reach a model "
+            "gateway directly. Both are unset, so opencode has no baseURL and every "
+            "invocation would fail with '\"/chat/completions\" cannot be parsed as a URL'."
+        )
+        sys.exit(1)
+
     # Step 5: build the engine pool. Egress is the agent's via external MCP tools —
     # the harness has no delivery adapter (it never posts on the model's behalf).
     from ach_agent.engine.lifecycle import EngineConfig
@@ -502,7 +605,10 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
         system_prompt=cfg.prompt.base if cfg.prompt else "",
         startup_timeout_seconds=cfg.startup_timeout_seconds,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
-        shared_ttl_seconds=0,
+        # Keep the server (and its opencode session) warm between invocations so a --tui
+        # REPL reuses it instead of cold-starting + losing continuity each line. 0 = stop
+        # immediately (default for channels/one-shot). See _resolve_idle_ttl for precedence.
+        shared_ttl_seconds=int(_resolve_idle_ttl(cfg, tui_mode)),
         model_base_url=model_base_url,
         mcp_local_urls=mcp_local_urls,
     )
@@ -544,6 +650,8 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
             else:
                 await run_tui_console(router)
         finally:
+            # Stop any warm-held engine server (idle TTL may not have elapsed at EOF).
+            await pool._stop()
             await stop_model_proxies()
             if mcp_proxy is not None:
                 await mcp_proxy.stop()

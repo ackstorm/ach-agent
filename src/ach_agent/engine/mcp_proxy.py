@@ -13,6 +13,7 @@ stored on an instance attribute and never logged.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 
 import aiohttp
@@ -43,22 +44,45 @@ _MODEL_PREFIXES = ("/v1", "/gemini", "/anthropic")
 _SHUTDOWN_TIMEOUT_S = 1.0
 
 
+def _rpc_method(body: bytes) -> str:
+    """Best-effort JSON-RPC ``method`` from an MCP request body (diagnostics only).
+
+    Returns "" for non-JSON / non-dict bodies. Only the method NAME is extracted —
+    never params/args — so no payload data is logged.
+    """
+    if not body:
+        return ""
+    try:
+        parsed = json.loads(body)
+    except (ValueError, TypeError):
+        return ""
+    return str(parsed.get("method", "")) if isinstance(parsed, dict) else ""
+
+
 async def _forward(
     session: aiohttp.ClientSession,
     target: str,
     request: web.Request,
-    ek: str,
+    auth_value: str,
+    label: str = "proxy",
+    auth_header: str = "x-ach-key",
 ) -> web.StreamResponse:
-    """Forward ``request`` to ``target`` injecting the ek, streaming the response.
+    """Forward ``request`` to ``target`` injecting auth, streaming the response.
 
     The upstream body is streamed chunk-by-chunk via a ``web.StreamResponse`` so
-    SSE (``text/event-stream``) is never fully buffered. ``ek`` is used only here
-    (caller keeps it in a closure) and is never logged.
+    SSE (``text/event-stream``) is never fully buffered. ``auth_value`` is used only
+    here (caller keeps it in a closure) and is never logged. ``auth_header`` defaults
+    to ACH's ``x-ach-key``; the model proxy can override it (e.g. ``Authorization`` for
+    a litellm-direct bypass).
     """
     headers = {k: v for k, v in request.headers.items() if k.lower() not in _DROP_REQUEST_HEADERS}
-    headers["x-ach-key"] = ek
+    headers[auth_header] = auth_value
 
     body = await request.read()
+    # Diagnostics for MCP toolCount=0 triage: the JSON-RPC method opencode sends and the
+    # MCP session-id round-trip. NEVER logs the ek (injected above, never read here) nor
+    # request/response bodies/params — only the method name + header presence + status.
+    rpc = _rpc_method(body) if label == "mcp" else ""
     async with session.request(
         request.method,
         target,
@@ -66,14 +90,32 @@ async def _forward(
         params=request.query,
         data=body if body else None,
     ) as upstream:
+        log.debug(
+            f"{label} forward",
+            method=request.method,
+            path=request.path,
+            rpc=rpc,
+            status=upstream.status,
+            content_type=upstream.headers.get("Content-Type", ""),
+            req_session_id=bool(request.headers.get("Mcp-Session-Id")),
+            resp_session_id=bool(upstream.headers.get("Mcp-Session-Id")),
+            set_cookie=bool(upstream.headers.get("Set-Cookie")),
+        )
         resp = web.StreamResponse(status=upstream.status)
         for k, v in upstream.headers.items():
             if k.lower() not in _DROP_RESPONSE_HEADERS:
                 resp.headers[k] = v
-        await resp.prepare(request)
-        async for chunk in upstream.content.iter_any():
-            await resp.write(chunk)
-        await resp.write_eof()
+        try:
+            await resp.prepare(request)
+            async for chunk in upstream.content.iter_any():
+                await resp.write(chunk)
+            await resp.write_eof()
+        except (ConnectionResetError, aiohttp.ClientError) as exc:
+            # The client (opencode) went away mid-stream. Common at teardown: a long-lived
+            # MCP poll (e.g. calendar auth_wait) outlives the opencode subprocess, so the
+            # final upstream chunk lands after opencode's connection closed. Nothing left to
+            # deliver — log quietly instead of dumping a traceback to stderr.
+            log.debug(f"{label} client gone mid-stream", path=request.path, error=str(exc))
         return resp
 
 
@@ -143,7 +185,7 @@ class McpProxy:
             tail = request.match_info.get("tail", "")
             target = f"{base}/{tail}" if tail else base
             assert self._session is not None  # start() always creates it
-            return await _forward(self._session, target, request, ek)
+            return await _forward(self._session, target, request, ek, label="mcp")
 
         return handler
 
@@ -168,13 +210,13 @@ class ModelProxy:
         self._site: web.TCPSite | None = None
         self._session: aiohttp.ClientSession | None = None
 
-    async def start(self, ach_base_url: str, ek: str) -> str:
+    async def start(self, base_url: str, auth_value: str, auth_header: str = "x-ach-key") -> str:
         """Start the localhost model proxy and return its base URL."""
         self._session = aiohttp.ClientSession()
-        ach_base = ach_base_url.rstrip("/")
+        ach_base = base_url.rstrip("/")
 
         app = web.Application()
-        handler = self._make_handler(ach_base, ek)
+        handler = self._make_handler(ach_base, auth_value, auth_header)
         for prefix in _MODEL_PREFIXES:
             app.router.add_route("*", prefix, handler)
             app.router.add_route("*", f"{prefix}/{{tail:.*}}", handler)
@@ -201,16 +243,18 @@ class ModelProxy:
             await self._session.close()
             self._session = None
 
-    def _make_handler(self, ach_base: str, ek: str) -> _Handler:
-        """Build a handler that forwards the incoming path to ACH injecting the ek.
+    def _make_handler(self, ach_base: str, auth_value: str, auth_header: str) -> _Handler:
+        """Build a handler that forwards the incoming path upstream injecting auth.
 
-        ``ek`` is captured in this closure only — never stored on the instance.
+        ``auth_value`` is captured in this closure only — never stored on the instance.
         """
 
         async def handler(request: web.Request) -> web.StreamResponse:
             target = f"{ach_base}{request.path}"
             assert self._session is not None  # start() always creates it
-            return await _forward(self._session, target, request, ek)
+            return await _forward(
+                self._session, target, request, auth_value, label="model", auth_header=auth_header
+            )
 
         return handler
 
@@ -220,14 +264,14 @@ class ModelProxy:
 _MODEL_PROXIES: list[ModelProxy] = []
 
 
-async def start_model_proxy(ach_base_url: str, ek: str) -> str:
-    """Start a localhost model proxy and return its base URL (no ``ek`` in it).
+async def start_model_proxy(base_url: str, auth_value: str, auth_header: str = "x-ach-key") -> str:
+    """Start a localhost model proxy and return its base URL (no secret in it).
 
     The proxy instance is tracked in ``_MODEL_PROXIES`` and torn down by
     :func:`stop_model_proxies`.
     """
     proxy = ModelProxy()
-    base = await proxy.start(ach_base_url, ek)
+    base = await proxy.start(base_url, auth_value, auth_header)
     _MODEL_PROXIES.append(proxy)
     return base
 

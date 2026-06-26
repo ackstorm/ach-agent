@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.3.1] - 2026-06-26
+
+### Changed
+- **opencode runtime bumped `1.16.0` → `1.17.11`** (`OPENCODE_VERSION` in the Dockerfile).
+  Verified live against ACH (streaming console + tool chrome + calendar MCP flow).
+
 ## [0.3.0] - 2026-06-26
 
 ### Added

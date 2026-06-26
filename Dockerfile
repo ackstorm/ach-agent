@@ -2,7 +2,7 @@
 # The harness shells out to `opencode serve`, so the runtime image must carry the
 # opencode binary. Fetch the pinned release (anomalyco/opencode, glibc linux-x64).
 FROM debian:12-slim AS opencode-bin
-ARG OPENCODE_VERSION=1.16.0
+ARG OPENCODE_VERSION=1.17.11
 RUN apt-get update -qq \
  && apt-get install -y --no-install-recommends curl ca-certificates \
  && curl -fsSL "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-x64.tar.gz" -o /tmp/oc.tgz \

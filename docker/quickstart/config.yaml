@@ -10,8 +10,9 @@ model:
 
 capability:
   type: ach
-  ach:
-    baseUrl: https://ach.ackstorm.ai
+  ach: {}
+    # baseUrl comes from the ACH_BASE_URL env var (set in docker-compose.yaml), so this
+    # file carries no host. Pin `baseUrl: https://your-ach-host` here instead if you prefer.
     # environment is implicit — your EK scopes which env + tools get hydrated.
 
 # Inline agent persona (append-layered on the ACH-hydrated skills/prompts).

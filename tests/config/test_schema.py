@@ -214,6 +214,22 @@ def test_v3_fields_parse(tmp_path: Path) -> None:
     assert config.governed is True
 
 
+def test_engine_idle_ttl_default_and_parse() -> None:
+    """engine.idleTtlSeconds defaults to 0 (spawn-per-invocation) and parses when set."""
+    from ach_agent.config.schema import AgentConfig
+
+    base = {
+        "schemaVersion": "1",
+        "agent": {"name": "e", "namespace": "test", "generation": 1},
+        "model": {"name": "openai.x", "type": "openai"},
+        "capability": {"type": "ach", "ach": {"baseUrl": "https://ach.example.com"}},
+        "channels": [],
+    }
+    assert AgentConfig.model_validate(base).engine.idle_ttl_seconds == 0
+    warm = AgentConfig.model_validate({**base, "engine": {"idleTtlSeconds": 120}})
+    assert warm.engine.idle_ttl_seconds == 120
+
+
 # ---------------------------------------------------------------------------
 # Positive/Negative: ModelBlock {name, type, params} shape
 # ---------------------------------------------------------------------------
@@ -248,10 +264,11 @@ def test_model_params_is_open_dict(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_load_valid_yaml_config(tmp_path: Path) -> None:
+def test_load_valid_yaml_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A .yaml contract validates against the SAME schema as JSON (aliases honored)."""
     from ach_agent.config import load_config
 
+    monkeypatch.delenv("ACH_BASE_URL", raising=False)  # assert the contract's own baseUrl
     yaml_text = """
 schemaVersion: "1"
 agent:
@@ -313,10 +330,13 @@ def test_malformed_yaml_hard_fails(tmp_path: Path) -> None:
     assert exc_info.value.code != 0
 
 
-def test_capability_ach_environment_is_optional(tmp_path: Path) -> None:
+def test_capability_ach_environment_is_optional(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """capability.ach.environment is implicit (EK scopes it) → defaults to 'platform'."""
     from ach_agent.config import load_config
 
+    monkeypatch.delenv("ACH_BASE_URL", raising=False)  # assert the contract's own baseUrl
     raw = {
         "schemaVersion": "1",
         "agent": {"name": "x", "namespace": "default"},
@@ -329,6 +349,72 @@ def test_capability_ach_environment_is_optional(tmp_path: Path) -> None:
     cfg = load_config(str(config_file))
     assert cfg.capability.ach.environment == "platform"
     assert cfg.capability.ach.base_url == "https://ach.example.com"
+
+
+# ---------------------------------------------------------------------------
+# ACH_BASE_URL env override (local-dev convenience; baked/sample configs ship hostless)
+# ---------------------------------------------------------------------------
+
+
+def test_ach_base_url_env_fills_when_config_omits_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A config that omits baseUrl loads when ACH_BASE_URL supplies it at runtime."""
+    from ach_agent.config import load_config
+
+    monkeypatch.setenv("ACH_BASE_URL", "https://ach.example.com")
+    raw = {
+        "schemaVersion": "1",
+        "agent": {"name": "x", "namespace": "default"},
+        "model": {"name": "gemini.gemini-flash-latest", "type": "openai"},
+        "capability": {"type": "ach", "ach": {}},
+    }
+    config_file = tmp_path / "hostless.json"
+    config_file.write_text(json.dumps(raw), encoding="utf-8")
+
+    cfg = load_config(str(config_file))
+    assert cfg.capability.ach.base_url == "https://ach.example.com"
+
+
+def test_ach_base_url_env_overrides_config_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ACH_BASE_URL wins over a baseUrl pinned in the contract (point at staging vs prod)."""
+    from ach_agent.config import load_config
+
+    monkeypatch.setenv("ACH_BASE_URL", "https://staging.example.com")
+    raw = {
+        "schemaVersion": "1",
+        "agent": {"name": "x", "namespace": "default"},
+        "model": {"name": "gemini.gemini-flash-latest", "type": "openai"},
+        "capability": {"type": "ach", "ach": {"baseUrl": "https://pinned.example.com"}},
+    }
+    config_file = tmp_path / "pinned.json"
+    config_file.write_text(json.dumps(raw), encoding="utf-8")
+
+    cfg = load_config(str(config_file))
+    assert cfg.capability.ach.base_url == "https://staging.example.com"
+
+
+def test_missing_base_url_and_no_env_hard_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No baseUrl in the contract AND no ACH_BASE_URL env → sys.exit(1)."""
+    from ach_agent.config import load_config
+
+    monkeypatch.delenv("ACH_BASE_URL", raising=False)
+    raw = {
+        "schemaVersion": "1",
+        "agent": {"name": "x", "namespace": "default"},
+        "model": {"name": "gemini.gemini-flash-latest", "type": "openai"},
+        "capability": {"type": "ach", "ach": {}},
+    }
+    config_file = tmp_path / "no_host.json"
+    config_file.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
 
 
 # ---------------------------------------------------------------------------

@@ -102,6 +102,81 @@ def test_parse_text_update():
     assert event.session_id == "ses_1"
 
 
+def test_parse_message_part_delta_ignored():
+    """message.part.delta is intentionally ignored — text comes from the cumulative
+    message.part.updated snapshots, not the token-granular deltas."""
+    data = {
+        "type": "message.part.delta",
+        "properties": {"messageID": "msg_1", "partID": "prt_1", "field": "text", "delta": "x"},
+    }
+    assert parse_opencode_event(data) is None
+
+
+def test_parse_tool_running():
+    """message.part.updated (part.type=tool, state=running) → OpenCodeToolUpdate."""
+    from ach_agent.engine.events import OpenCodeToolUpdate, ToolStateRunning
+
+    data = {
+        "type": "message.part.updated",
+        "properties": {
+            "sessionID": "ses_1",
+            "part": {
+                "id": "prt_t1",
+                "messageID": "msg_1",
+                "type": "tool",
+                "tool": "mcp-google-calendar-ro_mcp-google-calendar-ro_auth_wait",
+                "callID": "cj1__thought__ABC",
+                "state": {"status": "running", "input": {"timeout_seconds": 120}},
+            },
+        },
+    }
+    event = parse_opencode_event(data)
+    assert isinstance(event, OpenCodeToolUpdate)
+    assert isinstance(event.state, ToolStateRunning)
+    assert event.part_id == "prt_t1"
+    assert event.tool_name.endswith("auth_wait")
+    assert event.state.input == {"timeout_seconds": 120}
+
+
+def test_parse_tool_error():
+    """message.part.updated (part.type=tool, state=error) → OpenCodeToolUpdate w/ error."""
+    from ach_agent.engine.events import OpenCodeToolUpdate, ToolStateError
+
+    data = {
+        "type": "message.part.updated",
+        "properties": {
+            "part": {
+                "id": "prt_t2",
+                "messageID": "msg_1",
+                "type": "tool",
+                "tool": "calendar_list_events",
+                "state": {"status": "error", "error": "boom"},
+            },
+        },
+    }
+    event = parse_opencode_event(data)
+    assert isinstance(event, OpenCodeToolUpdate)
+    assert isinstance(event.state, ToolStateError)
+    assert event.state.error == "boom"
+
+
+def test_parse_tool_pending_ignored():
+    """A tool part still pending carries nothing renderable → None."""
+    data = {
+        "type": "message.part.updated",
+        "properties": {"part": {"id": "p", "type": "tool", "state": {"status": "pending"}}},
+    }
+    assert parse_opencode_event(data) is None
+
+
+def test_parse_server_connected():
+    """server.connected → OpenCodeStreamReady (subscription-live signal, gates the send)."""
+    from ach_agent.engine.events import OpenCodeStreamReady
+
+    event = parse_opencode_event({"type": "server.connected", "properties": {}})
+    assert isinstance(event, OpenCodeStreamReady)
+
+
 def test_parse_user_message():
     data = _user_message_event("ses_1", "msg_u1")
     event = parse_opencode_event(data)

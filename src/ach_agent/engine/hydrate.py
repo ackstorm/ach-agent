@@ -87,6 +87,70 @@ async def hydrate(base_url: str, ek: str) -> HydrationManifest:
     return HydrationManifest.model_validate(data)
 
 
+def _sse_json(text: str) -> dict[str, Any]:
+    """Parse the first JSON-RPC payload out of an MCP ``text/event-stream`` body.
+
+    ACH MCP responses come back as ``event: message\\ndata: {json}``. Returns the
+    decoded ``data`` dict (or ``{}`` if none / unparseable).
+    """
+    import json
+
+    for line in text.splitlines():
+        if line.startswith("data:"):
+            try:
+                obj: dict[str, Any] = json.loads(line[5:].strip())
+                return obj
+            except (ValueError, TypeError):
+                return {}
+    return {}
+
+
+async def list_mcp_tools(endpoint: str, ek: str) -> list[str]:
+    """Best-effort: return the tool names an MCP server exposes for this ek.
+
+    Runs the StreamableHTTP handshake (initialize → initialized → tools/list) and
+    extracts ``result.tools[].name``. Never raises — returns ``[]`` on any error so a
+    boot-time probe can warn without breaking startup. The ek is sent as ``x-ach-key``
+    and never logged.
+    """
+    init = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "ach-agent", "version": "0"},
+        },
+    }
+    headers = {
+        "x-ach-key": ek,
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.post(endpoint, headers=headers, json=init)
+            r.raise_for_status()
+            sid = r.headers.get("mcp-session-id", "")
+            sess = {**headers, "mcp-session-id": sid} if sid else headers
+            await c.post(
+                endpoint,
+                headers=sess,
+                json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+            )
+            tr = await c.post(
+                endpoint,
+                headers=sess,
+                json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            )
+            tr.raise_for_status()
+            tools = _sse_json(tr.text).get("result", {}).get("tools", [])
+            return [str(t.get("name", "")) for t in tools if isinstance(t, dict)]
+    except Exception:  # noqa: BLE001 — best-effort probe, never breaks boot
+        return []
+
+
 def resolve_model(manifest: HydrationManifest, name: str) -> ModelEntry | None:
     """Resolve a configured model name against the hydrated models.
 

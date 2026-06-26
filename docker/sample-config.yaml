@@ -24,8 +24,10 @@ model:
 
 capability:
   type: ach
-  ach:
-    baseUrl: https://ach.ackstorm.ai
+  ach: {}
+    # baseUrl is supplied at runtime from the ACH_BASE_URL env var, e.g.
+    #   docker run -it -e ACH_TOKEN=ek-... -e ACH_BASE_URL=https://your-ach-host ...
+    # (you may also pin it here as `baseUrl: https://your-ach-host`; the env wins if both).
     # environment is implicit — your EK scopes it server-side (defaults to "platform").
 
 # Optional — the inline agent persona. Layered (append) on top of the skills/prompts

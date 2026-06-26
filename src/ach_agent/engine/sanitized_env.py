@@ -18,8 +18,10 @@ Constraint:
 
 from __future__ import annotations
 
+import logging
 import os
 import re
+import sys
 
 import structlog
 from structlog.typing import EventDict, WrappedLogger
@@ -120,6 +122,44 @@ class SanitizedEnv:
         return self.__repr__()
 
 
+class _StderrProxy:
+    """Write proxy that forwards to the *current* ``sys.stderr`` at each call.
+
+    Logs must go to STDERR so STDOUT carries only the agent reply (the live token
+    stream from the tui/one-shot sink). Passing ``sys.stderr`` directly to
+    PrintLoggerFactory would freeze the handle at configure time (import); under
+    pytest the captured stderr is closed/swapped between tests, raising
+    "I/O operation on closed file". Resolving ``sys.stderr`` per write follows
+    whatever stream is live (prod: real stderr; pytest: the per-test capture).
+    """
+
+    def write(self, s: str) -> int:
+        return sys.stderr.write(s)
+
+    def flush(self) -> None:
+        sys.stderr.flush()
+
+
+_LOG_LEVELS = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warning": logging.WARNING,
+    "warn": logging.WARNING,
+    "error": logging.ERROR,
+}
+
+
+def _resolve_log_level() -> int:
+    """Resolve the filtering level from ACH_LOG_LEVEL (default INFO).
+
+    Default INFO keeps the console readable: at debug, the opencode stdout/stderr drain
+    re-logs every line opencode prints (~135/178 lines in a calendar run) and buries the
+    agent reply on the shared TTY. ACH_LOG_LEVEL=debug restores the full firehose,
+    including the raw per-event SSE trace.
+    """
+    return _LOG_LEVELS.get(os.environ.get("ACH_LOG_LEVEL", "").strip().lower(), logging.INFO)
+
+
 def configure_logging() -> None:
     """Configure structlog with the redact_ek_processor in the processor chain.
 
@@ -136,7 +176,12 @@ def configure_logging() -> None:
             redact_gitlab_token_processor,  # SEC-03: must come before renderer
             structlog.dev.ConsoleRenderer(),
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(0),
+        wrapper_class=structlog.make_filtering_bound_logger(_resolve_log_level()),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
+        # Logs → stderr so STDOUT carries ONLY the agent reply (live token stream from
+        # the tui/one-shot sink). Without this the streamed reply is buried in the log
+        # torrent on a shared stdout; `--prompt ... 2>/dev/null` now yields a clean reply.
+        # PrintLogger only ever calls .write/.flush — the proxy satisfies that at runtime;
+        # the stub demands full TextIO, hence the narrow ignore.
+        logger_factory=structlog.PrintLoggerFactory(file=_StderrProxy()),  # type: ignore[arg-type]
     )

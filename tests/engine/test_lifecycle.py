@@ -314,3 +314,111 @@ async def test_run_invocation_returns_terminal_object() -> None:
     assert isinstance(result, dict)
     assert result["action"] == "none"
     assert result["text"] == "done"
+
+
+# ---------------------------------------------------------------------------
+# Text-part reduction: suffix streaming + tool sink + separator between parts
+# ---------------------------------------------------------------------------
+
+
+async def test_consume_streams_suffix_separates_parts_and_emits_tools() -> None:
+    """consume_sse_after_send: stream new text suffix per snapshot, insert a blank line
+    between distinct text parts, and fire on_tool once per (part_id, status)."""
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.events import (
+        OpenCodeSessionIdle,
+        OpenCodeStreamReady,
+        OpenCodeTextUpdate,
+        OpenCodeToolUpdate,
+        ToolStateRunning,
+    )
+    from ach_agent.engine.lifecycle import consume_sse_after_send
+
+    # Scripted typed events: subscription confirmed first (server.connected), then part A
+    # grows, a tool runs (twice → deduped), part B begins.
+    scripted = [
+        OpenCodeStreamReady(),
+        OpenCodeTextUpdate("s", "prtA", "msgA", "Hola"),
+        OpenCodeTextUpdate("s", "prtA", "msgA", "Hola mundo"),
+        OpenCodeToolUpdate("s", "prtT", "msgA", "mcp-x_auth_wait", "cid", ToolStateRunning()),
+        OpenCodeToolUpdate("s", "prtT", "msgA", "mcp-x_auth_wait", "cid", ToolStateRunning()),
+        OpenCodeTextUpdate("s", "prtB", "msgA", "Adios"),
+        OpenCodeSessionIdle("s"),
+    ]
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        for e in scripted:
+            await queue.put(e)
+
+    client = OpenCodeClient("http://127.0.0.1:0")
+    client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
+    client.send_message = AsyncMock()  # type: ignore[method-assign]
+
+    streamed: list[str] = []
+    tools: list[OpenCodeToolUpdate] = []
+
+    with patch.object(ev, "_consume_events_from_response", new=fake_consume):
+        text = await consume_sse_after_send(
+            client, "ses", "hi", on_text=streamed.append, on_tool=tools.append
+        )
+
+    assert text == "Hola mundo\n\nAdios", "suffix streamed + blank line between parts"
+    assert "".join(streamed) == "Hola mundo\n\nAdios"
+    assert len(tools) == 1, "tool running fired once (deduped per part_id+status)"
+    assert tools[0].tool_name == "mcp-x_auth_wait"
+
+
+async def test_consume_releases_resp_on_early_sse_error() -> None:
+    """CR-03: if the first SSE item is an exception (early stream error), the finally still
+    cancels the reader and releases resp — the readiness gate must not leak past the try."""
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.lifecycle import consume_sse_after_send
+
+    boom = RuntimeError("sse stream died on connect")
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        await queue.put(boom)  # first (and only) item is an error
+
+    resp = MagicMock(release=AsyncMock())
+    client = OpenCodeClient("http://127.0.0.1:0")
+    client.subscribe_events = AsyncMock(return_value=resp)  # type: ignore[method-assign]
+    client.send_message = AsyncMock()  # type: ignore[method-assign]
+
+    with patch.object(ev, "_consume_events_from_response", new=fake_consume):
+        with pytest.raises(RuntimeError, match="sse stream died"):
+            await consume_sse_after_send(client, "ses", "hi")
+
+    resp.release.assert_awaited()  # leak guard: resp released despite the early raise
+    client.send_message.assert_not_awaited()  # gate raised before the prompt was sent
+
+
+async def test_consume_to_completion_dedups_cumulative_snapshots() -> None:
+    """consume_sse_to_completion appends only the new suffix per part — cumulative
+    message.part.updated snapshots must not be concatenated into duplicated text."""
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.events import (
+        OpenCodeSessionIdle,
+        OpenCodeTextUpdate,
+        consume_sse_to_completion,
+    )
+
+    scripted = [
+        OpenCodeTextUpdate("s", "prtA", "msgA", "Hello"),
+        OpenCodeTextUpdate("s", "prtA", "msgA", "Hello world"),
+        OpenCodeSessionIdle("s"),
+    ]
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        for e in scripted:
+            await queue.put(e)
+
+    client = OpenCodeClient("http://127.0.0.1:0")
+    client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
+
+    with patch.object(ev, "_consume_events_from_response", new=fake_consume):
+        text = await consume_sse_to_completion(client, "ses")
+
+    assert text == "Hello world", "cumulative snapshots deduped (not 'HelloHello world')"

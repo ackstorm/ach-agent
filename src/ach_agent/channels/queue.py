@@ -221,4 +221,14 @@ class QueueConsumer:
 
         # onComplete: ack ONLY after handle() returned (ACCEPTED/DUPLICATE = processed;
         # FULL_QUEUE = ack+drop). The raise path above already returned without acking.
-        await self._client.xack(self._stream, self._group, message_id)
+        # A failed xack must not abort the consume batch: log and continue. The message
+        # stays pending and is redelivered (at-least-once) — dedup absorbs the replay.
+        try:
+            await self._client.xack(self._stream, self._group, message_id)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "queue: xack failed — message left pending for redelivery",
+                channel=self._cfg.name,
+                message_id=msg_id_str,
+                error=str(exc),
+            )

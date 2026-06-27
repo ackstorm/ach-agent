@@ -67,6 +67,10 @@ class EngineConfig:
     # HTTP API + web UI on all interfaces — INSECURE (no auth), dev/test only. The harness
     # HTTP client always connects via 127.0.0.1 regardless of this value.
     bind_host: str = "127.0.0.1"
+    # Fixed port for opencode `serve`. 0 = pick a free ephemeral port (default). Set a fixed
+    # port (via ACH_OPENCODE_PORT) so it can be published from a container (`ports:`) to reach
+    # the web UI from the host — dev/test only; collides if two harness instances share it.
+    port: int = 0
     shared_enabled: bool = False
     shared_ttl_seconds: int = 0
     max_invocation_seconds: int = 1800

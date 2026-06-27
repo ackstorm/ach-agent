@@ -597,9 +597,17 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
             "Use for local dev/test only, never in production or on an untrusted network.",
             bind_host=opencode_bind_host,
         )
+    # Fixed opencode port (dev/test): 0 = ephemeral. Set ACH_OPENCODE_PORT so a container can
+    # publish a known port and the web UI is reachable from the host (pair with 0.0.0.0 bind).
+    try:
+        opencode_port = int(os.environ.get("ACH_OPENCODE_PORT", "0") or "0")
+    except ValueError:
+        log.warning("invalid ACH_OPENCODE_PORT — ignoring (using an ephemeral port)")
+        opencode_port = 0
 
     engine_cfg = EngineConfig(
         bind_host=opencode_bind_host,
+        port=opencode_port,
         work_dir=cfg.work_dir,
         session_dir=f"{cfg.persistence.mount_path}/opencode/sessions",
         provider=cfg.model.type,
@@ -875,6 +883,15 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
         await shutdown_event.wait()
 
     if shutdown_event.is_set():
+        # Stop queue consumers BEFORE draining. Unlike HTTP/cron intake, queue consumers
+        # do NOT honor the `draining` flag — they keep xreadgroup'ing redis and routing
+        # events into lanes. If left running during _drain, they feed new events into lanes
+        # that _drain is cancelling: those events fail admission, stay unacked, and get
+        # redelivered on the next boot (redelivery churn, defeats graceful drain). Stopping
+        # consumers first guarantees no new events enter lanes; events already routed are
+        # still drained to completion by _drain's lane.join() below.
+        for consumer in queue_consumers:
+            await consumer.stop()
         # Graceful drain (DUR-03): flip readyz, drain lanes, cleanup. _drain sets
         # uv_server.should_exit so uvicorn stops accepting, then returns (no sys.exit).
         await _drain(
@@ -884,10 +901,6 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
             router=router,
             dedup_store=dedup_store,
         )
-        # Stop queue consumers (cancel their consume tasks; close clients we created).
-        # Done after _drain so in-flight lane work routed from the queue can complete.
-        for consumer in queue_consumers:
-            await consumer.stop()
         # Plan 2: tear down the localhost proxies (closes their aiohttp runners/sessions).
         await stop_model_proxies()
         if mcp_proxy is not None:

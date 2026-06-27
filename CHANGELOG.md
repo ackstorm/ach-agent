@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.3.3] - 2026-06-27
+
+### Added
+- **`ACH_OPENCODE_PORT`** pins the opencode `serve` port (default `0` = ephemeral). Set a
+  fixed port so a container can publish it (`ports:`) and the opencode web UI is reachable
+  from the host. Pair with `ACH_OPENCODE_BIND_HOST=0.0.0.0`. Dev/test only — collides if two
+  harness instances share the port.
+
+### Fixed
+- **Queue consumers are stopped before the graceful drain** so in-flight redelivery can't
+  re-enqueue work mid-drain.
+- **Redis `xack` failures are guarded** in the queue consumer (a failed ack no longer
+  escapes the consume loop).
+- **Dedup mark reads the clock once** in the router, removing a read-time skew between the
+  TTL stamp and the window check.
+- **Removed the 300s cap on MCP/model proxy upstream calls** — long-running upstream
+  requests (e.g. a slow MCP tool) are no longer truncated by the localhost proxy.
+
 ## [0.3.2] - 2026-06-27
 
 ### Added

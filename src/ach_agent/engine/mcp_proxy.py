@@ -43,6 +43,13 @@ _MODEL_PREFIXES = ("/v1", "/gemini", "/anthropic")
 # so there is nothing worth waiting for — force-close lingering streams promptly.
 _SHUTDOWN_TIMEOUT_S = 1.0
 
+# Upstream client timeout. aiohttp's ClientSession defaults to total=300s, which would abort
+# any proxied MCP tool call or model/SSE stream that legitimately runs longer than 5 min —
+# even though invocations are bounded at a higher layer by maxInvocationSeconds (up to 1800s).
+# Disable the overall cap (total=None) and rely on that watchdog; keep a short connect timeout
+# so an unreachable upstream still fails fast instead of hanging the handler.
+_UPSTREAM_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=30)
+
 
 def _rpc_method(body: bytes) -> str:
     """Best-effort JSON-RPC ``method`` from an MCP request body (diagnostics only).
@@ -140,7 +147,7 @@ class McpProxy:
 
         Servers whose ``id`` is in ``exclude`` are not started and get no route.
         """
-        self._session = aiohttp.ClientSession()
+        self._session = aiohttp.ClientSession(timeout=_UPSTREAM_TIMEOUT)
 
         app = web.Application()
         routed: list[str] = []
@@ -212,7 +219,7 @@ class ModelProxy:
 
     async def start(self, base_url: str, auth_value: str, auth_header: str = "x-ach-key") -> str:
         """Start the localhost model proxy and return its base URL."""
-        self._session = aiohttp.ClientSession()
+        self._session = aiohttp.ClientSession(timeout=_UPSTREAM_TIMEOUT)
         ach_base = base_url.rstrip("/")
 
         app = web.Application()

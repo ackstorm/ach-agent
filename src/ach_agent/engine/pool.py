@@ -149,7 +149,9 @@ async def _default_start_server(config: EngineConfig) -> ManagedServer:
     from ach_agent.engine.lifecycle import launch, poll_ready
 
     ephemeral_home = Path(tempfile.mkdtemp(prefix="oc-pool-"))
-    port = find_free_port()
+    # A fixed config.port (ACH_OPENCODE_PORT) lets a container publish a known port so the
+    # opencode web UI is reachable from the host; 0 = pick a free ephemeral port.
+    port = config.port or find_free_port()
     server = await launch(port, ephemeral_home, config)
     await poll_ready(server, config.startup_timeout_seconds)
     return server

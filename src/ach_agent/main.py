@@ -22,7 +22,6 @@ D-08: deliver.type: reply → event.reply_future resolved by engine_runner on th
 from __future__ import annotations
 
 import asyncio
-import math
 import os
 import signal
 import sys
@@ -41,7 +40,6 @@ from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.queue import QueueConsumer
 from ach_agent.channels.tui import run_one_shot, run_tui_console
 from ach_agent.config import load_config
-from ach_agent.config.schema import AgentConfig
 from ach_agent.engine.context import fetch_context
 from ach_agent.engine.hydrate import hydrate, resolve_model
 from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
@@ -201,6 +199,7 @@ def _make_engine_runner(
     engine_cfg: Any,
     max_invocation_seconds: int,
     memory_cfg: Any = None,
+    channel_ttl: dict[str, float] | None = None,
 ) -> Callable[..., Any]:
     """Build the engine_runner callable injected into the Router.
 
@@ -228,8 +227,15 @@ def _make_engine_runner(
     When present, prepare_memory is called BEFORE pool.acquire so the opencode.json
     written for that server includes or excludes the memory MCP server (Pitfall 3).
     Fail-open: unreachable backend → exclude MCP server, log WARN + metric, run anyway.
+
+    channel_ttl: {channel_name: idle_ttl_seconds} — the wait after a conversation ends
+    before the opencode server is stopped, a per-channel constant (see _CHANNEL_IDLE_TTL_S).
+    Unknown channels (e.g. the --tui console) default to 0 = stop immediately. --tui pins a
+    held ref so 0 never actually stops it mid-session (see the console-mode pre-warm).
     """
     from ach_agent.engine.lifecycle import run_invocation
+
+    ttl_by_channel = channel_ttl or {}
 
     async def engine_runner(event: MessageEvent, on_kill: Callable[[], None]) -> None:
         # Build sanitized launch env — ek_ is never read into a local variable
@@ -328,8 +334,9 @@ def _make_engine_runner(
             # calls on_kill for queued_total. run_invocation also fires on_kill on
             # a watchdog kill; on_kill is idempotent so that double call is safe.
             # EnginePool.release(ttl_seconds) — no server arg (pool tracks internally).
+            # TTL is a per-channel constant (0 for all v1 channels → stop on conversation end).
             try:
-                await pool.release(ttl_seconds=float(engine_cfg.shared_ttl_seconds))
+                await pool.release(ttl_seconds=ttl_by_channel.get(event.channel_name, 0.0))
             except Exception as exc:  # noqa: BLE001
                 log.warning("pool release error", error=str(exc))
 
@@ -404,32 +411,16 @@ async def _drain(
     log.info("drain: complete")
 
 
-# Default warm-server TTL for the --tui REPL when neither the contract nor the env sets one:
-# interactive prompts should reuse the same server+session instead of cold-starting each line.
-_DEFAULT_TUI_IDLE_TTL_S = 60
-
-
-def _resolve_idle_ttl(cfg: AgentConfig, tui_mode: bool) -> float:
-    """Resolve the engine idle-TTL (seconds the server stays warm after an invocation).
-
-    Precedence: ACH_ENGINE_IDLE_TTL_SECONDS env > contract engine.idleTtlSeconds >
-    TUI default (60s, only when unset and in --tui REPL) > 0 (spawn-per-invocation).
-    """
-    env = os.environ.get("ACH_ENGINE_IDLE_TTL_SECONDS", "").strip()
-    if env:
-        try:
-            val = float(env)
-        except ValueError:
-            val = math.nan
-        # Reject inf/nan too: float() accepts them but the caller's int(...) would crash boot
-        # (OverflowError/ValueError). Treat any non-finite/unparseable value as "unset".
-        if math.isfinite(val):
-            return max(0.0, val)
-        log.warning("invalid ACH_ENGINE_IDLE_TTL_SECONDS — ignoring", value=env)
-    ttl = cfg.engine.idle_ttl_seconds
-    if ttl == 0 and tui_mode:
-        return float(_DEFAULT_TUI_IDLE_TTL_S)
-    return float(ttl)
+# Per-channel idle TTL (seconds the opencode server lingers after a conversation ends
+# before it is stopped). A constant keyed by channel type — all v1 channels are 0, so the
+# server stops as soon as the conversation ends. Future channels may set a non-zero linger.
+# (--tui is NOT a channel: it pre-warms opencode at boot and holds it until Ctrl-C — see main.)
+_CHANNEL_IDLE_TTL_S: dict[str, float] = {
+    "webhook": 0.0,
+    "cron": 0.0,
+    "queue": 0.0,
+    "a2a": 0.0,
+}
 
 
 async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> None:
@@ -594,7 +585,21 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
     from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.engine.pool import EnginePool
 
+    # opencode `serve` bind host. Default loopback (127.0.0.1) — the API + web UI are then
+    # only reachable inside the container/host. ACH_OPENCODE_BIND_HOST=0.0.0.0 exposes it on
+    # all interfaces (e.g. to open the opencode web UI from your host's browser via a
+    # published port). The harness client always connects via loopback regardless.
+    opencode_bind_host = os.environ.get("ACH_OPENCODE_BIND_HOST", "").strip() or "127.0.0.1"
+    if opencode_bind_host not in ("127.0.0.1", "localhost", "::1"):
+        log.warning(
+            "SECURITY: opencode serve is binding a non-loopback interface — its HTTP API "
+            "and web UI run WITHOUT authentication and can drive the agent + its tools. "
+            "Use for local dev/test only, never in production or on an untrusted network.",
+            bind_host=opencode_bind_host,
+        )
+
     engine_cfg = EngineConfig(
+        bind_host=opencode_bind_host,
         work_dir=cfg.work_dir,
         session_dir=f"{cfg.persistence.mount_path}/opencode/sessions",
         provider=cfg.model.type,
@@ -605,10 +610,10 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
         system_prompt=cfg.prompt.base if cfg.prompt else "",
         startup_timeout_seconds=cfg.startup_timeout_seconds,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
-        # Keep the server (and its opencode session) warm between invocations so a --tui
-        # REPL reuses it instead of cold-starting + losing continuity each line. 0 = stop
-        # immediately (default for channels/one-shot). See _resolve_idle_ttl for precedence.
-        shared_ttl_seconds=int(_resolve_idle_ttl(cfg, tui_mode)),
+        # Idle TTL is now a per-channel constant resolved in engine_runner (see
+        # _CHANNEL_IDLE_TTL_S). This field is unused by the runner and kept at 0 for
+        # back-compat with EngineConfig consumers.
+        shared_ttl_seconds=0,
         model_base_url=model_base_url,
         mcp_local_urls=mcp_local_urls,
     )
@@ -616,11 +621,14 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
 
     # 6b. Build engine_runner. MEM-01/D-02: pass memory_cfg so engine_runner probes
     # before pool.acquire (Pitfall 3).
+    # Per-channel idle TTL (constant by channel type; all v1 channels are 0).
+    channel_ttl = {ch.name: _CHANNEL_IDLE_TTL_S.get(ch.type, 0.0) for ch in cfg.channels}
     engine_runner = _make_engine_runner(
         pool=pool,
         engine_cfg=engine_cfg,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
         memory_cfg=cfg.memory,
+        channel_ttl=channel_ttl,
     )
 
     # Step 6 (cont.): construct Router with all limits from config (RTR-03/04)
@@ -648,6 +656,28 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
             if one_shot_prompt is not None:
                 await run_one_shot(router, one_shot_prompt)
             else:
+                # --tui: launch opencode at boot (not lazily on the first prompt) and hold a
+                # ref for the whole REPL, so per-invocation release(0) never stops it between
+                # prompts — there is no idle TTL; only Ctrl-C / EOF ends the session (the
+                # finally below stops it). Probe memory first so the pre-warmed server's
+                # opencode.json wires the memory MCP exactly as engine_runner would.
+                import dataclasses
+
+                warm_mcp_servers: list[str] = []
+                if cfg.memory is not None:
+                    from ach_agent.memory.adapter import prepare_memory
+
+                    _mem_ok, _ = await prepare_memory(cfg.memory)
+                    if _mem_ok:
+                        warm_mcp_servers = [cfg.memory.endpoint]
+                warm_cfg = dataclasses.replace(engine_cfg, mcp_servers=warm_mcp_servers)
+                warm_server = await pool.acquire(warm_cfg)
+                # No stdout banner — opencode's own --print-logs already announces the
+                # listening address. Keep one structured info line with the reachable host.
+                log.info(
+                    "ach-agent: opencode web UI",
+                    url=f"http://{opencode_bind_host}:{warm_server.port}",
+                )
                 await run_tui_console(router)
         finally:
             # Stop any warm-held engine server (idle TTL may not have elapsed at EOF).

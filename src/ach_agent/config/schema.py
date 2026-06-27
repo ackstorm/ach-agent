@@ -60,11 +60,11 @@ class LimitsBlock(BaseModel):
 class EngineBlock(BaseModel):
     """Engine server lifecycle knobs (harness-local; operator may render or omit).
 
-    ``idle_ttl_seconds`` keeps the opencode server (and its session) warm for this many
-    seconds after an invocation finishes, so a follow-up prompt reuses it instead of cold-
-    starting a fresh server (which also loses conversational continuity). 0 = stop the
-    server immediately after each invocation (spawn-per-invocation). The ``--tui`` REPL
-    defaults to a warm value when this is 0; ``ACH_ENGINE_IDLE_TTL_SECONDS`` overrides both.
+    ``idle_ttl_seconds`` is DEPRECATED and no longer consumed by the harness: the server
+    idle TTL (seconds the opencode server lingers after a conversation ends) is now a
+    per-channel constant (``ach_agent.main._CHANNEL_IDLE_TTL_S``), 0 for all v1 channels.
+    The field is retained for config back-compat (``extra='forbid'`` would reject it) but
+    has no effect. The ``--tui`` REPL pre-warms opencode at boot and holds it until Ctrl-C.
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)

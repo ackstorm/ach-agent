@@ -62,6 +62,11 @@ class EngineConfig:
     system_prompt: str = ""
     steps: int = 50
     startup_timeout_seconds: int = 30
+    # Interface opencode `serve` binds to. Defaults to loopback (only reachable inside the
+    # container/host). Set to 0.0.0.0 (via ACH_OPENCODE_BIND_HOST) to expose the opencode
+    # HTTP API + web UI on all interfaces — INSECURE (no auth), dev/test only. The harness
+    # HTTP client always connects via 127.0.0.1 regardless of this value.
+    bind_host: str = "127.0.0.1"
     shared_enabled: bool = False
     shared_ttl_seconds: int = 0
     max_invocation_seconds: int = 1800
@@ -283,6 +288,7 @@ async def launch(port: int, ephemeral_home: Path, config: EngineConfig) -> Manag
     log.info(
         "launching opencode serve",
         port=port,
+        hostname=config.bind_host,
         binary=binary,
         ephemeral_home=str(ephemeral_home),
     )
@@ -293,7 +299,7 @@ async def launch(port: int, ephemeral_home: Path, config: EngineConfig) -> Manag
         "--port",
         str(port),
         "--hostname",
-        "127.0.0.1",
+        config.bind_host,
         "--print-logs",
         "--pure",  # disable external plugins (Pitfall isolation)
         stdin=asyncio.subprocess.DEVNULL,

@@ -345,41 +345,14 @@ async def test_cr03_slack_only_config_waits_for_shutdown_event() -> None:
     )
 
 
-def _minimal_cfg(idle_ttl: int | None = None):
-    """Build a minimal valid AgentConfig, optionally setting engine.idleTtlSeconds."""
-    from ach_agent.config.schema import AgentConfig
+def test_channel_idle_ttl_constant() -> None:
+    """Idle TTL is a per-channel-type constant; all v1 channels stop on conversation end (0)."""
+    from ach_agent.main import _CHANNEL_IDLE_TTL_S
 
-    raw: dict[str, Any] = {
-        "schemaVersion": "1",
-        "agent": {"name": "t", "namespace": "test", "generation": 1},
-        "model": {"name": "openai.x", "type": "openai"},
-        "capability": {"type": "ach", "ach": {"baseUrl": "https://ach.example.com"}},
-        "channels": [],
-    }
-    if idle_ttl is not None:
-        raw["engine"] = {"idleTtlSeconds": idle_ttl}
-    return AgentConfig.model_validate(raw)
-
-
-def test_resolve_idle_ttl_precedence(monkeypatch: Any) -> None:
-    """env > contract param > TUI default(60) > 0 (channels/one-shot)."""
-    from ach_agent.main import _resolve_idle_ttl
-
-    monkeypatch.delenv("ACH_ENGINE_IDLE_TTL_SECONDS", raising=False)
-
-    # No param, not tui → 0 (spawn-per-invocation).
-    assert _resolve_idle_ttl(_minimal_cfg(), tui_mode=False) == 0.0
-    # No param, tui → 60s default warm.
-    assert _resolve_idle_ttl(_minimal_cfg(), tui_mode=True) == 60.0
-    # Contract param wins over the tui default.
-    assert _resolve_idle_ttl(_minimal_cfg(idle_ttl=200), tui_mode=True) == 200.0
-    # Env overrides everything (even a contract param).
-    monkeypatch.setenv("ACH_ENGINE_IDLE_TTL_SECONDS", "15")
-    assert _resolve_idle_ttl(_minimal_cfg(idle_ttl=200), tui_mode=True) == 15.0
-    # Invalid env is ignored → falls back to the contract param.
-    monkeypatch.setenv("ACH_ENGINE_IDLE_TTL_SECONDS", "abc")
-    assert _resolve_idle_ttl(_minimal_cfg(idle_ttl=200), tui_mode=False) == 200.0
-    # Non-finite env (inf/nan/-inf) is ignored — float() accepts them but int() would crash boot.
-    for bad in ("inf", "nan", "-inf"):
-        monkeypatch.setenv("ACH_ENGINE_IDLE_TTL_SECONDS", bad)
-        assert _resolve_idle_ttl(_minimal_cfg(idle_ttl=30), tui_mode=False) == 30.0
+    assert _CHANNEL_IDLE_TTL_S == {"webhook": 0.0, "cron": 0.0, "queue": 0.0, "a2a": 0.0}
+    # The boot-time name→ttl map resolves each configured channel by its type; an unknown
+    # channel (e.g. the --tui console) defaults to 0 = stop immediately.
+    channels = [("hook", "webhook"), ("tick", "cron")]
+    channel_ttl = {name: _CHANNEL_IDLE_TTL_S.get(typ, 0.0) for name, typ in channels}
+    assert channel_ttl == {"hook": 0.0, "tick": 0.0}
+    assert channel_ttl.get("tui-console", 0.0) == 0.0

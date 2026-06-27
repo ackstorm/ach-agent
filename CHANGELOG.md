@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Added
+- **`ACH_OPENCODE_BIND_HOST`** controls the interface opencode `serve` binds to (default
+  `127.0.0.1`). Set to `0.0.0.0` to expose the opencode HTTP API + web UI on all interfaces
+  (e.g. to open the web UI from your host's browser). Binding a non-loopback interface logs a
+  loud security warning — the opencode API runs without authentication, dev/test only. The
+  harness HTTP client always connects via loopback regardless.
+- **`--tui` pre-warms opencode at boot**: the console now launches the opencode server up
+  front (instead of lazily on the first prompt) and holds it for the whole REPL, so there is
+  no idle TTL between prompts — only Ctrl-C / EOF ends the session.
+
+### Changed
+- **Engine idle TTL is now a per-channel constant** (`_CHANNEL_IDLE_TTL_S`), `0` for all v1
+  channels, so the opencode server stops as soon as a conversation ends. Replaces the global
+  `ACH_ENGINE_IDLE_TTL_SECONDS` env / `engine.idleTtlSeconds` resolution. The
+  `engine.idleTtlSeconds` config field is retained for back-compat but no longer has any effect.
+
 ## [0.3.1] - 2026-06-26
 
 ### Changed

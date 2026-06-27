@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.3.2] - 2026-06-27
+
 ### Added
 - **`ACH_OPENCODE_BIND_HOST`** controls the interface opencode `serve` binds to (default
   `127.0.0.1`). Set to `0.0.0.0` to expose the opencode HTTP API + web UI on all interfaces

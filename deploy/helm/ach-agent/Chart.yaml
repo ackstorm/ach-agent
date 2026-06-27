@@ -1,7 +1,7 @@
 apiVersion: v2
 name: ach-agent
-version: 0.3.1
-appVersion: v0.3.1
+version: 0.3.2
+appVersion: v0.3.2
 kubeVersion: ">= 1.27.0-0"
 description: >-
   ACH Agent — execution plane harness for the ACH ecosystem.

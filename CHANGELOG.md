@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Added
+- **`ACH_OPENCODE_PORT`** pins the opencode `serve` port (default `0` = ephemeral). Set a
+  fixed port so a container can publish it (`ports:`) and the opencode web UI is reachable
+  from the host. Pair with `ACH_OPENCODE_BIND_HOST=0.0.0.0`. Dev/test only — collides if two
+  harness instances share the port.
+
 ## [0.3.2] - 2026-06-27
 
 ### Added

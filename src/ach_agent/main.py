@@ -597,9 +597,17 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
             "Use for local dev/test only, never in production or on an untrusted network.",
             bind_host=opencode_bind_host,
         )
+    # Fixed opencode port (dev/test): 0 = ephemeral. Set ACH_OPENCODE_PORT so a container can
+    # publish a known port and the web UI is reachable from the host (pair with 0.0.0.0 bind).
+    try:
+        opencode_port = int(os.environ.get("ACH_OPENCODE_PORT", "0") or "0")
+    except ValueError:
+        log.warning("invalid ACH_OPENCODE_PORT — ignoring (using an ephemeral port)")
+        opencode_port = 0
 
     engine_cfg = EngineConfig(
         bind_host=opencode_bind_host,
+        port=opencode_port,
         work_dir=cfg.work_dir,
         session_dir=f"{cfg.persistence.mount_path}/opencode/sessions",
         provider=cfg.model.type,

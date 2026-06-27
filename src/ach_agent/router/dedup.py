@@ -106,12 +106,16 @@ class FileBackedDedupStore:
 
         Lazy prune: DELETE WHERE expiry < now() runs in same transaction (T-03-03).
         """
+        # Read the clock once so the just-inserted expiry and the prune cutoff share a
+        # consistent `now` — a separate time.time() for the DELETE could (under a forward
+        # clock jump) prune the key we just marked.
+        now = time.time()
         self._con.execute(
             "INSERT OR REPLACE INTO dedup (key, expiry) VALUES (?,?)",
-            (key, time.time() + ttl_seconds),
+            (key, now + ttl_seconds),
         )
         # Lazy prune — bound table size to active idempotency window (T-03-03, D-02)
-        self._con.execute("DELETE FROM dedup WHERE expiry < ?", (time.time(),))
+        self._con.execute("DELETE FROM dedup WHERE expiry < ?", (now,))
         self._con.commit()
 
     def close(self) -> None:

@@ -370,6 +370,33 @@ async def test_cr03_slack_only_config_waits_for_shutdown_event() -> None:
     )
 
 
+def test_resolve_engine_paths_defaults_and_overrides() -> None:
+    from types import SimpleNamespace
+
+    from ach_agent.main import resolve_engine_paths
+
+    # persistence enabled, nothing pinned → home under mountPath, workDir under home
+    cfg = SimpleNamespace(
+        engine=SimpleNamespace(home="", work_dir=""),
+        persistence=SimpleNamespace(enabled=True, mount_path="/var/lib/ach-agent"),
+    )
+    home, work_dir = resolve_engine_paths(cfg)
+    assert home == "/var/lib/ach-agent/home"
+    assert work_dir == "/var/lib/ach-agent/home/workspace"
+
+    # persistence disabled → volatile /tmp home
+    cfg.persistence = SimpleNamespace(enabled=False, mount_path="/var/lib/ach-agent")
+    home, work_dir = resolve_engine_paths(cfg)
+    assert home == "/tmp/ach-home"
+    assert work_dir == "/tmp/ach-home/workspace"
+
+    # explicit pins win, and workDir stays where the operator put it
+    cfg.engine = SimpleNamespace(home="/h", work_dir="/elsewhere/ws")
+    home, work_dir = resolve_engine_paths(cfg)
+    assert home == "/h"
+    assert work_dir == "/elsewhere/ws"
+
+
 def test_channel_idle_ttl_constant() -> None:
     """Idle TTL is a per-channel-type constant; all v1 channels stop on conversation end (0)."""
     from ach_agent.main import _CHANNEL_IDLE_TTL_S

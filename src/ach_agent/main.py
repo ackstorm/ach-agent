@@ -194,6 +194,21 @@ def build_engine_prompt(event: MessageEvent) -> str:
     return " ".join(parts)
 
 
+def resolve_engine_paths(cfg: Any) -> tuple[str, str]:
+    """Resolve the opencode HOME and the agent workDir from the contract.
+
+    Both are definable (engine.home / engine.workDir). When omitted:
+      - home → <mountPath>/home if persistence.enabled (persistent), else /tmp/ach-home.
+      - work_dir → <home>/workspace.
+    Static state (config, skills, sessions) lives under HOME; HOME under mountPath persists.
+    """
+    home = cfg.engine.home
+    if not home:
+        home = f"{cfg.persistence.mount_path}/home" if cfg.persistence.enabled else "/tmp/ach-home"
+    work_dir = cfg.engine.work_dir or f"{home}/workspace"
+    return home, work_dir
+
+
 def _make_engine_runner(
     pool: Any,
     engine_cfg: Any,
@@ -500,6 +515,7 @@ async def main(
 
     # Step 2: load config (hard-fail on schema mismatch — CFG-02)
     cfg = load_config(config_path)
+    engine_home, engine_work_dir = resolve_engine_paths(cfg)
 
     # Step 3: D-02 gate — reject unwired channel types before serving.
     # Skipped under --tui/--prompt: configured channels are ignored in console mode.
@@ -542,7 +558,12 @@ async def main(
                 s for s in manifest.context.skills if s.name not in _exclude_skills
             ]
             log.info("filter: skills excluded", excluded=sorted(_exclude_skills))
-        await fetch_context(manifest.context, ek, Path(cfg.persistence.mount_path))
+        await fetch_context(
+            manifest.context,
+            ek,
+            Path(cfg.persistence.mount_path),
+            Path(engine_home) / ".config" / "opencode" / "skills",
+        )
         mcp_proxy = McpProxy()
         _exclude_servers = set(_exclude.mcp_servers)
         mcp_local_urls = await mcp_proxy.start(manifest.mcp_servers, ek, exclude=_exclude_servers)
@@ -658,7 +679,8 @@ async def main(
     # picks — only reachable inside the container/host. `--tui` drives it via `opencode attach`
     # (co-located, loopback); nothing is published off-host.
     engine_cfg = EngineConfig(
-        work_dir=cfg.engine.work_dir,
+        home=engine_home,
+        work_dir=engine_work_dir,
         provider=cfg.model.type,
         model=cfg.model.name,
         params=cfg.model.params,

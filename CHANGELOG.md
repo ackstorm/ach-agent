@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.4.0] - 2026-06-30
+
 ### Added
 - **`engine.forwardEnv`** (config) — a list of extra env var NAMES to forward from the
   harness env into the opencode subprocess. Defaults to empty.

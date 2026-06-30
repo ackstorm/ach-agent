@@ -105,14 +105,9 @@ _docs-build:
 docs-serve: ## Live docs preview on :8000
 	./scripts/dev.sh uv run mkdocs serve -a 0.0.0.0:8000
 
-##@ E2E
-.PHONY: e2e
-e2e: ## Run full e2e stack (compose up -> assertions -> teardown)
-	./scripts/e2e.sh
-
 ##@ Verify
 .PHONY: verify
-verify: lint test conformance secrets ## Full local gate (lint + mypy + unit + conformance + e2e + secrets)
+verify: lint test conformance secrets ## Full local gate (lint + mypy + unit + conformance + secrets)
 
 ##@ Build / Release
 .PHONY: build-image

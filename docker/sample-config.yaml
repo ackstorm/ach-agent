@@ -43,6 +43,14 @@ persistence:
   enabled: false
   mountPath: /tmp/ach-state
 
+# Optional engine knobs. opencode's subprocess env is built clean-slate: it inherits ONLY
+# a small base allowlist (PATH, SHELL, LANG, …) — never the harness secrets, so the ek_
+# (ACH_TOKEN/ACH_API_KEY) cannot reach opencode in proxy mode. List extra env var NAMES to
+# forward from the harness env here (e.g. a custom CA bundle path). NEVER list the ek_.
+# engine:
+#   forwardEnv:
+#     - SSL_CERT_FILE
+
 # No channels under --tui/--prompt: the typed/passed line IS the prompt. To exercise a
 # real channel instead, add it here and launch WITHOUT --tui/--prompt.
 channels: []

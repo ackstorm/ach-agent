@@ -70,6 +70,12 @@ class EngineBlock(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     idle_ttl_seconds: int = Field(default=0, alias="idleTtlSeconds")
+    # SEC-01 / ek-hygiene: extra env var NAMES forwarded from the harness env into the
+    # opencode subprocess. opencode's env is built clean-slate from a small base allowlist
+    # (see engine.lifecycle.build_opencode_env), so nothing else is inherited — the ek_
+    # (ACH_TOKEN/ACH_API_KEY) never reaches opencode unless explicitly named here. Use
+    # sparingly (e.g. a custom CA bundle path or a tool's own config var); never list the ek_.
+    forward_env: list[str] = Field(default_factory=list, alias="forwardEnv")
 
 
 class PersistenceBlock(BaseModel):

@@ -656,6 +656,9 @@ async def main(
         shared_ttl_seconds=0,
         model_base_url=model_base_url,
         mcp_local_urls=mcp_local_urls,
+        # SEC-01 / ek-hygiene: opencode's env is clean-slate (base allowlist only). Extra
+        # var names the operator wants forwarded come from engine.forwardEnv.
+        forward_env=cfg.engine.forward_env,
     )
     pool = EnginePool()
 

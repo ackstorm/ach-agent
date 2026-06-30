@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Added
+- **`engine.forwardEnv`** (config) — a list of extra env var NAMES to forward from the
+  harness env into the opencode subprocess. Defaults to empty.
+
 ### Changed
 - **`--tui` now attaches to opencode's native TUI** via `opencode attach` against the
   harness-prewarmed `serve` (egress hygiene preserved — model + MCP still flow through the
@@ -17,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loopback (`127.0.0.1`) on a free ephemeral port. The off-host web-UI exposure they enabled
   is obsolete now that `--tui` uses `opencode attach` (co-located, loopback); dropping the
   `0.0.0.0` bind also removes an unauthenticated-API footgun.
+
+### Security
+- **opencode's subprocess env is now built clean-slate** instead of inheriting the full
+  harness environment. opencode gets only a small base allowlist (`PATH`, `SHELL`, `LANG`,
+  …) plus any names in `engine.forwardEnv`; `HOME`/`TMPDIR` are pinned to its ephemeral
+  home. This enforces CONTRACT §3 — the `ek_` (`ACH_TOKEN`/`ACH_API_KEY`) never reaches
+  opencode in proxy mode (previously the subprocess inherited `**os.environ`, including the
+  bearer). Legacy local-dev mode (no localhost proxy) still forwards `ACH_API_KEY`/
+  `ACH_BASE_URL`, which opencode.json dereferences directly.
 
 ## [0.3.3] - 2026-06-27
 

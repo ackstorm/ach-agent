@@ -422,3 +422,66 @@ async def test_consume_to_completion_dedups_cumulative_snapshots() -> None:
         text = await consume_sse_to_completion(client, "ses")
 
     assert text == "Hello world", "cumulative snapshots deduped (not 'HelloHello world')"
+
+
+# ---------------------------------------------------------------------------
+# SEC-01 / ek-hygiene: opencode subprocess env is clean-slate (allowlist only)
+# ---------------------------------------------------------------------------
+
+
+def test_build_opencode_env_strips_secrets_in_proxy_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Proxy mode: the ek_ and other secrets are NEVER forwarded into opencode's env."""
+    from ach_agent.engine.lifecycle import EngineConfig, build_opencode_env
+
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setenv("ACH_TOKEN", "ek-secret")
+    monkeypatch.setenv("ACH_API_KEY", "ek-secret")
+    monkeypatch.setenv("GITLAB_TOKEN", "glpat-x")
+
+    env = build_opencode_env(tmp_path, EngineConfig(model_base_url="http://127.0.0.1:9/v1"))
+
+    assert "ACH_TOKEN" not in env
+    assert "ACH_API_KEY" not in env  # proxy injects the ek_; opencode must not see it
+    assert "GITLAB_TOKEN" not in env
+    assert env["PATH"] == "/usr/bin"  # base allowlist preserved
+    assert env["HOME"] == str(tmp_path)  # pinned to ephemeral home
+    assert env["TMPDIR"] == str(tmp_path)
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_build_opencode_env_forwards_configured_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """engine.forwardEnv names are forwarded by value; unnamed secrets stay stripped."""
+    from ach_agent.engine.lifecycle import EngineConfig, build_opencode_env
+
+    monkeypatch.setenv("MY_CA_BUNDLE", "/etc/ca.pem")
+    monkeypatch.setenv("ACH_TOKEN", "ek-secret")
+
+    env = build_opencode_env(
+        tmp_path,
+        EngineConfig(model_base_url="http://127.0.0.1:9/v1", forward_env=["MY_CA_BUNDLE"]),
+    )
+
+    assert env["MY_CA_BUNDLE"] == "/etc/ca.pem"
+    assert "ACH_TOKEN" not in env  # not named → not forwarded
+
+
+def test_build_opencode_env_forwards_ach_refs_in_legacy_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Legacy mode (no proxy): opencode.json dereferences ACH_API_KEY/ACH_BASE_URL, so they
+    are forwarded (required for that mode); ACH_TOKEN is still never forwarded."""
+    from ach_agent.engine.lifecycle import EngineConfig, build_opencode_env
+
+    monkeypatch.setenv("ACH_API_KEY", "dev-key")
+    monkeypatch.setenv("ACH_BASE_URL", "https://hub.example")
+    monkeypatch.setenv("ACH_TOKEN", "ek-secret")
+
+    env = build_opencode_env(tmp_path, EngineConfig(model_base_url=""))
+
+    assert env["ACH_API_KEY"] == "dev-key"
+    assert env["ACH_BASE_URL"] == "https://hub.example"
+    assert "ACH_TOKEN" not in env

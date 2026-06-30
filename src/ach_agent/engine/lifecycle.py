@@ -76,6 +76,12 @@ class EngineConfig:
     # {server_id: "http://127.0.0.1:<port>/mcp/<id>"} from McpProxy — proxied external MCP
     # servers written into opencode.json's mcp block alongside any memory server.
     mcp_local_urls: dict[str, str] = field(default_factory=dict)
+    # SEC-01 / ek-hygiene: extra env var NAMES the operator wants forwarded from the harness
+    # env into the opencode subprocess (engine.forwardEnv). The opencode env is built
+    # clean-slate from a small base allowlist (see build_opencode_env) — nothing else is
+    # inherited — so the ek_ (ACH_TOKEN/ACH_API_KEY) never reaches opencode unless explicitly
+    # named here. Use sparingly (e.g. a custom CA bundle path); never list the ek_.
+    forward_env: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -242,6 +248,65 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
     )
 
 
+# Base allowlist (SEC-01 / ek-hygiene): the only harness env vars opencode inherits by
+# default — the benign set a CLI needs to run (locate binaries, locale, terminal). Secrets
+# (ACH_TOKEN/ACH_API_KEY, GITLAB_TOKEN, provider keys) are deliberately ABSENT. HOME/TMPDIR
+# are pinned to the ephemeral home below, so the values here (if any) are overridden.
+# Note: XDG_CONFIG_HOME is intentionally excluded — it would override $HOME/.config/opencode
+# and break the ephemeral opencode.json the harness just wrote.
+_OPENCODE_ENV_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "PATH",
+        "SHELL",
+        "USER",
+        "LOGNAME",
+        "HOSTNAME",
+        "LANG",
+        "LANGUAGE",
+        "TERM",
+        "TZ",
+    }
+)
+
+
+def build_opencode_env(ephemeral_home: Path, config: EngineConfig) -> dict[str, str]:
+    """Construct a minimal, allowlisted environment for the opencode subprocess.
+
+    Clean-slate (SEC-01 / ek-hygiene): opencode does NOT inherit the harness env. It gets
+    only ``_OPENCODE_ENV_ALLOWLIST`` (benign CLI basics), plus any var NAMES the operator
+    lists in ``engine.forwardEnv`` (config.forward_env). The ek_ (ACH_TOKEN/ACH_API_KEY)
+    is never present unless explicitly named — in proxy mode it must not be, because the
+    localhost model-proxy injects it and opencode points only at 127.0.0.1.
+
+    Legacy mode (no ``model_base_url`` — local dev without ACH): opencode.json references
+    ``{env:ACH_API_KEY}`` / ``{env:ACH_BASE_URL}``; those two are forwarded when present
+    because opencode cannot reach the model at all otherwise — they are required for that
+    mode to work, not an ek-hygiene leak (no governed ek_ exists in local-dev legacy mode).
+
+    Pinned last (override anything above): HOME/TMPDIR → the per-server ephemeral home;
+    GIT_TERMINAL_PROMPT=0 so git never blocks a non-interactive subprocess on a prompt.
+    """
+    env: dict[str, str] = {
+        name: os.environ[name] for name in _OPENCODE_ENV_ALLOWLIST if name in os.environ
+    }
+    # Operator-defined exceptions (engine.forwardEnv) — forwarded by name when present.
+    for name in config.forward_env:
+        value = os.environ.get(name)
+        if value is not None:
+            env[name] = value
+    # Legacy mode: opencode.json dereferences these at runtime; required for it to work.
+    if not config.model_base_url:
+        for name in ("ACH_API_KEY", "ACH_BASE_URL"):
+            value = os.environ.get(name)
+            if value is not None:
+                env[name] = value
+    # Pinned hardening — last word, overrides any inherited/forwarded value.
+    env["HOME"] = str(ephemeral_home)
+    env["TMPDIR"] = str(ephemeral_home)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
+
 async def launch(port: int, ephemeral_home: Path, config: EngineConfig) -> ManagedServer:
     """Launch opencode serve in an isolated ephemeral home.
 
@@ -265,20 +330,15 @@ async def launch(port: int, ephemeral_home: Path, config: EngineConfig) -> Manag
     if not work_dir.exists():
         work_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build subprocess env: inherit os.environ + add hardening vars
-    # ACH_BASE_URL and ACH_API_KEY are already in os.environ;
-    # they are referenced via {env:...} in opencode.json — NOT re-injected here.
+    # Build a clean-slate subprocess env (SEC-01 / ek-hygiene): opencode inherits NOTHING
+    # from the harness env except a small base allowlist + operator-named extras. The ek_
+    # (ACH_TOKEN/ACH_API_KEY) is therefore absent from opencode's environment in proxy mode.
     #
     # Note on OPENCODE_SERVER_PASSWORD (Pitfall 5 deviation):
     # When set, opencode requires authentication for ALL routes including GET /app,
     # breaking the readiness probe (401). Do NOT set it; accept the warning in logs.
     # The server binds to 127.0.0.1 only.
-    env: dict[str, str] = {
-        **os.environ,
-        "HOME": str(ephemeral_home),
-        "TMPDIR": str(ephemeral_home),
-        "GIT_TERMINAL_PROMPT": "0",
-    }
+    env = build_opencode_env(ephemeral_home, config)
 
     log.info(
         "launching opencode serve",

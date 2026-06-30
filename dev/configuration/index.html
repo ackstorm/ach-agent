@@ -566,12 +566,12 @@ YAML. Both validate against the same schema, and <strong>unknown keys are reject
 <tr>
 <td><code>prompt</code></td>
 <td></td>
-<td><code>system</code> (inline persona, markdown ok) + <code>compose: append</code> (layered on ACH-hydrated context).</td>
+<td><code>system</code> (inline persona, markdown ok). <code>compose</code> is contract-reserved (accepted; prompt-layering not yet executed by the harness).</td>
 </tr>
 <tr>
 <td><code>memory</code></td>
 <td></td>
-<td>Fail-open. <code>endpoint</code>, <code>mission</code>, <code>bank</code> (static memory bank_id), <code>mentalModels</code>. Backend down → run without it.</td>
+<td>Fail-open. <code>endpoint</code>, <code>bank</code> (static memory bank_id), <code>mentalModels</code>. <code>mission</code> is contract-reserved (accepted; not yet consumed). Backend down → run without it.</td>
 </tr>
 <tr>
 <td><code>limits</code></td>

@@ -227,6 +227,31 @@ def resolve_engine_paths(cfg: Any) -> tuple[str, str]:
     return home, work_dir
 
 
+def ach_state_dir(home: str) -> Path:
+    """The single hydration state root: <home>/.ach-state (prompts + artifacts)."""
+    return Path(home) / ".ach-state"
+
+
+def link_ach_state(home: str, work_dir: str) -> Path:
+    """Create <home>/.ach-state and, when workDir differs, a <workDir>/.ach-state symlink.
+
+    The symlink gives the agent's shell (cwd = workDir) one stable path to hydrated
+    artifacts; HOME stays the canonical read-only root. Best-effort: a symlink failure
+    (e.g. unsupported FS) is non-fatal — the agent can still reach state under HOME.
+    """
+    state = ach_state_dir(home)
+    state.mkdir(parents=True, exist_ok=True)
+    if work_dir and Path(work_dir).resolve() != Path(home).resolve():
+        link = Path(work_dir) / ".ach-state"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if not link.exists():
+            try:
+                link.symlink_to(state, target_is_directory=True)
+            except OSError as e:
+                log.warning("workDir .ach-state symlink failed (non-fatal)", error=str(e))
+    return state
+
+
 def _make_engine_runner(
     pool: Any,
     engine_cfg: Any,
@@ -541,6 +566,7 @@ async def main(
     # Step 2: load config (hard-fail on schema mismatch — CFG-02)
     cfg = load_config(config_path)
     engine_home, engine_work_dir = resolve_engine_paths(cfg)
+    state_dir = link_ach_state(engine_home, engine_work_dir)
 
     # Step 3: D-02 gate — reject unwired channel types before serving.
     # Skipped under --tui/--prompt: configured channels are ignored in console mode.
@@ -586,7 +612,7 @@ async def main(
         await fetch_context(
             manifest.context,
             ek,
-            Path(cfg.persistence.mount_path),
+            state_dir,
             Path(engine_home) / ".config" / "opencode" / "skills",
         )
         mcp_proxy = McpProxy()

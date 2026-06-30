@@ -14,8 +14,7 @@
 schemaVersion: "1"          # must be the quoted string "1" (unquoted 1 is rejected)
 
 agent:
-  name: local-dev-agent
-  namespace: default
+  name: local-dev-agent     # name only — namespace/generation are not part of the contract
 
 model:
   name: gemini.gemini-flash-latest   # an ACH-served model id
@@ -29,28 +28,50 @@ capability:
     #   docker run -it -e ACH_TOKEN=ek-... -e ACH_BASE_URL=https://your-ach-host ...
     # (you may also pin it here as `baseUrl: https://your-ach-host`; the env wins if both).
     # environment is implicit — your EK scopes it server-side (defaults to "platform").
+  # Optional governance gate ABOVE the model — withhold capabilities before they are offered.
+  # tool ids MUST match opencode's MCP tool names (the boot probe logs each server's tools).
+  # filter:
+  #   exclude:
+  #     tools: ["gitlab_merge_merge_request"]
+  #     mcpServers: ["dangerous-admin"]
+  #     skills: ["send-email"]
 
 # Optional — the inline agent persona. Layered (append) on top of the skills/prompts
 # hydrated from ACH. Drop this block to rely solely on ACH-provisioned context.
 prompt:
-  base: "You are a concise software-engineering assistant."
+  system: "You are a concise software-engineering assistant."
   compose: append
 
-# Local writable scratch dirs (uid 10001 inside the container). persistence.enabled:false
+# Engine knobs (harness-local; operator-optional). workDir + startupTimeoutSeconds live here.
+# opencode's subprocess env is built clean-slate: it inherits ONLY a small base allowlist
+# (PATH, SHELL, LANG, …) — never the harness secrets, so the ek_ (ACH_TOKEN/ACH_API_KEY)
+# cannot reach opencode in proxy mode. forwardEnv lists extra env var NAMES to forward from
+# the harness env (e.g. a custom CA bundle path). NEVER list the ek_.
+engine:
+  workDir: /tmp/workspace
+  startupTimeoutSeconds: 30
+  # forwardEnv:
+  #   - SSL_CERT_FILE
+
+# Local writable scratch dir (uid 10001 inside the container). persistence.enabled:false
 # keeps the dry-run volume-free.
-workDir: /tmp/workspace
 persistence:
   enabled: false
   mountPath: /tmp/ach-state
 
-# Optional engine knobs. opencode's subprocess env is built clean-slate: it inherits ONLY
-# a small base allowlist (PATH, SHELL, LANG, …) — never the harness secrets, so the ek_
-# (ACH_TOKEN/ACH_API_KEY) cannot reach opencode in proxy mode. List extra env var NAMES to
-# forward from the harness env here (e.g. a custom CA bundle path). NEVER list the ek_.
-# engine:
-#   forwardEnv:
-#     - SSL_CERT_FILE
-
 # No channels under --tui/--prompt: the typed/passed line IS the prompt. To exercise a
-# real channel instead, add it here and launch WITHOUT --tui/--prompt.
+# real channel instead, add it here and launch WITHOUT --tui/--prompt. Each channel's
+# `concurrency` is a per-channel sub-cap under the global limits.maxConcurrentInvocations.
+# Example webhook with the static-secret header_token auth:
+#
+# channels:
+#   - name: generic-hook
+#     type: webhook
+#     source: generic
+#     concurrency: 2
+#     webhook:
+#       auth:
+#         type: header_token          # gitlab_token | hmac | header_token | none
+#         header: X-Api-Key
+#         secretPath: /etc/ach-agent/secrets/generic-hook/secret
 channels: []

@@ -10,13 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **`engine.forwardEnv`** (config) — a list of extra env var NAMES to forward from the
   harness env into the opencode subprocess. Defaults to empty.
+- **`capability.filter.exclude.mcpServers` + `.skills`** — withhold MCP servers and ACH
+  skills before they reach the model (governance gate); plus existing `.tools` now enforced
+  via opencode.json tool-disable.
+- **`header_token` webhook auth** — static shared secret in a configurable header.
+- **Per-channel `concurrency`** — each channel's `concurrency` is now a real sub-cap under
+  the global `maxConcurrentInvocations`.
+- **`maxSteps` and `terminalOutputRetries`** are now honored (were parsed but ignored).
 
 ### Changed
+- **Config reshape:** `workDir` + `startupTimeoutSeconds` moved under `engine`;
+  `prompt.base` → `prompt.system`.
 - **`--tui` now attaches to opencode's native TUI** via `opencode attach` against the
   harness-prewarmed `serve` (egress hygiene preserved — model + MCP still flow through the
   localhost proxies that inject the `ek_`). `--debug` remains the plain stdin/stdout REPL.
 
 ### Removed
+- **`agent.namespace`, `agent.generation`, top-level `governed`, `channels[].session`,
+  `channels[].expire`, `engine.idleTtlSeconds`** — inert or redundant; dropped to close the
+  contract.
 - **`ACH_OPENCODE_BIND_HOST` and `ACH_OPENCODE_PORT`** — opencode `serve` now always binds
   loopback (`127.0.0.1`) on a free ephemeral port. The off-host web-UI exposure they enabled
   is obsolete now that `--tui` uses `opencode attach` (co-located, loopback); dropping the

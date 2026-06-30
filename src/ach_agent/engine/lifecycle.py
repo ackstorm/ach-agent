@@ -54,8 +54,10 @@ class EngineConfig:
     """
 
     binary_path: str = "opencode"
+    # Stable opencode HOME: holds .config/opencode (opencode.json + hydrated skills),
+    # .local/share/opencode (sessions — persist because HOME is stable), and node_modules.
+    home: str = ""
     work_dir: str = "/workspace"
-    session_dir: str = "/var/lib/ach-agent/opencode/sessions"
     provider: str = "openai"
     model: str = "gpt-4o-mini"  # opencode validates model names; must be a known OpenAI model ID
     params: dict[str, object] = field(default_factory=dict)  # model params (temperature, …)

@@ -648,7 +648,6 @@ async def main(
     # (co-located, loopback); nothing is published off-host.
     engine_cfg = EngineConfig(
         work_dir=cfg.engine.work_dir,
-        session_dir=f"{cfg.persistence.mount_path}/opencode/sessions",
         provider=cfg.model.type,
         model=cfg.model.name,
         params=cfg.model.params,

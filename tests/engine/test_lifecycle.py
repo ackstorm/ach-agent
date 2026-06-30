@@ -467,3 +467,11 @@ def test_build_opencode_env_forwards_configured_names(
 
     assert env["MY_CA_BUNDLE"] == "/etc/ca.pem"
     assert "ACH_TOKEN" not in env  # not named → not forwarded
+
+
+def test_engine_config_has_home_and_no_session_dir() -> None:
+    from ach_agent.engine.lifecycle import EngineConfig
+
+    cfg = EngineConfig(home="/var/lib/ach-agent/home")
+    assert cfg.home == "/var/lib/ach-agent/home"
+    assert not hasattr(cfg, "session_dir")

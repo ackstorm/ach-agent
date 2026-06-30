@@ -360,3 +360,16 @@ async def test_gitlab_token_auth_rejects_bad_token(tmp_path: pytest.TempPathFact
 
     assert result.status_code == 401
     assert handler._call_count == 0
+
+
+def test_header_token_auth(tmp_path) -> None:
+    """header_token auth: static shared secret in a configurable header (constant-time)."""
+    from ach_agent.channels.webhook import _verify_auth
+    from ach_agent.config.schema import WebhookAuthBlock
+
+    secret = tmp_path / "s"
+    secret.write_text("topsecret")
+    auth = WebhookAuthBlock(type="header_token", header="X-Api-Key", secret_path=str(secret))
+    assert _verify_auth(auth, {"x-api-key": "topsecret"}, b"") is True
+    assert _verify_auth(auth, {"x-api-key": "wrong"}, b"") is False
+    assert _verify_auth(auth, {}, b"") is False

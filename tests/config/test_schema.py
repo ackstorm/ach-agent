@@ -146,6 +146,20 @@ def test_prompt_system_field() -> None:
     assert PromptBlock.model_validate({"system": "hi"}).system == "hi"
 
 
+def test_contract_reserved_fields_accepted() -> None:
+    """prompt.compose + memory.mission are CONTRACT §2 reserved fields: the operator
+    renders them, the harness must ACCEPT them (extra=forbid) even though it does not yet
+    execute them. Guards against re-removing them as 'inert'."""
+    from ach_agent.config.schema import MemoryBlock, PromptBlock
+
+    p = PromptBlock.model_validate({"system": "hi", "compose": "append"})
+    assert p.compose == "append"
+    m = MemoryBlock.model_validate(
+        {"endpoint": "http://mem:8080", "mission": "reviewer", "bank": "b1"}
+    )
+    assert m.mission == "reviewer"
+
+
 def test_agent_namespace_rejected() -> None:
     import pytest
     from pydantic import ValidationError

@@ -28,11 +28,11 @@ capability:
 
 prompt:
   system: "You are a senior code reviewer for the platform team."
-  compose: append                       # layered on top of ACH-hydrated skills/prompts
+  compose: append                       # reserved: accepted, prompt-layering not yet executed
 
 memory:                                 # omit if unused; fail-open (backend down → run without it)
   endpoint: http://hindsight.engineering.svc:8080
-  mission: "AI code reviewer for the platform team"
+  mission: "AI code reviewer for the platform team"   # reserved: accepted, not yet consumed
   bank: gitlab-pr-review                # static memory bank_id (the agent's mission namespace)
   mentalModels: [architecture, conventions, recurring-issues]
 

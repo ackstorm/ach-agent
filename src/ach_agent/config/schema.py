@@ -66,7 +66,12 @@ class EngineBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    work_dir: str = Field(default="/workspace", alias="workDir")
+    # Empty by default — the harness derives the concrete paths at boot from
+    # persistence (see ach_agent.main.resolve_engine_paths): persistence.enabled →
+    # home=<mountPath>/home (persistent), else /tmp/ach-home (volatile); work_dir
+    # defaults to <home>/workspace. Set either here to pin an explicit path.
+    home: str = Field(default="", alias="home")
+    work_dir: str = Field(default="", alias="workDir")
     startup_timeout_seconds: int = Field(default=30, alias="startupTimeoutSeconds")
     forward_env: list[str] = Field(default_factory=list, alias="forwardEnv")
 

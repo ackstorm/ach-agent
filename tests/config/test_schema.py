@@ -128,6 +128,18 @@ def test_engine_holds_workdir_and_startup() -> None:
     assert not hasattr(cfg, "governed")
 
 
+def test_engine_home_field_and_workdir_default_empty() -> None:
+    from ach_agent.config.schema import EngineBlock
+
+    e = EngineBlock.model_validate({"home": "/h", "workDir": "/h/ws"})
+    assert e.home == "/h"
+    assert e.work_dir == "/h/ws"
+    # Both default to "" (empty) so the harness can derive them from persistence at boot.
+    blank = EngineBlock.model_validate({})
+    assert blank.home == ""
+    assert blank.work_dir == ""
+
+
 def test_prompt_system_field() -> None:
     from ach_agent.config.schema import PromptBlock
 

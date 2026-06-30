@@ -252,6 +252,31 @@ def link_ach_state(home: str, work_dir: str) -> Path:
     return state
 
 
+def resolve_system_prompt(prompt_block: Any, state_dir: Path) -> str:
+    """Resolve prompt.system (text | file | None) into the persona string.
+
+    text → the inline text. file → bytes of <state_dir>/<file>, with the resolved real
+    path re-checked to stay inside state_dir (defense in depth over the schema validator,
+    which only sees the literal path). A missing file is a hard startup failure: a persona
+    the operator declared but hydration did not deliver is a misconfiguration, not fail-open.
+    None → "" (no persona).
+    """
+    if prompt_block is None or prompt_block.system is None:
+        return ""
+    system = prompt_block.system
+    if system.type == "text":
+        return str(system.text)
+    root = state_dir.resolve()
+    target = (root / str(system.file)).resolve()
+    if not target.is_relative_to(root):
+        log.error("prompt.system.file escapes .ach-state", file=system.file)
+        sys.exit(1)
+    if not target.is_file():
+        log.error("prompt.system.file not found under .ach-state", path=str(target))
+        sys.exit(1)
+    return target.read_text(encoding="utf-8")
+
+
 def _make_engine_runner(
     pool: Any,
     engine_cfg: Any,
@@ -737,7 +762,7 @@ async def main(
         params=cfg.model.params,
         # prompt.system = the inline agent persona; written to opencode's append-mode
         # `instructions` (layered on ACH-hydrated skills/prompts). Empty when absent.
-        system_prompt=cfg.prompt.system if cfg.prompt else "",
+        system_prompt=resolve_system_prompt(cfg.prompt, state_dir),
         steps=cfg.limits.max_steps,
         startup_timeout_seconds=cfg.engine.startup_timeout_seconds,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,

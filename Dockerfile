@@ -64,6 +64,11 @@ COPY --from=opencode-bin /usr/local/bin/opencode /usr/local/bin/opencode
 COPY --from=codemem-bin /usr/local/bin/node /usr/local/bin/node
 COPY --from=codemem-bin /opt/codemem /opt/codemem
 ENV PATH="/opt/codemem/bin:${PATH}"
+# Runtime smoke: prove codemem actually EXECUTES in the final image (python:3.12-slim libs),
+# not just that the binary is present. prepare_codemem probes PATH only (shutil.which), so a
+# present-but-broken codemem would pass the probe and crash opencode's stdio child at runtime.
+# Failing the build here closes the "broken (not missing)" half of the fail-open invariant.
+RUN codemem --version
 COPY src/ ./src/
 
 # Bake a minimal default contract so a collaborator can run the image with only an EK

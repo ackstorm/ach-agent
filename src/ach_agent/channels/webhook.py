@@ -89,14 +89,30 @@ def _verify_hmac(signature: str, secret_path: str, raw_body: bytes) -> bool:
     return hmac.compare_digest(sig, expected)
 
 
+def _verify_header_token(header_token: str, secret_path: str) -> bool:
+    """Constant-time compare a static shared secret carried in a configurable header.
+
+    Secret read per-call from secret_path for rotation support (SEC-02). Empty header or
+    empty/unreadable secret → reject.
+    """
+    if not header_token or not secret_path:
+        return False
+    secret = Path(secret_path).read_text(encoding="utf-8").strip()
+    return bool(secret) and hmac.compare_digest(header_token, secret)
+
+
 def _verify_auth(auth: WebhookAuthBlock, lower_headers: dict[str, str], raw_body: bytes) -> bool:
-    """Dispatch auth verification by auth.type (gitlab_token | hmac | none)."""
+    """Dispatch auth verification by auth.type (gitlab_token | hmac | header_token | none)."""
     match auth.type:
         case "gitlab_token":
             return _verify_gitlab_token(lower_headers.get("x-gitlab-token", ""), auth.secret_path)
         case "hmac":
             return _verify_hmac(
                 lower_headers.get("x-hub-signature-256", ""), auth.secret_path, raw_body
+            )
+        case "header_token":
+            return _verify_header_token(
+                lower_headers.get(auth.header.lower(), ""), auth.secret_path
             )
         case "none":
             return True

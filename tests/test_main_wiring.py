@@ -193,6 +193,31 @@ def test_opencode_json_never_contains_ek(tmp_path: Any, monkeypatch: Any) -> Non
     assert "mcp-gofetch" in blob  # proxied MCP server is registered at its localhost URL
 
 
+def test_engine_config_gets_max_steps_and_paths(tmp_path: Any, monkeypatch: Any) -> None:
+    """maxSteps → EngineConfig.steps; engine.workDir/startupTimeout flow through."""
+    from ach_agent.engine.lifecycle import EngineConfig
+
+    cfg = EngineConfig(work_dir="/w", startup_timeout_seconds=7, steps=12)
+    assert cfg.steps == 12 and cfg.work_dir == "/w" and cfg.startup_timeout_seconds == 7
+
+
+def test_excluded_tools_written_disabled_in_opencode_json(tmp_path: Any) -> None:
+    import json as _json
+
+    from ach_agent.engine.lifecycle import EngineConfig, write_opencode_config
+
+    cfg = EngineConfig(
+        model="gpt-4o-mini",
+        model_base_url="http://127.0.0.1:9001/v1",
+        exclude_tools=["gitlab_merge_merge_request"],
+    )
+    write_opencode_config(tmp_path, cfg)
+    data = _json.loads((tmp_path / ".config" / "opencode" / "opencode.json").read_text())
+    tools = data["agent"]["build"]["tools"]
+    assert tools["gitlab_merge_merge_request"] is False
+    assert tools["question"] is False  # existing disable preserved
+
+
 # ---------------------------------------------------------------------------
 # WR-07: build_engine_prompt produces a real MR prompt (gap-closure 02-05)
 # ---------------------------------------------------------------------------
@@ -343,6 +368,33 @@ async def test_cr03_slack_only_config_waits_for_shutdown_event() -> None:
     assert result == "waited_via_shutdown_event", (
         f"CR-03: channel-only config must await shutdown_event, got: {result!r}"
     )
+
+
+def test_resolve_engine_paths_defaults_and_overrides() -> None:
+    from types import SimpleNamespace
+
+    from ach_agent.main import resolve_engine_paths
+
+    # persistence enabled, nothing pinned → home under mountPath, workDir under home
+    cfg = SimpleNamespace(
+        engine=SimpleNamespace(home="", work_dir=""),
+        persistence=SimpleNamespace(enabled=True, mount_path="/var/lib/ach-agent"),
+    )
+    home, work_dir = resolve_engine_paths(cfg)
+    assert home == "/var/lib/ach-agent/home"
+    assert work_dir == "/var/lib/ach-agent/home/workspace"
+
+    # persistence disabled → volatile /tmp home
+    cfg.persistence = SimpleNamespace(enabled=False, mount_path="/var/lib/ach-agent")
+    home, work_dir = resolve_engine_paths(cfg)
+    assert home == "/tmp/ach-home"
+    assert work_dir == "/tmp/ach-home/workspace"
+
+    # explicit pins win, and workDir stays where the operator put it
+    cfg.engine = SimpleNamespace(home="/h", work_dir="/elsewhere/ws")
+    home, work_dir = resolve_engine_paths(cfg)
+    assert home == "/h"
+    assert work_dir == "/elsewhere/ws"
 
 
 def test_channel_idle_ttl_constant() -> None:

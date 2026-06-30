@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.4.0] - 2026-06-30
+
+### Added
+- **`engine.forwardEnv`** (config) — a list of extra env var NAMES to forward from the
+  harness env into the opencode subprocess. Defaults to empty.
+- **`capability.filter.exclude.mcpServers` + `.skills`** — withhold MCP servers and ACH
+  skills before they reach the model (governance gate); plus existing `.tools` now enforced
+  via opencode.json tool-disable.
+- **`header_token` webhook auth** — static shared secret in a configurable header.
+- **Per-channel `concurrency`** — each channel's `concurrency` is now a real sub-cap under
+  the global `maxConcurrentInvocations`.
+- **`maxSteps` and `terminalOutputRetries`** are now honored (were parsed but ignored).
+- **`engine.home`** (config) — the opencode HOME (config, hydrated skills, sessions,
+  node_modules). Definable; defaults to `<persistence.mountPath>/home` when persistence is
+  enabled, else `/tmp/ach-home`. `engine.workDir` now defaults to `<home>/workspace`.
+
+### Changed
+- **`memory.scope` renamed to `memory.bank`** — the static memory bank_id (the agent's
+  mission namespace, e.g. `gitlab-pr-review`). Per-event tag-based partitioning is a
+  separate future layer and does not affect this field.
+- **`channel.prompt` is now rendered** through a zero-dependency `{{ }}` substitution
+  engine. Namespaces: `payload.*` (inbound JSON body) and `internal.*` (`channel.name`/
+  `type`/`source`, `agent.name`, `memory.bank`, `event.id`, `session.key`); one filter,
+  `| default("x")`. There is no `env` namespace — process env (the `ek_`) is structurally
+  unreachable from a template (ek-hygiene at the template layer). Channels without a
+  `prompt` keep the previous built-in instruction behavior unchanged.
+- **Config reshape:** `workDir` + `startupTimeoutSeconds` moved under `engine`;
+  `prompt.base` → `prompt.system`.
+- **`--tui` now attaches to opencode's native TUI** via `opencode attach` against the
+  harness-prewarmed `serve` (egress hygiene preserved — model + MCP still flow through the
+  localhost proxies that inject the `ek_`). `--debug` remains the plain stdin/stdout REPL.
+- **ACH skills now load in opencode** — hydrated skills extract flat into
+  `<home>/.config/opencode/skills/<name>/SKILL.md` (the directory opencode scans), instead of
+  `persistence.mountPath/skills/<qualified-name>/<name>/` (which opencode never read).
+- **opencode HOME is now a single stable dir** (`engine.home`) instead of a fresh per-server
+  `mktemp`, so sessions and node_modules persist. `tui-attach.log` moved to a volatile
+  `/tmp/ach-harness/`.
+
+### Removed
+- **`agent.namespace`, `agent.generation`, top-level `governed`, `channels[].session`,
+  `channels[].expire`, `engine.idleTtlSeconds`** — inert or redundant; dropped to close the
+  contract.
+- **`ACH_OPENCODE_BIND_HOST` and `ACH_OPENCODE_PORT`** — opencode `serve` now always binds
+  loopback (`127.0.0.1`) on a free ephemeral port. The off-host web-UI exposure they enabled
+  is obsolete now that `--tui` uses `opencode attach` (co-located, loopback); dropping the
+  `0.0.0.0` bind also removes an unauthenticated-API footgun.
+- **Legacy direct-gateway model mode** — opencode.json no longer falls back to
+  `{env:ACH_API_KEY}` / `{env:ACH_BASE_URL}` when no localhost proxy is configured. opencode
+  always reaches the model through the localhost model-proxy, so **`ACH_TOKEN` (the `ek_`) is
+  now required**: the harness hard-fails at boot without it (no model endpoint). Removes the
+  one path where opencode read a key directly from its env.
+- **`EngineConfig.session_dir`** — dead field (set, never read); opencode persists sessions
+  under `<home>/.local/share/opencode`.
+
+### Security
+- **opencode's subprocess env is now built clean-slate** instead of inheriting the full
+  harness environment. opencode gets only a small base allowlist (`PATH`, `SHELL`, `LANG`,
+  …) plus any names in `engine.forwardEnv`; `HOME`/`TMPDIR` are pinned to its ephemeral
+  home. This enforces CONTRACT §3 — the `ek_` (`ACH_TOKEN`/`ACH_API_KEY`) never reaches
+  opencode in proxy mode (previously the subprocess inherited `**os.environ`, including the
+  bearer). Legacy local-dev mode (no localhost proxy) still forwards `ACH_API_KEY`/
+  `ACH_BASE_URL`, which opencode.json dereferences directly.
+
 ## [0.3.3] - 2026-06-27
 
 ### Added

@@ -69,6 +69,38 @@ into the pod by `ach-runtime`; for local runs you provide them yourself.
 Channel credentials (`GITLAB_TOKEN`, `SLACK_BOT_TOKEN`, `TELEGRAM_BOT_TOKEN`, …) are supplied
 per the channels your config enables.
 
+### Channel prompts (`{{ }}` templating)
+
+A channel may carry a `prompt` — the per-invocation instruction handed to the engine. It is
+rendered through a small, zero-dependency `{{ }}` substitution engine against the inbound event,
+so one channel can adapt its prompt to each event:
+
+```yaml
+channels:
+  - name: gitlab-mr-review
+    type: webhook
+    source: gitlab
+    prompt: "Review merge request {{ payload.object_attributes.url }} in {{ payload.project.path_with_namespace | default(\"this repo\") }}."
+```
+
+**Namespaces** (the roots a token may reference):
+
+| Root | What | Available on |
+|------|------|--------------|
+| `payload.*` | the inbound JSON body, dotted path (`payload.commits.0.id` indexes lists) | webhook, queue, a2a |
+| `internal.*` | harness facts: `channel.name` / `channel.type` / `channel.source`, `agent.name`, `memory.bank`, `event.id`, `session.key` | all channels |
+| `header.*` | reserved — inbound headers are not yet carried across the channel→router seam (always resolves empty) | — |
+
+**Syntax:** `{{ path }}`, whitespace-insensitive. One filter, `{{ path | default("fallback") }}`,
+supplies a value when the path is missing. A missing token with no default renders empty.
+
+**There is no `env` namespace.** Process environment — where the `ek_` bearer lives — is
+structurally unreachable from a template; the resolver only ever walks the event data. A channel
+without a `prompt` keeps the built-in per-channel instruction behavior unchanged.
+
+The memory block's `bank` field names the static memory bank_id (the agent's mission namespace,
+e.g. `gitlab-pr-review`).
+
 ## Deployment
 
 A Helm chart and a Kustomize base are provided under [`deploy/`](deploy/):

@@ -54,23 +54,16 @@ class EngineConfig:
     """
 
     binary_path: str = "opencode"
+    # Stable opencode HOME: holds .config/opencode (opencode.json + hydrated skills),
+    # .local/share/opencode (sessions — persist because HOME is stable), and node_modules.
+    home: str = ""
     work_dir: str = "/workspace"
-    session_dir: str = "/var/lib/ach-agent/opencode/sessions"
     provider: str = "openai"
     model: str = "gpt-4o-mini"  # opencode validates model names; must be a known OpenAI model ID
     params: dict[str, object] = field(default_factory=dict)  # model params (temperature, …)
     system_prompt: str = ""
     steps: int = 50
     startup_timeout_seconds: int = 30
-    # Interface opencode `serve` binds to. Defaults to loopback (only reachable inside the
-    # container/host). Set to 0.0.0.0 (via ACH_OPENCODE_BIND_HOST) to expose the opencode
-    # HTTP API + web UI on all interfaces — INSECURE (no auth), dev/test only. The harness
-    # HTTP client always connects via 127.0.0.1 regardless of this value.
-    bind_host: str = "127.0.0.1"
-    # Fixed port for opencode `serve`. 0 = pick a free ephemeral port (default). Set a fixed
-    # port (via ACH_OPENCODE_PORT) so it can be published from a container (`ports:`) to reach
-    # the web UI from the host — dev/test only; collides if two harness instances share it.
-    port: int = 0
     shared_enabled: bool = False
     shared_ttl_seconds: int = 0
     max_invocation_seconds: int = 1800
@@ -78,13 +71,23 @@ class EngineConfig:
     # Written to opencode.json before subprocess launch so the model either has memory tools
     # or does not — no runtime tool-registration API exists.
     mcp_servers: list[str] = field(default_factory=list)
-    # Plan 2 (localhost-proxy / ek-hygiene): when set, opencode.json points the model at
-    # this localhost model-proxy baseURL (no ek_; the proxy injects it) instead of
-    # {env:ACH_BASE_URL}. Empty → legacy {env:...} behavior (local dev without ACH).
+    # Plan 2 (localhost-proxy / ek-hygiene): opencode.json points the model at this localhost
+    # model-proxy baseURL (no ek_; the proxy injects it). Always set in a real boot — the
+    # harness hard-fails without it (no direct-gateway fallback). Empty only in unit tests
+    # that never invoke the model.
     model_base_url: str = ""
     # {server_id: "http://127.0.0.1:<port>/mcp/<id>"} from McpProxy — proxied external MCP
     # servers written into opencode.json's mcp block alongside any memory server.
     mcp_local_urls: dict[str, str] = field(default_factory=dict)
+    # SEC-01 / ek-hygiene: extra env var NAMES the operator wants forwarded from the harness
+    # env into the opencode subprocess (engine.forwardEnv). The opencode env is built
+    # clean-slate from a small base allowlist (see build_opencode_env) — nothing else is
+    # inherited — so the ek_ (ACH_TOKEN/ACH_API_KEY) never reaches opencode unless explicitly
+    # named here. Use sparingly (e.g. a custom CA bundle path); never list the ek_.
+    forward_env: list[str] = field(default_factory=list)
+    # capability.filter.exclude.tools — opencode tool ids to disable in opencode.json
+    # (agent.build.tools[<id>]=False), withholding them from the model.
+    exclude_tools: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -155,9 +158,9 @@ class ManagedServer:
 def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
     """Write opencode.json to ephemeral home before subprocess launch.
 
-    Security (SEC-01 / T-00-EK / Pitfall 6): The value of ACH_API_KEY is NEVER
-    read into a Python variable here. Only the reference string "{env:ACH_API_KEY}"
-    is written into the JSON file; opencode dereferences it at runtime.
+    Security (SEC-01 / T-00-EK / Pitfall 6): no secret is ever written. opencode points at
+    the localhost model-proxy and the proxy injects the ek_; opencode.json carries only a
+    dummy apiKey and the loopback baseURL.
 
     Security (T-00-TRACE): Secrets are never passed as CLI arguments — only config file.
     """
@@ -168,18 +171,11 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_path.write_text(config.system_prompt or "", encoding="utf-8")
 
-    # Plan 2 (CONTRACT §6.10 ek-hygiene): when a localhost model-proxy baseURL is set,
-    # opencode points at 127.0.0.1 and the proxy injects the ek_ — so opencode.json carries
-    # NO ek_ and NO real ACH URL. apiKey is a dummy placeholder (the proxy ignores inbound
-    # auth and adds its own). When unset (local dev without ACH), fall back to the legacy
-    # {env:...} refs: the ACH_API_KEY value is never read into a Python variable — only the
-    # reference string is written; opencode dereferences it at runtime.
-    if config.model_base_url:
-        api_key: str = "local-proxy"  # placeholder; real ek_ injected by the localhost proxy
-        base_url = config.model_base_url
-    else:
-        api_key = "{env:ACH_API_KEY}"  # ek_ dereferenced at runtime only
-        base_url = "{env:ACH_BASE_URL}"  # Hub/mock endpoint
+    # CONTRACT §6.10 ek-hygiene: opencode always points at the localhost model-proxy baseURL
+    # (model_base_url); the proxy injects the ek_, so opencode.json carries NO ek_ and NO real
+    # ACH URL. apiKey is a dummy placeholder (the proxy ignores inbound auth and adds its own).
+    api_key = "local-proxy"  # placeholder; real ek_ injected by the localhost proxy
+    base_url = config.model_base_url
 
     # opencode provider: a CUSTOM provider id backed by @ai-sdk/openai-compatible (lenient
     # parser) instead of opencode's bundled @ai-sdk/openai (strict). The strict provider
@@ -222,7 +218,7 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
                 # prompt→reply turn with no channel to feed an answer back into a running
                 # opencode turn, so an asked question dead-ends (blocks, then times out).
                 # Removing it forces the agent to answer in text instead.
-                "tools": {"question": False},
+                "tools": {"question": False, **{t: False for t in config.exclude_tools}},
             },
             "plan": {"disable": True},
         },
@@ -251,6 +247,54 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
     )
 
 
+# Base allowlist (SEC-01 / ek-hygiene): the only harness env vars opencode inherits by
+# default — the benign set a CLI needs to run (locate binaries, locale, terminal). Secrets
+# (ACH_TOKEN/ACH_API_KEY, GITLAB_TOKEN, provider keys) are deliberately ABSENT. HOME/TMPDIR
+# are pinned to the ephemeral home below, so the values here (if any) are overridden.
+# Note: XDG_CONFIG_HOME is intentionally excluded — it would override $HOME/.config/opencode
+# and break the ephemeral opencode.json the harness just wrote.
+_OPENCODE_ENV_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "PATH",
+        "SHELL",
+        "USER",
+        "LOGNAME",
+        "HOSTNAME",
+        "LANG",
+        "LANGUAGE",
+        "TERM",
+        "TZ",
+    }
+)
+
+
+def build_opencode_env(ephemeral_home: Path, config: EngineConfig) -> dict[str, str]:
+    """Construct a minimal, allowlisted environment for the opencode subprocess.
+
+    Clean-slate (SEC-01 / ek-hygiene): opencode does NOT inherit the harness env. It gets
+    only ``_OPENCODE_ENV_ALLOWLIST`` (benign CLI basics), plus any var NAMES the operator
+    lists in ``engine.forwardEnv`` (config.forward_env). The ek_ (ACH_TOKEN/ACH_API_KEY)
+    is never present unless explicitly named — and it must not be, because the localhost
+    model-proxy injects it and opencode points only at 127.0.0.1.
+
+    Pinned last (override anything above): HOME/TMPDIR → the per-server ephemeral home;
+    GIT_TERMINAL_PROMPT=0 so git never blocks a non-interactive subprocess on a prompt.
+    """
+    env: dict[str, str] = {
+        name: os.environ[name] for name in _OPENCODE_ENV_ALLOWLIST if name in os.environ
+    }
+    # Operator-defined exceptions (engine.forwardEnv) — forwarded by name when present.
+    for name in config.forward_env:
+        value = os.environ.get(name)
+        if value is not None:
+            env[name] = value
+    # Pinned hardening — last word, overrides any inherited/forwarded value.
+    env["HOME"] = str(ephemeral_home)
+    env["TMPDIR"] = str(ephemeral_home)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
+
 async def launch(port: int, ephemeral_home: Path, config: EngineConfig) -> ManagedServer:
     """Launch opencode serve in an isolated ephemeral home.
 
@@ -274,25 +318,20 @@ async def launch(port: int, ephemeral_home: Path, config: EngineConfig) -> Manag
     if not work_dir.exists():
         work_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build subprocess env: inherit os.environ + add hardening vars
-    # ACH_BASE_URL and ACH_API_KEY are already in os.environ;
-    # they are referenced via {env:...} in opencode.json — NOT re-injected here.
+    # Build a clean-slate subprocess env (SEC-01 / ek-hygiene): opencode inherits NOTHING
+    # from the harness env except a small base allowlist + operator-named extras. The ek_
+    # (ACH_TOKEN/ACH_API_KEY) is therefore absent from opencode's environment in proxy mode.
     #
     # Note on OPENCODE_SERVER_PASSWORD (Pitfall 5 deviation):
     # When set, opencode requires authentication for ALL routes including GET /app,
     # breaking the readiness probe (401). Do NOT set it; accept the warning in logs.
     # The server binds to 127.0.0.1 only.
-    env: dict[str, str] = {
-        **os.environ,
-        "HOME": str(ephemeral_home),
-        "TMPDIR": str(ephemeral_home),
-        "GIT_TERMINAL_PROMPT": "0",
-    }
+    env = build_opencode_env(ephemeral_home, config)
 
     log.info(
         "launching opencode serve",
         port=port,
-        hostname=config.bind_host,
+        hostname="127.0.0.1",
         binary=binary,
         ephemeral_home=str(ephemeral_home),
     )
@@ -303,7 +342,7 @@ async def launch(port: int, ephemeral_home: Path, config: EngineConfig) -> Manag
         "--port",
         str(port),
         "--hostname",
-        config.bind_host,
+        "127.0.0.1",  # loopback only — the harness client + opencode attach are co-located
         "--print-logs",
         "--pure",  # disable external plugins (Pitfall isolation)
         stdin=asyncio.subprocess.DEVNULL,

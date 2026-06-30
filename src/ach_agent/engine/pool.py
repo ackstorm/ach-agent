@@ -140,18 +140,20 @@ class EnginePool:
 async def _default_start_server(config: EngineConfig) -> ManagedServer:
     """Default start-server implementation: full lifecycle launch + poll_ready.
 
+    HOME is the stable, shared ``config.home`` (created if absent) — opencode's config,
+    hydrated skills, sessions, and node_modules live there and persist across servers.
     Used in production. Tests replace pool._start_server with a fake.
     """
-    import tempfile
     from pathlib import Path
 
     from ach_agent.engine.client import find_free_port
     from ach_agent.engine.lifecycle import launch, poll_ready
 
-    ephemeral_home = Path(tempfile.mkdtemp(prefix="oc-pool-"))
-    # A fixed config.port (ACH_OPENCODE_PORT) lets a container publish a known port so the
-    # opencode web UI is reachable from the host; 0 = pick a free ephemeral port.
-    port = config.port or find_free_port()
-    server = await launch(port, ephemeral_home, config)
+    home = Path(config.home)
+    home.mkdir(parents=True, exist_ok=True)
+    # opencode serve binds loopback on a free ephemeral port the harness picks (so it knows
+    # the port for its client + `opencode attach`); never published off-host.
+    port = find_free_port()
+    server = await launch(port, home, config)
     await poll_ready(server, config.startup_timeout_seconds)
     return server

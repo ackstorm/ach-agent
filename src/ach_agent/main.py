@@ -46,6 +46,7 @@ from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_p
 from ach_agent.engine.sanitized_env import SanitizedEnv, configure_logging
 from ach_agent.http.app import create_app
 from ach_agent.router import Router
+from ach_agent.templating import build_template_context, render_template
 
 # configure_logging() is called at module TOP (not in main()) so that any
 # log emission during import (e.g. validation warnings) is already redacted.
@@ -148,18 +149,35 @@ def _open_dedup_store(cfg: Any) -> Any:
             return InMemoryDedupStore()
 
 
-def build_engine_prompt(event: MessageEvent) -> str:
+def build_engine_prompt(
+    event: MessageEvent,
+    channel_cfg: Any = None,
+    agent_name: str = "",
+    memory_bank: str = "",
+) -> str:
     """Build a meaningful engine prompt from a MessageEvent.
 
-    For cron events the payload carries a 'scheduled_tick' key — return it as-is
-    (original cron behavior preserved).
-
-    For webhook MR events the payload carries the GitLab MR JSON body.
-    Build a human-readable review instruction from project_id, mr_iid, and the
-    MR title/description from payload['object_attributes'] (guarded — no KeyError).
+    When the channel declares a `prompt` template, it wins: it is rendered through the
+    {{ }} engine against the event payload + harness internals (channel.prompt is the
+    contract-specified per-channel instruction). Otherwise the legacy fallback applies:
+    cron `scheduled_tick`, free-form `payload['text']`, or a built MR review instruction.
 
     Never raises; falls back to an empty string if no usable content is found.
     """
+    # Channel-prompt path: render the contract-authored template (CONTRACT §2 channel.prompt)
+    if channel_cfg is not None and getattr(channel_cfg, "prompt", None):
+        ctx = build_template_context(
+            event.payload,
+            channel_name=event.channel_name,
+            channel_type=getattr(channel_cfg, "type", "") or "",
+            channel_source=getattr(channel_cfg, "source", "") or "",
+            agent_name=agent_name,
+            memory_bank=memory_bank,
+            event_id=event.idempotency_key,
+            session_key=event.session_key,
+        )
+        return render_template(channel_cfg.prompt, ctx)
+
     # Cron path: payload has a scheduled_tick key
     scheduled_tick = event.payload.get("scheduled_tick")
     if scheduled_tick is not None:
@@ -194,12 +212,31 @@ def build_engine_prompt(event: MessageEvent) -> str:
     return " ".join(parts)
 
 
+def resolve_engine_paths(cfg: Any) -> tuple[str, str]:
+    """Resolve the opencode HOME and the agent workDir from the contract.
+
+    Both are definable (engine.home / engine.workDir). When omitted:
+      - home → <mountPath>/home if persistence.enabled (persistent), else /tmp/ach-home.
+      - work_dir → <home>/workspace.
+    Static state (config, skills, sessions) lives under HOME; HOME under mountPath persists.
+    """
+    home = cfg.engine.home
+    if not home:
+        home = f"{cfg.persistence.mount_path}/home" if cfg.persistence.enabled else "/tmp/ach-home"
+    work_dir = cfg.engine.work_dir or f"{home}/workspace"
+    return home, work_dir
+
+
 def _make_engine_runner(
     pool: Any,
     engine_cfg: Any,
     max_invocation_seconds: int,
+    terminal_output_retries: int = 1,
     memory_cfg: Any = None,
     channel_ttl: dict[str, float] | None = None,
+    channels_by_name: dict[str, Any] | None = None,
+    agent_name: str = "",
+    memory_bank: str = "",
 ) -> Callable[..., Any]:
     """Build the engine_runner callable injected into the Router.
 
@@ -236,6 +273,7 @@ def _make_engine_runner(
     from ach_agent.engine.lifecycle import run_invocation
 
     ttl_by_channel = channel_ttl or {}
+    channels_by_name = channels_by_name or {}
 
     async def engine_runner(event: MessageEvent, on_kill: Callable[[], None]) -> None:
         # Build sanitized launch env — ek_ is never read into a local variable
@@ -272,22 +310,27 @@ def _make_engine_runner(
             future = event.reply_future
             try:
                 # MEM-01: append ## Memory section (summaries or unavailable note) to prompt.
-                base_prompt = build_engine_prompt(event)
+                base_prompt = build_engine_prompt(
+                    event,
+                    channel_cfg=channels_by_name.get(event.channel_name),
+                    agent_name=agent_name,
+                    memory_bank=memory_bank,
+                )
                 full_prompt = f"{base_prompt}\n\n{memory_prompt}" if memory_prompt else base_prompt
                 # Free-form channels (--tui console) carry no terminal contract: return
                 # the raw reply, no terminal extraction/repair (delivery_context marker).
                 free_form = bool(event.delivery_context.get("free_form"))
-                # Optional live-text sink (the --tui console sets this to stream the reply
+                # Optional live-text sink (the --debug console sets this to stream the reply
                 # as it's produced, so a slow trailing tool call doesn't hide the text).
                 on_text = event.delivery_context.get("on_text")
-                # Optional tool-lifecycle sink (the --tui console shows "⚙ running <tool>"
+                # Optional tool-lifecycle sink (the --debug console shows "⚙ running <tool>"
                 # so a long-blocking tool call isn't dead air).
                 on_tool = event.delivery_context.get("on_tool")
                 obj = await run_invocation(
                     server=server,
                     session_id=event.session_key,
                     prompt=full_prompt,
-                    terminal_retries=1,
+                    terminal_retries=terminal_output_retries,
                     max_invocation_seconds=max_invocation_seconds,
                     on_kill=on_kill,
                     free_form=free_form,
@@ -423,20 +466,81 @@ _CHANNEL_IDLE_TTL_S: dict[str, float] = {
 }
 
 
-async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> None:
+def _harness_log_dir() -> Path:
+    """Volatile dir for transient harness logs (e.g. the --tui attach log).
+
+    Lives under /tmp, never the opencode HOME — harness logs are throwaway and must not
+    pollute the persistent home/state tree.
+    """
+    d = Path("/tmp/ach-harness")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+async def _run_opencode_attach(
+    router: Any, *, binary_path: str, port: int, ephemeral_home: Path
+) -> None:
+    """`--tui`: hand the terminal to opencode's native TUI, attached to our serve.
+
+    Shells out to `opencode attach http://127.0.0.1:<port>` — opencode's own full-screen
+    client driving the SAME serve process the harness pre-warmed. Egress hygiene is
+    preserved: the server still routes model + MCP traffic through the localhost proxies
+    that inject the ek_ (opencode never sees it). Loopback is used even when serve binds
+    0.0.0.0 — the attach client is always co-located.
+
+    Harness logging (structlog → sys.stderr, plus the serve-drain + proxy request logs)
+    would corrupt opencode's alt-screen, so sys.stderr is redirected to a file for the
+    session. The subprocess inherits the real terminal fds (0/1/2) at the OS level, so
+    opencode renders normally; only Python-level harness logging is diverted.
+
+    Falls back to the plain REPL if the opencode binary is not found.
+    """
+    import shutil
+
+    binary = shutil.which(binary_path)
+    if not binary:
+        log.error(
+            "opencode binary not found for attach — falling back to plain REPL",
+            binary=binary_path,
+        )
+        await run_tui_console(router)
+        return
+
+    url = f"http://127.0.0.1:{port}"
+    env = {**os.environ, "HOME": str(ephemeral_home), "TMPDIR": str(ephemeral_home)}
+    log_path = _harness_log_dir() / "tui-attach.log"
+    log.info("ach-agent: --tui → opencode attach", url=url, log_file=str(log_path))
+
+    real_stderr = sys.stderr
+    with open(log_path, "a", encoding="utf-8") as log_fh:
+        sys.stderr = log_fh
+        try:
+            proc = await asyncio.create_subprocess_exec(binary, "attach", url, "--pure", env=env)
+            await proc.wait()
+        finally:
+            sys.stderr = real_stderr
+
+
+async def main(
+    tui_mode: bool = False, one_shot_prompt: str | None = None, debug_mode: bool = False
+) -> None:
     """Async entrypoint: load config, boot router, start channel adapters + uvicorn.
 
-    Two launch modifiers boot the engine/proxies/hydration but IGNORE the configured
+    Three launch modifiers boot the engine/proxies/hydration but IGNORE the configured
     channels (the typed/passed line IS the prompt — no terminal contract):
-      - tui_mode (`--tui`): run an interactive console REPL (see run_tui_console).
+      - tui_mode (`--tui`): hands the terminal to opencode's native TUI attached to our
+        pre-warmed serve (see _run_opencode_attach).
+      - debug_mode (`--debug`): the plain stdin/stdout REPL (see run_tui_console) — the
+        minimal console, easiest to pipe/debug. Takes precedence over tui_mode.
       - one_shot_prompt (`--prompt TEXT`): run a single prompt non-interactively, print
-        the reply, and exit (see run_one_shot). Takes precedence over tui_mode.
+        the reply, and exit (see run_one_shot). Highest precedence.
     """
-    console_mode = tui_mode or one_shot_prompt is not None
+    console_mode = tui_mode or debug_mode or one_shot_prompt is not None
     config_path = os.environ.get(CONFIG_PATH_ENV, DEFAULT_CONFIG_PATH)
 
     # Step 2: load config (hard-fail on schema mismatch — CFG-02)
     cfg = load_config(config_path)
+    engine_home, engine_work_dir = resolve_engine_paths(cfg)
 
     # Step 3: D-02 gate — reject unwired channel types before serving.
     # Skipped under --tui/--prompt: configured channels are ignored in console mode.
@@ -459,8 +563,8 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
     #
     # The ek_ (ACH_TOKEN) is read here solely to pass to hydration + the proxies; it is
     # NEVER logged and NEVER written to opencode.json (the proxies hold it in a closure).
-    # When ACH_TOKEN is unset (local dev with a hand-written config + no ACH), hydration is
-    # skipped and opencode.json falls back to {env:...} refs — the harness stays runnable.
+    # ACH_TOKEN is REQUIRED — opencode reaches the model only through the localhost proxy,
+    # which is created during hydration. A missing ek_ is hard-failed below (no model endpoint).
     ek = os.environ.get("ACH_TOKEN")
     model_base_url: str = ""
     mcp_local_urls: dict[str, str] = {}
@@ -469,12 +573,27 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
         manifest = await hydrate(cfg.capability.ach.base_url, ek)
         # hard-fail (sys.exit 1) if model absent; returns the entry (with its real endpoint).
         model_entry = resolve_model(manifest, cfg.model.name)
-        await fetch_context(manifest.context, ek, Path(cfg.persistence.mount_path))
+        # capability.filter.exclude — governance gate ABOVE the model. Skills are dropped
+        # from the hydrated context BEFORE fetch (never downloaded); MCP servers are excluded
+        # from the localhost proxy (never fronted, so opencode never discovers them).
+        _exclude = cfg.capability.filter.exclude
+        _exclude_skills = set(_exclude.skills)
+        if _exclude_skills:
+            manifest.context.skills = [
+                s for s in manifest.context.skills if s.name not in _exclude_skills
+            ]
+            log.info("filter: skills excluded", excluded=sorted(_exclude_skills))
+        await fetch_context(
+            manifest.context,
+            ek,
+            Path(cfg.persistence.mount_path),
+            Path(engine_home) / ".config" / "opencode" / "skills",
+        )
         mcp_proxy = McpProxy()
-        # NOTE: CONTRACT_v3 capability.filter.exclude only carries `tools` (opencode-side,
-        # deferred to Plan 3/4) — there is no per-MCP-server exclude in the schema, so all
-        # hydrated servers are fronted.
-        mcp_local_urls = await mcp_proxy.start(manifest.mcp_servers, ek, exclude=set())
+        _exclude_servers = set(_exclude.mcp_servers)
+        mcp_local_urls = await mcp_proxy.start(manifest.mcp_servers, ek, exclude=_exclude_servers)
+        if _exclude_servers:
+            log.info("filter: mcp servers excluded", excluded=sorted(_exclude_servers))
         # Model-proxy upstream override (dev/test only — A/B a different model backend,
         # e.g. litellm direct, to isolate forwarder buffering). MODEL-ONLY: hydration + MCP
         # stay on the ACH coords above; only the model proxy's upstream + auth swap. The
@@ -565,18 +684,14 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
                 tool_count=len(a2a_tools),
             )
 
-    # Fail fast on an unresolvable model endpoint. With an ek_ the model proxy gives
-    # opencode a concrete localhost baseURL; without one, opencode.json falls back to
-    # {env:ACH_BASE_URL} and opencode dereferences it from its env. If THAT is empty too,
-    # opencode builds an empty baseURL and only fails mid-invocation with the opaque
-    # '"/chat/completions" cannot be parsed as a URL'. Catch it here with an actionable
-    # message instead. (model_base_url is set only inside the `if ek:` block above.)
-    if not model_base_url and not os.environ.get("ACH_BASE_URL"):
+    # ACH_TOKEN (ek_) is REQUIRED: opencode always reaches the model through the localhost
+    # model-proxy, which only exists once we hydrate with the ek_. Without it there is no
+    # model endpoint at all (model_base_url is set only inside the `if ek:` block above).
+    if not model_base_url:
         log.error(
-            "no model endpoint — set ACH_TOKEN (ek_) to hydrate + front the model via "
-            "the localhost proxy, or set ACH_BASE_URL so opencode can reach a model "
-            "gateway directly. Both are unset, so opencode has no baseURL and every "
-            "invocation would fail with '\"/chat/completions\" cannot be parsed as a URL'."
+            "no model endpoint — set ACH_TOKEN (ek_) so the harness can hydrate and front "
+            "the model via the localhost proxy. opencode points only at that proxy; there "
+            "is no direct-gateway fallback."
         )
         sys.exit(1)
 
@@ -585,38 +700,20 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
     from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.engine.pool import EnginePool
 
-    # opencode `serve` bind host. Default loopback (127.0.0.1) — the API + web UI are then
-    # only reachable inside the container/host. ACH_OPENCODE_BIND_HOST=0.0.0.0 exposes it on
-    # all interfaces (e.g. to open the opencode web UI from your host's browser via a
-    # published port). The harness client always connects via loopback regardless.
-    opencode_bind_host = os.environ.get("ACH_OPENCODE_BIND_HOST", "").strip() or "127.0.0.1"
-    if opencode_bind_host not in ("127.0.0.1", "localhost", "::1"):
-        log.warning(
-            "SECURITY: opencode serve is binding a non-loopback interface — its HTTP API "
-            "and web UI run WITHOUT authentication and can drive the agent + its tools. "
-            "Use for local dev/test only, never in production or on an untrusted network.",
-            bind_host=opencode_bind_host,
-        )
-    # Fixed opencode port (dev/test): 0 = ephemeral. Set ACH_OPENCODE_PORT so a container can
-    # publish a known port and the web UI is reachable from the host (pair with 0.0.0.0 bind).
-    try:
-        opencode_port = int(os.environ.get("ACH_OPENCODE_PORT", "0") or "0")
-    except ValueError:
-        log.warning("invalid ACH_OPENCODE_PORT — ignoring (using an ephemeral port)")
-        opencode_port = 0
-
+    # opencode `serve` always binds loopback (127.0.0.1) on a free ephemeral port the pool
+    # picks — only reachable inside the container/host. `--tui` drives it via `opencode attach`
+    # (co-located, loopback); nothing is published off-host.
     engine_cfg = EngineConfig(
-        bind_host=opencode_bind_host,
-        port=opencode_port,
-        work_dir=cfg.work_dir,
-        session_dir=f"{cfg.persistence.mount_path}/opencode/sessions",
+        home=engine_home,
+        work_dir=engine_work_dir,
         provider=cfg.model.type,
         model=cfg.model.name,
         params=cfg.model.params,
-        # prompt.base = the inline agent persona; written to opencode's append-mode
+        # prompt.system = the inline agent persona; written to opencode's append-mode
         # `instructions` (layered on ACH-hydrated skills/prompts). Empty when absent.
-        system_prompt=cfg.prompt.base if cfg.prompt else "",
-        startup_timeout_seconds=cfg.startup_timeout_seconds,
+        system_prompt=cfg.prompt.system if cfg.prompt else "",
+        steps=cfg.limits.max_steps,
+        startup_timeout_seconds=cfg.engine.startup_timeout_seconds,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
         # Idle TTL is now a per-channel constant resolved in engine_runner (see
         # _CHANNEL_IDLE_TTL_S). This field is unused by the runner and kept at 0 for
@@ -624,6 +721,11 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
         shared_ttl_seconds=0,
         model_base_url=model_base_url,
         mcp_local_urls=mcp_local_urls,
+        # SEC-01 / ek-hygiene: opencode's env is clean-slate (base allowlist only). Extra
+        # var names the operator wants forwarded come from engine.forwardEnv.
+        forward_env=cfg.engine.forward_env,
+        # capability.filter.exclude.tools — disabled in opencode.json (withheld from model).
+        exclude_tools=cfg.capability.filter.exclude.tools,
     )
     pool = EnginePool()
 
@@ -631,12 +733,18 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
     # before pool.acquire (Pitfall 3).
     # Per-channel idle TTL (constant by channel type; all v1 channels are 0).
     channel_ttl = {ch.name: _CHANNEL_IDLE_TTL_S.get(ch.type, 0.0) for ch in cfg.channels}
+    channels_by_name = {c.name: c for c in cfg.channels}
+    memory_bank = cfg.memory.bank if cfg.memory is not None else ""
     engine_runner = _make_engine_runner(
         pool=pool,
         engine_cfg=engine_cfg,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
+        terminal_output_retries=cfg.limits.terminal_output_retries,
         memory_cfg=cfg.memory,
         channel_ttl=channel_ttl,
+        channels_by_name=channels_by_name,
+        agent_name=cfg.agent.name,
+        memory_bank=memory_bank,
     )
 
     # Step 6 (cont.): construct Router with all limits from config (RTR-03/04)
@@ -650,6 +758,7 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
         engine_runner=engine_runner,
         delivery_adapter=None,
         max_invocation_seconds=float(cfg.limits.max_invocation_seconds),
+        channel_concurrency={ch.name: ch.concurrency for ch in cfg.channels},
     )
 
     # --tui / --prompt launch modifiers: ignore the configured channels and drive the
@@ -658,13 +767,15 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
     if console_mode:
         if one_shot_prompt is not None:
             log.info("ach-agent: --prompt one-shot mode (configured channels ignored)")
+        elif debug_mode:
+            log.info("ach-agent: --debug plain console mode (configured channels ignored)")
         else:
             log.info("ach-agent: --tui console mode (configured channels ignored)")
         try:
             if one_shot_prompt is not None:
                 await run_one_shot(router, one_shot_prompt)
             else:
-                # --tui: launch opencode at boot (not lazily on the first prompt) and hold a
+                # --tui/--debug: launch opencode at boot (not lazily on the first prompt) + hold a
                 # ref for the whole REPL, so per-invocation release(0) never stops it between
                 # prompts — there is no idle TTL; only Ctrl-C / EOF ends the session (the
                 # finally below stops it). Probe memory first so the pre-warmed server's
@@ -681,12 +792,23 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
                 warm_cfg = dataclasses.replace(engine_cfg, mcp_servers=warm_mcp_servers)
                 warm_server = await pool.acquire(warm_cfg)
                 # No stdout banner — opencode's own --print-logs already announces the
-                # listening address. Keep one structured info line with the reachable host.
+                # listening address. Keep one structured info line with the loopback address.
                 log.info(
-                    "ach-agent: opencode web UI",
-                    url=f"http://{opencode_bind_host}:{warm_server.port}",
+                    "ach-agent: opencode serve listening",
+                    url=f"http://127.0.0.1:{warm_server.port}",
                 )
-                await run_tui_console(router)
+                # --debug → the plain stdin/stdout REPL (minimal, pipe-friendly). --tui →
+                # the full-screen Textual UI, but only on a real TTY (docker compose run
+                # tty:true); piped/non-TTY stdin falls back to the plain REPL.
+                if debug_mode or not sys.stdout.isatty():
+                    await run_tui_console(router)
+                else:
+                    await _run_opencode_attach(
+                        router,
+                        binary_path=engine_cfg.binary_path,
+                        port=warm_server.port,
+                        ephemeral_home=warm_server.ephemeral_home,
+                    )
         finally:
             # Stop any warm-held engine server (idle TTL may not have elapsed at EOF).
             await pool._stop()
@@ -917,14 +1039,15 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
         log.info("ach-agent shutdown complete")
 
 
-def _parse_cli(argv: list[str]) -> tuple[bool, str | None]:
+def _parse_cli(argv: list[str]) -> tuple[bool, str | None, bool]:
     """Parse launch modifiers from argv.
 
-    `--tui` → interactive console REPL. `--prompt TEXT` (or `--prompt=TEXT`) → single
-    non-interactive prompt then exit. Both ignore the configured channels; `--prompt`
-    takes precedence when both are present.
+    `--tui` → full-screen Textual UI. `--debug` → plain stdin/stdout REPL (minimal,
+    pipe-friendly). `--prompt TEXT` (or `--prompt=TEXT`) → single non-interactive prompt
+    then exit. All ignore the configured channels; precedence is `--prompt` > `--debug` > `--tui`.
     """
     tui = "--tui" in argv
+    debug = "--debug" in argv
     prompt: str | None = None
     for i, arg in enumerate(argv):
         if arg == "--prompt" and i + 1 < len(argv):
@@ -933,10 +1056,10 @@ def _parse_cli(argv: list[str]) -> tuple[bool, str | None]:
         if arg.startswith("--prompt="):
             prompt = arg[len("--prompt=") :]
             break
-    return tui, prompt
+    return tui, prompt, debug
 
 
 if __name__ == "__main__":
-    # `--tui` / `--prompt` launch modifiers: drive the engine directly, channels ignored.
-    _tui_mode, _one_shot = _parse_cli(sys.argv[1:])
-    asyncio.run(main(tui_mode=_tui_mode, one_shot_prompt=_one_shot))
+    # `--tui` / `--debug` / `--prompt` launch modifiers: drive the engine directly.
+    _tui_mode, _one_shot, _debug_mode = _parse_cli(sys.argv[1:])
+    asyncio.run(main(tui_mode=_tui_mode, one_shot_prompt=_one_shot, debug_mode=_debug_mode))

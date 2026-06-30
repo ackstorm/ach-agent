@@ -64,7 +64,7 @@ class Router:
         engine_runner: Callable[..., Any],
         delivery_adapter: Any,
         max_invocation_seconds: float = _DEFAULT_MAX_INVOCATION_SECONDS,
-        channel_concurrency: int = 1,
+        channel_concurrency: dict[str, int] | None = None,
     ) -> None:
         self._max_queued_total = max_queued_total
         self._idempotency_window_seconds = idempotency_window_seconds
@@ -133,11 +133,11 @@ class Router:
         self._queued_total.inc()
 
         # 4. LANE — enqueue into per-session FIFO
-        lane = self._get_or_create_lane(event.session_key)
+        lane = self._get_or_create_lane(event.session_key, event.channel_name)
         await lane.put(event)
         return RouterAdmitResult.ACCEPTED
 
-    def _get_or_create_lane(self, session_key: str) -> Any:
+    def _get_or_create_lane(self, session_key: str, channel_name: str) -> Any:
         """Get the existing lane for session_key or create a new one.
 
         Deferred import of Lane to avoid circular imports (lane.py imports
@@ -150,7 +150,7 @@ class Router:
                 session_key=session_key,
                 router_ref=weakref.ref(self),
                 global_sem=self._slot_manager.global_sem,
-                channel_slot=self._slot_manager.channel_slot,
+                channel_sem=self._slot_manager.channel_sem(channel_name),
                 engine_runner=self._engine_runner,
                 max_invocation_seconds=self._max_invocation_seconds,
             )

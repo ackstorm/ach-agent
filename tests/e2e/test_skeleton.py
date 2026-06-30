@@ -39,7 +39,7 @@ def _make_bad_config(tmp_path: Path, extra: dict[str, Any]) -> str:
     """Write a minimal valid config + extra keys and return its path."""
     base: dict[str, Any] = {
         "schemaVersion": "1",
-        "agent": {"name": "test-agent", "namespace": "test", "generation": 1},
+        "agent": {"name": "test-agent"},
         "model": {"name": "openai.gpt-5", "type": "openai"},
         "capability": {"ach": {"baseUrl": "https://ach.example", "environment": "test"}},
     }
@@ -124,7 +124,7 @@ def test_unwired_channel_hard_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
     a2a_config: dict[str, Any] = {
         "schemaVersion": "1",
-        "agent": {"name": "test-agent", "namespace": "test", "generation": 1},
+        "agent": {"name": "test-agent"},
         "model": {"name": "openai.gpt-5", "type": "openai"},
         "capability": {"ach": {"baseUrl": "https://ach.example", "environment": "test"}},
         "channels": [

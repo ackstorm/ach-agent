@@ -217,3 +217,44 @@ async def test_ready_once_latch() -> None:
     assert pool.engine_has_been_ready_once is True, (
         "DUR-02: latch must remain True after second acquire (D-07: first-warmup-only)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 4: stable HOME + volatile harness log
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_default_start_server_uses_config_home(tmp_path: Path, monkeypatch) -> None:
+    """The pool launches opencode in the stable engine.home, not a fresh mkdtemp."""
+    from ach_agent.engine import pool as poolmod
+    from ach_agent.engine.lifecycle import EngineConfig
+
+    captured: dict[str, object] = {}
+
+    async def fake_launch(port: int, home: Path, config: object) -> object:
+        captured["home"] = home
+        captured["port"] = port
+        return object()
+
+    async def fake_poll(server: object, timeout: int) -> None:
+        return None
+
+    monkeypatch.setattr("ach_agent.engine.lifecycle.launch", fake_launch)
+    monkeypatch.setattr("ach_agent.engine.lifecycle.poll_ready", fake_poll)
+    monkeypatch.setattr("ach_agent.engine.client.find_free_port", lambda: 12345)
+
+    home = tmp_path / "home"
+    cfg = EngineConfig(home=str(home))
+    await poolmod._default_start_server(cfg)
+
+    assert captured["home"] == home
+    assert home.is_dir()  # created if absent
+
+
+def test_harness_log_dir_is_volatile_tmp() -> None:
+    from ach_agent.main import _harness_log_dir
+
+    d = _harness_log_dir()
+    assert str(d).startswith("/tmp/")
+    assert d.is_dir()

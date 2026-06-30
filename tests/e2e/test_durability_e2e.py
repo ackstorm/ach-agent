@@ -45,7 +45,7 @@ def _make_persistence_cfg(
 
     raw = {
         "schemaVersion": "1",
-        "agent": {"name": "test", "namespace": "default"},
+        "agent": {"name": "test"},
         "model": {"name": "openai.gpt-5", "type": "openai"},
         "capability": {"ach": {"baseUrl": "https://ach.example", "environment": "test"}},
         "persistence": {

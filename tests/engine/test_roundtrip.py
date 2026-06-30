@@ -17,8 +17,8 @@ CONFIRMED FINDINGS (from investigative runs, recorded here for the phase):
 ENVIRONMENT REQUIREMENTS:
   - /usr/bin/opencode v1.16.0 must be installed and executable
   - fastapi + uvicorn must be installed (in dev dependency-group)
-  - ACH_API_KEY env var set to any non-empty string (fake ek_ value is fine)
-  - ACH_BASE_URL will be overridden to point at the in-process mock server
+  - opencode is pointed at the in-process mock server via config.model_base_url (the same
+    path the localhost model-proxy uses in prod); no real key or ACH endpoint is needed
 
 If opencode is unavailable, the test is skipped automatically.
 """
@@ -117,7 +117,7 @@ def mock_model_server():
 # ---------------------------------------------------------------------------
 
 
-async def test_roundtrip_launch_to_actions(mock_model_server, tmp_path, monkeypatch):
+async def test_roundtrip_launch_to_actions(mock_model_server, tmp_path):
     """Full launch → ready → session → SSE → actions round-trip.
 
     Empirically closes A1: confirms {"actions":[...]} arrives as plain text
@@ -141,10 +141,9 @@ async def test_roundtrip_launch_to_actions(mock_model_server, tmp_path, monkeypa
     mock_host, mock_port = mock_model_server
     mock_base_url = f"http://{mock_host}:{mock_port}/v1"
 
-    # Inject env vars — ACH_API_KEY never read into a Python variable (SEC-01)
-    monkeypatch.setenv("ACH_BASE_URL", mock_base_url)
-    monkeypatch.setenv("ACH_API_KEY", "ek_test_roundtrip_fake_key_not_real")
-
+    # Point opencode straight at the mock model server via model_base_url (the same path the
+    # localhost model-proxy uses in prod). apiKey is a dummy "local-proxy"; the mock ignores
+    # auth, so no real key is needed or written.
     config = EngineConfig(
         binary_path=OPENCODE_BINARY,
         work_dir=str(tmp_path / "workspace"),
@@ -154,6 +153,7 @@ async def test_roundtrip_launch_to_actions(mock_model_server, tmp_path, monkeypa
         system_prompt="You are a test assistant. Reply with JSON only.",
         steps=5,
         startup_timeout_seconds=30,
+        model_base_url=mock_base_url,
     )
 
     (tmp_path / "workspace").mkdir(parents=True, exist_ok=True)

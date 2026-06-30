@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Changed
+- **`--tui` now attaches to opencode's native TUI** via `opencode attach` against the
+  harness-prewarmed `serve` (egress hygiene preserved — model + MCP still flow through the
+  localhost proxies that inject the `ek_`). `--debug` remains the plain stdin/stdout REPL.
+
+### Removed
+- **`ACH_OPENCODE_BIND_HOST` and `ACH_OPENCODE_PORT`** — opencode `serve` now always binds
+  loopback (`127.0.0.1`) on a free ephemeral port. The off-host web-UI exposure they enabled
+  is obsolete now that `--tui` uses `opencode attach` (co-located, loopback); dropping the
+  `0.0.0.0` bind also removes an unauthenticated-API footgun.
+
 ## [0.3.3] - 2026-06-27
 
 ### Added

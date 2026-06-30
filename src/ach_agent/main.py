@@ -277,10 +277,10 @@ def _make_engine_runner(
                 # Free-form channels (--tui console) carry no terminal contract: return
                 # the raw reply, no terminal extraction/repair (delivery_context marker).
                 free_form = bool(event.delivery_context.get("free_form"))
-                # Optional live-text sink (the --tui console sets this to stream the reply
+                # Optional live-text sink (the --debug console sets this to stream the reply
                 # as it's produced, so a slow trailing tool call doesn't hide the text).
                 on_text = event.delivery_context.get("on_text")
-                # Optional tool-lifecycle sink (the --tui console shows "⚙ running <tool>"
+                # Optional tool-lifecycle sink (the --debug console shows "⚙ running <tool>"
                 # so a long-blocking tool call isn't dead air).
                 on_tool = event.delivery_context.get("on_tool")
                 obj = await run_invocation(
@@ -423,16 +423,67 @@ _CHANNEL_IDLE_TTL_S: dict[str, float] = {
 }
 
 
-async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> None:
+async def _run_opencode_attach(
+    router: Any, *, binary_path: str, port: int, ephemeral_home: Path
+) -> None:
+    """`--tui`: hand the terminal to opencode's native TUI, attached to our serve.
+
+    Shells out to `opencode attach http://127.0.0.1:<port>` — opencode's own full-screen
+    client driving the SAME serve process the harness pre-warmed. Egress hygiene is
+    preserved: the server still routes model + MCP traffic through the localhost proxies
+    that inject the ek_ (opencode never sees it). Loopback is used even when serve binds
+    0.0.0.0 — the attach client is always co-located.
+
+    Harness logging (structlog → sys.stderr, plus the serve-drain + proxy request logs)
+    would corrupt opencode's alt-screen, so sys.stderr is redirected to a file for the
+    session. The subprocess inherits the real terminal fds (0/1/2) at the OS level, so
+    opencode renders normally; only Python-level harness logging is diverted.
+
+    Falls back to the plain REPL if the opencode binary is not found.
+    """
+    import shutil
+
+    binary = shutil.which(binary_path)
+    if not binary:
+        log.error(
+            "opencode binary not found for attach — falling back to plain REPL",
+            binary=binary_path,
+        )
+        await run_tui_console(router)
+        return
+
+    url = f"http://127.0.0.1:{port}"
+    env = {**os.environ, "HOME": str(ephemeral_home), "TMPDIR": str(ephemeral_home)}
+    log_path = ephemeral_home / "tui-attach.log"
+    log.info("ach-agent: --tui → opencode attach", url=url, log_file=str(log_path))
+
+    real_stderr = sys.stderr
+    with open(log_path, "a", encoding="utf-8") as log_fh:
+        sys.stderr = log_fh
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                binary, "attach", url, "--pure", env=env
+            )
+            await proc.wait()
+        finally:
+            sys.stderr = real_stderr
+
+
+async def main(
+    tui_mode: bool = False, one_shot_prompt: str | None = None, debug_mode: bool = False
+) -> None:
     """Async entrypoint: load config, boot router, start channel adapters + uvicorn.
 
-    Two launch modifiers boot the engine/proxies/hydration but IGNORE the configured
+    Three launch modifiers boot the engine/proxies/hydration but IGNORE the configured
     channels (the typed/passed line IS the prompt — no terminal contract):
-      - tui_mode (`--tui`): run an interactive console REPL (see run_tui_console).
+      - tui_mode (`--tui`): hands the terminal to opencode's native TUI attached to our
+        pre-warmed serve (see _run_opencode_attach).
+      - debug_mode (`--debug`): the plain stdin/stdout REPL (see run_tui_console) — the
+        minimal console, easiest to pipe/debug. Takes precedence over tui_mode.
       - one_shot_prompt (`--prompt TEXT`): run a single prompt non-interactively, print
-        the reply, and exit (see run_one_shot). Takes precedence over tui_mode.
+        the reply, and exit (see run_one_shot). Highest precedence.
     """
-    console_mode = tui_mode or one_shot_prompt is not None
+    console_mode = tui_mode or debug_mode or one_shot_prompt is not None
     config_path = os.environ.get(CONFIG_PATH_ENV, DEFAULT_CONFIG_PATH)
 
     # Step 2: load config (hard-fail on schema mismatch — CFG-02)
@@ -585,29 +636,10 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
     from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.engine.pool import EnginePool
 
-    # opencode `serve` bind host. Default loopback (127.0.0.1) — the API + web UI are then
-    # only reachable inside the container/host. ACH_OPENCODE_BIND_HOST=0.0.0.0 exposes it on
-    # all interfaces (e.g. to open the opencode web UI from your host's browser via a
-    # published port). The harness client always connects via loopback regardless.
-    opencode_bind_host = os.environ.get("ACH_OPENCODE_BIND_HOST", "").strip() or "127.0.0.1"
-    if opencode_bind_host not in ("127.0.0.1", "localhost", "::1"):
-        log.warning(
-            "SECURITY: opencode serve is binding a non-loopback interface — its HTTP API "
-            "and web UI run WITHOUT authentication and can drive the agent + its tools. "
-            "Use for local dev/test only, never in production or on an untrusted network.",
-            bind_host=opencode_bind_host,
-        )
-    # Fixed opencode port (dev/test): 0 = ephemeral. Set ACH_OPENCODE_PORT so a container can
-    # publish a known port and the web UI is reachable from the host (pair with 0.0.0.0 bind).
-    try:
-        opencode_port = int(os.environ.get("ACH_OPENCODE_PORT", "0") or "0")
-    except ValueError:
-        log.warning("invalid ACH_OPENCODE_PORT — ignoring (using an ephemeral port)")
-        opencode_port = 0
-
+    # opencode `serve` always binds loopback (127.0.0.1) on a free ephemeral port the pool
+    # picks — only reachable inside the container/host. `--tui` drives it via `opencode attach`
+    # (co-located, loopback); nothing is published off-host.
     engine_cfg = EngineConfig(
-        bind_host=opencode_bind_host,
-        port=opencode_port,
         work_dir=cfg.work_dir,
         session_dir=f"{cfg.persistence.mount_path}/opencode/sessions",
         provider=cfg.model.type,
@@ -658,13 +690,15 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
     if console_mode:
         if one_shot_prompt is not None:
             log.info("ach-agent: --prompt one-shot mode (configured channels ignored)")
+        elif debug_mode:
+            log.info("ach-agent: --debug plain console mode (configured channels ignored)")
         else:
             log.info("ach-agent: --tui console mode (configured channels ignored)")
         try:
             if one_shot_prompt is not None:
                 await run_one_shot(router, one_shot_prompt)
             else:
-                # --tui: launch opencode at boot (not lazily on the first prompt) and hold a
+                # --tui/--debug: launch opencode at boot (not lazily on the first prompt) + hold a
                 # ref for the whole REPL, so per-invocation release(0) never stops it between
                 # prompts — there is no idle TTL; only Ctrl-C / EOF ends the session (the
                 # finally below stops it). Probe memory first so the pre-warmed server's
@@ -681,12 +715,23 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
                 warm_cfg = dataclasses.replace(engine_cfg, mcp_servers=warm_mcp_servers)
                 warm_server = await pool.acquire(warm_cfg)
                 # No stdout banner — opencode's own --print-logs already announces the
-                # listening address. Keep one structured info line with the reachable host.
+                # listening address. Keep one structured info line with the loopback address.
                 log.info(
-                    "ach-agent: opencode web UI",
-                    url=f"http://{opencode_bind_host}:{warm_server.port}",
+                    "ach-agent: opencode serve listening",
+                    url=f"http://127.0.0.1:{warm_server.port}",
                 )
-                await run_tui_console(router)
+                # --debug → the plain stdin/stdout REPL (minimal, pipe-friendly). --tui →
+                # the full-screen Textual UI, but only on a real TTY (docker compose run
+                # tty:true); piped/non-TTY stdin falls back to the plain REPL.
+                if debug_mode or not sys.stdout.isatty():
+                    await run_tui_console(router)
+                else:
+                    await _run_opencode_attach(
+                        router,
+                        binary_path=engine_cfg.binary_path,
+                        port=warm_server.port,
+                        ephemeral_home=warm_server.ephemeral_home,
+                    )
         finally:
             # Stop any warm-held engine server (idle TTL may not have elapsed at EOF).
             await pool._stop()
@@ -917,14 +962,15 @@ async def main(tui_mode: bool = False, one_shot_prompt: str | None = None) -> No
         log.info("ach-agent shutdown complete")
 
 
-def _parse_cli(argv: list[str]) -> tuple[bool, str | None]:
+def _parse_cli(argv: list[str]) -> tuple[bool, str | None, bool]:
     """Parse launch modifiers from argv.
 
-    `--tui` → interactive console REPL. `--prompt TEXT` (or `--prompt=TEXT`) → single
-    non-interactive prompt then exit. Both ignore the configured channels; `--prompt`
-    takes precedence when both are present.
+    `--tui` → full-screen Textual UI. `--debug` → plain stdin/stdout REPL (minimal,
+    pipe-friendly). `--prompt TEXT` (or `--prompt=TEXT`) → single non-interactive prompt
+    then exit. All ignore the configured channels; precedence is `--prompt` > `--debug` > `--tui`.
     """
     tui = "--tui" in argv
+    debug = "--debug" in argv
     prompt: str | None = None
     for i, arg in enumerate(argv):
         if arg == "--prompt" and i + 1 < len(argv):
@@ -933,10 +979,10 @@ def _parse_cli(argv: list[str]) -> tuple[bool, str | None]:
         if arg.startswith("--prompt="):
             prompt = arg[len("--prompt=") :]
             break
-    return tui, prompt
+    return tui, prompt, debug
 
 
 if __name__ == "__main__":
-    # `--tui` / `--prompt` launch modifiers: drive the engine directly, channels ignored.
-    _tui_mode, _one_shot = _parse_cli(sys.argv[1:])
-    asyncio.run(main(tui_mode=_tui_mode, one_shot_prompt=_one_shot))
+    # `--tui` / `--debug` / `--prompt` launch modifiers: drive the engine directly.
+    _tui_mode, _one_shot, _debug_mode = _parse_cli(sys.argv[1:])
+    asyncio.run(main(tui_mode=_tui_mode, one_shot_prompt=_one_shot, debug_mode=_debug_mode))

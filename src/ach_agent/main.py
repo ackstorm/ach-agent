@@ -46,6 +46,7 @@ from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_p
 from ach_agent.engine.sanitized_env import SanitizedEnv, configure_logging
 from ach_agent.http.app import create_app
 from ach_agent.router import Router
+from ach_agent.templating import build_template_context, render_template
 
 # configure_logging() is called at module TOP (not in main()) so that any
 # log emission during import (e.g. validation warnings) is already redacted.
@@ -148,18 +149,35 @@ def _open_dedup_store(cfg: Any) -> Any:
             return InMemoryDedupStore()
 
 
-def build_engine_prompt(event: MessageEvent) -> str:
+def build_engine_prompt(
+    event: MessageEvent,
+    channel_cfg: Any = None,
+    agent_name: str = "",
+    memory_bank: str = "",
+) -> str:
     """Build a meaningful engine prompt from a MessageEvent.
 
-    For cron events the payload carries a 'scheduled_tick' key — return it as-is
-    (original cron behavior preserved).
-
-    For webhook MR events the payload carries the GitLab MR JSON body.
-    Build a human-readable review instruction from project_id, mr_iid, and the
-    MR title/description from payload['object_attributes'] (guarded — no KeyError).
+    When the channel declares a `prompt` template, it wins: it is rendered through the
+    {{ }} engine against the event payload + harness internals (channel.prompt is the
+    contract-specified per-channel instruction). Otherwise the legacy fallback applies:
+    cron `scheduled_tick`, free-form `payload['text']`, or a built MR review instruction.
 
     Never raises; falls back to an empty string if no usable content is found.
     """
+    # Channel-prompt path: render the contract-authored template (CONTRACT §2 channel.prompt)
+    if channel_cfg is not None and getattr(channel_cfg, "prompt", None):
+        ctx = build_template_context(
+            event.payload,
+            channel_name=event.channel_name,
+            channel_type=getattr(channel_cfg, "type", "") or "",
+            channel_source=getattr(channel_cfg, "source", "") or "",
+            agent_name=agent_name,
+            memory_bank=memory_bank,
+            event_id=event.idempotency_key,
+            session_key=event.session_key,
+        )
+        return render_template(channel_cfg.prompt, ctx)
+
     # Cron path: payload has a scheduled_tick key
     scheduled_tick = event.payload.get("scheduled_tick")
     if scheduled_tick is not None:
@@ -216,6 +234,9 @@ def _make_engine_runner(
     terminal_output_retries: int = 1,
     memory_cfg: Any = None,
     channel_ttl: dict[str, float] | None = None,
+    channels_by_name: dict[str, Any] | None = None,
+    agent_name: str = "",
+    memory_bank: str = "",
 ) -> Callable[..., Any]:
     """Build the engine_runner callable injected into the Router.
 
@@ -252,6 +273,7 @@ def _make_engine_runner(
     from ach_agent.engine.lifecycle import run_invocation
 
     ttl_by_channel = channel_ttl or {}
+    channels_by_name = channels_by_name or {}
 
     async def engine_runner(event: MessageEvent, on_kill: Callable[[], None]) -> None:
         # Build sanitized launch env — ek_ is never read into a local variable
@@ -288,7 +310,12 @@ def _make_engine_runner(
             future = event.reply_future
             try:
                 # MEM-01: append ## Memory section (summaries or unavailable note) to prompt.
-                base_prompt = build_engine_prompt(event)
+                base_prompt = build_engine_prompt(
+                    event,
+                    channel_cfg=channels_by_name.get(event.channel_name),
+                    agent_name=agent_name,
+                    memory_bank=memory_bank,
+                )
                 full_prompt = f"{base_prompt}\n\n{memory_prompt}" if memory_prompt else base_prompt
                 # Free-form channels (--tui console) carry no terminal contract: return
                 # the raw reply, no terminal extraction/repair (delivery_context marker).
@@ -488,9 +515,7 @@ async def _run_opencode_attach(
     with open(log_path, "a", encoding="utf-8") as log_fh:
         sys.stderr = log_fh
         try:
-            proc = await asyncio.create_subprocess_exec(
-                binary, "attach", url, "--pure", env=env
-            )
+            proc = await asyncio.create_subprocess_exec(binary, "attach", url, "--pure", env=env)
             await proc.wait()
         finally:
             sys.stderr = real_stderr
@@ -708,6 +733,8 @@ async def main(
     # before pool.acquire (Pitfall 3).
     # Per-channel idle TTL (constant by channel type; all v1 channels are 0).
     channel_ttl = {ch.name: _CHANNEL_IDLE_TTL_S.get(ch.type, 0.0) for ch in cfg.channels}
+    channels_by_name = {c.name: c for c in cfg.channels}
+    memory_bank = cfg.memory.bank if cfg.memory is not None else ""
     engine_runner = _make_engine_runner(
         pool=pool,
         engine_cfg=engine_cfg,
@@ -715,6 +742,9 @@ async def main(
         terminal_output_retries=cfg.limits.terminal_output_retries,
         memory_cfg=cfg.memory,
         channel_ttl=channel_ttl,
+        channels_by_name=channels_by_name,
+        agent_name=cfg.agent.name,
+        memory_bank=memory_bank,
     )
 
     # Step 6 (cont.): construct Router with all limits from config (RTR-03/04)

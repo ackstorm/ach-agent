@@ -885,6 +885,20 @@ def test_capability_type_direct_hard_fails(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_memory_block_uses_bank_not_scope():
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import MemoryBlock
+
+    m = MemoryBlock(endpoint="http://mem:8080", bank="gitlab-pr-review")
+    assert m.bank == "gitlab-pr-review"
+
+    # the old key is gone — extra='forbid' must reject it
+    with pytest.raises(ValidationError):
+        MemoryBlock(endpoint="http://mem:8080", scope="x")
+
+
 def test_schema_version_wrong_hard_fails(tmp_path: Path) -> None:
     """D-01: schemaVersion:'3' → Literal['1'] rejects → sys.exit(1)."""
     from ach_agent.config import load_config

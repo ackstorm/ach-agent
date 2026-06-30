@@ -42,6 +42,14 @@ prompt:
   system: "You are a concise software-engineering assistant."
   compose: append
 
+# Optional memory (fail-open). `bank` is the static memory bank_id (the agent's mission
+# namespace). Per-event tag partitioning is a separate future layer — not configured here.
+# memory:
+#   endpoint: http://hindsight.engineering.svc:8080
+#   mission: "AI code reviewer"
+#   bank: gitlab-pr-review
+#   mentalModels: [architecture, conventions]
+
 # Engine knobs (harness-local; operator-optional). workDir + startupTimeoutSeconds live here.
 # opencode's subprocess env is built clean-slate: it inherits ONLY a small base allowlist
 # (PATH, SHELL, LANG, …) — never the harness secrets, so the ek_ (ACH_TOKEN/ACH_API_KEY)

@@ -4,8 +4,7 @@
 Locked decisions:
   - Fail-open via pre-check (D-02): probe BEFORE pool.acquire() so opencode.json
     includes or excludes memory MCP server BEFORE subprocess launch (RESEARCH.md Pitfall 3).
-  - bank_id: use MemoryBlock.scope as bank_id (Task 1 decision: derive-from-scope,
-    no CONTRACT.md §2 frozen-seam change). Decision recorded: bank_id = MemoryBlock.scope.
+  - bank_id: use MemoryBlock.bank as bank_id (static, operator config — never from inbound payload).
   - MCP client: mcp.client.streamable_http.streamable_http_client per-call (ackbot pattern).
   - Fail-open: any exception in probe/fetch → degrade, never raise to caller.
   - Metric: MEMORY_DEGRADED counter from router/metrics.py (extended in Phase 4 Plan 01).
@@ -95,7 +94,7 @@ async def prepare_memory(
     Call BEFORE pool.acquire() in engine_runner (RESEARCH.md Pitfall 3) so the
     opencode.json written for that server includes or excludes the memory MCP server.
 
-    Decision (Task 1: derive-from-scope): bank_id = memory_cfg.scope.
+    bank_id = memory_cfg.bank (static, operator config — never from inbound payload).
     T-04-03: bank_id is always from operator config, never from inbound payload.
 
     Never raises — MEM-02 fail-open contract (D-02).
@@ -103,8 +102,7 @@ async def prepare_memory(
     (False, unavailable section).
     """
     try:
-        # Task 1 decision: scope field serves as bank_id (no schema change)
-        bank_id = memory_cfg.scope
+        bank_id = memory_cfg.bank
 
         available = await probe_memory_endpoint(memory_cfg.endpoint)
         if not available:

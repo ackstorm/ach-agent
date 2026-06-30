@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enabled, else `/tmp/ach-home`. `engine.workDir` now defaults to `<home>/workspace`.
 
 ### Changed
+- **`memory.scope` renamed to `memory.bank`** — the static memory bank_id (the agent's
+  mission namespace, e.g. `gitlab-pr-review`). Per-event tag-based partitioning is a
+  separate future layer and does not affect this field.
+- **`channel.prompt` is now rendered** through a zero-dependency `{{ }}` substitution
+  engine. Namespaces: `payload.*` (inbound JSON body) and `internal.*` (`channel.name`/
+  `type`/`source`, `agent.name`, `memory.bank`, `event.id`, `session.key`); one filter,
+  `| default("x")`. There is no `env` namespace — process env (the `ek_`) is structurally
+  unreachable from a template (ek-hygiene at the template layer). Channels without a
+  `prompt` keep the previous built-in instruction behavior unchanged.
 - **Config reshape:** `workDir` + `startupTimeoutSeconds` moved under `engine`;
   `prompt.base` → `prompt.system`.
 - **`--tui` now attaches to opencode's native TUI** via `opencode attach` against the

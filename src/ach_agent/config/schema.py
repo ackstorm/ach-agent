@@ -110,9 +110,10 @@ class MemoryBlock(BaseModel):
 
     endpoint: str
     mission: str = ""
-    # DEPRECATED: scope currently feeds the memory bank_id (memory/adapter.py). Slated to
-    # move to a per-channel `scope` in a future revision; kept until that lands.
-    scope: str = ""
+    # Static memory bank_id (the memory namespace for this agent's mission, e.g.
+    # "gitlab-pr-review"). Per-event tag-based partitioning is a separate future layer
+    # (see the memory bank+tags design note) and does NOT change this static field.
+    bank: str = ""
     mental_models: list[str] = Field(default_factory=list, alias="mentalModels")
 
 

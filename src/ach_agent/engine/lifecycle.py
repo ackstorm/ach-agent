@@ -79,6 +79,10 @@ class EngineConfig:
     # {server_id: "http://127.0.0.1:<port>/mcp/<id>"} from McpProxy — proxied external MCP
     # servers written into opencode.json's mcp block alongside any memory server.
     mcp_local_urls: dict[str, str] = field(default_factory=dict)
+    # codemem (MEM/D-02): when set, opencode.json registers a LOCAL stdio MCP server that
+    # opencode spawns as its own child: `codemem mcp --db-path <db>`. Empty → no codemem.
+    # Static per-agent db path (operator config). Viewer is disabled via env (headless).
+    codemem_db_path: str = ""
     # SEC-01 / ek-hygiene: extra env var NAMES the operator wants forwarded from the harness
     # env into the opencode subprocess (engine.forwardEnv). The opencode env is built
     # clean-slate from a small base allowlist (see build_opencode_env) — nothing else is
@@ -237,6 +241,15 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
     }
     for sid, url in config.mcp_local_urls.items():
         mcp_block[sid] = {"type": "remote", "url": url, "enabled": True}
+    if config.codemem_db_path:
+        # MCP type=local: opencode owns the codemem stdio child (1:1 with this opencode process).
+        # SEC: no ek_; codemem is local. Viewer disabled (headless, N sessions).
+        mcp_block["codemem"] = {
+            "type": "local",
+            "command": ["codemem", "mcp", "--db-path", config.codemem_db_path],
+            "enabled": True,
+            "environment": {"CODEMEM_VIEWER": "0", "CODEMEM_VIEWER_AUTO": "0"},
+        }
     if mcp_block:
         oc_config["mcp"] = mcp_block
     (config_dir / "opencode.json").write_text(json.dumps(oc_config, indent=2), encoding="utf-8")

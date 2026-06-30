@@ -16,7 +16,9 @@ capability:
 
 # Inline agent persona (append-layered on the ACH-hydrated skills/prompts).
 prompt:
-  system: "You are a concise software-engineering assistant."
+  system:
+    type: text
+    text: "You are a concise software-engineering assistant."
   compose: append
 
 # Writable scratch for the non-root container user (uid 10001).

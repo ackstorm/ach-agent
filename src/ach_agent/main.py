@@ -858,13 +858,20 @@ async def main(
                 import dataclasses
 
                 warm_mcp_servers: list[str] = []
+                warm_codemem_db: str = ""
                 if isinstance(cfg.memory, HindsightMemory):
                     from ach_agent.memory.adapter import prepare_memory
 
                     _mem_ok, _ = await prepare_memory(cfg.memory)
                     if _mem_ok:
                         warm_mcp_servers = [cfg.memory.endpoint]
-                warm_cfg = dataclasses.replace(engine_cfg, mcp_servers=warm_mcp_servers)
+                elif isinstance(cfg.memory, CodememMemory):
+                    from ach_agent.memory.adapter import prepare_codemem
+
+                    _cm_ok, warm_codemem_db = prepare_codemem(cfg.memory)
+                warm_cfg = dataclasses.replace(
+                    engine_cfg, mcp_servers=warm_mcp_servers, codemem_db_path=warm_codemem_db
+                )
                 warm_server = await pool.acquire(warm_cfg)
                 # No stdout banner — opencode's own --print-logs already announces the
                 # listening address. Keep one structured info line with the loopback address.

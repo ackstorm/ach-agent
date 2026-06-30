@@ -61,7 +61,7 @@ async def test_global_concurrency_cap(fake_engine: FakeEngine) -> None:
         dedup_store=InMemoryDedupStore(),
         engine_runner=fake_engine.run,
         delivery_adapter=None,
-        channel_concurrency=10,  # global_sem (=2) is the bottleneck, not channel_slot
+        channel_concurrency={"test-channel": 10},  # global_sem (=2) is the bottleneck
     )
 
     fake_engine.hold()  # Block all invocations

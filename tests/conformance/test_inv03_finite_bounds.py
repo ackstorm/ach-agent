@@ -60,7 +60,7 @@ async def test_inv03_finite_bounds(fake_engine: FakeEngine) -> None:
         dedup_store=InMemoryDedupStore(),
         engine_runner=cap_engine.run,
         delivery_adapter=None,
-        channel_concurrency=10,  # global sem is the limiting factor
+        channel_concurrency={"test-channel": 10},  # global sem is the limiting factor
     )
 
     # Submit 3 distinct events — all accepted (queue has room), but only 2 in-flight.

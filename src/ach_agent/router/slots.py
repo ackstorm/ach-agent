@@ -21,20 +21,33 @@ from collections.abc import Callable
 
 
 class SlotManager:
-    """Manages a global asyncio.Semaphore (maxConcurrentInvocations) and
-    per-channel asyncio.Semaphore (channel concurrency cap, default 1 for cron).
+    """Global concurrency semaphore (maxConcurrentInvocations) + per-channel semaphores.
 
-    The SlotManager is passed into the Lane so the lane consumer can acquire
-    the global slot before dispatching an invocation.
+    Each channel name gets its own asyncio.Semaphore sized to that channel's `concurrency`,
+    so a single channel can be sub-capped below the global ceiling (e.g. cron=1 while a
+    webhook still uses a second global slot). Unknown channel names (e.g. the --tui console)
+    get a global-sized semaphore — no tighter-than-global constraint. Semaphores are cached
+    so every lane for the same channel shares one cap.
     """
 
     def __init__(
         self,
         max_concurrent_invocations: int,
-        channel_concurrency: int = 1,
+        channel_concurrency: dict[str, int] | None = None,
     ) -> None:
         self.global_sem: asyncio.Semaphore = asyncio.Semaphore(max_concurrent_invocations)
-        self.channel_slot: asyncio.Semaphore = asyncio.Semaphore(channel_concurrency)
+        self._max = max_concurrent_invocations
+        self._channel_sems: dict[str, asyncio.Semaphore] = {
+            name: asyncio.Semaphore(cap) for name, cap in (channel_concurrency or {}).items()
+        }
+
+    def channel_sem(self, channel_name: str) -> asyncio.Semaphore:
+        """Return the per-channel semaphore, creating a global-sized one for unknown names."""
+        sem = self._channel_sems.get(channel_name)
+        if sem is None:
+            sem = asyncio.Semaphore(self._max)
+            self._channel_sems[channel_name] = sem
+        return sem
 
 
 def make_on_kill(

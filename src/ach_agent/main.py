@@ -684,6 +684,7 @@ async def main(
         engine_runner=engine_runner,
         delivery_adapter=None,
         max_invocation_seconds=float(cfg.limits.max_invocation_seconds),
+        channel_concurrency={ch.name: ch.concurrency for ch in cfg.channels},
     )
 
     # --tui / --prompt launch modifiers: ignore the configured channels and drive the

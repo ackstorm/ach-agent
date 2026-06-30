@@ -1,9 +1,7 @@
 {
   "schemaVersion": "1",
   "agent": {
-    "name": "a2a-test-agent",
-    "namespace": "engineering",
-    "generation": 1
+    "name": "a2a-test-agent"
   },
   "model": {
     "name": "openai.gpt-5",
@@ -12,9 +10,10 @@
       "temperature": 1
     }
   },
-  "workDir": "/workspace",
-  "startupTimeoutSeconds": 30,
-  "governed": true,
+  "engine": {
+    "workDir": "/workspace",
+    "startupTimeoutSeconds": 30
+  },
   "capability": {
     "type": "ach",
     "ach": {
@@ -48,12 +47,6 @@
       "name": "agent-to-agent",
       "type": "a2a",
       "concurrency": 1,
-      "expire": 120,
-      "session": {
-        "mode": "auto",
-        "continuity": "ephemeral",
-        "ttlSeconds": 86400
-      },
       "a2a": {
         "mode": "async",
         "auth": {

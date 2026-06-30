@@ -46,11 +46,9 @@ def _load_fixture(tmp_path: Path, name: str):
 
 _VALID_WEBHOOK_BASE: dict = {
     "schemaVersion": "1",
-    "agent": {"name": "test-agent", "namespace": "default", "generation": 0},
+    "agent": {"name": "test-agent"},
     "model": {"name": "openai.gpt-5", "type": "openai", "params": {"temperature": 1}},
-    "workDir": "/workspace",
-    "startupTimeoutSeconds": 30,
-    "governed": True,
+    "engine": {"workDir": "/workspace", "startupTimeoutSeconds": 30},
     "capability": {
         "type": "ach",
         "ach": {"baseUrl": "https://ach.example.com", "environment": "test"},
@@ -76,11 +74,9 @@ _VALID_WEBHOOK_BASE: dict = {
 
 _VALID_CRON_BASE: dict = {
     "schemaVersion": "1",
-    "agent": {"name": "test-agent", "namespace": "default", "generation": 0},
+    "agent": {"name": "test-agent"},
     "model": {"name": "openai.gpt-5", "type": "openai", "params": {"temperature": 1}},
-    "workDir": "/workspace",
-    "startupTimeoutSeconds": 30,
-    "governed": False,
+    "engine": {"workDir": "/workspace", "startupTimeoutSeconds": 30},
     "capability": {
         "type": "ach",
         "ach": {"baseUrl": "https://ach.example.com", "environment": "test"},
@@ -105,6 +101,94 @@ _VALID_CRON_BASE: dict = {
 
 
 # ---------------------------------------------------------------------------
+# Contract-close reshape (this session): engine block, prompt.system,
+# filter.exclude three lists, header_token, dropped namespace/session/expire.
+# ---------------------------------------------------------------------------
+
+
+def test_engine_holds_workdir_and_startup() -> None:
+    from ach_agent.config.schema import AgentConfig
+
+    cfg = AgentConfig.model_validate(
+        {
+            "schemaVersion": "1",
+            "agent": {"name": "a"},
+            "model": {"name": "m", "type": "openai"},
+            "capability": {"type": "ach", "ach": {"baseUrl": "http://x"}},
+            "engine": {
+                "workDir": "/w",
+                "startupTimeoutSeconds": 9,
+                "forwardEnv": ["SSL_CERT_FILE"],
+            },
+        }
+    )
+    assert cfg.engine.work_dir == "/w"
+    assert cfg.engine.startup_timeout_seconds == 9
+    assert cfg.engine.forward_env == ["SSL_CERT_FILE"]
+    assert not hasattr(cfg, "governed")
+
+
+def test_prompt_system_field() -> None:
+    from ach_agent.config.schema import PromptBlock
+
+    assert PromptBlock.model_validate({"system": "hi"}).system == "hi"
+
+
+def test_agent_namespace_rejected() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import AgentBlock
+
+    with pytest.raises(ValidationError):
+        AgentBlock.model_validate({"name": "a", "namespace": "x"})
+
+
+def test_filter_exclude_three_lists() -> None:
+    from ach_agent.config.schema import CapabilityFilterExcludeBlock
+
+    e = CapabilityFilterExcludeBlock.model_validate(
+        {"tools": ["t"], "mcpServers": ["s"], "skills": ["k"]}
+    )
+    assert e.tools == ["t"] and e.mcp_servers == ["s"] and e.skills == ["k"]
+
+
+def test_webhook_header_token_auth() -> None:
+    from ach_agent.config.schema import WebhookAuthBlock
+
+    a = WebhookAuthBlock.model_validate(
+        {"type": "header_token", "header": "X-Api-Key", "secretPath": "/s"}
+    )
+    assert a.type == "header_token" and a.header == "X-Api-Key"
+
+
+def test_channel_session_and_expire_rejected() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import ChannelConfig
+
+    with pytest.raises(ValidationError):
+        ChannelConfig.model_validate(
+            {
+                "name": "c",
+                "type": "cron",
+                "cron": {"schedule": "* * * * *"},
+                "session": {"mode": "auto"},
+            }
+        )
+    with pytest.raises(ValidationError):
+        ChannelConfig.model_validate(
+            {
+                "name": "c",
+                "type": "cron",
+                "cron": {"schedule": "* * * * *"},
+                "expire": 30,
+            }
+        )
+
+
+# ---------------------------------------------------------------------------
 # Positive: CFG-06 — each fixture loads, type + representative sub-field verified
 # ---------------------------------------------------------------------------
 
@@ -119,7 +203,7 @@ def test_load_valid_cron_config() -> None:
 
 
 def test_cron_channel_config() -> None:
-    """CHN-02 / CFG-06: cron channel parses schedule, session.continuity, and timezone."""
+    """CHN-02 / CFG-06: cron channel parses schedule and timezone."""
     from ach_agent.config import load_config
 
     config = load_config(str(FIXTURES_DIR / "config_cron.json"))
@@ -127,7 +211,6 @@ def test_cron_channel_config() -> None:
     assert channel.type == "cron"
     assert channel.cron is not None
     assert channel.cron.schedule == "* * * * *"
-    assert channel.session.continuity == "durable"
     assert channel.cron.timezone == "Europe/Madrid"
 
 
@@ -175,18 +258,16 @@ def test_load_valid_a2a_config() -> None:
 
 
 def test_v3_fields_parse(tmp_path: Path) -> None:
-    """CFG-05: all v3 fields parse — model.name/type/params, work_dir,
-    startup_timeout_seconds, limits.max_steps, limits.terminal_output_retries,
-    capability.filter.exclude.tools, governed."""
+    """CFG-05: all v3 fields parse — model.name/type/params, engine.work_dir,
+    engine.startup_timeout_seconds, limits.max_steps, limits.terminal_output_retries,
+    capability.filter.exclude.tools."""
     from ach_agent.config.schema import AgentConfig
 
     cfg = {
         "schemaVersion": "1",
-        "agent": {"name": "field-test", "namespace": "test", "generation": 2},
+        "agent": {"name": "field-test"},
         "model": {"name": "openai.gpt-5", "type": "openai", "params": {"temperature": 1}},
-        "workDir": "/custom/work",
-        "startupTimeoutSeconds": 60,
-        "governed": True,
+        "engine": {"workDir": "/custom/work", "startupTimeoutSeconds": 60},
         "capability": {
             "type": "ach",
             "ach": {"baseUrl": "https://ach.example.com", "environment": "staging"},
@@ -206,28 +287,11 @@ def test_v3_fields_parse(tmp_path: Path) -> None:
     assert config.model.name == "openai.gpt-5"
     assert config.model.type == "openai"
     assert config.model.params == {"temperature": 1}
-    assert config.work_dir == "/custom/work"
-    assert config.startup_timeout_seconds == 60
+    assert config.engine.work_dir == "/custom/work"
+    assert config.engine.startup_timeout_seconds == 60
     assert config.limits.max_steps == 25
     assert config.limits.terminal_output_retries == 3
     assert config.capability.filter.exclude.tools == ["dangerous-tool", "restricted-tool"]
-    assert config.governed is True
-
-
-def test_engine_idle_ttl_default_and_parse() -> None:
-    """engine.idleTtlSeconds defaults to 0 (spawn-per-invocation) and parses when set."""
-    from ach_agent.config.schema import AgentConfig
-
-    base = {
-        "schemaVersion": "1",
-        "agent": {"name": "e", "namespace": "test", "generation": 1},
-        "model": {"name": "openai.x", "type": "openai"},
-        "capability": {"type": "ach", "ach": {"baseUrl": "https://ach.example.com"}},
-        "channels": [],
-    }
-    assert AgentConfig.model_validate(base).engine.idle_ttl_seconds == 0
-    warm = AgentConfig.model_validate({**base, "engine": {"idleTtlSeconds": 120}})
-    assert warm.engine.idle_ttl_seconds == 120
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +337,6 @@ def test_load_valid_yaml_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 schemaVersion: "1"
 agent:
   name: yaml-agent
-  namespace: default
 model:
   name: gemini.gemini-flash-latest
   type: openai
@@ -283,7 +346,7 @@ capability:
     baseUrl: https://ach.example.com
     environment: platform
 prompt:
-  base: "You are a concise assistant."
+  system: "You are a concise assistant."
   compose: append
 channels: []
 """
@@ -296,7 +359,7 @@ channels: []
     assert cfg.model.type == "openai"
     assert cfg.capability.ach.base_url == "https://ach.example.com"
     assert cfg.prompt is not None
-    assert cfg.prompt.base == "You are a concise assistant."
+    assert cfg.prompt.system == "You are a concise assistant."
 
 
 def test_yaml_unknown_key_hard_fails(tmp_path: Path) -> None:
@@ -305,7 +368,7 @@ def test_yaml_unknown_key_hard_fails(tmp_path: Path) -> None:
 
     yaml_text = """
 schemaVersion: "1"
-agent: {name: x, namespace: default}
+agent: {name: x}
 model: {name: openai.gpt-5, type: openai}
 capability: {type: ach, ach: {baseUrl: https://ach.example.com, environment: test}}
 unexpectedKey: true
@@ -339,7 +402,7 @@ def test_capability_ach_environment_is_optional(
     monkeypatch.delenv("ACH_BASE_URL", raising=False)  # assert the contract's own baseUrl
     raw = {
         "schemaVersion": "1",
-        "agent": {"name": "x", "namespace": "default"},
+        "agent": {"name": "x"},
         "model": {"name": "gemini.gemini-flash-latest", "type": "openai"},
         "capability": {"type": "ach", "ach": {"baseUrl": "https://ach.example.com"}},
     }
@@ -365,7 +428,7 @@ def test_ach_base_url_env_fills_when_config_omits_it(
     monkeypatch.setenv("ACH_BASE_URL", "https://ach.example.com")
     raw = {
         "schemaVersion": "1",
-        "agent": {"name": "x", "namespace": "default"},
+        "agent": {"name": "x"},
         "model": {"name": "gemini.gemini-flash-latest", "type": "openai"},
         "capability": {"type": "ach", "ach": {}},
     }
@@ -385,7 +448,7 @@ def test_ach_base_url_env_overrides_config_value(
     monkeypatch.setenv("ACH_BASE_URL", "https://staging.example.com")
     raw = {
         "schemaVersion": "1",
-        "agent": {"name": "x", "namespace": "default"},
+        "agent": {"name": "x"},
         "model": {"name": "gemini.gemini-flash-latest", "type": "openai"},
         "capability": {"type": "ach", "ach": {"baseUrl": "https://pinned.example.com"}},
     }
@@ -405,7 +468,7 @@ def test_missing_base_url_and_no_env_hard_fails(
     monkeypatch.delenv("ACH_BASE_URL", raising=False)
     raw = {
         "schemaVersion": "1",
-        "agent": {"name": "x", "namespace": "default"},
+        "agent": {"name": "x"},
         "model": {"name": "gemini.gemini-flash-latest", "type": "openai"},
         "capability": {"type": "ach", "ach": {}},
     }

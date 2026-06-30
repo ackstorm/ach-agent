@@ -30,8 +30,6 @@ class AgentBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
-    namespace: str
-    generation: int = 0
 
 
 class ModelBlock(BaseModel):
@@ -58,23 +56,18 @@ class LimitsBlock(BaseModel):
 
 
 class EngineBlock(BaseModel):
-    """Engine server lifecycle knobs (harness-local; operator may render or omit).
+    """Engine runtime knobs (harness-local; operator-optional).
 
-    ``idle_ttl_seconds`` is DEPRECATED and no longer consumed by the harness: the server
-    idle TTL (seconds the opencode server lingers after a conversation ends) is now a
-    per-channel constant (``ach_agent.main._CHANNEL_IDLE_TTL_S``), 0 for all v1 channels.
-    The field is retained for config back-compat (``extra='forbid'`` would reject it) but
-    has no effect. The ``--tui`` REPL pre-warms opencode at boot and holds it until Ctrl-C.
+    Carries "how we run opencode": its working directory, startup deadline, and the
+    env-forwarding allowlist. opencode's subprocess env is built clean-slate from a small
+    base allowlist (engine.lifecycle.build_opencode_env); ``forward_env`` lists extra var
+    NAMES to forward — never the ek_ (ACH_TOKEN/ACH_API_KEY).
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    idle_ttl_seconds: int = Field(default=0, alias="idleTtlSeconds")
-    # SEC-01 / ek-hygiene: extra env var NAMES forwarded from the harness env into the
-    # opencode subprocess. opencode's env is built clean-slate from a small base allowlist
-    # (see engine.lifecycle.build_opencode_env), so nothing else is inherited — the ek_
-    # (ACH_TOKEN/ACH_API_KEY) never reaches opencode unless explicitly named here. Use
-    # sparingly (e.g. a custom CA bundle path or a tool's own config var); never list the ek_.
+    work_dir: str = Field(default="/workspace", alias="workDir")
+    startup_timeout_seconds: int = Field(default=30, alias="startupTimeoutSeconds")
     forward_env: list[str] = Field(default_factory=list, alias="forwardEnv")
 
 
@@ -101,7 +94,7 @@ class PromptBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    base: str = ""
+    system: str = ""
     compose: str = "append"
 
 
@@ -112,6 +105,8 @@ class MemoryBlock(BaseModel):
 
     endpoint: str
     mission: str = ""
+    # DEPRECATED: scope currently feeds the memory bank_id (memory/adapter.py). Slated to
+    # move to a per-channel `scope` in a future revision; kept until that lands.
     scope: str = ""
     mental_models: list[str] = Field(default_factory=list, alias="mentalModels")
 
@@ -138,11 +133,13 @@ class CapabilityAchBlock(BaseModel):
 
 
 class CapabilityFilterExcludeBlock(BaseModel):
-    """CONTRACT_v3 §2 capability.filter.exclude sub-block."""
+    """CONTRACT_v3 §2 capability.filter.exclude sub-block — gate ABOVE the model."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     tools: list[str] = Field(default_factory=list)
+    mcp_servers: list[str] = Field(default_factory=list, alias="mcpServers")
+    skills: list[str] = Field(default_factory=list)
 
 
 class CapabilityFilterBlock(BaseModel):
@@ -168,23 +165,16 @@ class CapabilityBlock(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class SessionBlock(BaseModel):
-    """CONTRACT §2 channel session block."""
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    mode: str = "auto"
-    continuity: str = "ephemeral"
-    ttl_seconds: int = Field(default=86400, alias="ttlSeconds")
-
-
 class WebhookAuthBlock(BaseModel):
     """CONTRACT_v3 §2 webhook.auth sub-block."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    type: Literal["gitlab_token", "hmac", "none"] = "hmac"
+    type: Literal["gitlab_token", "hmac", "header_token", "none"] = "hmac"
     secret_path: str = Field(default="", alias="secretPath")
+    # For type=="header_token": the request header carrying the static shared secret
+    # (constant-time compared against the file at secret_path). Ignored for other types.
+    header: str = Field(default="")
 
 
 class WebhookBlock(BaseModel):
@@ -251,8 +241,6 @@ class ChannelConfig(BaseModel):
     name: str
     type: ChannelType  # Literal union rejects unknown types (CFG-03)
     concurrency: int = 1
-    expire: int = 120
-    session: SessionBlock = Field(default_factory=SessionBlock)
     prompt: str | None = None
     source: Literal["gitlab", "github", "generic"] | None = None
     webhook: WebhookBlock | None = None
@@ -322,9 +310,6 @@ class AgentConfig(BaseModel):
     schema_version: Literal["1"] = Field(alias="schemaVersion")
     agent: AgentBlock
     model: ModelBlock
-    work_dir: str = Field(default="/workspace", alias="workDir")
-    startup_timeout_seconds: int = Field(default=30, alias="startupTimeoutSeconds")
-    governed: bool = False
     capability: CapabilityBlock
     prompt: PromptBlock | None = None
     memory: MemoryBlock | None = None

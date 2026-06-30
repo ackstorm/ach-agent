@@ -1,9 +1,7 @@
 {
   "schemaVersion": "1",
   "agent": {
-    "name": "cron-test-agent",
-    "namespace": "engineering",
-    "generation": 1
+    "name": "cron-test-agent"
   },
   "model": {
     "name": "openai.gpt-5",
@@ -12,9 +10,10 @@
       "temperature": 1
     }
   },
-  "workDir": "/workspace",
-  "startupTimeoutSeconds": 30,
-  "governed": true,
+  "engine": {
+    "workDir": "/workspace",
+    "startupTimeoutSeconds": 30
+  },
   "capability": {
     "type": "ach",
     "ach": {
@@ -48,12 +47,6 @@
       "name": "heartbeat",
       "type": "cron",
       "concurrency": 1,
-      "expire": 60,
-      "session": {
-        "mode": "auto",
-        "continuity": "durable",
-        "ttlSeconds": 86400
-      },
       "cron": {
         "schedule": "* * * * *",
         "timezone": "Europe/Madrid"

@@ -521,12 +521,22 @@ async def main(
         manifest = await hydrate(cfg.capability.ach.base_url, ek)
         # hard-fail (sys.exit 1) if model absent; returns the entry (with its real endpoint).
         model_entry = resolve_model(manifest, cfg.model.name)
+        # capability.filter.exclude — governance gate ABOVE the model. Skills are dropped
+        # from the hydrated context BEFORE fetch (never downloaded); MCP servers are excluded
+        # from the localhost proxy (never fronted, so opencode never discovers them).
+        _exclude = cfg.capability.filter.exclude
+        _exclude_skills = set(_exclude.skills)
+        if _exclude_skills:
+            manifest.context.skills = [
+                s for s in manifest.context.skills if s.name not in _exclude_skills
+            ]
+            log.info("filter: skills excluded", excluded=sorted(_exclude_skills))
         await fetch_context(manifest.context, ek, Path(cfg.persistence.mount_path))
         mcp_proxy = McpProxy()
-        # NOTE: CONTRACT_v3 capability.filter.exclude only carries `tools` (opencode-side,
-        # deferred to Plan 3/4) — there is no per-MCP-server exclude in the schema, so all
-        # hydrated servers are fronted.
-        mcp_local_urls = await mcp_proxy.start(manifest.mcp_servers, ek, exclude=set())
+        _exclude_servers = set(_exclude.mcp_servers)
+        mcp_local_urls = await mcp_proxy.start(manifest.mcp_servers, ek, exclude=_exclude_servers)
+        if _exclude_servers:
+            log.info("filter: mcp servers excluded", excluded=sorted(_exclude_servers))
         # Model-proxy upstream override (dev/test only — A/B a different model backend,
         # e.g. litellm direct, to isolate forwarder buffering). MODEL-ONLY: hydration + MCP
         # stay on the ACH coords above; only the model proxy's upstream + auth swap. The

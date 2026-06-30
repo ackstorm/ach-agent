@@ -84,7 +84,8 @@ def test_ach_state_dir_under_home(tmp_path):
 def test_link_ach_state_symlinks_workdir(tmp_path):
     home = tmp_path / "home"
     work = tmp_path / "work"
-    home.mkdir(); work.mkdir()
+    home.mkdir()
+    work.mkdir()
     real = link_ach_state(str(home), str(work))
     assert real == home / ".ach-state"
     assert real.is_dir()

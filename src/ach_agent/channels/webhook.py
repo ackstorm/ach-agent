@@ -12,10 +12,7 @@ Locked decisions:
     ms-timestamp fallback (IDM-01, Pitfall 7: always send unique UUID per test POST).
   - Status map: ACCEPTED→202, DUPLICATE→200, FULL_QUEUE→503 (D-05).
   - source_trait: "sync" (webhook caller can handle 503 / retry).
-  - reply mode (CR-01 / ACT-01): when deliver.type == "reply", WebhookResult carries
-    a reply_future set on the admitted event. engine_runner resolves it; the route
-    awaits it to return reply text on the held connection. Engine runs EXACTLY ONCE
-    on the bounded lane — no separate sync_invoke call.
+  - Webhook events are always async — 202 accept-and-process; no reply-hold path.
 
 RTR-06: NEVER import from hermes_agent.* here.
 
@@ -24,11 +21,10 @@ Boot-order: imported after configure_logging().
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import hmac
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -47,16 +43,10 @@ log = structlog.get_logger(__name__)
 
 @dataclass
 class WebhookResult:
-    """Outcome of a webhook request — carries HTTP status + JSON body.
-
-    reply_future: populated only when deliver.type == "reply" and the event was
-    ACCEPTED (202). The route awaits this future to obtain the engine reply text.
-    None in all non-reply or non-202 outcomes (CR-01 / ACT-01).
-    """
+    """Outcome of a webhook request — carries HTTP status + JSON body."""
 
     status_code: int
     body: dict[str, Any]
-    reply_future: asyncio.Future[str] | None = field(default=None)
 
 
 def _verify_gitlab_token(header_token: str, secret_path: str) -> bool:
@@ -170,32 +160,25 @@ async def handle_webhook_request(
     headers: dict[str, str],
     channel_cfg: ChannelConfig,
     handler: MessageHandler,
-    deliver_type: str | None = None,
 ) -> WebhookResult:
-    """Handle a GitLab MR webhook request end-to-end.
+    """Handle a webhook request end-to-end — always async (202 accept-and-process).
 
     Stages (ORDER IS NORMATIVE):
-      1. Auth: verify X-Gitlab-Token via constant-time compare (SEC-02)
+      1. Auth: verify token/HMAC via constant-time compare (SEC-02)
          — invalid/absent → 401 WebhookResult, handler.handle() NOT called
       2. Parse JSON body, extract delivery_context (D-07)
       3. Derive idempotency key from headers (IDM-01, D-06)
       4. Build MessageEvent (source_trait="sync")
-         For reply mode: attach event.reply_future BEFORE handler.handle() so the
-         lane consumer sees it when engine_runner runs (CR-01 / ACT-01).
       5. Dispatch to handler.handle(event) → map to D-05 status
-         For reply ACCEPTED: carry reply_future on WebhookResult for the route.
 
     Args:
-        raw_body:     Raw request body bytes (read by caller before JSON parse).
-        headers:      Request headers dict (case-sensitive; caller normalises keys).
-        channel_cfg:  Channel configuration carrying webhook.auth.secret_path.
-        handler:      MessageHandler (Router) to dispatch to.
-        deliver_type: deliver.type from channel config ("reply" / "gitlab_comment" /
-                      None). When "reply" and ACCEPTED, creates event.reply_future
-                      and returns it on WebhookResult so the route can await it.
+        raw_body:    Raw request body bytes (read by caller before JSON parse).
+        headers:     Request headers dict (case-sensitive; caller normalises keys).
+        channel_cfg: Channel configuration carrying webhook.auth.secret_path.
+        handler:     MessageHandler (Router) to dispatch to.
 
     Returns:
-        WebhookResult with status_code, body dict, and (reply mode only) reply_future.
+        WebhookResult with status_code and body dict.
     """
     assert channel_cfg.webhook is not None, "webhook block required on channel config"
     auth = channel_cfg.webhook.auth
@@ -254,12 +237,6 @@ async def handle_webhook_request(
         return WebhookResult(status_code=422, body={"detail": "Missing required fields"})
 
     # 5. BUILD MessageEvent
-    # For reply mode: create reply_future BEFORE handler.handle() so the lane
-    # consumer can resolve it when engine_runner runs (CR-01: single execution).
-    reply_future: asyncio.Future[str] | None = None
-    if deliver_type == "reply":
-        reply_future = asyncio.get_running_loop().create_future()
-
     event = MessageEvent(
         idempotency_key=idempotency_key,
         session_key=session_key,
@@ -267,7 +244,6 @@ async def handle_webhook_request(
         payload=body,
         delivery_context=delivery_context,
         source_trait="sync",
-        reply_future=reply_future,
     )
 
     log.info(
@@ -280,11 +256,4 @@ async def handle_webhook_request(
 
     # 6. DISPATCH → router → D-05 status map
     result = await handler.handle(event)
-    webhook_result = _status_map(result)
-
-    # 7. Carry reply_future on result ONLY for ACCEPTED reply-mode events.
-    # Non-202 outcomes (401/200-dup/503): no future — reply_future stays None.
-    if deliver_type == "reply" and webhook_result.status_code == 202:
-        webhook_result.reply_future = reply_future
-
-    return webhook_result
+    return _status_map(result)

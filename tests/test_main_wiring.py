@@ -1,12 +1,10 @@
-"""Tests for main.py wiring: webhook registration, engine dispatch, reply_future (Plan 02-04/05).
+"""Tests for main.py wiring: webhook registration, engine dispatch (Plan 02-04/05).
 
 Covers:
   - (a) gitlab_comment webhook config: boots app, registers route, returns 202,
-        dispatches reply action to fake GitlabCommentAdapter with delivery_context.
-  - (b) deliver.type: reply webhook config: reply_future resolved by engine_runner,
-        route awaits it → POST returns 200 + reply text (CR-01 / ACT-01).
-  - (c) _make_engine_runner dispatches to dispatch_actions with event.delivery_context.
-  - (d) build_engine_prompt builds real MR prompt (WR-07).
+        dispatches to router with delivery_context.
+  - (b) _make_engine_runner dispatches to dispatch_actions with event.delivery_context.
+  - (c) build_engine_prompt builds real MR prompt (WR-07).
 """
 
 from __future__ import annotations
@@ -16,15 +14,12 @@ import json
 import uuid
 from typing import Any
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import ChannelConfig
 from ach_agent.http.app import create_app
-from ach_agent.router import Router
-from ach_agent.router.dedup import InMemoryDedupStore
 from ach_agent.router.router import RouterAdmitResult
 
 
@@ -104,63 +99,6 @@ def test_gitlab_comment_webhook_returns_202(tmp_path: Any) -> None:
     assert len(handler.events) == 1
     event = handler.events[0]
     assert event.delivery_context == {"project_id": 42, "mr_iid": 7}
-
-
-# ---------------------------------------------------------------------------
-# (b) reply mode: reply_future resolved by engine_runner → 200 + reply text (CR-01/ACT-01)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.skip(reason="reply mode deferred — see Plan 3")
-def test_reply_mode_webhook_returns_200_with_reply_text(tmp_path: Any) -> None:
-    """deliver.type: reply webhook: POST returns 200 + engine reply text (ACT-01/CR-01/D-08).
-
-    Updated for gap-closure 02-05: uses reply_future resolved by engine_runner on the lane.
-    No sync_invoke callable — the engine runs EXACTLY ONCE (CR-01).
-    """
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("reply_secret")
-    cfg = _make_webhook_cfg("reply-channel", str(secret_file), "reply")
-
-    engine_call_count = 0
-
-    async def counting_engine_runner(event: MessageEvent, on_kill: Any) -> None:
-        nonlocal engine_call_count
-        engine_call_count += 1
-        if event.reply_future is not None and not event.reply_future.done():
-            event.reply_future.set_result("Engine reply from main.py engine_runner")
-        on_kill()
-
-    router = Router(
-        max_concurrent_invocations=1,
-        max_queued_total=10,
-        idempotency_window_seconds=3600,
-        dedup_store=InMemoryDedupStore(),
-        engine_runner=counting_engine_runner,
-        delivery_adapter=None,
-    )
-    app = create_app([cfg], router)
-
-    async def run_request() -> httpx.Response:
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
-            base_url="http://test",
-        ) as client:
-            return await client.post(
-                "/channels/reply-channel/events",
-                content=json.dumps(MR_PAYLOAD).encode(),
-                headers=_gitlab_headers("reply_secret"),
-            )
-
-    resp = asyncio.run(run_request())
-
-    assert resp.status_code == 200, f"ACT-01: expected 200, got {resp.status_code}: {resp.text}"
-    assert resp.json().get("reply") == "Engine reply from main.py engine_runner", (
-        f"ACT-01: reply text mismatch: {resp.json()}"
-    )
-    assert engine_call_count == 1, (
-        f"CR-01: engine must be called EXACTLY ONCE, got {engine_call_count}"
-    )
 
 
 # ---------------------------------------------------------------------------

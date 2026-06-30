@@ -1,12 +1,10 @@
-"""FastAPI HTTP surface tests (HTTP-01..04, ACT-01) — Plan 02-02 GREEN / 02-05 updated.
+"""FastAPI HTTP surface tests (HTTP-01..04) — Plan 02-02 GREEN / 02-05 updated.
 
 Tests cover:
   - HTTP-02: GET /readyz returns 503 before lifespan, 200 after
   - HTTP-03: GET /healthz always returns 200
   - HTTP-04: GET /metrics returns Prometheus text via make_asgi_app()
   - HTTP-01: POST /channels/{name}/events dispatches to webhook adapter (202)
-  - ACT-01 / D-08 / CR-01: deliver.type: reply → engine runs ONCE via reply_future → 200
-    gitlab_comment → 202 async (no reply_future)
   - T-02-05: oversized body → 413, router NOT called (defense-in-depth DoS cap)
 """
 
@@ -16,7 +14,6 @@ import asyncio
 import json
 import uuid
 from pathlib import Path
-from typing import Any
 
 import httpx
 import pytest
@@ -25,8 +22,6 @@ from fastapi.testclient import TestClient
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import ChannelConfig
 from ach_agent.http.app import create_app
-from ach_agent.router import Router
-from ach_agent.router.dedup import InMemoryDedupStore
 from ach_agent.router.router import RouterAdmitResult
 
 # ---------------------------------------------------------------------------
@@ -169,109 +164,6 @@ def test_inbound_route_dispatches(tmp_path: pytest.TempPathFactory) -> None:
         )
     assert resp.status_code == 202, f"Expected 202, got {resp.status_code}: {resp.text}"
     assert resp.json()["status"] == "accepted"
-
-
-@pytest.mark.skip(reason="reply mode deferred — see Plan 3")
-def test_reply_mode_returns_reply_synchronously(tmp_path: pytest.TempPathFactory) -> None:
-    """ACT-01 / D-08 / CR-01: deliver.type: reply → engine resolves reply_future → 200.
-
-    Updated for gap-closure 02-05 (CR-01): reply mode uses event.reply_future resolved
-    by engine_runner on the bounded lane; no sync_invoke callable is injected into create_app.
-
-    Verifies:
-      - POST to deliver.type: reply channel returns 200 (not 202)
-      - Body contains reply text set by the engine_runner via reply_future
-      - Engine runs EXACTLY ONCE (no double-fire)
-
-    Also verifies counterpart: deliver.type: gitlab_comment → 202 (no reply_future path).
-    """
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
-
-    # --- reply channel ---
-    reply_cfg = _make_channel_cfg(
-        name="reply-channel",
-        secret_path=str(secret_file),
-        deliver_type="reply",
-    )
-
-    engine_call_count = 0
-
-    async def counting_engine_runner(event: MessageEvent, on_kill: Any) -> None:
-        nonlocal engine_call_count
-        engine_call_count += 1
-        if event.reply_future is not None and not event.reply_future.done():
-            event.reply_future.set_result("Engine reply text")
-        on_kill()
-
-    router_reply = Router(
-        max_concurrent_invocations=1,
-        max_queued_total=10,
-        idempotency_window_seconds=3600,
-        dedup_store=InMemoryDedupStore(),
-        engine_runner=counting_engine_runner,
-        delivery_adapter=None,
-    )
-    app_reply = create_app([reply_cfg], router_reply)
-
-    async def run_reply_test() -> httpx.Response:
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app_reply),
-            base_url="http://test",
-        ) as client:
-            return await client.post(
-                "/channels/reply-channel/events",
-                content=json.dumps(MR_PAYLOAD).encode(),
-                headers=_make_headers("s3cr3t", event_uuid=str(uuid.uuid4())),
-            )
-
-    resp = asyncio.run(run_reply_test())
-
-    assert resp.status_code == 200, (
-        f"ACT-01: reply mode must return 200, got {resp.status_code}: {resp.text}"
-    )
-    assert "reply" in resp.json(), f"ACT-01: body must contain 'reply' key, got {resp.json()}"
-    assert resp.json()["reply"] == "Engine reply text", (
-        f"ACT-01: reply text mismatch: {resp.json()['reply']!r}"
-    )
-    assert engine_call_count == 1, (
-        f"CR-01: engine must be called EXACTLY ONCE, got {engine_call_count}"
-    )
-
-    # --- gitlab_comment channel counterpart (D-04: accept-and-process-async) ---
-    gitlab_comment_cfg = _make_channel_cfg(
-        name="comment-channel",
-        secret_path=str(secret_file),
-        deliver_type="gitlab_comment",
-    )
-
-    comment_engine_count = 0
-
-    async def comment_engine_runner(event: MessageEvent, on_kill: Any) -> None:
-        nonlocal comment_engine_count
-        comment_engine_count += 1
-        on_kill()
-
-    router_comment = Router(
-        max_concurrent_invocations=1,
-        max_queued_total=10,
-        idempotency_window_seconds=3600,
-        dedup_store=InMemoryDedupStore(),
-        engine_runner=comment_engine_runner,
-        delivery_adapter=None,
-    )
-    app_comment = create_app([gitlab_comment_cfg], router_comment)
-
-    with TestClient(app_comment) as client:
-        resp2 = client.post(
-            "/channels/comment-channel/events",
-            content=json.dumps(MR_PAYLOAD).encode(),
-            headers=_make_headers("s3cr3t", event_uuid=str(uuid.uuid4())),
-        )
-
-    assert resp2.status_code == 202, (
-        f"D-04: gitlab_comment must return 202, got {resp2.status_code}: {resp2.text}"
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -424,8 +424,9 @@ API.</p>
 (<code>maxConcurrentInvocations</code>, <code>maxInvocationSeconds</code>, <code>maxQueuedTotal</code>). Its behavior is pinned
 by the CONTRACT §6 conformance suite (<code>make conformance</code>).</p>
 <h2 id="getting-started">Getting started</h2>
-<p>See the <a href="https://github.com/ackstorm/ach-agent#readme">README</a> for the quick-start, the
-<code>ACH_*</code> configuration contract, and deployment via the Helm chart / Kustomize base.</p>
+<p>See the <a href="https://github.com/ackstorm/ach-agent#readme">README</a> for the quick-start and the
+<code>ACH_*</code> configuration contract. In production the <code>ach-runtime</code> operator deploys the harness
+(it owns the Deployment); locally, run the container directly — see <a href="getting-started/">Getting started</a>.</p>
 <p>All tooling runs inside a content-addressed devtools container — no host pip/venv:</p>
 <div class="highlight"><pre><span></span><code>make<span class="w"> </span>verify<span class="w">   </span><span class="c1"># full local gate: lint + mypy + unit + conformance + secrets</span>
 </code></pre></div>

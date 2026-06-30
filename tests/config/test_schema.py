@@ -141,9 +141,11 @@ def test_engine_home_field_and_workdir_default_empty() -> None:
 
 
 def test_prompt_system_field() -> None:
-    from ach_agent.config.schema import PromptBlock
+    from ach_agent.config.schema import PromptBlock, SystemText
 
-    assert PromptBlock.model_validate({"system": "hi"}).system == "hi"
+    b = PromptBlock.model_validate({"system": {"type": "text", "text": "hi"}})
+    assert isinstance(b.system, SystemText)
+    assert b.system.text == "hi"
 
 
 def test_contract_reserved_fields_accepted() -> None:
@@ -152,7 +154,7 @@ def test_contract_reserved_fields_accepted() -> None:
     execute them. Guards against re-removing them as 'inert'."""
     from ach_agent.config.schema import MemoryBlock, PromptBlock
 
-    p = PromptBlock.model_validate({"system": "hi", "compose": "append"})
+    p = PromptBlock.model_validate({"system": {"type": "text", "text": "hi"}, "compose": "append"})
     assert p.compose == "append"
     m = MemoryBlock.model_validate(
         {"endpoint": "http://mem:8080", "mission": "reviewer", "bank": "b1"}
@@ -372,7 +374,9 @@ capability:
     baseUrl: https://ach.example.com
     environment: platform
 prompt:
-  system: "You are a concise assistant."
+  system:
+    type: text
+    text: "You are a concise assistant."
 channels: []
 """
     config_file = tmp_path / "config.yaml"
@@ -383,8 +387,11 @@ channels: []
     assert cfg.model.name == "gemini.gemini-flash-latest"
     assert cfg.model.type == "openai"
     assert cfg.capability.ach.base_url == "https://ach.example.com"
+    from ach_agent.config.schema import SystemText
+
     assert cfg.prompt is not None
-    assert cfg.prompt.system == "You are a concise assistant."
+    assert isinstance(cfg.prompt.system, SystemText)
+    assert cfg.prompt.system.text == "You are a concise assistant."
 
 
 def test_yaml_unknown_key_hard_fails(tmp_path: Path) -> None:
@@ -910,6 +917,73 @@ def test_memory_block_uses_bank_not_scope():
     # the old key is gone — extra='forbid' must reject it
     with pytest.raises(ValidationError):
         MemoryBlock(endpoint="http://mem:8080", scope="x")
+
+
+# ---------------------------------------------------------------------------
+# prompt.system discriminated union (SystemText | SystemFile | None)
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_system_text_form():
+    from ach_agent.config.schema import PromptBlock, SystemText
+
+    b = PromptBlock.model_validate({"system": {"type": "text", "text": "hi"}, "compose": "append"})
+    assert isinstance(b.system, SystemText)
+    assert b.system.text == "hi"
+
+
+def test_prompt_system_file_form():
+    from ach_agent.config.schema import PromptBlock, SystemFile
+
+    b = PromptBlock.model_validate({"system": {"type": "file", "file": "prompts/p/x.md"}})
+    assert isinstance(b.system, SystemFile)
+    assert b.system.file == "prompts/p/x.md"
+
+
+def test_prompt_system_string_shorthand_rejected():
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import PromptBlock
+
+    with pytest.raises(ValidationError):
+        PromptBlock.model_validate({"system": "an inline persona"})
+
+
+def test_prompt_system_missing_type_rejected():
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import PromptBlock
+
+    with pytest.raises(ValidationError):
+        PromptBlock.model_validate({"system": {"text": "no type"}})
+
+
+def test_prompt_system_file_absolute_rejected():
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import PromptBlock
+
+    with pytest.raises(ValidationError):
+        PromptBlock.model_validate({"system": {"type": "file", "file": "/etc/passwd"}})
+
+
+def test_prompt_system_file_traversal_rejected():
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import PromptBlock
+
+    with pytest.raises(ValidationError):
+        PromptBlock.model_validate({"system": {"type": "file", "file": "../../secrets/ek"}})
+
+
+def test_prompt_system_omitted_is_none():
+    from ach_agent.config.schema import PromptBlock
+
+    assert PromptBlock.model_validate({"compose": "append"}).system is None
 
 
 def test_schema_version_wrong_hard_fails(tmp_path: Path) -> None:

@@ -20,7 +20,7 @@ YAML. Both validate against the same schema, and **unknown keys are rejected** (
 | `agent.name` | ✓ | The agent's name. |
 | `model` | ✓ | `name` (ACH-served model id, verbatim), `type` (`openai`\|`gemini`\|`anthropic` — picks the compat wire), `params` (open dict, splatted to the client). |
 | `capability` | ✓ | `type: ach`; `ach.baseUrl` / `ach.environment`; `filter.exclude` withholds `tools` / `mcpServers` / `skills` **before** the model sees them. |
-| `prompt` | | `system` (inline persona, markdown ok). `compose` is contract-reserved (accepted; prompt-layering not yet executed by the harness). |
+| `prompt` | | `system` is a typed source: `{type: text, text: "…"}` for an inline persona, or `{type: file, file: "prompts/<name>/<file>.md"}` for a hydrated prompt (path relative to `<home>/.ach-state`; absolute or `..` rejected; missing file = hard boot failure). The bare-string form is rejected. `compose` is contract-reserved (accepted; prompt-layering not yet executed by the harness). |
 | `memory` | | Fail-open. `endpoint`, `bank` (static memory bank_id), `mentalModels`. `mission` is contract-reserved (accepted; not yet consumed). Backend down → run without it. |
 | `limits` | | `maxConcurrentInvocations`, `maxInvocationSeconds`, `maxQueuedTotal`, `idempotencyWindowSeconds`, `maxSteps`, `terminalOutputRetries`. |
 | `engine` | | Harness-local. `home`, `workDir`, `startupTimeoutSeconds`, `forwardEnv` (default-deny env allowlist — see below). |
@@ -90,7 +90,13 @@ capability:
       skills: [send-email]
 
 prompt:
-  system: "You are a senior code reviewer for the platform team."
+  system:
+    type: text
+    text: "You are a senior code reviewer for the platform team."
+  # file form — source the persona from a hydrated prompt (relative to <home>/.ach-state):
+  # system:
+  #   type: file
+  #   file: prompts/<prompt-name>/<file>.md
   compose: append
 
 memory:

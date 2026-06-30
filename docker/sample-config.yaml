@@ -39,7 +39,9 @@ capability:
 # Optional — the inline agent persona. Layered (append) on top of the skills/prompts
 # hydrated from ACH. Drop this block to rely solely on ACH-provisioned context.
 prompt:
-  system: "You are a concise software-engineering assistant."
+  system:
+    type: text
+    text: "You are a concise software-engineering assistant."
   compose: append
 
 # Optional memory (fail-open). `bank` is the static memory bank_id (the agent's mission

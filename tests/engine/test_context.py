@@ -6,6 +6,7 @@ import pytest
 
 from ach_agent.engine.context import _safe_extract, fetch_context
 from ach_agent.engine.hydrate import Context, ContextItem
+from ach_agent.main import ach_state_dir, link_ach_state
 
 
 def _make_skill_targz() -> bytes:
@@ -74,3 +75,28 @@ async def test_skills_dir_reconciled_drops_stale_skills(tmp_path: Path, monkeypa
     # The current manifest's skill is present; the stale revoked one is gone.
     assert (skills_dir / "frontend-design" / "SKILL.md").is_file()
     assert not (skills_dir / "send-email").exists()
+
+
+def test_ach_state_dir_under_home(tmp_path):
+    assert ach_state_dir(str(tmp_path)) == tmp_path / ".ach-state"
+
+
+def test_link_ach_state_symlinks_workdir(tmp_path):
+    home = tmp_path / "home"
+    work = tmp_path / "work"
+    home.mkdir()
+    work.mkdir()
+    real = link_ach_state(str(home), str(work))
+    assert real == home / ".ach-state"
+    assert real.is_dir()
+    link = work / ".ach-state"
+    assert link.is_symlink()
+    assert link.resolve() == real.resolve()
+
+
+def test_link_ach_state_no_symlink_when_workdir_equals_home(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    real = link_ach_state(str(home), str(home))
+    assert real == home / ".ach-state"
+    assert not (home / ".ach-state" / ".ach-state").exists()

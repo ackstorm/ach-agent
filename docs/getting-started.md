@@ -30,7 +30,9 @@ capability:
     baseUrl: https://ach.ackstorm.ai   # or leave empty and set ACH_BASE_URL
 
 prompt:
-  system: "You are a concise software-engineering assistant."
+  system:
+    type: text
+    text: "You are a concise software-engineering assistant."
   compose: append
 
 engine:

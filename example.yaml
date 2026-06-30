@@ -27,7 +27,13 @@ capability:
       skills: [send-email]
 
 prompt:
-  system: "You are a senior code reviewer for the platform team."
+  system:
+    type: text
+    text: "You are a senior code reviewer for the platform team."
+  # file form — source the persona from a hydrated prompt (relative to <home>/.ach-state):
+  # system:
+  #   type: file
+  #   file: prompts/<prompt-name>/<file>.md
   compose: append                       # reserved: accepted, prompt-layering not yet executed
 
 memory:                                 # omit if unused; fail-open (backend down → run without it)

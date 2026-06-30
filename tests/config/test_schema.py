@@ -359,7 +359,6 @@ capability:
     environment: platform
 prompt:
   system: "You are a concise assistant."
-  compose: append
 channels: []
 """
     config_file = tmp_path / "config.yaml"

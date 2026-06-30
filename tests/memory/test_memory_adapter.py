@@ -33,7 +33,6 @@ async def test_prompt_injection() -> None:
     cfg = MemoryBlock(
         endpoint=endpoint,
         bank="test-scope",
-        mission="test",
         mentalModels=["coding-habits"],
     )
 
@@ -89,7 +88,6 @@ async def test_fail_open() -> None:
     cfg = MemoryBlock(
         endpoint="http://hindsight.svc:8080",
         bank="test-scope",
-        mission="test",
         mentalModels=[],
     )
 
@@ -141,7 +139,6 @@ async def test_engine_runner_reachable_branch() -> None:
     memory_cfg = MemoryBlock(
         endpoint=endpoint,
         bank="test-scope",
-        mission="test",
         mentalModels=["coding-habits"],
     )
     base_engine_cfg = EngineConfig()
@@ -223,7 +220,6 @@ async def test_engine_runner_degraded_path() -> None:
     memory_cfg = MemoryBlock(
         endpoint=endpoint,
         bank="test-scope",
-        mission="test",
         mentalModels=[],
     )
     base_engine_cfg = EngineConfig()

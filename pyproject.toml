@@ -25,7 +25,6 @@ dependencies = [
     "aiohttp>=3.13.4",
     "structlog==26.1.0",
     "prometheus-client==0.25.0",
-    "jsonschema>=4.26.0",
     "pydantic==2.13.4",
     "croniter>=6.0.0,<7",
     "a2a-sdk>=1.1.0,<2",
@@ -87,5 +86,5 @@ strict = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["jsonschema", "croniter", "gateway.*"]
+module = ["croniter", "gateway.*"]
 ignore_missing_imports = true

@@ -5,9 +5,10 @@
 
 `ach-agent` is the **execution plane** of the ACH ecosystem: a single-process **Python**
 runtime ("the harness") that boots from a rendered runtime config, runs channel adapters
-(`webhook`, `slack`, `telegram`, `a2a`, `cron`), serializes inbound events through a governed
+(`webhook`, `cron`, `queue`, `a2a`), serializes inbound events through a governed
 FIFO **router**, drives the [opencode](https://github.com/sst/opencode) engine over HTTP/SSE,
-and delivers results via a `reply` / `sideEffect` action contract.
+and lets the agent act through external MCP servers (fronted by ACH); egress is model-initiated
+and the harness does not deliver results itself.
 
 It consumes the frozen seam produced by `ach-runtime` (the Go operator) and never reads CRDs,
 talks to the Kubernetes API server, or writes `Agent.status` — status is the operator's job.
@@ -25,12 +26,11 @@ use. Its behavior is pinned by an authoritative conformance suite (`make conform
 ## How it works
 
 ```
-channel adapter ──▶ router (dedup → backpressure → lane) ──▶ engine (opencode HTTP/SSE) ──▶ delivery
-   webhook                  per-session FIFO                    {"actions":[...]}            reply
-   slack                    finite bounds                                                    gitlab_comment
-   telegram                                                                                  sideEffect (consent-gated)
+channel adapter ──▶ router (dedup → backpressure → lane) ──▶ engine (opencode HTTP/SSE) ──▶ external MCP servers
+   webhook                  per-session FIFO                    single-object terminal          (ACH-fronted, egress
+   cron                     finite bounds                       contract (Pydantic-validated)    is model-initiated)
+   queue
    a2a
-   cron
 ```
 
 Everything runs in one process (spec §15 topology A); the channel→router boundary is a named
@@ -66,8 +66,7 @@ into the pod by `ach-runtime`; for local runs you provide them yourself.
 | `ACH_BASE_URL` | ACH endpoint. Overrides `capability.ach.baseUrl` when set, so a config can ship without a hardcoded host (required if the config omits `baseUrl`). |
 | `ACH_API_KEY` | `ek_` bearer for the engine — never logged; dereferenced only at runtime. |
 
-Channel credentials (`GITLAB_TOKEN`, `SLACK_BOT_TOKEN`, `TELEGRAM_BOT_TOKEN`, …) are supplied
-per the channels your config enables.
+Channel credentials (`GITLAB_TOKEN`, …) are supplied per the channels your config enables.
 
 ### Channel prompts (`{{ }}` templating)
 

@@ -100,6 +100,10 @@ class PromptBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     system: str = ""
+    # Contract-reserved (CONTRACT §2): the operator renders it; the harness accepts it but
+    # does NOT yet execute layering. Kept so a rendered config carrying `compose` still loads
+    # under extra=forbid. Do not remove without a coordinated CONTRACT_v3 change.
+    compose: str = "append"
 
 
 class MemoryBlock(BaseModel):
@@ -108,6 +112,10 @@ class MemoryBlock(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     endpoint: str
+    # Contract-reserved (CONTRACT §2): agent-specific memory intent. Accepted but not yet
+    # consumed by the harness; kept so an operator-rendered config carrying `mission` loads
+    # under extra=forbid. Do not remove without a coordinated CONTRACT_v3 change.
+    mission: str = ""
     # Static memory bank_id (the memory namespace for this agent's mission, e.g.
     # "gitlab-pr-review"). Per-event tag-based partitioning is a separate future layer
     # (see the memory bank+tags design note) and does NOT change this static field.

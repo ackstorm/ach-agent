@@ -20,8 +20,8 @@ YAML. Both validate against the same schema, and **unknown keys are rejected** (
 | `agent.name` | ✓ | The agent's name. |
 | `model` | ✓ | `name` (ACH-served model id, verbatim), `type` (`openai`\|`gemini`\|`anthropic` — picks the compat wire), `params` (open dict, splatted to the client). |
 | `capability` | ✓ | `type: ach`; `ach.baseUrl` / `ach.environment`; `filter.exclude` withholds `tools` / `mcpServers` / `skills` **before** the model sees them. |
-| `prompt` | | `system` (inline persona, markdown ok) + `compose: append` (layered on ACH-hydrated context). |
-| `memory` | | Fail-open. `endpoint`, `mission`, `bank` (static memory bank_id), `mentalModels`. Backend down → run without it. |
+| `prompt` | | `system` (inline persona, markdown ok). `compose` is contract-reserved (accepted; prompt-layering not yet executed by the harness). |
+| `memory` | | Fail-open. `endpoint`, `bank` (static memory bank_id), `mentalModels`. `mission` is contract-reserved (accepted; not yet consumed). Backend down → run without it. |
 | `limits` | | `maxConcurrentInvocations`, `maxInvocationSeconds`, `maxQueuedTotal`, `idempotencyWindowSeconds`, `maxSteps`, `terminalOutputRetries`. |
 | `engine` | | Harness-local. `home`, `workDir`, `startupTimeoutSeconds`, `forwardEnv` (default-deny env allowlist — see below). |
 | `persistence` | | `enabled` (false → in-memory dedup, no volume), `mountPath`. |

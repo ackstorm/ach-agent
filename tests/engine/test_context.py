@@ -47,3 +47,30 @@ def test_safe_extract_rejects_traversal(tmp_path: Path) -> None:
     info = tarfile.TarInfo("../evil")
     with pytest.raises(ValueError):
         _safe_extract([info], tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_skills_dir_reconciled_drops_stale_skills(tmp_path: Path, monkeypatch) -> None:
+    """A persistent skills_dir is wiped before re-hydration so revoked/removed skills
+    do not linger and get loaded by opencode (governance gate must hold across restarts)."""
+    blob = _make_skill_targz()
+
+    async def fake_get_bytes(url: str, ek: str) -> bytes:
+        return blob
+
+    monkeypatch.setattr("ach_agent.engine.context._get_bytes", fake_get_bytes)
+
+    skills_dir = tmp_path / "home" / ".config" / "opencode" / "skills"
+    # A skill extracted on a previous boot, now revoked (absent from the current manifest).
+    stale = skills_dir / "send-email"
+    stale.mkdir(parents=True)
+    (stale / "SKILL.md").write_text("revoked")
+
+    ctx = Context(
+        skills=[ContextItem(name="frontend-design@anthropics-skills", downloadUrl="http://x")]
+    )
+    await fetch_context(ctx, "ek-test", tmp_path / "state", skills_dir)
+
+    # The current manifest's skill is present; the stale revoked one is gone.
+    assert (skills_dir / "frontend-design" / "SKILL.md").is_file()
+    assert not (skills_dir / "send-email").exists()

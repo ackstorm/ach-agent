@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import shutil
 import tarfile
 from pathlib import Path
 
@@ -40,7 +41,14 @@ async def fetch_context(ctx: Context, ek: str, root: Path, skills_dir: Path) -> 
 
     ``prompts``/``artifacts`` keep their ``root/<kind>/<item.name>`` layout (opencode does
     not auto-load them; they are addressable by path).
+
+    ``skills_dir`` is RECONCILED (wiped) before extraction: the HOME is now stable and
+    persistent, so a skill extracted on a previous boot would otherwise linger and be loaded
+    by opencode even after it is removed upstream or added to ``capability.filter.exclude.skills``.
+    Wiping first makes the on-disk skill set always equal the current (post-exclusion) manifest.
     """
+    if skills_dir.exists():
+        shutil.rmtree(skills_dir)
     for kind in _KINDS:
         items = getattr(ctx, kind)
         for item in items:

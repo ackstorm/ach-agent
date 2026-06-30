@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ach_agent.engine.context import fetch_context
+from ach_agent.engine.context import _safe_extract, fetch_context
 from ach_agent.engine.hydrate import Context, ContextItem
 
 
@@ -40,3 +40,10 @@ async def test_skills_extract_flat_into_skills_dir(tmp_path: Path, monkeypatch) 
     assert (skills_dir / "frontend-design" / "SKILL.md").is_file()
     # The registry-qualified item.name must NOT appear as a wrapper directory.
     assert not (skills_dir / "frontend-design@anthropics-skills").exists()
+
+
+def test_safe_extract_rejects_traversal(tmp_path: Path) -> None:
+    """_safe_extract rejects a tar member that escapes the destination dir."""
+    info = tarfile.TarInfo("../evil")
+    with pytest.raises(ValueError):
+        _safe_extract([info], tmp_path)

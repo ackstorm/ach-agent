@@ -69,9 +69,10 @@ class EngineConfig:
     # Written to opencode.json before subprocess launch so the model either has memory tools
     # or does not — no runtime tool-registration API exists.
     mcp_servers: list[str] = field(default_factory=list)
-    # Plan 2 (localhost-proxy / ek-hygiene): when set, opencode.json points the model at
-    # this localhost model-proxy baseURL (no ek_; the proxy injects it) instead of
-    # {env:ACH_BASE_URL}. Empty → legacy {env:...} behavior (local dev without ACH).
+    # Plan 2 (localhost-proxy / ek-hygiene): opencode.json points the model at this localhost
+    # model-proxy baseURL (no ek_; the proxy injects it). Always set in a real boot — the
+    # harness hard-fails without it (no direct-gateway fallback). Empty only in unit tests
+    # that never invoke the model.
     model_base_url: str = ""
     # {server_id: "http://127.0.0.1:<port>/mcp/<id>"} from McpProxy — proxied external MCP
     # servers written into opencode.json's mcp block alongside any memory server.
@@ -152,9 +153,9 @@ class ManagedServer:
 def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
     """Write opencode.json to ephemeral home before subprocess launch.
 
-    Security (SEC-01 / T-00-EK / Pitfall 6): The value of ACH_API_KEY is NEVER
-    read into a Python variable here. Only the reference string "{env:ACH_API_KEY}"
-    is written into the JSON file; opencode dereferences it at runtime.
+    Security (SEC-01 / T-00-EK / Pitfall 6): no secret is ever written. opencode points at
+    the localhost model-proxy and the proxy injects the ek_; opencode.json carries only a
+    dummy apiKey and the loopback baseURL.
 
     Security (T-00-TRACE): Secrets are never passed as CLI arguments — only config file.
     """
@@ -165,18 +166,11 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_path.write_text(config.system_prompt or "", encoding="utf-8")
 
-    # Plan 2 (CONTRACT §6.10 ek-hygiene): when a localhost model-proxy baseURL is set,
-    # opencode points at 127.0.0.1 and the proxy injects the ek_ — so opencode.json carries
-    # NO ek_ and NO real ACH URL. apiKey is a dummy placeholder (the proxy ignores inbound
-    # auth and adds its own). When unset (local dev without ACH), fall back to the legacy
-    # {env:...} refs: the ACH_API_KEY value is never read into a Python variable — only the
-    # reference string is written; opencode dereferences it at runtime.
-    if config.model_base_url:
-        api_key: str = "local-proxy"  # placeholder; real ek_ injected by the localhost proxy
-        base_url = config.model_base_url
-    else:
-        api_key = "{env:ACH_API_KEY}"  # ek_ dereferenced at runtime only
-        base_url = "{env:ACH_BASE_URL}"  # Hub/mock endpoint
+    # CONTRACT §6.10 ek-hygiene: opencode always points at the localhost model-proxy baseURL
+    # (model_base_url); the proxy injects the ek_, so opencode.json carries NO ek_ and NO real
+    # ACH URL. apiKey is a dummy placeholder (the proxy ignores inbound auth and adds its own).
+    api_key = "local-proxy"  # placeholder; real ek_ injected by the localhost proxy
+    base_url = config.model_base_url
 
     # opencode provider: a CUSTOM provider id backed by @ai-sdk/openai-compatible (lenient
     # parser) instead of opencode's bundled @ai-sdk/openai (strict). The strict provider
@@ -275,13 +269,8 @@ def build_opencode_env(ephemeral_home: Path, config: EngineConfig) -> dict[str, 
     Clean-slate (SEC-01 / ek-hygiene): opencode does NOT inherit the harness env. It gets
     only ``_OPENCODE_ENV_ALLOWLIST`` (benign CLI basics), plus any var NAMES the operator
     lists in ``engine.forwardEnv`` (config.forward_env). The ek_ (ACH_TOKEN/ACH_API_KEY)
-    is never present unless explicitly named — in proxy mode it must not be, because the
-    localhost model-proxy injects it and opencode points only at 127.0.0.1.
-
-    Legacy mode (no ``model_base_url`` — local dev without ACH): opencode.json references
-    ``{env:ACH_API_KEY}`` / ``{env:ACH_BASE_URL}``; those two are forwarded when present
-    because opencode cannot reach the model at all otherwise — they are required for that
-    mode to work, not an ek-hygiene leak (no governed ek_ exists in local-dev legacy mode).
+    is never present unless explicitly named — and it must not be, because the localhost
+    model-proxy injects it and opencode points only at 127.0.0.1.
 
     Pinned last (override anything above): HOME/TMPDIR → the per-server ephemeral home;
     GIT_TERMINAL_PROMPT=0 so git never blocks a non-interactive subprocess on a prompt.
@@ -294,12 +283,6 @@ def build_opencode_env(ephemeral_home: Path, config: EngineConfig) -> dict[str, 
         value = os.environ.get(name)
         if value is not None:
             env[name] = value
-    # Legacy mode: opencode.json dereferences these at runtime; required for it to work.
-    if not config.model_base_url:
-        for name in ("ACH_API_KEY", "ACH_BASE_URL"):
-            value = os.environ.get(name)
-            if value is not None:
-                env[name] = value
     # Pinned hardening — last word, overrides any inherited/forwarded value.
     env["HOME"] = str(ephemeral_home)
     env["TMPDIR"] = str(ephemeral_home)

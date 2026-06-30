@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loopback (`127.0.0.1`) on a free ephemeral port. The off-host web-UI exposure they enabled
   is obsolete now that `--tui` uses `opencode attach` (co-located, loopback); dropping the
   `0.0.0.0` bind also removes an unauthenticated-API footgun.
+- **Legacy direct-gateway model mode** — opencode.json no longer falls back to
+  `{env:ACH_API_KEY}` / `{env:ACH_BASE_URL}` when no localhost proxy is configured. opencode
+  always reaches the model through the localhost model-proxy, so **`ACH_TOKEN` (the `ek_`) is
+  now required**: the harness hard-fails at boot without it (no model endpoint). Removes the
+  one path where opencode read a key directly from its env.
 
 ### Security
 - **opencode's subprocess env is now built clean-slate** instead of inheriting the full

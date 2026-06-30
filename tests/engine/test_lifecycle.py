@@ -467,21 +467,3 @@ def test_build_opencode_env_forwards_configured_names(
 
     assert env["MY_CA_BUNDLE"] == "/etc/ca.pem"
     assert "ACH_TOKEN" not in env  # not named → not forwarded
-
-
-def test_build_opencode_env_forwards_ach_refs_in_legacy_mode(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Legacy mode (no proxy): opencode.json dereferences ACH_API_KEY/ACH_BASE_URL, so they
-    are forwarded (required for that mode); ACH_TOKEN is still never forwarded."""
-    from ach_agent.engine.lifecycle import EngineConfig, build_opencode_env
-
-    monkeypatch.setenv("ACH_API_KEY", "dev-key")
-    monkeypatch.setenv("ACH_BASE_URL", "https://hub.example")
-    monkeypatch.setenv("ACH_TOKEN", "ek-secret")
-
-    env = build_opencode_env(tmp_path, EngineConfig(model_base_url=""))
-
-    assert env["ACH_API_KEY"] == "dev-key"
-    assert env["ACH_BASE_URL"] == "https://hub.example"
-    assert "ACH_TOKEN" not in env

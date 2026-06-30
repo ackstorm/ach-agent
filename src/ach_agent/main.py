@@ -510,8 +510,8 @@ async def main(
     #
     # The ek_ (ACH_TOKEN) is read here solely to pass to hydration + the proxies; it is
     # NEVER logged and NEVER written to opencode.json (the proxies hold it in a closure).
-    # When ACH_TOKEN is unset (local dev with a hand-written config + no ACH), hydration is
-    # skipped and opencode.json falls back to {env:...} refs — the harness stays runnable.
+    # ACH_TOKEN is REQUIRED — opencode reaches the model only through the localhost proxy,
+    # which is created during hydration. A missing ek_ is hard-failed below (no model endpoint).
     ek = os.environ.get("ACH_TOKEN")
     model_base_url: str = ""
     mcp_local_urls: dict[str, str] = {}
@@ -616,18 +616,14 @@ async def main(
                 tool_count=len(a2a_tools),
             )
 
-    # Fail fast on an unresolvable model endpoint. With an ek_ the model proxy gives
-    # opencode a concrete localhost baseURL; without one, opencode.json falls back to
-    # {env:ACH_BASE_URL} and opencode dereferences it from its env. If THAT is empty too,
-    # opencode builds an empty baseURL and only fails mid-invocation with the opaque
-    # '"/chat/completions" cannot be parsed as a URL'. Catch it here with an actionable
-    # message instead. (model_base_url is set only inside the `if ek:` block above.)
-    if not model_base_url and not os.environ.get("ACH_BASE_URL"):
+    # ACH_TOKEN (ek_) is REQUIRED: opencode always reaches the model through the localhost
+    # model-proxy, which only exists once we hydrate with the ek_. Without it there is no
+    # model endpoint at all (model_base_url is set only inside the `if ek:` block above).
+    if not model_base_url:
         log.error(
-            "no model endpoint — set ACH_TOKEN (ek_) to hydrate + front the model via "
-            "the localhost proxy, or set ACH_BASE_URL so opencode can reach a model "
-            "gateway directly. Both are unset, so opencode has no baseURL and every "
-            "invocation would fail with '\"/chat/completions\" cannot be parsed as a URL'."
+            "no model endpoint — set ACH_TOKEN (ek_) so the harness can hydrate and front "
+            "the model via the localhost proxy. opencode points only at that proxy; there "
+            "is no direct-gateway fallback."
         )
         sys.exit(1)
 

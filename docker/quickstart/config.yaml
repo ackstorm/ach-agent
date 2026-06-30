@@ -2,7 +2,6 @@ schemaVersion: "1"
 
 agent:
   name: juan-dev-agent
-  namespace: default
 
 model:
   name: gemini.gemini-flash-latest   # an ACH-served model id
@@ -17,11 +16,13 @@ capability:
 
 # Inline agent persona (append-layered on the ACH-hydrated skills/prompts).
 prompt:
-  base: "You are a concise software-engineering assistant."
+  system: "You are a concise software-engineering assistant."
   compose: append
 
 # Writable scratch for the non-root container user (uid 10001).
-workDir: /tmp/workspace
+engine:
+  home: /tmp/ach-home
+  workDir: /tmp/ach-home/workspace
 persistence:
   enabled: false
   mountPath: /tmp/ach-state

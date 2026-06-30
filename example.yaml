@@ -1,0 +1,109 @@
+# Full ach-agent contract — every block, current schema (schemaVersion "1").
+# In production the operator renders this from your CRD; locally you hand-author it.
+# Only schemaVersion, agent, model, capability.ach are required — the rest have defaults.
+# Unknown keys are rejected (extra=forbid).
+
+schemaVersion: "1"
+
+agent:
+  name: gitlab-ackstorm                 # the only agent field
+
+model:
+  name: openai.gpt-5                    # ACH-served model id, passed verbatim
+  type: openai                          # openai | gemini | anthropic — picks the ACH compat wire
+  params:                               # open dict, splatted to the model client
+    temperature: 1
+    top_p: 0.95
+
+capability:
+  type: ach                             # ach only in v1
+  ach:
+    baseUrl: https://ach.ackstorm.ai    # or supply via ACH_BASE_URL env (env wins)
+    environment: engineering-prod       # implicit (the EK scopes it server-side)
+  filter:                               # governance gate ABOVE the model — withhold before offering
+    exclude:
+      tools: [gitlab_merge_merge_request]
+      mcpServers: [dangerous-admin]
+      skills: [send-email]
+
+prompt:
+  system: "You are a senior code reviewer for the platform team."
+  compose: append                       # layered on top of ACH-hydrated skills/prompts
+
+memory:                                 # omit if unused; fail-open (backend down → run without it)
+  endpoint: http://hindsight.engineering.svc:8080
+  mission: "AI code reviewer for the platform team"
+  bank: gitlab-pr-review                # static memory bank_id (the agent's mission namespace)
+  mentalModels: [architecture, conventions, recurring-issues]
+
+limits:
+  maxConcurrentInvocations: 2           # global semaphore across ALL channels
+  maxInvocationSeconds: 1800            # per-invocation hard cap + watchdog kill
+  maxQueuedTotal: 100                   # backpressure bound
+  idempotencyWindowSeconds: 3600        # dedup window
+  maxSteps: 50                          # opencode agent step cap
+  terminalOutputRetries: 1              # structured-output validate + retry budget
+
+engine:                                 # harness-local (operator-optional)
+  home: /var/lib/ach-agent/home         # opencode HOME; derived from persistence if unset
+  workDir: /workspace                   # cwd for the opencode subprocess
+  startupTimeoutSeconds: 30             # engine + hydration must be ready within this, else exit
+  forwardEnv:                           # default-deny: opencode env is clean-slate; ONLY these names
+    - SSL_CERT_FILE                     # are forwarded from the harness env. NEVER list the ek_.
+    - HTTPS_PROXY
+
+persistence:
+  enabled: true                         # false → in-memory dedup, no volume
+  mountPath: /var/lib/ach-agent
+
+health:
+  host: 0.0.0.0                         # harness HTTP surface: healthz/readyz/metrics + webhooks
+  port: 8000
+
+channels:
+  - name: gitlab-mr-review
+    type: webhook
+    source: gitlab                      # gitlab | github | generic
+    concurrency: 4                      # per-channel cap (≤ the global limit)
+    prompt: "Review this merge request: {{ payload.object_attributes.url }}"
+    webhook:
+      auth:
+        type: gitlab_token              # gitlab_token | hmac | header_token | none
+        secretPath: /etc/ach-agent/secrets/gitlab-webhook/secret   # a path, never a value
+
+  - name: generic-hook
+    type: webhook
+    source: generic
+    concurrency: 2
+    prompt: 'Handle event {{ payload.id | default("?") }} via your tools.'
+    webhook:
+      auth:
+        type: header_token              # static shared secret in a chosen header
+        header: X-Api-Key
+        secretPath: /etc/ach-agent/secrets/generic-hook/secret
+
+  - name: daily-security
+    type: cron
+    concurrency: 1
+    cron:
+      schedule: "0 8 * * 1-5"
+      timezone: Europe/Madrid           # IANA tz
+    prompt: "Scan main for new CVEs; open an issue via your tools if any are critical."
+
+  - name: ticket-triage
+    type: queue
+    concurrency: 2
+    queue:
+      type: redis                       # redis only in v1
+      key: ach:triage
+      ackMode: onComplete
+    prompt: "Triage this ticket and act via your tools."
+
+  - name: peer-intake
+    type: a2a
+    concurrency: 2
+    a2a:
+      mode: async                       # async only in v1
+      auth:
+        header: x-a2a-custom-api-key
+        secretPath: /etc/ach-agent/secrets/a2a/key

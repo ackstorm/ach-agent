@@ -19,3 +19,6 @@ build/
 # graphify knowledge-graph outputs
 graphify-out/
 **/graphify-out/
+
+# mkdocs build output
+site/

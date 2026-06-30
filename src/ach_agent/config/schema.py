@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import os
 import sys
-from pathlib import Path
-from typing import Any, Literal
+from pathlib import Path, PurePosixPath
+from typing import Annotated, Any, Literal
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 log = structlog.get_logger(__name__)
 
@@ -94,15 +94,48 @@ class HealthBlock(BaseModel):
     port: int = 8000
 
 
+class SystemText(BaseModel):
+    """Inline persona text."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["text"]
+    text: str
+
+
+class SystemFile(BaseModel):
+    """Persona sourced from a hydrated prompt file under <home>/.ach-state."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["file"]
+    file: str  # relative to <home>/.ach-state; absolute or ".." is rejected
+
+    @field_validator("file")
+    @classmethod
+    def _no_escape(cls, v: str) -> str:
+        p = PurePosixPath(v)
+        if p.is_absolute() or ".." in p.parts:
+            raise ValueError(
+                "prompt.system.file must be a relative path under .ach-state, no '..'"
+            )
+        return v
+
+
+# Discriminated on `type`: the string shorthand is intentionally NOT accepted (CONTRACT_v3
+# ADDENDUM-prompt-source §1 — the operator renders the object form).
+SystemPrompt = Annotated[SystemText | SystemFile, Field(discriminator="type")]
+
+
 class PromptBlock(BaseModel):
     """CONTRACT §2 prompt block."""
 
     model_config = ConfigDict(extra="forbid")
 
-    system: str = ""
+    # text | file source; omitted → no persona (today's ""). The plain-string form is rejected.
+    system: SystemPrompt | None = None
     # Contract-reserved (CONTRACT §2): the operator renders it; the harness accepts it but
-    # does NOT yet execute layering. Kept so a rendered config carrying `compose` still loads
-    # under extra=forbid. Do not remove without a coordinated CONTRACT_v3 change.
+    # does NOT yet execute layering. Do not remove without a coordinated CONTRACT_v3 change.
     compose: str = "append"
 
 

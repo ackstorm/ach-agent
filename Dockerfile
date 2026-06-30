@@ -10,6 +10,15 @@ RUN apt-get update -qq \
  && chmod 755 /usr/local/bin/opencode \
  && rm -rf /tmp/oc.tgz /var/lib/apt/lists/*
 
+# ── codemem stage ────────────────────────────────────────────────────────────
+# codemem is a Node.js CLI (npm). opencode spawns it as a stdio MCP child:
+# `codemem mcp --db-path <db>`. Install into an isolated prefix so one COPY brings
+# the package + its (native) deps into the runtime. bookworm matches runtime glibc.
+FROM node:24-bookworm-slim AS codemem-bin
+ARG CODEMEM_VERSION=0.37.1
+RUN npm install -g --prefix /opt/codemem "codemem@${CODEMEM_VERSION}" \
+ && /opt/codemem/bin/codemem --version
+
 # ── Builder stage ────────────────────────────────────────────────────────────
 FROM python:3.12-slim AS builder
 WORKDIR /app
@@ -50,6 +59,11 @@ RUN apt-get update -qq \
 
 COPY --from=builder /app/deps /app/deps
 COPY --from=opencode-bin /usr/local/bin/opencode /usr/local/bin/opencode
+# codemem (Node) runtime: the node binary + the isolated codemem prefix. PATH prepend
+# puts `codemem` on PATH; its shebang resolves `node` from /usr/local/bin (also on PATH).
+COPY --from=codemem-bin /usr/local/bin/node /usr/local/bin/node
+COPY --from=codemem-bin /opt/codemem /opt/codemem
+ENV PATH="/opt/codemem/bin:${PATH}"
 COPY src/ ./src/
 
 # Bake a minimal default contract so a collaborator can run the image with only an EK

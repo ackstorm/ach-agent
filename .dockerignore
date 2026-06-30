@@ -50,3 +50,6 @@ docs/
 
 # Tests (not needed in runtime image)
 tests/
+
+# Node (defensive — we never COPY . ., but keep the image tight)
+node_modules/

@@ -17,8 +17,9 @@ by the CONTRACT §6 conformance suite (`make conformance`).
 
 ## Getting started
 
-See the [README](https://github.com/ackstorm/ach-agent#readme) for the quick-start, the
-`ACH_*` configuration contract, and deployment via the Helm chart / Kustomize base.
+See the [README](https://github.com/ackstorm/ach-agent#readme) for the quick-start and the
+`ACH_*` configuration contract. In production the `ach-runtime` operator deploys the harness
+(it owns the Deployment); locally, run the container directly — see [Getting started](getting-started.md).
 
 All tooling runs inside a content-addressed devtools container — no host pip/venv:
 

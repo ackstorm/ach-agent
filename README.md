@@ -103,19 +103,14 @@ e.g. `gitlab-pr-review`).
 
 ## Deployment
 
-A Helm chart and a Kustomize base are provided under [`deploy/`](deploy/):
+In production the harness is **not** deployed by hand — the **`ach-runtime` operator** builds
+the `Deployment` from your `Agent` CRD (it owns the deployment profile — cpu/mem, replicas,
+scaling — and renders the runtime config into the pod). The harness has no Kubernetes RBAC and
+never talks to the API server; see [`docs/plan/CONTRACT_v3.md`](docs/plan/CONTRACT_v3.md) §1.
 
-```bash
-make helm-lint                       # lint the chart
-make helm-template                   # render to stdout
-helm install ach-agent deploy/helm/ach-agent
+For local/standalone runs use the container directly — see [Getting started](docs/getting-started.md).
 
-make kustomize-build                 # render the kustomize base
-kubectl apply -k deploy/kustomize/base
-```
-
-Released container images are published to `ghcr.io/ackstorm/ach-agent` and the chart to
-`oci://ghcr.io/ackstorm/charts`.
+Released container images are published to `ghcr.io/ackstorm/ach-agent`.
 
 ## Contributing
 

@@ -1,8 +1,0 @@
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-
-# Plain-manifest base. Overlays stamp namespace + the pinned image tag.
-# The config Secret is created out-of-band by the operator (ach-runtime).
-resources:
-  - deployment.yaml
-  - service.yaml

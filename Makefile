@@ -124,9 +124,6 @@ release-bump: ## Bump version everywhere (VERSION=X.Y.Z)
 	@test -n "$(VERSION)" || { echo "VERSION=X.Y.Z required"; exit 1; }
 	@echo "$(VERSION)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([-.A-Za-z0-9]+)?$$' || { echo "bad VERSION '$(VERSION)'"; exit 1; }
 	sed -i -E 's/^version = ".*"/version = "$(VERSION)"/' pyproject.toml
-	sed -i -E 's/^version: .*/version: $(VERSION)/' deploy/helm/ach-agent/Chart.yaml
-	sed -i -E 's/^appVersion: .*/appVersion: v$(VERSION)/' deploy/helm/ach-agent/Chart.yaml
-	sed -i -E 's/^  tag: ".*"/  tag: "v$(VERSION)"/' deploy/helm/ach-agent/values.yaml
 	sed -i -E 's/^## \[unreleased\].*/## [unreleased]\n\n## [$(VERSION)] - '"$$(date +%F)"'/' CHANGELOG.md
 	@echo "Bumped to $(VERSION). Review the diff + CHANGELOG.md, commit, then: make release-cut VERSION=$(VERSION)"
 
@@ -137,20 +134,3 @@ release-cut: ## Tag-trigger a release (VERSION=X.Y.Z) — empty commit on main (
 	./scripts/pre-push-check.sh
 	git commit --allow-empty -m "chore(release): v$(VERSION)"
 	git push origin HEAD
-
-##@ Deploy (host helm/kustomize)
-.PHONY: helm-lint
-helm-lint: ## helm lint the chart
-	helm lint deploy/helm/ach-agent
-
-.PHONY: helm-template
-helm-template: ## render the chart to stdout
-	helm template ach-agent deploy/helm/ach-agent
-
-.PHONY: helm-package
-helm-package: ## package the chart into dist/
-	helm package deploy/helm/ach-agent -d dist/
-
-.PHONY: kustomize-build
-kustomize-build: ## render the kustomize base to stdout
-	kubectl kustomize deploy/kustomize/base

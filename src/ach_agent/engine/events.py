@@ -80,9 +80,9 @@ class OpenCodeTextUpdate:
     text: str
 
 
-# Tool-part state — channel-agnostic so any renderer (tui now; slack/telegram later)
-# can show "running a tool", its result, or its error. Parsed in full even though the
-# tui currently renders only `running`/`error`; getting the event right is the point.
+# Tool-part state — channel-agnostic renderer can show "running a tool", its result,
+# or its error. Parsed in full even though the tui currently renders only
+# `running`/`error`; getting the event right is the point.
 @dataclass(slots=True, frozen=True)
 class ToolStateRunning:
     input: dict[str, Any] | None = None

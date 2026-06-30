@@ -884,14 +884,12 @@ async def main(
         a2a_bridges.append(bridge)
         log.info("a2a channel bridge built", channel_name=channel.name, mount_path=mount_path)
 
-    # 6c. Create FastAPI app with all webhook channels (CR-01: reply mode uses
-    # event.reply_future resolved by engine_runner; no sync_invoke needed).
+    # 6c. Create FastAPI app with all webhook channels.
     # pool=pool threads the A′ gate (DUR-02) into the webhook route — live in production.
     # a2a_mounts threads the A2A sub-apps under the same socket (topology A).
     app = create_app(
         channels=webhook_channels,
         handler=router,
-        max_invocation_seconds=float(cfg.limits.max_invocation_seconds) + 5.0,
         pool=pool,
         a2a_mounts=a2a_mounts,
     )

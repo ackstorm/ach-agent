@@ -7,8 +7,6 @@ Protocol is the stability guarantee.
 
 Idempotency derivation functions (pure logic, CONTRACT §6.1, spec §18.4.0):
   - derive_webhook_idempotency_key: header priority chain → ms-timestamp fallback
-  - derive_slack_idempotency_key:   ts field → ms-timestamp fallback
-  - derive_telegram_idempotency_key: update_id → ms-timestamp fallback
   - derive_cron_idempotency_key:    {channel}:{scheduled_tick_iso} (D-09)
 
 Constraint: NEVER import from hermes_agent.* or engine.* here (RTR-06, D-08).
@@ -150,22 +148,6 @@ def derive_webhook_idempotency_key(headers: dict[str, str]) -> str:
     return str(int(time.time() * 1000))
 
 
-def derive_slack_idempotency_key(event: dict[str, object]) -> str:
-    """Slack: ts field (event timestamp, unique per message) → ms-timestamp fallback."""
-    ts = event.get("ts")
-    if ts is not None:
-        return str(ts)
-    return str(int(time.time() * 1000))
-
-
-def derive_telegram_idempotency_key(update: dict[str, object]) -> str:
-    """Telegram: update_id (monotonically increasing, unique per update) → ms-timestamp fallback."""
-    uid = update.get("update_id")
-    if uid is not None:
-        return str(uid)
-    return str(int(time.time() * 1000))
-
-
 def derive_cron_idempotency_key(channel_name: str, scheduled_tick: datetime) -> str:
     """{channel}:{scheduled_tick_iso} — deterministic per scheduled tick (D-09).
 
@@ -181,7 +163,7 @@ def derive_a2a_idempotency_key(task_id: str) -> str:
     """A2A: task_id → a2a:{task_id}; empty → ms-timestamp fallback (CHN-05, D-03, IDM-01).
 
     Invariant: unique-per-distinct-event, degrade to unique-per-arrival, never empty/shared.
-    Mirrors derive_slack_idempotency_key / derive_telegram_idempotency_key (same file).
+    Uses the same ms-timestamp fallback pattern as other derivers when task_id is absent.
     """
     if task_id:
         return f"a2a:{task_id}"

@@ -10,7 +10,6 @@ Locked decisions:
   - Metric: MEMORY_DEGRADED counter from router/metrics.py (extended in Phase 4 Plan 01).
 
 RTR-06: no router.* imports used here (only MEMORY_DEGRADED metric is imported at call time).
-No hermes_agent.* imports here.
 """
 
 from __future__ import annotations
@@ -29,14 +28,14 @@ log = structlog.get_logger(__name__)
 async def probe_memory_endpoint(endpoint: str, timeout: float = 2.0) -> bool:
     """Return True if the Hindsight memory endpoint is reachable within timeout.
 
-    Uses aiohttp (transitive dep via Hermes — do not add separately to pyproject.toml).
+    Uses aiohttp (direct dependency in pyproject.toml).
     Any exception (network error, timeout, non-2xx/3xx) → returns False, never raises.
 
     ASSUMPTION A2 (RESEARCH.md): endpoint exposes /health for probing.
     T-04-02/T-04-04: bounded 2s timeout; probe targets only the operator-rendered config URL,
     never user input (SSRF mitigation).
     """
-    import aiohttp  # transitive via hermes-agent
+    import aiohttp  # direct dependency
 
     try:
         async with asyncio.timeout(timeout):

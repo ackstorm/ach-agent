@@ -21,7 +21,6 @@ async def test_inv05_memory_fail_open() -> None:
     cfg = MemoryBlock(
         endpoint="http://hindsight.svc:8080",
         bank="test-scope",
-        mission="test",
         mentalModels=[],
     )
 

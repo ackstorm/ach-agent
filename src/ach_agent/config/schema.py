@@ -100,7 +100,6 @@ class PromptBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     system: str = ""
-    compose: str = "append"
 
 
 class MemoryBlock(BaseModel):
@@ -109,7 +108,6 @@ class MemoryBlock(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     endpoint: str
-    mission: str = ""
     # Static memory bank_id (the memory namespace for this agent's mission, e.g.
     # "gitlab-pr-review"). Per-event tag-based partitioning is a separate future layer
     # (see the memory bank+tags design note) and does NOT change this static field.

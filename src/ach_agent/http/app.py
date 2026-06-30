@@ -8,17 +8,14 @@ Locked decisions:
   - GET /readyz: 200 iff lifespan has set _ready flag; 503 otherwise (HTTP-02, Pitfall 6).
     Engine warmup is NOT a gate (spec §8.5).
   - GET /metrics: Prometheus exposition via make_asgi_app() mounted sub-application (HTTP-04).
-  - deliver.type: "reply" → hold connection, await event.reply_future, return 200 + body
-    (ACT-01, D-08, CR-01). Engine runs EXACTLY ONCE on the bounded lane via engine_runner;
-    no separate sync_invoke callable is needed.
-  - deliver.type: "gitlab_comment" → 202 accept-and-process-async; engine runs out-of-band (D-04).
+  - Webhook events are always async (202 accept-and-process); the route never holds the
+    connection waiting for engine output (D-04).
 
 RTR-06: NEVER import from hermes_agent.* here.
 """
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
@@ -36,15 +33,6 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-# Timeout margin added to maxInvocationSeconds when waiting for reply_future.
-# Gives the lane's own asyncio.timeout a chance to fire first so the route
-# never hangs indefinitely (CR-01 / ACT-01).
-_REPLY_TIMEOUT_MARGIN_SECONDS: float = 5.0
-
-# Default timeout used when channel config does not expose max_invocation_seconds
-# directly (conservative upper bound matching the lane default).
-_DEFAULT_REPLY_TIMEOUT_SECONDS: float = 305.0
-
 # Maximum inbound webhook body size (T-02-05 defense-in-depth DoS cap).
 # GitLab MR webhooks are well under this limit in practice; this cap is a
 # last-resort guard behind any ingress-level limit (nginx/ALB body cap).
@@ -54,20 +42,16 @@ MAX_WEBHOOK_BODY_BYTES: int = 1 * 1024 * 1024  # 1 MiB
 def create_app(
     channels: Sequence[ChannelConfig],
     handler: MessageHandler,
-    max_invocation_seconds: float = _DEFAULT_REPLY_TIMEOUT_SECONDS,
     pool: Any = None,  # EnginePool — None disables A′ gate (existing pool-less tests pass)
     a2a_mounts: Sequence[tuple[str, Any]] | None = None,  # [(path, sub_app), ...] — A2A sub-apps
 ) -> FastAPI:
     """Create the FastAPI app with all HTTP surface endpoints.
 
     Args:
-        channels:               List of channel configs (looked up by name on each request).
-        handler:                MessageHandler (Router) for router.handle(event) calls.
-        max_invocation_seconds: Upper-bound for awaiting reply_future in reply mode.
-                                Should match the router's maxInvocationSeconds + margin.
-                                Defaults to 305s (300s lane timeout + 5s margin).
-        pool:                   EnginePool instance for A′ cold-start gate (DUR-02, D-06).
-                                None disables the gate (backward-compatible default).
+        channels:  List of channel configs (looked up by name on each request).
+        handler:   MessageHandler (Router) for router.handle(event) calls.
+        pool:      EnginePool instance for A′ cold-start gate (DUR-02, D-06).
+                   None disables the gate (backward-compatible default).
 
     Returns:
         FastAPI application instance with lifespan, routes, and /metrics mount.
@@ -104,20 +88,15 @@ def create_app(
 
     @app.post("/channels/{channel_name}/events")
     async def inbound_events(channel_name: str, request: Request) -> JSONResponse:
-        """Accept an inbound GitLab MR webhook event.
+        """Accept an inbound webhook event and dispatch it asynchronously.
 
         Stages:
           0. Pre-admission gate: A′ cold-start (DUR-02, D-06) + draining (D-12) → 503
           1. Resolve channel config by name (404 if unknown — T-02-06)
           2. Read raw body BEFORE any JSON parse (Pattern 1)
-          3. Determine deliver.type to select handling strategy (D-08)
-          4. Dispatch to webhook adapter (HMAC verify → parse → dedup → router)
-             For reply mode: webhook adapter creates event.reply_future before
-             handler.handle() so the lane consumer can resolve it (CR-01).
-          5. Branch on deliver.type for the ACCEPTED outcome (D-08):
-             - "reply"         → await reply_future with timeout, return 200 + body
-             - "gitlab_comment" (or any non-reply) → return 202 accept-and-process-async
-          6. For non-ACCEPTED outcomes (401/200-dup/503), return as-is
+          3. Dispatch to webhook adapter (HMAC verify → parse → dedup → router)
+          4. For non-202 outcomes (401/200-dup/400/422/503), return as-is
+          5. ACCEPTED → return 202 accept-and-process-async
         """
         # 0. Pre-admission gate (DUR-02, D-06, D-12): reject before channel lookup + router.
         # draining (D-12): straggler inbound during SIGTERM drain → retriable 503.
@@ -180,42 +159,14 @@ def create_app(
         raw_body: bytes = b"".join(chunks)
         headers: dict[str, str] = dict(request.headers)
 
-        # 3. Determine deliver.type — determines whether to hold the connection (D-08)
-        # v3: webhook.deliver removed; deliver_type is always None in this phase.
-        # Phase 2 (ENG-13) will rewire this when the Codex engine swap lands.
-        deliver_type: str | None = None
+        # 3. Dispatch — webhook adapter verifies auth, parses, deduplicates, routes.
+        webhook_result = await handle_webhook_request(raw_body, headers, channel_cfg, handler)
 
-        # 4. Dispatch — webhook adapter attaches reply_future to the event when
-        #    deliver_type == "reply" BEFORE handler.handle() is called (CR-01).
-        webhook_result = await handle_webhook_request(
-            raw_body, headers, channel_cfg, handler, deliver_type=deliver_type
-        )
-
-        # 5. Non-202 outcomes (401, 200-dup, 400/422, 503) returned immediately
+        # 4. Non-202 outcomes (401, 200-dup, 400/422, 503) returned immediately
         if webhook_result.status_code != 202:
             return JSONResponse(webhook_result.body, status_code=webhook_result.status_code)
 
-        # 6. ACCEPTED (202) — branch on deliver.type (D-08)
-        if deliver_type == "reply" and webhook_result.reply_future is not None:
-            # ACT-01 / CR-01: the engine runs ONCE on the bounded lane and resolves
-            # event.reply_future. Await it here with a timeout so the connection
-            # is never held indefinitely (CR-01: exactly one engine execution).
-            try:
-                reply_text = await asyncio.wait_for(
-                    webhook_result.reply_future,
-                    timeout=max_invocation_seconds,
-                )
-                log.info("http: synchronous reply delivered", channel=channel_name)
-                return JSONResponse({"reply": reply_text}, status_code=200)
-            except TimeoutError:
-                log.warning(
-                    "http: reply_future timed out — engine did not resolve future in time",
-                    channel=channel_name,
-                    timeout=max_invocation_seconds,
-                )
-                return JSONResponse({"detail": "Engine reply timed out"}, status_code=504)
-
-        # gitlab_comment (D-04) or any non-reply type → accept-and-process-async
+        # 5. ACCEPTED → accept-and-process-async (D-04)
         return JSONResponse(webhook_result.body, status_code=202)
 
     # -----------------------------------------------------------------------

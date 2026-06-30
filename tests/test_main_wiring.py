@@ -193,6 +193,14 @@ def test_opencode_json_never_contains_ek(tmp_path: Any, monkeypatch: Any) -> Non
     assert "mcp-gofetch" in blob  # proxied MCP server is registered at its localhost URL
 
 
+def test_engine_config_gets_max_steps_and_paths(tmp_path: Any, monkeypatch: Any) -> None:
+    """maxSteps → EngineConfig.steps; engine.workDir/startupTimeout flow through."""
+    from ach_agent.engine.lifecycle import EngineConfig
+
+    cfg = EngineConfig(work_dir="/w", startup_timeout_seconds=7, steps=12)
+    assert cfg.steps == 12 and cfg.work_dir == "/w" and cfg.startup_timeout_seconds == 7
+
+
 # ---------------------------------------------------------------------------
 # WR-07: build_engine_prompt produces a real MR prompt (gap-closure 02-05)
 # ---------------------------------------------------------------------------

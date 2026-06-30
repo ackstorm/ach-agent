@@ -198,6 +198,7 @@ def _make_engine_runner(
     pool: Any,
     engine_cfg: Any,
     max_invocation_seconds: int,
+    terminal_output_retries: int = 1,
     memory_cfg: Any = None,
     channel_ttl: dict[str, float] | None = None,
 ) -> Callable[..., Any]:
@@ -287,7 +288,7 @@ def _make_engine_runner(
                     server=server,
                     session_id=event.session_key,
                     prompt=full_prompt,
-                    terminal_retries=1,
+                    terminal_retries=terminal_output_retries,
                     max_invocation_seconds=max_invocation_seconds,
                     on_kill=on_kill,
                     free_form=free_form,
@@ -636,15 +637,16 @@ async def main(
     # picks — only reachable inside the container/host. `--tui` drives it via `opencode attach`
     # (co-located, loopback); nothing is published off-host.
     engine_cfg = EngineConfig(
-        work_dir=cfg.work_dir,
+        work_dir=cfg.engine.work_dir,
         session_dir=f"{cfg.persistence.mount_path}/opencode/sessions",
         provider=cfg.model.type,
         model=cfg.model.name,
         params=cfg.model.params,
-        # prompt.base = the inline agent persona; written to opencode's append-mode
+        # prompt.system = the inline agent persona; written to opencode's append-mode
         # `instructions` (layered on ACH-hydrated skills/prompts). Empty when absent.
-        system_prompt=cfg.prompt.base if cfg.prompt else "",
-        startup_timeout_seconds=cfg.startup_timeout_seconds,
+        system_prompt=cfg.prompt.system if cfg.prompt else "",
+        steps=cfg.limits.max_steps,
+        startup_timeout_seconds=cfg.engine.startup_timeout_seconds,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
         # Idle TTL is now a per-channel constant resolved in engine_runner (see
         # _CHANNEL_IDLE_TTL_S). This field is unused by the runner and kept at 0 for
@@ -666,6 +668,7 @@ async def main(
         pool=pool,
         engine_cfg=engine_cfg,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
+        terminal_output_retries=cfg.limits.terminal_output_retries,
         memory_cfg=cfg.memory,
         channel_ttl=channel_ttl,
     )

@@ -11,23 +11,25 @@
       
       
       
+        <link rel="prev" href="..">
       
-        <link rel="next" href="getting-started/">
+      
+        <link rel="next" href="../configuration/">
       
       
-      <link rel="icon" href="assets/images/favicon.png">
+      <link rel="icon" href="../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>ach-agent</title>
+        <title>Getting started - ach-agent</title>
       
     
     
-      <link rel="stylesheet" href="assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -46,7 +48,7 @@
       
     
     
-    <script>__md_scope=new URL(".",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -72,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#ach-agent" class="md-skip">
+        <a href="#getting-started" class="md-skip">
           Skip to content
         </a>
       
@@ -88,7 +90,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+    <a href=".." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -108,7 +110,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Home
+              Getting started
             
           </span>
         </div>
@@ -207,7 +209,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+    <a href=".." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -234,6 +236,26 @@
       
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
     
   
   
@@ -250,18 +272,18 @@
           
   
   <span class="md-ellipsis">
-    Home
+    Getting started
   </span>
   
 
           <span class="md-nav__icon md-icon"></span>
         </label>
       
-      <a href="." class="md-nav__link md-nav__link--active">
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   <span class="md-ellipsis">
-    Home
+    Getting started
   </span>
   
 
@@ -283,18 +305,45 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#core-value-the-router" class="md-nav__link">
+  <a href="#what-you-need" class="md-nav__link">
     <span class="md-ellipsis">
-      Core value — the router
+      What you need
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#getting-started" class="md-nav__link">
+  <a href="#1-a-minimal-configyaml" class="md-nav__link">
     <span class="md-ellipsis">
-      Getting started
+      1. A minimal config.yaml
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-a-docker-composeyaml" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. A docker-compose.yaml
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-run-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Run it
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#launch-modifiers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Launch modifiers
     </span>
   </a>
   
@@ -315,27 +364,7 @@
   
   
     <li class="md-nav__item">
-      <a href="getting-started/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Getting started
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="configuration/" class="md-nav__link">
+      <a href="../configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -375,18 +404,45 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#core-value-the-router" class="md-nav__link">
+  <a href="#what-you-need" class="md-nav__link">
     <span class="md-ellipsis">
-      Core value — the router
+      What you need
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#getting-started" class="md-nav__link">
+  <a href="#1-a-minimal-configyaml" class="md-nav__link">
     <span class="md-ellipsis">
-      Getting started
+      1. A minimal config.yaml
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-a-docker-composeyaml" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. A docker-compose.yaml
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-run-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Run it
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#launch-modifiers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Launch modifiers
     </span>
   </a>
   
@@ -410,25 +466,99 @@
   
 
 
-<h1 id="ach-agent">ach-agent</h1>
-<p><code>ach-agent</code> is the <strong>execution plane</strong> of the ACH ecosystem: a single-process Python runtime
-that boots from a rendered runtime config, runs channel adapters, serializes inbound events
-through a governed FIFO router, drives the <strong>opencode</strong> engine over HTTP/SSE, and delivers
-results via a <code>reply</code> / <code>sideEffect</code> action contract. It consumes the frozen seam produced by
-<code>ach-runtime</code> (the Go operator) and is designed for platform and AI-engineering teams running
-managed AI agents — such as a GitLab MR reviewer — on top of the <code>runtime.ackstorm.ai/v1alpha1</code>
-API.</p>
-<h2 id="core-value-the-router">Core value — the router</h2>
-<p>The router must be correct: per-session FIFO lanes with the pinned ordering
-<code>dedup → backpressure → lane</code> and three always-enforced finite bounds
-(<code>maxConcurrentInvocations</code>, <code>maxInvocationSeconds</code>, <code>maxQueuedTotal</code>). Its behavior is pinned
-by the CONTRACT §6 conformance suite (<code>make conformance</code>).</p>
-<h2 id="getting-started">Getting started</h2>
-<p>See the <a href="https://github.com/ackstorm/ach-agent#readme">README</a> for the quick-start, the
-<code>ACH_*</code> configuration contract, and deployment via the Helm chart / Kustomize base.</p>
-<p>All tooling runs inside a content-addressed devtools container — no host pip/venv:</p>
-<div class="highlight"><pre><span></span><code>make<span class="w"> </span>verify<span class="w">   </span><span class="c1"># full local gate: lint + mypy + unit + conformance + secrets</span>
+<h1 id="getting-started">Getting started</h1>
+<p>Launch an <code>ach-agent</code> on your machine with Docker — a config file and two environment
+variables. No host Python.</p>
+<h2 id="what-you-need">What you need</h2>
+<ul>
+<li>Docker</li>
+<li>An <strong>EK</strong> (<code>ek-…</code>) for ACH — passed as <code>ACH_TOKEN</code>, never baked into an image or logged</li>
+<li>Your ACH endpoint — passed as <code>ACH_BASE_URL</code></li>
+</ul>
+<p>A ready-to-run example lives in the sibling repo <strong><code>../ach-agent-test</code></strong> (<code>config.yaml</code> +
+<code>docker-compose.yaml</code>); the files below are the same shape.</p>
+<h2 id="1-a-minimal-configyaml">1. A minimal <code>config.yaml</code></h2>
+<div class="highlight"><pre><span></span><code><span class="nt">schemaVersion</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1&quot;</span>
+
+<span class="nt">agent</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">local-dev-agent</span>
+
+<span class="nt">model</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gemini.gemini-flash-latest</span><span class="w">   </span><span class="c1"># an ACH-served model id</span>
+<span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span><span class="w">                       </span><span class="c1"># the ACH compat wire (gemini.* is served on /v1)</span>
+
+<span class="nt">capability</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ach</span>
+<span class="w">  </span><span class="nt">ach</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">baseUrl</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://ach.ackstorm.ai</span><span class="w">   </span><span class="c1"># or leave empty and set ACH_BASE_URL</span>
+
+<span class="nt">prompt</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">system</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;You</span><span class="nv"> </span><span class="s">are</span><span class="nv"> </span><span class="s">a</span><span class="nv"> </span><span class="s">concise</span><span class="nv"> </span><span class="s">software-engineering</span><span class="nv"> </span><span class="s">assistant.&quot;</span>
+<span class="w">  </span><span class="nt">compose</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">append</span>
+
+<span class="nt">engine</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">home</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/tmp/ach-home</span>
+<span class="w">  </span><span class="nt">workDir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/tmp/ach-home/workspace</span>
+
+<span class="nt">persistence</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<span class="w">  </span><span class="nt">mountPath</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/tmp/ach-state</span>
+
+<span class="nt">channels</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span><span class="w">                          </span><span class="c1"># none under --tui/--prompt: the line you type IS the prompt</span>
 </code></pre></div>
+<p>See <a href="../configuration/">Configuration</a> for every block and the full <code>example.yaml</code>.</p>
+<h2 id="2-a-docker-composeyaml">2. A <code>docker-compose.yaml</code></h2>
+<div class="highlight"><pre><span></span><code><span class="nt">services</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">agent</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ghcr.io/ackstorm/ach-agent:latest</span>
+<span class="w">    </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;--tui&quot;</span><span class="p p-Indicator">]</span><span class="w">                </span><span class="c1"># console REPL</span>
+<span class="w">    </span><span class="nt">environment</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ACH_TOKEN=${ACH_TOKEN:?set ACH_TOKEN=ek-... in your shell}</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ACH_BASE_URL=${ACH_BASE_URL:?set ACH_BASE_URL=https://your-ach-host in your shell}</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ACH_CONFIG_PATH=/etc/ach-agent/config.yaml</span>
+<span class="w">    </span><span class="nt">volumes</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./config.yaml:/etc/ach-agent/config.yaml:ro</span>
+<span class="w">    </span><span class="nt">stdin_open</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">    </span><span class="nt">tty</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</code></pre></div>
+<h2 id="3-run-it">3. Run it</h2>
+<div class="highlight"><pre><span></span><code><span class="c1"># interactive console — the line you type is the prompt, Ctrl-D exits</span>
+<span class="nv">ACH_TOKEN</span><span class="o">=</span>ek-&lt;your-key&gt;<span class="w"> </span><span class="nv">ACH_BASE_URL</span><span class="o">=</span>https://&lt;your-ach-host&gt;<span class="w"> </span>docker<span class="w"> </span>compose<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>agent
+
+<span class="c1"># one-shot instead of the REPL</span>
+<span class="nv">ACH_TOKEN</span><span class="o">=</span>ek-&lt;your-key&gt;<span class="w"> </span><span class="nv">ACH_BASE_URL</span><span class="o">=</span>https://&lt;your-ach-host&gt;<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>docker<span class="w"> </span>compose<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>agent<span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;Review MR !42 in project 7&quot;</span>
+</code></pre></div>
+<p>To drive <strong>real channels</strong> (webhook / cron / queue / a2a) instead of the console, add a
+<code>channels:</code> block to <code>config.yaml</code> and launch <strong>without</strong> <code>--tui</code>/<code>--prompt</code> — the harness then
+serves its HTTP surface and runs the configured channels. See <a href="../configuration/">Configuration</a>.</p>
+<h2 id="launch-modifiers">Launch modifiers</h2>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--tui</code></td>
+<td>Attach opencode's native TUI against the prewarmed engine (interactive).</td>
+</tr>
+<tr>
+<td><code>--prompt "…"</code></td>
+<td>Run one prompt, print the reply, exit.</td>
+</tr>
+<tr>
+<td><code>--debug</code></td>
+<td>Plain stdin/stdout REPL (no native TUI).</td>
+</tr>
+<tr>
+<td><em>(none)</em></td>
+<td>Serve the HTTP surface and run the configured <code>channels</code>.</td>
+</tr>
+</tbody>
+</table>
 
 
 
@@ -475,10 +605,10 @@ by the CONTRACT §6 conformance suite (<code>make conformance</code>).</p>
     </div>
     
     
-    <script id="__config" type="application/json">{"base": ".", "features": [], "search": "assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    <script id="__config" type="application/json">{"base": "..", "features": [], "search": "../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
     
     
-      <script src="assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
     
   </body>

@@ -667,6 +667,8 @@ async def main(
         # SEC-01 / ek-hygiene: opencode's env is clean-slate (base allowlist only). Extra
         # var names the operator wants forwarded come from engine.forwardEnv.
         forward_env=cfg.engine.forward_env,
+        # capability.filter.exclude.tools — disabled in opencode.json (withheld from model).
+        exclude_tools=cfg.capability.filter.exclude.tools,
     )
     pool = EnginePool()
 

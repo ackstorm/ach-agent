@@ -83,6 +83,9 @@ class EngineConfig:
     # inherited — so the ek_ (ACH_TOKEN/ACH_API_KEY) never reaches opencode unless explicitly
     # named here. Use sparingly (e.g. a custom CA bundle path); never list the ek_.
     forward_env: list[str] = field(default_factory=list)
+    # capability.filter.exclude.tools — opencode tool ids to disable in opencode.json
+    # (agent.build.tools[<id>]=False), withholding them from the model.
+    exclude_tools: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -213,7 +216,7 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
                 # prompt→reply turn with no channel to feed an answer back into a running
                 # opencode turn, so an asked question dead-ends (blocks, then times out).
                 # Removing it forces the agent to answer in text instead.
-                "tools": {"question": False},
+                "tools": {"question": False, **{t: False for t in config.exclude_tools}},
             },
             "plan": {"disable": True},
         },

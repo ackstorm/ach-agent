@@ -201,6 +201,23 @@ def test_engine_config_gets_max_steps_and_paths(tmp_path: Any, monkeypatch: Any)
     assert cfg.steps == 12 and cfg.work_dir == "/w" and cfg.startup_timeout_seconds == 7
 
 
+def test_excluded_tools_written_disabled_in_opencode_json(tmp_path: Any) -> None:
+    import json as _json
+
+    from ach_agent.engine.lifecycle import EngineConfig, write_opencode_config
+
+    cfg = EngineConfig(
+        model="gpt-4o-mini",
+        model_base_url="http://127.0.0.1:9001/v1",
+        exclude_tools=["gitlab_merge_merge_request"],
+    )
+    write_opencode_config(tmp_path, cfg)
+    data = _json.loads((tmp_path / ".config" / "opencode" / "opencode.json").read_text())
+    tools = data["agent"]["build"]["tools"]
+    assert tools["gitlab_merge_merge_request"] is False
+    assert tools["question"] is False  # existing disable preserved
+
+
 # ---------------------------------------------------------------------------
 # WR-07: build_engine_prompt produces a real MR prompt (gap-closure 02-05)
 # ---------------------------------------------------------------------------

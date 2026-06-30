@@ -48,7 +48,11 @@ prompt:
 # cannot reach opencode in proxy mode. forwardEnv lists extra env var NAMES to forward from
 # the harness env (e.g. a custom CA bundle path). NEVER list the ek_.
 engine:
-  workDir: /tmp/workspace
+  # home: where opencode keeps its config, hydrated skills, sessions, node_modules.
+  # workDir: the agent's working directory (defaults to <home>/workspace).
+  # Omit both to derive from persistence (enabled → <mountPath>/home; else /tmp/ach-home).
+  home: /tmp/ach-home
+  workDir: /tmp/ach-home/workspace
   startupTimeoutSeconds: 30
   # forwardEnv:
   #   - SSL_CERT_FILE

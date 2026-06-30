@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Per-channel `concurrency`** — each channel's `concurrency` is now a real sub-cap under
   the global `maxConcurrentInvocations`.
 - **`maxSteps` and `terminalOutputRetries`** are now honored (were parsed but ignored).
+- **`engine.home`** (config) — the opencode HOME (config, hydrated skills, sessions,
+  node_modules). Definable; defaults to `<persistence.mountPath>/home` when persistence is
+  enabled, else `/tmp/ach-home`. `engine.workDir` now defaults to `<home>/workspace`.
 
 ### Changed
 - **Config reshape:** `workDir` + `startupTimeoutSeconds` moved under `engine`;
@@ -24,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--tui` now attaches to opencode's native TUI** via `opencode attach` against the
   harness-prewarmed `serve` (egress hygiene preserved — model + MCP still flow through the
   localhost proxies that inject the `ek_`). `--debug` remains the plain stdin/stdout REPL.
+- **ACH skills now load in opencode** — hydrated skills extract flat into
+  `<home>/.config/opencode/skills/<name>/SKILL.md` (the directory opencode scans), instead of
+  `persistence.mountPath/skills/<qualified-name>/<name>/` (which opencode never read).
+- **opencode HOME is now a single stable dir** (`engine.home`) instead of a fresh per-server
+  `mktemp`, so sessions and node_modules persist. `tui-attach.log` moved to a volatile
+  `/tmp/ach-harness/`.
 
 ### Removed
 - **`agent.namespace`, `agent.generation`, top-level `governed`, `channels[].session`,
@@ -38,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   always reaches the model through the localhost model-proxy, so **`ACH_TOKEN` (the `ek_`) is
   now required**: the harness hard-fails at boot without it (no model endpoint). Removes the
   one path where opencode read a key directly from its env.
+- **`EngineConfig.session_dir`** — dead field (set, never read); opencode persists sessions
+  under `<home>/.local/share/opencode`.
 
 ### Security
 - **opencode's subprocess env is now built clean-slate** instead of inheriting the full

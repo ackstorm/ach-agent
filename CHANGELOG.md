@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Removed
+- **Helm chart + Kustomize base (`deploy/`)** and the chart-publish step in the release
+  workflow. The harness is deployed by the `ach-runtime` operator, which owns the
+  `Deployment` (CONTRACT §1); the standalone chart was a redundant, unexercised second
+  deployer. Released container images are still published to `ghcr.io/ackstorm/ach-agent`.
+
 ## [0.4.0] - 2026-06-30
 
 ### Added

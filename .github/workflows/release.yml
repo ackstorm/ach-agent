@@ -45,14 +45,6 @@ jobs:
             ghcr.io/${{ steps.owner.outputs.lc }}/ach-agent:v${{ steps.ver.outputs.v }}
             ghcr.io/${{ steps.owner.outputs.lc }}/ach-agent:latest
 
-      - uses: azure/setup-helm@v4
-      - name: Package and push Helm chart (OCI)
-        run: |
-          V="${{ steps.ver.outputs.v }}"
-          helm registry login ghcr.io -u "${{ github.actor }}" --password "${{ secrets.GITHUB_TOKEN }}"
-          helm package deploy/helm/ach-agent --version "$V" --app-version "v$V"
-          helm push "ach-agent-$V.tgz" "oci://ghcr.io/${{ steps.owner.outputs.lc }}/charts"
-
       - name: Tag the release commit
         run: |
           git config user.name "github-actions[bot]"

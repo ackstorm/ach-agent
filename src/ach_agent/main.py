@@ -424,6 +424,17 @@ _CHANNEL_IDLE_TTL_S: dict[str, float] = {
 }
 
 
+def _harness_log_dir() -> Path:
+    """Volatile dir for transient harness logs (e.g. the --tui attach log).
+
+    Lives under /tmp, never the opencode HOME — harness logs are throwaway and must not
+    pollute the persistent home/state tree.
+    """
+    d = Path("/tmp/ach-harness")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 async def _run_opencode_attach(
     router: Any, *, binary_path: str, port: int, ephemeral_home: Path
 ) -> None:
@@ -455,7 +466,7 @@ async def _run_opencode_attach(
 
     url = f"http://127.0.0.1:{port}"
     env = {**os.environ, "HOME": str(ephemeral_home), "TMPDIR": str(ephemeral_home)}
-    log_path = ephemeral_home / "tui-attach.log"
+    log_path = _harness_log_dir() / "tui-attach.log"
     log.info("ach-agent: --tui → opencode attach", url=url, log_file=str(log_path))
 
     real_stderr = sys.stderr

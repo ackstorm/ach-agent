@@ -74,6 +74,9 @@ packages = ["src/ach_agent"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: integration tests covering multi-layer wiring (config → opencode.json); runs in the normal suite unless deselected",
+]
 
 [tool.ruff]
 line-length = 100

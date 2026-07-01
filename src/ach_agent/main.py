@@ -383,8 +383,8 @@ def _make_engine_runner(
         # MEM-01/MEM-02/D-02: probe memory backend BEFORE pool.acquire (Pitfall 3).
         # prepare_memory never raises (fail-open contract).
         # When unavailable: MEMORY_DEGRADED incremented + WARN logged inside prepare_memory.
-        mcp_servers, memory_prompt, codemem_db, codemem_project = (
-            await select_memory_wiring_async(memory_cfg)
+        mcp_servers, memory_prompt, codemem_db, codemem_project = await select_memory_wiring_async(
+            memory_cfg
         )
 
         # Build per-invocation engine config with memory MCP server iff reachable (D-02).

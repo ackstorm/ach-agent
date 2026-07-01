@@ -18,10 +18,11 @@ by the CONTRACT §6 conformance suite (`make conformance`).
 ## Engine — per-session opencode servers
 
 The engine pool is keyed by `session_key`: each session identity (cron name, gitlab server+repo,
-tui-console) gets its **own** `opencode serve` process with its own isolated HOME (config, session
-store, `node_modules`), so distinct sessions never share filesystem state. The working directory
-(`/workspace`) stays shared. See the design record:
-[Keyed EnginePool](references/2026-07-01-keyed-engine-pool.md).
+tui-console) gets its **own** `opencode serve` process. All agentes share **one** `engine.home`
+(skills, `.ach-state`, session store, and `node_modules` live there once); per-session isolation
+is the opencode config file `<home>/.config/opencode/opencode_<session_key>.json`, selected via
+the `OPENCODE_CONFIG` env var. The working directory (`/workspace`) stays shared. See the design
+record: [Keyed EnginePool](references/2026-07-01-keyed-engine-pool.md).
 
 ## Getting started
 

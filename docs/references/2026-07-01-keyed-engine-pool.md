@@ -169,3 +169,44 @@ b0ce381 docs(engine): document per-key home disk tradeoff (M-3)
 ```
 
 Gate at merge: full suite **309 passed, 1 skipped**; `make _lint` (ruff + mypy --strict) clean.
+
+---
+
+## 7. Correction (2026-07-01): per-key HOME → shared HOME + per-session config file
+
+**Branch:** `feat/shared-home-per-session-config`. **Plan:**
+`docs/superpowers/plans/2026-07-01-shared-home-per-session-config.md`.
+
+### The split-brain regression
+
+The per-key HOME design described in §3 (`_config_for_key` → `<home>/servers/oc-<key>`) introduced
+a split-brain regression: the harness hydrates skills and `.ach-state` once into the **shared**
+`engine.home`, but each opencode process ran with a **per-key** HOME — so it never saw the
+hydrated skills, prompts, or state. The agente and the harness were looking at different trees.
+
+### The fix
+
+`_config_for_key` was deleted. Instead:
+
+- All agentes run with the **same** `engine.home` (one shared HOME).
+- Per-`session_key` isolation is now the **opencode config file**: each key writes
+  `<home>/.config/opencode/opencode_<session_key>.json` (+ personality system-prompt file) and
+  the agente is launched with `OPENCODE_CONFIG` pointing at it. opencode reads the config path
+  from that env var, so no key ever loads another key's model/MCP wiring.
+
+### Issues resolved
+
+- **I-1 (truncate race):** per-key config *file* names (not a shared `opencode.json`) eliminate the
+  concurrent-truncate race — each key owns a distinct file path.
+- **M-3 (disk bloat):** `node_modules` and the npm/bun caches are shared across keys (no
+  per-key reinstall, no disk reaper needed for those paths).
+
+### New accepted tradeoff
+
+The opencode session store (`<home>/.local/share/opencode`) and caches are shared across
+concurrent keyed processes. At v1 concurrency levels this is low-risk. If isolation is needed
+later, `XDG_DATA_HOME` can be set per-key in the agente env.
+
+### Gate
+
+Full suite **321 passed, 1 skipped**; `make _lint` clean.

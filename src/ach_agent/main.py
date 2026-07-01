@@ -40,7 +40,7 @@ from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.queue import QueueConsumer
 from ach_agent.channels.tui import run_one_shot, run_tui_console
 from ach_agent.config import load_config
-from ach_agent.config.schema import HindsightMemory, Memory
+from ach_agent.config.schema import CodememMemory, HindsightMemory, Memory
 from ach_agent.engine.context import fetch_context
 from ach_agent.engine.hydrate import hydrate, resolve_model
 from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
@@ -375,10 +375,34 @@ def _make_engine_runner(
         # Build sanitized launch env — ek_ is never read into a local variable
         _sanitized = SanitizedEnv(os.environ.copy())  # noqa: F841 — used by launch
 
+        # Resolve channel cfg early so ctx can be built before the memory probe.
+        ch_cfg = channels_by_name.get(event.channel_name)
+        ctx = build_template_context(
+            event.payload,
+            channel_name=event.channel_name,
+            channel_type=getattr(ch_cfg, "type", "") or "",
+            channel_source=getattr(ch_cfg, "source", "") or "",
+            agent_name=agent_name,
+            memory_bank=memory_bank,
+            event_id=event.idempotency_key,
+            session_key=event.session_key,
+        )
+
+        # Bank (hindsight) — render before the probe so the rendered value flows into both
+        # the hindsight fetch and the memory section of the prompt. Probe stays BEFORE
+        # pool.acquire (MEM-01/MEM-02/D-02, "Pitfall 3"). When bank has no {{ token,
+        # effective_* aliases are the original values — zero behavior change.
+        effective_memory_cfg = memory_cfg
+        effective_bank = memory_bank
+        if isinstance(memory_cfg, HindsightMemory) and "{{" in memory_cfg.hindsight.bank:
+            effective_bank = render_template(memory_cfg.hindsight.bank, ctx)
+            updated_hindsight = memory_cfg.hindsight.model_copy(update={"bank": effective_bank})
+            effective_memory_cfg = memory_cfg.model_copy(update={"hindsight": updated_hindsight})
+
         # MEM-01/MEM-02/D-02: probe memory backend BEFORE pool.acquire (Pitfall 3).
         # prepare_memory never raises (fail-open contract).
         # When unavailable: MEMORY_DEGRADED incremented + WARN logged inside prepare_memory.
-        mcp_servers, memory_prompt = await select_memory_wiring_async(memory_cfg)
+        mcp_servers, memory_prompt = await select_memory_wiring_async(effective_memory_cfg)
 
         # Build per-invocation engine config with the (dynamic) hindsight MCP server iff
         # reachable (D-02). codemem fields are static per-agent and already on engine_cfg from
@@ -392,6 +416,20 @@ def _make_engine_runner(
             invocation_engine_cfg = engine_cfg
             invocation_engine_cfg.mcp_servers = mcp_servers
 
+        # Project (codemem) — render after mcp_servers replace, before acquire. Keyed pool reuses
+        # one agente per session_key, so codemem_project is fixed by the first event — correct
+        # for a session-invariant template.
+        if (
+            isinstance(memory_cfg, CodememMemory)
+            and "{{" in memory_cfg.codemem.project
+            and dataclasses.is_dataclass(engine_cfg)
+            and not isinstance(engine_cfg, type)
+        ):
+            rendered_project = render_template(memory_cfg.codemem.project, ctx)
+            invocation_engine_cfg = dataclasses.replace(
+                invocation_engine_cfg, codemem_project=rendered_project
+            )
+
         server = await pool.acquire(event.session_key, invocation_engine_cfg)
         try:
             # CR-01: in reply mode the future MUST always be resolved (set_result or
@@ -399,13 +437,12 @@ def _make_engine_runner(
             # sets the exception on error before re-raising.
             future = event.reply_future
             try:
-                ch_cfg = channels_by_name.get(event.channel_name)
                 # MEM-01: append ## Memory section (summaries or unavailable note) to prompt.
                 base_prompt = build_engine_prompt(
                     event,
                     channel_cfg=ch_cfg,
                     agent_name=agent_name,
-                    memory_bank=memory_bank,
+                    memory_bank=effective_bank,
                 )
                 full_prompt = f"{base_prompt}\n\n{memory_prompt}" if memory_prompt else base_prompt
                 # Free-form channels (--tui console) carry no terminal contract: return

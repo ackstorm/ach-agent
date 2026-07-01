@@ -193,7 +193,7 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig, session_ke
     config_dir = ephemeral_home / ".config" / "opencode"
     config_dir.mkdir(parents=True, exist_ok=True)
 
-    prompt_path = ephemeral_home / "personality" / f"system_prompt{suffix}.txt"
+    prompt_path = config_dir / "personality" / f"system_prompt{suffix}.txt"
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_path.write_text(config.system_prompt or "", encoding="utf-8")
 
@@ -325,8 +325,12 @@ def build_opencode_env(
     is never present unless explicitly named — and it must not be, because the localhost
     model-proxy injects it and opencode points only at 127.0.0.1.
 
-    Pinned last (override anything above): HOME/TMPDIR → the shared ephemeral home;
-    GIT_TERMINAL_PROMPT=0 so git never blocks a non-interactive subprocess on a prompt.
+    Pinned last (override anything above): HOME → the shared ephemeral home; TMPDIR → ``/tmp``
+    (world-writable, off the persistent volume) so opencode's bun runtime extracts its native
+    addons (~15 MB, regenerated every boot, dlopen'd not renamed → no cross-device risk) into
+    ephemeral space instead of bloating HOME / the PVC. The harness already requires a writable
+    /tmp (harness log dir, default engine home). GIT_TERMINAL_PROMPT=0 so git never blocks a
+    non-interactive subprocess on a prompt.
     Note: XDG_CONFIG_HOME is intentionally excluded — it would override $HOME/.config/opencode
     and break the per-session opencode config file the harness just wrote.
     """
@@ -340,7 +344,7 @@ def build_opencode_env(
             env[name] = value
     # Pinned hardening — last word, overrides any inherited/forwarded value.
     env["HOME"] = str(ephemeral_home)
-    env["TMPDIR"] = str(ephemeral_home)
+    env["TMPDIR"] = "/tmp"
     env["GIT_TERMINAL_PROMPT"] = "0"
     # Point opencode at THIS server's per-session config file; HOME-shared skills/
     # agents and the session store stay discoverable from the shared config dir.

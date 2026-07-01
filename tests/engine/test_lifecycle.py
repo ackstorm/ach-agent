@@ -450,7 +450,7 @@ def test_build_opencode_env_strips_secrets_in_proxy_mode(
     assert "GITLAB_TOKEN" not in env
     assert env["PATH"] == "/usr/bin"  # base allowlist preserved
     assert env["HOME"] == str(tmp_path)  # pinned to ephemeral home
-    assert env["TMPDIR"] == str(tmp_path)
+    assert env["TMPDIR"] == "/tmp"
     assert env["GIT_TERMINAL_PROMPT"] == "0"
     assert "OPENCODE_CONFIG" in env  # per-session config path always set
 
@@ -489,8 +489,11 @@ def test_write_opencode_config_per_session_filename(tmp_path: Path) -> None:
     # deterministic in the key
     again = write_opencode_config(tmp_path, cfg, "gitlab.com/g/repo")
     assert again.name == path.name
-    # a per-session prompt file is written too (no shared system_prompt.txt)
-    assert not (tmp_path / "personality" / "system_prompt.txt").exists()
+    # a per-session prompt file is written too, under .config/opencode/personality/
+    # (CONTRACT §3.2), NOT a shared system_prompt.txt and NOT top-level personality/
+    assert not (cfg_dir / "personality" / "system_prompt.txt").exists()
+    assert not (tmp_path / "personality").exists()
+    assert (cfg_dir / "personality" / f"system_prompt{path.name[len('opencode'):-len('.json')]}.txt").is_file()
 
 
 def test_build_opencode_env_sets_opencode_config(tmp_path: Path) -> None:

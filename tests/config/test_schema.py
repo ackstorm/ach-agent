@@ -1008,6 +1008,16 @@ def test_prompt_system_ach_traversal_rejected():
             PromptBlock.model_validate({"system": bad})
 
 
+def test_prompt_system_ach_empty_rejected():
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import PromptBlock
+
+    with pytest.raises(ValidationError):
+        PromptBlock.model_validate({"system": {"type": "ach", "ach": "  "}})
+
+
 def test_prompt_system_omitted_is_none():
     from ach_agent.config.schema import PromptBlock
 

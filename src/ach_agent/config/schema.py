@@ -134,7 +134,8 @@ class SystemAch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["ach"]
-    ach: str  # hydrated prompt name; a single path component, no "/" traversal
+    ach: str  # hydrated prompt name; maps to the prompts/<ach> dir. Absolute or ".." rejected;
+    # "/" is allowed (a registry-qualified name is a nested dir), it just cannot escape upward.
     file: str = ""  # optional subpath under the prompt dir; empty → the sole file
 
     @field_validator("ach", "file")
@@ -145,6 +146,13 @@ class SystemAch(BaseModel):
         p = PurePosixPath(v)
         if p.is_absolute() or ".." in p.parts:
             raise ValueError("prompt.system ach/file must be a relative path, no '..'")
+        return v
+
+    @field_validator("ach")
+    @classmethod
+    def _ach_nonempty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("prompt.system.ach must be a non-empty prompt name")
         return v
 
 

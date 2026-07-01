@@ -46,6 +46,16 @@ class EnginePool:
     the shared checkout root, as it was before keying. Reference counting per key
     ensures a key's TTL only starts once no invocation holds it.
 
+    Disk tradeoff (explicit v1 decision): per-key homes are NOT reaped on stop —
+    stopping a server leaves ``<base>/servers/oc-<key>`` (incl. its node_modules)
+    on disk so the next invocation of that key reuses the cache. Live-server disk
+    is bounded by ``maxConcurrentInvocations``; on-disk home count grows with the
+    number of DISTINCT keys ever seen. For bounded-cardinality channels (cron/
+    tui/queue/a2a: key = channel name) this is fine. For an unbounded key space
+    (gitlab key = server+repo across many repos over a long-lived pod) it can
+    fill disk. v1 accepts this; a reaper (GC ``servers/oc-*`` whose key is not
+    live, e.g. by mtime) is a tracked follow-up, not built here.
+
     For ttl_seconds == 0 (spawn-per-invocation, v1 default): the key's server is
     stopped as soon as its last holder releases. For ttl_seconds > 0: the server
     is kept warm for that key until the idle TTL elapses; a re-acquire cancels

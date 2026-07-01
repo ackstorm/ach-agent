@@ -205,6 +205,11 @@ class CodememParams(BaseModel):
     # Absolute path to the codemem SQLite DB on a persistent volume. Operator config
     # (trusted, like bank_id). NOT templated per-repo in v1; NOT from inbound payload.
     db_path: str = Field(alias="dbPath")
+    # REQUIRED stable project namespace (passed to codemem as CODEMEM_PROJECT). codemem
+    # otherwise derives the project from cwd (git repo root), and its remember/search
+    # fallbacks disagree on a non-git work_dir — cross-session recall then silently returns
+    # nothing. A fixed project makes remember + search always agree.
+    project: str
 
     @field_validator("db_path")
     @classmethod

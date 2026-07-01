@@ -51,6 +51,7 @@ memory:                                 # omit if unused; fail-open (backend dow
   #   type: codemem
   #   codemem:
   #     dbPath: /var/lib/ach-agent/codemem.db   # absolute path on a persistent volume (no "..")
+  #     project: ach-agent                       # stable namespace for codemem search/remember
 
 limits:
   maxConcurrentInvocations: 2           # global semaphore across ALL channels

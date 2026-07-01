@@ -87,8 +87,8 @@ EXPOSE 8080
 # Pre-create writable work/state dirs the harness + opencode use (the pool's ephemeral
 # homes go under TMPDIR=/tmp, which is world-writable).
 RUN useradd -u 10001 -m appuser \
- && mkdir -p /tmp/workspace /tmp/ach-state \
- && chown -R 10001 /tmp/workspace /tmp/ach-state
+ && mkdir -p /tmp/workspace /tmp/ach-state /tmp/ach-home \
+ && chown -R 10001 /tmp/workspace /tmp/ach-state /tmp/ach-home
 USER 10001
 
 # ENTRYPOINT (not CMD) so launch modifiers append cleanly:

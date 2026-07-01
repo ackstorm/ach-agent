@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for memory.type discriminated union (hindsight|codemem).
 
-TDD tests for Task 1: HindsightMemory, CodememMemory, and backward-compat
-field_validator on AgentConfig. All sub-model cases test the concrete classes
-directly (no helpers.py needed); the backward-compat case uses the fixture
-+ _load_raw round-trip to exercise the full load_config path.
+TDD tests for Task 1: HindsightMemory, CodememMemory strict nested schema.
+All sub-model cases test the concrete classes directly (no helpers.py needed);
+the legacy-rejection case uses the fixture + _load_raw round-trip to exercise
+the full load_config path.
 """
 
 from __future__ import annotations
@@ -39,16 +39,23 @@ def _load_raw(tmp_path: Path, raw: dict):
 
 
 def test_hindsight_memory_direct() -> None:
-    """HindsightMemory validates endpoint, bank, mentalModels with default type."""
+    """HindsightMemory validates with type, hindsight sub-block, endpoint, bank, mentalModels."""
     from ach_agent.config.schema import HindsightMemory
 
     m = HindsightMemory.model_validate(
-        {"endpoint": "http://mem:8080", "bank": "gitlab-pr-review", "mentalModels": ["m1"]}
+        {
+            "type": "hindsight",
+            "hindsight": {
+                "endpoint": "http://mem:8080",
+                "bank": "gitlab-pr-review",
+                "mentalModels": ["m1"],
+            },
+        }
     )
     assert m.type == "hindsight"
-    assert m.endpoint == "http://mem:8080"
-    assert m.bank == "gitlab-pr-review"
-    assert m.mental_models == ["m1"]
+    assert m.hindsight.endpoint == "http://mem:8080"
+    assert m.hindsight.bank == "gitlab-pr-review"
+    assert m.hindsight.mental_models == ["m1"]
 
 
 # ---------------------------------------------------------------------------
@@ -57,15 +64,14 @@ def test_hindsight_memory_direct() -> None:
 
 
 def test_codemem_memory_loads() -> None:
-    """CodememMemory validates with explicit type and absolute dbPath."""
+    """CodememMemory validates with explicit type and codemem sub-block with absolute dbPath."""
     from ach_agent.config.schema import CodememMemory
 
     m = CodememMemory.model_validate(
-        {"type": "codemem", "dbPath": "/var/lib/codemem/agent.db"}
+        {"type": "codemem", "codemem": {"dbPath": "/var/lib/codemem/agent.db"}}
     )
     assert m.type == "codemem"
-    assert m.db_path == "/var/lib/codemem/agent.db"
-    assert m.mission == ""
+    assert m.codemem.db_path == "/var/lib/codemem/agent.db"
 
 
 def test_codemem_rejects_relative_db_path() -> None:
@@ -73,7 +79,9 @@ def test_codemem_rejects_relative_db_path() -> None:
     from ach_agent.config.schema import CodememMemory
 
     with pytest.raises(ValidationError, match="absolute"):
-        CodememMemory.model_validate({"type": "codemem", "dbPath": "relative/path.db"})
+        CodememMemory.model_validate(
+            {"type": "codemem", "codemem": {"dbPath": "relative/path.db"}}
+        )
 
 
 def test_codemem_rejects_dotdot_in_db_path() -> None:
@@ -81,41 +89,36 @@ def test_codemem_rejects_dotdot_in_db_path() -> None:
     from ach_agent.config.schema import CodememMemory
 
     with pytest.raises(ValidationError, match="absolute"):
-        CodememMemory.model_validate({"type": "codemem", "dbPath": "/var/lib/../escape.db"})
-
-
-def test_codemem_rejects_hindsight_only_fields() -> None:
-    """extra='forbid': bank is not a codemem field — ValidationError expected."""
-    from ach_agent.config.schema import CodememMemory
-
-    with pytest.raises(ValidationError):
         CodememMemory.model_validate(
-            {"type": "codemem", "dbPath": "/var/lib/codemem/a.db", "bank": "x"}
+            {"type": "codemem", "codemem": {"dbPath": "/var/lib/../escape.db"}}
         )
 
 
+def test_codemem_rejects_hindsight_only_fields() -> None:
+    """extra='forbid': flat dbPath without the codemem: sub-block is rejected by CodememMemory."""
+    from ach_agent.config.schema import CodememMemory
+
+    with pytest.raises(ValidationError):
+        CodememMemory.model_validate({"type": "codemem", "dbPath": "/var/lib/codemem/a.db"})
+
+
 # ---------------------------------------------------------------------------
-# Backward compat: legacy memory block without `type` → hindsight
+# Strict: legacy memory block without `type` now raises ValidationError
 # ---------------------------------------------------------------------------
 
 
-def test_legacy_block_without_type_loads_as_hindsight(tmp_path: Path) -> None:
-    """A legacy memory block with no `type` key is defaulted to hindsight.
+def test_legacy_block_without_type_raises(tmp_path: Path) -> None:
+    """A legacy memory block with no `type` key now hard-fails (no backward-compat coercion).
 
-    Uses the fixture + _load_raw round-trip to exercise the full load_config
-    path including the @field_validator("memory", mode="before") on AgentConfig.
+    The strict nested schema requires an explicit ``type`` discriminator; omitting it
+    causes a ValidationError in load_config → sys.exit(1) (SystemExit).
     """
-    from ach_agent.config.schema import HindsightMemory
-
     raw = _read_fixture("config_webhook.json")
-    # Legacy shape: no `type` key — operator pre-v1 configs render this form.
+    # Legacy shape: no `type` key — was formerly defaulted to hindsight; now rejected.
     raw["memory"] = {
         "endpoint": "http://mem:8080",
         "bank": "gitlab-pr-review",
         "mentalModels": ["m1"],
     }
-    cfg = _load_raw(tmp_path, raw)
-    assert isinstance(cfg.memory, HindsightMemory)
-    assert cfg.memory.type == "hindsight"
-    assert cfg.memory.endpoint == "http://mem:8080"
-    assert cfg.memory.bank == "gitlab-pr-review"
+    with pytest.raises(SystemExit):
+        _load_raw(tmp_path, raw)

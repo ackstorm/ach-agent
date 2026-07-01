@@ -171,17 +171,12 @@ class PromptBlock(BaseModel):
     compose: str = "append"
 
 
-class HindsightMemory(BaseModel):
-    """CONTRACT §2 memory block — Hindsight backend (fail-open §31). Legacy/default shape."""
+class HindsightParams(BaseModel):
+    """Hindsight backend params — the ``memory.hindsight`` sub-block (CONTRACT §2)."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    type: Literal["hindsight"] = "hindsight"
     endpoint: str
-    # Contract-reserved (CONTRACT §2): agent-specific memory intent. Accepted but not yet
-    # consumed by the harness; kept so an operator-rendered config carrying `mission` loads
-    # under extra=forbid. Do not remove without a coordinated CONTRACT_v3 change.
-    mission: str = ""
     # Static memory bank_id (the memory namespace for this agent's mission, e.g.
     # "gitlab-pr-review"). Per-event tag-based partitioning is a separate future layer
     # (see the memory bank+tags design note) and does NOT change this static field.
@@ -189,34 +184,53 @@ class HindsightMemory(BaseModel):
     mental_models: list[str] = Field(default_factory=list, alias="mentalModels")
 
 
-class CodememMemory(BaseModel):
-    """CONTRACT §2 memory block — codemem backend (local stdio MCP, model-managed)."""
+class HindsightMemory(BaseModel):
+    """CONTRACT §2 memory block — Hindsight backend (fail-open §31).
+
+    Strict nested form: ``{type: hindsight, hindsight: {...}}``. There is NO backward-compat
+    for a flat block or a missing ``type`` — the schema hard-fails (extra='forbid').
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["hindsight"]
+    hindsight: HindsightParams
+
+
+class CodememParams(BaseModel):
+    """codemem backend params — the ``memory.codemem`` sub-block (CONTRACT §2)."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    type: Literal["codemem"]
     # Absolute path to the codemem SQLite DB on a persistent volume. Operator config
     # (trusted, like bank_id). NOT templated per-repo in v1; NOT from inbound payload.
     db_path: str = Field(alias="dbPath")
-    # Contract-reserved (CONTRACT §2): accepted, not yet consumed.
-    mission: str = ""
 
     @field_validator("db_path")
     @classmethod
     def _abs_no_escape(cls, v: str) -> str:
         p = PurePosixPath(v)
         if not p.is_absolute() or ".." in p.parts:
-            raise ValueError("memory.codemem.db_path must be an absolute path with no '..'")
+            raise ValueError("memory.codemem.dbPath must be an absolute path with no '..'")
         return v
 
 
-# Discriminated on `type`. Backward-compat: a legacy block with no `type` is defaulted
-# to "hindsight" by the validator on AgentConfig (see below).
-Memory = Annotated[HindsightMemory | CodememMemory, Field(discriminator="type")]
+class CodememMemory(BaseModel):
+    """CONTRACT §2 memory block — codemem backend (local stdio MCP, model-managed).
 
-# Backward-compat alias: memory adapter and other downstream modules import MemoryBlock;
-# they are updated in later tasks (Tasks 3/4). This alias keeps them working unchanged.
-MemoryBlock = HindsightMemory
+    Strict nested form: ``{type: codemem, codemem: {dbPath: ...}}``. A flat ``dbPath`` at the
+    ``memory`` level is rejected (extra='forbid').
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["codemem"]
+    codemem: CodememParams
+
+
+# Strict discriminated union on `type` — `type` is REQUIRED (no default, no backward-compat
+# coercion). An unknown/missing `type`, a flat block, or a mismatched sub-block hard-fails.
+Memory = Annotated[HindsightMemory | CodememMemory, Field(discriminator="type")]
 
 
 # ---------------------------------------------------------------------------
@@ -426,15 +440,6 @@ class AgentConfig(BaseModel):
     persistence: PersistenceBlock = Field(default_factory=PersistenceBlock)
     health: HealthBlock = Field(default_factory=HealthBlock)
     channels: list[ChannelConfig] = Field(default_factory=list)
-
-    @field_validator("memory", mode="before")
-    @classmethod
-    def _default_memory_type(cls, v: object) -> object:
-        """Backward-compat: legacy configs render the Hindsight shape without an explicit
-        `type`. Inject `type: hindsight` so the discriminated union resolves correctly."""
-        if isinstance(v, dict) and "type" not in v:
-            return {**v, "type": "hindsight"}
-        return v
 
 
 # ---------------------------------------------------------------------------

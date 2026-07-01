@@ -15,6 +15,14 @@ The router must be correct: per-session FIFO lanes with the pinned ordering
 (`maxConcurrentInvocations`, `maxInvocationSeconds`, `maxQueuedTotal`). Its behavior is pinned
 by the CONTRACT §6 conformance suite (`make conformance`).
 
+## Engine — per-session opencode servers
+
+The engine pool is keyed by `session_key`: each session identity (cron name, gitlab server+repo,
+tui-console) gets its **own** `opencode serve` process with its own isolated HOME (config, session
+store, `node_modules`), so distinct sessions never share filesystem state. The working directory
+(`/workspace`) stays shared. See the design record:
+[Keyed EnginePool](references/2026-07-01-keyed-engine-pool.md).
+
 ## Getting started
 
 See the [README](https://github.com/ackstorm/ach-agent#readme) for the quick-start and the

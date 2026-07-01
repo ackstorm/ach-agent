@@ -937,9 +937,26 @@ async def main(
                     _mem_ok, _ = await prepare_memory(cfg.memory)
                     if _mem_ok:
                         warm_mcp_servers = [cfg.memory.hindsight.endpoint]
-                warm_cfg = dataclasses.replace(engine_cfg, mcp_servers=warm_mcp_servers)
                 from ach_agent.channels.tui import _CONSOLE_SESSION_KEY
 
+                warm_codemem_project = engine_cfg.codemem_project
+                if isinstance(cfg.memory, CodememMemory) and "{{" in engine_cfg.codemem_project:
+                    warm_ctx = build_template_context(
+                        {},
+                        channel_name="tui",
+                        channel_type="tui",
+                        channel_source="",
+                        agent_name=cfg.agent.name,
+                        memory_bank="",
+                        event_id="",
+                        session_key=_CONSOLE_SESSION_KEY,
+                    )
+                    # Keyed pool reuses this warm server for the whole console session, so the
+                    # project must be rendered HERE — engine_runner's later render is discarded.
+                    warm_codemem_project = render_template(engine_cfg.codemem_project, warm_ctx)
+                warm_cfg = dataclasses.replace(
+                    engine_cfg, mcp_servers=warm_mcp_servers, codemem_project=warm_codemem_project
+                )
                 warm_server = await pool.acquire(_CONSOLE_SESSION_KEY, warm_cfg)
                 # No stdout banner — opencode's own --print-logs already announces the
                 # listening address. Keep one structured info line with the loopback address.

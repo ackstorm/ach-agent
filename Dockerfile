@@ -84,11 +84,12 @@ ENV ACH_CONFIG_PATH=/etc/ach-agent/config.yaml
 EXPOSE 8080
 
 # non-root: uid 10001 (numeric USER so kubelet runAsNonRoot can verify without /etc/passwd).
-# Pre-create writable work/state dirs the harness + opencode use (the pool's ephemeral
-# homes go under TMPDIR=/tmp, which is world-writable).
+# Pre-create the engine home owned by uid 10001 so a volume mounted there inherits a
+# non-root-writable mountpoint. workDir (<home>/workspace) and .ach-state (<home>/.ach-state)
+# live UNDER home, so the harness creates them — no top-level scratch dirs needed.
 RUN useradd -u 10001 -m appuser \
- && mkdir -p /tmp/workspace /tmp/ach-state /tmp/ach-home \
- && chown -R 10001 /tmp/workspace /tmp/ach-state /tmp/ach-home
+ && mkdir -p /tmp/ach-home \
+ && chown -R 10001 /tmp/ach-home
 USER 10001
 
 # ENTRYPOINT (not CMD) so launch modifiers append cleanly:

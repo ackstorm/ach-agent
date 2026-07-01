@@ -645,7 +645,7 @@ async def _run_opencode_attach(
         return
 
     url = f"http://127.0.0.1:{port}"
-    env = {**os.environ, "HOME": str(ephemeral_home), "TMPDIR": str(ephemeral_home)}
+    env = {**os.environ, "HOME": str(ephemeral_home), "TMPDIR": "/tmp"}
     if config_path is not None:
         env["OPENCODE_CONFIG"] = str(config_path)
     log_path = _harness_log_dir() / "tui-attach.log"

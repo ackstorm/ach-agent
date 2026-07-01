@@ -46,8 +46,8 @@ def _cfg(memory: dict | None = None, persistence: dict | None = None) -> AgentCo
     return AgentConfig.model_validate(raw)
 
 
-def _opencode_json(home: Path) -> dict:  # type: ignore[type-arg]
-    return json.loads((home / ".config" / "opencode" / "opencode.json").read_text())
+def _opencode_json(config_path: Path) -> dict:  # type: ignore[type-arg]
+    return json.loads(config_path.read_text())
 
 
 # ---------------------------------------------------------------------------
@@ -74,9 +74,9 @@ async def test_codemem_config_flows_into_opencode_json(
         codemem_db_path=db_path,
         codemem_project=project,
     )
-    write_opencode_config(tmp_path, engine_cfg)
+    cfg_path = write_opencode_config(tmp_path, engine_cfg, "k1")
 
-    mcp = _opencode_json(tmp_path)["mcp"]
+    mcp = _opencode_json(cfg_path)["mcp"]
     assert mcp["codemem"] == {
         "type": "local",
         "command": ["codemem", "mcp", "--db-path", "/var/lib/codemem/agent.db"],
@@ -121,9 +121,9 @@ async def test_codemem_absent_from_path_degrades(
         codemem_db_path=db_path,
         codemem_project=project,
     )
-    write_opencode_config(tmp_path, engine_cfg)
+    cfg_path = write_opencode_config(tmp_path, engine_cfg, "k1")
 
-    assert "codemem" not in _opencode_json(tmp_path).get("mcp", {})
+    assert "codemem" not in _opencode_json(cfg_path).get("mcp", {})
 
 
 async def test_hindsight_path_produces_no_codemem_entry(
@@ -152,9 +152,9 @@ async def test_hindsight_path_produces_no_codemem_entry(
         codemem_db_path="",
         codemem_project="",
     )
-    write_opencode_config(tmp_path, engine_cfg)
+    cfg_path = write_opencode_config(tmp_path, engine_cfg, "k1")
 
-    oc_mcp = _opencode_json(tmp_path).get("mcp", {})
+    oc_mcp = _opencode_json(cfg_path).get("mcp", {})
 
     # No codemem entry for hindsight path
     assert "codemem" not in oc_mcp

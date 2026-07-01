@@ -165,7 +165,7 @@ async def test_roundtrip_launch_to_actions(mock_model_server, tmp_path):
 
     try:
         # Phase 1: launch
-        server = await launch(oc_port, ephemeral_home, config)
+        server = await launch(oc_port, ephemeral_home, config, session_key="k1")
         assert server.is_alive(), "opencode subprocess must be running after launch"
 
         # Phase 2: poll_ready (GET /app returns 200 when ready)

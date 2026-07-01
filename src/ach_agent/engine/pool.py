@@ -75,8 +75,8 @@ class EnginePool:
         self.engine_has_been_ready_once: bool = False
 
         # _start_server is injectable for testing (replaced by tests with a fake).
-        # In production it points to the lifecycle launch helper. It receives only
-        # the EngineConfig — session_key is pool-internal.
+        # In production it points to the lifecycle launch helper. It receives the
+        # EngineConfig and session_key.
         self._start_server: Callable[..., Awaitable[ManagedServer]] = _default_start_server
 
     @staticmethod
@@ -150,7 +150,9 @@ class EnginePool:
                 self._ref_counts.pop(session_key, None)
 
             log.info("EnginePool.acquire: starting new server", session_key=session_key)
-            server = await self._start_server(self._config_for_key(session_key, config))
+            server = await self._start_server(
+                self._config_for_key(session_key, config), session_key
+            )
             # A′ latch: _start_server only returns on success (poll_ready calls
             # sys.exit(1) on failure), so reaching here proves the engine was ready.
             self.engine_has_been_ready_once = True
@@ -247,7 +249,7 @@ class EnginePool:
             await self._stop(session_key)
 
 
-async def _default_start_server(config: EngineConfig) -> ManagedServer:
+async def _default_start_server(config: EngineConfig, session_key: str) -> ManagedServer:
     """Default start-server implementation: full lifecycle launch + poll_ready.
 
     HOME is ``config.home`` (created if absent). The caller (EnginePool.acquire)
@@ -265,6 +267,6 @@ async def _default_start_server(config: EngineConfig) -> ManagedServer:
     # opencode serve binds loopback on a free ephemeral port the harness picks (so it knows
     # the port for its client + `opencode attach`); never published off-host.
     port = find_free_port()
-    server = await launch(port, home, config)
+    server = await launch(port, home, config, session_key)
     await poll_ready(server, config.startup_timeout_seconds)
     return server

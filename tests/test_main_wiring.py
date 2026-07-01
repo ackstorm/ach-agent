@@ -122,8 +122,8 @@ def test_opencode_json_never_contains_ek(tmp_path: Any, monkeypatch: Any) -> Non
         model_base_url="http://127.0.0.1:9001/v1",
         mcp_local_urls={"mcp-gofetch": "http://127.0.0.1:9002/mcp/mcp-gofetch"},
     )
-    write_opencode_config(tmp_path, cfg)
-    blob = (tmp_path / ".config" / "opencode" / "opencode.json").read_text(encoding="utf-8")
+    path = write_opencode_config(tmp_path, cfg, "k1")
+    blob = path.read_text(encoding="utf-8")
 
     assert "ek-secret-xyz" not in blob
     assert "ach.example.com" not in blob
@@ -149,8 +149,8 @@ def test_excluded_tools_written_disabled_in_opencode_json(tmp_path: Any) -> None
         model_base_url="http://127.0.0.1:9001/v1",
         exclude_tools=["gitlab_merge_merge_request"],
     )
-    write_opencode_config(tmp_path, cfg)
-    data = _json.loads((tmp_path / ".config" / "opencode" / "opencode.json").read_text())
+    path = write_opencode_config(tmp_path, cfg, "k1")
+    data = _json.loads(path.read_text())
     tools = data["agent"]["build"]["tools"]
     assert tools["gitlab_merge_merge_request"] is False
     assert tools["question"] is False  # existing disable preserved

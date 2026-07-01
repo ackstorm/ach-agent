@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import sys
@@ -162,19 +164,35 @@ class ManagedServer:
 # ---------------------------------------------------------------------------
 
 
-def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
-    """Write opencode.json to ephemeral home before subprocess launch.
+def _key_suffix(session_key: str) -> str:
+    """Filename-safe, deterministic suffix for a session_key.
+
+    Gives each keyed opencode process its OWN config + prompt file inside the SHARED
+    home, so distinct keys never truncate-rewrite the same file (I-1) while sharing
+    skills/.ach-state/node_modules under that home. session_key is always non-empty
+    (the pool derives it per channel).
+    """
+    digest = hashlib.sha1(session_key.encode("utf-8")).hexdigest()[:8]
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", session_key)[:48]
+    return f"_{safe}-{digest}"
+
+
+def write_opencode_config(ephemeral_home: Path, config: EngineConfig, session_key: str) -> Path:
+    """Write per-session opencode config file to ephemeral home before subprocess launch.
 
     Security (SEC-01 / T-00-EK / Pitfall 6): no secret is ever written. opencode points at
     the localhost model-proxy and the proxy injects the ek_; opencode.json carries only a
     dummy apiKey and the loopback baseURL.
 
     Security (T-00-TRACE): Secrets are never passed as CLI arguments — only config file.
+
+    Returns the Path of the config file written (opencode_<suffix>.json).
     """
+    suffix = _key_suffix(session_key)
     config_dir = ephemeral_home / ".config" / "opencode"
     config_dir.mkdir(parents=True, exist_ok=True)
 
-    prompt_path = ephemeral_home / "personality" / "system_prompt.txt"
+    prompt_path = ephemeral_home / "personality" / f"system_prompt{suffix}.txt"
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_path.write_text(config.system_prompt or "", encoding="utf-8")
 
@@ -264,12 +282,14 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
         }
     if mcp_block:
         oc_config["mcp"] = mcp_block
-    (config_dir / "opencode.json").write_text(json.dumps(oc_config, indent=2), encoding="utf-8")
+    config_path = config_dir / f"opencode{suffix}.json"
+    config_path.write_text(json.dumps(oc_config, indent=2), encoding="utf-8")
     log.debug(
-        "opencode.json written",
-        path=str(config_dir / "opencode.json"),
+        "opencode config written",
+        path=str(config_path),
         provider=config.provider,
     )
+    return config_path
 
 
 # Base allowlist (SEC-01 / ek-hygiene): the only harness env vars opencode inherits by
@@ -293,7 +313,9 @@ _OPENCODE_ENV_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
-def build_opencode_env(ephemeral_home: Path, config: EngineConfig) -> dict[str, str]:
+def build_opencode_env(
+    ephemeral_home: Path, config: EngineConfig, config_path: Path
+) -> dict[str, str]:
     """Construct a minimal, allowlisted environment for the opencode subprocess.
 
     Clean-slate (SEC-01 / ek-hygiene): opencode does NOT inherit the harness env. It gets
@@ -302,8 +324,10 @@ def build_opencode_env(ephemeral_home: Path, config: EngineConfig) -> dict[str, 
     is never present unless explicitly named — and it must not be, because the localhost
     model-proxy injects it and opencode points only at 127.0.0.1.
 
-    Pinned last (override anything above): HOME/TMPDIR → the per-server ephemeral home;
+    Pinned last (override anything above): HOME/TMPDIR → the shared ephemeral home;
     GIT_TERMINAL_PROMPT=0 so git never blocks a non-interactive subprocess on a prompt.
+    Note: XDG_CONFIG_HOME is intentionally excluded — it would override $HOME/.config/opencode
+    and break the per-session opencode config file the harness just wrote.
     """
     env: dict[str, str] = {
         name: os.environ[name] for name in _OPENCODE_ENV_ALLOWLIST if name in os.environ
@@ -317,11 +341,16 @@ def build_opencode_env(ephemeral_home: Path, config: EngineConfig) -> dict[str, 
     env["HOME"] = str(ephemeral_home)
     env["TMPDIR"] = str(ephemeral_home)
     env["GIT_TERMINAL_PROMPT"] = "0"
+    # Point opencode at THIS server's per-session config file; HOME-shared skills/
+    # agents and the session store stay discoverable from the shared config dir.
+    env["OPENCODE_CONFIG"] = str(config_path)
     return env
 
 
-async def launch(port: int, ephemeral_home: Path, config: EngineConfig) -> ManagedServer:
-    """Launch opencode serve in an isolated ephemeral home.
+async def launch(
+    port: int, ephemeral_home: Path, config: EngineConfig, session_key: str
+) -> ManagedServer:
+    """Launch opencode serve in a shared ephemeral home with a per-session config file.
 
     Hardening applied:
       - start_new_session=True (Pitfall 3 / H-03: process-group kill safety)
@@ -336,7 +365,7 @@ async def launch(port: int, ephemeral_home: Path, config: EngineConfig) -> Manag
     if not binary:
         raise RuntimeError(f"opencode binary not found: {config.binary_path!r}")
 
-    write_opencode_config(ephemeral_home, config)
+    config_path = write_opencode_config(ephemeral_home, config, session_key)
 
     # Ensure work_dir exists
     work_dir = Path(config.work_dir)
@@ -351,7 +380,7 @@ async def launch(port: int, ephemeral_home: Path, config: EngineConfig) -> Manag
     # When set, opencode requires authentication for ALL routes including GET /app,
     # breaking the readiness probe (401). Do NOT set it; accept the warning in logs.
     # The server binds to 127.0.0.1 only.
-    env = build_opencode_env(ephemeral_home, config)
+    env = build_opencode_env(ephemeral_home, config, config_path)
 
     log.info(
         "launching opencode serve",

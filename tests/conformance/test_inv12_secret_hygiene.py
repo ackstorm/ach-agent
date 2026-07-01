@@ -29,8 +29,8 @@ def test_ek_never_in_opencode_json(tmp_path: Path, monkeypatch: Any) -> None:
         model_base_url="http://127.0.0.1:9001/v1",
         mcp_local_urls={"m": "http://127.0.0.1:9002/mcp/m"},
     )
-    write_opencode_config(tmp_path, cfg)
-    blob = (tmp_path / ".config" / "opencode" / "opencode.json").read_text(encoding="utf-8")
+    path = write_opencode_config(tmp_path, cfg, "k1")
+    blob = path.read_text(encoding="utf-8")
 
     assert "ek_conformance_secret_value" not in blob, "§6.10: ek_ must never be in opencode.json"
     assert "127.0.0.1" in blob, "§6.10: opencode must point at the local proxy"

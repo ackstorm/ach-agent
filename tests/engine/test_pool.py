@@ -34,7 +34,7 @@ async def test_pool_reuse_same_key() -> None:
     calls = {"n": 0}
     fake = _make_fake_server(alive=True)
 
-    async def fake_start(cfg):
+    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
         calls["n"] += 1
         return fake
 
@@ -53,7 +53,7 @@ async def test_pool_distinct_keys_get_distinct_servers() -> None:
     servers = {"k1": _make_fake_server(), "k2": _make_fake_server()}
     seq = iter([servers["k1"], servers["k2"]])  # returned in acquire order
 
-    async def fake_start(cfg):
+    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
         return next(seq)
 
     pool._start_server = fake_start
@@ -72,7 +72,7 @@ async def test_release_one_key_does_not_stop_another() -> None:
     servers = {"k1": _make_fake_server(), "k2": _make_fake_server()}
     seq = iter([servers["k1"], servers["k2"]])  # returned in acquire order
 
-    async def fake_start(cfg):
+    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
         return next(seq)
 
     pool._start_server = fake_start
@@ -93,7 +93,7 @@ async def test_ttl0_stops_immediately() -> None:
     pool = EnginePool()
     fake = _make_fake_server(alive=True)
 
-    async def fake_start(cfg):
+    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
         return fake
 
     pool._start_server = fake_start
@@ -109,7 +109,7 @@ async def test_ttl_expires_after_delay() -> None:
     pool = EnginePool()
     fake = _make_fake_server(alive=True)
 
-    async def fake_start(cfg):
+    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
         return fake
 
     pool._start_server = fake_start
@@ -129,7 +129,7 @@ async def test_reacquire_cancels_pending_ttl() -> None:
     pool = EnginePool()
     fake = _make_fake_server(alive=True)
 
-    async def fake_start(cfg):
+    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
         return fake
 
     pool._start_server = fake_start
@@ -147,7 +147,7 @@ async def test_ref_count_keeps_server_until_last_release() -> None:
     pool = EnginePool()
     fake = _make_fake_server(alive=True)
 
-    async def fake_start(cfg):
+    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
         return fake
 
     pool._start_server = fake_start
@@ -169,7 +169,7 @@ async def test_dead_server_replaced_on_acquire() -> None:
     live = _make_fake_server(alive=True)
     seq = [dead, live]
 
-    async def fake_start(cfg):
+    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
         return seq.pop(0)
 
     pool._start_server = fake_start
@@ -186,7 +186,7 @@ async def test_ready_latch_set_on_first_start() -> None:
     pool = EnginePool()
     fake = _make_fake_server(alive=True)
 
-    async def fake_start(cfg):
+    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
         return fake
 
     pool._start_server = fake_start
@@ -204,7 +204,7 @@ async def test_stop_all_stops_every_server() -> None:
     servers = {"k1": _make_fake_server(), "k2": _make_fake_server()}
     seq = iter([servers["k1"], servers["k2"]])  # returned in acquire order
 
-    async def fake_start(cfg):
+    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
         return next(seq)
 
     pool._start_server = fake_start
@@ -235,7 +235,7 @@ async def test_distinct_keys_get_isolated_homes() -> None:
     pool = EnginePool()
     seen_homes: list[str] = []
 
-    async def fake_start(cfg):
+    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
         seen_homes.append(cfg.home)
         return _make_fake_server(alive=True)
 
@@ -275,7 +275,7 @@ async def test_default_start_server_uses_config_home(tmp_path: Path, monkeypatch
 
     captured: dict[str, object] = {}
 
-    async def fake_launch(port: int, home: Path, config: object) -> object:
+    async def fake_launch(port: int, home: Path, config: object, session_key: str = "") -> object:
         captured["home"] = home
         captured["port"] = port
         return object()
@@ -289,7 +289,7 @@ async def test_default_start_server_uses_config_home(tmp_path: Path, monkeypatch
 
     home = tmp_path / "home"
     cfg = EngineConfig(home=str(home))
-    await poolmod._default_start_server(cfg)
+    await poolmod._default_start_server(cfg, "k1")
 
     assert captured["home"] == home
     assert home.is_dir()  # created if absent

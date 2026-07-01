@@ -621,3 +621,55 @@ async def test_run_invocation_reuse_true_reuses_session() -> None:
     # create_session called exactly once — second call reuses the stored id
     mock_client.create_session.assert_awaited_once()
     assert server._sessions.get("key-b") == "ses-reused"
+
+
+# ---------------------------------------------------------------------------
+# Shared-home parity: launch() populates ManagedServer.config_path
+# ---------------------------------------------------------------------------
+
+
+async def test_launch_populates_config_path(tmp_path: Path) -> None:
+    """launch() stores the path returned by write_opencode_config in server.config_path.
+
+    Under the shared-home model a per-session config file is written and the path is
+    needed by the --tui attach client to set OPENCODE_CONFIG.  Drives launch() with a
+    real fake binary so the full code path executes (same pattern as test_launch_subprocess).
+    """
+    from ach_agent.engine.lifecycle import EngineConfig, ManagedServer, launch
+
+    config = EngineConfig()
+    fake_binary = tmp_path / "opencode"
+    fake_binary.write_text("#!/bin/sh\nsleep 30\n")
+    fake_binary.chmod(0o755)
+    config.binary_path = str(fake_binary)
+    config.work_dir = str(tmp_path)
+
+    known_path = tmp_path / ".config" / "opencode" / "opencode_k1.json"
+
+    with (
+        patch(
+            "ach_agent.engine.lifecycle.write_opencode_config",
+            return_value=known_path,
+        ),
+        patch(
+            "ach_agent.engine.client.OpenCodeClient.check_health",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+    ):
+        server = await launch(port=19883, ephemeral_home=tmp_path, config=config, session_key="k1")
+
+    try:
+        assert server.config_path == known_path, (
+            f"Expected config_path={known_path!r}, got {server.config_path!r}"
+        )
+    finally:
+        await server.stop()
+
+
+def test_managed_server_config_path_defaults_none() -> None:
+    """ManagedServer.config_path defaults to None when not supplied."""
+    from ach_agent.engine.lifecycle import ManagedServer
+
+    server = ManagedServer(port=0)
+    assert server.config_path is None

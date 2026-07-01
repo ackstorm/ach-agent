@@ -108,6 +108,7 @@ class ManagedServer:
 
     port: int = 0
     ephemeral_home: Path = field(default_factory=lambda: Path("/tmp/oc-unset"))
+    config_path: Path | None = None
     # process and client are None until launch() populates them
     _process: object | None = field(default=None, repr=False)
     _client: object | None = field(default=None, repr=False)
@@ -407,7 +408,7 @@ async def launch(
         start_new_session=True,  # H-03 / Pitfall 3: required for os.killpg safety
     )
 
-    server = ManagedServer(port=port, ephemeral_home=ephemeral_home)
+    server = ManagedServer(port=port, ephemeral_home=ephemeral_home, config_path=config_path)
     server._process = proc
 
     # H-05: Start drain tasks immediately after subprocess creation.

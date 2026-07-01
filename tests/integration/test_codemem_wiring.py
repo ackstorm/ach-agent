@@ -56,7 +56,11 @@ async def test_codemem_config_flows_into_opencode_json(
         "type": "local",
         "command": ["codemem", "mcp", "--db-path", "/var/lib/codemem/agent.db"],
         "enabled": True,
-        "environment": {"CODEMEM_VIEWER": "0", "CODEMEM_VIEWER_AUTO": "0"},
+        "environment": {
+            "CODEMEM_VIEWER": "0",
+            "CODEMEM_VIEWER_AUTO": "0",
+            "CODEMEM_PROJECT": "ach-agent",
+        },
     }
 
 

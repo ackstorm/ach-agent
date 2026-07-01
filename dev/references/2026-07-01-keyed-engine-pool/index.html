@@ -1,0 +1,701 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>Keyed EnginePool — design, decisions & session record (2026-07-01) - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#keyed-enginepool-design-decisions-session-record-2026-07-01" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Keyed EnginePool — design, decisions &amp; session record (2026-07-01)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-why-we-did-this" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Why we did this
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-the-model-we-locked-session-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. The model we locked (session identity)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. The model we locked (session identity)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#session_key-the-identity-derived-per-channel" class="md-nav__link">
+    <span class="md-ellipsis">
+      session_key = the identity, derived per channel
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#one-session_key-one-agent-queue-the-rest-the-router-already-correct" class="md-nav__link">
+    <span class="md-ellipsis">
+      "one session_key → one agent, queue the rest" = the router (already correct)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#harness-variables-vs-agent-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      harness variables vs agent variables
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session_key-opencode-session-and-reuse-autonone-deferred" class="md-nav__link">
+    <span class="md-ellipsis">
+      session_key ↔ opencode session, and reuse (auto|none) — DEFERRED
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-sin-colision-decision-important" class="md-nav__link">
+    <span class="md-ellipsis">
+      The "sin colisión" decision (important)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-architecture-fork-we-took" class="md-nav__link">
+    <span class="md-ellipsis">
+      The architecture fork we took
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-what-shipped" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. What shipped
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. What shipped">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#keyed-enginepool-srcach_agentenginepoolpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      Keyed EnginePool (src/ach_agent/engine/pool.py)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#per-key-home-isolation-_config_for_key-the-i-1-fix" class="md-nav__link">
+    <span class="md-ellipsis">
+      Per-key HOME isolation (_config_for_key) — the I-1 fix
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wiring-srcach_agentmainpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      Wiring (src/ach_agent/main.py)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-the-bug-the-process-caught-i-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. The bug the process caught (I-1)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-follow-ups-tracked-not-in-this-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Follow-ups (tracked, not in this branch)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-commits" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Commits
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="keyed-enginepool-design-decisions-session-record-2026-07-01">Keyed EnginePool — design, decisions &amp; session record (2026-07-01)</h1>
+<p><strong>Status:</strong> Shipped. Merged to <code>main</code> (<code>c57c92a</code>, <code>--no-ff</code>) and pushed. Validated live in <code>--tui</code>.
+<strong>Branch:</strong> <code>feat/keyed-engine-pool</code> (7 commits).
+<strong>Built with:</strong> superpowers <code>writing-plans</code> + <code>subagent-driven-development</code> (fresh implementer per task,
+per-task review, whole-branch review). Plan: <code>docs/superpowers/plans/2026-07-01-keyed-engine-pool.md</code>.</p>
+<p>This document records the whole reasoning session — not just the diff — so the <em>why</em> survives.</p>
+<hr />
+<h2 id="1-why-we-did-this">1. Why we did this</h2>
+<p>The trigger was a memory question: make codemem's <code>project</code> (and, by the same logic, hindsight's
+<code>bankID</code>) reflect <strong>session identity</strong> rather than a fixed per-agent constant, so memory can be scoped
+per repo / per cron / per user. That surfaced a deeper architectural gap: <strong>codemem's
+<code>CODEMEM_PROJECT</code> is an env fixed at MCP-child spawn</strong>, and the harness ran <strong>one shared opencode
+server</strong> for all sessions — so there was no per-session seam to hang a per-session project on.</p>
+<p>Resolving "per-session memory" therefore required resolving the pool architecture first. codemem
+templating and the <code>session: auto|none</code> flag are deliberately <strong>deferred</strong> to follow-ups; this branch
+delivers only the seam they need: <strong>a pool keyed by <code>session_key</code>.</strong></p>
+<p>Reference implementation studied: <code>../ackbot-process/src/agent/server_pool.py</code> — a keyed
+<code>ServerPool</code> (<code>dict[server_id → ManagedServer]</code>, per-key ref-count + TTL).</p>
+<hr />
+<h2 id="2-the-model-we-locked-session-identity">2. The model we locked (session identity)</h2>
+<h3 id="session_key-the-identity-derived-per-channel">session_key = the identity, derived per channel</h3>
+<p>Each channel derives a <code>session_key</code> from its own internal facts. This already existed in the router:</p>
+<table>
+<thead>
+<tr>
+<th>channel</th>
+<th>session_key</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>cron</td>
+<td>channel name</td>
+</tr>
+<tr>
+<td>webhook + gitlab</td>
+<td>server + repo (<code>_parse_gitlab</code>)</td>
+</tr>
+<tr>
+<td>webhook + github</td>
+<td><code>_parse_github</code></td>
+</tr>
+<tr>
+<td>webhook + generic</td>
+<td>idempotency-derived (<code>_parse_generic</code>)</td>
+</tr>
+<tr>
+<td>queue</td>
+<td>channel name</td>
+</tr>
+<tr>
+<td>a2a</td>
+<td><code>context_id</code></td>
+</tr>
+<tr>
+<td>tui</td>
+<td>fixed <code>"tui-console"</code> (<code>_CONSOLE_SESSION_KEY</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><em>(future e.g. telegram → per user)</em></p>
+<h3 id="one-session_key-one-agent-queue-the-rest-the-router-already-correct">"one session_key → one agent, queue the rest" = the router (already correct)</h3>
+<p>The router keys per-session FIFO lanes by <code>session_key</code> (RTR-02): <strong>same key → same lane → serialized
+(queued); different keys → parallel</strong> up to <code>maxConcurrentInvocations</code>. Two GitLab hooks for the same
+repo wait; a hook for another repo runs in parallel. This is the repo's core IP and was <strong>not</strong> changed.
+(Note: ackbot is coarser — it keys its server pool by <em>channel name</em>, not per repo; the per-repo lane
+granularity is ach-agent's own.)</p>
+<h3 id="harness-variables-vs-agent-variables">harness variables vs agent variables</h3>
+<ul>
+<li><strong>harness / boot-static:</strong> e.g. <code>agent.name</code> — fixed once at server launch, one per harness.</li>
+<li><strong>agent / per-session:</strong> e.g. <code>session_key</code> — per event, channel-derived. The right candidate for
+  codemem <code>project</code> / hindsight <code>bankID</code> (follow-up).</li>
+</ul>
+<h3 id="session_key-opencode-session-and-reuse-autonone-deferred">session_key ↔ opencode session, and reuse (auto|none) — DEFERRED</h3>
+<p><code>ManagedServer._sessions: dict[session_key → opencode ses_id]</code> maps the logical key to the real
+opencode session. Today it <strong>always reuses</strong> (map never cleared). The planned <code>session: auto|none</code>
+per-channel flag governs <strong>only</strong> this opencode-session reuse:</p>
+<ul>
+<li><code>auto</code> → reuse the <code>ses_</code> across events (conversational continuity).</li>
+<li><code>none</code> → fresh <code>ses_</code> each event (clean run, e.g. each cron tick from scratch).</li>
+</ul>
+<h3 id="the-sin-colision-decision-important">The "sin colisión" decision (important)</h3>
+<p>An early idea was: in <code>none</code> mode the channel emits <code>session_key = None</code>. That is correct for the
+<strong>opencode-session</strong> layer (no set → fresh session), but <code>session_key</code> does <strong>triple duty</strong> — it is
+also the <strong>router lane key</strong> and the <strong>pool key</strong>. A literal <code>None</code> there would collapse all <code>none</code>
+events from all channels into one lane and one server. <strong>Decision: <code>session_key</code> stays a stable,
+non-<code>None</code> identity always</strong> (governs lane + pool); a <strong>separate</strong> <code>session: auto|none</code> flag governs
+opencode-session reuse only. Same behaviour, no collision. (<code>session: auto|none</code> itself is a follow-up.)</p>
+<h3 id="the-architecture-fork-we-took">The architecture fork we took</h3>
+<p><code>EnginePool</code> held <strong>one</strong> shared server (<code>self._server</code>), with opencode's own sessions layered on top.
+We migrated it to a <strong>keyed pool</strong> (<code>dict[session_key → ManagedServer]</code>) modelled on ackbot's
+<code>ServerPool</code>. Consequence — and the point: <strong>distinct <code>session_key</code>s now get separate opencode
+processes</strong> (own port, own HOME), instead of concurrent sessions sharing one server. Real per-repo /
+per-session isolation, and the seam per-session codemem/hindsight needs.</p>
+<hr />
+<h2 id="3-what-shipped">3. What shipped</h2>
+<h3 id="keyed-enginepool-srcach_agentenginepoolpy">Keyed <code>EnginePool</code> (<code>src/ach_agent/engine/pool.py</code>)</h3>
+<ul>
+<li>State: <code>_servers</code>, <code>_ref_counts</code>, <code>_ttl_tasks</code>, <code>_locks</code> — all <code>dict[session_key → …]</code>. Per-key
+  <code>asyncio.Lock</code> via <code>_get_lock</code> (ackbot pattern).</li>
+<li>API: <code>acquire(session_key, config)</code>, <code>release(session_key, ttl_seconds)</code>, <code>stop_all()</code>, plus per-key
+  <code>_expire</code> / <code>_stop</code>.</li>
+<li><code>engine_has_been_ready_once</code> stays a <strong>pool-global</strong> bool (readiness gate; readers in <code>http/app.py</code>,
+  <code>channels/cron.py</code>, <code>channels/a2a.py</code> unchanged).</li>
+<li>Lifecycle preserved: <code>release(ttl=0)</code> (v1 default for every channel) stops the key's server on last
+  release; <code>ttl&gt;0</code> schedules expiry; a re-acquire cancels the pending TTL.</li>
+<li>Hardening from review: TTL scheduling moved <strong>inside</strong> the per-key lock (uniform lock discipline);
+  a warning is logged on a spurious release (<code>ref_count==0</code>).</li>
+</ul>
+<h3 id="per-key-home-isolation-_config_for_key-the-i-1-fix">Per-key HOME isolation (<code>_config_for_key</code>) — the I-1 fix</h3>
+<p><code>acquire</code> feeds <code>_start_server</code> a config whose <code>home</code> is per-key:
+<code>&lt;config.home&gt;/servers/oc-&lt;sanitized_key&gt;-&lt;sha1[:8]&gt;</code>. HOME carries opencode's <code>opencode.json</code>, the
+<code>.local/share/opencode</code> session store, and <code>node_modules</code> — so <strong>distinct keys write distinct files;
+no shared-file race</strong>. The path is <strong>deterministic in <code>session_key</code></strong>: the same key reuses its home
+across invocations (node_modules cache reuse — reinstalled only when a <em>new</em> key first appears).
+<code>config.work_dir</code> (cwd, <code>/workspace</code>) is <strong>not</strong> per-key — it was shared before keying too, so leaving
+it shared is not a regression.</p>
+<h3 id="wiring-srcach_agentmainpy">Wiring (<code>src/ach_agent/main.py</code>)</h3>
+<ul>
+<li><code>engine_runner</code>: <code>acquire(event.session_key, cfg)</code> and, in <code>finally</code>,
+  <code>release(event.session_key, ttl_by_channel[...])</code> — same key on both (no leak).</li>
+<li>tui warm-up: <code>acquire(_CONSOLE_SESSION_KEY, warm_cfg)</code>; tui shutdown: <code>stop_all()</code>.</li>
+</ul>
+<hr />
+<h2 id="4-the-bug-the-process-caught-i-1">4. The bug the process caught (I-1)</h2>
+<p>The per-task reviews (each seeing one task's diff) passed. The <strong>whole-branch review</strong> (run on the most
+capable model) caught a real integration bug at the pool↔lifecycle seam that the green suite could not
+see — because <strong>every pool test injects a fake <code>_start_server</code></strong>:</p>
+<blockquote>
+<p><code>_default_start_server</code> launched every keyed server into the single shared <code>config.home</code>. Only the
+port was per-key. With <code>maxConcurrentInvocations ≥ 2</code> and two active keys (two GitLab repos — the MR
+reviewer case), two <code>_start_server</code> calls concurrently truncate-rewrite the <strong>same</strong>
+<code>opencode.json</code> → a subprocess reads torn/partial or cross-wired JSON → opencode dies at startup →
+<code>poll_ready</code> calls <code>sys.exit(1)</code> → <strong>harness crash</strong>.</p>
+</blockquote>
+<p>Fix = per-key HOME (§3). A focused re-review verified the trace end-to-end (<code>_config_for_key</code> →
+<code>dataclasses.replace(home=…)</code> → <code>launch</code> → <code>write_opencode_config</code>) and confirmed <strong>I-1 CLOSED</strong>, with
+same-key concurrency serialized by the per-key lock and the router lane, and path-sanitization safe
+against traversal/collision.</p>
+<p>Lesson recorded: a fleet of green unit tests that all stub the process-launch boundary cannot see a
+race at that boundary. The whole-branch adversarial pass is what caught it.</p>
+<hr />
+<h2 id="5-follow-ups-tracked-not-in-this-branch">5. Follow-ups (tracked, not in this branch)</h2>
+<ul>
+<li><strong><code>session: auto|none</code> per-channel flag</strong> — govern opencode-session reuse (<code>_sessions</code> store/lookup)
+  per §2. Needs <code>ttl&gt;0</code> to keep a keyed server warm between events for <code>auto</code>.</li>
+<li><strong>codemem <code>project</code> / hindsight <code>bankID</code> templating</strong> — the original motivation; now unblocked
+  (<code>project = {{ session.key }}</code> or channel-derived) because each key has its own server.</li>
+<li><strong>M-3 — per-key home disk reaper.</strong> Homes accumulate (one <code>node_modules</code> per distinct key, never
+  reaped). Bounded for cron/tui/queue/a2a (key = channel name); unbounded for gitlab (server+repo) over
+  a long-lived pod → disk-full risk. Documented as an explicit v1 decision in the <code>EnginePool</code>
+  docstring. TODO: GC <code>servers/oc-*</code> for non-live keys (by mtime).</li>
+<li><strong>M-4 — shared <code>/workspace</code> git tree.</strong> Pre-existing; keying makes it easier to hit concurrent git
+  index-lock contention / checkout races across distinct-key processes. Out of scope here.</li>
+</ul>
+<hr />
+<h2 id="6-commits">6. Commits</h2>
+<div class="highlight"><pre><span></span><code>b53ce20 feat(engine): key EnginePool by session_key
+b4a76af test(engine): restore non-pool coverage + drop _pending_key hack
+dfb26e1 fix(engine): lock-protect TTL scheduling + warn on spurious release
+5c02e73 feat(engine): wire engine_runner + tui to keyed pool
+7ce6d1a docs(engine): fix stale release() comment for keyed API
+ede6d3e fix(engine): isolate opencode HOME per session_key (I-1)
+b0ce381 docs(engine): document per-key home disk tradeoff (M-3)
+</code></pre></div>
+<p>Gate at merge: full suite <strong>309 passed, 1 skipped</strong>; <code>make _lint</code> (ruff + mypy --strict) clean.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

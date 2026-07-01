@@ -491,7 +491,7 @@ def _make_engine_runner(
             # lane: its `async with` blocks free the semaphores and its finally
             # calls on_kill for queued_total. run_invocation also fires on_kill on
             # a watchdog kill; on_kill is idempotent so that double call is safe.
-            # EnginePool.release(ttl_seconds) — no server arg (pool tracks internally).
+            # EnginePool.release(session_key, ttl_seconds) — pool tracks server by key internally.
             # TTL is a per-channel constant (0 for all v1 channels → stop on conversation end).
             try:
                 await pool.release(

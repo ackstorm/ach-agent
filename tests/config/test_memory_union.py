@@ -78,13 +78,32 @@ def test_codemem_memory_loads() -> None:
     assert m.codemem.project == "ach-agent"
 
 
+def test_codemem_empty_sub_block_is_valid() -> None:
+    """CodememMemory with an empty codemem sub-block is valid: dbPath=None, project='ach-agent'."""
+    from ach_agent.config.schema import CodememMemory
+
+    m = CodememMemory.model_validate({"type": "codemem", "codemem": {}})
+    assert m.type == "codemem"
+    assert m.codemem.db_path is None
+    assert m.codemem.project == "ach-agent"
+
+
+def test_codemem_minimal_no_sub_block_is_valid() -> None:
+    """The minimal form {type: codemem} (no codemem key) is valid — sub-block defaults."""
+    from ach_agent.config.schema import CodememMemory
+
+    m = CodememMemory.model_validate({"type": "codemem"})
+    assert m.codemem.db_path is None
+    assert m.codemem.project == "ach-agent"
+
+
 def test_codemem_rejects_relative_db_path() -> None:
     """CodememMemory rejects a relative dbPath (no leading slash)."""
     from ach_agent.config.schema import CodememMemory
 
     with pytest.raises(ValidationError, match="absolute"):
         CodememMemory.model_validate(
-            {"type": "codemem", "codemem": {"dbPath": "relative/path.db", "project": "test"}}
+            {"type": "codemem", "codemem": {"dbPath": "relative/path.db"}}
         )
 
 
@@ -94,17 +113,7 @@ def test_codemem_rejects_dotdot_in_db_path() -> None:
 
     with pytest.raises(ValidationError, match="absolute"):
         CodememMemory.model_validate(
-            {"type": "codemem", "codemem": {"dbPath": "/var/lib/../escape.db", "project": "test"}}
-        )
-
-
-def test_codemem_rejects_missing_project() -> None:
-    """CodememMemory requires project field — omitting it must raise ValidationError."""
-    from ach_agent.config.schema import CodememMemory
-
-    with pytest.raises(ValidationError):
-        CodememMemory.model_validate(
-            {"type": "codemem", "codemem": {"dbPath": "/var/lib/codemem/agent.db"}}
+            {"type": "codemem", "codemem": {"dbPath": "/var/lib/../escape.db"}}
         )
 
 

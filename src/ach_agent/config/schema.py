@@ -202,18 +202,22 @@ class CodememParams(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    # Absolute path to the codemem SQLite DB on a persistent volume. Operator config
-    # (trusted, like bank_id). NOT templated per-repo in v1; NOT from inbound payload.
-    db_path: str = Field(alias="dbPath")
-    # REQUIRED stable project namespace (passed to codemem as CODEMEM_PROJECT). codemem
-    # otherwise derives the project from cwd (git repo root), and its remember/search
-    # fallbacks disagree on a non-git work_dir — cross-session recall then silently returns
-    # nothing. A fixed project makes remember + search always agree.
-    project: str
+    # Absolute path to the codemem SQLite DB. OMITTED → the harness derives it at boot from
+    # persistence (<mountPath>/codemem/codemem.db when persistence.enabled, else
+    # /tmp/ach-home/codemem/codemem.db). Set it to override. Operator config (trusted); never
+    # templated per-repo, never from inbound payload.
+    db_path: str | None = Field(default=None, alias="dbPath")
+    # Stable project namespace (passed to codemem as CODEMEM_PROJECT). Fixed default so
+    # remember + search always agree across sessions — codemem otherwise derives the project
+    # from cwd (git repo root), and its fallbacks disagree on a non-git work_dir, silently
+    # breaking cross-session recall. Override only if you know why.
+    project: str = "ach-agent"
 
     @field_validator("db_path")
     @classmethod
-    def _abs_no_escape(cls, v: str) -> str:
+    def _abs_no_escape(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
         p = PurePosixPath(v)
         if not p.is_absolute() or ".." in p.parts:
             raise ValueError("memory.codemem.dbPath must be an absolute path with no '..'")
@@ -223,14 +227,16 @@ class CodememParams(BaseModel):
 class CodememMemory(BaseModel):
     """CONTRACT §2 memory block — codemem backend (local stdio MCP, model-managed).
 
-    Strict nested form: ``{type: codemem, codemem: {dbPath: ...}}``. A flat ``dbPath`` at the
+    Minimal form: ``{type: codemem}`` — the ``codemem`` sub-block and both its fields
+    (``dbPath``, ``project``) are optional and derived/defaulted. Override via
+    ``{type: codemem, codemem: {dbPath: ..., project: ...}}``. A flat ``dbPath`` at the
     ``memory`` level is rejected (extra='forbid').
     """
 
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["codemem"]
-    codemem: CodememParams
+    codemem: CodememParams = Field(default_factory=CodememParams)
 
 
 # Strict discriminated union on `type` — `type` is REQUIRED (no default, no backward-compat

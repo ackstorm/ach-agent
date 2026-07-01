@@ -566,7 +566,7 @@ YAML. Both validate against the same schema, and <strong>unknown keys are reject
 <tr>
 <td><code>prompt</code></td>
 <td></td>
-<td><code>system</code> (inline persona, markdown ok). <code>compose</code> is contract-reserved (accepted; prompt-layering not yet executed by the harness).</td>
+<td><code>system</code> is a typed source: <code>{type: text, text: "…"}</code> inline; <code>{type: ach, ach: "&lt;prompt-name&gt;"}</code> for a hydrated prompt addressed by name (harness resolves its sole file, or a given <code>file:</code> subpath) — the preferred form; or <code>{type: file, file: "prompts/&lt;name&gt;/&lt;file&gt;.md"}</code> addressed by path. <code>file</code>/<code>ach</code> resolve under <code>&lt;home&gt;/.ach-state</code> (absolute or <code>..</code> rejected; missing = hard boot failure). The bare-string form is rejected. <code>compose</code> is contract-reserved (accepted; prompt-layering not yet executed by the harness).</td>
 </tr>
 <tr>
 <td><code>memory</code></td>
@@ -676,7 +676,17 @@ channel adapts per event:</p>
 <span class="w">      </span><span class="nt">skills</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">send-email</span><span class="p p-Indicator">]</span>
 
 <span class="nt">prompt</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">system</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;You</span><span class="nv"> </span><span class="s">are</span><span class="nv"> </span><span class="s">a</span><span class="nv"> </span><span class="s">senior</span><span class="nv"> </span><span class="s">code</span><span class="nv"> </span><span class="s">reviewer</span><span class="nv"> </span><span class="s">for</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">platform</span><span class="nv"> </span><span class="s">team.&quot;</span>
+<span class="w">  </span><span class="nt">system</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">text</span>
+<span class="w">    </span><span class="nt">text</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;You</span><span class="nv"> </span><span class="s">are</span><span class="nv"> </span><span class="s">a</span><span class="nv"> </span><span class="s">senior</span><span class="nv"> </span><span class="s">code</span><span class="nv"> </span><span class="s">reviewer</span><span class="nv"> </span><span class="s">for</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">platform</span><span class="nv"> </span><span class="s">team.&quot;</span>
+<span class="w">  </span><span class="c1"># ach form (preferred) — name a hydrated prompt; the harness resolves its file:</span>
+<span class="w">  </span><span class="c1"># system:</span>
+<span class="w">  </span><span class="c1">#   type: ach</span>
+<span class="w">  </span><span class="c1">#   ach: &lt;prompt-name&gt;          # add `file: &lt;subpath&gt;` only if the prompt ships &gt;1 file</span>
+<span class="w">  </span><span class="c1"># file form — address a hydrated prompt file by path (relative to &lt;home&gt;/.ach-state):</span>
+<span class="w">  </span><span class="c1"># system:</span>
+<span class="w">  </span><span class="c1">#   type: file</span>
+<span class="w">  </span><span class="c1">#   file: prompts/&lt;prompt-name&gt;/&lt;file&gt;.md</span>
 <span class="w">  </span><span class="nt">compose</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">append</span>
 
 <span class="nt">memory</span><span class="p">:</span>

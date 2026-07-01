@@ -122,9 +122,35 @@ class SystemFile(BaseModel):
         return v
 
 
+class SystemAch(BaseModel):
+    """Persona sourced from a hydrated prompt by ACH name (harness resolves the file).
+
+    ``ach`` is the hydrated prompt name → ``<home>/.ach-state/prompts/<ach>/``. ``file`` is
+    an optional subpath within it; when empty the harness uses the prompt dir's sole file
+    (and errors if the dir has 0 or >1 files). Convenience over ``file`` — the operator
+    names the prompt, not its on-disk path.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["ach"]
+    ach: str  # hydrated prompt name; a single path component, no "/" traversal
+    file: str = ""  # optional subpath under the prompt dir; empty → the sole file
+
+    @field_validator("ach", "file")
+    @classmethod
+    def _no_escape(cls, v: str) -> str:
+        if not v:
+            return v
+        p = PurePosixPath(v)
+        if p.is_absolute() or ".." in p.parts:
+            raise ValueError("prompt.system ach/file must be a relative path, no '..'")
+        return v
+
+
 # Discriminated on `type`: the string shorthand is intentionally NOT accepted (CONTRACT_v3
 # ADDENDUM-prompt-source §1 — the operator renders the object form).
-SystemPrompt = Annotated[SystemText | SystemFile, Field(discriminator="type")]
+SystemPrompt = Annotated[SystemText | SystemFile | SystemAch, Field(discriminator="type")]
 
 
 class PromptBlock(BaseModel):
@@ -132,7 +158,7 @@ class PromptBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # text | file source; omitted → no persona (today's ""). The plain-string form is rejected.
+    # text | file | ach source; omitted → no persona (""). The plain-string form is rejected.
     system: SystemPrompt | None = None
     # Contract-reserved (CONTRACT §2): the operator renders it; the harness accepts it but
     # does NOT yet execute layering. Do not remove without a coordinated CONTRACT_v3 change.

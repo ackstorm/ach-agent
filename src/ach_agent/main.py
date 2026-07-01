@@ -254,13 +254,14 @@ def link_ach_state(home: str, work_dir: str) -> Path:
 
 
 def resolve_system_prompt(prompt_block: Any, state_dir: Path) -> str:
-    """Resolve prompt.system (text | file | None) into the persona string.
+    """Resolve prompt.system (text | file | ach | None) into the persona string.
 
-    text → the inline text. file → bytes of <state_dir>/<file>, with the resolved real
-    path re-checked to stay inside state_dir (defense in depth over the schema validator,
-    which only sees the literal path). A missing file is a hard startup failure: a persona
-    the operator declared but hydration did not deliver is a misconfiguration, not fail-open.
-    None → "" (no persona).
+    text → the inline text. file → <state_dir>/<file>. ach → the named hydrated prompt at
+    <state_dir>/prompts/<ach>/ (its sole file, or the given `file` subpath). For every
+    on-disk form the resolved REAL path is re-checked to stay inside state_dir (defense in
+    depth over the schema validator, which only sees the literal path), and a missing file
+    is a hard startup failure — a persona the operator declared but hydration did not deliver
+    is a misconfiguration, not fail-open. None → "" (no persona).
     """
     if prompt_block is None or prompt_block.system is None:
         return ""
@@ -268,12 +269,32 @@ def resolve_system_prompt(prompt_block: Any, state_dir: Path) -> str:
     if system.type == "text":
         return str(system.text)
     root = state_dir.resolve()
-    target = (root / str(system.file)).resolve()
+    if system.type == "file":
+        target = (root / str(system.file)).resolve()
+    else:  # ach — resolve the named prompt dir, then pick its file
+        prompt_dir = (root / "prompts" / str(system.ach)).resolve()
+        if not prompt_dir.is_relative_to(root) or not prompt_dir.is_dir():
+            log.error("prompt.system.ach not hydrated under .ach-state/prompts", ach=system.ach)
+            sys.exit(1)
+        if system.file:
+            target = (prompt_dir / str(system.file)).resolve()
+        else:
+            files = sorted(p for p in prompt_dir.rglob("*") if p.is_file())
+            if len(files) != 1:
+                log.error(
+                    "prompt.system.ach needs an explicit `file:` — the prompt dir has 0 or "
+                    ">1 files",
+                    ach=system.ach,
+                    count=len(files),
+                    files=[f.name for f in files],
+                )
+                sys.exit(1)
+            target = files[0].resolve()
     if not target.is_relative_to(root):
-        log.error("prompt.system.file escapes .ach-state", file=system.file)
+        log.error("prompt.system file escapes .ach-state", path=str(target))
         sys.exit(1)
     if not target.is_file():
-        log.error("prompt.system.file not found under .ach-state", path=str(target))
+        log.error("prompt.system file not found under .ach-state", path=str(target))
         sys.exit(1)
     return target.read_text(encoding="utf-8")
 

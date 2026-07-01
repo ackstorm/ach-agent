@@ -30,7 +30,11 @@ prompt:
   system:
     type: text
     text: "You are a senior code reviewer for the platform team."
-  # file form — source the persona from a hydrated prompt (relative to <home>/.ach-state):
+  # ach form (preferred) — name a hydrated prompt; harness resolves its file:
+  # system:
+  #   type: ach
+  #   ach: <prompt-name>          # add `file: <subpath>` only if the prompt ships >1 file
+  # file form — a hydrated prompt file addressed by path (relative to <home>/.ach-state):
   # system:
   #   type: file
   #   file: prompts/<prompt-name>/<file>.md

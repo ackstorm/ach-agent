@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ach_agent.engine.pool import EnginePool
+
+if TYPE_CHECKING:
+    from ach_agent.engine.lifecycle import ManagedServer
 
 
 def _make_fake_server(alive: bool = True):

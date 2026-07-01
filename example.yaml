@@ -49,9 +49,8 @@ memory:                                 # omit if unused; fail-open (backend dow
   # codemem backend (local stdio MCP, model-managed) — alternative to hindsight:
   # memory:
   #   type: codemem
-  #   codemem:
-  #     dbPath: /var/lib/ach-agent/codemem.db   # absolute path on a persistent volume (no "..")
-  #     project: ach-agent                       # stable namespace for codemem search/remember
+  #   codemem: {}   # dbPath and project are optional — derived from persistence / default "ach-agent"
+  #                 # set dbPath: /absolute/path.db to override; set project: my-ns to override namespace
 
 limits:
   maxConcurrentInvocations: 2           # global semaphore across ALL channels

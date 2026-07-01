@@ -228,6 +228,36 @@ def resolve_engine_paths(cfg: Any) -> tuple[str, str]:
     return home, work_dir
 
 
+def resolve_codemem_wiring(cfg: Any) -> tuple[str, str]:
+    """Resolve (db_path, project) for the codemem backend — static per-agent, at boot.
+
+    Returns ("", "") when memory is not codemem, or when the `codemem` binary is not on
+    PATH (fail-open, MEM-02/D-02: degrade, increment MEMORY_DEGRADED, never raise).
+
+    db_path derives from persistence when omitted (mirrors resolve_engine_paths):
+      - persistence.enabled → <mountPath>/codemem/codemem.db
+      - else                → /tmp/ach-home/codemem/codemem.db
+    project defaults to the schema constant ("ach-agent"); both are config-overridable.
+    """
+    if not isinstance(cfg.memory, CodememMemory):
+        return "", ""
+
+    import shutil
+
+    if shutil.which("codemem") is None:
+        from ach_agent.memory.adapter import _inc_memory_degraded
+
+        log.warning("codemem binary not on PATH — running degraded (MEM-02, D-02)")
+        _inc_memory_degraded()
+        return "", ""
+
+    cm = cfg.memory.codemem
+    base = cfg.persistence.mount_path if cfg.persistence.enabled else "/tmp/ach-home"
+    db_path = cm.db_path or f"{base}/codemem/codemem.db"
+    log.info("memory: codemem backend active", db_path=db_path, project=cm.project)
+    return db_path, cm.project
+
+
 def ach_state_dir(home: str) -> Path:
     """The single hydration state root: <home>/.ach-state (prompts + artifacts)."""
     return Path(home) / ".ach-state"
@@ -301,31 +331,21 @@ def resolve_system_prompt(prompt_block: Any, state_dir: Path) -> str:
 
 async def select_memory_wiring_async(
     memory_cfg: Memory | None,
-) -> tuple[list[str], str, str, str]:
-    """Resolve (mcp_servers, memory_prompt, codemem_db_path, codemem_project) for one invocation.
+) -> tuple[list[str], str]:
+    """Resolve (mcp_servers, memory_prompt) for one invocation — HINDSIGHT only.
 
-    Hindsight: probe endpoint + fetch the '## Memory' prompt (prepare_memory); register the
-    endpoint as a remote MCP server iff reachable. codemem: no remote probe (stdio-local MCP
-    that opencode spawns); return codemem_db_path + codemem_project iff the binary is on PATH
-    (prepare_codemem), with no prompt and no remote server. Fail-open: adapters never raise (D-02).
+    Hindsight probes its endpoint per-invocation (fail-open): register the endpoint as a
+    remote MCP server iff reachable, plus the '## Memory' prompt. codemem is NOT handled here
+    — it is static per-agent and resolved once at boot (resolve_codemem_wiring → engine_cfg).
     """
-    if memory_cfg is None:
-        return [], "", "", ""
+    if not isinstance(memory_cfg, HindsightMemory):
+        return [], ""
 
-    if isinstance(memory_cfg, CodememMemory):
-        from ach_agent.memory.adapter import prepare_codemem
-
-        available, db_path = prepare_codemem(memory_cfg)
-        if available:
-            return [], "", db_path, memory_cfg.codemem.project
-        return [], "", "", ""
-
-    # memory_cfg narrowed to HindsightMemory here by isinstance elimination above.
     from ach_agent.memory.adapter import prepare_memory
 
     mem_available, memory_prompt = await prepare_memory(memory_cfg)
     mcp_servers = [memory_cfg.hindsight.endpoint] if mem_available else []
-    return mcp_servers, memory_prompt, "", ""
+    return mcp_servers, memory_prompt
 
 
 def _make_engine_runner(
@@ -383,27 +403,19 @@ def _make_engine_runner(
         # MEM-01/MEM-02/D-02: probe memory backend BEFORE pool.acquire (Pitfall 3).
         # prepare_memory never raises (fail-open contract).
         # When unavailable: MEMORY_DEGRADED incremented + WARN logged inside prepare_memory.
-        mcp_servers, memory_prompt, codemem_db, codemem_project = await select_memory_wiring_async(
-            memory_cfg
-        )
+        mcp_servers, memory_prompt = await select_memory_wiring_async(memory_cfg)
 
-        # Build per-invocation engine config with memory MCP server iff reachable (D-02).
-        # Dataclass copy with updated mcp_servers — original engine_cfg is not mutated.
+        # Build per-invocation engine config with the (dynamic) hindsight MCP server iff
+        # reachable (D-02). codemem fields are static per-agent and already on engine_cfg from
+        # boot — dataclasses.replace preserves them. Original engine_cfg is not mutated.
         import dataclasses
 
         if dataclasses.is_dataclass(engine_cfg) and not isinstance(engine_cfg, type):
-            invocation_engine_cfg = dataclasses.replace(
-                engine_cfg,
-                mcp_servers=mcp_servers,
-                codemem_db_path=codemem_db,
-                codemem_project=codemem_project,
-            )
+            invocation_engine_cfg = dataclasses.replace(engine_cfg, mcp_servers=mcp_servers)
         else:
             # Non-dataclass (e.g. MagicMock in tests) — attach attribute directly.
             invocation_engine_cfg = engine_cfg
             invocation_engine_cfg.mcp_servers = mcp_servers
-            invocation_engine_cfg.codemem_db_path = codemem_db
-            invocation_engine_cfg.codemem_project = codemem_project
 
         server = await pool.acquire(invocation_engine_cfg)
         try:
@@ -807,9 +819,15 @@ async def main(
     # opencode `serve` always binds loopback (127.0.0.1) on a free ephemeral port the pool
     # picks — only reachable inside the container/host. `--tui` drives it via `opencode attach`
     # (co-located, loopback); nothing is published off-host.
+    # codemem is static per-agent: resolve db_path + project once at boot (needs persistence
+    # context). Fail-open ("","") when not codemem or the binary is absent (MEM-02/D-02).
+    codemem_db_path, codemem_project = resolve_codemem_wiring(cfg)
+
     engine_cfg = EngineConfig(
         home=engine_home,
         work_dir=engine_work_dir,
+        codemem_db_path=codemem_db_path,
+        codemem_project=codemem_project,
         provider=cfg.model.type,
         model=cfg.model.name,
         params=cfg.model.params,
@@ -886,27 +904,16 @@ async def main(
                 # opencode.json wires the memory MCP exactly as engine_runner would.
                 import dataclasses
 
+                # codemem is already on engine_cfg from boot (static); only hindsight's
+                # remote MCP server is resolved here so the pre-warmed opencode.json matches.
                 warm_mcp_servers: list[str] = []
-                warm_codemem_db: str = ""
-                warm_codemem_project: str = ""
                 if isinstance(cfg.memory, HindsightMemory):
                     from ach_agent.memory.adapter import prepare_memory
 
                     _mem_ok, _ = await prepare_memory(cfg.memory)
                     if _mem_ok:
                         warm_mcp_servers = [cfg.memory.hindsight.endpoint]
-                elif isinstance(cfg.memory, CodememMemory):
-                    from ach_agent.memory.adapter import prepare_codemem
-
-                    _cm_ok, warm_codemem_db = prepare_codemem(cfg.memory)
-                    if _cm_ok:
-                        warm_codemem_project = cfg.memory.codemem.project
-                warm_cfg = dataclasses.replace(
-                    engine_cfg,
-                    mcp_servers=warm_mcp_servers,
-                    codemem_db_path=warm_codemem_db,
-                    codemem_project=warm_codemem_project,
-                )
+                warm_cfg = dataclasses.replace(engine_cfg, mcp_servers=warm_mcp_servers)
                 warm_server = await pool.acquire(warm_cfg)
                 # No stdout banner — opencode's own --print-logs already announces the
                 # listening address. Keep one structured info line with the loopback address.

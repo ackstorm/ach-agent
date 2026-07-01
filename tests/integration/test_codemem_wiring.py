@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Integration test: codemem memory config → select_memory_wiring_async → write_opencode_config.
+"""Integration test: resolve_codemem_wiring → EngineConfig → write_opencode_config.
 
-Proves that a `codemem` memory config flows through the full config→opencode.json chain
-in-process, without launching a live opencode process or calling any model.
+Proves that a `codemem` memory config flows through the full
+config → resolve_codemem_wiring → opencode.json chain in-process, without launching
+a live opencode process or calling any model.
 
 WAL note (verified fact):
     codemem 0.37.1 uses SQLite WAL by default (verified: PRAGMA journal_mode='wal').
@@ -18,38 +19,60 @@ from pathlib import Path
 
 import pytest
 
-from ach_agent.config.schema import CodememMemory, CodememParams, HindsightMemory, HindsightParams
+from ach_agent.config.schema import AgentConfig, HindsightMemory, HindsightParams
 from ach_agent.engine.lifecycle import EngineConfig, write_opencode_config
-from ach_agent.main import select_memory_wiring_async
+from ach_agent.main import resolve_codemem_wiring, select_memory_wiring_async
 
 pytestmark = pytest.mark.integration  # opt-in; runs in normal suite unless deselected
+
+# ---------------------------------------------------------------------------
+# Minimal valid AgentConfig dict factory
+# ---------------------------------------------------------------------------
+
+_BASE_CFG: dict = {
+    "schemaVersion": "1",
+    "agent": {"name": "a"},
+    "model": {"name": "openai.gpt-5", "type": "openai"},
+    "capability": {"ach": {"baseUrl": "https://ach.example.com"}},
+}
+
+
+def _cfg(memory: dict | None = None, persistence: dict | None = None) -> AgentConfig:
+    raw: dict = dict(_BASE_CFG)
+    if memory is not None:
+        raw["memory"] = memory
+    if persistence is not None:
+        raw["persistence"] = persistence
+    return AgentConfig.model_validate(raw)
 
 
 def _opencode_json(home: Path) -> dict:  # type: ignore[type-arg]
     return json.loads((home / ".config" / "opencode" / "opencode.json").read_text())
 
 
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
 async def test_codemem_config_flows_into_opencode_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """codemem present on PATH → db_path propagates all the way into opencode.json's mcp block."""
+    """codemem present on PATH + explicit dbPath → propagates into opencode.json mcp block."""
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/codemem")
 
-    params = CodememParams(db_path="/var/lib/codemem/agent.db", project="ach-agent")
-    cfg = CodememMemory(type="codemem", codemem=params)
-    mcp_servers, memory_prompt, codemem_db, codemem_project = await select_memory_wiring_async(cfg)
+    cfg = _cfg(
+        memory={"type": "codemem", "codemem": {"dbPath": "/var/lib/codemem/agent.db", "project": "ach-agent"}}
+    )
+    db_path, project = resolve_codemem_wiring(cfg)
 
-    # Wiring: no remote MCP, no memory prompt, db_path resolved
-    assert mcp_servers == []
-    assert memory_prompt == ""
-    assert codemem_db == "/var/lib/codemem/agent.db"
+    assert db_path == "/var/lib/codemem/agent.db"
+    assert project == "ach-agent"
 
-    # Feed resolved wiring into write_opencode_config exactly as boot/engine_runner does
     engine_cfg = EngineConfig(
         model_base_url="http://127.0.0.1:9/v1",
-        mcp_servers=mcp_servers,
-        codemem_db_path=codemem_db,
-        codemem_project=codemem_project,
+        codemem_db_path=db_path,
+        codemem_project=project,
     )
     write_opencode_config(tmp_path, engine_cfg)
 
@@ -66,22 +89,37 @@ async def test_codemem_config_flows_into_opencode_json(
     }
 
 
+async def test_codemem_derived_db_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """codemem with no dbPath + persistence.enabled → db derives to <mountPath>/codemem/codemem.db."""
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/codemem")
+
+    cfg = _cfg(
+        memory={"type": "codemem", "codemem": {}},
+        persistence={"enabled": True, "mountPath": "/var/lib/ach-agent"},
+    )
+    db_path, project = resolve_codemem_wiring(cfg)
+
+    assert db_path == "/var/lib/ach-agent/codemem/codemem.db"
+    assert project == "ach-agent"
+
+
 async def test_codemem_absent_from_path_degrades(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """codemem not on PATH → fail-open: codemem_db_path '' → no codemem entry in opencode.json."""
+    """codemem not on PATH → fail-open: resolve returns ("","") → no codemem entry in opencode.json."""
     monkeypatch.setattr("shutil.which", lambda name: None)
 
-    params = CodememParams(db_path="/var/lib/codemem/agent.db", project="ach-agent")
-    cfg = CodememMemory(type="codemem", codemem=params)
-    _, _, codemem_db, codemem_project = await select_memory_wiring_async(cfg)
+    cfg = _cfg(memory={"type": "codemem", "codemem": {"dbPath": "/var/lib/codemem/agent.db"}})
+    db_path, project = resolve_codemem_wiring(cfg)
 
-    assert codemem_db == ""
+    assert db_path == ""
 
     engine_cfg = EngineConfig(
         model_base_url="http://127.0.0.1:9/v1",
-        codemem_db_path=codemem_db,
-        codemem_project=codemem_project,
+        codemem_db_path=db_path,
+        codemem_project=project,
     )
     write_opencode_config(tmp_path, engine_cfg)
 
@@ -102,18 +140,17 @@ async def test_hindsight_path_produces_no_codemem_entry(
 
     monkeypatch.setattr("ach_agent.memory.adapter.prepare_memory", _ok)
 
-    cfg = HindsightMemory(type="hindsight", hindsight=HindsightParams(endpoint="http://mem:8080"))
-    mcp_servers, memory_prompt, codemem_db, codemem_project = await select_memory_wiring_async(cfg)
+    cfg_mem = HindsightMemory(type="hindsight", hindsight=HindsightParams(endpoint="http://mem:8080"))
+    mcp_servers, memory_prompt = await select_memory_wiring_async(cfg_mem)
 
     assert mcp_servers == ["http://mem:8080"]
     assert memory_prompt == "## Memory\nx"
-    assert codemem_db == ""
 
     engine_cfg = EngineConfig(
         model_base_url="http://127.0.0.1:9/v1",
         mcp_servers=mcp_servers,
-        codemem_db_path=codemem_db,
-        codemem_project=codemem_project,
+        codemem_db_path="",
+        codemem_project="",
     )
     write_opencode_config(tmp_path, engine_cfg)
 

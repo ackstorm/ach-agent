@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for select_memory_wiring_async — branching by memory backend type.
+"""Tests for select_memory_wiring_async — hindsight-only (2-tuple) + codemem/None pass-through.
 
 Verifies that:
-- codemem: does NOT call prepare_memory; returns ([], "", db_path, project) when binary is on PATH.
-- hindsight: calls prepare_memory; returns ([endpoint], prompt, "", "") when reachable.
-- None: returns ([], "", "", "").
+- codemem: select_memory_wiring_async returns ([], "") — codemem is NOT handled here (boot-time).
+- hindsight: calls prepare_memory; returns ([endpoint], prompt) 2-tuple when reachable.
+- None: returns ([], "").
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ import pytest
 from ach_agent.config.schema import CodememMemory, CodememParams, HindsightMemory, HindsightParams
 
 
-async def test_codemem_type_skips_hindsight_probe(monkeypatch: pytest.MonkeyPatch) -> None:
-    """codemem memory cfg must NOT invoke prepare_memory and must return db_path."""
+async def test_codemem_type_returns_empty_2tuple(monkeypatch: pytest.MonkeyPatch) -> None:
+    """codemem memory cfg must NOT invoke prepare_memory and must return ([], "")."""
     from ach_agent import main as m
 
     called = {"prepare_memory": False}
@@ -25,23 +25,19 @@ async def test_codemem_type_skips_hindsight_probe(monkeypatch: pytest.MonkeyPatc
         return (True, "## Memory\nx")
 
     monkeypatch.setattr("ach_agent.memory.adapter.prepare_memory", _boom)
-    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/codemem")
 
-    params = CodememParams(db_path="/var/lib/codemem/a.db", project="ach-agent")
+    # CodememParams() is now valid — db_path defaults to None, project defaults to "ach-agent"
+    params = CodememParams(db_path="/var/lib/codemem/a.db")
     cfg = CodememMemory(type="codemem", codemem=params)
-    mcp_servers, memory_prompt, codemem_db, codemem_project = (
-        await m.select_memory_wiring_async(cfg)
-    )
+    mcp_servers, memory_prompt = await m.select_memory_wiring_async(cfg)
 
     assert mcp_servers == []
     assert memory_prompt == ""
-    assert codemem_db == "/var/lib/codemem/a.db"
-    assert codemem_project == "ach-agent"
     assert called["prepare_memory"] is False
 
 
 async def test_hindsight_type_uses_probe(monkeypatch: pytest.MonkeyPatch) -> None:
-    """hindsight memory cfg must call prepare_memory and return endpoint + prompt."""
+    """hindsight memory cfg must call prepare_memory and return (endpoint_list, prompt) 2-tuple."""
     from ach_agent import main as m
 
     async def _ok(_cfg: object) -> tuple[bool, str]:
@@ -50,25 +46,17 @@ async def test_hindsight_type_uses_probe(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr("ach_agent.memory.adapter.prepare_memory", _ok)
 
     cfg = HindsightMemory(type="hindsight", hindsight=HindsightParams(endpoint="http://mem:8080"))
-    mcp_servers, memory_prompt, codemem_db, codemem_project = (
-        await m.select_memory_wiring_async(cfg)
-    )
+    mcp_servers, memory_prompt = await m.select_memory_wiring_async(cfg)
 
     assert mcp_servers == ["http://mem:8080"]
     assert memory_prompt == "## Memory\nx"
-    assert codemem_db == ""
-    assert codemem_project == ""
 
 
 async def test_none_memory_cfg() -> None:
-    """None memory config must return empty tuple."""
+    """None memory config must return ([], "") 2-tuple."""
     from ach_agent import main as m
 
-    mcp_servers, memory_prompt, codemem_db, codemem_project = (
-        await m.select_memory_wiring_async(None)
-    )
+    mcp_servers, memory_prompt = await m.select_memory_wiring_async(None)
 
     assert mcp_servers == []
     assert memory_prompt == ""
-    assert codemem_db == ""
-    assert codemem_project == ""

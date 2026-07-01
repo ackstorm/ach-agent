@@ -1,230 +1,273 @@
-"""Pool tests: ENG-08 shared-server pool behavior.
+# SPDX-License-Identifier: Apache-2.0
+"""Tests for the keyed EnginePool (ENG-08 + keyed migration).
 
-Tests owned by this plan (00-03): implements the stubs marked in 00-01a.
-
-Per-Task Verification Map (00-VALIDATION.md):
-  ENG-08: test_pool_reuse         — implemented by 00-03
-  ENG-08: test_pool_ttl_expires   — implemented by 00-03
-  ENG-08: test_pool_ttl0_stops_immediately — implemented by 00-03
-  ENG-08: test_pool_reacquire_cancels_ttl — implemented by 00-03
+Each session_key maps to its own ManagedServer. acquire/release take a
+session_key; releasing one key never affects another.
 """
+
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from pathlib import Path
 
-import pytest
+from ach_agent.engine.pool import EnginePool
+
+
+def _make_fake_server(alive: bool = True):
+    from unittest.mock import AsyncMock, MagicMock
+
+    srv = MagicMock()
+    srv.is_alive.return_value = alive
+    srv.stop = AsyncMock()
+    return srv
+
+
+def _config():
+    from unittest.mock import MagicMock
+
+    return MagicMock(name="EngineConfig")
+
+
+async def test_pool_reuse_same_key() -> None:
+    """Second acquire with the same key reuses the alive server (no new start)."""
+    pool = EnginePool()
+    calls = {"n": 0}
+    fake = _make_fake_server(alive=True)
+
+    async def fake_start(cfg):
+        calls["n"] += 1
+        return fake
+
+    pool._start_server = fake_start
+
+    s1 = await pool.acquire("k1", _config())
+    s2 = await pool.acquire("k1", _config())
+    assert calls["n"] == 1, "Same key must reuse the server"
+    assert s1 is fake and s2 is fake
+    assert pool._ref_counts["k1"] == 2
+
+
+async def test_pool_distinct_keys_get_distinct_servers() -> None:
+    """Different keys start different servers and are tracked independently."""
+    pool = EnginePool()
+    servers = {"k1": _make_fake_server(), "k2": _make_fake_server()}
+    seq = iter([servers["k1"], servers["k2"]])  # returned in acquire order
+
+    async def fake_start(cfg):
+        return next(seq)
+
+    pool._start_server = fake_start
+
+    a = await pool.acquire("k1", _config())
+    b = await pool.acquire("k2", _config())
+
+    assert a is servers["k1"]
+    assert b is servers["k2"]
+    assert set(pool._servers.keys()) == {"k1", "k2"}
+
+
+async def test_release_one_key_does_not_stop_another() -> None:
+    """Stopping k1 (ttl=0) must leave k2's server alive and untracked-untouched."""
+    pool = EnginePool()
+    servers = {"k1": _make_fake_server(), "k2": _make_fake_server()}
+    seq = iter([servers["k1"], servers["k2"]])  # returned in acquire order
+
+    async def fake_start(cfg):
+        return next(seq)
+
+    pool._start_server = fake_start
+
+    await pool.acquire("k1", _config())
+    await pool.acquire("k2", _config())
+
+    await pool.release("k1", ttl_seconds=0)
+
+    servers["k1"].stop.assert_awaited_once()
+    servers["k2"].stop.assert_not_awaited()
+    assert "k1" not in pool._servers
+    assert "k2" in pool._servers
+
+
+async def test_ttl0_stops_immediately() -> None:
+    """release(ttl=0) stops that key's server and removes it from the pool."""
+    pool = EnginePool()
+    fake = _make_fake_server(alive=True)
+
+    async def fake_start(cfg):
+        return fake
+
+    pool._start_server = fake_start
+
+    await pool.acquire("k1", _config())
+    await pool.release("k1", ttl_seconds=0)
+    fake.stop.assert_awaited_once()
+    assert "k1" not in pool._servers
+
+
+async def test_ttl_expires_after_delay() -> None:
+    """release(ttl>0) keeps the server until TTL elapses, then stops it."""
+    pool = EnginePool()
+    fake = _make_fake_server(alive=True)
+
+    async def fake_start(cfg):
+        return fake
+
+    pool._start_server = fake_start
+
+    await pool.acquire("k1", _config())
+    await pool.release("k1", ttl_seconds=0.05)
+    assert fake.stop.call_count == 0
+    assert "k1" in pool._servers
+
+    await asyncio.sleep(0.12)
+    fake.stop.assert_awaited_once()
+    assert "k1" not in pool._servers
+
+
+async def test_reacquire_cancels_pending_ttl() -> None:
+    """A re-acquire before TTL fires cancels that key's expiry task."""
+    pool = EnginePool()
+    fake = _make_fake_server(alive=True)
+
+    async def fake_start(cfg):
+        return fake
+
+    pool._start_server = fake_start
+
+    await pool.acquire("k1", _config())
+    await pool.release("k1", ttl_seconds=0.05)
+    await pool.acquire("k1", _config())  # cancels expiry
+    await asyncio.sleep(0.12)
+    fake.stop.assert_not_awaited()
+    assert "k1" in pool._servers
+
+
+async def test_ref_count_keeps_server_until_last_release() -> None:
+    """Two acquires + one release keep the server; second release (ttl=0) stops it."""
+    pool = EnginePool()
+    fake = _make_fake_server(alive=True)
+
+    async def fake_start(cfg):
+        return fake
+
+    pool._start_server = fake_start
+
+    await pool.acquire("k1", _config())
+    await pool.acquire("k1", _config())
+    await pool.release("k1", ttl_seconds=0)
+    fake.stop.assert_not_awaited()
+    assert "k1" in pool._servers
+    await pool.release("k1", ttl_seconds=0)
+    fake.stop.assert_awaited_once()
+    assert "k1" not in pool._servers
+
+
+async def test_dead_server_replaced_on_acquire() -> None:
+    """If the tracked server is dead, acquire starts a fresh one for that key."""
+    pool = EnginePool()
+    dead = _make_fake_server(alive=False)
+    live = _make_fake_server(alive=True)
+    seq = [dead, live]
+
+    async def fake_start(cfg):
+        return seq.pop(0)
+
+    pool._start_server = fake_start
+
+    s1 = await pool.acquire("k1", _config())
+    assert s1 is dead
+    s2 = await pool.acquire("k1", _config())  # dead → replace
+    assert s2 is live
+    dead.stop.assert_awaited_once()
+
+
+async def test_ready_latch_set_on_first_start() -> None:
+    """engine_has_been_ready_once flips True on first successful start, stays True."""
+    pool = EnginePool()
+    fake = _make_fake_server(alive=True)
+
+    async def fake_start(cfg):
+        return fake
+
+    pool._start_server = fake_start
+
+    assert pool.engine_has_been_ready_once is False
+    await pool.acquire("k1", _config())
+    assert pool.engine_has_been_ready_once is True
+    await pool.release("k1", ttl_seconds=0)
+    assert pool.engine_has_been_ready_once is True
+
+
+async def test_stop_all_stops_every_server() -> None:
+    """stop_all() stops every live server and clears the pool."""
+    pool = EnginePool()
+    servers = {"k1": _make_fake_server(), "k2": _make_fake_server()}
+    seq = iter([servers["k1"], servers["k2"]])  # returned in acquire order
+
+    async def fake_start(cfg):
+        return next(seq)
+
+    pool._start_server = fake_start
+
+    await pool.acquire("k1", _config())
+    await pool.acquire("k2", _config())
+
+    await pool.stop_all()
+    servers["k1"].stop.assert_awaited_once()
+    servers["k2"].stop.assert_awaited_once()
+    assert pool._servers == {}
 
 
 # ---------------------------------------------------------------------------
-# Fake ManagedServer helper
+# I-1: per-key HOME isolation — distinct keys launch into distinct homes so
+# concurrent servers never race a shared opencode.json.
 # ---------------------------------------------------------------------------
 
 
-def _make_fake_server(alive: bool = True) -> MagicMock:
-    """Return a fake ManagedServer with controllable is_alive() and a recordable stop()."""
-    server = MagicMock()
-    server.is_alive.return_value = alive
-    server.stop = AsyncMock()
-    return server
+async def test_distinct_keys_get_isolated_homes() -> None:
+    """Each session_key launches into its own <base>/servers/oc-* home (I-1).
 
-
-# ---------------------------------------------------------------------------
-# ENG-08: Shared mode — second acquire reuses alive server
-# ---------------------------------------------------------------------------
-
-
-async def test_pool_reuse() -> None:
-    """ENG-08: EnginePool.acquire() reuses the alive server on second call.
-
-    Verifies that the ref-count increments and the same ManagedServer object
-    is returned without starting a new subprocess.
+    The same key is deterministic (reuses its home → node_modules cache reuse);
+    different keys get different homes → no shared-opencode.json race.
     """
-    from ach_agent.engine.pool import EnginePool
     from ach_agent.engine.lifecycle import EngineConfig
 
-    config = EngineConfig()
     pool = EnginePool()
+    seen_homes: list[str] = []
 
-    fake_server = _make_fake_server(alive=True)
-    start_call_count = 0
+    async def fake_start(cfg):
+        seen_homes.append(cfg.home)
+        return _make_fake_server(alive=True)
 
-    async def fake_start_server(cfg: EngineConfig) -> MagicMock:
-        nonlocal start_call_count
-        start_call_count += 1
-        return fake_server
+    pool._start_server = fake_start
+    cfg = EngineConfig(home="/base/home")
 
-    pool._start_server = fake_start_server
+    await pool.acquire("gitlab.example.com/group/repo-a", cfg)
+    await pool.acquire("gitlab.example.com/group/repo-b", cfg)
 
-    # First acquire — creates a new server
-    s1 = await pool.acquire(config)
-    assert start_call_count == 1, "First acquire must start a new server"
-    assert s1 is fake_server
+    assert len(seen_homes) == 2
+    assert seen_homes[0] != seen_homes[1], "distinct keys must not share a home"
+    for h in seen_homes:
+        assert h.startswith("/base/home/servers/oc-"), h
 
-    # Second acquire — server is alive, must reuse it (no new subprocess)
-    s2 = await pool.acquire(config)
-    assert start_call_count == 1, "Second acquire must NOT start a new server (reuse)"
-    assert s2 is fake_server, "Second acquire must return the same ManagedServer"
-
-    # ref_count must be 2 after two acquires
-    assert pool._ref_count == 2, f"Expected ref_count=2, got {pool._ref_count}"
+    # Same key re-acquired after stop → same home (deterministic, cache reuse).
+    await pool._stop("gitlab.example.com/group/repo-a")
+    await pool.acquire("gitlab.example.com/group/repo-a", cfg)
+    assert seen_homes[2] == seen_homes[0], "same key must map to the same home"
 
 
-# ---------------------------------------------------------------------------
-# ENG-08: TTL=0 stops server immediately on release
-# ---------------------------------------------------------------------------
-
-
-async def test_pool_ttl0_stops_immediately() -> None:
-    """ENG-08: release(ttl_seconds=0) stops the server immediately (spawn-per-invocation)."""
-    from ach_agent.engine.pool import EnginePool
-    from ach_agent.engine.lifecycle import EngineConfig
-
-    config = EngineConfig()
-    pool = EnginePool()
-
-    fake_server = _make_fake_server(alive=True)
-
-    async def fake_start_server(cfg: EngineConfig) -> MagicMock:
-        return fake_server
-
-    pool._start_server = fake_start_server
-
-    await pool.acquire(config)
-    assert pool._ref_count == 1
-
-    await pool.release(ttl_seconds=0)
-
-    # Server must be stopped immediately
-    fake_server.stop.assert_awaited_once()
-    # Pool must no longer hold the server
-    assert pool._server is None
-    assert pool._ref_count == 0
+async def test_config_for_key_passthrough_non_dataclass() -> None:
+    """A non-dataclass config (test/MagicMock) passes through _config_for_key unchanged."""
+    cfg = _config()
+    assert EnginePool._config_for_key("k1", cfg) is cfg
 
 
 # ---------------------------------------------------------------------------
-# ENG-08: Shared mode — TTL triggers stop after idle
+# Non-keyed coverage preserved from the pre-migration test file:
+# _default_start_server home behavior and main._harness_log_dir.
 # ---------------------------------------------------------------------------
 
 
-async def test_pool_ttl_expires() -> None:
-    """ENG-08: EnginePool.release() with ttl_seconds>0 stops server after TTL elapses."""
-    from ach_agent.engine.pool import EnginePool
-    from ach_agent.engine.lifecycle import EngineConfig
-
-    config = EngineConfig()
-    pool = EnginePool()
-
-    fake_server = _make_fake_server(alive=True)
-
-    async def fake_start_server(cfg: EngineConfig) -> MagicMock:
-        return fake_server
-
-    pool._start_server = fake_start_server
-
-    await pool.acquire(config)
-    assert pool._ref_count == 1
-
-    # Release with a tiny TTL (0.05s) — server should NOT be stopped immediately
-    await pool.release(ttl_seconds=0.05)
-    assert fake_server.stop.call_count == 0, "Server must not be stopped before TTL elapses"
-    assert pool._server is not None, "Pool must still hold the server before TTL"
-
-    # Wait for TTL to elapse
-    await asyncio.sleep(0.15)
-
-    # Server must now be stopped and pool cleared
-    fake_server.stop.assert_awaited_once()
-    assert pool._server is None, "Pool must clear server after TTL expiry"
-
-
-# ---------------------------------------------------------------------------
-# ENG-08: Re-acquire before TTL elapses cancels the pending TTL task
-# ---------------------------------------------------------------------------
-
-
-async def test_pool_reacquire_cancels_ttl() -> None:
-    """ENG-08: A new acquire before the TTL fires cancels the pending expiry task."""
-    from ach_agent.engine.pool import EnginePool
-    from ach_agent.engine.lifecycle import EngineConfig
-
-    config = EngineConfig()
-    pool = EnginePool()
-
-    fake_server = _make_fake_server(alive=True)
-
-    async def fake_start_server(cfg: EngineConfig) -> MagicMock:
-        return fake_server
-
-    pool._start_server = fake_start_server
-
-    await pool.acquire(config)
-    await pool.release(ttl_seconds=0.1)  # TTL not yet elapsed
-
-    # Re-acquire while TTL is pending — must cancel the TTL and reuse the server
-    s = await pool.acquire(config)
-    assert s is fake_server, "Re-acquire must reuse the server still in TTL window"
-
-    # Wait past the original TTL deadline
-    await asyncio.sleep(0.2)
-
-    # Server must NOT have been stopped (TTL was cancelled)
-    assert fake_server.stop.call_count == 0, (
-        "Server must not be stopped — TTL was cancelled by re-acquire"
-    )
-    assert pool._server is not None, "Pool must still hold the server after re-acquire"
-    assert pool._ref_count == 1
-
-
-# ---------------------------------------------------------------------------
-# DUR-02: engine_has_been_ready_once latch (Plan 03-02)
-# ---------------------------------------------------------------------------
-
-
-async def test_ready_once_latch() -> None:
-    """DUR-02: engine_has_been_ready_once starts False, set True after first acquire, never resets.
-
-    D-07: first-warmup-only gate — latch never re-gated after ready-once.
-    D-08-latch: set on first successful poll_ready return (via acquire).
-    """
-    from ach_agent.engine.pool import EnginePool
-    from ach_agent.engine.lifecycle import EngineConfig
-
-    config = EngineConfig()
-    pool = EnginePool()
-
-    # Latch must start as False (DUR-02)
-    assert pool.engine_has_been_ready_once is False, (
-        "DUR-02: engine_has_been_ready_once must start False"
-    )
-
-    fake_server = _make_fake_server(alive=True)
-
-    async def fake_start_server(cfg: EngineConfig) -> MagicMock:
-        return fake_server
-
-    pool._start_server = fake_start_server
-
-    # First acquire — latch must flip to True after server starts
-    await pool.acquire(config)
-
-    assert pool.engine_has_been_ready_once is True, (
-        "DUR-02: engine_has_been_ready_once must be True after first acquire"
-    )
-
-    # Second acquire — latch must remain True (D-07: never reset)
-    await pool.acquire(config)
-    assert pool.engine_has_been_ready_once is True, (
-        "DUR-02: latch must remain True after second acquire (D-07: first-warmup-only)"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Task 4: stable HOME + volatile harness log
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
 async def test_default_start_server_uses_config_home(tmp_path: Path, monkeypatch) -> None:
     """The pool launches opencode in the stable engine.home, not a fresh mkdtemp."""
     from ach_agent.engine import pool as poolmod

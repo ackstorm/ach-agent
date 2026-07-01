@@ -157,11 +157,11 @@ async def test_engine_runner_reachable_branch() -> None:
     captured_acquire_cfg: list[EngineConfig] = []
     captured_prompt: list[str] = []
 
-    async def fake_acquire(cfg: EngineConfig) -> MagicMock:
+    async def fake_acquire(session_key: str, cfg: EngineConfig) -> MagicMock:
         captured_acquire_cfg.append(cfg)
         return MagicMock()
 
-    async def fake_release(ttl_seconds: float) -> None:
+    async def fake_release(session_key: str, ttl_seconds: float = 0.0) -> None:
         pass
 
     fake_pool = MagicMock()
@@ -239,11 +239,11 @@ async def test_engine_runner_degraded_path() -> None:
     captured_acquire_cfg: list[EngineConfig] = []
     invocation_called = []
 
-    async def fake_acquire(cfg: EngineConfig) -> MagicMock:
+    async def fake_acquire(session_key: str, cfg: EngineConfig) -> MagicMock:
         captured_acquire_cfg.append(cfg)
         return MagicMock()
 
-    async def fake_release(ttl_seconds: float) -> None:
+    async def fake_release(session_key: str, ttl_seconds: float = 0.0) -> None:
         pass
 
     fake_pool = MagicMock()

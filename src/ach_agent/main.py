@@ -417,7 +417,7 @@ def _make_engine_runner(
             invocation_engine_cfg = engine_cfg
             invocation_engine_cfg.mcp_servers = mcp_servers
 
-        server = await pool.acquire(invocation_engine_cfg)
+        server = await pool.acquire(event.session_key, invocation_engine_cfg)
         try:
             # CR-01: in reply mode the future MUST always be resolved (set_result or
             # set_exception), otherwise the awaiting route hangs forever. The try/except
@@ -491,10 +491,13 @@ def _make_engine_runner(
             # lane: its `async with` blocks free the semaphores and its finally
             # calls on_kill for queued_total. run_invocation also fires on_kill on
             # a watchdog kill; on_kill is idempotent so that double call is safe.
-            # EnginePool.release(ttl_seconds) — no server arg (pool tracks internally).
+            # EnginePool.release(session_key, ttl_seconds) — pool tracks server by key internally.
             # TTL is a per-channel constant (0 for all v1 channels → stop on conversation end).
             try:
-                await pool.release(ttl_seconds=ttl_by_channel.get(event.channel_name, 0.0))
+                await pool.release(
+                    event.session_key,
+                    ttl_seconds=ttl_by_channel.get(event.channel_name, 0.0),
+                )
             except Exception as exc:  # noqa: BLE001
                 log.warning("pool release error", error=str(exc))
 
@@ -914,7 +917,9 @@ async def main(
                     if _mem_ok:
                         warm_mcp_servers = [cfg.memory.hindsight.endpoint]
                 warm_cfg = dataclasses.replace(engine_cfg, mcp_servers=warm_mcp_servers)
-                warm_server = await pool.acquire(warm_cfg)
+                from ach_agent.channels.tui import _CONSOLE_SESSION_KEY
+
+                warm_server = await pool.acquire(_CONSOLE_SESSION_KEY, warm_cfg)
                 # No stdout banner — opencode's own --print-logs already announces the
                 # listening address. Keep one structured info line with the loopback address.
                 log.info(
@@ -935,7 +940,7 @@ async def main(
                     )
         finally:
             # Stop any warm-held engine server (idle TTL may not have elapsed at EOF).
-            await pool._stop()
+            await pool.stop_all()
             await stop_model_proxies()
             if mcp_proxy is not None:
                 await mcp_proxy.stop()

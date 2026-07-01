@@ -16,7 +16,11 @@ def test_codemem_local_entry_written(tmp_path):
         "type": "local",
         "command": ["codemem", "mcp", "--db-path", "/var/lib/codemem/a.db"],
         "enabled": True,
-        "environment": {"CODEMEM_VIEWER": "0", "CODEMEM_VIEWER_AUTO": "0"},
+        "environment": {
+            "CODEMEM_VIEWER": "0",
+            "CODEMEM_VIEWER_AUTO": "0",
+            "CODEMEM_PROJECT": "ach-agent",
+        },
     }
 
 

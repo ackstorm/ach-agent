@@ -244,11 +244,20 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
     if config.codemem_db_path:
         # MCP type=local: opencode owns the codemem stdio child (1:1 with this opencode process).
         # SEC: no ek_; codemem is local. Viewer disabled (headless, N sessions).
+        # CODEMEM_PROJECT: pin a STABLE project namespace. codemem otherwise derives the
+        # project from cwd (git repo root), and for a non-git work_dir its remember/search
+        # fallbacks disagree — memories are stored under one project but the default search
+        # looks under another, so cross-session recall silently returns nothing. The db is
+        # already per-agent, so a fixed project makes remember + search always agree.
         mcp_block["codemem"] = {
             "type": "local",
             "command": ["codemem", "mcp", "--db-path", config.codemem_db_path],
             "enabled": True,
-            "environment": {"CODEMEM_VIEWER": "0", "CODEMEM_VIEWER_AUTO": "0"},
+            "environment": {
+                "CODEMEM_VIEWER": "0",
+                "CODEMEM_VIEWER_AUTO": "0",
+                "CODEMEM_PROJECT": "ach-agent",
+            },
         }
     if mcp_block:
         oc_config["mcp"] = mcp_block

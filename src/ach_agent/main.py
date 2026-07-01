@@ -40,7 +40,7 @@ from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.queue import QueueConsumer
 from ach_agent.channels.tui import run_one_shot, run_tui_console
 from ach_agent.config import load_config
-from ach_agent.config.schema import CodememMemory, HindsightMemory, Memory
+from ach_agent.config.schema import HindsightMemory, Memory
 from ach_agent.engine.context import fetch_context
 from ach_agent.engine.hydrate import hydrate, resolve_model
 from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
@@ -228,34 +228,9 @@ def resolve_engine_paths(cfg: Any) -> tuple[str, str]:
     return home, work_dir
 
 
-def resolve_codemem_wiring(cfg: Any) -> tuple[str, str]:
-    """Resolve (db_path, project) for the codemem backend — static per-agent, at boot.
-
-    Returns ("", "") when memory is not codemem, or when the `codemem` binary is not on
-    PATH (fail-open, MEM-02/D-02: degrade, increment MEMORY_DEGRADED, never raise).
-
-    db_path derives from persistence when omitted (mirrors resolve_engine_paths):
-      - persistence.enabled → <mountPath>/codemem/codemem.db
-      - else                → /tmp/ach-home/codemem/codemem.db
-    project defaults to the schema constant ("ach-agent"); both are config-overridable.
-    """
-    if not isinstance(cfg.memory, CodememMemory):
-        return "", ""
-
-    import shutil
-
-    if shutil.which("codemem") is None:
-        from ach_agent.memory.adapter import _inc_memory_degraded
-
-        log.warning("codemem binary not on PATH — running degraded (MEM-02, D-02)")
-        _inc_memory_degraded()
-        return "", ""
-
-    cm = cfg.memory.codemem
-    base = cfg.persistence.mount_path if cfg.persistence.enabled else "/tmp/ach-home"
-    db_path = cm.db_path or f"{base}/codemem/codemem.db"
-    log.info("memory: codemem backend active", db_path=db_path, project=cm.project)
-    return db_path, cm.project
+# resolve_codemem_wiring has moved to ach_agent.memory.codemem; re-exported here for
+# back-compat with existing callers (tests/integration/test_codemem_wiring.py, etc.).
+from ach_agent.memory.codemem import resolve_codemem_wiring as resolve_codemem_wiring  # noqa: E402
 
 
 def ach_state_dir(home: str) -> Path:
@@ -826,6 +801,13 @@ async def main(
     # context). Fail-open ("","") when not codemem or the binary is absent (MEM-02/D-02).
     codemem_db_path, codemem_project = resolve_codemem_wiring(cfg)
 
+    # Boot-static system prompt: persona + active backend's TOOLS_SPEC (appended once at boot).
+    _persona = resolve_system_prompt(cfg.prompt, state_dir)
+    from ach_agent.memory import tools_spec_for
+
+    _spec = tools_spec_for(cfg.memory)
+    _system_prompt = f"{_persona}\n\n## Memory Tools\n{_spec}" if _spec else _persona
+
     engine_cfg = EngineConfig(
         home=engine_home,
         work_dir=engine_work_dir,
@@ -834,9 +816,8 @@ async def main(
         provider=cfg.model.type,
         model=cfg.model.name,
         params=cfg.model.params,
-        # prompt.system = the inline agent persona; written to opencode's append-mode
-        # `instructions` (layered on ACH-hydrated skills/prompts). Empty when absent.
-        system_prompt=resolve_system_prompt(cfg.prompt, state_dir),
+        # prompt.system = the inline agent persona + per-backend TOOLS_SPEC (boot-static).
+        system_prompt=_system_prompt,
         steps=cfg.limits.max_steps,
         startup_timeout_seconds=cfg.engine.startup_timeout_seconds,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,

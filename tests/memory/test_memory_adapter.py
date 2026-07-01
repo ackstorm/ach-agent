@@ -40,11 +40,11 @@ async def test_prompt_injection() -> None:
 
     with (
         patch(
-            "ach_agent.memory.adapter.probe_memory_endpoint",
+            "ach_agent.memory.hindsight.probe_memory_endpoint",
             new=AsyncMock(return_value=True),
         ),
         patch(
-            "ach_agent.memory.adapter.fetch_mental_model_summaries",
+            "ach_agent.memory.hindsight.fetch_mental_model_summaries",
             new=AsyncMock(return_value=memory_section),
         ),
     ):
@@ -104,7 +104,7 @@ async def test_fail_open() -> None:
 
     # Monkeypatch probe to simulate unreachable backend
     with patch(
-        "ach_agent.memory.adapter.probe_memory_endpoint",
+        "ach_agent.memory.hindsight.probe_memory_endpoint",
         new=AsyncMock(return_value=False),
     ):
         # Must not raise (MEM-02 fail-open)

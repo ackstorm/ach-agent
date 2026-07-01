@@ -7,11 +7,13 @@ from ach_agent.memory.adapter import prepare_codemem
 
 def test_available_when_on_path(monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/codemem")
-    cfg = CodememMemory(type="codemem", codemem=CodememParams(db_path="/var/lib/codemem/a.db"))
+    params = CodememParams(db_path="/var/lib/codemem/a.db", project="ach-agent")
+    cfg = CodememMemory(type="codemem", codemem=params)
     assert prepare_codemem(cfg) == (True, "/var/lib/codemem/a.db")
 
 
 def test_degrades_when_absent(monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: None)
-    cfg = CodememMemory(type="codemem", codemem=CodememParams(db_path="/var/lib/codemem/a.db"))
+    params = CodememParams(db_path="/var/lib/codemem/a.db", project="ach-agent")
+    cfg = CodememMemory(type="codemem", codemem=params)
     assert prepare_codemem(cfg) == (False, "")

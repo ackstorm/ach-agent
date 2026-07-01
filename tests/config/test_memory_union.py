@@ -68,10 +68,14 @@ def test_codemem_memory_loads() -> None:
     from ach_agent.config.schema import CodememMemory
 
     m = CodememMemory.model_validate(
-        {"type": "codemem", "codemem": {"dbPath": "/var/lib/codemem/agent.db"}}
+        {
+            "type": "codemem",
+            "codemem": {"dbPath": "/var/lib/codemem/agent.db", "project": "ach-agent"},
+        }
     )
     assert m.type == "codemem"
     assert m.codemem.db_path == "/var/lib/codemem/agent.db"
+    assert m.codemem.project == "ach-agent"
 
 
 def test_codemem_rejects_relative_db_path() -> None:
@@ -80,7 +84,7 @@ def test_codemem_rejects_relative_db_path() -> None:
 
     with pytest.raises(ValidationError, match="absolute"):
         CodememMemory.model_validate(
-            {"type": "codemem", "codemem": {"dbPath": "relative/path.db"}}
+            {"type": "codemem", "codemem": {"dbPath": "relative/path.db", "project": "test"}}
         )
 
 
@@ -90,7 +94,17 @@ def test_codemem_rejects_dotdot_in_db_path() -> None:
 
     with pytest.raises(ValidationError, match="absolute"):
         CodememMemory.model_validate(
-            {"type": "codemem", "codemem": {"dbPath": "/var/lib/../escape.db"}}
+            {"type": "codemem", "codemem": {"dbPath": "/var/lib/../escape.db", "project": "test"}}
+        )
+
+
+def test_codemem_rejects_missing_project() -> None:
+    """CodememMemory requires project field — omitting it must raise ValidationError."""
+    from ach_agent.config.schema import CodememMemory
+
+    with pytest.raises(ValidationError):
+        CodememMemory.model_validate(
+            {"type": "codemem", "codemem": {"dbPath": "/var/lib/codemem/agent.db"}}
         )
 
 

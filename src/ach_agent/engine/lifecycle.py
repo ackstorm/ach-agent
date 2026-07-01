@@ -83,6 +83,9 @@ class EngineConfig:
     # opencode spawns as its own child: `codemem mcp --db-path <db>`. Empty → no codemem.
     # Static per-agent db path (operator config). Viewer is disabled via env (headless).
     codemem_db_path: str = ""
+    # Stable codemem project namespace (config memory.codemem.project → CODEMEM_PROJECT env).
+    # Required in config; carried here so the codemem MCP entry pins a consistent project.
+    codemem_project: str = ""
     # SEC-01 / ek-hygiene: extra env var NAMES the operator wants forwarded from the harness
     # env into the opencode subprocess (engine.forwardEnv). The opencode env is built
     # clean-slate from a small base allowlist (see build_opencode_env) — nothing else is
@@ -256,7 +259,7 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig) -> None:
             "environment": {
                 "CODEMEM_VIEWER": "0",
                 "CODEMEM_VIEWER_AUTO": "0",
-                "CODEMEM_PROJECT": "ach-agent",
+                "CODEMEM_PROJECT": config.codemem_project,
             },
         }
     if mcp_block:

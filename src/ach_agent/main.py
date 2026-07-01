@@ -301,29 +301,31 @@ def resolve_system_prompt(prompt_block: Any, state_dir: Path) -> str:
 
 async def select_memory_wiring_async(
     memory_cfg: Memory | None,
-) -> tuple[list[str], str, str]:
-    """Resolve (mcp_servers, memory_prompt, codemem_db_path) for one invocation.
+) -> tuple[list[str], str, str, str]:
+    """Resolve (mcp_servers, memory_prompt, codemem_db_path, codemem_project) for one invocation.
 
     Hindsight: probe endpoint + fetch the '## Memory' prompt (prepare_memory); register the
     endpoint as a remote MCP server iff reachable. codemem: no remote probe (stdio-local MCP
-    that opencode spawns); return codemem_db_path iff the binary is on PATH (prepare_codemem),
-    with no prompt and no remote server. Fail-open: both adapters never raise (D-02).
+    that opencode spawns); return codemem_db_path + codemem_project iff the binary is on PATH
+    (prepare_codemem), with no prompt and no remote server. Fail-open: adapters never raise (D-02).
     """
     if memory_cfg is None:
-        return [], "", ""
+        return [], "", "", ""
 
     if isinstance(memory_cfg, CodememMemory):
         from ach_agent.memory.adapter import prepare_codemem
 
         available, db_path = prepare_codemem(memory_cfg)
-        return [], "", (db_path if available else "")
+        if available:
+            return [], "", db_path, memory_cfg.codemem.project
+        return [], "", "", ""
 
     # memory_cfg narrowed to HindsightMemory here by isinstance elimination above.
     from ach_agent.memory.adapter import prepare_memory
 
     mem_available, memory_prompt = await prepare_memory(memory_cfg)
     mcp_servers = [memory_cfg.hindsight.endpoint] if mem_available else []
-    return mcp_servers, memory_prompt, ""
+    return mcp_servers, memory_prompt, "", ""
 
 
 def _make_engine_runner(
@@ -381,7 +383,9 @@ def _make_engine_runner(
         # MEM-01/MEM-02/D-02: probe memory backend BEFORE pool.acquire (Pitfall 3).
         # prepare_memory never raises (fail-open contract).
         # When unavailable: MEMORY_DEGRADED incremented + WARN logged inside prepare_memory.
-        mcp_servers, memory_prompt, codemem_db = await select_memory_wiring_async(memory_cfg)
+        mcp_servers, memory_prompt, codemem_db, codemem_project = (
+            await select_memory_wiring_async(memory_cfg)
+        )
 
         # Build per-invocation engine config with memory MCP server iff reachable (D-02).
         # Dataclass copy with updated mcp_servers — original engine_cfg is not mutated.
@@ -389,13 +393,17 @@ def _make_engine_runner(
 
         if dataclasses.is_dataclass(engine_cfg) and not isinstance(engine_cfg, type):
             invocation_engine_cfg = dataclasses.replace(
-                engine_cfg, mcp_servers=mcp_servers, codemem_db_path=codemem_db
+                engine_cfg,
+                mcp_servers=mcp_servers,
+                codemem_db_path=codemem_db,
+                codemem_project=codemem_project,
             )
         else:
             # Non-dataclass (e.g. MagicMock in tests) — attach attribute directly.
             invocation_engine_cfg = engine_cfg
             invocation_engine_cfg.mcp_servers = mcp_servers
             invocation_engine_cfg.codemem_db_path = codemem_db
+            invocation_engine_cfg.codemem_project = codemem_project
 
         server = await pool.acquire(invocation_engine_cfg)
         try:
@@ -880,6 +888,7 @@ async def main(
 
                 warm_mcp_servers: list[str] = []
                 warm_codemem_db: str = ""
+                warm_codemem_project: str = ""
                 if isinstance(cfg.memory, HindsightMemory):
                     from ach_agent.memory.adapter import prepare_memory
 
@@ -890,8 +899,13 @@ async def main(
                     from ach_agent.memory.adapter import prepare_codemem
 
                     _cm_ok, warm_codemem_db = prepare_codemem(cfg.memory)
+                    if _cm_ok:
+                        warm_codemem_project = cfg.memory.codemem.project
                 warm_cfg = dataclasses.replace(
-                    engine_cfg, mcp_servers=warm_mcp_servers, codemem_db_path=warm_codemem_db
+                    engine_cfg,
+                    mcp_servers=warm_mcp_servers,
+                    codemem_db_path=warm_codemem_db,
+                    codemem_project=warm_codemem_project,
                 )
                 warm_server = await pool.acquire(warm_cfg)
                 # No stdout banner — opencode's own --print-logs already announces the

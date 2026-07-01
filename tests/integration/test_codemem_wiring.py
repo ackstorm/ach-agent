@@ -35,8 +35,9 @@ async def test_codemem_config_flows_into_opencode_json(
     """codemem present on PATH → db_path propagates all the way into opencode.json's mcp block."""
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/codemem")
 
-    cfg = CodememMemory(type="codemem", codemem=CodememParams(db_path="/var/lib/codemem/agent.db"))
-    mcp_servers, memory_prompt, codemem_db = await select_memory_wiring_async(cfg)
+    params = CodememParams(db_path="/var/lib/codemem/agent.db", project="ach-agent")
+    cfg = CodememMemory(type="codemem", codemem=params)
+    mcp_servers, memory_prompt, codemem_db, codemem_project = await select_memory_wiring_async(cfg)
 
     # Wiring: no remote MCP, no memory prompt, db_path resolved
     assert mcp_servers == []
@@ -48,6 +49,7 @@ async def test_codemem_config_flows_into_opencode_json(
         model_base_url="http://127.0.0.1:9/v1",
         mcp_servers=mcp_servers,
         codemem_db_path=codemem_db,
+        codemem_project=codemem_project,
     )
     write_opencode_config(tmp_path, engine_cfg)
 
@@ -70,14 +72,16 @@ async def test_codemem_absent_from_path_degrades(
     """codemem not on PATH → fail-open: codemem_db_path '' → no codemem entry in opencode.json."""
     monkeypatch.setattr("shutil.which", lambda name: None)
 
-    cfg = CodememMemory(type="codemem", codemem=CodememParams(db_path="/var/lib/codemem/agent.db"))
-    _, _, codemem_db = await select_memory_wiring_async(cfg)
+    params = CodememParams(db_path="/var/lib/codemem/agent.db", project="ach-agent")
+    cfg = CodememMemory(type="codemem", codemem=params)
+    _, _, codemem_db, codemem_project = await select_memory_wiring_async(cfg)
 
     assert codemem_db == ""
 
     engine_cfg = EngineConfig(
         model_base_url="http://127.0.0.1:9/v1",
         codemem_db_path=codemem_db,
+        codemem_project=codemem_project,
     )
     write_opencode_config(tmp_path, engine_cfg)
 
@@ -99,7 +103,7 @@ async def test_hindsight_path_produces_no_codemem_entry(
     monkeypatch.setattr("ach_agent.memory.adapter.prepare_memory", _ok)
 
     cfg = HindsightMemory(type="hindsight", hindsight=HindsightParams(endpoint="http://mem:8080"))
-    mcp_servers, memory_prompt, codemem_db = await select_memory_wiring_async(cfg)
+    mcp_servers, memory_prompt, codemem_db, codemem_project = await select_memory_wiring_async(cfg)
 
     assert mcp_servers == ["http://mem:8080"]
     assert memory_prompt == "## Memory\nx"
@@ -109,6 +113,7 @@ async def test_hindsight_path_produces_no_codemem_entry(
         model_base_url="http://127.0.0.1:9/v1",
         mcp_servers=mcp_servers,
         codemem_db_path=codemem_db,
+        codemem_project=codemem_project,
     )
     write_opencode_config(tmp_path, engine_cfg)
 

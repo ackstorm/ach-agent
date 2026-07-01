@@ -322,7 +322,7 @@ async def select_memory_wiring_async(
     from ach_agent.memory.adapter import prepare_memory
 
     mem_available, memory_prompt = await prepare_memory(memory_cfg)
-    mcp_servers = [memory_cfg.endpoint] if mem_available else []
+    mcp_servers = [memory_cfg.hindsight.endpoint] if mem_available else []
     return mcp_servers, memory_prompt, ""
 
 
@@ -830,7 +830,7 @@ async def main(
     # Per-channel idle TTL (constant by channel type; all v1 channels are 0).
     channel_ttl = {ch.name: _CHANNEL_IDLE_TTL_S.get(ch.type, 0.0) for ch in cfg.channels}
     channels_by_name = {c.name: c for c in cfg.channels}
-    memory_bank = cfg.memory.bank if isinstance(cfg.memory, HindsightMemory) else ""
+    memory_bank = cfg.memory.hindsight.bank if isinstance(cfg.memory, HindsightMemory) else ""
     engine_runner = _make_engine_runner(
         pool=pool,
         engine_cfg=engine_cfg,
@@ -885,7 +885,7 @@ async def main(
 
                     _mem_ok, _ = await prepare_memory(cfg.memory)
                     if _mem_ok:
-                        warm_mcp_servers = [cfg.memory.endpoint]
+                        warm_mcp_servers = [cfg.memory.hindsight.endpoint]
                 elif isinstance(cfg.memory, CodememMemory):
                     from ach_agent.memory.adapter import prepare_codemem
 

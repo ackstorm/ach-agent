@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 if TYPE_CHECKING:
-    from ach_agent.config.schema import CodememMemory, MemoryBlock
+    from ach_agent.config.schema import CodememMemory, HindsightMemory
 
 log = structlog.get_logger(__name__)
 
@@ -87,7 +87,7 @@ async def fetch_mental_model_summaries(
 
 
 async def prepare_memory(
-    memory_cfg: MemoryBlock,
+    memory_cfg: HindsightMemory,
 ) -> tuple[bool, str]:
     """Probe endpoint and fetch mental-model summaries. Returns (available, prompt_section).
 
@@ -102,22 +102,24 @@ async def prepare_memory(
     (False, unavailable section).
     """
     try:
-        bank_id = memory_cfg.bank
+        params = memory_cfg.hindsight
+        bank_id = params.bank
 
-        available = await probe_memory_endpoint(memory_cfg.endpoint)
+        available = await probe_memory_endpoint(params.endpoint)
         if not available:
             log.warning(
                 "memory backend unreachable — running degraded (MEM-02, D-02)",
-                endpoint=memory_cfg.endpoint,
+                endpoint=params.endpoint,
                 bank_id=bank_id,
             )
             _inc_memory_degraded()
             return False, "## Memory\n\nUnavailable (backend unreachable)."
 
+        log.info("memory: hindsight backend active", endpoint=params.endpoint, bank_id=bank_id)
         prompt_section = await fetch_mental_model_summaries(
-            endpoint=memory_cfg.endpoint,
+            endpoint=params.endpoint,
             bank_id=bank_id,
-            mental_model_ids=memory_cfg.mental_models,
+            mental_model_ids=params.mental_models,
         )
         return True, prompt_section
 
@@ -138,14 +140,16 @@ def prepare_codemem(memory_cfg: CodememMemory) -> tuple[bool, str]:
     endpoint). Availability = the `codemem` binary is on PATH. Fail-open (MEM-02/D-02):
     if absent, degrade (no memory tools) and never raise.
     """
+    db_path = memory_cfg.codemem.db_path
     if shutil.which("codemem") is None:
         log.warning(
             "codemem binary not on PATH — running degraded (MEM-02, D-02)",
-            db_path=memory_cfg.db_path,
+            db_path=db_path,
         )
         _inc_memory_degraded()
         return False, ""
-    return True, memory_cfg.db_path
+    log.info("memory: codemem backend active", db_path=db_path)
+    return True, db_path
 
 
 def _inc_memory_degraded() -> None:

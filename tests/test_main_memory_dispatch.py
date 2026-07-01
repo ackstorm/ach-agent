@@ -10,7 +10,8 @@ Verifies that:
 from __future__ import annotations
 
 import pytest
-from ach_agent.config.schema import CodememMemory, HindsightMemory
+
+from ach_agent.config.schema import CodememMemory, CodememParams, HindsightMemory, HindsightParams
 
 
 async def test_codemem_type_skips_hindsight_probe(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -26,7 +27,7 @@ async def test_codemem_type_skips_hindsight_probe(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr("ach_agent.memory.adapter.prepare_memory", _boom)
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/codemem")
 
-    cfg = CodememMemory(type="codemem", dbPath="/var/lib/codemem/a.db")
+    cfg = CodememMemory(type="codemem", codemem=CodememParams(db_path="/var/lib/codemem/a.db"))
     mcp_servers, memory_prompt, codemem_db = await m.select_memory_wiring_async(cfg)
 
     assert mcp_servers == []
@@ -44,7 +45,7 @@ async def test_hindsight_type_uses_probe(monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setattr("ach_agent.memory.adapter.prepare_memory", _ok)
 
-    cfg = HindsightMemory(type="hindsight", endpoint="http://mem:8080")
+    cfg = HindsightMemory(type="hindsight", hindsight=HindsightParams(endpoint="http://mem:8080"))
     mcp_servers, memory_prompt, codemem_db = await m.select_memory_wiring_async(cfg)
 
     assert mcp_servers == ["http://mem:8080"]

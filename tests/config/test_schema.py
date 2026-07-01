@@ -149,17 +149,13 @@ def test_prompt_system_field() -> None:
 
 
 def test_contract_reserved_fields_accepted() -> None:
-    """prompt.compose + memory.mission are CONTRACT §2 reserved fields: the operator
-    renders them, the harness must ACCEPT them (extra=forbid) even though it does not yet
-    execute them. Guards against re-removing them as 'inert'."""
-    from ach_agent.config.schema import HindsightMemory, PromptBlock
+    """prompt.compose is a CONTRACT §2 reserved field: the operator renders it,
+    the harness must ACCEPT it (extra=forbid) even though it does not yet execute layering.
+    Guards against re-removing it as 'inert'."""
+    from ach_agent.config.schema import PromptBlock
 
     p = PromptBlock.model_validate({"system": {"type": "text", "text": "hi"}, "compose": "append"})
     assert p.compose == "append"
-    m = HindsightMemory.model_validate(
-        {"endpoint": "http://mem:8080", "mission": "reviewer", "bank": "b1"}
-    )
-    assert m.mission == "reviewer"
 
 
 def test_agent_namespace_rejected() -> None:
@@ -909,14 +905,20 @@ def test_memory_block_uses_bank_not_scope():
     import pytest
     from pydantic import ValidationError
 
-    from ach_agent.config.schema import MemoryBlock
+    from ach_agent.config.schema import HindsightMemory, HindsightParams
 
-    m = MemoryBlock(endpoint="http://mem:8080", bank="gitlab-pr-review")
-    assert m.bank == "gitlab-pr-review"
+    m = HindsightMemory(
+        type="hindsight",
+        hindsight=HindsightParams(endpoint="http://mem:8080", bank="gitlab-pr-review"),
+    )
+    assert m.hindsight.bank == "gitlab-pr-review"
 
-    # the old key is gone — extra='forbid' must reject it
+    # the old key is gone — extra='forbid' must reject it on HindsightParams
     with pytest.raises(ValidationError):
-        MemoryBlock(endpoint="http://mem:8080", scope="x")
+        HindsightMemory(
+            type="hindsight",
+            hindsight=HindsightParams(endpoint="http://mem:8080", scope="x"),  # type: ignore[call-arg]
+        )
 
 
 # ---------------------------------------------------------------------------

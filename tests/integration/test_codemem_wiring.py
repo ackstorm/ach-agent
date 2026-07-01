@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from ach_agent.config.schema import CodememMemory, HindsightMemory
+from ach_agent.config.schema import CodememMemory, CodememParams, HindsightMemory, HindsightParams
 from ach_agent.engine.lifecycle import EngineConfig, write_opencode_config
 from ach_agent.main import select_memory_wiring_async
 
@@ -35,7 +35,7 @@ async def test_codemem_config_flows_into_opencode_json(
     """codemem present on PATH → db_path propagates all the way into opencode.json's mcp block."""
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/codemem")
 
-    cfg = CodememMemory(type="codemem", dbPath="/var/lib/codemem/agent.db")
+    cfg = CodememMemory(type="codemem", codemem=CodememParams(db_path="/var/lib/codemem/agent.db"))
     mcp_servers, memory_prompt, codemem_db = await select_memory_wiring_async(cfg)
 
     # Wiring: no remote MCP, no memory prompt, db_path resolved
@@ -66,7 +66,7 @@ async def test_codemem_absent_from_path_degrades(
     """codemem not on PATH → fail-open: codemem_db_path '' → no codemem entry in opencode.json."""
     monkeypatch.setattr("shutil.which", lambda name: None)
 
-    cfg = CodememMemory(type="codemem", dbPath="/var/lib/codemem/agent.db")
+    cfg = CodememMemory(type="codemem", codemem=CodememParams(db_path="/var/lib/codemem/agent.db"))
     _, _, codemem_db = await select_memory_wiring_async(cfg)
 
     assert codemem_db == ""
@@ -94,7 +94,7 @@ async def test_hindsight_path_produces_no_codemem_entry(
 
     monkeypatch.setattr("ach_agent.memory.adapter.prepare_memory", _ok)
 
-    cfg = HindsightMemory(type="hindsight", endpoint="http://mem:8080")
+    cfg = HindsightMemory(type="hindsight", hindsight=HindsightParams(endpoint="http://mem:8080"))
     mcp_servers, memory_prompt, codemem_db = await select_memory_wiring_async(cfg)
 
     assert mcp_servers == ["http://mem:8080"]

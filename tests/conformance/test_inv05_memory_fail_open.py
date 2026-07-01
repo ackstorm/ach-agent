@@ -15,13 +15,15 @@ async def test_inv05_memory_fail_open() -> None:
     prepare_memory returns (False, <unavailable section>) and does NOT raise
     an exception. The invocation must continue (fail-open semantics per §31).
     """
-    from ach_agent.config.schema import MemoryBlock
+    from ach_agent.config.schema import HindsightMemory, HindsightParams
     from ach_agent.memory.adapter import prepare_memory
 
-    cfg = MemoryBlock(
-        endpoint="http://hindsight.svc:8080",
-        bank="test-scope",
-        mentalModels=[],
+    cfg = HindsightMemory(
+        type="hindsight",
+        hindsight=HindsightParams(
+            endpoint="http://hindsight.svc:8080",
+            bank="test-scope",
+        ),
     )
 
     # Simulate backend unreachable: probe returns False.

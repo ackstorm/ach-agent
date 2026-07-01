@@ -41,16 +41,16 @@ prompt:
   compose: append                       # reserved: accepted, prompt-layering not yet executed
 
 memory:                                 # omit if unused; fail-open (backend down → run without it)
-  type: hindsight                       # hindsight (default) | codemem — discriminated union
-  endpoint: http://hindsight.engineering.svc:8080
-  mission: "AI code reviewer for the platform team"   # reserved: accepted, not yet consumed
-  bank: gitlab-pr-review                # static memory bank_id (the agent's mission namespace)
-  mentalModels: [architecture, conventions, recurring-issues]
+  type: hindsight                       # hindsight | codemem — discriminated union (required)
+  hindsight:
+    endpoint: http://hindsight.engineering.svc:8080
+    bank: gitlab-pr-review              # static memory bank_id (the agent's mission namespace)
+    mentalModels: [architecture, conventions, recurring-issues]
   # codemem backend (local stdio MCP, model-managed) — alternative to hindsight:
   # memory:
   #   type: codemem
-  #   dbPath: /var/lib/ach-agent/codemem.db   # absolute path on a persistent volume (no "..")
-  #   mission: "..."                          # reserved: accepted, not yet consumed
+  #   codemem:
+  #     dbPath: /var/lib/ach-agent/codemem.db   # absolute path on a persistent volume (no "..")
 
 limits:
   maxConcurrentInvocations: 2           # global semaphore across ALL channels

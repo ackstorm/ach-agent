@@ -15,25 +15,27 @@ D-02 invariant: verified by MCP-list membership in BOTH probe branches, not by s
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
 async def test_prompt_injection() -> None:
     """MEM-01: when backend is reachable, prepare_memory returns (True, '## Memory...')
     and an EngineConfig built with the result CONTAINS the memory MCP server entry."""
-    from ach_agent.memory.adapter import prepare_memory
+    from ach_agent.config.schema import HindsightMemory, HindsightParams
     from ach_agent.engine.lifecycle import EngineConfig
-    from ach_agent.config.schema import MemoryBlock
+    from ach_agent.memory.adapter import prepare_memory
 
     endpoint = "http://hindsight.svc:8080"
     summary_text = "### coding-habits\nPrefers test-driven development."
     memory_section = f"## Memory\n\n{summary_text}"
 
-    cfg = MemoryBlock(
-        endpoint=endpoint,
-        bank="test-scope",
-        mentalModels=["coding-habits"],
+    cfg = HindsightMemory(
+        type="hindsight",
+        hindsight=HindsightParams(
+            endpoint=endpoint,
+            bank="test-scope",
+            mental_models=["coding-habits"],
+        ),
     )
 
     with (
@@ -61,7 +63,8 @@ async def test_prompt_injection() -> None:
     # the memory server entry when available=True.
     engine_cfg_with_memory = EngineConfig(mcp_servers=[endpoint])
     assert engine_cfg_with_memory.mcp_servers, (
-        "D-02 (reachable branch): EngineConfig.mcp_servers must not be empty when memory is available"
+        "D-02 (reachable branch): EngineConfig.mcp_servers must not be empty "
+        "when memory is available"
     )
     assert any(endpoint in url for url in engine_cfg_with_memory.mcp_servers), (
         f"D-02 (reachable branch): EngineConfig.mcp_servers must contain the memory endpoint, "
@@ -72,7 +75,8 @@ async def test_prompt_injection() -> None:
     # memory entry does NOT contain the memory server — the absent branch must also hold.
     engine_cfg_without_memory = EngineConfig()
     assert engine_cfg_without_memory.mcp_servers == [], (
-        "D-02 (unreachable branch complement): EngineConfig.mcp_servers must be empty when memory omitted"
+        "D-02 (unreachable branch complement): EngineConfig.mcp_servers must be empty "
+        "when memory omitted"
     )
 
 
@@ -80,15 +84,17 @@ async def test_fail_open() -> None:
     """MEM-02: when probe_memory_endpoint returns False, prepare_memory returns
     (False, section with 'Unavailable'), never raises, invocation can continue,
     MEMORY_DEGRADED counter is incremented, and EngineConfig.mcp_servers is EMPTY."""
-    from ach_agent.memory.adapter import prepare_memory
-    from ach_agent.engine.lifecycle import EngineConfig
-    from ach_agent.config.schema import MemoryBlock
-    import prometheus_client
 
-    cfg = MemoryBlock(
-        endpoint="http://hindsight.svc:8080",
-        bank="test-scope",
-        mentalModels=[],
+    from ach_agent.config.schema import HindsightMemory, HindsightParams
+    from ach_agent.engine.lifecycle import EngineConfig
+    from ach_agent.memory.adapter import prepare_memory
+
+    cfg = HindsightMemory(
+        type="hindsight",
+        hindsight=HindsightParams(
+            endpoint="http://hindsight.svc:8080",
+            bank="test-scope",
+        ),
     )
 
     # Sample the MEMORY_DEGRADED counter before the call
@@ -121,25 +127,29 @@ async def test_fail_open() -> None:
     # when memory is unavailable — the model must never receive a tool that can fail.
     engine_cfg_degraded = EngineConfig()  # no mcp_servers → empty list
     assert engine_cfg_degraded.mcp_servers == [], (
-        "D-02 (unreachable branch): EngineConfig.mcp_servers must be empty when memory backend unreachable"
+        "D-02 (unreachable branch): EngineConfig.mcp_servers must be empty "
+        "when memory backend unreachable"
     )
 
 
 async def test_engine_runner_reachable_branch() -> None:
     """Task 2 / MEM-01 / D-02: engine_runner passes EngineConfig with memory MCP server
     to pool.acquire when memory backend is reachable, and ## Memory summaries in prompt."""
-    from ach_agent.main import _make_engine_runner, build_engine_prompt
-    from ach_agent.config.schema import MemoryBlock
-    from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.channels.message_event import MessageEvent
+    from ach_agent.config.schema import HindsightMemory, HindsightParams
+    from ach_agent.engine.lifecycle import EngineConfig
+    from ach_agent.main import _make_engine_runner
 
     endpoint = "http://hindsight.svc:8080"
     memory_section = "## Memory\n\n### coding-habits\nPrefers TDD."
 
-    memory_cfg = MemoryBlock(
-        endpoint=endpoint,
-        bank="test-scope",
-        mentalModels=["coding-habits"],
+    memory_cfg = HindsightMemory(
+        type="hindsight",
+        hindsight=HindsightParams(
+            endpoint=endpoint,
+            bank="test-scope",
+            mental_models=["coding-habits"],
+        ),
     )
     base_engine_cfg = EngineConfig()
 
@@ -209,18 +219,20 @@ async def test_engine_runner_reachable_branch() -> None:
 async def test_engine_runner_degraded_path() -> None:
     """Task 2 / MEM-02 / D-02: engine_runner excludes memory MCP server from pool.acquire
     when memory backend is unreachable, invocation still completes (no exception, no retry)."""
-    from ach_agent.main import _make_engine_runner
-    from ach_agent.config.schema import MemoryBlock
-    from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.channels.message_event import MessageEvent
+    from ach_agent.config.schema import HindsightMemory, HindsightParams
+    from ach_agent.engine.lifecycle import EngineConfig
+    from ach_agent.main import _make_engine_runner
 
     endpoint = "http://hindsight.svc:8080"
     degraded_section = "## Memory\n\nUnavailable (backend unreachable)."
 
-    memory_cfg = MemoryBlock(
-        endpoint=endpoint,
-        bank="test-scope",
-        mentalModels=[],
+    memory_cfg = HindsightMemory(
+        type="hindsight",
+        hindsight=HindsightParams(
+            endpoint=endpoint,
+            bank="test-scope",
+        ),
     )
     base_engine_cfg = EngineConfig()
 
@@ -282,4 +294,6 @@ async def test_engine_runner_degraded_path() -> None:
     )
 
     # Invocation must complete despite degraded memory (no retry, no fail)
-    assert invocation_called, "run_invocation was not called — invocation must complete even in degraded mode"
+    assert invocation_called, (
+        "run_invocation was not called — invocation must complete even in degraded mode"
+    )

@@ -219,6 +219,50 @@ async def test_stop_all_stops_every_server() -> None:
 
 
 # ---------------------------------------------------------------------------
+# I-1: per-key HOME isolation — distinct keys launch into distinct homes so
+# concurrent servers never race a shared opencode.json.
+# ---------------------------------------------------------------------------
+
+
+async def test_distinct_keys_get_isolated_homes() -> None:
+    """Each session_key launches into its own <base>/servers/oc-* home (I-1).
+
+    The same key is deterministic (reuses its home → node_modules cache reuse);
+    different keys get different homes → no shared-opencode.json race.
+    """
+    from ach_agent.engine.lifecycle import EngineConfig
+
+    pool = EnginePool()
+    seen_homes: list[str] = []
+
+    async def fake_start(cfg):
+        seen_homes.append(cfg.home)
+        return _make_fake_server(alive=True)
+
+    pool._start_server = fake_start
+    cfg = EngineConfig(home="/base/home")
+
+    await pool.acquire("gitlab.example.com/group/repo-a", cfg)
+    await pool.acquire("gitlab.example.com/group/repo-b", cfg)
+
+    assert len(seen_homes) == 2
+    assert seen_homes[0] != seen_homes[1], "distinct keys must not share a home"
+    for h in seen_homes:
+        assert h.startswith("/base/home/servers/oc-"), h
+
+    # Same key re-acquired after stop → same home (deterministic, cache reuse).
+    await pool._stop("gitlab.example.com/group/repo-a")
+    await pool.acquire("gitlab.example.com/group/repo-a", cfg)
+    assert seen_homes[2] == seen_homes[0], "same key must map to the same home"
+
+
+async def test_config_for_key_passthrough_non_dataclass() -> None:
+    """A non-dataclass config (test/MagicMock) passes through _config_for_key unchanged."""
+    cfg = _config()
+    assert EnginePool._config_for_key("k1", cfg) is cfg
+
+
+# ---------------------------------------------------------------------------
 # Non-keyed coverage preserved from the pre-migration test file:
 # _default_start_server home behavior and main._harness_log_dir.
 # ---------------------------------------------------------------------------

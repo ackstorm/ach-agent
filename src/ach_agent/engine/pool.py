@@ -127,6 +127,14 @@ class EnginePool:
         lock = self._get_lock(session_key)
         async with lock:
             count = self._ref_counts.get(session_key, 0)
+            if count == 0:
+                # Spurious release (double-release or release of a never-acquired
+                # key). No server is tracked for this key — nothing to stop.
+                log.warning(
+                    "EnginePool.release: no active ref for key (spurious release)",
+                    session_key=session_key,
+                )
+                return
             if count > 1:
                 self._ref_counts[session_key] = count - 1
                 log.debug(
@@ -136,21 +144,25 @@ class EnginePool:
                 )
                 return
             self._ref_counts.pop(session_key, None)
+            # Schedule the TTL task under the lock so _ttl_tasks mutations are
+            # always lock-protected (consistent with acquire()). ttl==0 stops the
+            # server via _stop() below — which takes the same lock, so it must run
+            # AFTER this block exits to avoid re-entrant deadlock.
+            if ttl_seconds > 0:
+                log.debug(
+                    "EnginePool.release: scheduling TTL expiry",
+                    session_key=session_key,
+                    ttl_seconds=ttl_seconds,
+                )
+                old = self._ttl_tasks.pop(session_key, None)
+                if old is not None and not old.done():
+                    old.cancel()
+                self._ttl_tasks[session_key] = asyncio.create_task(
+                    self._expire(session_key, ttl_seconds)
+                )
 
         if ttl_seconds == 0:
             await self._stop(session_key)
-        else:
-            log.debug(
-                "EnginePool.release: scheduling TTL expiry",
-                session_key=session_key,
-                ttl_seconds=ttl_seconds,
-            )
-            old = self._ttl_tasks.pop(session_key, None)
-            if old is not None and not old.done():
-                old.cancel()
-            self._ttl_tasks[session_key] = asyncio.create_task(
-                self._expire(session_key, ttl_seconds)
-            )
 
     async def _expire(self, session_key: str, ttl: float) -> None:
         """Sleep ttl seconds, then stop the key's server (unless cancelled)."""

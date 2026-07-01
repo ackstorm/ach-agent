@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Added
+- **`prompt.system` typed source: `text` | `file` | `ach`.** The persona can be inline
+  (`{type: text, text: "…"}`), a hydrated prompt file addressed by path
+  (`{type: file, file: "prompts/<name>/<f>.md"}`), or a hydrated prompt addressed by name
+  (`{type: ach, ach: "<name>", file?: "<subpath>"}`, the preferred form — the harness
+  resolves the prompt dir's sole file, or the given subpath). Paths resolve under
+  `<home>/.ach-state`; absolute or `..` is rejected at load and re-checked (real path) at
+  read time; a missing file/dir is a hard boot failure (never fail-open).
+- **`memory.type` backend union: `hindsight` | `codemem`.** `hindsight` (default) keeps the
+  existing `endpoint`/`bank`/`mentalModels` shape; `codemem` is a local stdio-MCP,
+  model-managed backend taking an absolute `dbPath`. A legacy memory block with no `type`
+  defaults to `hindsight`. codemem fails open (PATH probe) and is wired into opencode.json.
+
+### Changed
+- **BREAKING — `prompt.system` is no longer a plain string.** The bare-string form is
+  rejected; the operator (and hand-authored configs) must render the object form above.
+  Lockstep change with `ach-runtime`.
+- **Hydrated `prompts`/`artifacts` relocated to `<home>/.ach-state/{prompts,artifacts}/<name>`**
+  (was `<mountPath>/{kind}`); a `<workDir>/.ach-state` symlink gives the agent one path.
+  Skills are unchanged (`<home>/.config/opencode/skills/<name>`).
+
 ### Removed
 - **Helm chart + Kustomize base (`deploy/`)** and the chart-publish step in the release
   workflow. The harness is deployed by the `ach-runtime` operator, which owns the

@@ -52,7 +52,7 @@ async def test_launch_subprocess(tmp_path: Path) -> None:
 
     # Patch check_health to avoid real HTTP calls
     with patch("ach_agent.engine.client.OpenCodeClient.check_health", new_callable=AsyncMock, return_value=True):
-        server = await launch(port=19876, ephemeral_home=tmp_path, config=config)
+        server = await launch(port=19876, ephemeral_home=tmp_path, config=config, session_key="k1")
 
     try:
         assert server.is_alive(), "Process should be alive after launch"
@@ -145,7 +145,7 @@ async def test_drain_tasks_started(tmp_path: Path) -> None:
         patch("ach_agent.engine.lifecycle.asyncio.create_task", side_effect=recording_create_task),
         patch("ach_agent.engine.client.OpenCodeClient.check_health", new_callable=AsyncMock, return_value=True),
     ):
-        server = await launch(port=19879, ephemeral_home=tmp_path, config=config)
+        server = await launch(port=19879, ephemeral_home=tmp_path, config=config, session_key="k1")
 
     try:
         # Should have created exactly two drain tasks (stdout + stderr)
@@ -440,7 +440,10 @@ def test_build_opencode_env_strips_secrets_in_proxy_mode(
     monkeypatch.setenv("ACH_API_KEY", "ek-secret")
     monkeypatch.setenv("GITLAB_TOKEN", "glpat-x")
 
-    env = build_opencode_env(tmp_path, EngineConfig(model_base_url="http://127.0.0.1:9/v1"))
+    dummy_cfg_path = tmp_path / ".config" / "opencode" / "opencode_k.json"
+    env = build_opencode_env(
+        tmp_path, EngineConfig(model_base_url="http://127.0.0.1:9/v1"), dummy_cfg_path
+    )
 
     assert "ACH_TOKEN" not in env
     assert "ACH_API_KEY" not in env  # proxy injects the ek_; opencode must not see it
@@ -449,6 +452,7 @@ def test_build_opencode_env_strips_secrets_in_proxy_mode(
     assert env["HOME"] == str(tmp_path)  # pinned to ephemeral home
     assert env["TMPDIR"] == str(tmp_path)
     assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert "OPENCODE_CONFIG" in env  # per-session config path always set
 
 
 def test_build_opencode_env_forwards_configured_names(
@@ -460,13 +464,42 @@ def test_build_opencode_env_forwards_configured_names(
     monkeypatch.setenv("MY_CA_BUNDLE", "/etc/ca.pem")
     monkeypatch.setenv("ACH_TOKEN", "ek-secret")
 
+    dummy_cfg_path = tmp_path / ".config" / "opencode" / "opencode_k.json"
     env = build_opencode_env(
         tmp_path,
         EngineConfig(model_base_url="http://127.0.0.1:9/v1", forward_env=["MY_CA_BUNDLE"]),
+        dummy_cfg_path,
     )
 
     assert env["MY_CA_BUNDLE"] == "/etc/ca.pem"
     assert "ACH_TOKEN" not in env  # not named → not forwarded
+
+
+def test_write_opencode_config_per_session_filename(tmp_path: Path) -> None:
+    from ach_agent.engine.lifecycle import EngineConfig, write_opencode_config
+
+    cfg = EngineConfig(model_base_url="http://127.0.0.1:9/v1")
+    path = write_opencode_config(tmp_path, cfg, "gitlab.com/g/repo")
+    cfg_dir = tmp_path / ".config" / "opencode"
+    # per-session filename; there is NO opencode.json fallback
+    assert path.parent == cfg_dir
+    assert path.name.startswith("opencode_") and path.name.endswith(".json")
+    assert path.is_file()
+    assert not (cfg_dir / "opencode.json").exists()
+    # deterministic in the key
+    again = write_opencode_config(tmp_path, cfg, "gitlab.com/g/repo")
+    assert again.name == path.name
+    # a per-session prompt file is written too (no shared system_prompt.txt)
+    assert not (tmp_path / "personality" / "system_prompt.txt").exists()
+
+
+def test_build_opencode_env_sets_opencode_config(tmp_path: Path) -> None:
+    from ach_agent.engine.lifecycle import EngineConfig, build_opencode_env
+
+    cfg_path = tmp_path / ".config" / "opencode" / "opencode_k.json"
+    env = build_opencode_env(tmp_path, EngineConfig(), cfg_path)
+    assert env["OPENCODE_CONFIG"] == str(cfg_path)
+    assert env["HOME"] == str(tmp_path)  # HOME stays the shared home
 
 
 def test_engine_config_has_home_and_no_session_dir() -> None:
@@ -588,3 +621,55 @@ async def test_run_invocation_reuse_true_reuses_session() -> None:
     # create_session called exactly once — second call reuses the stored id
     mock_client.create_session.assert_awaited_once()
     assert server._sessions.get("key-b") == "ses-reused"
+
+
+# ---------------------------------------------------------------------------
+# Shared-home parity: launch() populates ManagedServer.config_path
+# ---------------------------------------------------------------------------
+
+
+async def test_launch_populates_config_path(tmp_path: Path) -> None:
+    """launch() stores the path returned by write_opencode_config in server.config_path.
+
+    Under the shared-home model a per-session config file is written and the path is
+    needed by the --tui attach client to set OPENCODE_CONFIG.  Drives launch() with a
+    real fake binary so the full code path executes (same pattern as test_launch_subprocess).
+    """
+    from ach_agent.engine.lifecycle import EngineConfig, ManagedServer, launch
+
+    config = EngineConfig()
+    fake_binary = tmp_path / "opencode"
+    fake_binary.write_text("#!/bin/sh\nsleep 30\n")
+    fake_binary.chmod(0o755)
+    config.binary_path = str(fake_binary)
+    config.work_dir = str(tmp_path)
+
+    known_path = tmp_path / ".config" / "opencode" / "opencode_k1.json"
+
+    with (
+        patch(
+            "ach_agent.engine.lifecycle.write_opencode_config",
+            return_value=known_path,
+        ),
+        patch(
+            "ach_agent.engine.client.OpenCodeClient.check_health",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+    ):
+        server = await launch(port=19883, ephemeral_home=tmp_path, config=config, session_key="k1")
+
+    try:
+        assert server.config_path == known_path, (
+            f"Expected config_path={known_path!r}, got {server.config_path!r}"
+        )
+    finally:
+        await server.stop()
+
+
+def test_managed_server_config_path_defaults_none() -> None:
+    """ManagedServer.config_path defaults to None when not supplied."""
+    from ach_agent.engine.lifecycle import ManagedServer
+
+    server = ManagedServer(port=0)
+    assert server.config_path is None

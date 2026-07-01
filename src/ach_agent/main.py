@@ -611,7 +611,12 @@ def _harness_log_dir() -> Path:
 
 
 async def _run_opencode_attach(
-    router: Any, *, binary_path: str, port: int, ephemeral_home: Path
+    router: Any,
+    *,
+    binary_path: str,
+    port: int,
+    ephemeral_home: Path,
+    config_path: Path | None = None,
 ) -> None:
     """`--tui`: hand the terminal to opencode's native TUI, attached to our serve.
 
@@ -641,6 +646,8 @@ async def _run_opencode_attach(
 
     url = f"http://127.0.0.1:{port}"
     env = {**os.environ, "HOME": str(ephemeral_home), "TMPDIR": str(ephemeral_home)}
+    if config_path is not None:
+        env["OPENCODE_CONFIG"] = str(config_path)
     log_path = _harness_log_dir() / "tui-attach.log"
     log.info("ach-agent: --tui → opencode attach", url=url, log_file=str(log_path))
 
@@ -975,6 +982,7 @@ async def main(
                         binary_path=engine_cfg.binary_path,
                         port=warm_server.port,
                         ephemeral_home=warm_server.ephemeral_home,
+                        config_path=warm_server.config_path,
                     )
         finally:
             # Stop any warm-held engine server (idle TTL may not have elapsed at EOF).

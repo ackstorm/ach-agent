@@ -32,10 +32,10 @@ class _FakeServer:
 class _FakePool:
     """Minimal EnginePool stand-in: acquire returns a server, release is a no-op."""
 
-    async def acquire(self, _cfg: Any) -> _FakeServer:
+    async def acquire(self, _session_key: str, _cfg: Any) -> _FakeServer:
         return _FakeServer()
 
-    async def release(self, ttl_seconds: float = 0.0) -> None:
+    async def release(self, _session_key: str, ttl_seconds: float = 0.0) -> None:
         return None
 
 

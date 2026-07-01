@@ -375,6 +375,7 @@ class ChannelConfig(BaseModel):
     type: ChannelType  # Literal union rejects unknown types (CFG-03)
     concurrency: int = 1
     prompt: str | None = None
+    session: Literal["auto", "none"] = "auto"
     source: Literal["gitlab", "github", "generic"] | None = None
     webhook: WebhookBlock | None = None
     cron: CronBlock | None = None

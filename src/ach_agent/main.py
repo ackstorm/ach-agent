@@ -228,34 +228,9 @@ def resolve_engine_paths(cfg: Any) -> tuple[str, str]:
     return home, work_dir
 
 
-def resolve_codemem_wiring(cfg: Any) -> tuple[str, str]:
-    """Resolve (db_path, project) for the codemem backend — static per-agent, at boot.
-
-    Returns ("", "") when memory is not codemem, or when the `codemem` binary is not on
-    PATH (fail-open, MEM-02/D-02: degrade, increment MEMORY_DEGRADED, never raise).
-
-    db_path derives from persistence when omitted (mirrors resolve_engine_paths):
-      - persistence.enabled → <mountPath>/codemem/codemem.db
-      - else                → /tmp/ach-home/codemem/codemem.db
-    project defaults to the schema constant ("ach-agent"); both are config-overridable.
-    """
-    if not isinstance(cfg.memory, CodememMemory):
-        return "", ""
-
-    import shutil
-
-    if shutil.which("codemem") is None:
-        from ach_agent.memory.adapter import _inc_memory_degraded
-
-        log.warning("codemem binary not on PATH — running degraded (MEM-02, D-02)")
-        _inc_memory_degraded()
-        return "", ""
-
-    cm = cfg.memory.codemem
-    base = cfg.persistence.mount_path if cfg.persistence.enabled else "/tmp/ach-home"
-    db_path = cm.db_path or f"{base}/codemem/codemem.db"
-    log.info("memory: codemem backend active", db_path=db_path, project=cm.project)
-    return db_path, cm.project
+# resolve_codemem_wiring has moved to ach_agent.memory.codemem; re-exported here for
+# back-compat with existing callers (tests/integration/test_codemem_wiring.py, etc.).
+from ach_agent.memory.codemem import resolve_codemem_wiring as resolve_codemem_wiring  # noqa: E402
 
 
 def ach_state_dir(home: str) -> Path:
@@ -400,10 +375,34 @@ def _make_engine_runner(
         # Build sanitized launch env — ek_ is never read into a local variable
         _sanitized = SanitizedEnv(os.environ.copy())  # noqa: F841 — used by launch
 
+        # Resolve channel cfg early so ctx can be built before the memory probe.
+        ch_cfg = channels_by_name.get(event.channel_name)
+        ctx = build_template_context(
+            event.payload,
+            channel_name=event.channel_name,
+            channel_type=getattr(ch_cfg, "type", "") or "",
+            channel_source=getattr(ch_cfg, "source", "") or "",
+            agent_name=agent_name,
+            memory_bank=memory_bank,
+            event_id=event.idempotency_key,
+            session_key=event.session_key,
+        )
+
+        # Bank (hindsight) — render before the probe so the rendered value flows into both
+        # the hindsight fetch and the memory section of the prompt. Probe stays BEFORE
+        # pool.acquire (MEM-01/MEM-02/D-02, "Pitfall 3"). When bank has no {{ token,
+        # effective_* aliases are the original values — zero behavior change.
+        effective_memory_cfg = memory_cfg
+        effective_bank = memory_bank
+        if isinstance(memory_cfg, HindsightMemory) and "{{" in memory_cfg.hindsight.bank:
+            effective_bank = render_template(memory_cfg.hindsight.bank, ctx)
+            updated_hindsight = memory_cfg.hindsight.model_copy(update={"bank": effective_bank})
+            effective_memory_cfg = memory_cfg.model_copy(update={"hindsight": updated_hindsight})
+
         # MEM-01/MEM-02/D-02: probe memory backend BEFORE pool.acquire (Pitfall 3).
         # prepare_memory never raises (fail-open contract).
         # When unavailable: MEMORY_DEGRADED incremented + WARN logged inside prepare_memory.
-        mcp_servers, memory_prompt = await select_memory_wiring_async(memory_cfg)
+        mcp_servers, memory_prompt = await select_memory_wiring_async(effective_memory_cfg)
 
         # Build per-invocation engine config with the (dynamic) hindsight MCP server iff
         # reachable (D-02). codemem fields are static per-agent and already on engine_cfg from
@@ -417,6 +416,20 @@ def _make_engine_runner(
             invocation_engine_cfg = engine_cfg
             invocation_engine_cfg.mcp_servers = mcp_servers
 
+        # Project (codemem) — render after mcp_servers replace, before acquire. Keyed pool reuses
+        # one agente per session_key, so codemem_project is fixed by the first event — correct
+        # for a session-invariant template.
+        if (
+            isinstance(memory_cfg, CodememMemory)
+            and "{{" in memory_cfg.codemem.project
+            and dataclasses.is_dataclass(engine_cfg)
+            and not isinstance(engine_cfg, type)
+        ):
+            rendered_project = render_template(memory_cfg.codemem.project, ctx)
+            invocation_engine_cfg = dataclasses.replace(
+                invocation_engine_cfg, codemem_project=rendered_project
+            )
+
         server = await pool.acquire(event.session_key, invocation_engine_cfg)
         try:
             # CR-01: in reply mode the future MUST always be resolved (set_result or
@@ -427,9 +440,9 @@ def _make_engine_runner(
                 # MEM-01: append ## Memory section (summaries or unavailable note) to prompt.
                 base_prompt = build_engine_prompt(
                     event,
-                    channel_cfg=channels_by_name.get(event.channel_name),
+                    channel_cfg=ch_cfg,
                     agent_name=agent_name,
-                    memory_bank=memory_bank,
+                    memory_bank=effective_bank,
                 )
                 full_prompt = f"{base_prompt}\n\n{memory_prompt}" if memory_prompt else base_prompt
                 # Free-form channels (--tui console) carry no terminal contract: return
@@ -441,6 +454,7 @@ def _make_engine_runner(
                 # Optional tool-lifecycle sink (the --debug console shows "⚙ running <tool>"
                 # so a long-blocking tool call isn't dead air).
                 on_tool = event.delivery_context.get("on_tool")
+                reuse = getattr(ch_cfg, "session", "auto") != "none"
                 obj = await run_invocation(
                     server=server,
                     session_id=event.session_key,
@@ -451,6 +465,7 @@ def _make_engine_runner(
                     free_form=free_form,
                     on_text=on_text,
                     on_tool=on_tool,
+                    reuse=reuse,
                 )
             except Exception as exc:
                 if future is not None and not future.done():
@@ -826,6 +841,13 @@ async def main(
     # context). Fail-open ("","") when not codemem or the binary is absent (MEM-02/D-02).
     codemem_db_path, codemem_project = resolve_codemem_wiring(cfg)
 
+    # Boot-static system prompt: persona + active backend's TOOLS_SPEC (appended once at boot).
+    _persona = resolve_system_prompt(cfg.prompt, state_dir)
+    from ach_agent.memory import tools_spec_for
+
+    _spec = tools_spec_for(cfg.memory)
+    _system_prompt = f"{_persona}\n\n## Memory Tools\n{_spec}" if _spec else _persona
+
     engine_cfg = EngineConfig(
         home=engine_home,
         work_dir=engine_work_dir,
@@ -834,9 +856,8 @@ async def main(
         provider=cfg.model.type,
         model=cfg.model.name,
         params=cfg.model.params,
-        # prompt.system = the inline agent persona; written to opencode's append-mode
-        # `instructions` (layered on ACH-hydrated skills/prompts). Empty when absent.
-        system_prompt=resolve_system_prompt(cfg.prompt, state_dir),
+        # prompt.system = the inline agent persona + per-backend TOOLS_SPEC (boot-static).
+        system_prompt=_system_prompt,
         steps=cfg.limits.max_steps,
         startup_timeout_seconds=cfg.engine.startup_timeout_seconds,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
@@ -916,9 +937,26 @@ async def main(
                     _mem_ok, _ = await prepare_memory(cfg.memory)
                     if _mem_ok:
                         warm_mcp_servers = [cfg.memory.hindsight.endpoint]
-                warm_cfg = dataclasses.replace(engine_cfg, mcp_servers=warm_mcp_servers)
                 from ach_agent.channels.tui import _CONSOLE_SESSION_KEY
 
+                warm_codemem_project = engine_cfg.codemem_project
+                if isinstance(cfg.memory, CodememMemory) and "{{" in engine_cfg.codemem_project:
+                    warm_ctx = build_template_context(
+                        {},
+                        channel_name="tui",
+                        channel_type="tui",
+                        channel_source="",
+                        agent_name=cfg.agent.name,
+                        memory_bank="",
+                        event_id="",
+                        session_key=_CONSOLE_SESSION_KEY,
+                    )
+                    # Keyed pool reuses this warm server for the whole console session, so the
+                    # project must be rendered HERE — engine_runner's later render is discarded.
+                    warm_codemem_project = render_template(engine_cfg.codemem_project, warm_ctx)
+                warm_cfg = dataclasses.replace(
+                    engine_cfg, mcp_servers=warm_mcp_servers, codemem_project=warm_codemem_project
+                )
                 warm_server = await pool.acquire(_CONSOLE_SESSION_KEY, warm_cfg)
                 # No stdout banner — opencode's own --print-logs already announces the
                 # listening address. Keep one structured info line with the loopback address.

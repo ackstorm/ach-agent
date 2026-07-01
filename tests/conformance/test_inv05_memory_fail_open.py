@@ -28,7 +28,7 @@ async def test_inv05_memory_fail_open() -> None:
 
     # Simulate backend unreachable: probe returns False.
     with patch(
-        "ach_agent.memory.adapter.probe_memory_endpoint",
+        "ach_agent.memory.hindsight.probe_memory_endpoint",
         new=AsyncMock(return_value=False),
     ):
         # Must not raise — fail-open invariant (§6.5 / §31)

@@ -463,6 +463,7 @@ async def run_invocation(
     free_form: bool = False,
     on_text: Callable[[str], None] | None = None,
     on_tool: Callable[[OpenCodeToolUpdate], None] | None = None,
+    reuse: bool = True,
 ) -> dict[str, Any]:
     """Orchestrate: subscribe SSE → send prompt → consume → return the terminal object.
 
@@ -490,13 +491,21 @@ async def run_invocation(
     # opencode requires a session created via POST /session before /session/{id}/message
     # (sending to an arbitrary id → 500). Map the logical session_key → an opencode
     # session id, created once per key and reused for conversational continuity.
-    oc_session_id = server._sessions.get(session_id)
-    if oc_session_id is None:
+    # When reuse=False (channel.session='none'), always create a fresh opencode session
+    # and never touch server._sessions (no read, no write).
+    if reuse:
+        oc_session_id = server._sessions.get(session_id)
+        if oc_session_id is None:
+            created = await client.create_session()
+            oc_session_id = str(created.get("id", ""))
+            if not oc_session_id:
+                raise RuntimeError(f"opencode create_session returned no id: {created!r}")
+            server._sessions[session_id] = oc_session_id
+    else:
         created = await client.create_session()
         oc_session_id = str(created.get("id", ""))
         if not oc_session_id:
             raise RuntimeError(f"opencode create_session returned no id: {created!r}")
-        server._sessions[session_id] = oc_session_id
 
     try:
         async with asyncio.timeout(max_invocation_seconds):

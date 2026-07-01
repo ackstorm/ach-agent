@@ -76,3 +76,19 @@ def test_render_internal_event_and_session():
 def test_header_namespace_reserved_empty():
     # headers are not threaded across the seam yet — reserved, resolves missing
     assert resolve_path(_ctx(), "header.x-api-key") is None
+
+
+def test_project_template_renders_session_key() -> None:
+    """Task 3 contract: {{ internal.session.key }} renders to the session key; literals pass through."""
+    ctx = build_template_context(
+        {},
+        channel_name="cron-daily",
+        channel_type="cron",
+        channel_source="",
+        agent_name="agent",
+        memory_bank="",
+        event_id="evt-1",
+        session_key="gitlab.com/g/repo",
+    )
+    assert render_template("{{ internal.session.key }}", ctx) == "gitlab.com/g/repo"
+    assert render_template("ach-agent", ctx) == "ach-agent"

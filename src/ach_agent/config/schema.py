@@ -139,11 +139,12 @@ class PromptBlock(BaseModel):
     compose: str = "append"
 
 
-class MemoryBlock(BaseModel):
-    """CONTRACT §2 memory block (fail-open — §31)."""
+class HindsightMemory(BaseModel):
+    """CONTRACT §2 memory block — Hindsight backend (fail-open §31). Legacy/default shape."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
+    type: Literal["hindsight"] = "hindsight"
     endpoint: str
     # Contract-reserved (CONTRACT §2): agent-specific memory intent. Accepted but not yet
     # consumed by the harness; kept so an operator-rendered config carrying `mission` loads
@@ -154,6 +155,36 @@ class MemoryBlock(BaseModel):
     # (see the memory bank+tags design note) and does NOT change this static field.
     bank: str = ""
     mental_models: list[str] = Field(default_factory=list, alias="mentalModels")
+
+
+class CodememMemory(BaseModel):
+    """CONTRACT §2 memory block — codemem backend (local stdio MCP, model-managed)."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    type: Literal["codemem"]
+    # Absolute path to the codemem SQLite DB on a persistent volume. Operator config
+    # (trusted, like bank_id). NOT templated per-repo in v1; NOT from inbound payload.
+    db_path: str = Field(alias="dbPath")
+    # Contract-reserved (CONTRACT §2): accepted, not yet consumed.
+    mission: str = ""
+
+    @field_validator("db_path")
+    @classmethod
+    def _abs_no_escape(cls, v: str) -> str:
+        p = PurePosixPath(v)
+        if not p.is_absolute() or ".." in p.parts:
+            raise ValueError("memory.codemem.db_path must be an absolute path with no '..'")
+        return v
+
+
+# Discriminated on `type`. Backward-compat: a legacy block with no `type` is defaulted
+# to "hindsight" by the validator on AgentConfig (see below).
+Memory = Annotated[HindsightMemory | CodememMemory, Field(discriminator="type")]
+
+# Backward-compat alias: memory adapter and other downstream modules import MemoryBlock;
+# they are updated in later tasks (Tasks 3/4). This alias keeps them working unchanged.
+MemoryBlock = HindsightMemory
 
 
 # ---------------------------------------------------------------------------
@@ -357,12 +388,21 @@ class AgentConfig(BaseModel):
     model: ModelBlock
     capability: CapabilityBlock
     prompt: PromptBlock | None = None
-    memory: MemoryBlock | None = None
+    memory: Memory | None = None
     limits: LimitsBlock = Field(default_factory=LimitsBlock)
     engine: EngineBlock = Field(default_factory=EngineBlock)
     persistence: PersistenceBlock = Field(default_factory=PersistenceBlock)
     health: HealthBlock = Field(default_factory=HealthBlock)
     channels: list[ChannelConfig] = Field(default_factory=list)
+
+    @field_validator("memory", mode="before")
+    @classmethod
+    def _default_memory_type(cls, v: object) -> object:
+        """Backward-compat: legacy configs render the Hindsight shape without an explicit
+        `type`. Inject `type: hindsight` so the discriminated union resolves correctly."""
+        if isinstance(v, dict) and "type" not in v:
+            return {**v, "type": "hindsight"}
+        return v
 
 
 # ---------------------------------------------------------------------------

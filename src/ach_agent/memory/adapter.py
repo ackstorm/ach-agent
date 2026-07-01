@@ -15,12 +15,13 @@ RTR-06: no router.* imports used here (only MEMORY_DEGRADED metric is imported a
 from __future__ import annotations
 
 import asyncio
+import shutil
 from typing import TYPE_CHECKING
 
 import structlog
 
 if TYPE_CHECKING:
-    from ach_agent.config.schema import MemoryBlock
+    from ach_agent.config.schema import CodememMemory, MemoryBlock
 
 log = structlog.get_logger(__name__)
 
@@ -128,6 +129,23 @@ async def prepare_memory(
         )
         _inc_memory_degraded()
         return False, "## Memory\n\nUnavailable (unexpected error)."
+
+
+def prepare_codemem(memory_cfg: CodememMemory) -> tuple[bool, str]:
+    """Return (available, db_path) for the codemem stdio MCP backend.
+
+    codemem is a LOCAL stdio MCP that opencode spawns itself (no probe of a remote
+    endpoint). Availability = the `codemem` binary is on PATH. Fail-open (MEM-02/D-02):
+    if absent, degrade (no memory tools) and never raise.
+    """
+    if shutil.which("codemem") is None:
+        log.warning(
+            "codemem binary not on PATH — running degraded (MEM-02, D-02)",
+            db_path=memory_cfg.db_path,
+        )
+        _inc_memory_degraded()
+        return False, ""
+    return True, memory_cfg.db_path
 
 
 def _inc_memory_degraded() -> None:

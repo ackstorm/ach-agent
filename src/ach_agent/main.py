@@ -40,6 +40,7 @@ from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.queue import QueueConsumer
 from ach_agent.channels.tui import run_one_shot, run_tui_console
 from ach_agent.config import load_config
+from ach_agent.config.schema import CodememMemory, HindsightMemory, Memory
 from ach_agent.engine.context import fetch_context
 from ach_agent.engine.hydrate import hydrate, resolve_model
 from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
@@ -277,6 +278,33 @@ def resolve_system_prompt(prompt_block: Any, state_dir: Path) -> str:
     return target.read_text(encoding="utf-8")
 
 
+async def select_memory_wiring_async(
+    memory_cfg: Memory | None,
+) -> tuple[list[str], str, str]:
+    """Resolve (mcp_servers, memory_prompt, codemem_db_path) for one invocation.
+
+    Hindsight: probe endpoint + fetch the '## Memory' prompt (prepare_memory); register the
+    endpoint as a remote MCP server iff reachable. codemem: no remote probe (stdio-local MCP
+    that opencode spawns); return codemem_db_path iff the binary is on PATH (prepare_codemem),
+    with no prompt and no remote server. Fail-open: both adapters never raise (D-02).
+    """
+    if memory_cfg is None:
+        return [], "", ""
+
+    if isinstance(memory_cfg, CodememMemory):
+        from ach_agent.memory.adapter import prepare_codemem
+
+        available, db_path = prepare_codemem(memory_cfg)
+        return [], "", (db_path if available else "")
+
+    # memory_cfg narrowed to HindsightMemory here by isinstance elimination above.
+    from ach_agent.memory.adapter import prepare_memory
+
+    mem_available, memory_prompt = await prepare_memory(memory_cfg)
+    mcp_servers = [memory_cfg.endpoint] if mem_available else []
+    return mcp_servers, memory_prompt, ""
+
+
 def _make_engine_runner(
     pool: Any,
     engine_cfg: Any,
@@ -332,25 +360,21 @@ def _make_engine_runner(
         # MEM-01/MEM-02/D-02: probe memory backend BEFORE pool.acquire (Pitfall 3).
         # prepare_memory never raises (fail-open contract).
         # When unavailable: MEMORY_DEGRADED incremented + WARN logged inside prepare_memory.
-        memory_prompt: str = ""
-        if memory_cfg is not None:
-            from ach_agent.memory.adapter import prepare_memory
-
-            mem_available, memory_prompt = await prepare_memory(memory_cfg)
-            mcp_servers = [memory_cfg.endpoint] if mem_available else []
-        else:
-            mcp_servers = []
+        mcp_servers, memory_prompt, codemem_db = await select_memory_wiring_async(memory_cfg)
 
         # Build per-invocation engine config with memory MCP server iff reachable (D-02).
         # Dataclass copy with updated mcp_servers — original engine_cfg is not mutated.
         import dataclasses
 
         if dataclasses.is_dataclass(engine_cfg) and not isinstance(engine_cfg, type):
-            invocation_engine_cfg = dataclasses.replace(engine_cfg, mcp_servers=mcp_servers)
+            invocation_engine_cfg = dataclasses.replace(
+                engine_cfg, mcp_servers=mcp_servers, codemem_db_path=codemem_db
+            )
         else:
             # Non-dataclass (e.g. MagicMock in tests) — attach attribute directly.
             invocation_engine_cfg = engine_cfg
             invocation_engine_cfg.mcp_servers = mcp_servers
+            invocation_engine_cfg.codemem_db_path = codemem_db
 
         server = await pool.acquire(invocation_engine_cfg)
         try:
@@ -785,7 +809,7 @@ async def main(
     # Per-channel idle TTL (constant by channel type; all v1 channels are 0).
     channel_ttl = {ch.name: _CHANNEL_IDLE_TTL_S.get(ch.type, 0.0) for ch in cfg.channels}
     channels_by_name = {c.name: c for c in cfg.channels}
-    memory_bank = cfg.memory.bank if cfg.memory is not None else ""
+    memory_bank = cfg.memory.bank if isinstance(cfg.memory, HindsightMemory) else ""
     engine_runner = _make_engine_runner(
         pool=pool,
         engine_cfg=engine_cfg,
@@ -834,13 +858,20 @@ async def main(
                 import dataclasses
 
                 warm_mcp_servers: list[str] = []
-                if cfg.memory is not None:
+                warm_codemem_db: str = ""
+                if isinstance(cfg.memory, HindsightMemory):
                     from ach_agent.memory.adapter import prepare_memory
 
                     _mem_ok, _ = await prepare_memory(cfg.memory)
                     if _mem_ok:
                         warm_mcp_servers = [cfg.memory.endpoint]
-                warm_cfg = dataclasses.replace(engine_cfg, mcp_servers=warm_mcp_servers)
+                elif isinstance(cfg.memory, CodememMemory):
+                    from ach_agent.memory.adapter import prepare_codemem
+
+                    _cm_ok, warm_codemem_db = prepare_codemem(cfg.memory)
+                warm_cfg = dataclasses.replace(
+                    engine_cfg, mcp_servers=warm_mcp_servers, codemem_db_path=warm_codemem_db
+                )
                 warm_server = await pool.acquire(warm_cfg)
                 # No stdout banner — opencode's own --print-logs already announces the
                 # listening address. Keep one structured info line with the loopback address.

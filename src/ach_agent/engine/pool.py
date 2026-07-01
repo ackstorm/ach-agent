@@ -4,6 +4,13 @@
 Keyed by session_key: each session identity (cron name, gitlab server+repo,
 tui-console) gets its own ManagedServer. See D-07 for scope boundary.
 
+All servers share ONE home (``engine.home``). Per-key isolation is the
+``opencode_<key>.json`` config file (written via ``OPENCODE_CONFIG`` by
+``launch``), so concurrent servers for distinct keys never race the same
+config file (I-1). The session store and node_modules cache under the shared
+home are intentionally shared across concurrent keyed processes — low risk at
+v1; isolate ``XDG_DATA_HOME`` per key later if needed.
+
 Lifecycle modes:
   - spawn-per-invocation (shared.enabled=false): acquire starts a new server for
     the session_key, release(key, ttl_seconds=0) stops it immediately after each
@@ -18,9 +25,6 @@ Constraint: No router or Hermes imports (D-08, RTR-06).
 from __future__ import annotations
 
 import asyncio
-import dataclasses
-import hashlib
-import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -37,29 +41,18 @@ class EnginePool:
     """Pool of opencode servers keyed by session_key.
 
     Each session_key (cron name, gitlab server+repo, tui-console) maps to its
-    own ManagedServer with its own port and its own HOME (opencode.json, the
-    opencode session store, and node_modules) under
-    ``<config.home>/servers/oc-<key>`` — so concurrent servers for distinct keys
-    never race the same opencode.json (I-1). The home is stable per key: the same
-    session_key reuses its home across invocations (node_modules cache reuse).
-    The working directory (``config.work_dir``, cwd) is NOT per-key — it remains
-    the shared checkout root, as it was before keying. Reference counting per key
-    ensures a key's TTL only starts once no invocation holds it.
-
-    Disk tradeoff (explicit v1 decision): per-key homes are NOT reaped on stop —
-    stopping a server leaves ``<base>/servers/oc-<key>`` (incl. its node_modules)
-    on disk so the next invocation of that key reuses the cache. Live-server disk
-    is bounded by ``maxConcurrentInvocations``; on-disk home count grows with the
-    number of DISTINCT keys ever seen. For bounded-cardinality channels (cron/
-    tui/queue/a2a: key = channel name) this is fine. For an unbounded key space
-    (gitlab key = server+repo across many repos over a long-lived pod) it can
-    fill disk. v1 accepts this; a reaper (GC ``servers/oc-*`` whose key is not
-    live, e.g. by mtime) is a tracked follow-up, not built here.
+    own ManagedServer with its own port, all sharing ONE home (``config.home``).
+    Per-key isolation is the ``opencode_<key>.json`` config file selected via
+    ``OPENCODE_CONFIG`` — so concurrent servers for distinct keys never race the
+    same config file (I-1). The session store and node_modules cache are shared
+    across keyed processes (v1 tradeoff; isolate ``XDG_DATA_HOME`` per key later
+    if needed).
 
     For ttl_seconds == 0 (spawn-per-invocation, v1 default): the key's server is
     stopped as soon as its last holder releases. For ttl_seconds > 0: the server
     is kept warm for that key until the idle TTL elapses; a re-acquire cancels
-    the pending expiry.
+    the pending expiry. Reference counting per key ensures a key's TTL only
+    starts once no invocation holds it.
 
     Constraint: No router or Hermes imports (D-08, RTR-06).
     """
@@ -77,31 +70,9 @@ class EnginePool:
         # _start_server is injectable for testing (replaced by tests with a fake).
         # In production it points to the lifecycle launch helper. It receives the
         # EngineConfig and session_key.
-        self._start_server: Callable[..., Awaitable[ManagedServer]] = _default_start_server
-
-    @staticmethod
-    def _config_for_key(session_key: str, config: EngineConfig) -> EngineConfig:
-        """Return a copy of ``config`` whose HOME is isolated per session_key.
-
-        Each key launches into ``<config.home>/servers/oc-<safe>-<hash>`` so two
-        concurrent servers for distinct keys never share opencode.json, the
-        session store, or node_modules (I-1: a shared HOME let concurrent
-        ``write_opencode_config`` calls tear/cross-wire the same file). The path
-        is deterministic in ``session_key`` — the same key reuses its home, so
-        node_modules is reinstalled only when a new key first appears.
-
-        Non-dataclass configs (test fakes / MagicMock) or an empty home pass
-        through unchanged.
-        """
-        if not dataclasses.is_dataclass(config) or isinstance(config, type):
-            return config
-        base = getattr(config, "home", "") or ""
-        if not base:
-            return config
-        digest = hashlib.sha1(session_key.encode("utf-8")).hexdigest()[:8]
-        safe = re.sub(r"[^A-Za-z0-9._-]", "_", session_key)[:48]
-        per_key_home = str(Path(base) / "servers" / f"oc-{safe}-{digest}")
-        return dataclasses.replace(config, home=per_key_home)
+        self._start_server: Callable[[EngineConfig, str], Awaitable[ManagedServer]] = (
+            _default_start_server
+        )
 
     def _get_lock(self, session_key: str) -> asyncio.Lock:
         """Return the per-key lock, creating it on first use.
@@ -150,9 +121,7 @@ class EnginePool:
                 self._ref_counts.pop(session_key, None)
 
             log.info("EnginePool.acquire: starting new server", session_key=session_key)
-            server = await self._start_server(
-                self._config_for_key(session_key, config), session_key
-            )
+            server = await self._start_server(config, session_key)
             # A′ latch: _start_server only returns on success (poll_ready calls
             # sys.exit(1) on failure), so reaching here proves the engine was ready.
             self.engine_has_been_ready_once = True
@@ -250,14 +219,14 @@ class EnginePool:
 
 
 async def _default_start_server(config: EngineConfig, session_key: str) -> ManagedServer:
-    """Default start-server implementation: full lifecycle launch + poll_ready.
+    """Default start-server: full lifecycle launch + poll_ready into the SHARED home.
 
-    HOME is ``config.home`` (created if absent). The caller (EnginePool.acquire)
-    passes a per-session_key home (``<base>/servers/oc-<key>``) so opencode's
-    config, session store, and node_modules are isolated per key and never race
-    a shared file across concurrent servers (I-1). The per-key home is stable, so
-    node_modules persists across invocations of the same key.
-    Used in production. Tests replace pool._start_server with a fake.
+    HOME is ``config.home`` (shared across all keys, created if absent). Per-key
+    isolation is the opencode CONFIG FILE (``opencode_<key>.json`` via
+    ``OPENCODE_CONFIG``), written by ``launch`` from ``session_key`` — so distinct
+    keys never race the same config file (I-1) while sharing skills/.ach-state/
+    node_modules/session store under the one home. Tests replace
+    ``pool._start_server`` with a fake ``(config, session_key)``.
     """
     from ach_agent.engine.client import find_free_port
     from ach_agent.engine.lifecycle import launch, poll_ready

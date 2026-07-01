@@ -34,7 +34,7 @@ async def test_pool_reuse_same_key() -> None:
     calls = {"n": 0}
     fake = _make_fake_server(alive=True)
 
-    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
+    async def fake_start(cfg, session_key: str) -> ManagedServer:
         calls["n"] += 1
         return fake
 
@@ -53,7 +53,7 @@ async def test_pool_distinct_keys_get_distinct_servers() -> None:
     servers = {"k1": _make_fake_server(), "k2": _make_fake_server()}
     seq = iter([servers["k1"], servers["k2"]])  # returned in acquire order
 
-    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
+    async def fake_start(cfg, session_key: str) -> ManagedServer:
         return next(seq)
 
     pool._start_server = fake_start
@@ -72,7 +72,7 @@ async def test_release_one_key_does_not_stop_another() -> None:
     servers = {"k1": _make_fake_server(), "k2": _make_fake_server()}
     seq = iter([servers["k1"], servers["k2"]])  # returned in acquire order
 
-    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
+    async def fake_start(cfg, session_key: str) -> ManagedServer:
         return next(seq)
 
     pool._start_server = fake_start
@@ -93,7 +93,7 @@ async def test_ttl0_stops_immediately() -> None:
     pool = EnginePool()
     fake = _make_fake_server(alive=True)
 
-    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
+    async def fake_start(cfg, session_key: str) -> ManagedServer:
         return fake
 
     pool._start_server = fake_start
@@ -109,7 +109,7 @@ async def test_ttl_expires_after_delay() -> None:
     pool = EnginePool()
     fake = _make_fake_server(alive=True)
 
-    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
+    async def fake_start(cfg, session_key: str) -> ManagedServer:
         return fake
 
     pool._start_server = fake_start
@@ -129,7 +129,7 @@ async def test_reacquire_cancels_pending_ttl() -> None:
     pool = EnginePool()
     fake = _make_fake_server(alive=True)
 
-    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
+    async def fake_start(cfg, session_key: str) -> ManagedServer:
         return fake
 
     pool._start_server = fake_start
@@ -147,7 +147,7 @@ async def test_ref_count_keeps_server_until_last_release() -> None:
     pool = EnginePool()
     fake = _make_fake_server(alive=True)
 
-    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
+    async def fake_start(cfg, session_key: str) -> ManagedServer:
         return fake
 
     pool._start_server = fake_start
@@ -169,7 +169,7 @@ async def test_dead_server_replaced_on_acquire() -> None:
     live = _make_fake_server(alive=True)
     seq = [dead, live]
 
-    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
+    async def fake_start(cfg, session_key: str) -> ManagedServer:
         return seq.pop(0)
 
     pool._start_server = fake_start
@@ -186,7 +186,7 @@ async def test_ready_latch_set_on_first_start() -> None:
     pool = EnginePool()
     fake = _make_fake_server(alive=True)
 
-    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
+    async def fake_start(cfg, session_key: str) -> ManagedServer:
         return fake
 
     pool._start_server = fake_start
@@ -204,7 +204,7 @@ async def test_stop_all_stops_every_server() -> None:
     servers = {"k1": _make_fake_server(), "k2": _make_fake_server()}
     seq = iter([servers["k1"], servers["k2"]])  # returned in acquire order
 
-    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
+    async def fake_start(cfg, session_key: str) -> ManagedServer:
         return next(seq)
 
     pool._start_server = fake_start
@@ -219,47 +219,42 @@ async def test_stop_all_stops_every_server() -> None:
 
 
 # ---------------------------------------------------------------------------
-# I-1: per-key HOME isolation — distinct keys launch into distinct homes so
-# concurrent servers never race a shared opencode.json.
+# I-1: per-key server isolation — distinct keys get distinct ManagedServer
+# objects so concurrent servers are independently ref-counted and stopped.
+# All servers share the same config.home; per-key isolation is the
+# opencode_<key>.json config file (via OPENCODE_CONFIG).
 # ---------------------------------------------------------------------------
 
 
-async def test_distinct_keys_get_isolated_homes() -> None:
-    """Each session_key launches into its own <base>/servers/oc-* home (I-1).
+async def test_distinct_keys_get_distinct_servers_and_refcounts() -> None:
+    """Different keys start independent ManagedServer objects with independent ref-counts.
 
-    The same key is deterministic (reuses its home → node_modules cache reuse);
-    different keys get different homes → no shared-opencode.json race.
+    All servers receive the same (shared) config.home — isolation is handled by
+    the per-key opencode config file, not a per-key home directory.
     """
-    from ach_agent.engine.lifecycle import EngineConfig
-
     pool = EnginePool()
-    seen_homes: list[str] = []
+    srv_a = _make_fake_server(alive=True)
+    srv_b = _make_fake_server(alive=True)
+    seq = iter([srv_a, srv_b])
 
-    async def fake_start(cfg, session_key: str = "") -> ManagedServer:
-        seen_homes.append(cfg.home)
-        return _make_fake_server(alive=True)
+    async def fake_start(cfg, session_key: str) -> ManagedServer:
+        return next(seq)
 
     pool._start_server = fake_start
-    cfg = EngineConfig(home="/base/home")
 
-    await pool.acquire("gitlab.example.com/group/repo-a", cfg)
-    await pool.acquire("gitlab.example.com/group/repo-b", cfg)
+    await pool.acquire("gitlab.example.com/group/repo-a", _config())
+    await pool.acquire("gitlab.example.com/group/repo-b", _config())
 
-    assert len(seen_homes) == 2
-    assert seen_homes[0] != seen_homes[1], "distinct keys must not share a home"
-    for h in seen_homes:
-        assert h.startswith("/base/home/servers/oc-"), h
+    assert pool._servers["gitlab.example.com/group/repo-a"] is srv_a
+    assert pool._servers["gitlab.example.com/group/repo-b"] is srv_b
+    assert srv_a is not srv_b, "distinct keys must get distinct ManagedServer objects"
 
-    # Same key re-acquired after stop → same home (deterministic, cache reuse).
-    await pool._stop("gitlab.example.com/group/repo-a")
-    await pool.acquire("gitlab.example.com/group/repo-a", cfg)
-    assert seen_homes[2] == seen_homes[0], "same key must map to the same home"
-
-
-async def test_config_for_key_passthrough_non_dataclass() -> None:
-    """A non-dataclass config (test/MagicMock) passes through _config_for_key unchanged."""
-    cfg = _config()
-    assert EnginePool._config_for_key("k1", cfg) is cfg
+    # Independent ref-counts: stopping repo-a leaves repo-b unaffected.
+    await pool.release("gitlab.example.com/group/repo-a", ttl_seconds=0)
+    srv_a.stop.assert_awaited_once()
+    srv_b.stop.assert_not_awaited()
+    assert "gitlab.example.com/group/repo-a" not in pool._servers
+    assert pool._ref_counts.get("gitlab.example.com/group/repo-b", 0) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -275,9 +270,10 @@ async def test_default_start_server_uses_config_home(tmp_path: Path, monkeypatch
 
     captured: dict[str, object] = {}
 
-    async def fake_launch(port: int, home: Path, config: object, session_key: str = "") -> object:
+    async def fake_launch(port: int, home: Path, config: object, session_key: str) -> object:
         captured["home"] = home
         captured["port"] = port
+        captured["session_key"] = session_key
         return object()
 
     async def fake_poll(server: object, timeout: int) -> None:
@@ -292,6 +288,7 @@ async def test_default_start_server_uses_config_home(tmp_path: Path, monkeypatch
     await poolmod._default_start_server(cfg, "k1")
 
     assert captured["home"] == home
+    assert captured["session_key"] == "k1"
     assert home.is_dir()  # created if absent
 
 

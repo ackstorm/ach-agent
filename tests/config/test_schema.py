@@ -980,6 +980,44 @@ def test_prompt_system_file_traversal_rejected():
         PromptBlock.model_validate({"system": {"type": "file", "file": "../../secrets/ek"}})
 
 
+def test_prompt_system_ach_form():
+    from ach_agent.config.schema import PromptBlock, SystemAch
+
+    b = PromptBlock.model_validate({"system": {"type": "ach", "ach": "my-prompt"}})
+    assert isinstance(b.system, SystemAch)
+    assert b.system.ach == "my-prompt"
+    assert b.system.file == ""
+
+
+def test_prompt_system_ach_with_file_subpath():
+    from ach_agent.config.schema import PromptBlock, SystemAch
+
+    b = PromptBlock.model_validate({"system": {"type": "ach", "ach": "p", "file": "sub.md"}})
+    assert isinstance(b.system, SystemAch)
+    assert b.system.file == "sub.md"
+
+
+def test_prompt_system_ach_traversal_rejected():
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import PromptBlock
+
+    for bad in ({"type": "ach", "ach": "../evil"}, {"type": "ach", "ach": "p", "file": "../x"}):
+        with pytest.raises(ValidationError):
+            PromptBlock.model_validate({"system": bad})
+
+
+def test_prompt_system_ach_empty_rejected():
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import PromptBlock
+
+    with pytest.raises(ValidationError):
+        PromptBlock.model_validate({"system": {"type": "ach", "ach": "  "}})
+
+
 def test_prompt_system_omitted_is_none():
     from ach_agent.config.schema import PromptBlock
 

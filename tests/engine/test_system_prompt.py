@@ -39,3 +39,39 @@ def test_file_symlink_escape_exits(tmp_path):
     pb = PromptBlock.model_validate({"system": {"type": "file", "file": "evil.md"}})
     with pytest.raises(SystemExit):
         resolve_system_prompt(pb, state)
+
+
+def test_ach_form_single_file_autoresolves(tmp_path):
+    # ach: <name> with a sole file in the hydrated prompt dir → that file, no `file:` needed
+    f = tmp_path / "prompts" / "my-prompt" / "persona.md"
+    f.parent.mkdir(parents=True)
+    f.write_text("ach persona", encoding="utf-8")
+    pb = PromptBlock.model_validate({"system": {"type": "ach", "ach": "my-prompt"}})
+    assert resolve_system_prompt(pb, tmp_path) == "ach persona"
+
+
+def test_ach_form_explicit_file_subpath(tmp_path):
+    d = tmp_path / "prompts" / "my-prompt"
+    d.mkdir(parents=True)
+    (d / "a.md").write_text("A", encoding="utf-8")
+    (d / "b.md").write_text("B", encoding="utf-8")
+    pb = PromptBlock.model_validate(
+        {"system": {"type": "ach", "ach": "my-prompt", "file": "b.md"}}
+    )
+    assert resolve_system_prompt(pb, tmp_path) == "B"
+
+
+def test_ach_missing_prompt_dir_exits(tmp_path):
+    pb = PromptBlock.model_validate({"system": {"type": "ach", "ach": "not-hydrated"}})
+    with pytest.raises(SystemExit):
+        resolve_system_prompt(pb, tmp_path)
+
+
+def test_ach_multiple_files_without_file_exits(tmp_path):
+    d = tmp_path / "prompts" / "my-prompt"
+    d.mkdir(parents=True)
+    (d / "a.md").write_text("A", encoding="utf-8")
+    (d / "b.md").write_text("B", encoding="utf-8")
+    pb = PromptBlock.model_validate({"system": {"type": "ach", "ach": "my-prompt"}})
+    with pytest.raises(SystemExit):
+        resolve_system_prompt(pb, tmp_path)

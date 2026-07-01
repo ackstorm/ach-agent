@@ -8,8 +8,7 @@ session_key; releasing one key never affects another.
 from __future__ import annotations
 
 import asyncio
-
-import pytest
+from pathlib import Path
 
 from ach_agent.engine.pool import EnginePool
 
@@ -52,17 +51,14 @@ async def test_pool_distinct_keys_get_distinct_servers() -> None:
     """Different keys start different servers and are tracked independently."""
     pool = EnginePool()
     servers = {"k1": _make_fake_server(), "k2": _make_fake_server()}
+    seq = iter([servers["k1"], servers["k2"]])  # returned in acquire order
 
     async def fake_start(cfg):
-        # index by call order via a mutable marker on the pool
-        key = pool._pending_key  # set by test just before acquire
-        return servers[key]
+        return next(seq)
 
     pool._start_server = fake_start
 
-    pool._pending_key = "k1"
     a = await pool.acquire("k1", _config())
-    pool._pending_key = "k2"
     b = await pool.acquire("k2", _config())
 
     assert a is servers["k1"]
@@ -74,15 +70,14 @@ async def test_release_one_key_does_not_stop_another() -> None:
     """Stopping k1 (ttl=0) must leave k2's server alive and untracked-untouched."""
     pool = EnginePool()
     servers = {"k1": _make_fake_server(), "k2": _make_fake_server()}
+    seq = iter([servers["k1"], servers["k2"]])  # returned in acquire order
 
     async def fake_start(cfg):
-        return servers[pool._pending_key]
+        return next(seq)
 
     pool._start_server = fake_start
 
-    pool._pending_key = "k1"
     await pool.acquire("k1", _config())
-    pool._pending_key = "k2"
     await pool.acquire("k2", _config())
 
     await pool.release("k1", ttl_seconds=0)
@@ -207,18 +202,58 @@ async def test_stop_all_stops_every_server() -> None:
     """stop_all() stops every live server and clears the pool."""
     pool = EnginePool()
     servers = {"k1": _make_fake_server(), "k2": _make_fake_server()}
+    seq = iter([servers["k1"], servers["k2"]])  # returned in acquire order
 
     async def fake_start(cfg):
-        return servers[pool._pending_key]
+        return next(seq)
 
     pool._start_server = fake_start
 
-    pool._pending_key = "k1"
     await pool.acquire("k1", _config())
-    pool._pending_key = "k2"
     await pool.acquire("k2", _config())
 
     await pool.stop_all()
     servers["k1"].stop.assert_awaited_once()
     servers["k2"].stop.assert_awaited_once()
     assert pool._servers == {}
+
+
+# ---------------------------------------------------------------------------
+# Non-keyed coverage preserved from the pre-migration test file:
+# _default_start_server home behavior and main._harness_log_dir.
+# ---------------------------------------------------------------------------
+
+
+async def test_default_start_server_uses_config_home(tmp_path: Path, monkeypatch) -> None:
+    """The pool launches opencode in the stable engine.home, not a fresh mkdtemp."""
+    from ach_agent.engine import pool as poolmod
+    from ach_agent.engine.lifecycle import EngineConfig
+
+    captured: dict[str, object] = {}
+
+    async def fake_launch(port: int, home: Path, config: object) -> object:
+        captured["home"] = home
+        captured["port"] = port
+        return object()
+
+    async def fake_poll(server: object, timeout: int) -> None:
+        return None
+
+    monkeypatch.setattr("ach_agent.engine.lifecycle.launch", fake_launch)
+    monkeypatch.setattr("ach_agent.engine.lifecycle.poll_ready", fake_poll)
+    monkeypatch.setattr("ach_agent.engine.client.find_free_port", lambda: 12345)
+
+    home = tmp_path / "home"
+    cfg = EngineConfig(home=str(home))
+    await poolmod._default_start_server(cfg)
+
+    assert captured["home"] == home
+    assert home.is_dir()  # created if absent
+
+
+def test_harness_log_dir_is_volatile_tmp() -> None:
+    from ach_agent.main import _harness_log_dir
+
+    d = _harness_log_dir()
+    assert str(d).startswith("/tmp/")
+    assert d.is_dir()

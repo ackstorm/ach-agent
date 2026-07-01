@@ -1026,6 +1026,21 @@ def test_prompt_system_omitted_is_none():
     assert PromptBlock.model_validate({"compose": "append"}).system is None
 
 
+def test_channel_session_defaults_auto_and_validates() -> None:
+    """channel.session defaults to 'auto', accepts 'none', rejects other strings."""
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import ChannelConfig
+
+    cron_block = {"cron": {"schedule": "* * * * *"}}
+    c = ChannelConfig(name="c", type="cron", **cron_block)
+    assert c.session == "auto"
+    ChannelConfig(name="c", type="cron", session="none", **cron_block)
+    with pytest.raises(ValidationError):
+        ChannelConfig(name="c", type="cron", session="sometimes", **cron_block)
+
+
 def test_schema_version_wrong_hard_fails(tmp_path: Path) -> None:
     """D-01: schemaVersion:'3' → Literal['1'] rejects → sys.exit(1)."""
     from ach_agent.config import load_config

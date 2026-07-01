@@ -399,10 +399,11 @@ def _make_engine_runner(
             # sets the exception on error before re-raising.
             future = event.reply_future
             try:
+                ch_cfg = channels_by_name.get(event.channel_name)
                 # MEM-01: append ## Memory section (summaries or unavailable note) to prompt.
                 base_prompt = build_engine_prompt(
                     event,
-                    channel_cfg=channels_by_name.get(event.channel_name),
+                    channel_cfg=ch_cfg,
                     agent_name=agent_name,
                     memory_bank=memory_bank,
                 )
@@ -416,6 +417,7 @@ def _make_engine_runner(
                 # Optional tool-lifecycle sink (the --debug console shows "⚙ running <tool>"
                 # so a long-blocking tool call isn't dead air).
                 on_tool = event.delivery_context.get("on_tool")
+                reuse = getattr(ch_cfg, "session", "auto") != "none"
                 obj = await run_invocation(
                     server=server,
                     session_id=event.session_key,
@@ -426,6 +428,7 @@ def _make_engine_runner(
                     free_form=free_form,
                     on_text=on_text,
                     on_tool=on_tool,
+                    reuse=reuse,
                 )
             except Exception as exc:
                 if future is not None and not future.done():

@@ -475,3 +475,116 @@ def test_engine_config_has_home_and_no_session_dir() -> None:
     cfg = EngineConfig(home="/var/lib/ach-agent/home")
     assert cfg.home == "/var/lib/ach-agent/home"
     assert not hasattr(cfg, "session_dir")
+
+
+# ---------------------------------------------------------------------------
+# session reuse policy: run_invocation(reuse=True|False)
+# ---------------------------------------------------------------------------
+
+
+async def test_run_invocation_reuse_false_always_creates_fresh_session() -> None:
+    """reuse=False: two invocations each create a distinct opencode session.
+
+    server._sessions must remain untouched (empty for the key) across both calls.
+    """
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.lifecycle import ManagedServer, run_invocation
+
+    # Incrementing counter to produce distinct session ids per create_session call
+    call_count = 0
+
+    async def fake_create_session() -> dict[str, str]:
+        nonlocal call_count
+        call_count += 1
+        return {"id": f"ses-fresh-{call_count}"}
+
+    mock_client = AsyncMock(spec=OpenCodeClient)
+    mock_client.create_session = fake_create_session
+
+    server = ManagedServer(port=19883)
+    mock_proc = MagicMock()
+    mock_proc.returncode = None
+    server._process = mock_proc
+    server._client = mock_client
+
+    canned = '{"action":"none","text":"ok","thoughts":""}'
+
+    with patch(
+        "ach_agent.engine.lifecycle.consume_sse_after_send",
+        new_callable=AsyncMock,
+        return_value=canned,
+    ):
+        result1 = await run_invocation(
+            server=server,
+            session_id="key-a",
+            prompt="first",
+            terminal_retries=1,
+            max_invocation_seconds=30,
+            on_kill=lambda: None,
+            reuse=False,
+        )
+        result2 = await run_invocation(
+            server=server,
+            session_id="key-a",
+            prompt="second",
+            terminal_retries=1,
+            max_invocation_seconds=30,
+            on_kill=lambda: None,
+            reuse=False,
+        )
+
+    # Two distinct opencode sessions were created
+    assert call_count == 2
+    # server._sessions must be untouched — reuse=False never writes to it
+    assert "key-a" not in server._sessions
+    # Both invocations returned valid terminal objects
+    assert result1["action"] == "none"
+    assert result2["action"] == "none"
+
+
+async def test_run_invocation_reuse_true_reuses_session() -> None:
+    """reuse=True (default): second invocation reuses the opencode session from the first.
+
+    create_session is called exactly once; server._sessions is populated.
+    """
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.lifecycle import ManagedServer, run_invocation
+
+    mock_client = AsyncMock(spec=OpenCodeClient)
+    mock_client.create_session = AsyncMock(return_value={"id": "ses-reused"})
+
+    server = ManagedServer(port=19884)
+    mock_proc = MagicMock()
+    mock_proc.returncode = None
+    server._process = mock_proc
+    server._client = mock_client
+
+    canned = '{"action":"none","text":"ok","thoughts":""}'
+
+    with patch(
+        "ach_agent.engine.lifecycle.consume_sse_after_send",
+        new_callable=AsyncMock,
+        return_value=canned,
+    ):
+        await run_invocation(
+            server=server,
+            session_id="key-b",
+            prompt="first",
+            terminal_retries=1,
+            max_invocation_seconds=30,
+            on_kill=lambda: None,
+            reuse=True,
+        )
+        await run_invocation(
+            server=server,
+            session_id="key-b",
+            prompt="second",
+            terminal_retries=1,
+            max_invocation_seconds=30,
+            on_kill=lambda: None,
+            reuse=True,
+        )
+
+    # create_session called exactly once — second call reuses the stored id
+    mock_client.create_session.assert_awaited_once()
+    assert server._sessions.get("key-b") == "ses-reused"

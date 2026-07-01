@@ -116,9 +116,7 @@ class SystemFile(BaseModel):
     def _no_escape(cls, v: str) -> str:
         p = PurePosixPath(v)
         if p.is_absolute() or ".." in p.parts:
-            raise ValueError(
-                "prompt.system.file must be a relative path under .ach-state, no '..'"
-            )
+            raise ValueError("prompt.system.file must be a relative path under .ach-state, no '..'")
         return v
 
 

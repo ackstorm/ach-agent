@@ -1241,8 +1241,7 @@ async def main(
     # Step 7: wire channel adapters (D-08: one CronScheduler for ALL cron channels, SC#3)
     seen_channel_names: set[str] = set()
     tasks: list[asyncio.Task[None]] = []
-    has_webhook = False
-    uv_server: Any = None  # captured below if webhook channels exist
+    uv_server: Any = None  # captured below when uvicorn boots (always)
 
     # D-08/SC#3: collect all cron channels and construct exactly ONE CronScheduler.
     # Pitfall 9 (one task per channel) is superseded by D-08 (one scheduler for all).
@@ -1285,7 +1284,6 @@ async def main(
         elif channel.type == "webhook":
             # Webhook channels are served by uvicorn via the FastAPI app (started below).
             # Route is already registered in create_app() for all webhook_channels.
-            has_webhook = True
             log.info(
                 "webhook channel registered",
                 channel_name=channel.name,
@@ -1293,24 +1291,25 @@ async def main(
         elif channel.type == "a2a":
             # A2A channel: bridge + sub-app already built above and mounted in create_app.
             # uvicorn must be started to serve A2A HTTP requests (topology A, T-04-17).
-            has_webhook = True
             log.info("a2a channel registered", channel_name=channel.name)
 
-    if has_webhook:
-        # Boot uvicorn on the harness host/port (from health config).
-        # uvicorn shares the SAME event loop as the cron tasks — no thread pool,
-        # single-process topology (spec §15 topology A).
-        host = cfg.health.host
-        port = cfg.health.port
-        uv_config = uvicorn.Config(
-            app=app,
-            host=host,
-            port=port,
-            log_level="warning",  # uvicorn internal logs; harness uses structlog
-        )
-        uv_server = uvicorn.Server(uv_config)
-        log.info("uvicorn starting", host=host, port=port)
-        tasks.append(asyncio.create_task(uv_server.serve()))
+    # Boot uvicorn UNCONDITIONALLY (CONTRACT §4): healthz/readyz/metrics MUST always be
+    # reachable, even for cron-only or queue-only configs with no inbound HTTP channel —
+    # otherwise k8s liveness/readiness probes fail and the pod is killed. Webhook + a2a
+    # channels additionally serve their routes on this same socket (topology A).
+    # uvicorn shares the SAME event loop as the cron tasks — no thread pool,
+    # single-process topology (spec §15 topology A).
+    host = cfg.health.host
+    port = cfg.health.port
+    uv_config = uvicorn.Config(
+        app=app,
+        host=host,
+        port=port,
+        log_level="warning",  # uvicorn internal logs; harness uses structlog
+    )
+    uv_server = uvicorn.Server(uv_config)
+    log.info("uvicorn starting", host=host, port=port)
+    tasks.append(asyncio.create_task(uv_server.serve()))
 
     # Install SIGTERM handler via loop.add_signal_handler (NOT signal.signal).
     # RESEARCH Pitfall 2: uvicorn uses signal.signal() inside capture_signals() —
@@ -1340,8 +1339,9 @@ async def main(
             return_when=asyncio.FIRST_COMPLETED,
         )
     else:
-        # CR-03: no uvicorn task (cron-only config) — still wait for SIGTERM.
-        # Without this, the event loop exits immediately, orphaning background tasks.
+        # Defensive fallback: uvicorn is now booted unconditionally so `tasks` is never
+        # empty here, but if that ever changes, still wait for SIGTERM rather than exit
+        # immediately and orphan background tasks (CR-03).
         await shutdown_event.wait()
 
     if shutdown_event.is_set():

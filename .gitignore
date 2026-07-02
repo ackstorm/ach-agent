@@ -16,6 +16,7 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+node_modules/
 
 # graphify knowledge-graph outputs
 graphify-out/

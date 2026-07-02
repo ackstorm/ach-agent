@@ -328,6 +328,7 @@ def _make_engine_runner(
     engine_cfg: Any,
     max_invocation_seconds: int,
     terminal_output_retries: int = 1,
+    max_tool_calls: int = 0,
     memory_cfg: Any = None,
     channel_ttl: dict[str, float] | None = None,
     channels_by_name: dict[str, Any] | None = None,
@@ -466,6 +467,7 @@ def _make_engine_runner(
                 on_text=on_text,
                 on_tool=on_tool,
                 reuse=reuse,
+                max_tool_calls=max_tool_calls,
             )
 
             text = str(obj.get("text", ""))
@@ -893,6 +895,7 @@ async def main(
         engine_cfg=engine_cfg,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
         terminal_output_retries=cfg.limits.terminal_output_retries,
+        max_tool_calls=cfg.engine.max_tool_calls,
         memory_cfg=cfg.memory,
         channel_ttl=channel_ttl,
         channels_by_name=channels_by_name,

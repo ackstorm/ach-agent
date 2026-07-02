@@ -508,6 +508,7 @@ async def run_invocation(
     on_text: Callable[[str], None] | None = None,
     on_tool: Callable[[OpenCodeToolUpdate], None] | None = None,
     reuse: bool = True,
+    max_tool_calls: int = 0,
 ) -> dict[str, Any]:
     """Orchestrate: subscribe SSE → send prompt → consume → return the terminal object.
 
@@ -549,9 +550,42 @@ async def run_invocation(
     # Subscribe to SSE FIRST, then send the message.
     # This ensures we don't miss the session.idle event. The lane bounds this await via
     # maxInvocationSeconds; a deadline cancels it (no inner timeout here).
+    stats: dict[str, Any] = {}
     accumulated_text = await consume_sse_after_send(
-        client, oc_session_id, prompt, on_text=on_text, on_tool=on_tool, is_alive=server.is_alive
+        client,
+        oc_session_id,
+        prompt,
+        on_text=on_text,
+        on_tool=on_tool,
+        is_alive=server.is_alive,
+        max_tool_calls=max_tool_calls,
+        stats=stats,
     )
+    if stats.get("aborted"):
+        # Step-budget abort (Plan 4): the turn was cut mid-tool-loop, so accumulated_text may
+        # lack a terminal object. Run ONE wrap-up turn (budget OFF, same opencode session) so the
+        # model stops calling tools and emits a clean terminal object; its output then flows
+        # through the normal extract/repair path below.
+        # NOTE: legacy also ran a "tool-only correction" (has_text_beyond_action) — NOT ported:
+        # ach-agent's terminal contract expects prose + a trailing terminal object and
+        # extract_terminal rfinds the last {"action"...}, so "text beyond the action" is normal
+        # here, not an error to correct. Only the step-budget abort/wrap-up transfers.
+        log.warning("step-budget abort — running wrap-up turn", session_id=session_id)
+        wrap = (
+            "You have reached your tool-call budget for this turn. Do NOT call any more tools. "
+            "Reply now with ONLY the terminal JSON object "
+            '({"action":"none","text":"..."} or {"action":"a2a_reply","text":"..."}) '
+            "summarizing what you found and did."
+        )
+        accumulated_text = await consume_sse_after_send(
+            client,
+            oc_session_id,
+            wrap,
+            on_text=on_text,
+            on_tool=on_tool,
+            is_alive=server.is_alive,
+            max_tool_calls=0,  # never abort the wrap-up
+        )
 
     # debug (not info): at INFO this line lands on stderr right as the streamed reply
     # finishes on stdout, gluing onto the last reply char on a shared TTY.

@@ -944,3 +944,106 @@ async def test_step_budget_disabled_never_aborts() -> None:
     client.abort_session.assert_not_awaited()
     assert stats["aborted"] is False
     assert stats["tool_calls"] == 10
+
+
+# ---------------------------------------------------------------------------
+# Plan 4: abort-triggered wrap-up turn in run_invocation
+# ---------------------------------------------------------------------------
+
+
+def _wrapup_server(port: int) -> Any:
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.lifecycle import ManagedServer
+
+    server = ManagedServer(port=port)
+    mock_client = AsyncMock(spec=OpenCodeClient)
+    mock_client.create_session = AsyncMock(return_value={"id": "ses-x"})
+    server._client = mock_client
+    fake_proc = MagicMock()
+    fake_proc.returncode = None
+    server._process = fake_proc
+    return server
+
+
+async def test_run_invocation_wrapup_after_abort() -> None:
+    """An aborted turn runs ONE wrap-up consume (budget off) → terminal object from wrap-up."""
+    from ach_agent.engine.lifecycle import run_invocation
+
+    server = _wrapup_server(19891)
+    calls: list[dict[str, Any]] = []
+
+    async def fake_consume(_client: Any, _sid: str, prompt: str, **kwargs: Any) -> str:
+        calls.append({"prompt": prompt, "mtc": kwargs.get("max_tool_calls", 0)})
+        if len(calls) == 1:
+            stats = kwargs.get("stats")
+            if stats is not None:
+                stats["aborted"] = True
+                stats["tool_calls"] = 9
+            return "ran many tools, no terminal json here"
+        return '{"action":"none","text":"wrapped up"}'
+
+    with patch("ach_agent.engine.lifecycle.consume_sse_after_send", new=fake_consume):
+        result = await run_invocation(
+            server=server, session_id="k", prompt="hi", terminal_retries=1, max_tool_calls=5
+        )
+
+    assert len(calls) == 2, "aborted turn triggers exactly one wrap-up consume"
+    assert calls[0]["mtc"] == 5, "main turn carries the budget"
+    assert calls[1]["mtc"] == 0, "wrap-up turn disables the budget"
+    assert calls[1]["prompt"].startswith("You have reached your tool-call budget")
+    assert result == {"action": "none", "text": "wrapped up"}
+
+
+async def test_run_invocation_no_wrapup_when_not_aborted() -> None:
+    """Not aborted → exactly ONE consume (no wrap-up), terminal object returned as-is."""
+    from ach_agent.engine.lifecycle import run_invocation
+
+    server = _wrapup_server(19892)
+    calls: list[str] = []
+
+    async def fake_consume(_client: Any, _sid: str, prompt: str, **kwargs: Any) -> str:
+        calls.append(prompt)
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["aborted"] = False
+            stats["tool_calls"] = 2
+        return '{"action":"none","text":"clean"}'
+
+    with patch("ach_agent.engine.lifecycle.consume_sse_after_send", new=fake_consume):
+        result = await run_invocation(
+            server=server, session_id="k", prompt="hi", terminal_retries=1, max_tool_calls=5
+        )
+
+    assert len(calls) == 1, "no abort → no wrap-up turn"
+    assert result["text"] == "clean"
+
+
+async def test_run_invocation_freeform_abort_returns_wrapup_text() -> None:
+    """free_form + aborted → wrap-up ran, returns {'action':'none','text': <wrap-up text>}."""
+    from ach_agent.engine.lifecycle import run_invocation
+
+    server = _wrapup_server(19893)
+    calls: list[dict[str, Any]] = []
+
+    async def fake_consume(_client: Any, _sid: str, prompt: str, **kwargs: Any) -> str:
+        calls.append({"prompt": prompt, "mtc": kwargs.get("max_tool_calls", 0)})
+        if len(calls) == 1:
+            stats = kwargs.get("stats")
+            if stats is not None:
+                stats["aborted"] = True
+            return "partial free-form reply"
+        return "final free-form summary"
+
+    with patch("ach_agent.engine.lifecycle.consume_sse_after_send", new=fake_consume):
+        result = await run_invocation(
+            server=server,
+            session_id="k",
+            prompt="hi",
+            terminal_retries=1,
+            free_form=True,
+            max_tool_calls=5,
+        )
+
+    assert len(calls) == 2, "aborted free-form turn still runs the wrap-up"
+    assert calls[1]["mtc"] == 0
+    assert result == {"action": "none", "text": "final free-form summary"}

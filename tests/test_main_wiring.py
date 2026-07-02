@@ -13,6 +13,7 @@ import asyncio
 import json
 import uuid
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -466,3 +467,49 @@ def test_channel_idle_ttl_from_config() -> None:
 
     # Explicit 0 restores spawn-per-invocation.
     assert EngineBlock.model_validate({"idleTtlSeconds": 0}).idle_ttl_seconds == 0.0
+
+
+async def test_engine_runner_passes_pool_oc_sessions_to_run_invocation() -> None:
+    """engine_runner threads the pool-owned session map into run_invocation."""
+    from typing import Any
+
+    import ach_agent.engine.lifecycle as lifecycle
+    from ach_agent.channels.message_event import MessageEvent
+    from ach_agent.engine.lifecycle import EngineConfig
+    from ach_agent.main import _make_engine_runner
+
+    class _Pool:
+        def __init__(self) -> None:
+            self.oc_sessions: dict[str, str] = {}
+
+        async def acquire(self, _session_key: str, _cfg: Any) -> Any:
+            return object()
+
+        async def release(self, _session_key: str, ttl_seconds: float = 0.0) -> None:
+            return None
+
+    pool = _Pool()
+    captured: dict[str, Any] = {}
+
+    async def _fake_run(**kw: Any) -> dict[str, Any]:
+        captured.update(kw)
+        return {"action": "none", "text": ""}
+
+    event = MessageEvent(
+        idempotency_key="k1",
+        session_key="sess-1",
+        channel_name="cron-x",
+        payload={},
+        delivery_context={},
+        source_trait="async_no_retry",
+    )
+
+    with patch.object(lifecycle, "run_invocation", new=AsyncMock(side_effect=_fake_run)):
+        runner = _make_engine_runner(
+            pool=pool,
+            engine_cfg=EngineConfig(),
+            max_invocation_seconds=30,
+        )
+        await runner(event, lambda: None)
+
+    assert captured["oc_sessions"] is pool.oc_sessions

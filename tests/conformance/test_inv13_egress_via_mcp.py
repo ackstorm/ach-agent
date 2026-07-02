@@ -32,6 +32,8 @@ class _FakeServer:
 class _FakePool:
     """Minimal EnginePool stand-in: acquire returns a server, release is a no-op."""
 
+    oc_sessions: dict[str, str] = {}
+
     async def acquire(self, _session_key: str, _cfg: Any) -> _FakeServer:
         return _FakeServer()
 

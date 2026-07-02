@@ -860,7 +860,13 @@ async def test_run_invocation_reuse_false_ignores_pool_map() -> None:
 
 async def test_run_invocation_logs_oc_session(capfd) -> None:
     """Every turn logs which opencode session is used and whether it was reused."""
+    import structlog
+
     from ach_agent.engine.lifecycle import run_invocation
+
+    # Other test modules call structlog.configure() (global, mutable) without resetting
+    # it; reset here so this assertion doesn't depend on cross-test execution order.
+    structlog.reset_defaults()
 
     canned = '{"action":"none","text":"ok","thoughts":""}'
     shared_map: dict[str, str] = {}

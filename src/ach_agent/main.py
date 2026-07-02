@@ -577,6 +577,7 @@ def _make_engine_runner(
                 reuse=reuse,
                 max_tool_calls=max_tool_calls,
                 stats=turn_stats,
+                oc_sessions=pool.oc_sessions,
             )
 
             text = str(obj.get("text", ""))

@@ -175,6 +175,8 @@ async def test_engine_runner_signals_on_fail_on_engine_error(
             return True
 
     class _FakePool:
+        oc_sessions: dict[str, str] = {}
+
         async def acquire(self, session_key: str, config: Any) -> _FakeServer:
             return _FakeServer()
 

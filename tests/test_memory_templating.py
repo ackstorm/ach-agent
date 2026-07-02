@@ -25,6 +25,7 @@ class _CapturingPool:
 
     def __init__(self) -> None:
         self.acquired_cfgs: list[EngineConfig] = []
+        self.oc_sessions: dict[str, str] = {}
 
     async def acquire(self, _session_key: str, cfg: Any) -> Any:
         self.acquired_cfgs.append(cfg)

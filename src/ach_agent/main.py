@@ -545,6 +545,7 @@ def _make_engine_runner(
                 log.warning(
                     "engine: launch failed (pool.acquire)",
                     session_key=event.session_key,
+                    task_id=event.task_id,
                     error=str(exc),
                 )
             if future is not None and not future.done():
@@ -562,7 +563,7 @@ def _make_engine_runner(
                 try:
                     await pool.release(event.session_key, ttl_seconds=ttl)
                 except Exception as exc:  # noqa: BLE001
-                    log.warning("pool release error", error=str(exc))
+                    log.warning("pool release error", task_id=event.task_id, error=str(exc))
 
     return engine_runner
 

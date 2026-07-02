@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -50,6 +51,9 @@ class WebhookResult:
 
     status_code: int
     body: dict[str, Any]
+    # Correlation id (uuid4 hex) echoed on 202 accept — log/trace correlation ONLY, not
+    # persisted/queryable. Empty for every non-202 outcome.
+    task_id: str = ""
 
 
 def _verify_gitlab_token(header_token: str, secret_path: str) -> bool:
@@ -201,11 +205,20 @@ def _parse_generic(idempotency_key: str) -> tuple[dict[str, Any], str]:
     return {}, idempotency_key
 
 
-def _status_map(result: RouterAdmitResult) -> WebhookResult:
-    """Map RouterAdmitResult to D-05 HTTP status + JSON body."""
+def _status_map(result: RouterAdmitResult, task_id: str) -> WebhookResult:
+    """Map RouterAdmitResult to D-05 HTTP status + JSON body.
+
+    task_id is echoed in the body (and threaded onto WebhookResult.task_id for the
+    X-ACH-Task-Id header) ONLY on the ACCEPTED (202) branch — DUPLICATE/FULL_QUEUE
+    bodies are unchanged.
+    """
     match result:
         case RouterAdmitResult.ACCEPTED:
-            return WebhookResult(status_code=202, body={"status": "accepted"})
+            return WebhookResult(
+                status_code=202,
+                body={"status": "accepted", "task_id": task_id},
+                task_id=task_id,
+            )
         case RouterAdmitResult.DUPLICATE:
             return WebhookResult(status_code=200, body={"status": "duplicate"})
         case RouterAdmitResult.FULL_QUEUE:
@@ -309,6 +322,10 @@ async def handle_webhook_request(
     # possible — the secondary key is safe to compute here at parse time.
     secondary_key = derive_gitlab_composite_key(body) if source == "gitlab" else None
 
+    # Correlation id — uuid4 hex, echoed on 202 and logged by engine_runner for log/trace
+    # correlation ONLY (not persisted, not queryable).
+    task_id = uuid.uuid4().hex
+
     # 5. BUILD MessageEvent
     event = MessageEvent(
         idempotency_key=idempotency_key,
@@ -318,6 +335,7 @@ async def handle_webhook_request(
         delivery_context=delivery_context,
         source_trait="sync",
         secondary_idempotency_key=secondary_key,
+        task_id=task_id,
     )
 
     log.info(
@@ -330,4 +348,4 @@ async def handle_webhook_request(
 
     # 6. DISPATCH → router → D-05 status map
     result = await handler.handle(event)
-    return _status_map(result)
+    return _status_map(result, task_id)

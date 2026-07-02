@@ -595,3 +595,74 @@ async def test_note_on_mr_missing_block_raises_422(tmp_path) -> None:
     result, handler = await _post(NOTE_ON_MR_MISSING_MR, cfg, "s")
     assert result.status_code == 422
     assert handler._call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Correlation task_id on the 202 accept (log/trace correlation ONLY)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_accepted_response_carries_task_id(tmp_path: pytest.TempPathFactory) -> None:
+    """202 accept: WebhookResult.task_id is a non-empty uuid, echoed in the body."""
+    secret_file = tmp_path / "secret"
+    secret_file.write_text("s3cr3t")
+
+    cfg = _make_channel_cfg(str(secret_file))
+    handler = FakeHandler(RouterAdmitResult.ACCEPTED)
+    headers = _make_headers("s3cr3t", event_uuid=str(uuid.uuid4()))
+    raw_body = json.dumps(MR_PAYLOAD).encode()
+
+    result = await handle_webhook_request(raw_body, headers, cfg, handler)
+
+    assert result.status_code == 202
+    assert result.task_id, "WebhookResult.task_id must be non-empty on 202"
+    assert result.body["task_id"] == result.task_id, "task_id must be echoed in the body"
+    # uuid4 hex — uuid.UUID(...) parses it back.
+    assert uuid.UUID(result.task_id)
+
+    # The MessageEvent dispatched to the router carries the SAME task_id.
+    assert handler.events[0].task_id == result.task_id
+
+
+@pytest.mark.asyncio
+async def test_distinct_events_get_distinct_task_ids(tmp_path: pytest.TempPathFactory) -> None:
+    """Two distinct webhook requests get two distinct task_ids."""
+    secret_file = tmp_path / "secret"
+    secret_file.write_text("s3cr3t")
+
+    cfg = _make_channel_cfg(str(secret_file))
+    raw_body = json.dumps(MR_PAYLOAD).encode()
+
+    handler1 = FakeHandler(RouterAdmitResult.ACCEPTED)
+    r1 = await handle_webhook_request(
+        raw_body, _make_headers("s3cr3t", event_uuid=str(uuid.uuid4())), cfg, handler1
+    )
+    handler2 = FakeHandler(RouterAdmitResult.ACCEPTED)
+    r2 = await handle_webhook_request(
+        raw_body, _make_headers("s3cr3t", event_uuid=str(uuid.uuid4())), cfg, handler2
+    )
+
+    assert r1.task_id != r2.task_id, "distinct events must get distinct task_ids"
+
+
+@pytest.mark.asyncio
+async def test_non_accepted_responses_have_no_task_id(tmp_path: pytest.TempPathFactory) -> None:
+    """DUPLICATE (200) / FULL_QUEUE (503) bodies are unchanged — no task_id."""
+    secret_file = tmp_path / "secret"
+    secret_file.write_text("s3cr3t")
+
+    cfg = _make_channel_cfg(str(secret_file))
+    raw_body = json.dumps(MR_PAYLOAD).encode()
+
+    handler_dup = FakeHandler(RouterAdmitResult.DUPLICATE)
+    r_dup = await handle_webhook_request(
+        raw_body, _make_headers("s3cr3t", event_uuid=str(uuid.uuid4())), cfg, handler_dup
+    )
+    assert "task_id" not in r_dup.body
+
+    handler_full = FakeHandler(RouterAdmitResult.FULL_QUEUE)
+    r_full = await handle_webhook_request(
+        raw_body, _make_headers("s3cr3t", event_uuid=str(uuid.uuid4())), cfg, handler_full
+    )
+    assert "task_id" not in r_full.body

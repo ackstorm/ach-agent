@@ -162,7 +162,12 @@ def create_app(
             return JSONResponse(webhook_result.body, status_code=webhook_result.status_code)
 
         # 5. ACCEPTED → accept-and-process-async (D-04)
-        return JSONResponse(webhook_result.body, status_code=202)
+        # X-ACH-Task-Id: correlation id for log/trace ONLY (not a lookup handle).
+        return JSONResponse(
+            webhook_result.body,
+            status_code=202,
+            headers={"X-ACH-Task-Id": webhook_result.task_id} if webhook_result.task_id else None,
+        )
 
     # -----------------------------------------------------------------------
     # GET /healthz — liveness (HTTP-03, always 200 while process alive)

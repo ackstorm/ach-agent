@@ -35,6 +35,8 @@ class MessageEvent:
                           None = async/gitlab_comment mode (default, unchanged path).
                           When not None, engine_runner MUST call set_result or
                           set_exception so the route never hangs.
+        task_id:          Correlation id echoed to the caller on 202; empty for channels
+                          that don't set one.
     """
 
     idempotency_key: str
@@ -54,3 +56,6 @@ class MessageEvent:
     # ALL channel adapters leave this False in v1 — the real derivation is V1.1 CR.
     # Do NOT build per-channel consent derivation logic here.
     user_consented: bool = field(default=False)
+    # Correlation id (uuid4 hex) echoed to the caller on the webhook 202 accept and logged
+    # by engine_runner for log/trace correlation ONLY — not persisted, not queryable.
+    task_id: str = ""

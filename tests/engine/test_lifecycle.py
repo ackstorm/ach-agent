@@ -312,6 +312,139 @@ async def test_consume_to_completion_dedups_cumulative_snapshots() -> None:
 
 
 # ---------------------------------------------------------------------------
+# B4: live-path SSE reconnect (send-once, health-gated, send/stream error split)
+# ---------------------------------------------------------------------------
+
+
+async def test_live_sse_reconnects_after_transient_drop() -> None:
+    """A transient SSE-reader drop reconnects (health-gated), sends once, no text dup."""
+    import aiohttp
+
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.events import (
+        OpenCodeSessionIdle,
+        OpenCodeStreamReady,
+        OpenCodeTextUpdate,
+    )
+    from ach_agent.engine.lifecycle import consume_sse_after_send
+
+    # Attempt 0: connect, grow part A, then the reader drops (ClientError).
+    # Attempt 1: connect, opencode RESENDS the cumulative snapshot, then idle.
+    scripts = [
+        [
+            OpenCodeStreamReady(),
+            OpenCodeTextUpdate("s", "prtA", "msgA", "Hola"),
+            OpenCodeTextUpdate("s", "prtA", "msgA", "Hola mundo"),
+            aiohttp.ClientError("connection reset"),
+        ],
+        [
+            OpenCodeStreamReady(),
+            OpenCodeTextUpdate("s", "prtA", "msgA", "Hola mundo"),  # resent snapshot
+            OpenCodeSessionIdle("s"),
+        ],
+    ]
+    calls = {"n": 0}
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        script = scripts[calls["n"]]
+        calls["n"] += 1
+        for e in script:
+            await queue.put(e)
+
+    client = OpenCodeClient("http://127.0.0.1:0")
+    client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
+    client.send_message = AsyncMock()  # type: ignore[method-assign]
+    client.check_health = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+    streamed: list[str] = []
+    with patch.object(ev, "_consume_events_from_response", new=fake_consume):
+        text = await consume_sse_after_send(client, "ses", "hi", on_text=streamed.append)
+
+    assert text == "Hola mundo", "resent snapshot deduped by the accumulator"
+    assert "".join(streamed) == "Hola mundo", "on_text did not re-emit the resent prefix"
+    assert client.send_message.await_count == 1, "prompt sent exactly once across reconnects"
+    assert client.subscribe_events.await_count == 2, "reconnected once (two subscribe_events)"
+
+
+async def test_live_send_failure_is_terminal_no_resend() -> None:
+    """A send_message failure is terminal — raised, never re-sent / reconnected."""
+    import aiohttp
+
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.events import OpenCodeStreamReady
+    from ach_agent.engine.lifecycle import consume_sse_after_send
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        # Only the readiness gate event; the send fails, no terminal ever arrives.
+        await queue.put(OpenCodeStreamReady())
+
+    client = OpenCodeClient("http://127.0.0.1:0")
+    client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
+    client.send_message = AsyncMock(side_effect=aiohttp.ClientError("post failed"))  # type: ignore[method-assign]
+    client.check_health = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+    with patch.object(ev, "_consume_events_from_response", new=fake_consume):
+        with pytest.raises(aiohttp.ClientError, match="post failed"):
+            await consume_sse_after_send(client, "ses", "hi")
+
+    assert client.send_message.await_count == 1, "send attempted exactly once"
+    assert client.subscribe_events.await_count == 1, "no reconnect on a send failure"
+
+
+async def test_live_sse_exhausts_reconnects() -> None:
+    """Every attempt's reader drops → EngineError('sse_exhausted') after max_reconnects."""
+    import aiohttp
+
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.events import EngineError, OpenCodeStreamReady
+    from ach_agent.engine.lifecycle import consume_sse_after_send
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        await queue.put(OpenCodeStreamReady())
+        await queue.put(aiohttp.ClientError("drop"))
+
+    client = OpenCodeClient("http://127.0.0.1:0")
+    client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
+    client.send_message = AsyncMock()  # type: ignore[method-assign]
+    client.check_health = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+    with patch.object(ev, "_consume_events_from_response", new=fake_consume):
+        with pytest.raises(EngineError, match="sse_exhausted"):
+            await consume_sse_after_send(client, "ses", "hi", max_reconnects=2)
+
+    assert client.send_message.await_count == 1, "sent once despite exhausted reconnects"
+    assert client.subscribe_events.await_count == 3, "attempt 0 + 2 reconnects"
+
+
+async def test_live_reconnect_gated_on_health() -> None:
+    """SSE drops but check_health() is False → no reconnect, original error raised."""
+    import aiohttp
+
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.events import OpenCodeStreamReady
+    from ach_agent.engine.lifecycle import consume_sse_after_send
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        await queue.put(OpenCodeStreamReady())
+        await queue.put(aiohttp.ClientError("drop"))
+
+    client = OpenCodeClient("http://127.0.0.1:0")
+    client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
+    client.send_message = AsyncMock()  # type: ignore[method-assign]
+    client.check_health = AsyncMock(return_value=False)  # type: ignore[method-assign]
+
+    with patch.object(ev, "_consume_events_from_response", new=fake_consume):
+        with pytest.raises(aiohttp.ClientError, match="drop"):
+            await consume_sse_after_send(client, "ses", "hi")
+
+    assert client.subscribe_events.await_count == 1, "unhealthy engine → no reconnect"
+
+
+# ---------------------------------------------------------------------------
 # SEC-01 / ek-hygiene: opencode subprocess env is clean-slate (allowlist only)
 # ---------------------------------------------------------------------------
 

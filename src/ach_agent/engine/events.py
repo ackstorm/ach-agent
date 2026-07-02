@@ -44,6 +44,20 @@ class EngineError(Exception):
         super().__init__(f"[{error_type}] {message}")
 
 
+class _SendFailed(Exception):
+    """Wraps a send_message failure so the SSE consume loop treats it as terminal.
+
+    A send-POST failure must NEVER trigger a reconnect/re-send — that would start a
+    duplicate opencode turn. The loop unwraps `.original` and raises it. A stream-reader
+    drop, by contrast, is pushed to the queue as the raw ``aiohttp.ClientError`` and IS
+    reconnectable.
+    """
+
+    def __init__(self, original: BaseException) -> None:
+        self.original = original
+        super().__init__(f"send_message failed: {original!r}")
+
+
 class InvocationTimeout(Exception):
     """Raised when run_invocation exceeds maxInvocationSeconds watchdog.
 

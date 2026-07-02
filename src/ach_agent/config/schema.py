@@ -307,16 +307,45 @@ class CapabilityBlock(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class SecretSource(BaseModel):
+    """CONTRACT_v3 §2 secret source — exactly one of {env, file}.
+
+    env  → the harness reads the value from os.environ[NAME] at use time (hardened default:
+           dumpable=0 hides it from the co-resident agent; the NAME must NOT be in
+           engine.forwardEnv — the boot guard rejects that).
+    file → the harness reads the value from PATH at use time (volume-mount deployments;
+           same-uid readable by the agent — weaker).
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    env: str = Field(default="")
+    file: str = Field(default="")
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> SecretSource:
+        if bool(self.env) == bool(self.file):
+            raise ValueError("secret must set exactly one of {env, file}")
+        return self
+
+
 class WebhookAuthBlock(BaseModel):
     """CONTRACT_v3 §2 webhook.auth sub-block."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     type: Literal["gitlab_token", "hmac", "header_token", "none"] = "hmac"
-    secret_path: str = Field(default="", alias="secretPath")
+    # Exactly one of {env, file}; required unless type == "none".
+    secret: SecretSource | None = None
     # For type=="header_token": the request header carrying the static shared secret
-    # (constant-time compared against the file at secret_path). Ignored for other types.
+    # (constant-time compared against the resolved secret). Ignored for other types.
     header: str = Field(default="")
+
+    @model_validator(mode="after")
+    def _secret_required_unless_none(self) -> WebhookAuthBlock:
+        if self.type != "none" and self.secret is None:
+            raise ValueError(f"webhook.auth.secret is required for type={self.type!r}")
+        return self
 
 
 class WebhookBlock(BaseModel):
@@ -341,7 +370,13 @@ class A2AAuthBlock(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     header: str = Field(default="x-a2a-custom-api-key")
-    secret_path: str = Field(default="", alias="secretPath")
+    secret: SecretSource | None = None
+
+    @model_validator(mode="after")
+    def _secret_required(self) -> A2AAuthBlock:
+        if self.secret is None:
+            raise ValueError("a2a.auth.secret is required")
+        return self
 
 
 class A2ABlock(BaseModel):

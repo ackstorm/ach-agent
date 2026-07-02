@@ -31,7 +31,7 @@ dependencies = [
     "mcp>=1.28.0,<2",
     "httpx>=0.27.0",
     "redis>=5,<9",
-    "fastapi==0.137.2",
+    "fastapi==0.139.0",
     # plain uvicorn (no [standard]): the [standard] extras (uvloop, httptools, websockets,
     # watchfiles) add ~20MB of speedups this single-replica harness does not need. The
     # asyncio loop + h11 are plenty for the webhook/a2a/health surface.

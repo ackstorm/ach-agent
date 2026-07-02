@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from ach_agent.channels.message_event import MessageEvent
-from ach_agent.router.dedup import derive_webhook_idempotency_key
+from ach_agent.router.dedup import derive_gitlab_composite_key, derive_webhook_idempotency_key
 from ach_agent.router.router import RouterAdmitResult
 
 if TYPE_CHECKING:
@@ -236,6 +236,13 @@ async def handle_webhook_request(
         )
         return WebhookResult(status_code=422, body={"detail": "Missing required fields"})
 
+    # 4b. SECONDARY dedup key — GitLab logical content composite (gitlab source only).
+    # Legacy ran dedup AFTER trigger classification so an ignored `open` couldn't shadow a
+    # later `update`; ach-agent has no harness trigger step (every event is forwarded to the
+    # agent) and the composite is content-sensitive on a short window, so no shadowing is
+    # possible — the secondary key is safe to compute here at parse time.
+    secondary_key = derive_gitlab_composite_key(body) if source == "gitlab" else None
+
     # 5. BUILD MessageEvent
     event = MessageEvent(
         idempotency_key=idempotency_key,
@@ -244,6 +251,7 @@ async def handle_webhook_request(
         payload=body,
         delivery_context=delivery_context,
         source_trait="sync",
+        secondary_idempotency_key=secondary_key,
     )
 
     log.info(

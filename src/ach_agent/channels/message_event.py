@@ -40,6 +40,10 @@ class MessageEvent:
     idempotency_key: str
     session_key: str
     channel_name: str
+    # Optional SECONDARY dedup key — the GitLab logical content composite (gitlab source
+    # only in v1; None for every other channel). Checked & marked alongside the primary in
+    # Router.handle on a SHORT window, catching logical double-fires the UUID key misses.
+    secondary_idempotency_key: str | None = None
     payload: dict[str, Any] = field(default_factory=dict)
     delivery_context: dict[str, Any] = field(default_factory=dict)
     source_trait: Literal["sync", "async_no_retry"] = "async_no_retry"

@@ -141,3 +141,86 @@ def test_dedup_ttl_window() -> None:
     # Force time to pass at least a tiny bit so monotonic > expiry
     time.sleep(0.001)
     assert not store.seen(key), "Key should expire after TTL=0 + tiny sleep"
+
+
+# ---------------------------------------------------------------------------
+# GitLab logical content composite (SECONDARY dedup key) — Plan 3
+# ---------------------------------------------------------------------------
+
+
+def test_gitlab_composite_collapses_open_and_update_same_description() -> None:
+    """open+update for the same MR creation collapse (action EXCLUDED from composite)."""
+    from ach_agent.router.dedup import derive_gitlab_composite_key
+
+    open_body = {
+        "object_kind": "merge_request",
+        "project": {"id": 42},
+        "user": {"username": "alice"},
+        "object_attributes": {"iid": 7, "action": "open", "description": "Fix the bug"},
+    }
+    update_body = {
+        **open_body,
+        "object_attributes": {**open_body["object_attributes"], "action": "update"},
+    }
+    assert derive_gitlab_composite_key(open_body) == derive_gitlab_composite_key(update_body)
+
+
+def test_gitlab_composite_differs_on_edited_description() -> None:
+    """A genuinely edited description → different content_hash → NOT collapsed."""
+    from ach_agent.router.dedup import derive_gitlab_composite_key
+
+    a = {
+        "object_kind": "merge_request",
+        "project": {"id": 42},
+        "user": {"username": "alice"},
+        "object_attributes": {"iid": 7, "action": "update", "description": "v1"},
+    }
+    b = {**a, "object_attributes": {**a["object_attributes"], "description": "v2 edited"}}
+    assert derive_gitlab_composite_key(a) != derive_gitlab_composite_key(b)
+
+
+def test_gitlab_composite_differs_across_mrs_and_kinds() -> None:
+    """Distinct target iid or object_kind → distinct composite."""
+    from ach_agent.router.dedup import derive_gitlab_composite_key
+
+    mr = {
+        "object_kind": "merge_request",
+        "project": {"id": 42},
+        "user": {"username": "alice"},
+        "object_attributes": {"iid": 7, "description": "x"},
+    }
+    other_mr = {**mr, "object_attributes": {**mr["object_attributes"], "iid": 8}}
+    note = {
+        "object_kind": "note",
+        "project": {"id": 42},
+        "user": {"username": "alice"},
+        "merge_request": {"iid": 7},
+        "object_attributes": {"note": "x"},
+    }
+    keys = {
+        derive_gitlab_composite_key(mr),
+        derive_gitlab_composite_key(other_mr),
+        derive_gitlab_composite_key(note),
+    }
+    assert len(keys) == 3
+
+
+def test_gitlab_composite_contentless_events_disambiguate() -> None:
+    """Content-less events (pipeline) fall back to status/updated_at so states don't collapse."""
+    from ach_agent.router.dedup import derive_gitlab_composite_key
+
+    succ = {
+        "object_kind": "pipeline",
+        "project": {"id": 42},
+        "user": {"username": "ci"},
+        "object_attributes": {"id": 99, "status": "success", "updated_at": "t1"},
+    }
+    fail = {**succ, "object_attributes": {"id": 99, "status": "failed", "updated_at": "t2"}}
+    assert derive_gitlab_composite_key(succ) != derive_gitlab_composite_key(fail)
+
+
+def test_gitlab_composite_never_raises_on_empty_body() -> None:
+    """Degrades to a stable string on a malformed/empty body — never raises."""
+    from ach_agent.router.dedup import derive_gitlab_composite_key
+
+    assert isinstance(derive_gitlab_composite_key({}), str)

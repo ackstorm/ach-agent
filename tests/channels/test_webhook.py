@@ -373,3 +373,57 @@ def test_header_token_auth(tmp_path) -> None:
     assert _verify_auth(auth, {"x-api-key": "topsecret"}, b"") is True
     assert _verify_auth(auth, {"x-api-key": "wrong"}, b"") is False
     assert _verify_auth(auth, {}, b"") is False
+
+
+# ---------------------------------------------------------------------------
+# Secondary dedup key (GitLab logical content composite) — Plan 3
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_gitlab_sets_secondary_idempotency_key(tmp_path: pytest.TempPathFactory) -> None:
+    """gitlab source: secondary_idempotency_key == composite; primary still the UUID."""
+    from ach_agent.router.dedup import derive_gitlab_composite_key
+
+    secret_file = tmp_path / "secret"
+    secret_file.write_text("s3cr3t")
+
+    cfg = _make_channel_cfg(str(secret_file))
+    handler = FakeHandler(RouterAdmitResult.ACCEPTED)
+    event_uuid = str(uuid.uuid4())
+    headers = _make_headers("s3cr3t", event_uuid=event_uuid)
+    raw_body = json.dumps(MR_PAYLOAD).encode()
+
+    await handle_webhook_request(raw_body, headers, cfg, handler)
+
+    event = handler.events[0]
+    assert event.idempotency_key == event_uuid, "primary key unchanged (UUID)"
+    assert event.secondary_idempotency_key == derive_gitlab_composite_key(MR_PAYLOAD)
+
+
+@pytest.mark.asyncio
+async def test_github_leaves_secondary_key_none(tmp_path: pytest.TempPathFactory) -> None:
+    """github source: secondary_idempotency_key stays None (gitlab-only in v1)."""
+    secret_file = tmp_path / "secret"
+    secret_file.write_text("gh-hmac-secret")
+
+    cfg = ChannelConfig.model_validate(
+        {
+            "name": "gh",
+            "type": "webhook",
+            "source": "github",
+            "webhook": {"auth": {"type": "hmac", "secretPath": str(secret_file)}},
+        }
+    )
+    handler = FakeHandler(RouterAdmitResult.ACCEPTED)
+    raw_body = json.dumps(GITHUB_PR_PAYLOAD).encode()
+    signature = hmac.new(b"gh-hmac-secret", raw_body, hashlib.sha256).hexdigest()
+    headers = {
+        "X-Hub-Signature-256": f"sha256={signature}",
+        "X-GitHub-Delivery": str(uuid.uuid4()),
+        "Content-Type": "application/json",
+    }
+
+    await handle_webhook_request(raw_body, headers, cfg, handler)
+
+    assert handler.events[0].secondary_idempotency_key is None

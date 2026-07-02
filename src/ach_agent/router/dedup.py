@@ -14,11 +14,12 @@ Constraint: NEVER import from hermes_agent.* or engine.* here (RTR-06, D-08).
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 # ---------------------------------------------------------------------------
 # DedupStore Protocol (swappable Phase 1 → Phase 3)
@@ -157,6 +158,41 @@ def derive_cron_idempotency_key(channel_name: str, scheduled_tick: datetime) -> 
     """
     tick_iso = scheduled_tick.strftime("%Y-%m-%dT%H:%M:%S")
     return f"{channel_name}:{tick_iso}"
+
+
+def derive_gitlab_composite_key(body: dict[str, Any]) -> str:
+    """Logical content composite for GitLab dedup — the SECONDARY key (short window).
+
+    Collapses GitLab's near-simultaneous logical double-fires (e.g. `open`+`update` for
+    one MR creation, or a re-delivery with a fresh X-Gitlab-Event-UUID) that the primary
+    UUID key misses. ACTION is deliberately EXCLUDED so open+update collapse; a content
+    discriminator is INCLUDED so a genuinely edited change does not. Ported from legacy
+    ackbot-process gitlab handler `_is_duplicate` (kind:project:target:user:content_hash).
+    Never raises — degrades to a stable string on malformed bodies.
+    """
+    attrs = body.get("object_attributes") or {}
+    kind = str(body.get("object_kind") or body.get("event_type") or "")
+    project_id = str((body.get("project") or {}).get("id", ""))
+    user = str((body.get("user") or {}).get("username", "") or body.get("user_username", ""))
+    target_id = str(
+        attrs.get("iid")
+        or (body.get("merge_request") or {}).get("iid")
+        or (body.get("issue") or {}).get("iid")
+        or attrs.get("id", "")
+    )
+    # Content: the salient text of the logical change. For content-less events (pipeline,
+    # push) fall back to updated_at/status so distinct states don't collapse — while MR/note
+    # events keep collapsing open+update because their description/note is non-empty.
+    content = str(
+        attrs.get("note")
+        or attrs.get("description")
+        or attrs.get("title")
+        or attrs.get("updated_at")
+        or attrs.get("status")
+        or ""
+    )
+    content_hash = hashlib.md5(content.encode("utf-8")).hexdigest()[:8] if content else ""
+    return f"gl:{kind}:{project_id}:{target_id}:{user}:{content_hash}"
 
 
 def derive_a2a_idempotency_key(task_id: str) -> str:

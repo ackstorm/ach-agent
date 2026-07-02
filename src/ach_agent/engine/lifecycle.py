@@ -741,9 +741,18 @@ async def consume_sse_after_send(
                         terminal_error = EngineError(event.error_type, event.message)
                         break
             finally:
-                # Recreate the reader per attempt: cancel it + release this attempt's resp.
+                # Fully stop THIS attempt's reader before the loop may start a new one on the
+                # SHARED result_queue. Awaiting (not wait-with-timeout-then-abandon) guarantees
+                # no second reader can ever run concurrently and interleave/pollute events into
+                # the next attempt's readiness gate. _consume_events_from_response swallows
+                # CancelledError and returns, so this is prompt and won't raise; a pathological
+                # non-cancellable read is still bounded from above by the lane's
+                # maxInvocationSeconds (which cancels this await too).
                 sse_task.cancel()
-                await asyncio.wait([sse_task], timeout=2.0)
+                try:
+                    await sse_task
+                except asyncio.CancelledError:
+                    pass
                 try:
                     await resp.release()
                 except Exception:  # noqa: BLE001
@@ -761,11 +770,15 @@ async def consume_sse_after_send(
             f"SSE stream disconnected after {max_reconnects} reconnect attempts",
         )
     finally:
-        # The send task persists across attempts; cancel it once at the very end. asyncio.wait
-        # never raises the task's exception (already retrieved by _on_send_done).
+        # The send task persists across attempts; cancel it once at the very end and await it
+        # to completion so it can't outlive the invocation and push a late _SendFailed onto the
+        # (now-unreferenced) queue. Its exception was already retrieved by _on_send_done.
         if send_task is not None:
             send_task.cancel()
-            await asyncio.wait([send_task], timeout=2.0)
+            try:
+                await send_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
 
 
 async def _await_subscription_ready(result_queue: asyncio.Queue, session_id: str) -> None:  # type: ignore[type-arg]
@@ -778,13 +791,18 @@ async def _await_subscription_ready(result_queue: asyncio.Queue, session_id: str
     the invocation: log and let the caller send anyway after 5s. An early SSE error surfaces
     as the first queued item and is re-raised (the caller's finally then cleans up).
     """
-    from ach_agent.engine.events import OpenCodeStreamReady
+    from ach_agent.engine.events import OpenCodeStreamReady, _SendFailed
 
     try:
         first = await asyncio.wait_for(result_queue.get(), timeout=5.0)
     except TimeoutError:
         log.warning("SSE not confirmed within 5s — sending anyway", session_id=session_id)
         return
+    # A send-POST failure that lands here (e.g. surfaced during a reconnect's gate) is unwrapped
+    # to the original — same as the main consume loop — so callers see the real error, not the
+    # _SendFailed wrapper.
+    if isinstance(first, _SendFailed):
+        raise first.original
     if isinstance(first, Exception):
         raise first
     # server.connected carries nothing to render and is consumed here; any other event

@@ -318,3 +318,28 @@ RTR-01 preserved) and mark (step 3).
   EXPECTS prose + a trailing terminal object and `extract_terminal` `rfind`s the last `{"action"…}`,
   so "text beyond the action" is normal, not an error — porting it would flag correct output as
   broken. Documented, not implemented.
+
+## Update (2026-07-02): note-hook 422 fixed + configurable GitLab events
+
+- **Confirmed defect.** A GitLab **Note Hook** (MR/issue comment) 422'd: `_parse_gitlab` read
+  `body["object_attributes"]["iid"]`, present on Merge Request Hooks but NOT on Note Hooks (the
+  MR/issue iid lives under `merge_request.iid` / `issue.iid`). Repro:
+  `_parse_gitlab(note_hook) → KeyError: 'iid' → HTTP 422`. Repeated 422s risk GitLab
+  auto-disabling the webhook.
+- **Fix — config-driven allowlist.** New `WebhookBlock.gitlab_events:
+  list[Literal["merge_request","issue","note"]] | None` (None ⇒ default all three). `_parse_gitlab`
+  now returns `(delivery_context, session_key)` to ROUTE, `None` to **accept-and-ignore (HTTP 200
+  `{"status":"ignored"}`)**, and raises (→ 422) ONLY for a *routable-but-malformed* payload (e.g. an
+  MR-note with no `merge_request` block). Push/pipeline/tag/emoji/etc. → 200 ignored, never 422.
+- **A note routes** only when `"note"` AND its noteable base kind are both allowed — so
+  `["merge_request","note"]` routes MR + MR-comments but not issue-comments. Commit/snippet notes
+  have no derivable target → ignored.
+- **session_key scheme (MR back-compat).** MR hook & MR-comment → `f"{project}:{mr_iid}"`
+  (UNCHANGED — a comment shares the MR's lane + opencode session). Issue hook & issue-comment →
+  `f"{project}:issue:{issue_iid}"` (namespaced so MR `!7` and issue `#7` never collide).
+  `delivery_context` now carries `kind` + `target_type`; `build_engine_prompt` builds a per-kind
+  default (Review MR / Review issue / New comment …).
+- **Harness stays a dumb pipe.** No `@bot`-mention gating in the harness (legacy did that) — routed
+  events go to the agent; mention/trigger policy is a prompt concern, consistent with the
+  post-trigger-N/A dedup decision (§ above). Reuses the note-aware `derive_gitlab_composite_key` for
+  the secondary dedup key — no second dedup mechanism added.

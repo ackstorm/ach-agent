@@ -86,6 +86,8 @@ channels:
       auth:
         type: gitlab_token              # gitlab_token | hmac | header_token | none
         secretPath: /etc/ach-agent/secrets/gitlab-webhook/secret   # a path, never a value
+      gitlab_events: [merge_request, note]   # route MR hooks + MR/issue comments; omit → MR+issue+note.
+                                             # Other kinds (push, pipeline, …) → HTTP 200 ignored, never 422.
 
   - name: generic-hook
     type: webhook

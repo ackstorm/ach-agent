@@ -159,9 +159,18 @@ def _log_engine_tool(update: OpenCodeToolUpdate) -> None:
 
     run_invocation calls this as each tool moves running→completed/error. Wired only when
     the channel provides no on_tool of its own (--debug/console keep their own streaming
-    sinks), so a channel turn shows the tools it ran instead of dead air.
+    sinks), so a channel turn shows the tools it ran — the action title and its result —
+    instead of dead air.
     """
-    log.info("engine: tool", tool=update.tool_name, status=update.state.status)
+    state = update.state
+    detail = getattr(state, "output", "") or getattr(state, "error", "")
+    log.info(
+        "engine: tool",
+        tool=update.tool_name,
+        status=state.status,
+        title=getattr(state, "title", ""),
+        detail=detail[:300],
+    )
 
 
 def build_engine_prompt(

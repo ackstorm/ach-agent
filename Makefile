@@ -105,6 +105,13 @@ _docs-build:
 docs-serve: ## Live docs preview on :8000
 	./scripts/dev.sh uv run mkdocs serve -a 0.0.0.0:8000
 
+##@ Contract
+.PHONY: schema _schema
+schema: ## Regenerate the frozen JSON Schema v1 from AgentConfig (docs/schemas/agent-config-v1.schema.json)
+	$(call container_target,_schema)
+_schema:
+	uv run python scripts/gen_schema.py
+
 ##@ Verify
 .PHONY: verify
 verify: lint test conformance secrets ## Full local gate (lint + mypy + unit + conformance + secrets)

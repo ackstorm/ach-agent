@@ -595,6 +595,8 @@ async def consume_sse_after_send(
     *,
     is_alive: Callable[[], bool] | None = None,
     max_reconnects: int = 3,
+    max_tool_calls: int = 0,
+    stats: dict[str, Any] | None = None,
 ) -> str:
     """Subscribe to SSE, send the prompt ONCE, then consume to session.idle with reconnect.
 
@@ -645,6 +647,11 @@ async def consume_sse_after_send(
     # user-echo id set, the result queue, and the single send task. Only resp + sse_task are
     # per-attempt.
     acc = ReplyAccumulator(on_text, on_tool)
+    # Step-budget (Plan 4): count DISTINCT tool call_ids across the whole turn. A set (not a
+    # counter) so opencode's resent snapshots on a reconnect never inflate the count. Persists
+    # across reconnect attempts alongside acc.
+    tool_call_ids: set[str] = set()
+    aborted = False
     user_message_ids: set[str] = set()
     result_queue: asyncio.Queue = asyncio.Queue()  # type: ignore[type-arg]
     send_task: asyncio.Task[None] | None = None
@@ -727,8 +734,31 @@ async def consume_sse_after_send(
                             acc.add_text(event.part_id, event.text)
                     elif isinstance(event, OpenCodeToolUpdate):
                         acc.add_tool(event)
+                        tool_call_ids.add(event.call_id or event.part_id)
+                        if (
+                            max_tool_calls > 0
+                            and not aborted
+                            and len(tool_call_ids) >= max_tool_calls
+                        ):
+                            aborted = True
+                            log.warning(
+                                "step budget reached — aborting turn",
+                                session_id=session_id,
+                                tool_calls=len(tool_call_ids),
+                                max_tool_calls=max_tool_calls,
+                            )
+                            try:
+                                await client.abort_session(session_id)
+                            except Exception:  # noqa: BLE001
+                                log.warning(
+                                    "abort_session failed", session_id=session_id, exc_info=True
+                                )
+                            # keep consuming — session.idle arrives after the abort
                     elif isinstance(event, OpenCodeSessionIdle):
                         log.debug("session.idle received", session_id=session_id)
+                        if stats is not None:
+                            stats["tool_calls"] = len(tool_call_ids)
+                            stats["aborted"] = aborted
                         terminal_idle = True
                         break
                     elif isinstance(event, OpenCodeSessionError):

@@ -821,3 +821,126 @@ def test_managed_server_config_path_defaults_none() -> None:
 
     server = ManagedServer(port=0)
     assert server.config_path is None
+
+
+# ---------------------------------------------------------------------------
+# Plan 4: step-budget abort inside consume_sse_after_send
+# ---------------------------------------------------------------------------
+
+
+def _tool_client() -> Any:
+    """OpenCodeClient with subscribe/send mocked + a recording abort_session AsyncMock."""
+    from ach_agent.engine.client import OpenCodeClient
+
+    client = OpenCodeClient("http://127.0.0.1:0")
+    client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
+    client.send_message = AsyncMock()  # type: ignore[method-assign]
+    client.abort_session = AsyncMock()  # type: ignore[method-assign]
+    return client
+
+
+async def test_step_budget_aborts_after_threshold() -> None:
+    """max_tool_calls=3: after 3 distinct tool call_ids → abort once, keep consuming to idle."""
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.events import (
+        OpenCodeSessionIdle,
+        OpenCodeStreamReady,
+        OpenCodeTextUpdate,
+        OpenCodeToolUpdate,
+        ToolStateCompleted,
+        ToolStateRunning,
+    )
+    from ach_agent.engine.lifecycle import consume_sse_after_send
+
+    scripted = [
+        OpenCodeStreamReady(),
+        OpenCodeToolUpdate("s", "p1", "m", "tool", "c1", ToolStateRunning()),
+        OpenCodeToolUpdate("s", "p1", "m", "tool", "c1", ToolStateCompleted()),
+        OpenCodeToolUpdate("s", "p2", "m", "tool", "c2", ToolStateRunning()),
+        OpenCodeToolUpdate("s", "p3", "m", "tool", "c3", ToolStateRunning()),
+        OpenCodeTextUpdate("s", "pA", "m", "partial reply"),
+        OpenCodeSessionIdle("s"),
+    ]
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        for e in scripted:
+            await queue.put(e)
+
+    client = _tool_client()
+    stats: dict[str, Any] = {}
+    with patch.object(ev, "_consume_events_from_response", new=fake_consume):
+        text = await consume_sse_after_send(
+            client, "ses", "hi", max_tool_calls=3, stats=stats
+        )
+
+    client.abort_session.assert_awaited_once_with("ses")
+    assert stats["aborted"] is True
+    assert stats["tool_calls"] >= 3
+    assert text == "partial reply", "idle arrived after abort → accumulated text returned"
+
+
+async def test_step_budget_counts_distinct_calls_not_updates() -> None:
+    """One call_id with running+completed (2 updates) + max_tool_calls=2 → no abort."""
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.events import (
+        OpenCodeSessionIdle,
+        OpenCodeStreamReady,
+        OpenCodeToolUpdate,
+        ToolStateCompleted,
+        ToolStateRunning,
+    )
+    from ach_agent.engine.lifecycle import consume_sse_after_send
+
+    scripted = [
+        OpenCodeStreamReady(),
+        OpenCodeToolUpdate("s", "p1", "m", "tool", "c1", ToolStateRunning()),
+        OpenCodeToolUpdate("s", "p1", "m", "tool", "c1", ToolStateCompleted()),
+        OpenCodeSessionIdle("s"),
+    ]
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        for e in scripted:
+            await queue.put(e)
+
+    client = _tool_client()
+    stats: dict[str, Any] = {}
+    with patch.object(ev, "_consume_events_from_response", new=fake_consume):
+        await consume_sse_after_send(client, "ses", "hi", max_tool_calls=2, stats=stats)
+
+    client.abort_session.assert_not_awaited()
+    assert stats["aborted"] is False
+    assert stats["tool_calls"] == 1, "distinct call_ids counted, not per-update"
+
+
+async def test_step_budget_disabled_never_aborts() -> None:
+    """max_tool_calls=0 (default): many tool calls → never abort, stats.aborted False."""
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.events import (
+        OpenCodeSessionIdle,
+        OpenCodeStreamReady,
+        OpenCodeToolUpdate,
+        ToolStateRunning,
+    )
+    from ach_agent.engine.lifecycle import consume_sse_after_send
+
+    scripted = [
+        OpenCodeStreamReady(),
+        *[
+            OpenCodeToolUpdate("s", f"p{i}", "m", "tool", f"c{i}", ToolStateRunning())
+            for i in range(10)
+        ],
+        OpenCodeSessionIdle("s"),
+    ]
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        for e in scripted:
+            await queue.put(e)
+
+    client = _tool_client()
+    stats: dict[str, Any] = {}
+    with patch.object(ev, "_consume_events_from_response", new=fake_consume):
+        await consume_sse_after_send(client, "ses", "hi", max_tool_calls=0, stats=stats)
+
+    client.abort_session.assert_not_awaited()
+    assert stats["aborted"] is False
+    assert stats["tool_calls"] == 10

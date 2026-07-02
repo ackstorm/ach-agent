@@ -137,6 +137,18 @@ def test_engine_idle_ttl_default() -> None:
     assert EngineBlock.model_validate({"idleTtlSeconds": 120.5}).idle_ttl_seconds == 120.5
 
 
+def test_engine_max_tool_calls_default() -> None:
+    """engine.max_tool_calls defaults to 0 (disabled) and accepts a positive override (Plan 4)."""
+    import pytest
+
+    from ach_agent.config.schema import EngineBlock
+
+    assert EngineBlock.model_validate({}).max_tool_calls == 0
+    assert EngineBlock.model_validate({"maxToolCalls": 80}).max_tool_calls == 80
+    with pytest.raises(ValueError, match="greater than or equal to 0"):
+        EngineBlock.model_validate({"maxToolCalls": -1})
+
+
 def test_engine_home_field_and_workdir_default_empty() -> None:
     from ach_agent.config.schema import EngineBlock
 

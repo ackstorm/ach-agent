@@ -79,6 +79,10 @@ class EngineBlock(BaseModel):
     # session (_sessions) across events for the same session_key instead of respawning. 0
     # restores spawn-per-invocation (stop as soon as the conversation ends).
     idle_ttl_seconds: float = Field(default=60.0, ge=0, alias="idleTtlSeconds")
+    # Runaway control (Plan 4): abort a turn after this many DISTINCT tool calls, then run one
+    # wrap-up turn so the model still returns a valid terminal object. 0 disables counting/abort;
+    # maxInvocationSeconds remains the always-on time backstop. Recommend ~80 when opting in.
+    max_tool_calls: int = Field(default=0, ge=0, alias="maxToolCalls")
 
 
 class PersistenceBlock(BaseModel):

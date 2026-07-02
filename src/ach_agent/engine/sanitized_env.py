@@ -84,6 +84,28 @@ def redact_gitlab_token_processor(
     return event_dict
 
 
+def make_redact_secret_env_processor(env_names: list[str]) -> structlog.typing.Processor:
+    """structlog processor: redact the CURRENT values of the given secret env vars.
+
+    Reads os.environ per-call (rotation-safe, like redact_gitlab_token_processor). Arbitrary
+    secret env NAMES (SecretSource {env:...}) are not caught by the hardcoded ek_/GITLAB_TOKEN
+    processors — this closes that gap.
+    """
+
+    def _proc(logger: WrappedLogger, method_name: str, event_dict: EventDict) -> EventDict:
+        values = [v for n in env_names if (v := os.environ.get(n))]
+        if not values:
+            return event_dict
+        for key, val in list(event_dict.items()):
+            if isinstance(val, str):
+                for secret in values:
+                    if secret in val:
+                        event_dict[key] = val.replace(secret, "[REDACTED]")
+        return event_dict
+
+    return _proc
+
+
 class SanitizedEnv:
     """Env dict wrapper that never exposes ek_ values in repr/logging.
 
@@ -183,5 +205,30 @@ def configure_logging() -> None:
         # torrent on a shared stdout; `--prompt ... 2>/dev/null` now yields a clean reply.
         # PrintLogger only ever calls .write/.flush — the proxy satisfies that at runtime;
         # the stub demands full TextIO, hence the narrow ignore.
+        logger_factory=structlog.PrintLoggerFactory(file=_StderrProxy()),  # type: ignore[arg-type]
+    )
+
+
+def add_secret_redaction(env_names: list[str]) -> None:
+    """Re-configure structlog with a secret-env redaction processor added.
+
+    configure_logging() runs at module import time (before config load), so it cannot
+    know the operator's secret.env NAMES yet. Called once from main() after load_config,
+    this re-runs structlog.configure with make_redact_secret_env_processor(env_names)
+    inserted before the renderer — mirrors configure_logging's exact processor chain plus
+    the one extra processor, so ek_/GITLAB_TOKEN redaction keeps working unchanged.
+    """
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.stdlib.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+            redact_ek_processor,  # SEC-01: must come before renderer
+            redact_gitlab_token_processor,  # SEC-03: must come before renderer
+            make_redact_secret_env_processor(env_names),  # generic secret.env redaction
+            structlog.dev.ConsoleRenderer(),
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(_resolve_log_level()),
+        context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(file=_StderrProxy()),  # type: ignore[arg-type]
     )

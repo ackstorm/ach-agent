@@ -50,7 +50,7 @@ from ach_agent.engine.context import fetch_context
 from ach_agent.engine.hydrate import hydrate, resolve_model
 from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
 from ach_agent.engine.metrics import DRAIN_COMPLETED, ENGINE_LAUNCH_FAILURES
-from ach_agent.engine.sanitized_env import SanitizedEnv, configure_logging
+from ach_agent.engine.sanitized_env import SanitizedEnv, add_secret_redaction, configure_logging
 from ach_agent.http.app import create_app
 from ach_agent.router import Router
 from ach_agent.security.preflight import run_preflight
@@ -746,6 +746,38 @@ def _harness_log_dir() -> Path:
     return d
 
 
+def collect_secret_env_names(cfg: Any) -> list[str]:
+    """Every secret.env name across webhook + a2a channel auth."""
+    names: list[str] = []
+    for ch in cfg.channels:
+        wh = getattr(ch, "webhook", None)
+        if wh is not None and wh.auth.secret is not None and wh.auth.secret.env:
+            names.append(wh.auth.secret.env)
+        a2a = getattr(ch, "a2a", None)
+        if a2a is not None and a2a.auth.secret is not None and a2a.auth.secret.env:
+            names.append(a2a.auth.secret.env)
+    return names
+
+
+def strip_forwarded_secrets(cfg: Any) -> list[str]:
+    """Fail-SAFE: remove any secret.env name from engine.forwardEnv so a misconfig can never
+    leak the secret into opencode's env. Returns the cleaned forward-env list; logs a WARN for
+    each stripped name (operator agreement: strip + warn, NOT hard-fail).
+    """
+    secret_names = set(collect_secret_env_names(cfg))
+    cleaned: list[str] = []
+    stripped: list[str] = []
+    for name in cfg.engine.forward_env:
+        (stripped if name in secret_names else cleaned).append(name)
+    if stripped:
+        log.warning(
+            "secret env name(s) present in engine.forwardEnv — stripped so they never reach the "
+            "agent (fix the config)",
+            names=sorted(stripped),
+        )
+    return cleaned
+
+
 async def _run_opencode_attach(
     router: Any,
     *,
@@ -821,6 +853,13 @@ async def main(
 
     # Step 2: load config (hard-fail on schema mismatch — CFG-02)
     cfg = load_config(config_path)
+    # SEC: secret.env values must never reach opencode's env or the logs. Strip any
+    # secret.env name a misconfig also listed in engine.forwardEnv (fail-safe, WARN not
+    # hard-fail — see strip_forwarded_secrets), and register the secret names' CURRENT
+    # values for generic log redaction (the hardcoded ek_/GITLAB_TOKEN processors don't
+    # catch arbitrary secret.env NAMES).
+    effective_forward_env = strip_forwarded_secrets(cfg)
+    add_secret_redaction(collect_secret_env_names(cfg))
     engine_home, engine_work_dir = resolve_engine_paths(cfg)
     state_dir = link_ach_state(engine_home, engine_work_dir)
 
@@ -995,8 +1034,9 @@ async def main(
         model_base_url=model_base_url,
         mcp_local_urls=mcp_local_urls,
         # SEC-01 / ek-hygiene: opencode's env is clean-slate (base allowlist only). Extra
-        # var names the operator wants forwarded come from engine.forwardEnv.
-        forward_env=cfg.engine.forward_env,
+        # var names the operator wants forwarded come from engine.forwardEnv, with any
+        # secret.env name stripped (strip_forwarded_secrets, computed above).
+        forward_env=effective_forward_env,
         # capability.filter.exclude.tools — disabled in opencode.json (withheld from model).
         exclude_tools=cfg.capability.filter.exclude.tools,
     )

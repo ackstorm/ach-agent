@@ -32,6 +32,11 @@ def test_secret_source_neither_rejected():
         SecretSource()
 
 
+def test_secret_source_invalid_env_name_rejected():
+    with pytest.raises(ValidationError):
+        SecretSource(env="bad-name-with-dashes")
+
+
 def test_webhook_auth_requires_secret_unless_none():
     with pytest.raises(ValidationError):
         WebhookAuthBlock(type="gitlab_token")  # no secret

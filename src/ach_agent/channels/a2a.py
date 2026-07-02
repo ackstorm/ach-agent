@@ -119,7 +119,7 @@ class A2AAgentExecutorBridge:
 
         expected_header = a2a_cfg.auth.header  # e.g. "x-a2a-custom-api-key"
         expected_value = resolve_secret(a2a_cfg.auth.secret)
-        if expected_value is None:
+        if not expected_value:
             # CR-02: unresolvable/empty secret — never admit (empty-vs-empty must fail)
             log.error(
                 "a2a: secret unresolvable — rejecting all requests",

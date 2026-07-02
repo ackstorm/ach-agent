@@ -10,6 +10,7 @@ Constraint: NEVER import the router or any Hermes type here (RTR-06).
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, Literal
@@ -18,6 +19,8 @@ import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 log = structlog.get_logger(__name__)
+
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # ---------------------------------------------------------------------------
 # Leaf / utility blocks
@@ -326,6 +329,12 @@ class SecretSource(BaseModel):
     def _exactly_one(self) -> SecretSource:
         if bool(self.env) == bool(self.file):
             raise ValueError("secret must set exactly one of {env, file}")
+        return self
+
+    @model_validator(mode="after")
+    def _valid_env_name(self) -> SecretSource:
+        if self.env and not _ENV_NAME_RE.match(self.env):
+            raise ValueError(f"secret.env is not a valid environment variable name: {self.env!r}")
         return self
 
 

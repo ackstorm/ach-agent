@@ -556,7 +556,7 @@ def _make_engine_runner(
 
             text = str(obj.get("text", ""))
             log.info(
-                "engine: terminal result",
+                "engine: agent response",
                 channel=event.channel_name,
                 session_key=event.session_key,
                 action=obj.get("action"),

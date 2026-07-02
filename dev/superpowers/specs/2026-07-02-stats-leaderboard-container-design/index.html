@@ -1,0 +1,1042 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>Stats / Leaderboard Container — Design (Sub-project A) - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#stats-leaderboard-container-design-sub-project-a" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Stats / Leaderboard Container — Design (Sub-project A)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Purpose
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Purpose">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#non-goals-a" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-goals (A)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-decomposition" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Decomposition
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-architecture-topology" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Architecture / topology
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Architecture / topology">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#core-invariant-non-negotiable" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core invariant (non-negotiable)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-data-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Data model
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Data model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-entry-semantics-load-bearing-the-r1-unknown" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.1 Entry semantics (load-bearing) + the R1 unknown
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-redis-event-store-feeds-the-ui-a-versioned-cross-component-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.2 Redis — event store (feeds the UI), a versioned cross-component contract
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-prometheus-durable-aggregates-ops-owned" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.3 Prometheus — durable aggregates (ops-owned)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#44-leaderboard-contract-stats-api-ui-page-ready" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.4 Leaderboard contract (stats API → UI, page-ready)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-harness-changes-the-sink-thin-provably-non-blocking" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Harness changes — the sink (thin, provably non-blocking)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-stats-service-srcach_stats" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Stats service (src/ach_stats/)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Stats service (src/ach_stats/)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      6.1 API
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#62-aggregation" class="md-nav__link">
+    <span class="md-ellipsis">
+      6.2 Aggregation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#63-auth-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      6.3 Auth / boundary
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#64-ui-v0-cut" class="md-nav__link">
+    <span class="md-ellipsis">
+      6.4 UI (v0 cut)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-deploy" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Deploy
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-error-handling-the-intended-divergence" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Error handling &amp; the intended divergence
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-testing-tdd" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Testing (TDD)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-open-follow-ups-out-of-scope-for-a" class="md-nav__link">
+    <span class="md-ellipsis">
+      10. Open follow-ups (out of scope for A)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-external-review-disposition-gist-40db75ed-2-rounds" class="md-nav__link">
+    <span class="md-ellipsis">
+      11. External review disposition (gist 40db75ed, 2 rounds)
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="stats-leaderboard-container-design-sub-project-a">Stats / Leaderboard Container — Design (Sub-project A)</h1>
+<blockquote>
+<p><strong>Status:</strong> design approved; two external review rounds incorporated; pending final spec review → plan.
+<strong>Date:</strong> 2026-07-02
+<strong>Scope:</strong> Sub-project <strong>A</strong> only (usage dashboard + eval-score <em>seam</em>). The eval/benchmark
+harness that produces the score is <strong>Sub-project B</strong>, a separate spec, tackled next.
+<strong>Reviews:</strong> external design review, 2 rounds (gist <code>40db75ed</code>); dispositions in §11.
+<strong>Gating spike:</strong> the <strong>R1 probe</strong> (§4.1) MUST run before sink implementation — it settles the
+one remaining empirical unknown and decides whether the sink needs baseline-delta logic.</p>
+</blockquote>
+<h2 id="1-purpose">1. Purpose</h2>
+<p>Give ach-agent an operator-facing <strong>Model Leaderboard dashboard</strong>: a dark, card + ranked-table UI
+(visual language lifted from <code>../alitellm-auth</code>) showing, per model, the real operational usage the
+harness already measures — spend, tokens, turns, throughput, cache-hit, session volume — plus a
+<strong>nullable <code>score</code> column</strong> reserved for the future eval harness (B).</p>
+<p>Inspiration: the Fable-5 "Model Leaderboard" demo. <strong>Divergence:</strong> its <code>coding score</code> is faked seed
+data. We refuse to fake it — A ships every column we can source honestly and leaves <code>score = null</code>
+until B fills it.</p>
+<h3 id="non-goals-a">Non-goals (A)</h3>
+<ul>
+<li>The eval/benchmark harness and the coding <code>score</code> itself (→ Sub-project B).</li>
+<li>Grafana dashboards / provisioning / Prometheus scrape config. <strong>A only emits new counters at the
+  already-mounted <code>/metrics</code>.</strong> Consumption is ops' job.</li>
+<li>BudgetPanel, CSV export, UsageDonut, RequestsChart (deferred past v0 — §6.4).</li>
+</ul>
+<h2 id="2-decomposition">2. Decomposition</h2>
+<table>
+<thead>
+<tr>
+<th>Sub-project</th>
+<th>Produces</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A — Stats/leaderboard container</strong> (this doc)</td>
+<td>usage dashboard + <code>score</code> seam</td>
+<td>designing</td>
+</tr>
+<tr>
+<td><strong>B — Eval/benchmark harness</strong></td>
+<td>the coding <code>score</code> per model</td>
+<td>next spec</td>
+</tr>
+</tbody>
+</table>
+<p>Seam: the leaderboard row's <code>score</code>. A publishes it nullable; B populates the same store A reads.</p>
+<h2 id="3-architecture-topology">3. Architecture / topology</h2>
+<div class="highlight"><pre><span></span><code>┌─ ach-agent harness (existing process) ──────────────────┐
+│  router → engine → turn-summary (once per invocation)   │
+│                        │                                 │
+│                        ├──► StatsSink.record()  (NEW)    │  record() does ONLY:
+│                        │      ├─ prometheus incr (inline)│  prometheus incr + queue.put_nowait.
+│                        │      └─ queue.put_nowait(stat)  │  NEVER touches redis. Cannot block.
+│                        │            │                     │
+│                        │   ┌────────▼─────────┐           │
+│                        │   │ single supervised │──► redis XADD (writer OWNS the client;
+│                        │   │ writer task       │          socket timeouts; MINID trim;
+│                        │   └───────────────────┘          capped-backoff restart)
+│                        └──► /metrics  (existing mount)   │
+└─────────┬───────────────────────────┬───────────────────┘
+          │ redis stream (v:1 entry)   │ scrape (ops-owned)
+          ▼                            ▼
+┌─ ach-stats service (NEW container) ─┐   ┌─ Prometheus (ops) ─┐
+│  FastAPI + pure aggregate + SPA     │   │  durable aggregates │
+│  tolerant reader; auth boundary     │   └─────────────────────┘
+└─────────────────────────────────────┘
+</code></pre></div>
+<ul>
+<li>New code: <code>src/ach_agent/stats/</code> (sink + writer) + <code>src/ach_stats/</code> (FastAPI + <code>ui/</code> React).</li>
+<li>ach-agent becomes polyglot: Python harness + Python stats API + React UI.</li>
+<li><strong>Topology:</strong> multiple harness pods may write one shared <code>ach:sessions</code> stream; a single stats
+  service reads. Redis Streams accept concurrent <code>XADD</code> — no coordination.</li>
+</ul>
+<h3 id="core-invariant-non-negotiable">Core invariant (non-negotiable)</h3>
+<p>The turn path does exactly two non-blocking things: inline Prometheus increments +
+<code>queue.put_nowait()</code>. It <strong>never</strong> awaits redis, and <strong>nothing redis-shaped (client construction,
+connection acquisition, DNS) ever executes in <code>record()</code></strong> — the writer task owns the client. Any
+redis failure (down <strong>or slow</strong>) is absorbed by the writer, never the router. Protects the repo IP.</p>
+<h2 id="4-data-model">4. Data model</h2>
+<h3 id="41-entry-semantics-load-bearing-the-r1-unknown">4.1 Entry semantics (load-bearing) + the R1 unknown</h3>
+<p><strong>One redis entry == one channel-turn == one invocation == one inbound event handled.</strong> This is one
+"session" row in the UI (the demo's per-session "TURNS" column = within-invocation loop count =
+<code>stats["tool_count"]</code>). Recorded values = that invocation's <strong>final</strong> usage
+(<code>ReplyAccumulator.usage()</code>, keep-latest of <code>message.updated</code>, <code>events.py:386</code>).</p>
+<p>Confirmed against code:
+- <code>acc = ReplyAccumulator(...)</code> is created <strong>fresh per invocation</strong> (<code>lifecycle.py:665</code>); it persists
+  only across SSE reconnects <strong>and the ≤1 terminal-output retry</strong> <em>within</em> one invocation. So there
+  is <strong>no cross-invocation carryover</strong>: an invocation that errors before its first assistant message
+  yields <code>acc.usage() is None</code> → the entry records zero usage, not the previous run's.
+- The ≤1 terminal-output retry is <strong>internal to <code>run_invocation</code></strong> (<code>terminal_retries</code>, <code>main.py:571</code>)
+  → <strong>one record per inbound event, never two rows.</strong> (A retry that re-prompts may <em>undercount</em> the
+  discarded attempt — an R2-family effect, below — but does not duplicate a row.)</p>
+<p><strong>Totals:</strong> <code>sessions = COUNT(entries)</code>, <code>spend/tokens = SUM(entries)</code>. Correct only because each
+entry holds one invocation's final usage — never a running total across invocations.</p>
+<p><strong>Aborted invocations are recorded</strong> (<code>status</code> from <code>stats["aborted"]</code>) and <strong>included in <code>sessions</code>
+and <code>spend</code></strong> — an aborted run burned real tokens and a cost dashboard must never understate cost.
+<code>totals.aborted</code> (count) is surfaced separately so the KPI row can show it. (Aborted runs are
+excluded only from B's <em>quality</em> scoring, which is B's aggregation rule, not this entry's.)
+<strong>Hard process-kill mid-invocation</strong> produces no record and no Prometheus increment (same site) —
+the invocation is invisible to stats. Acceptable for metrics; stated here so it's a known bound.</p>
+<p><strong>Two correctness risks, both empirical, gated on opencode's <code>message.updated</code> accumulation scope:</strong></p>
+<ul>
+<li><strong>R1 — cross-turn accumulation (catastrophic).</strong> With <code>session:auto</code> the opencode session is
+  <em>reused</em> across invocations. If <code>info.tokens/cost</code> is <em>session</em>-cumulative (running total over the
+  whole reused session, not the current invocation), keep-latest grows every invocation and row-SUM
+  inflates <strong>superlinearly</strong>: n equal-cost invocations report <code>c·n(n+1)/2</code> instead of <code>c·n</code>
+  (≈ n/2× over-count, worst on the most-engaged sessions). <strong>Highest risk in the design.</strong></li>
+<li><strong>R2 — within-turn undercount (bounded).</strong> If one invocation emits multiple assistant messages
+  (or the terminal retry re-prompts), keep-latest drops the earlier ones → the entry undercounts.
+  Bounded; opposite direction from R1.</li>
+</ul>
+<p><strong>R1 PROBE (gating spike, run before writing the sink):</strong> one reused session, two trivial prompts
+("reply with exactly: ok") against the cheapest model, with a temporary debug tap logging every raw
+<code>message.updated</code> usage payload. Compare invocation 2's <strong>first</strong> usage event vs invocation 1's
+final — starts near zero → per-message scope (R2 territory at worst); starts at/above invocation 1's
+total → <strong>R1 confirmed</strong>. ~10 min, a few cents. <strong>Discriminate on <code>output_tokens</code>/<code>cost</code>, NEVER
+<code>input_tokens</code></strong> — in a reused session invocation 2 legitimately resends history, so input tokens
+grow even under correct per-message scope (asserting on input/totals false-positives).</p>
+<p><strong>Smallest fix if R1 confirms — baseline snapshot at invocation start:</strong> snapshot the session's
+cumulative usage when the invocation begins; record <code>final − baseline</code> at the summary site. State
+lives in the in-process session object (which <code>session:auto</code> already pins for reuse), per-pod, no
+eviction policy. Do <strong>not</strong> use a sink-side <code>dict[session_key → last_seen]</code> — it leaks without
+eviction and puts state in the component we designed stateless.</p>
+<p><strong>Optional field:</strong> <code>retry: bool</code> (needs <code>run_invocation</code> to expose whether a retry fired) so the
+recent table can badge retried runs. <code>sessions = invocations</code> regardless; never dedupe (deduping
+hides real cost).</p>
+<h3 id="42-redis-event-store-feeds-the-ui-a-versioned-cross-component-contract">4.2 Redis — event store (feeds the UI), a <strong>versioned cross-component contract</strong></h3>
+<p>The entry schema is a real contract: the harness writes it, the stats service reads it, and they
+<strong>deploy independently</strong>. It gets the same rigor as CONTRACT_v3 and the page contract:
+- Every entry carries <strong><code>v: 1</code></strong>. A future breaking change bumps it (detectable, not silently
+  misparsed).
+- The reader is <strong>tolerant</strong>: missing field → documented default; unknown field → ignored.</p>
+<ul>
+<li>Stream <code>ach:sessions</code>, <code>XADD</code> auto-ID (=ms ts → <code>XRANGE start-end</code> date filter,
+  <code>XREVRANGE COUNT n</code> recent).</li>
+<li><strong>Retention 35d</strong> (≥ longest UI range; a 7d default makes "this month" a lie by construction).
+  <code>ACH_STATS_RETENTION</code> may only <strong>shrink</strong> it for dev. Trim is <strong>owned by the writer</strong>: inline
+  approximate trim on every write, <code>XADD ach:sessions MINID ~ &lt;now−retention&gt; ...</code> (O(1) amortized,
+  no cron, no second component). <em>Comment at the trim site:</em> a future "last month" panel needs up to
+  62d lookback and 35d would silently break it.</li>
+<li>Entry fields:
+  <div class="highlight"><pre><span></span><code>v:1, ts, session_key, channel, source, model, provider,
+task,            # ≤80 chars, ek_/secret-redacted (only consumer = recent table, §6.3)
+input_tokens, output_tokens, cache_read, cache_write,
+cost, turns, duration_ms, tokens_per_s, status, [retry]
+</code></pre></div></li>
+</ul>
+<h3 id="43-prometheus-durable-aggregates-ops-owned">4.3 Prometheus — durable aggregates (ops-owned)</h3>
+<p>Low-cardinality labels only (<code>model</code>, <code>channel</code>, <code>provider</code>). <strong>Never</strong> <code>session_key</code>/<code>task</code>.
+<div class="highlight"><pre><span></span><code>ach_agent_sessions_total{model,channel}         counter
+ach_agent_turn_tokens_total{model,direction}    counter   # input|output|cache_read|cache_write
+ach_agent_turn_cost_usd_total{model,channel}    counter
+ach_agent_turns_total{model,channel}            counter
+ach_agent_turn_duration_seconds{model}          histogram
+ach_agent_stats_degraded_total                  counter   # sink drops (queue full / writer error)
+</code></pre></div>
+Follows <code>src/ach_agent/router/metrics.py</code>; exposed via <code>/metrics</code> (<code>http/app.py:200</code>).</p>
+<h3 id="44-leaderboard-contract-stats-api-ui-page-ready">4.4 Leaderboard contract (stats API → UI, page-ready)</h3>
+<p>UI is a <strong>dumb renderer</strong> (mirrors alitellm-auth <code>build_stats_contract</code>, incl. <code>null</code>-vs-<code>0</code>).
+<div class="highlight"><pre><span></span><code>range   { start, end, days, coverage_start, tz }   # coverage_start = oldest entry in stream
+totals  { sessions, tokens, spend, avg_cost_per_session, aborted, partial }
+leaderboard {
+  sorted_by: &quot;spend&quot; | &quot;score&quot;,                    # explicit; UI renders the header from this
+  rows: [ { rank, model, provider,
+            score,        # nullable — eval seam (B fills); null → row tagged &quot;unrated&quot;
+            speed_tok_s, cost_per_mtok, spend, sessions, tag } ]
+}
+cost_per_session [ { model, avg } ]
+sessions_this_month { rows:[{model,count}], partial }
+series [ { date, spend, sessions, tokens, partial } ]
+recent [ { ts, task, model, tokens, cost, turns, status, retry } ]
+</code></pre></div>
+- <strong>Per-panel partiality (server-computed, not one page flag):</strong> <code>totals.partial</code>,
+  <code>sessions_this_month.partial</code>, and per-point <code>series[].partial</code> are each derived from the single
+  <code>coverage_start</code> (<code>coverage_start &gt; panel_window_start</code>). Page-level <code>coverage_start</code> stays for the
+  "showing data since {date}" banner. A single page flag would over-warn (7d chart complete while
+  month KPI isn't) or lie.
+- <strong>Calendar boundaries are timezone-explicit.</strong> <code>ACH_STATS_TZ</code> (default <code>UTC</code>; we set
+  <code>Europe/Madrid</code>). "Sessions this month" = calendar month-to-date computed in that TZ. Retention 35d
+  ≥ 31d so MTD never runs short; <code>coverage_start</code>/<code>partial</code> covers cold-start. Without an explicit TZ,
+  late-on-the-31st CET sessions land in the wrong month and totals visibly drift for local viewers.
+- <strong>Ranking is explicit, never silently flipped.</strong> <code>sorted_by="spend"</code> today. When B lands, scores
+  arrive per-model (not atomically): scored rows sort by score (desc) <strong>above</strong> unscored rows (which
+  sort by spend, tagged "unrated"), and <code>sorted_by</code> flips to <code>"score"</code>. The reorder is a feature.
+- Derived in <code>aggregate.py</code>: <code>speed_tok_s = output_tokens/(duration_ms/1000)</code>, <code>cost_per_mtok</code>,
+  <code>avg_cost_per_session = spend/sessions</code>.
+- <code>provider</code>, <code>tag</code> from a static <strong>model-metadata map</strong> keyed by model id; unknown →
+  <code>provider="unknown"</code>, <code>tag=null</code>.
+- <strong>No version field on this page contract</strong> — the SPA is served from the same image as the API
+  (deploy-atomic, no skew). Versioning lives on the redis entry (§4.2), the seam that <em>does</em> skew.
+- <strong><code>budget</code> deferred</strong> (env-var budget is a toy; add with a real budget source — §6.4).</p>
+<h2 id="5-harness-changes-the-sink-thin-provably-non-blocking">5. Harness changes — the sink (thin, provably non-blocking)</h2>
+<p><code>src/ach_agent/stats/sink.py</code>, called once at the turn-summary site in <code>main.py</code>:</p>
+<ul>
+<li><strong><code>record(SessionStat)</code></strong> does <strong>only</strong>: inline Prometheus increments + <code>queue.put_nowait(stat)</code>;
+  on <code>asyncio.QueueFull</code> → drop + <code>stats_degraded_total</code>++. Sub-µs, cannot block, cannot accumulate.
+  Task text is truncated (≤80) then redacted (structlog <code>ek_</code> path) <strong>before</strong> entering the queue.</li>
+<li><strong>Bounded <code>asyncio.Queue(maxsize=256)</code>.</strong> <em>Reasoning (documented so it isn't cargo-culted):</em> memory
+  bound is irrelevant (256 × ~1KB ≈ 256KB); the number is a <strong>coverage</strong> bound — at a few
+  entries/minute arrival and a stalled redis serializing ~1–2 timeout-bound attempts/s, 256 buffers
+  <strong>hours</strong> of outage. Rationale: "survives any redis restart/redeploy; longer is a real incident and
+  metrics loss is the correct casualty." Drop-on-full is right for a metrics stream —
+  block-with-timeout reintroduces the exact latency the queue exists to remove. (<code>put_nowait</code> drops
+  the <em>newest</em>; drop-head/freshest-wins would be marginally better but asyncio.Queue lacks it and at
+  this volume it's noise — noted, not built.)</li>
+<li><strong>Single long-lived supervised writer task</strong> — the only component that touches redis:</li>
+<li><strong>Owns</strong> the redis client (created inside the task, never lazily in <code>record()</code>); client has
+    <code>socket_connect_timeout</code> + <code>socket_timeout ≈ 250–500ms</code> so a <em>stalled</em> socket can't wedge it.</li>
+<li><code>XADD</code> with inline <code>MINID ~</code> trim (§4.2).</li>
+<li><strong>Capped-exponential-backoff restart (1s → 30s) + rate-limited log</strong> on persistent failure (bad
+    URL / DNS / auth). A naive restart loop would busy-spin CPU and flood logs on the router's
+    process — this is the last path where the sink could hurt the harness.</li>
+<li><strong>Best-effort shutdown drain:</strong> on harness shutdown, drain the queue with a hard ~2s timeout,
+    then drop + count. Difference between "lose data only under failure" and "lose data every deploy".</li>
+<li><strong>No <code>ACH_STATS_REDIS_URL</code> → no queue, no writer; Prometheus still emits.</strong> Dev harness without
+  redis boots normally.</li>
+<li><strong>Pipelining: not in v0</strong> (single-digit entries/min buys nothing, adds partial-failure semantics).
+  Recorded future option: <em>opportunistic</em> batch — writer drains whatever is queued and pipelines it,
+  useful only for backlog recovery after an outage.</li>
+</ul>
+<p><strong>Rejected shapes (recorded so we don't regress):</strong> inline <code>await xadd()</code> → slow redis blocks the
+turn coroutine; per-turn <code>create_task(xadd())</code> → slow redis grows unbounded pending tasks + exhausts
+the connection pool (indirect router risk). Bounded-queue + single-writer is the only shape that
+bounds both latency and memory.</p>
+<p><strong>Config: env-gated, NOT CONTRACT_v3.</strong> <code>ACH_STATS_REDIS_URL</code>, <code>ACH_STATS_RETENTION</code>, <code>ACH_STATS_TZ</code>.
+A <code>stats:</code> config block would be a frozen-seam change dragging in the Go operator. <strong>Hygiene:</strong> add
+one non-normative line to <code>CONTRACT_v3.md</code> — "<code>ACH_STATS_*</code> env vars are harness-local and explicitly
+outside this contract." Promote to a real config block only if Sub-project B needs the operator to
+know about eval infrastructure.</p>
+<h2 id="6-stats-service-srcach_stats">6. Stats service (<code>src/ach_stats/</code>)</h2>
+<h3 id="61-api">6.1 API</h3>
+<ul>
+<li><code>GET /api/leaderboard?range=&amp;model=</code> → §4.4 contract</li>
+<li><code>GET /api/sessions?range=&amp;model=</code> → recent list (filters)</li>
+<li><code>GET /healthz</code>; serves the built React SPA (static) at <code>/</code></li>
+<li>reads its own env: <code>ACH_STATS_REDIS_URL</code> (read side), <code>ACH_STATS_TZ</code></li>
+</ul>
+<h3 id="62-aggregation">6.2 Aggregation</h3>
+<p><code>aggregate.py</code> — pure redis-rows → contract; zero HTTP; unit-testable. Lifts alitellm-auth
+<code>stats.py</code> shape, retargeted, reusing its <code>null</code>-vs-<code>0</code> guards. <strong>Aggregate-on-read</strong> (window scan +
+<code>defaultdict</code> group-by): self-healing (the stream is the truth; every render recomputes), no
+write-time invariants. ~45k entries (100 sessions/day × 5 turns × 90d) → single-digit ms at
+dashboard QPS; a secondary index is YAGNI. Optional 30s in-process TTL cache if latency ever bites
+(one dict, no new invariant). Implements the <strong>tolerant reader</strong> (§4.2: missing→default,
+unknown→ignore, dispatch on <code>v</code>), the per-panel <code>partial</code> booleans, and the <code>ACH_STATS_TZ</code>
+calendar-boundary math.</p>
+<h3 id="63-auth-boundary">6.3 Auth / boundary</h3>
+<p><code>/api/sessions</code> serves redacted <code>task</code> text on a <strong>new</strong> surface.
+- <strong>v0:</strong> the stats service is network-policied to the internal plane, <strong>never</strong> publicly exposed;
+  the recent/<code>task</code> panel is gated behind that boundary.
+- <strong>Target:</strong> lift alitellm-auth's OIDC/Dex auth (it's the UI donor anyway). Tracked as follow-up.</p>
+<h3 id="64-ui-v0-cut">6.4 UI (v0 cut)</h3>
+<p>Lift the <code>alitellm-auth/src/ui</code> design system: shadcn <code>components/ui/*</code>, <code>AppShell</code>, <code>ThemeToggle</code>.
+<strong>v0 leaves:</strong> new <code>Leaderboard.tsx</code> (rank·model·provider·score·speed·$/Mtok·tag), <code>KpiRow</code> (incl.
+<code>aborted</code>), recent-sessions table (badges <code>status</code>/<code>retry</code>), one <code>SpendChart</code>. <strong>Deferred:</strong>
+<code>BudgetPanel</code>, <code>ExportCsvButton</code>, <code>UsageDonut</code>, <code>RequestsChart</code>. TanStack Query hooks → our <code>/api</code>.</p>
+<h2 id="7-deploy">7. Deploy</h2>
+<ul>
+<li>Multi-stage <code>docker/stats.Dockerfile</code> (node build UI → python runtime serving static + api),
+  explicit <code>COPY</code> paths, <code>.dockerignore</code> (no <code>COPY . .</code>).</li>
+<li><code>docker-compose.dev.yml</code>: add <code>redis</code> + <code>ach-stats</code>; harness gets
+  <code>ACH_STATS_REDIS_URL=redis://redis:6379</code>, <code>ACH_STATS_TZ=Europe/Madrid</code>.</li>
+<li>Prod: harness emits the new counters at <code>/metrics</code>. No Grafana / scrape config / dashboards.</li>
+</ul>
+<h2 id="8-error-handling-the-intended-divergence">8. Error handling &amp; the intended divergence</h2>
+<table>
+<thead>
+<tr>
+<th>Failure</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Redis <strong>down or slow</strong> at the sink</td>
+<td>writer absorbs (socket timeouts + backoff); queue fills → <code>record()</code> drops + <code>stats_degraded_total</code>++. Turn never blocks.</td>
+</tr>
+<tr>
+<td>Writer crashes</td>
+<td>capped-backoff restart + rate-limited log + counter. No busy-loop.</td>
+</tr>
+<tr>
+<td>Harness shutdown with queued entries</td>
+<td>best-effort ~2s drain, then drop + count.</td>
+</tr>
+<tr>
+<td>No <code>ACH_STATS_REDIS_URL</code></td>
+<td>Prometheus-only; no queue/writer.</td>
+</tr>
+<tr>
+<td>Redis unreachable at stats API</td>
+<td><code>503</code> → UI error card (exists in lifted design).</td>
+</tr>
+<tr>
+<td>Prometheus</td>
+<td>best-effort; counters always safe to increment.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Intended divergence (documented, not a bug):</strong> Prometheus counters are durable; the redis stream
+is TTL'd (35d) and is the UI's only source. On a dropped <code>XADD</code> the Prometheus counter still
+increments while redis misses that entry — the two <strong>will</strong> diverge. Acceptable because they never
+share a screen; <code>coverage_start</code>/per-panel <code>partial</code> tell the UI when its own window is incomplete.
+No Prometheus→redis backfill.</p>
+<h2 id="9-testing-tdd">9. Testing (TDD)</h2>
+<ul>
+<li><strong>R1 probe (manual gating spike, before the sink):</strong> §4.1 — assert on <code>output_tokens</code>/<code>cost</code>, not
+  <code>input_tokens</code>. Outcome decides whether baseline-delta logic is needed.</li>
+<li><strong>Harness sink:</strong></li>
+<li><strong>R1 regression</strong> — two sequential invocations on one reused (<code>session:auto</code>) session; assert
+    each entry's <code>output_tokens</code>/<code>cost</code> are independent (non-growing). If baseline-delta is added,
+    assert <code>recorded == final − baseline</code>.</li>
+<li><strong>Stale-carryover guard</strong> — invocation 2 forced to fail pre-LLM → entry 2 has zero usage, not
+    entry 1's (already holds via fresh-per-invocation <code>acc</code>; guards future refactors).</li>
+<li><strong>Retry</strong> — a terminal-retry invocation emits exactly one record; <code>sessions=invocations</code>;
+    document the undercount bound.</li>
+<li><strong>Aborted</strong> — recorded with <code>status</code>; included in <code>totals.sessions</code>/<code>spend</code>; <code>totals.aborted</code>++.</li>
+<li><strong>Slow-socket</strong> (not just refused) → <code>record()</code> returns immediately, stat dropped,
+    <code>stats_degraded_total</code>++ (fakeredis + stalled socket).</li>
+<li><strong>Persistent-failure backoff</strong> — writer against an always-failing redis restarts with capped
+    backoff, does <strong>not</strong> busy-loop; logs rate-limited.</li>
+<li><strong>Shutdown drain</strong> — queued entries flushed within the timeout, remainder counted.</li>
+<li><strong>MINID trim</strong> — entries older than retention are trimmed on write.</li>
+<li><strong>No-redis</strong> → Prometheus-only path.</li>
+<li><strong>Stats API / aggregate.py:</strong> pure units (mirror alitellm-auth <code>test_stats.py</code>); <strong>tolerant
+  reader</strong> (missing→default, unknown→ignore, <code>v</code> dispatch); <code>sorted_by=spend</code> then partial-score
+  ordering when scores present; per-panel <code>partial</code> when the window predates <code>coverage_start</code>;
+  <code>ACH_STATS_TZ</code> calendar-month boundary (e.g. late-31st Madrid session lands in-month);
+  <code>XRANGE</code> date filter.</li>
+<li><strong>UI:</strong> vitest + <code>Leaderboard.tsx</code> ("unrated" rows, header driven by <code>sorted_by</code>), KPI <code>aborted</code>,
+  recent-table <code>status</code>/<code>retry</code> badges, "showing data since X" banner on partial.</li>
+</ul>
+<h2 id="10-open-follow-ups-out-of-scope-for-a">10. Open follow-ups (out of scope for A)</h2>
+<ul>
+<li>Sub-project <strong>B</strong>: eval/benchmark harness that fills <code>score</code>.</li>
+<li>Stats-API OIDC auth (v0 ships behind a network boundary).</li>
+<li>BudgetPanel + real budget source; CSV export; UsageDonut; RequestsChart.</li>
+<li>If R2 is real: sum-per-message usage in the accumulator (turn-summary fix).</li>
+<li>"Last month" panel → needs ≤62d retention (35d silently breaks it; comment left at the trim site).</li>
+<li>Opportunistic writer pipelining for backlog recovery; drop-head queue policy.</li>
+<li>Grafana dashboards / prod Prometheus scrape config.</li>
+</ul>
+<h2 id="11-external-review-disposition-gist-40db75ed-2-rounds">11. External review disposition (gist <code>40db75ed</code>, 2 rounds)</h2>
+<table>
+<thead>
+<tr>
+<th>Point</th>
+<th>Verdict</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>R1: entry semantics / accumulation scope</td>
+<td><strong>Accepted, corrected across both rounds</strong> — keep-latest per invocation (not sum); risk is R1 (session-cumulative, catastrophic) / R2 (undercount). Probe gates impl; baseline-delta fix if confirmed.</td>
+<td>§4.1, §9</td>
+</tr>
+<tr>
+<td>R1 test asserted on totals</td>
+<td><strong>Fixed</strong> — assert on <code>output_tokens</code>/<code>cost</code>; input grows with history.</td>
+<td>§4.1, §9</td>
+</tr>
+<tr>
+<td>Stale carryover on zero-usage invocation</td>
+<td><strong>Accepted (already holds)</strong> — fresh-per-invocation <code>acc</code>; guard test kept.</td>
+<td>§4.1, §9</td>
+</tr>
+<tr>
+<td>Retry "emits a second record"</td>
+<td><strong>Corrected</strong> — retry is internal to <code>run_invocation</code> → one record; effect is undercount, not duplication.</td>
+<td>§4.1</td>
+</tr>
+<tr>
+<td><code>event</code> discriminator</td>
+<td><strong>Dropped</strong> (conceded) — one record/site + <code>status</code>.</td>
+<td>§4.1</td>
+</tr>
+<tr>
+<td>Aborted runs in totals</td>
+<td><strong>Accepted</strong> — included in spend+sessions; <code>totals.aborted</code> surfaced.</td>
+<td>§4.1, §4.4</td>
+</tr>
+<tr>
+<td>Writer: backoff / client-ownership / shutdown-drain / MINID-trim</td>
+<td><strong>Accepted (4 specifics)</strong></td>
+<td>§5, §8</td>
+</tr>
+<tr>
+<td><code>maxsize=256</code> rationale</td>
+<td><strong>Accepted</strong> — coverage bound documented; drop-on-full; drop-head noted-not-built.</td>
+<td>§5</td>
+</tr>
+<tr>
+<td>Pipelining</td>
+<td><strong>Deferred</strong> — opportunistic backlog batch as future option.</td>
+<td>§5, §10</td>
+</tr>
+<tr>
+<td>Per-panel partiality</td>
+<td><strong>Accepted</strong> — server-side booleans from one <code>coverage_start</code>.</td>
+<td>§4.4, §6.2</td>
+</tr>
+<tr>
+<td>Timezone calendar boundary</td>
+<td><strong>Accepted</strong> — <code>ACH_STATS_TZ</code> (Europe/Madrid).</td>
+<td>§4.4, §6</td>
+</tr>
+<tr>
+<td>Redis entry = unversioned contract (strongest finding)</td>
+<td><strong>Accepted</strong> — <code>v:1</code> + tolerant reader.</td>
+<td>§4.2, §6.2</td>
+</tr>
+<tr>
+<td>Retention 35d, TZ, "last month" 62d trap</td>
+<td><strong>Accepted</strong> — 35d default + comment at trim site.</td>
+<td>§4.2, §10</td>
+</tr>
+<tr>
+<td>Nullable-score ranking</td>
+<td><strong>Accepted</strong> — explicit <code>sorted_by</code>, "unrated".</td>
+<td>§4.4</td>
+</tr>
+<tr>
+<td>Env vs CONTRACT_v3</td>
+<td><strong>Accepted</strong> — non-normative carve-out note.</td>
+<td>§5</td>
+</tr>
+<tr>
+<td>Cheaper cut</td>
+<td><strong>Accepted</strong> — v0 leaves cut; keep service.</td>
+<td>§6.4</td>
+</tr>
+<tr>
+<td>Stream vs sorted-set / on-read agg / page-contract versioning</td>
+<td><strong>No change</strong> — confirmed correct / YAGNI.</td>
+<td>§4.2, §4.4, §6.2</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../../..", "features": [], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

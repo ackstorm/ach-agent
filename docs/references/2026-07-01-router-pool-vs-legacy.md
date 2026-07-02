@@ -257,3 +257,36 @@ stays a Plan 3 follow-up). Behavior now:
 
 Not in this plan (→ Plan 4, runaway control): `POST /session/{id}/abort` on give-up and
 step-budget abort.
+
+---
+
+## 11. Update (2026-07-02): Plan 3 shipped (B6-adjacent gitlab dedup)
+
+`docs/superpowers/plans/2026-07-02-gitlab-dual-key-dedup.md` is implemented. Ported the
+valuable half of legacy `ackbot-process/src/handlers/gitlab/handler.py:55-89` — the **logical
+content composite** — as an **additive SECONDARY dedup key** beside the unchanged primary UUID
+key. The router structure (`dedup → backpressure → lane`, the three bounds, lanes, eviction) is
+untouched; only the dedup STEP gained the secondary check (inside step 1, before backpressure —
+RTR-01 preserved) and mark (step 3).
+
+- **What ported.** `derive_gitlab_composite_key(body)` (`router/dedup.py`) →
+  `gl:{kind}:{project}:{target}:{user}:{content_hash}`. ACTION is deliberately EXCLUDED so
+  GitLab's `open`+`update` MR-creation double-fire (two distinct `X-Gitlab-Event-UUID`s) collapses
+  to one agent run; a content discriminator (note/description/title → updated_at/status fallback)
+  is INCLUDED so a genuinely edited change or a distinct pipeline state does NOT collapse. Wired
+  only for `source == "gitlab"` in `webhook.py`; `MessageEvent.secondary_idempotency_key` is
+  `None` for every other channel (byte-for-byte unchanged behaviour).
+- **Two windows, on purpose.** Primary UUID key keeps the full `idempotency_window_seconds`
+  (already STRONGER than legacy's 2 s for exact-delivery retries). The secondary composite uses
+  a SHORT `_SECONDARY_DEDUP_WINDOW_S = 2` (matching legacy): a content-based key on the long
+  window would wrongly dedup two INTENTIONAL identical comments minutes apart.
+- **Post-trigger ordering did NOT port — no precondition here.** Legacy ran dedup *after*
+  `_determine_trigger` so an ignored `open` couldn't shadow a later `update`. ach-agent has **no
+  harness-side trigger step**: the webhook channel forwards *every* event to the agent, which
+  decides via prompt/MCP. There is no pre-dedup "ignore" that could shadow a later event, so the
+  ordering fix has no precondition — documented, not implemented.
+- **Follow-up (separate gap): note-hook 422.** `_parse_gitlab` (`webhook.py`) reads
+  `body["object_attributes"]["iid"]`, present on **Merge Request Hooks** but NOT on **Note Hooks**
+  (comments — `iid` lives under `body["merge_request"]["iid"]`), so note hooks currently 422.
+  `derive_gitlab_composite_key` already handles note shapes (future-proof), so closing that gap
+  needs only the parser, not the dedup. Not fixed here.

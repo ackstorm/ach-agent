@@ -4,26 +4,26 @@ from ach_agent.engine.events import OpenCodeToolUpdate, ToolStateCompleted, Tool
 from ach_agent.main import _log_engine_tool
 
 
-def test_log_engine_tool_emits_tool_name_and_status(capfd):
-    """The default on_tool sink writes one structlog line naming the tool + its state."""
-    update = OpenCodeToolUpdate(
-        session_id="s1",
-        part_id="p1",
-        message_id="m1",
-        tool_name="mcp-gitlab-ro.gitlab_get_merge_request",
-        call_id="c1",
-        state=ToolStateRunning(),
+def test_log_engine_tool_skips_running_logs_once_on_completed(capfd):
+    """The sink logs ONCE per tool: the running transition is suppressed, completed is logged."""
+    base = dict(session_id="s1", part_id="p1", message_id="m1", call_id="c1")
+
+    _log_engine_tool(
+        OpenCodeToolUpdate(tool_name="mcp-gitlab-ro.gitlab_get_merge_request",
+                           state=ToolStateRunning(), **base)
     )
+    out, err = capfd.readouterr()
+    assert (out + err).strip() == "", "running transition must not log"
 
-    _log_engine_tool(update)
-
-    # Logs go to STDERR (STDOUT carries only the agent reply); check both so the test
-    # asserts intent regardless of stream (same pattern as test_cron.py).
+    _log_engine_tool(
+        OpenCodeToolUpdate(tool_name="mcp-gitlab-ro.gitlab_get_merge_request",
+                           state=ToolStateCompleted(output="done"), **base)
+    )
     out, err = capfd.readouterr()
     combined = out + err
     assert "engine: tool" in combined
     assert "mcp-gitlab-ro.gitlab_get_merge_request" in combined
-    assert "running" in combined
+    assert "completed" in combined
 
 
 def test_log_engine_tool_includes_title_and_truncated_output(capfd):
@@ -53,14 +53,14 @@ def test_log_engine_tool_includes_title_and_truncated_output(capfd):
 
 
 def test_log_engine_tool_cleans_doubled_mcp_prefix_and_omits_empty_fields(capfd):
-    """Doubled MCP prefix → server/tool, and empty action/detail are dropped on running."""
+    """Doubled MCP prefix → server/tool, and empty action/detail keys are dropped."""
     update = OpenCodeToolUpdate(
         session_id="s1",
         part_id="p1",
         message_id="m1",
         tool_name="mcp-gitlab-ro_mcp-gitlab-ro_gitlab_get_merge_request",
         call_id="c1",
-        state=ToolStateRunning(),
+        state=ToolStateCompleted(),  # completed with empty title+output
     )
 
     _log_engine_tool(update)
@@ -69,7 +69,7 @@ def test_log_engine_tool_cleans_doubled_mcp_prefix_and_omits_empty_fields(capfd)
     combined = out + err
     assert "mcp-gitlab-ro/gitlab_get_merge_request" in combined
     assert "mcp-gitlab-ro_mcp-gitlab-ro_" not in combined
-    # a running tool has no title/output → those keys must not appear at all
+    # empty title/output → those keys must not appear at all
     assert "action=" not in combined
     assert "detail=" not in combined
 

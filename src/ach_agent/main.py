@@ -174,9 +174,12 @@ def _log_engine_tool(update: OpenCodeToolUpdate) -> None:
     run_invocation calls this as each tool moves running→completed/error. Wired only when
     the channel provides no on_tool of its own (--debug/console keep their own streaming
     sinks), so a channel turn shows the tools it ran — the action and its result — instead
-    of dead air. Empty ``action``/``detail`` are omitted so ``running`` lines stay terse.
+    of dead air. The ``running`` transition is skipped so each tool logs ONCE (on
+    completed/error), carrying its result; empty ``action``/``detail`` are omitted.
     """
     state = update.state
+    if state.status == "running":
+        return  # one line per tool — the completed/error transition carries the result
     fields: dict[str, Any] = {
         "tool": _clean_tool_name(update.tool_name),
         "status": state.status,

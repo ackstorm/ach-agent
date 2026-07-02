@@ -152,6 +152,12 @@ class ManagedServer:
             except Exception:  # noqa: BLE001
                 pass
 
+        # B7: free the reserved port so a later server can reuse it. release_port
+        # uses set.discard, so a double-stop (port already released) is a safe no-op.
+        from ach_agent.engine.client import release_port
+
+        release_port(self.port)
+
     @property
     def client(self) -> object:
         """Return the OpenCodeClient; raises if not yet launched."""

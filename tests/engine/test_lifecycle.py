@@ -505,6 +505,32 @@ async def test_run_invocation_reuse_true_reuses_session() -> None:
     assert server._sessions.get("key-b") == "ses-reused"
 
 
+async def test_stop_releases_reserved_port() -> None:
+    """B7: ManagedServer.stop() frees the reserved port so it can be reused."""
+    from ach_agent.engine import client as client_mod
+    from ach_agent.engine.client import find_free_port, release_port
+    from ach_agent.engine.lifecycle import ManagedServer
+
+    port = find_free_port()
+    assert port in client_mod._reserved_ports
+
+    exited_proc = MagicMock()
+    exited_proc.returncode = 0  # already exited — _process_group_kill is a no-op
+
+    server = ManagedServer(port=port)
+    server._process = exited_proc
+
+    try:
+        await server.stop()
+        assert port not in client_mod._reserved_ports, "stop() must release the reserved port"
+
+        # Double-stop is safe (release_port is a no-op on an absent port).
+        await server.stop()
+        assert port not in client_mod._reserved_ports
+    finally:
+        release_port(port)
+
+
 # ---------------------------------------------------------------------------
 # Shared-home parity: launch() populates ManagedServer.config_path
 # ---------------------------------------------------------------------------

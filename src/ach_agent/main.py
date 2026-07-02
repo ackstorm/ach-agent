@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import signal
 import sys
@@ -168,6 +169,27 @@ def _clean_tool_name(name: str) -> str:
     return name
 
 
+def _tool_detail(raw: str) -> str:
+    """Best-effort decode of a tool result for readable logging.
+
+    gitlab-mcp (and friends) return ``{"result": "<json-string>"}`` — doubly JSON-encoded,
+    which structlog then repr-escapes into an unreadable ``{\\n \\"...`` blob. Parse it, unwrap
+    a lone ``result`` string, and re-dump compact single-line JSON. Non-JSON output (file
+    reads, truncation notices) falls through to the raw text. Always truncated to 300 chars.
+    """
+    text = raw.strip()
+    try:
+        obj = json.loads(text)
+    except (ValueError, TypeError):
+        return text[:300]
+    if isinstance(obj, dict) and list(obj) == ["result"] and isinstance(obj["result"], str):
+        try:
+            obj = json.loads(obj["result"])
+        except (ValueError, TypeError):
+            obj = obj["result"]
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))[:300]
+
+
 def _log_engine_tool(update: OpenCodeToolUpdate) -> None:
     """Default on_tool sink for channel invocations.
 
@@ -175,7 +197,7 @@ def _log_engine_tool(update: OpenCodeToolUpdate) -> None:
     the channel provides no on_tool of its own (--debug/console keep their own streaming
     sinks), so a channel turn shows the tools it ran — the action and its result — instead
     of dead air. The ``running`` transition is skipped so each tool logs ONCE (on
-    completed/error), carrying its result; empty ``action``/``detail`` are omitted.
+    completed/error); the result is JSON-decoded for readability and both fields are bounded.
     """
     state = update.state
     if state.status == "running":
@@ -186,10 +208,10 @@ def _log_engine_tool(update: OpenCodeToolUpdate) -> None:
     }
     action = getattr(state, "title", "")
     if action:
-        fields["action"] = action
+        fields["action"] = action[:200]
     detail = getattr(state, "output", "") or getattr(state, "error", "")
     if detail:
-        fields["detail"] = detail[:300]
+        fields["detail"] = _tool_detail(detail)
     log.info("engine: tool", **fields)
 
 
@@ -535,7 +557,7 @@ def _make_engine_runner(
                 on_tool = _log_engine_tool
             reuse = getattr(ch_cfg, "session", "auto") != "none"
             log.info(
-                "engine: prompt dispatched",
+                "engine: prompt",
                 channel=event.channel_name,
                 session_key=event.session_key,
                 prompt=full_prompt,
@@ -556,7 +578,7 @@ def _make_engine_runner(
 
             text = str(obj.get("text", ""))
             log.info(
-                "engine: agent response",
+                "engine: response",
                 channel=event.channel_name,
                 session_key=event.session_key,
                 action=obj.get("action"),
@@ -564,7 +586,7 @@ def _make_engine_runner(
             )
             _usage = turn_stats.get("usage")
             log.info(
-                "engine: turn summary",
+                "engine: summary",
                 channel=event.channel_name,
                 session_key=event.session_key,
                 tools=turn_stats.get("tool_count", 0),

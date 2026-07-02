@@ -1,7 +1,22 @@
 from __future__ import annotations
 
 from ach_agent.engine.events import OpenCodeToolUpdate, ToolStateCompleted, ToolStateRunning
-from ach_agent.main import _log_engine_tool
+from ach_agent.main import _log_engine_tool, _tool_detail
+
+
+def test_tool_detail_unwraps_double_encoded_gitlab_result():
+    """gitlab-mcp {"result": "<json>"} → compact single-line JSON, no \\n / no double-escape."""
+    raw = '{"result": "{\\n  \\"merge_requests\\": [{\\"iid\\": 1}]\\n}"}'
+    out = _tool_detail(raw)
+    assert out == '{"merge_requests":[{"iid":1}]}'
+    assert "\\n" not in out and "\n" not in out
+
+
+def test_tool_detail_passes_through_non_json():
+    """A non-JSON tool result (file read / truncation notice) is returned raw, truncated."""
+    raw = "...75043 bytes truncated... saved to /tmp/x"
+    assert _tool_detail(raw) == raw
+    assert _tool_detail("y" * 500) == "y" * 300
 
 
 def test_log_engine_tool_skips_running_logs_once_on_completed(capfd):

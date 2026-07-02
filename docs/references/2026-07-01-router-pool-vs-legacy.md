@@ -343,3 +343,65 @@ RTR-01 preserved) and mark (step 3).
   events go to the agent; mention/trigger policy is a prompt concern, consistent with the
   post-trigger-N/A dedup decision (§ above). Reuses the note-aware `derive_gitlab_composite_key` for
   the secondary dedup key — no second dedup mechanism added.
+
+---
+
+## 13. B8 — acceptance coupled to engine readiness (design bug, not in legacy)
+
+**The bug / repro.** Clean boot with a real `ek`: `readyz` returns 200 within ~5s (adapters
+listening), but `webhook#1`/`webhook#2` immediately after both 503 with
+`reason=engine_not_ready`. A webhook-only GitLab MR reviewer processes **zero** webhooks out of
+the box. This is a deadlock, not a slow-start hiccup: the engine only starts on the first
+accepted invocation (`pool.acquire` inside the lane), but acceptance was gated on the engine
+already being ready — nothing ever breaks the cycle. Gate site (pre-fix): `http/app.py:105`,
+`if state["draining"] or (pool is not None and not pool.engine_has_been_ready_once): ... return
+JSONResponse({"detail": reason}, status_code=503)`. Twin gates existed in `channels/a2a.py`
+(`if self._pool is not None and not self._pool.engine_has_been_ready_once:` → failed
+`TaskStatusUpdateEvent("Service warming up")`) and `channels/cron.py` (same latch check → silent
+tick drop + `COLD_START_DROPS.inc()`).
+
+**Why this is a category error in a keyed pool.** There is no single global engine to be
+"ready." The pool is **keyed by `session_key`** (one agente ⇄ one key, `docs/references/2026-07-01-keyed-engine-pool.md`),
+and `session_key` isn't known until the inbound message is parsed (GitLab project+MR/issue,
+cron channel name, a2a context id, …). A global `engine_has_been_ready_once` latch answers a
+question that doesn't apply per-request: it can never correctly gate acceptance of a message
+whose key — and therefore whose engine instance — hasn't been created yet. The gate wasn't a
+race that needed tightening; it was checking the wrong thing.
+
+**Confirmed against legacy.** `ackbot-process/src/handlers/gitlab/handler.py:359-360`:
+```python
+asyncio.create_task(self._processor.process_message(msg))
+return JSONResponse({"status": "accepted"}, status_code=202)
+```
+No engine-readiness gate anywhere in that handler or in `bus/processor.py`. The only 503 in
+legacy is backpressure (`MessageProcessor` docstring: "Requests that wait longer than expire
+seconds are dropped with a 503") — a queue/concurrency bound, not a boot-state check. The A′
+cold-start gate was an `ach-agent` invention with no legacy precedent.
+
+**Resolution (shipped, `1c362bd`).** Decouple = restore legacy's 202-accept + lazy per-key
+engine start. Acceptance now depends **only** on harness readiness (routes up) and `draining`
+(SIGTERM straggler 503, D-12 — kept, correctly scoped to actual shutdown). All three
+`engine_has_been_ready_once` reads were deleted from the accept path: `http/app.py`
+pre-admission is now `if state["draining"]:` only; `channels/a2a.py` dropped the "Service
+warming up" failed-event branch; `channels/cron.py` dropped the tick-skip. The latch itself is
+still set in `pool.py` but nothing gates on it anymore — dead state, not a live invariant.
+Engine-launch failure is no longer silently absorbed: `engine_runner` now increments a new
+`ENGINE_LAUNCH_FAILURES` metric (`engine/metrics.py`) + WARN log, fired specifically when
+`pool.acquire` raises (not on downstream `run_invocation` failures) — an explicit signal,
+strictly better than the old blanket 503 that rejected traffic even when the eventual launch
+would have succeeded. `COLD_START_REJECTS`/`COLD_START_DROPS` are now dead metrics (no
+increment site left) — expected, not a regression.
+
+**Retired: the "boot pre-warm" band-aid.** An earlier idea floated a throwaway
+`pool.acquire`/`release` at boot to flip the global latch before serving traffic. That doesn't
+fix a keyed pool — it just warms *one* key (or none, if the key isn't known yet) while leaving
+the same category error in place for every other key. Superseded by the decouple; not built.
+
+**Correlation `task_id` (Task 2, `22da452`/`73a0eb8`).** The webhook 202 now carries a
+correlation handle: header `X-ACH-Task-Id` + body `{"status":"accepted","task_id":"<uuid4hex>"}`.
+It is logged by `engine_runner` for tracing, but is **not persisted and not queryable** —
+`MessageEvent.task_id` defaults to `""` for every non-webhook channel. A **queryable task-status
+API** (`GET /tasks/{task_id}`, a `TaskStore` with submitted→working→completed|failed states +
+TTL) and a **push callback** on completion are **explicitly deferred**, not built here: today's
+contract is fire-and-forget accept (matching legacy) plus a forward-compatible correlation id,
+same as A2A's native task/status path already covers for that channel.

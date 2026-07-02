@@ -152,14 +152,18 @@ def _parse_gitlab(body: dict[str, Any], allowed: set[str]) -> tuple[dict[str, An
 
     if kind == "note" and "note" in allowed:
         noteable = str(body.get("object_attributes", {}).get("noteable_type", "")).lower()
-        project_id = int(body["project"]["id"])
+        # project_id is read INSIDE the routable branches only — a non-routable note
+        # (commit/snippet, or a base kind not allowed) must accept-and-ignore (200), so it
+        # must not raise on a malformed project block before reaching the `return None`.
         if noteable == "mergerequest" and "merge_request" in allowed:
+            project_id = int(body["project"]["id"])
             mr_iid = int(body["merge_request"]["iid"])
             return (
                 {"project_id": project_id, "kind": "note", "target_type": "mr", "mr_iid": mr_iid},
                 f"{project_id}:{mr_iid}",
             )
         if noteable == "issue" and "issue" in allowed:
+            project_id = int(body["project"]["id"])
             issue_iid = int(body["issue"]["iid"])
             return (
                 {

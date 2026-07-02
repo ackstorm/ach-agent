@@ -572,6 +572,22 @@ async def test_note_on_mr_ignored_when_mr_not_allowed(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_commit_note_missing_project_still_ignored_200(tmp_path) -> None:
+    """Non-routable note (commit) must accept-ignore (200) even if project block is absent."""
+    secret_file = tmp_path / "secret"
+    secret_file.write_text("s")
+    cfg = _make_cfg_events(str(secret_file))
+    payload = {
+        "object_kind": "note",
+        "object_attributes": {"noteable_type": "Commit", "note": "nice"},
+        # no "project" block — must NOT 422 (non-routable → 200)
+    }
+    result, handler = await _post(payload, cfg, "s")
+    assert result.status_code == 200
+    assert result.body == {"status": "ignored"}
+
+
+@pytest.mark.asyncio
 async def test_note_on_mr_missing_block_raises_422(tmp_path) -> None:
     secret_file = tmp_path / "secret"
     secret_file.write_text("s")

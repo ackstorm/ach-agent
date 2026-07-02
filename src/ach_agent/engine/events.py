@@ -4,7 +4,7 @@
 Provides:
   - parse_opencode_event: maps raw JSON event dict → typed event or None
   - ReplyAccumulator: shared text/tool reducer (prefix-dedup of cumulative snapshots)
-  - _consume_events_from_response / _iter_sse_events_from_client: shared SSE reader helpers
+  - _consume_events_from_response: shared SSE reader helper
   - EngineError / _SendFailed: terminal-signal exceptions
   The live SSE consumer (subscribe → send-once → consume, with bounded health-gated reconnect
   and mid-invocation liveness) lives in ``lifecycle.consume_sse_after_send`` and reuses these
@@ -351,25 +351,6 @@ class ReplyAccumulator:
 
 
 # ---------------------------------------------------------------------------
-# SSE iteration helper (split from the SSE consumer for testability)
-# ---------------------------------------------------------------------------
-
-
-def _iter_sse_events_from_client(
-    client: OpenCodeClient,
-    resp: Any,
-) -> Any:
-    """Thin wrapper around OpenCodeClient.iter_sse_events.
-
-    Returns an async generator that yields OpenCodeEvent objects.
-    Separated so tests can patch this without touching client internals.
-    """
-    from ach_agent.engine.client import OpenCodeClient as _OCC
-
-    return _OCC.iter_sse_events(resp)
-
-
-# ---------------------------------------------------------------------------
 # SSE consumer
 # ---------------------------------------------------------------------------
 
@@ -384,8 +365,10 @@ async def _consume_events_from_response(
     Designed to run as an asyncio.Task so it can be cancelled when a terminal
     event is detected. Cancellation cleanly stops the aiohttp content reader.
     """
+    from ach_agent.engine.client import OpenCodeClient as _OCC
+
     try:
-        async for event in _iter_sse_events_from_client(client, resp):
+        async for event in _OCC.iter_sse_events(resp):
             await result_queue.put(event)
     except asyncio.CancelledError:
         pass  # normal exit when cancelled by the live consumer (consume_sse_after_send)

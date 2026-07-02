@@ -21,6 +21,7 @@ D-08: deliver.type: reply → event.reply_future resolved by engine_runner on th
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import os
 import signal
@@ -28,11 +29,14 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import structlog
 import uvicorn
+
+if TYPE_CHECKING:
+    from ach_agent.engine.events import OpenCodeToolUpdate
 
 from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a2a_agent_card
 from ach_agent.channels.cron import CronScheduler
@@ -1237,17 +1241,12 @@ def _parse_cli(argv: list[str]) -> tuple[bool, str | None, bool]:
     pipe-friendly). `--prompt TEXT` (or `--prompt=TEXT`) → single non-interactive prompt
     then exit. All ignore the configured channels; precedence is `--prompt` > `--debug` > `--tui`.
     """
-    tui = "--tui" in argv
-    debug = "--debug" in argv
-    prompt: str | None = None
-    for i, arg in enumerate(argv):
-        if arg == "--prompt" and i + 1 < len(argv):
-            prompt = argv[i + 1]
-            break
-        if arg.startswith("--prompt="):
-            prompt = arg[len("--prompt=") :]
-            break
-    return tui, prompt, debug
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--tui", action="store_true")
+    parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--prompt")
+    args, _unknown = parser.parse_known_args(argv)
+    return args.tui, args.prompt, args.debug
 
 
 if __name__ == "__main__":

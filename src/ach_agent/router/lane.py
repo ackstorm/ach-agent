@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from ach_agent.channels.message_event import MessageEvent
+from ach_agent.engine.metrics import ENGINE_WATCHDOG_KILLS
 from ach_agent.router.slots import make_on_kill
 
 if TYPE_CHECKING:
@@ -103,6 +104,12 @@ class Lane:
                             async with asyncio.timeout(self._max_invocation_seconds):
                                 await self._engine_runner(event, on_kill)
                         except TimeoutError:
+                            # RTR-04: the lane is the single maxInvocationSeconds owner, so
+                            # the watchdog-kill metric is incremented HERE (not in
+                            # run_invocation). This fires ONLY on a real deadline; a
+                            # shutdown-cancel hits `except CancelledError` below, not this
+                            # branch, so it is never over-counted.
+                            ENGINE_WATCHDOG_KILLS.inc()
                             log.warning(
                                 "lane: invocation exceeded maxInvocationSeconds",
                                 session_key=self._session_key,

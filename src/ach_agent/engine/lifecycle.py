@@ -492,8 +492,6 @@ async def run_invocation(
     session_id: str,
     prompt: str,
     terminal_retries: int,
-    max_invocation_seconds: int,
-    on_kill: Callable[[], None],
     free_form: bool = False,
     on_text: Callable[[str], None] | None = None,
     on_tool: Callable[[OpenCodeToolUpdate], None] | None = None,
@@ -501,22 +499,17 @@ async def run_invocation(
 ) -> dict[str, Any]:
     """Orchestrate: subscribe SSE → send prompt → consume → return the terminal object.
 
-    ENG-07 / D-02 / D-03: Wrapped in asyncio.timeout(max_invocation_seconds).
-    On TimeoutError:
-      1. _process_group_kill(server.process) — genuine kill (D-03)
-      2. ENGINE_WATCHDOG_KILLS.inc() — watchdog-kill metric
-      3. on_kill() — injected seam: Phase 0 = FakeSlotManager; Phase 1 = real router
-      4. raise InvocationTimeout(max_invocation_seconds)
-
-    Engine NEVER imports the router — on_kill stays a plain Callable[[], None] (D-02).
+    No self-timeout: the lane owns the single authoritative maxInvocationSeconds bound
+    (RTR-04). When the lane's deadline fires it cancels this coroutine; the caller
+    (engine_runner) resolves the reply_future with InvocationTimeout and force-releases the
+    pooled server (ttl=0), which stops the runaway process. This function therefore neither
+    times out nor kills — it just runs the turn.
 
     IMPORTANT: SSE subscription MUST happen before send_message because opencode
     emits session.idle on the SSE stream in real-time. If send_message completes
     before subscribe_events(), the session.idle event is missed and the consumer hangs.
     """
     from ach_agent.engine.client import OpenCodeClient
-    from ach_agent.engine.events import InvocationTimeout
-    from ach_agent.engine.metrics import ENGINE_WATCHDOG_KILLS
 
     client = server._client
     if not isinstance(client, OpenCodeClient):
@@ -541,28 +534,12 @@ async def run_invocation(
         if not oc_session_id:
             raise RuntimeError(f"opencode create_session returned no id: {created!r}")
 
-    try:
-        async with asyncio.timeout(max_invocation_seconds):
-            # Subscribe to SSE FIRST, then send the message.
-            # This ensures we don't miss the session.idle event.
-            accumulated_text = await consume_sse_after_send(
-                client, oc_session_id, prompt, on_text=on_text, on_tool=on_tool
-            )
-    except TimeoutError:
-        # D-03: must genuinely kill the subprocess
-        log.warning(
-            "invocation exceeded maxInvocationSeconds — killing",
-            max_invocation_seconds=max_invocation_seconds,
-            session_id=session_id,
-        )
-        proc = server._process
-        if proc is not None:
-            await _process_group_kill(proc)  # type: ignore[arg-type]
-        # Emit watchdog-kill metric (D-03)
-        ENGINE_WATCHDOG_KILLS.inc()
-        # Call the injected release seam (D-02)
-        on_kill()
-        raise InvocationTimeout(max_invocation_seconds)
+    # Subscribe to SSE FIRST, then send the message.
+    # This ensures we don't miss the session.idle event. The lane bounds this await via
+    # maxInvocationSeconds; a deadline cancels it (no inner timeout here).
+    accumulated_text = await consume_sse_after_send(
+        client, oc_session_id, prompt, on_text=on_text, on_tool=on_tool
+    )
 
     # debug (not info): at INFO this line lands on stderr right as the streamed reply
     # finishes on stdout, gluing onto the last reply char on a shared TTY.

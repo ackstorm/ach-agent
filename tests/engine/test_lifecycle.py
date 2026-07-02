@@ -19,8 +19,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tests.engine.conftest import FakeSlotManager
-
 
 # ---------------------------------------------------------------------------
 # ENG-01: opencode serve launches on allocated port; subprocess alive
@@ -166,115 +164,6 @@ async def test_drain_tasks_started(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# ENG-07: Watchdog kills subprocess and calls on_kill callback
-# ---------------------------------------------------------------------------
-
-
-async def test_watchdog_kills_and_releases(
-    fake_slot_manager: FakeSlotManager,
-    tmp_path: Path,
-) -> None:
-    """ENG-07: watchdog kills the overrunning subprocess and calls on_kill.
-
-    Uses a mock server with a fake SSE consume that sleeps past max_invocation_seconds.
-    """
-    from ach_agent.engine.lifecycle import ManagedServer, run_invocation
-    from ach_agent.engine.client import OpenCodeClient
-    from ach_agent.engine.events import InvocationTimeout
-
-    # Create a fake process that is "alive"
-    mock_proc = MagicMock()
-    mock_proc.pid = 99999
-    mock_proc.returncode = None
-
-    mock_client = AsyncMock(spec=OpenCodeClient)
-    # create_session returns a session dict
-    mock_client.create_session = AsyncMock(return_value={"id": "ses_test"})
-    # send_message succeeds
-    mock_client.send_message = AsyncMock(return_value=None)
-    # subscribe_events returns something that causes a long SSE consume
-    mock_client.subscribe_events = AsyncMock(return_value=AsyncMock())
-
-    server = ManagedServer(port=19880)
-    server._process = mock_proc
-    server._client = mock_client
-
-    # Patch consume_sse_after_send to sleep longer than the watchdog
-    async def slow_consume(*args: Any, **kwargs: Any) -> str:
-        await asyncio.sleep(10)  # much longer than max_invocation_seconds=1
-        return "should not get here"
-
-    with (
-        patch("ach_agent.engine.lifecycle.consume_sse_after_send", side_effect=slow_consume),
-        patch("ach_agent.engine.lifecycle._process_group_kill", new_callable=AsyncMock),
-    ):
-        with pytest.raises(InvocationTimeout):
-            await run_invocation(
-                server=server,
-                session_id="ses_test",
-                prompt="test prompt",
-                terminal_retries=1,
-                max_invocation_seconds=1,
-                on_kill=fake_slot_manager.on_kill,
-            )
-
-    assert fake_slot_manager.released is True, "on_kill must be called after watchdog fires"
-
-
-# ---------------------------------------------------------------------------
-# ENG-07: Watchdog emits prometheus counter increment
-# ---------------------------------------------------------------------------
-
-
-async def test_watchdog_metric(
-    fake_slot_manager: FakeSlotManager,
-    tmp_path: Path,
-) -> None:
-    """ENG-07: watchdog increments engine_watchdog_kills_total prometheus counter."""
-    from ach_agent.engine.lifecycle import ManagedServer, run_invocation
-    from ach_agent.engine.client import OpenCodeClient
-    from ach_agent.engine.events import InvocationTimeout
-    from ach_agent.engine.metrics import ENGINE_WATCHDOG_KILLS
-
-    mock_proc = MagicMock()
-    mock_proc.pid = 99998
-    mock_proc.returncode = None
-
-    mock_client = AsyncMock(spec=OpenCodeClient)
-    mock_client.create_session = AsyncMock(return_value={"id": "ses_test_metric"})
-    mock_client.send_message = AsyncMock(return_value=None)
-    mock_client.subscribe_events = AsyncMock(return_value=AsyncMock())
-
-    server = ManagedServer(port=19881)
-    server._process = mock_proc
-    server._client = mock_client
-
-    # Get counter value before
-    before = ENGINE_WATCHDOG_KILLS._value.get()
-
-    async def slow_consume(*args: Any, **kwargs: Any) -> str:
-        await asyncio.sleep(10)
-        return "should not get here"
-
-    with (
-        patch("ach_agent.engine.lifecycle.consume_sse_after_send", side_effect=slow_consume),
-        patch("ach_agent.engine.lifecycle._process_group_kill", new_callable=AsyncMock),
-    ):
-        with pytest.raises(InvocationTimeout):
-            await run_invocation(
-                server=server,
-                session_id="ses_test_metric",
-                prompt="metric test",
-                terminal_retries=1,
-                max_invocation_seconds=1,
-                on_kill=fake_slot_manager.on_kill,
-            )
-
-    after = ENGINE_WATCHDOG_KILLS._value.get()
-    assert after - before == 1.0, f"Expected counter increment of 1, got {after - before}"
-
-
-# ---------------------------------------------------------------------------
 # Terminal contract: run_invocation returns the single terminal object
 # ---------------------------------------------------------------------------
 
@@ -307,8 +196,6 @@ async def test_run_invocation_returns_terminal_object() -> None:
             session_id="ses_test",
             prompt="hello",
             terminal_retries=1,
-            max_invocation_seconds=30,
-            on_kill=lambda: None,
         )
 
     assert isinstance(result, dict)
@@ -555,8 +442,6 @@ async def test_run_invocation_reuse_false_always_creates_fresh_session() -> None
             session_id="key-a",
             prompt="first",
             terminal_retries=1,
-            max_invocation_seconds=30,
-            on_kill=lambda: None,
             reuse=False,
         )
         result2 = await run_invocation(
@@ -564,8 +449,6 @@ async def test_run_invocation_reuse_false_always_creates_fresh_session() -> None
             session_id="key-a",
             prompt="second",
             terminal_retries=1,
-            max_invocation_seconds=30,
-            on_kill=lambda: None,
             reuse=False,
         )
 
@@ -607,8 +490,6 @@ async def test_run_invocation_reuse_true_reuses_session() -> None:
             session_id="key-b",
             prompt="first",
             terminal_retries=1,
-            max_invocation_seconds=30,
-            on_kill=lambda: None,
             reuse=True,
         )
         await run_invocation(
@@ -616,8 +497,6 @@ async def test_run_invocation_reuse_true_reuses_session() -> None:
             session_id="key-b",
             prompt="second",
             terminal_retries=1,
-            max_invocation_seconds=30,
-            on_kill=lambda: None,
             reuse=True,
         )
 

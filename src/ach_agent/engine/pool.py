@@ -25,6 +25,7 @@ Constraint: No router or Hermes imports (D-08, RTR-06).
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -35,6 +36,35 @@ if TYPE_CHECKING:
     from ach_agent.engine.lifecycle import EngineConfig, ManagedServer
 
 log = structlog.get_logger(__name__)
+
+
+class _LRUSessionMap(OrderedDict[str, str]):
+    """Bounded LRU of session_key → opencode session id (``ses_…``).
+
+    Owned by EnginePool (process lifetime) so ``channel.session: auto`` keeps
+    conversational continuity across idle-TTL server restarts: opencode persists
+    sessions in SQLite under the shared home, and a fresh ``opencode serve``
+    accepts POSTs to a previously created id (verified on 1.17.13; stale id →
+    404, handled by run_invocation's recreate-and-retry guard).
+    """
+
+    def __init__(self, maxsize: int = 256) -> None:
+        super().__init__()
+        self.maxsize = maxsize
+
+    # Narrower than dict.get's generic-default overloads — this map is strictly
+    # str → str and the LRU refresh must run on .get(), hence the override.
+    def get(self, key: str, default: str | None = None) -> str | None:  # type: ignore[override]
+        if key not in self:
+            return default
+        self.move_to_end(key)
+        return super().__getitem__(key)
+
+    def __setitem__(self, key: str, value: str) -> None:
+        super().__setitem__(key, value)
+        self.move_to_end(key)
+        while len(self) > self.maxsize:
+            self.popitem(last=False)
 
 
 class EnginePool:
@@ -62,6 +92,12 @@ class EnginePool:
         self._ref_counts: dict[str, int] = {}
         self._ttl_tasks: dict[str, asyncio.Task[None]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+
+        # session_key → opencode session id (ses_…). Pool-owned so it outlives
+        # individual ManagedServers: channel.session='auto' reuses the persisted
+        # opencode session across idle-TTL restarts (threaded into run_invocation
+        # by engine_runner as oc_sessions).
+        self.oc_sessions = _LRUSessionMap()
 
         # _start_server is injectable for testing (replaced by tests with a fake).
         # In production it points to the lifecycle launch helper. It receives the

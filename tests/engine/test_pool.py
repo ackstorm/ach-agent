@@ -330,3 +330,48 @@ def test_harness_log_dir_is_volatile_tmp() -> None:
     d = _harness_log_dir()
     assert str(d).startswith("/tmp/")
     assert d.is_dir()
+
+
+# ---------------------------------------------------------------------------
+# _LRUSessionMap + EnginePool.oc_sessions (persistent session_key → ses_ map)
+# ---------------------------------------------------------------------------
+
+
+def test_lru_session_map_evicts_oldest() -> None:
+    from ach_agent.engine.pool import _LRUSessionMap
+
+    m = _LRUSessionMap(maxsize=2)
+    m["a"] = "ses-a"
+    m["b"] = "ses-b"
+    m["c"] = "ses-c"  # exceeds maxsize → evicts "a" (oldest)
+    assert "a" not in m
+    assert m.get("b") == "ses-b"
+    assert m.get("c") == "ses-c"
+
+
+def test_lru_session_map_get_refreshes_recency() -> None:
+    from ach_agent.engine.pool import _LRUSessionMap
+
+    m = _LRUSessionMap(maxsize=2)
+    m["a"] = "ses-a"
+    m["b"] = "ses-b"
+    assert m.get("a") == "ses-a"  # touch "a" → "b" is now oldest
+    m["c"] = "ses-c"
+    assert "a" in m
+    assert "b" not in m
+
+
+def test_lru_session_map_get_missing_returns_default() -> None:
+    from ach_agent.engine.pool import _LRUSessionMap
+
+    m = _LRUSessionMap(maxsize=2)
+    assert m.get("nope") is None
+    assert m.get("nope", "fallback") == "fallback"
+
+
+def test_pool_owns_oc_sessions_map() -> None:
+    from ach_agent.engine.pool import EnginePool, _LRUSessionMap
+
+    pool = EnginePool()
+    assert isinstance(pool.oc_sessions, _LRUSessionMap)
+    assert len(pool.oc_sessions) == 0

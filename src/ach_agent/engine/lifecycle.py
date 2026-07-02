@@ -549,7 +549,7 @@ async def run_invocation(
     # This ensures we don't miss the session.idle event. The lane bounds this await via
     # maxInvocationSeconds; a deadline cancels it (no inner timeout here).
     accumulated_text = await consume_sse_after_send(
-        client, oc_session_id, prompt, on_text=on_text, on_tool=on_tool
+        client, oc_session_id, prompt, on_text=on_text, on_tool=on_tool, is_alive=server.is_alive
     )
 
     # debug (not info): at INFO this line lands on stderr right as the streamed reply
@@ -578,7 +578,9 @@ async def run_invocation(
             "Reply with ONLY a terminal JSON object: "
             '{"action":"none","text":"..."} or {"action":"a2a_reply","text":"..."}.'
         )
-        accumulated_text = await consume_sse_after_send(client, oc_session_id, repair)
+        accumulated_text = await consume_sse_after_send(
+            client, oc_session_id, repair, is_alive=server.is_alive
+        )
         obj = extract_terminal(accumulated_text)
     return obj if obj is not None else {"action": "none", "text": accumulated_text}
 

@@ -445,6 +445,105 @@ async def test_live_reconnect_gated_on_health() -> None:
 
 
 # ---------------------------------------------------------------------------
+# B5: mid-invocation liveness — fail fast when opencode dies during a turn
+# ---------------------------------------------------------------------------
+
+
+async def test_engine_death_mid_invocation_fails_fast() -> None:
+    """A silent stream + dead engine raises engine_died within a poll, not the 300s stall."""
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.events import EngineError, OpenCodeStreamReady
+    from ach_agent.engine.lifecycle import consume_sse_after_send
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        # Gate event only, then silence — no terminal ever arrives (engine died).
+        await queue.put(OpenCodeStreamReady())
+
+    client = OpenCodeClient("http://127.0.0.1:0")
+    client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
+    client.send_message = AsyncMock()  # type: ignore[method-assign]
+
+    # Small poll so the test resolves fast; is_alive False → engine_died on first poll timeout.
+    with (
+        patch.object(ev, "_consume_events_from_response", new=fake_consume),
+        patch("ach_agent.engine.lifecycle._LIVENESS_POLL_S", 0.05),
+    ):
+        with pytest.raises(EngineError, match="engine_died"):
+            await asyncio.wait_for(
+                consume_sse_after_send(client, "ses", "hi", is_alive=lambda: False),
+                timeout=2.0,
+            )
+
+
+async def test_alive_engine_slow_but_not_dead_waits() -> None:
+    """A slow-but-alive engine (is_alive True) is NOT failed as dead; it completes on idle."""
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.events import (
+        OpenCodeSessionIdle,
+        OpenCodeStreamReady,
+        OpenCodeTextUpdate,
+    )
+    from ach_agent.engine.lifecycle import consume_sse_after_send
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        await queue.put(OpenCodeStreamReady())
+        await asyncio.sleep(0.15)  # spans a couple of poll intervals (0.05)
+        await queue.put(OpenCodeTextUpdate("s", "prtA", "msgA", "later"))
+        await queue.put(OpenCodeSessionIdle("s"))
+
+    client = OpenCodeClient("http://127.0.0.1:0")
+    client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
+    client.send_message = AsyncMock()  # type: ignore[method-assign]
+
+    with (
+        patch.object(ev, "_consume_events_from_response", new=fake_consume),
+        patch("ach_agent.engine.lifecycle._LIVENESS_POLL_S", 0.05),
+    ):
+        text = await asyncio.wait_for(
+            consume_sse_after_send(client, "ses", "hi", is_alive=lambda: True),
+            timeout=2.0,
+        )
+    assert text == "later", "slow-but-alive engine completes normally (no engine_died)"
+
+
+async def test_run_invocation_threads_is_alive() -> None:
+    """run_invocation passes is_alive=server.is_alive into every consume_sse_after_send call."""
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.lifecycle import ManagedServer, run_invocation
+
+    server = ManagedServer(port=19890)
+    mock_client = AsyncMock(spec=OpenCodeClient)
+    mock_client.create_session = AsyncMock(return_value={"id": "ses-x"})
+    server._client = mock_client
+    fake_proc = MagicMock()
+    fake_proc.returncode = None
+    server._process = fake_proc
+
+    seen_is_alive: list[Any] = []
+
+    async def fake_consume(_client: Any, _sid: str, _prompt: str, **kwargs: Any) -> str:
+        seen_is_alive.append(kwargs.get("is_alive"))
+        return '{"action":"none","text":"done"}'
+
+    with patch("ach_agent.engine.lifecycle.consume_sse_after_send", new=fake_consume):
+        await run_invocation(
+            server=server,
+            session_id="k",
+            prompt="hi",
+            terminal_retries=1,
+        )
+
+    assert seen_is_alive, "consume_sse_after_send was not called"
+    # Bound methods aren't identity-stable (each `server.is_alive` access makes a new object),
+    # but == compares (__self__, __func__) — so this asserts the SAME bound is_alive was passed.
+    assert all(cb == server.is_alive for cb in seen_is_alive), (
+        "run_invocation must thread is_alive=server.is_alive into every consume call"
+    )
+
+
+# ---------------------------------------------------------------------------
 # SEC-01 / ek-hygiene: opencode subprocess env is clean-slate (allowlist only)
 # ---------------------------------------------------------------------------
 

@@ -128,6 +128,15 @@ def test_engine_holds_workdir_and_startup() -> None:
     assert not hasattr(cfg, "governed")
 
 
+def test_engine_idle_ttl_default() -> None:
+    """engine.idle_ttl_seconds defaults to 60.0 and an explicit 0 round-trips (Task 2)."""
+    from ach_agent.config.schema import EngineBlock
+
+    assert EngineBlock.model_validate({}).idle_ttl_seconds == 60.0
+    assert EngineBlock.model_validate({"idleTtlSeconds": 0}).idle_ttl_seconds == 0.0
+    assert EngineBlock.model_validate({"idleTtlSeconds": 120.5}).idle_ttl_seconds == 120.5
+
+
 def test_engine_home_field_and_workdir_default_empty() -> None:
     from ach_agent.config.schema import EngineBlock
 

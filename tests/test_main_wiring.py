@@ -335,14 +335,20 @@ def test_resolve_engine_paths_defaults_and_overrides() -> None:
     assert work_dir == "/elsewhere/ws"
 
 
-def test_channel_idle_ttl_constant() -> None:
-    """Idle TTL is a per-channel-type constant; all v1 channels stop on conversation end (0)."""
-    from ach_agent.main import _CHANNEL_IDLE_TTL_S
+def test_channel_idle_ttl_from_config() -> None:
+    """Idle TTL is built from engine.idle_ttl_seconds and applied to every configured channel."""
+    from ach_agent.config.schema import EngineBlock
 
-    assert _CHANNEL_IDLE_TTL_S == {"webhook": 0.0, "cron": 0.0, "queue": 0.0, "a2a": 0.0}
-    # The boot-time name→ttl map resolves each configured channel by its type; an unknown
-    # channel (e.g. the --tui console) defaults to 0 = stop immediately.
+    # Default keeps servers warm (60s) so channel.session=auto persists across events.
+    idle_ttl = EngineBlock.model_validate({}).idle_ttl_seconds
+    assert idle_ttl == 60.0
+
+    # Boot-time map (main._make_engine_runner wiring): {ch.name: engine.idle_ttl_seconds}.
     channels = [("hook", "webhook"), ("tick", "cron")]
-    channel_ttl = {name: _CHANNEL_IDLE_TTL_S.get(typ, 0.0) for name, typ in channels}
-    assert channel_ttl == {"hook": 0.0, "tick": 0.0}
+    channel_ttl = {name: idle_ttl for name, _typ in channels}
+    assert channel_ttl == {"hook": 60.0, "tick": 60.0}
+    # An unknown channel (e.g. the --tui console) defaults to 0 at the release site.
     assert channel_ttl.get("tui-console", 0.0) == 0.0
+
+    # Explicit 0 restores spawn-per-invocation.
+    assert EngineBlock.model_validate({"idleTtlSeconds": 0}).idle_ttl_seconds == 0.0

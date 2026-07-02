@@ -74,6 +74,11 @@ class EngineBlock(BaseModel):
     work_dir: str = Field(default="", alias="workDir")
     startup_timeout_seconds: int = Field(default=30, alias="startupTimeoutSeconds")
     forward_env: list[str] = Field(default_factory=list, alias="forwardEnv")
+    # Seconds an idle keyed opencode server lingers after its last release before being
+    # stopped. Non-zero keeps the server warm so channel.session=auto persists the opencode
+    # session (_sessions) across events for the same session_key instead of respawning. 0
+    # restores spawn-per-invocation (stop as soon as the conversation ends).
+    idle_ttl_seconds: float = Field(default=60.0, ge=0, alias="idleTtlSeconds")
 
 
 class PersistenceBlock(BaseModel):

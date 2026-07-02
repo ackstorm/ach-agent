@@ -362,10 +362,11 @@ def _make_engine_runner(
     Fail-open: unreachable backend → exclude MCP server, log WARN + metric, run anyway.
 
     channel_ttl: {channel_name: idle_ttl_seconds} — the wait after a conversation ends
-    before the opencode server is stopped, a per-channel constant (see _CHANNEL_IDLE_TTL_S).
+    before the opencode server is stopped, built at boot from engine.idle_ttl_seconds.
     Unknown channels (e.g. the --tui console) default to 0 = stop immediately. --tui pins a
     held ref so 0 never actually stops it mid-session (see the console-mode pre-warm).
     """
+    from ach_agent.engine.events import InvocationTimeout
     from ach_agent.engine.lifecycle import run_invocation
 
     ttl_by_channel = channel_ttl or {}
@@ -430,47 +431,42 @@ def _make_engine_runner(
                 invocation_engine_cfg, codemem_project=rendered_project
             )
 
-        server = await pool.acquire(event.session_key, invocation_engine_cfg)
+        # CR-01: in reply mode the future MUST always be resolved (set_result or
+        # set_exception), otherwise the awaiting route hangs forever. The except branches
+        # below resolve it on every failure path.
+        future = event.reply_future
+        server = None
+        timed_out = False
         try:
-            # CR-01: in reply mode the future MUST always be resolved (set_result or
-            # set_exception), otherwise the awaiting route hangs forever. The try/except
-            # sets the exception on error before re-raising.
-            future = event.reply_future
-            try:
-                # MEM-01: append ## Memory section (summaries or unavailable note) to prompt.
-                base_prompt = build_engine_prompt(
-                    event,
-                    channel_cfg=ch_cfg,
-                    agent_name=agent_name,
-                    memory_bank=effective_bank,
-                )
-                full_prompt = f"{base_prompt}\n\n{memory_prompt}" if memory_prompt else base_prompt
-                # Free-form channels (--tui console) carry no terminal contract: return
-                # the raw reply, no terminal extraction/repair (delivery_context marker).
-                free_form = bool(event.delivery_context.get("free_form"))
-                # Optional live-text sink (the --debug console sets this to stream the reply
-                # as it's produced, so a slow trailing tool call doesn't hide the text).
-                on_text = event.delivery_context.get("on_text")
-                # Optional tool-lifecycle sink (the --debug console shows "⚙ running <tool>"
-                # so a long-blocking tool call isn't dead air).
-                on_tool = event.delivery_context.get("on_tool")
-                reuse = getattr(ch_cfg, "session", "auto") != "none"
-                obj = await run_invocation(
-                    server=server,
-                    session_id=event.session_key,
-                    prompt=full_prompt,
-                    terminal_retries=terminal_output_retries,
-                    max_invocation_seconds=max_invocation_seconds,
-                    on_kill=on_kill,
-                    free_form=free_form,
-                    on_text=on_text,
-                    on_tool=on_tool,
-                    reuse=reuse,
-                )
-            except Exception as exc:
-                if future is not None and not future.done():
-                    future.set_exception(exc)
-                raise
+            server = await pool.acquire(event.session_key, invocation_engine_cfg)
+            # MEM-01: append ## Memory section (summaries or unavailable note) to prompt.
+            base_prompt = build_engine_prompt(
+                event,
+                channel_cfg=ch_cfg,
+                agent_name=agent_name,
+                memory_bank=effective_bank,
+            )
+            full_prompt = f"{base_prompt}\n\n{memory_prompt}" if memory_prompt else base_prompt
+            # Free-form channels (--tui console) carry no terminal contract: return
+            # the raw reply, no terminal extraction/repair (delivery_context marker).
+            free_form = bool(event.delivery_context.get("free_form"))
+            # Optional live-text sink (the --debug console sets this to stream the reply
+            # as it's produced, so a slow trailing tool call doesn't hide the text).
+            on_text = event.delivery_context.get("on_text")
+            # Optional tool-lifecycle sink (the --debug console shows "⚙ running <tool>"
+            # so a long-blocking tool call isn't dead air).
+            on_tool = event.delivery_context.get("on_tool")
+            reuse = getattr(ch_cfg, "session", "auto") != "none"
+            obj = await run_invocation(
+                server=server,
+                session_id=event.session_key,
+                prompt=full_prompt,
+                terminal_retries=terminal_output_retries,
+                free_form=free_form,
+                on_text=on_text,
+                on_tool=on_tool,
+                reuse=reuse,
+            )
 
             text = str(obj.get("text", ""))
 
@@ -501,20 +497,32 @@ def _make_engine_runner(
 
             # Async mode: nothing to deliver. Egress already happened via the agent's
             # external MCP tool calls — the harness never posts on the model's behalf.
+            return
+        except asyncio.CancelledError:
+            # The lane's maxInvocationSeconds deadline (or a shutdown) cancelled us.
+            # Force-kill the runaway (finally releases with ttl=0) so a warm TTL is never
+            # armed on a timed-out server, and release the awaiting caller so it can't hang.
+            timed_out = True
+            if future is not None and not future.done():
+                future.set_exception(InvocationTimeout(max_invocation_seconds))
+            raise
+        except Exception as exc:
+            if future is not None and not future.done():
+                future.set_exception(exc)
+            raise
         finally:
-            # Return the engine server to the pool. Slot release is owned by the
-            # lane: its `async with` blocks free the semaphores and its finally
-            # calls on_kill for queued_total. run_invocation also fires on_kill on
-            # a watchdog kill; on_kill is idempotent so that double call is safe.
-            # EnginePool.release(session_key, ttl_seconds) — pool tracks server by key internally.
-            # TTL is a per-channel constant (0 for all v1 channels → stop on conversation end).
-            try:
-                await pool.release(
-                    event.session_key,
-                    ttl_seconds=ttl_by_channel.get(event.channel_name, 0.0),
-                )
-            except Exception as exc:  # noqa: BLE001
-                log.warning("pool release error", error=str(exc))
+            # Return the engine server to the pool. Slot release is owned by the lane:
+            # its `async with` blocks free the semaphores and its finally calls on_kill
+            # for queued_total. A timed-out invocation ALWAYS releases with ttl=0 (force
+            # kill of the runaway); otherwise the channel's warm idle TTL is applied so
+            # session:auto persists the server across events. `if server is not None`
+            # guards a cancel during a cold-start acquire.
+            if server is not None:
+                ttl = 0.0 if timed_out else ttl_by_channel.get(event.channel_name, 0.0)
+                try:
+                    await pool.release(event.session_key, ttl_seconds=ttl)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("pool release error", error=str(exc))
 
     return engine_runner
 
@@ -585,18 +593,6 @@ async def _drain(
         dedup_store.close()
     DRAIN_COMPLETED.inc()
     log.info("drain: complete")
-
-
-# Per-channel idle TTL (seconds the opencode server lingers after a conversation ends
-# before it is stopped). A constant keyed by channel type — all v1 channels are 0, so the
-# server stops as soon as the conversation ends. Future channels may set a non-zero linger.
-# (--tui is NOT a channel: it pre-warms opencode at boot and holds it until Ctrl-C — see main.)
-_CHANNEL_IDLE_TTL_S: dict[str, float] = {
-    "webhook": 0.0,
-    "cron": 0.0,
-    "queue": 0.0,
-    "a2a": 0.0,
-}
 
 
 def _harness_log_dir() -> Path:
@@ -868,9 +864,9 @@ async def main(
         steps=cfg.limits.max_steps,
         startup_timeout_seconds=cfg.engine.startup_timeout_seconds,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
-        # Idle TTL is now a per-channel constant resolved in engine_runner (see
-        # _CHANNEL_IDLE_TTL_S). This field is unused by the runner and kept at 0 for
-        # back-compat with EngineConfig consumers.
+        # Idle TTL is resolved from engine.idle_ttl_seconds into the channel_ttl map below
+        # and applied at the pool.release site in engine_runner. This EngineConfig field is
+        # unused by the runner and kept at 0 for back-compat with EngineConfig consumers.
         shared_ttl_seconds=0,
         model_base_url=model_base_url,
         mcp_local_urls=mcp_local_urls,
@@ -884,8 +880,12 @@ async def main(
 
     # 6b. Build engine_runner. MEM-01/D-02: pass memory_cfg so engine_runner probes
     # before pool.acquire (Pitfall 3).
-    # Per-channel idle TTL (constant by channel type; all v1 channels are 0).
-    channel_ttl = {ch.name: _CHANNEL_IDLE_TTL_S.get(ch.type, 0.0) for ch in cfg.channels}
+    # engine.idle_ttl_seconds (default 60) keeps a keyed server warm after its last release
+    # so channel.session=auto persists the opencode session across events for the same
+    # session_key. Applied to every configured channel; an unknown channel_name still
+    # defaults to 0 at the release site (engine_runner). --tui is NOT a channel — it pins a
+    # held ref for the whole REPL, so this TTL never stops it mid-session.
+    channel_ttl = {ch.name: cfg.engine.idle_ttl_seconds for ch in cfg.channels}
     channels_by_name = {c.name: c for c in cfg.channels}
     memory_bank = cfg.memory.hindsight.bank if isinstance(cfg.memory, HindsightMemory) else ""
     engine_runner = _make_engine_runner(

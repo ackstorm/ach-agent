@@ -180,15 +180,36 @@ class EnginePool:
             await self._stop(session_key)
 
     async def _expire(self, session_key: str, ttl: float) -> None:
-        """Sleep ttl seconds, then stop the key's server (unless cancelled)."""
+        """Sleep ttl seconds, then stop the key's server (unless re-acquired / superseded).
+
+        B7: the stop decision is re-checked UNDER the key lock. A re-acquire during the
+        sleep bumps the ref-count and cancels/replaces this task; if the cancellation lost
+        the race (this task already passed its sleep), the recheck still refuses to stop a
+        server that was handed back out. The recheck + pop are one atomic critical section
+        (inlined _stop) so nothing can slip between them.
+        """
         try:
             await asyncio.sleep(ttl)
         except asyncio.CancelledError:
             log.debug("EnginePool._expire: cancelled", session_key=session_key)
             return
+        async with self._get_lock(session_key):
+            if self._ref_counts.get(session_key, 0) > 0:
+                # Re-acquired during the sleep — server is in use, do NOT stop.
+                return
+            if self._ttl_tasks.get(session_key) not in (None, asyncio.current_task()):
+                # A newer release scheduled a different expiry task — let it own the stop.
+                return
+            self._ttl_tasks.pop(session_key, None)
+            server = self._servers.pop(session_key, None)
+            self._ref_counts.pop(session_key, None)
+        if server is None:
+            return
         log.info("EnginePool._expire: TTL elapsed — stopping", session_key=session_key, ttl=ttl)
-        self._ttl_tasks.pop(session_key, None)
-        await self._stop(session_key)
+        try:
+            await server.stop()
+        except Exception:  # noqa: BLE001
+            log.warning("EnginePool._expire: stop error", session_key=session_key, exc_info=True)
 
     async def _stop(self, session_key: str) -> None:
         """Stop and drop the server for one key (idempotent)."""

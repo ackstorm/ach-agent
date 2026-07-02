@@ -423,6 +423,7 @@ def _make_engine_runner(
     channels_by_name: dict[str, Any] | None = None,
     agent_name: str = "",
     memory_bank: str = "",
+    stats_sink: Any = None,
 ) -> Callable[..., Any]:
     """Build the engine_runner callable injected into the Router.
 
@@ -458,6 +459,7 @@ def _make_engine_runner(
     """
     from ach_agent.engine.events import InvocationTimeout
     from ach_agent.engine.lifecycle import run_invocation
+    from ach_agent.stats.sink import build_session_stat
 
     ttl_by_channel = channel_ttl or {}
     channels_by_name = channels_by_name or {}
@@ -596,6 +598,10 @@ def _make_engine_runner(
                 cost_usd=getattr(_usage, "cost", 0.0),
                 duration_ms=getattr(_usage, "duration_ms", 0),
             )
+            if stats_sink is not None:
+                stats_sink.record(
+                    build_session_stat(event, obj, turn_stats, ts_ms=int(time.time() * 1000))
+                )
 
             if future is not None:
                 # Reply mode: resolve the future the route is awaiting.
@@ -1002,6 +1008,16 @@ async def main(
     )
     pool = EnginePool()
 
+    # Best-effort stats sink (harness-local, ACH_STATS_* — never part of CONTRACT_v3).
+    # Unset ACH_STATS_REDIS_URL → Prometheus-only, no queue/writer.
+    from ach_agent.stats.sink import StatsSink
+
+    stats_sink = StatsSink(
+        os.environ.get("ACH_STATS_REDIS_URL"),
+        retention_s=int(os.environ.get("ACH_STATS_RETENTION", "3024000")),
+    )
+    await stats_sink.start()
+
     # 6b. Build engine_runner. MEM-01/D-02: pass memory_cfg so engine_runner probes
     # before pool.acquire (Pitfall 3).
     # engine.idle_ttl_seconds (default 60) keeps a keyed server warm after its last release
@@ -1023,6 +1039,7 @@ async def main(
         channels_by_name=channels_by_name,
         agent_name=cfg.agent.name,
         memory_bank=memory_bank,
+        stats_sink=stats_sink,
     )
 
     # Step 6 (cont.): construct Router with all limits from config (RTR-03/04)
@@ -1117,6 +1134,7 @@ async def main(
                 await mcp_proxy.stop()
             if hasattr(dedup_store, "close"):
                 dedup_store.close()
+            await stats_sink.stop()
         log.info("ach-agent: session ended")
         return
 
@@ -1315,6 +1333,7 @@ async def main(
         await stop_model_proxies()
         if mcp_proxy is not None:
             await mcp_proxy.stop()
+        await stats_sink.stop()
         if tasks:
             # uvicorn's serve() task returns on its own once should_exit=True; await it
             # so its lifespan shutdown completes before asyncio.run tears the loop down.

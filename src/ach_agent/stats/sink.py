@@ -128,3 +128,29 @@ class StatsSink:
                         await client.aclose()
                     except Exception:  # noqa: BLE001
                         pass
+
+
+def build_session_stat(
+    event: Any, obj: dict[str, Any], turn_stats: dict[str, Any], *, ts_ms: int
+) -> SessionStat:
+    """Map the engine turn-summary outputs to a SessionStat. Pure; unit-testable."""
+    usage = turn_stats.get("usage")
+    aborted = bool(turn_stats.get("aborted"))
+    return SessionStat.build(
+        ts_ms=ts_ms,
+        session_key=getattr(event, "session_key", "unknown"),
+        channel=getattr(event, "channel_name", "unknown"),
+        source=getattr(event, "source", getattr(event, "channel_name", "unknown")),
+        model=str(obj.get("model", "unknown")),
+        provider="unknown",  # provider is resolved by the stats service's model-map (A2), not here
+        raw_task=str(obj.get("text", "")),
+        input_tokens=getattr(usage, "input_tokens", 0),
+        output_tokens=getattr(usage, "output_tokens", 0),
+        cache_read=getattr(usage, "cache_read", 0),
+        cache_write=getattr(usage, "cache_write", 0),
+        cost=getattr(usage, "cost", 0.0),
+        turns=int(turn_stats.get("tool_count", 0)),
+        duration_ms=getattr(usage, "duration_ms", 0),
+        status="aborted" if aborted else "completed",
+        retry=bool(turn_stats.get("retry", False)),
+    )

@@ -1196,6 +1196,12 @@ async def main(
             router=router,
             dedup_store=dedup_store,
         )
+        # Stop every warm keyed opencode server BEFORE the proxies. With
+        # engine.idle_ttl_seconds > 0 a recently-used server lingers past its last release
+        # with a pending _expire task; without this its subprocess (start_new_session=True,
+        # own process group) would survive the harness exit and orphan (leaking the port).
+        # Idempotent; also cancels the pending TTL tasks.
+        await pool.stop_all()
         # Plan 2: tear down the localhost proxies (closes their aiohttp runners/sessions).
         await stop_model_proxies()
         if mcp_proxy is not None:

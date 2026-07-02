@@ -281,20 +281,26 @@ async def test_consume_releases_resp_on_early_sse_error() -> None:
     client.send_message.assert_not_awaited()  # gate raised before the prompt was sent
 
 
-async def test_consume_to_completion_dedups_cumulative_snapshots() -> None:
-    """consume_sse_to_completion appends only the new suffix per part — cumulative
-    message.part.updated snapshots must not be concatenated into duplicated text."""
+async def test_consume_filters_user_message_echo() -> None:
+    """Text belonging to user-echo message IDs is filtered from the accumulated reply.
+
+    (Live-path coverage preserved from the retired consume_sse_to_completion tests.)
+    """
     from ach_agent.engine import events as ev
     from ach_agent.engine.client import OpenCodeClient
     from ach_agent.engine.events import (
         OpenCodeSessionIdle,
+        OpenCodeStreamReady,
         OpenCodeTextUpdate,
-        consume_sse_to_completion,
+        OpenCodeUserMessage,
     )
+    from ach_agent.engine.lifecycle import consume_sse_after_send
 
     scripted = [
-        OpenCodeTextUpdate("s", "prtA", "msgA", "Hello"),
-        OpenCodeTextUpdate("s", "prtA", "msgA", "Hello world"),
+        OpenCodeStreamReady(),
+        OpenCodeUserMessage("s", "msg_user"),
+        OpenCodeTextUpdate("s", "prtU", "msg_user", "echoed user prompt"),  # filtered
+        OpenCodeTextUpdate("s", "prtA", "msg_asst", '{"actions":[]}'),  # kept
         OpenCodeSessionIdle("s"),
     ]
 
@@ -304,11 +310,13 @@ async def test_consume_to_completion_dedups_cumulative_snapshots() -> None:
 
     client = OpenCodeClient("http://127.0.0.1:0")
     client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
+    client.send_message = AsyncMock()  # type: ignore[method-assign]
 
     with patch.object(ev, "_consume_events_from_response", new=fake_consume):
-        text = await consume_sse_to_completion(client, "ses")
+        text = await consume_sse_after_send(client, "ses", "hi")
 
-    assert text == "Hello world", "cumulative snapshots deduped (not 'HelloHello world')"
+    assert "echoed user prompt" not in text, "user-echo text must be filtered"
+    assert text == '{"actions":[]}', "only assistant text is accumulated"
 
 
 # ---------------------------------------------------------------------------

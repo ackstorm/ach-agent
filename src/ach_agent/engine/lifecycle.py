@@ -5,11 +5,12 @@ Constraint: No router or Hermes imports (D-08, RTR-06).
 
 Hardening implemented in 00-02:
   - H-01: 1MB SSE read buffer (in client.py)
-  - H-02: SSE reconnect with bounded retry (in events.py)
+  - H-02: bounded health-gated SSE reconnect + mid-invocation liveness on the live path
+    (consume_sse_after_send below; reuses events.py's shared reader/accumulator helpers)
   - H-03: Process-group kill (SIGTERM → 10s → SIGKILL) via _process_group_kill
   - H-05: stdout/stderr drain tasks (_drain_logs with 50-line tail, started at launch)
   - ENG-06: Startup deadline calls sys.exit(1), NOT raises
-  - ENG-07: maxInvocationSeconds watchdog via asyncio.timeout + on_kill seam
+  - maxInvocationSeconds: owned by the lane (router), NOT run_invocation (Plan 1)
 """
 
 from __future__ import annotations

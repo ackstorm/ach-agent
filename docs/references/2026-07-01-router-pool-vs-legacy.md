@@ -228,3 +228,32 @@ stays a Plan 3 follow-up). Behavior now:
   the recheck + pop are one atomic critical section (inlined `_stop`).
 - **Port release on stop (B7).** `ManagedServer.stop()` now calls `release_port(self.port)`
   (safe on double-stop), so a stopped server frees its reserved ephemeral port.
+
+---
+
+## 10. Update (2026-07-02): Plan 2 shipped (B4/B5)
+
+`docs/superpowers/plans/2026-07-02-engine-sse-reconnect-liveness.md` is implemented. Closed
+**B4 and B5**. Behavior now on the LIVE invocation path (`lifecycle.consume_sse_after_send`):
+
+- **Bounded, health-gated reconnect (B4).** A transient SSE-reader drop
+  (`aiohttp.ClientError`) mid-turn is recovered by re-subscribing (default `max_reconnects=3`),
+  gated on `check_health()` (and `is_alive()` when supplied). The prompt is sent **exactly
+  once** — `result_queue`, the send task, and the `ReplyAccumulator` persist across attempts;
+  only `resp` + the reader task are recreated. opencode resends growing cumulative snapshots,
+  so the accumulator's prefix-dedup means re-sent text is neither double-counted nor
+  re-emitted via `on_text`. A send-POST failure is wrapped as `_SendFailed` and is terminal —
+  never reconnected. Healthy-but-out-of-budget → `EngineError("sse_exhausted")`;
+  unhealthy/dead → the original `ClientError` is raised.
+- **Mid-invocation liveness (B5).** Each queue wait polls every `_LIVENESS_POLL_S` (5s); on a
+  poll timeout, if `is_alive()` is False the turn fails fast with `EngineError("engine_died")`
+  instead of hanging the full 300s stall bound (which is preserved, reset on every real event,
+  as the wedged-but-alive backstop). `run_invocation` threads `is_alive=server.is_alive` into
+  both the main and repair `consume_sse_after_send` calls.
+- **Dead path retired.** The previously-dead reconnecting `consume_sse_to_completion`
+  (`events.py`) was deleted along with its unit tests; the shared helpers
+  (`_consume_events_from_response`, `ReplyAccumulator`, `_iter_sse_events_from_client`) stay
+  and are reused by the live path — no two reconnect implementations to drift.
+
+Not in this plan (→ Plan 4, runaway control): `POST /session/{id}/abort` on give-up and
+step-budget abort.

@@ -18,6 +18,20 @@ def _safe_div(n: float, d: float) -> float | None:
     return (n / d) if d else None
 
 
+def to_recent_row(r: dict[str, Any]) -> dict[str, Any]:
+    """A parsed row -> the page-ready `recent[]` shape (shared with /api/sessions)."""
+    return {
+        "ts": r["ts_ms"],
+        "task": r["task"],
+        "model": r["model"],
+        "tokens": r["input_tokens"] + r["output_tokens"],
+        "cost": r["cost"],
+        "turns": r["turns"],
+        "status": r["status"],
+        "retry": r["retry"],
+    }
+
+
 def build_totals(rows: list[dict[str, Any]]) -> dict[str, Any]:
     sessions = len(rows)
     spend = sum(r["cost"] for r in rows)
@@ -147,19 +161,7 @@ def build_contract(
         for day, v in sorted(day_acc.items())
     ]
 
-    recent = [
-        {
-            "ts": r["ts_ms"],
-            "task": r["task"],
-            "model": r["model"],
-            "tokens": r["input_tokens"] + r["output_tokens"],
-            "cost": r["cost"],
-            "turns": r["turns"],
-            "status": r["status"],
-            "retry": r["retry"],
-        }
-        for r in recent_rows
-    ]
+    recent = [to_recent_row(r) for r in recent_rows]
 
     days = max(1, round((range_end_ms - range_start_ms) / 86_400_000))
     return {

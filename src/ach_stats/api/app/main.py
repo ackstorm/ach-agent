@@ -11,7 +11,7 @@ from typing import Any, cast
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
-from app.aggregate import build_contract
+from app.aggregate import build_contract, to_recent_row
 from app.reader import read_coverage_start, read_recent, read_window
 
 
@@ -62,20 +62,7 @@ def create_app() -> FastAPI:
     async def sessions(request: Request, n: int = Query(50, ge=1, le=200)) -> JSONResponse:
         client = _redis(request)
         recent = await read_recent(client, n)
-        payload = [
-            {
-                "ts": r["ts_ms"],
-                "task": r["task"],
-                "model": r["model"],
-                "tokens": r["input_tokens"] + r["output_tokens"],
-                "cost": r["cost"],
-                "turns": r["turns"],
-                "status": r["status"],
-                "retry": r["retry"],
-            }
-            for r in recent
-        ]
-        return JSONResponse({"recent": payload})
+        return JSONResponse({"recent": [to_recent_row(r) for r in recent]})
 
     from pathlib import Path
 

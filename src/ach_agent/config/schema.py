@@ -48,7 +48,7 @@ class LimitsBlock(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     max_concurrent_invocations: int = Field(default=1, alias="maxConcurrentInvocations")
-    max_invocation_seconds: int = Field(default=1800, alias="maxInvocationSeconds")
+    max_invocation_seconds: int = Field(default=600, alias="maxInvocationSeconds")
     max_queued_total: int = Field(default=100, alias="maxQueuedTotal")
     idempotency_window_seconds: int = Field(default=3600, alias="idempotencyWindowSeconds")
     max_steps: int = Field(default=50, alias="maxSteps")
@@ -78,7 +78,7 @@ class EngineBlock(BaseModel):
     # stopped. Non-zero keeps the server warm so channel.session=auto persists the opencode
     # session (_sessions) across events for the same session_key instead of respawning. 0
     # restores spawn-per-invocation (stop as soon as the conversation ends).
-    idle_ttl_seconds: float = Field(default=60.0, ge=0, alias="idleTtlSeconds")
+    idle_ttl_seconds: float = Field(default=30.0, ge=0, alias="idleTtlSeconds")
     # Runaway control (Plan 4): abort a turn after this many DISTINCT tool calls, then run one
     # wrap-up turn so the model still returns a valid terminal object. 0 disables counting/abort;
     # maxInvocationSeconds remains the always-on time backstop. Recommend ~80 when opting in.
@@ -100,7 +100,7 @@ class HealthBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     host: str = "0.0.0.0"
-    port: int = 8000
+    port: int = 8080
 
 
 class SystemText(BaseModel):

@@ -1,6 +1,6 @@
 """CONTRACT §6.3: Three finite bounds invariant (authoritative conformance test).
 
-Invariant: maxConcurrentInvocations, maxInvocationSeconds (1800), and
+Invariant: maxConcurrentInvocations, maxInvocationSeconds (600), and
 maxQueuedTotal (100) are always enforced — never exceeded.
 """
 from __future__ import annotations

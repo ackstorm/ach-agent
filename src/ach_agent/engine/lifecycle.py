@@ -343,6 +343,10 @@ def build_opencode_env(
         value = os.environ.get(name)
         if value is not None:
             env[name] = value
+    # Exa web-search is on by default for every agente: the harness pins the enable flag so
+    # opencode always gets it without the operator listing it in forwardEnv. setdefault means a
+    # forwarded harness value (via forwardEnv) still wins if the operator sets one explicitly.
+    env.setdefault("OPENCODE_ENABLE_EXA", "true")
     # Pinned hardening — last word, overrides any inherited/forwarded value.
     env["HOME"] = str(ephemeral_home)
     env["TMPDIR"] = "/tmp"

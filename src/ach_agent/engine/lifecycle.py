@@ -489,6 +489,39 @@ async def _create_oc_session(client: OpenCodeClient) -> str:
     return oc_session_id
 
 
+async def discard_oc_session(server: ManagedServer, oc_session_id: str) -> None:
+    """DELETE the opencode session, best-effort (session.key='none' / overflow='rotate').
+
+    Failure leaves an orphan row in opencode.db — disk residue only, never worth
+    failing the event over. WARN and move on.
+    """
+    from ach_agent.engine.client import OpenCodeClient
+
+    client = server._client
+    if not isinstance(client, OpenCodeClient):
+        return
+    try:
+        await client.delete_session(oc_session_id)
+    except Exception:  # noqa: BLE001
+        log.warning("engine: session delete failed", oc_session_id=oc_session_id, exc_info=True)
+
+
+async def compact_oc_session(server: ManagedServer, oc_session_id: str) -> None:
+    """POST /session/{id}/compact, best-effort (overflow='compact').
+
+    Failure means the session keeps growing until the next turn retries — WARN only.
+    """
+    from ach_agent.engine.client import OpenCodeClient
+
+    client = server._client
+    if not isinstance(client, OpenCodeClient):
+        return
+    try:
+        await client.compact_session(oc_session_id)
+    except Exception:  # noqa: BLE001
+        log.warning("engine: session compact failed", oc_session_id=oc_session_id, exc_info=True)
+
+
 async def run_invocation(
     server: ManagedServer,
     session_id: str,
@@ -553,6 +586,7 @@ async def run_invocation(
     # This ensures we don't miss the session.idle event. The lane bounds this await via
     # maxInvocationSeconds; a deadline cancels it (no inner timeout here).
     stats = stats if stats is not None else {}
+    stats["oc_session_id"] = oc_session_id
     try:
         accumulated_text = await consume_sse_after_send(
             client,
@@ -578,6 +612,7 @@ async def run_invocation(
         )
         oc_session_id = await _create_oc_session(client)
         sessions[session_id] = oc_session_id
+        stats["oc_session_id"] = oc_session_id
         accumulated_text = await consume_sse_after_send(
             client,
             oc_session_id,

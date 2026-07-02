@@ -1291,3 +1291,87 @@ async def test_non_404_error_on_reused_session_propagates() -> None:
             )
 
     assert shared_map == {"key-a": "ses-cached"}  # map NOT overwritten
+
+
+# ---------------------------------------------------------------------------
+# stats oc_session_id + discard/compact helpers
+# ---------------------------------------------------------------------------
+
+
+async def test_run_invocation_reports_oc_session_id_in_stats() -> None:
+    from ach_agent.engine.lifecycle import run_invocation
+
+    canned = '{"action":"none","text":"ok","thoughts":""}'
+    server = _server_with_client(19892, AsyncMock(return_value={"id": "ses-stats"}))
+    turn_stats: dict = {}
+
+    with patch(
+        "ach_agent.engine.lifecycle.consume_sse_after_send",
+        new_callable=AsyncMock,
+        return_value=canned,
+    ):
+        await run_invocation(
+            server=server,
+            session_id="key-a",
+            prompt="p",
+            terminal_retries=1,
+            reuse=False,
+            stats=turn_stats,
+        )
+
+    assert turn_stats["oc_session_id"] == "ses-stats"
+
+
+async def test_stats_oc_session_id_reflects_stale_retry() -> None:
+    """After the 404 stale-guard recreates the session, stats carries the NEW id."""
+    from ach_agent.engine.lifecycle import run_invocation
+
+    canned = '{"action":"none","text":"ok","thoughts":""}'
+    shared_map: dict[str, str] = {"key-a": "ses-stale"}
+    server = _server_with_client(19893, AsyncMock(return_value={"id": "ses-new"}))
+    turn_stats: dict = {}
+
+    with patch(
+        "ach_agent.engine.lifecycle.consume_sse_after_send",
+        new_callable=AsyncMock,
+        side_effect=[_client_response_error(404), canned],
+    ):
+        await run_invocation(
+            server=server,
+            session_id="key-a",
+            prompt="p",
+            terminal_retries=1,
+            reuse=True,
+            oc_sessions=shared_map,
+            stats=turn_stats,
+        )
+
+    assert turn_stats["oc_session_id"] == "ses-new"
+
+
+async def test_discard_oc_session_swallows_errors() -> None:
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.lifecycle import ManagedServer, discard_oc_session
+
+    mock_client = AsyncMock(spec=OpenCodeClient)
+    mock_client.delete_session = AsyncMock(side_effect=RuntimeError("boom"))
+    server = ManagedServer(port=19894)
+    server._client = mock_client
+
+    await discard_oc_session(server, "ses-x")  # must not raise
+    mock_client.delete_session.assert_awaited_once_with("ses-x")
+
+    # no client at all → silent no-op
+    await discard_oc_session(ManagedServer(port=19895), "ses-y")
+
+
+async def test_compact_oc_session_calls_client() -> None:
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.lifecycle import ManagedServer, compact_oc_session
+
+    mock_client = AsyncMock(spec=OpenCodeClient)
+    server = ManagedServer(port=19896)
+    server._client = mock_client
+
+    await compact_oc_session(server, "ses-z")
+    mock_client.compact_session.assert_awaited_once_with("ses-z")

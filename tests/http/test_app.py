@@ -163,6 +163,8 @@ def test_inbound_route_dispatches(tmp_path: pytest.TempPathFactory) -> None:
         )
     assert resp.status_code == 202, f"Expected 202, got {resp.status_code}: {resp.text}"
     assert resp.json()["status"] == "accepted"
+    assert resp.headers.get("X-ACH-Task-Id"), "expected non-empty X-ACH-Task-Id header on 202"
+    assert resp.headers["X-ACH-Task-Id"] == resp.json()["task_id"]
 
 
 # ---------------------------------------------------------------------------

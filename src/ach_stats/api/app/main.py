@@ -65,4 +65,12 @@ def create_app() -> FastAPI:
         ]
         return JSONResponse({"recent": payload})
 
+    from pathlib import Path
+
+    from fastapi.staticfiles import StaticFiles
+
+    dist = Path(__file__).resolve().parent.parent / "ui" / "dist"
+    if dist.is_dir():
+        app.mount("/", StaticFiles(directory=str(dist), html=True), name="spa")
+
     return app

@@ -461,6 +461,66 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#7-correction-2026-07-01-per-key-home-shared-home-per-session-config-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Correction (2026-07-01): per-key HOME → shared HOME + per-session config file
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. Correction (2026-07-01): per-key HOME → shared HOME + per-session config file">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-split-brain-regression" class="md-nav__link">
+    <span class="md-ellipsis">
+      The split-brain regression
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-fix" class="md-nav__link">
+    <span class="md-ellipsis">
+      The fix
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#issues-resolved" class="md-nav__link">
+    <span class="md-ellipsis">
+      Issues resolved
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#new-accepted-tradeoff" class="md-nav__link">
+    <span class="md-ellipsis">
+      New accepted tradeoff
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      Gate
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -645,6 +705,37 @@ ede6d3e fix(engine): isolate opencode HOME per session_key (I-1)
 b0ce381 docs(engine): document per-key home disk tradeoff (M-3)
 </code></pre></div>
 <p>Gate at merge: full suite <strong>309 passed, 1 skipped</strong>; <code>make _lint</code> (ruff + mypy --strict) clean.</p>
+<hr />
+<h2 id="7-correction-2026-07-01-per-key-home-shared-home-per-session-config-file">7. Correction (2026-07-01): per-key HOME → shared HOME + per-session config file</h2>
+<p><strong>Branch:</strong> <code>feat/shared-home-per-session-config</code>. <strong>Plan:</strong>
+<code>docs/superpowers/plans/2026-07-01-shared-home-per-session-config.md</code>.</p>
+<h3 id="the-split-brain-regression">The split-brain regression</h3>
+<p>The per-key HOME design described in §3 (<code>_config_for_key</code> → <code>&lt;home&gt;/servers/oc-&lt;key&gt;</code>) introduced
+a split-brain regression: the harness hydrates skills and <code>.ach-state</code> once into the <strong>shared</strong>
+<code>engine.home</code>, but each opencode process ran with a <strong>per-key</strong> HOME — so it never saw the
+hydrated skills, prompts, or state. The agente and the harness were looking at different trees.</p>
+<h3 id="the-fix">The fix</h3>
+<p><code>_config_for_key</code> was deleted. Instead:</p>
+<ul>
+<li>All agentes run with the <strong>same</strong> <code>engine.home</code> (one shared HOME).</li>
+<li>Per-<code>session_key</code> isolation is now the <strong>opencode config file</strong>: each key writes
+  <code>&lt;home&gt;/.config/opencode/opencode_&lt;session_key&gt;.json</code> (+ personality system-prompt file) and
+  the agente is launched with <code>OPENCODE_CONFIG</code> pointing at it. opencode reads the config path
+  from that env var, so no key ever loads another key's model/MCP wiring.</li>
+</ul>
+<h3 id="issues-resolved">Issues resolved</h3>
+<ul>
+<li><strong>I-1 (truncate race):</strong> per-key config <em>file</em> names (not a shared <code>opencode.json</code>) eliminate the
+  concurrent-truncate race — each key owns a distinct file path.</li>
+<li><strong>M-3 (disk bloat):</strong> <code>node_modules</code> and the npm/bun caches are shared across keys (no
+  per-key reinstall, no disk reaper needed for those paths).</li>
+</ul>
+<h3 id="new-accepted-tradeoff">New accepted tradeoff</h3>
+<p>The opencode session store (<code>&lt;home&gt;/.local/share/opencode</code>) and caches are shared across
+concurrent keyed processes. At v1 concurrency levels this is low-risk. If isolation is needed
+later, <code>XDG_DATA_HOME</code> can be set per-key in the agente env.</p>
+<h3 id="gate">Gate</h3>
+<p>Full suite <strong>321 passed, 1 skipped</strong>; <code>make _lint</code> clean.</p>
 
 
 

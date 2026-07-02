@@ -443,10 +443,11 @@ API.</p>
 by the CONTRACT §6 conformance suite (<code>make conformance</code>).</p>
 <h2 id="engine-per-session-opencode-servers">Engine — per-session opencode servers</h2>
 <p>The engine pool is keyed by <code>session_key</code>: each session identity (cron name, gitlab server+repo,
-tui-console) gets its <strong>own</strong> <code>opencode serve</code> process with its own isolated HOME (config, session
-store, <code>node_modules</code>), so distinct sessions never share filesystem state. The working directory
-(<code>/workspace</code>) stays shared. See the design record:
-<a href="references/2026-07-01-keyed-engine-pool/">Keyed EnginePool</a>.</p>
+tui-console) gets its <strong>own</strong> <code>opencode serve</code> process. All agentes share <strong>one</strong> <code>engine.home</code>
+(skills, <code>.ach-state</code>, session store, and <code>node_modules</code> live there once); per-session isolation
+is the opencode config file <code>&lt;home&gt;/.config/opencode/opencode_&lt;session_key&gt;.json</code>, selected via
+the <code>OPENCODE_CONFIG</code> env var. The working directory (<code>/workspace</code>) stays shared. See the design
+record: <a href="references/2026-07-01-keyed-engine-pool/">Keyed EnginePool</a>.</p>
 <h2 id="getting-started">Getting started</h2>
 <p>See the <a href="https://github.com/ackstorm/ach-agent#readme">README</a> for the quick-start and the
 <code>ACH_*</code> configuration contract. In production the <code>ach-runtime</code> operator deploys the harness

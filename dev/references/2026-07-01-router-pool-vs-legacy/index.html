@@ -1,0 +1,954 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>Router / Engine-Pool / Session lifecycle vs legacy ackbot-process — comparison & decision record (2026-07-01) - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#router-engine-pool-session-lifecycle-vs-legacy-ackbot-process-comparison-decision-record-2026-07-01" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Router / Engine-Pool / Session lifecycle vs legacy ackbot-process — comparison &amp; decision record (2026-07-01)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-headline-the-hunch-is-half-right" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Headline: the hunch is half right
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-what-legacy-actually-is-this-reframes-everything" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. What legacy actually is (this reframes everything)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-side-by-side" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Side-by-side
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-confirmed-bugs-regressions-in-ach-agent-verified-by-direct-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Confirmed bugs / regressions in ach-agent (verified by direct read)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-what-ach-agent-does-better-keep-do-not-second-guess" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. What ach-agent does BETTER — keep, do not second-guess
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-proven-mechanisms-to-port-from-legacy-do-not-re-derive" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Proven mechanisms to PORT from legacy — do not re-derive
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-legacy-cruft-to-not-copy" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Legacy cruft to NOT copy
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-decision-rollout" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Decision &amp; rollout
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-update-2026-07-01-plan-1-shipped" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Update (2026-07-01): Plan 1 shipped
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-update-2026-07-02-plan-2-shipped-b4b5" class="md-nav__link">
+    <span class="md-ellipsis">
+      10. Update (2026-07-02): Plan 2 shipped (B4/B5)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-update-2026-07-02-plan-3-shipped-b6-adjacent-gitlab-dedup" class="md-nav__link">
+    <span class="md-ellipsis">
+      11. Update (2026-07-02): Plan 3 shipped (B6-adjacent gitlab dedup)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-update-2026-07-02-plan-4-shipped-runaway-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      12. Update (2026-07-02): Plan 4 shipped (runaway control)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#update-2026-07-02-note-hook-422-fixed-configurable-gitlab-events" class="md-nav__link">
+    <span class="md-ellipsis">
+      Update (2026-07-02): note-hook 422 fixed + configurable GitLab events
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#13-b8-acceptance-coupled-to-engine-readiness-design-bug-not-in-legacy" class="md-nav__link">
+    <span class="md-ellipsis">
+      13. B8 — acceptance coupled to engine readiness (design bug, not in legacy)
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="router-engine-pool-session-lifecycle-vs-legacy-ackbot-process-comparison-decision-record-2026-07-01">Router / Engine-Pool / Session lifecycle vs legacy <code>ackbot-process</code> — comparison &amp; decision record (2026-07-01)</h1>
+<p><strong>Status:</strong> Analysis + decisions. No code shipped by this document. Implementation is split into
+follow-up plans (see §8); the first is
+<code>docs/superpowers/plans/2026-07-01-engine-timeout-warm-reuse.md</code>.</p>
+<p><strong>Trigger:</strong> the question <em>"are we reinventing in <code>ach-agent</code> what <code>ackbot-process</code> already had — for
+process launch, session keys, session management, idle/TTL, locks, multiple inputs, the bus and the
+channels?"</em></p>
+<p><strong>Method:</strong> four read-only mapping agents (2 per repo, split router-vs-pool), then direct verification
+of every load-bearing claim against source (<code>lane.py</code>, <code>main.py</code> <code>engine_runner</code>, <code>pool.py</code>,
+<code>lifecycle.py</code>). Every bug below was confirmed by reading the code, not inferred.</p>
+<p>This record captures the <em>why</em> and the verdict so the next session does not re-derive it.</p>
+<hr />
+<h2 id="1-headline-the-hunch-is-half-right">1. Headline: the hunch is half right</h2>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Verdict</th>
+<th>One-line reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Router / bus / per-session serialization</strong></td>
+<td><strong>NOT reinvented — ours is genuinely new &amp; better.</strong> Keep.</td>
+<td>Legacy has <strong>no</strong> per-session lane. Its <code>session_key</code> is dead code.</td>
+</tr>
+<tr>
+<td><strong>Engine pool / idle / session lifecycle</strong></td>
+<td><strong>Reinvented, and the mature part was disabled.</strong> Restore.</td>
+<td>Legacy's refcount+TTL idle reaper works; ours is present but hardcoded off (<code>ttl=0</code>).</td>
+</tr>
+</tbody>
+</table>
+<p>So: the router is the repo's real IP and was <strong>added</strong>, not copied. The pool is where we rebuilt
+<code>ackbot-process/src/agent/server_pool.py</code> and lost its battle-tested behavior in the process.</p>
+<hr />
+<h2 id="2-what-legacy-actually-is-this-reframes-everything">2. What legacy actually is (this reframes everything)</h2>
+<p>The single most important finding: <strong>legacy <code>ackbot-process</code> never had a per-session router.</strong></p>
+<ul>
+<li>The "bus" (<code>src/bus/queue.py</code>, <code>src/bus/processor.py:630-641</code>) is <strong>one global <code>asyncio.Queue</code></strong> feeding
+  a fan-out loop that spawns <strong>one <code>asyncio.create_task</code> per message</strong>. The only throttle is a
+  <strong>per-channel <code>asyncio.Semaphore</code></strong> (<code>processor.py:257</code>).</li>
+<li><code>InboundMessage.session_key</code> (<code>bus/events.py:26</code>) is <strong>defined and never read</strong> — <code>grep</code> finds exactly
+  one hit: the definition. Continuity in legacy lives entirely in the process pool + an
+  adapter-held <code>session_id</code>, not in the bus.</li>
+<li>Consequence: <strong>two events for the same GitLab MR run concurrently</strong> (default <code>concurrency=3</code>) against
+  the <strong>same opencode filesystem</strong> — the legacy config literally warns "sessions share filesystem —
+  concurrent writes may collide" (<code>config.py:38-40</code>).</li>
+<li>The sophisticated per-user machinery in legacy's <code>docs/plans/</code> (<code>pool.get_or_create</code>, <code>UserManager</code>,
+  <code>state.json</code>, dual-concurrency) belongs to a <strong>deleted Slack/Telegram architecture</strong>; it is NOT in the
+  current opencode code. <code>docs/plans/2025-12-03-dual-concurrency-limits.md</code> describes a per-project cap
+  that <code>grep</code> confirms <strong>is not in the shipped code</strong> — a mature mechanism legacy itself dropped.</li>
+</ul>
+<p><code>ach-agent</code>'s per-session FIFO lane + pinned <code>dedup → backpressure → lane</code> + three finite bounds is
+therefore a <strong>deliberate correctness property legacy never had.</strong> We did not reinvent a lane; we built one.</p>
+<hr />
+<h2 id="3-side-by-side">3. Side-by-side</h2>
+<table>
+<thead>
+<tr>
+<th>Axis</th>
+<th>legacy <code>ackbot-process</code></th>
+<th><code>ach-agent</code></th>
+<th>Winner</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>session_key identity</td>
+<td>dead field; <code>thread_id</code> overloaded; hand-filled per handler</td>
+<td>real per-channel derivation, guarded never-null (422/reject on empty)</td>
+<td><strong>ach-agent</strong></td>
+</tr>
+<tr>
+<td>serialization</td>
+<td>per-channel semaphore over unbounded fan-out; same-MR events <strong>race</strong></td>
+<td>per-session FIFO lane, ≤1 in-flight per key (<code>lane.py:89-124</code>)</td>
+<td><strong>ach-agent</strong></td>
+</tr>
+<tr>
+<td>dedup</td>
+<td>none at bus; only gitlab handler (dual-key + post-trigger)</td>
+<td>first-class store (mem/SQLite), channel-namespaced, mark-before-enqueue</td>
+<td><strong>ach-agent structure / legacy gitlab logic richer</strong></td>
+</tr>
+<tr>
+<td>finite bounds</td>
+<td>2 of 3 (per-chan concurrency, query_timeout); <strong>no <code>maxQueuedTotal</code></strong></td>
+<td>all 3 (<code>maxConcurrentInvocations</code>, <code>maxInvocationSeconds</code>, <code>maxQueuedTotal</code>)</td>
+<td><strong>ach-agent</strong></td>
+</tr>
+<tr>
+<td>pool keying</td>
+<td><code>shared.enabled</code> boolean fork: channel-name OR req-id</td>
+<td>clean 1:1 <code>session_key</code></td>
+<td><strong>ach-agent</strong></td>
+</tr>
+<tr>
+<td>HOME isolation</td>
+<td>shared-HOME collision hazard (drove the whole ephemeral-home saga)</td>
+<td>shared HOME + per-key config file (<code>OPENCODE_CONFIG</code>)</td>
+<td><strong>ach-agent</strong></td>
+</tr>
+<tr>
+<td><strong>idle reaper</strong></td>
+<td>refcount+TTL, arms only at refcount 0, acquire cancels expiry (default 300s)</td>
+<td>machinery present but <strong>all channel TTLs = 0 → dead</strong>; spawn-per-invocation</td>
+<td><strong>legacy</strong></td>
+</tr>
+<tr>
+<td><strong>supervision / liveness</strong></td>
+<td>mid-query <code>is_alive()</code> raises; SSE 3-reconnect health-gated</td>
+<td>no mid-query liveness; <strong>live SSE path has no reconnect</strong></td>
+<td><strong>legacy</strong></td>
+</tr>
+<tr>
+<td>watchdog kill</td>
+<td>n/a (query_timeout wrap)</td>
+<td><strong>duplicated timeout; the real kill path is dead</strong> (§4 B2)</td>
+<td><strong>bug</strong></td>
+</tr>
+<tr>
+<td>runaway control</td>
+<td>step-budget abort + tool-only correction retry</td>
+<td>none</td>
+<td><strong>legacy</strong></td>
+</tr>
+<tr>
+<td>cron driver</td>
+<td>APScheduler</td>
+<td>croniter loop (per constraint)</td>
+<td><strong>ach-agent</strong></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="4-confirmed-bugs-regressions-in-ach-agent-verified-by-direct-read">4. Confirmed bugs / regressions in <code>ach-agent</code> (verified by direct read)</h2>
+<p><strong>B1 — Idle reaper dead → cold start every event, AND <code>session: auto</code> silently broken.</strong>
+<code>_CHANNEL_IDLE_TTL_S = {webhook:0, cron:0, queue:0, a2a:0}</code> (<code>main.py:594-599</code>). Every
+<code>release(ttl=0)</code> runs <code>_stop</code> immediately (<code>pool.py:179-180,193-209</code>), killing the opencode process —
+so:
+- Every webhook pays full <code>opencode serve</code> startup (<code>poll_ready</code>, up to 30 s ceiling) each time.
+- <code>ManagedServer._sessions</code> (the <code>session_key → opencode ses_id</code> map, <code>lifecycle.py:118</code>) <strong>dies with
+  the process.</strong> The next event for the same key starts a fresh server with an empty map → <code>create_session()</code>
+  fresh → <strong>no conversational continuity.</strong> <code>channel.session: auto</code> (default, <code>schema.py:378</code>) therefore
+  behaves like <code>none</code> for webhook/cron/queue/a2a. Only <code>--tui</code> keeps continuity because its warm-up holds
+  a ref for the whole REPL. <strong>This is the "we already had it, better" case:</strong> legacy's 300 s refcount+TTL
+  reaper is exactly the mechanism needed, and ours is switched off.</p>
+<p><strong>B2 — Duplicated <code>maxInvocationSeconds</code>; the genuine watchdog kill is dead.</strong> Two nested
+<code>asyncio.timeout(max_invocation_seconds)</code> with the <strong>same value</strong>: lane (<code>lane.py:103</code>, wraps
+<code>pool.acquire</code> + memory probe + <code>run_invocation</code>) and lifecycle (<code>lifecycle.py:545</code>, wraps only the SSE
+consume). Because the lane timer starts strictly earlier, its deadline is always sooner → <strong>the lane
+always fires first</strong>, cancelling <code>engine_runner</code> with <code>CancelledError</code>. Lifecycle's <code>except TimeoutError</code>
+(<code>:551</code>) — the only place that does <code>_process_group_kill</code> + <code>ENGINE_WATCHDOG_KILLS.inc()</code> — <strong>never
+runs.</strong> Today the process still dies via <code>pool.release(ttl=0)</code> in <code>engine_runner</code>'s <code>finally</code>
+(<code>main.py:511-515</code>), so no orphan <em>at ttl=0</em>. But the metric is permanently dead, and the bug is armed:
+once B1 turns TTL on, the timeout path would arm a warm TTL on a runaway server instead of killing it.</p>
+<p><strong>B3 — <code>reply_future</code> hangs the TUI on a lane timeout.</strong> In reply mode the future is resolved only in
+<code>except Exception</code> / the success path (<code>main.py:470-481</code>). A lane timeout injects <code>CancelledError</code> (a
+<code>BaseException</code>, <strong>not</strong> <code>Exception</code>) → not caught → future never resolved → <code>tui.py:180
+await reply_future</code> hangs forever. Any TUI turn exceeding <code>maxInvocationSeconds</code> wedges the REPL until
+Ctrl-C.</p>
+<p><strong>B4 — No SSE reconnect on the live invocation path.</strong> Live invocations use <code>consume_sse_after_send</code>
+(no reconnect); the reconnecting <code>consume_sse_to_completion</code> (<code>events.py</code>, 3-retry health-gated) is dead
+code. Legacy reconnects with liveness gating (<code>opencode.py:214-248</code>). A transient SSE drop fails the
+whole invocation.</p>
+<p><strong>B5 — No mid-invocation liveness.</strong> Legacy raises <code>"OpenCode died during query"</code> each SSE iteration via
+<code>is_alive()</code> (<code>opencode.py:268-271</code>). We detect death only lazily at the <em>next</em> <code>acquire()</code>
+(<code>pool.py:104,113</code>). (Note: that lazy check <em>does</em> correctly cover the warm-reuse path once B1 is on — a
+warm server that died between events is replaced on next acquire.)</p>
+<p><strong>B6 — <code>queue</code>/<code>cron</code> session_key = channel name.</strong> Correct for cron (ticks must serialize). <strong>Wrong for
+queue</strong> (<code>queue.py:189</code>): collapses all stream messages onto one lane, so the per-channel <code>concurrency</code>
+semaphore can never exceed 1. Design fork — decide whether redis-queue parallelism is wanted (key by
+message/task id) or intentional single-file ordering (keep channel name). <strong>Recommended v1 default: keep
+channel name, document the limitation, defer per-message keying.</strong></p>
+<p><strong>B7 — Latent race + minor leaks/cruft.</strong>
+- <code>_expire</code> (<code>pool.py:182-191</code>) pops itself and calls <code>_stop</code> <strong>without re-checking ref-count under the
+  lock</strong> — a re-acquire that lands after <code>sleep</code> completes but before <code>_stop</code> can, in principle, hand out a
+  server that <code>_stop</code> then kills. Moot at ttl=0; real once B1 is on. Fix: re-check ref/tasks under the lock
+  before stopping.
+- <code>release_port</code> (<code>client.py:82-84</code>) never called → <code>_reserved_ports</code> grows unbounded for the process life.
+- <code>AtomicCounter</code> (<code>admission.py:16-33</code>) is a no-op ceremony wrapper around an int.
+- <code>delivery_adapter</code> threaded through <code>Router.__init__</code> but always passed <code>None</code> (<code>main.py:912</code>).
+- Stale docs: <code>CLAUDE.md</code> + some strings still describe per-key HOME <code>servers/oc-&lt;key&gt;</code>; live code uses
+  shared home + per-key config file (already corrected in the keyed-pool record §7 — sync remaining strings).</p>
+<hr />
+<h2 id="5-what-ach-agent-does-better-keep-do-not-second-guess">5. What <code>ach-agent</code> does BETTER — keep, do not second-guess</h2>
+<ol>
+<li><strong>Real <code>session_key</code></strong> — never null, per-channel, guarded. Legacy's is dead. Superior identity model.</li>
+<li><strong>Per-session FIFO lane</strong> — ≤1 in-flight per key. Directly fixes legacy's same-MR concurrent-write race.</li>
+<li><strong><code>maxQueuedTotal</code></strong> — the third bound legacy lacks; prevents unbounded task accumulation under a
+   redelivery flood.</li>
+<li><strong>1:1 pool keying</strong> — kills legacy's <code>shared.enabled</code> boolean fork and its cold-start-every-request mode.</li>
+<li><strong>Pinned <code>dedup → backpressure → lane</code></strong> — a duplicate returns before consuming a queue slot.</li>
+<li><strong>croniter cron</strong>, shared-HOME + per-key config isolation — both cleaner than legacy.</li>
+</ol>
+<hr />
+<h2 id="6-proven-mechanisms-to-port-from-legacy-do-not-re-derive">6. Proven mechanisms to PORT from legacy — do not re-derive</h2>
+<ol>
+<li><strong>GitLab dual-key dedup + post-trigger ordering</strong> (<code>gitlab/handler.py:55-89,316</code>): a logical composite
+   key (<code>type:project:target:user:contenthash</code>) <strong>plus</strong> the raw event UUID, with dedup run <strong>after</strong>
+   trigger classification so an ignored <code>open</code> cannot shadow a later <code>update</code>. Our generic idempotency-key
+   dedup will treat GitLab's <code>open</code>+<code>update</code> resend as distinct. Port into the gitlab source parser.</li>
+<li><strong>Refcount + TTL idle reaper</strong> (<code>server_pool.py:435-480</code>): the invariant — TTL arms only at refcount 0,
+   any <code>acquire</code> cancels the pending expiry. We already have the shape (<code>pool.py</code>); restore the behavior
+   (B1) and add the <code>_expire</code> re-check (B7).</li>
+<li><strong>Step-budget abort + tool-only correction retry</strong> (<code>opencode.py:303-318</code>, <code>processor.py:540-584</code>):
+   runaway-turn control (<code>POST /session/{id}/abort</code> near the step ceiling) and recovery when a tools-only
+   agent leaks prose. We have neither.</li>
+<li><strong>SSE reconnect + mid-query liveness</strong> (<code>opencode.py:214-271</code>): bounded, health-gated reconnect and
+   per-iteration <code>is_alive()</code>. Port onto our live path (B4/B5).</li>
+<li><strong>contextvars lesson</strong> (<code>docs/plans/2026-02-22-user-push-race-condition-fix.md</code>): any per-request routing
+   state shared across concurrently-dispatched tasks must be lane/context-local. Our lane structurally
+   prevents the classic failure — keep it that way (never stash per-request state on a shared object).</li>
+</ol>
+<hr />
+<h2 id="7-legacy-cruft-to-not-copy">7. Legacy cruft to NOT copy</h2>
+<ul>
+<li>653-line <code>MessageProcessor</code> conflating routing + backpressure + memory-bank provisioning + prompt surgery</li>
+<li>telemetry + two retry ladders.</li>
+<li>Dead <code>_BatchAccumulator</code> (unreachable at <code>batch_window=0</code>).</li>
+<li><code>shared.enabled</code> boolean fork (already killed here).</li>
+<li>511-line config writers (<code>opencode_extensions.py</code>) full of personality/plugin baggage.</li>
+<li>Half-bypassed bus (handlers call <code>process_message()</code> directly; <code>publish_inbound</code>/<code>run()</code> vestigial).</li>
+<li>APScheduler cron (we correctly use croniter).</li>
+</ul>
+<hr />
+<h2 id="8-decision-rollout">8. Decision &amp; rollout</h2>
+<p><strong>Decisions locked:</strong>
+- <strong>Keep the router as-is</strong> (it is the IP and is strictly better than legacy). No structural change.
+- <strong>Restore warm reuse in the pool</strong> (B1) — required for <code>session: auto</code> correctness, not just perf.
+- <strong>Collapse the double timeout to one authoritative lane-level bound</strong> (B2) and <strong>resolve <code>reply_future</code>
+  on every terminal outcome incl. cancel</strong> (B3). These are prerequisites for B1 (the timeout path must
+  force-kill a runaway regardless of TTL).
+- <strong>Port</strong> gitlab dual-key dedup, SSE reconnect + mid-query liveness, and step-budget abort — each its own
+  plan.
+- <strong>B6:</strong> default to keeping channel-name keying for queue in v1; document the no-intra-channel-parallelism
+  limitation; per-message keying is a tracked follow-up.</p>
+<p><strong>Priority order (highest ROI first):</strong>
+1. <strong>Plan 1 — engine timeout + reply + warm reuse</strong> (B2, B3, B1, B7 <code>_expire</code>/<code>release_port</code>). Fully
+   task-decomposed at <code>docs/superpowers/plans/2026-07-01-engine-timeout-warm-reuse.md</code>. These four are
+   coupled (warm TTL is unsafe until the timeout path force-kills and the future always resolves) and are
+   the only cluster I can spec end-to-end from verified reading. Start here.
+2. <strong>Plan 2 — SSE reconnect + mid-query liveness on the live path</strong> (B4, B5). Port from legacy
+   <code>opencode.py</code>; needs a close read of <code>engine/events.py</code> first.
+3. <strong>Plan 3 — gitlab dual-key dedup + post-trigger ordering</strong> (port). Needs a read of the webhook/gitlab
+   source parser.
+4. <strong>Plan 4 — runaway control</strong> (step-budget abort + tool-only correction retry).
+5. <strong>Cleanup pass</strong> — <code>AtomicCounter</code>, <code>delivery_adapter</code>, stale HOME strings, B6 documentation.</p>
+<p>Each of Plans 2–4 deserves its own TDD plan when picked up — decomposing them now would be speculative
+(unread seams). This record is the shared <em>why</em>; the plans are the <em>how</em>.</p>
+<hr />
+<h2 id="9-update-2026-07-01-plan-1-shipped">9. Update (2026-07-01): Plan 1 shipped</h2>
+<p><code>docs/superpowers/plans/2026-07-01-engine-timeout-warm-reuse.md</code> is implemented and merged.
+Closed: <strong>B2, B3, B1, and the B7 <code>_expire</code>/<code>release_port</code> items</strong> (B7's queue dual-key dedup
+stays a Plan 3 follow-up). Behavior now:</p>
+<ul>
+<li><strong>Single <code>maxInvocationSeconds</code> owner (B2).</strong> <code>run_invocation</code> no longer self-times-out or
+  kills — the lane's <code>asyncio.timeout(maxInvocationSeconds)</code> (<code>router/lane.py</code>) is the sole
+  authoritative bound (RTR-04). <code>ENGINE_WATCHDOG_KILLS</code> is incremented in the lane's
+  <code>except TimeoutError</code> (fires only on a real deadline, never on shutdown-cancel).</li>
+<li><strong>Always-resolve <code>reply_future</code> + force-kill on timeout (B3).</strong> <code>engine_runner</code> (<code>main.py</code>) is
+  a single <code>try/except CancelledError/except Exception/finally</code>. A lane deadline (or shutdown)
+  cancels it → the cancel branch sets <code>reply_future</code> to <code>InvocationTimeout</code> (so a TUI/reply turn
+  never hangs) and marks <code>timed_out</code>. The <code>finally</code> releases the pooled server with <strong><code>ttl=0</code>
+  when <code>timed_out</code></strong> (force kill of the runaway) else the channel's warm TTL. <code>pool.acquire</code> is
+  inside the <code>try</code>, so a cancel during a cold-start acquire also resolves the future.</li>
+<li><strong>Configurable warm reuse (B1).</strong> <code>engine.idle_ttl_seconds</code> (default <strong>60</strong>, <code>ge=0</code>) keeps an
+  idle keyed server warm after its last release, so <code>channel.session: auto</code> persists the opencode
+  session (<code>ManagedServer._sessions</code>) across events for the same <code>session_key</code> instead of
+  respawning. <code>0</code> restores spawn-per-invocation. <code>--tui</code> is unaffected (it pins a held ref for the
+  whole REPL).</li>
+<li><strong>Race-safe <code>_expire</code> (B7).</strong> After its sleep, <code>EnginePool._expire</code> re-checks under the key lock:
+  it refuses to stop a server whose ref-count is back above 0 or whose TTL task was superseded, and
+  the recheck + pop are one atomic critical section (inlined <code>_stop</code>).</li>
+<li><strong>Port release on stop (B7).</strong> <code>ManagedServer.stop()</code> now calls <code>release_port(self.port)</code>
+  (safe on double-stop), so a stopped server frees its reserved ephemeral port.</li>
+</ul>
+<hr />
+<h2 id="10-update-2026-07-02-plan-2-shipped-b4b5">10. Update (2026-07-02): Plan 2 shipped (B4/B5)</h2>
+<p><code>docs/superpowers/plans/2026-07-02-engine-sse-reconnect-liveness.md</code> is implemented. Closed
+<strong>B4 and B5</strong>. Behavior now on the LIVE invocation path (<code>lifecycle.consume_sse_after_send</code>):</p>
+<ul>
+<li><strong>Bounded, health-gated reconnect (B4).</strong> A transient SSE-reader drop
+  (<code>aiohttp.ClientError</code>) mid-turn is recovered by re-subscribing (default <code>max_reconnects=3</code>),
+  gated on <code>check_health()</code> (and <code>is_alive()</code> when supplied). The prompt is sent <strong>exactly
+  once</strong> — <code>result_queue</code>, the send task, and the <code>ReplyAccumulator</code> persist across attempts;
+  only <code>resp</code> + the reader task are recreated. opencode resends growing cumulative snapshots,
+  so the accumulator's prefix-dedup means re-sent text is neither double-counted nor
+  re-emitted via <code>on_text</code>. A send-POST failure is wrapped as <code>_SendFailed</code> and is terminal —
+  never reconnected. Healthy-but-out-of-budget → <code>EngineError("sse_exhausted")</code>;
+  unhealthy/dead → the original <code>ClientError</code> is raised.</li>
+<li><strong>Mid-invocation liveness (B5).</strong> Each queue wait polls every <code>_LIVENESS_POLL_S</code> (5s); on a
+  poll timeout, if <code>is_alive()</code> is False the turn fails fast with <code>EngineError("engine_died")</code>
+  instead of hanging the full 300s stall bound (which is preserved, reset on every real event,
+  as the wedged-but-alive backstop). <code>run_invocation</code> threads <code>is_alive=server.is_alive</code> into
+  both the main and repair <code>consume_sse_after_send</code> calls.</li>
+<li><strong>Dead path retired.</strong> The previously-dead reconnecting <code>consume_sse_to_completion</code>
+  (<code>events.py</code>) was deleted along with its unit tests; the shared helpers
+  (<code>_consume_events_from_response</code>, <code>ReplyAccumulator</code>, <code>_iter_sse_events_from_client</code>) stay
+  and are reused by the live path — no two reconnect implementations to drift.</li>
+</ul>
+<p>Not in this plan (→ Plan 4, runaway control): <code>POST /session/{id}/abort</code> on give-up and
+step-budget abort.</p>
+<hr />
+<h2 id="11-update-2026-07-02-plan-3-shipped-b6-adjacent-gitlab-dedup">11. Update (2026-07-02): Plan 3 shipped (B6-adjacent gitlab dedup)</h2>
+<p><code>docs/superpowers/plans/2026-07-02-gitlab-dual-key-dedup.md</code> is implemented. Ported the
+valuable half of legacy <code>ackbot-process/src/handlers/gitlab/handler.py:55-89</code> — the <strong>logical
+content composite</strong> — as an <strong>additive SECONDARY dedup key</strong> beside the unchanged primary UUID
+key. The router structure (<code>dedup → backpressure → lane</code>, the three bounds, lanes, eviction) is
+untouched; only the dedup STEP gained the secondary check (inside step 1, before backpressure —
+RTR-01 preserved) and mark (step 3).</p>
+<ul>
+<li><strong>What ported.</strong> <code>derive_gitlab_composite_key(body)</code> (<code>router/dedup.py</code>) →
+  <code>gl:{kind}:{project}:{target}:{user}:{content_hash}</code>. ACTION is deliberately EXCLUDED so
+  GitLab's <code>open</code>+<code>update</code> MR-creation double-fire (two distinct <code>X-Gitlab-Event-UUID</code>s) collapses
+  to one agent run; a content discriminator (note/description/title → updated_at/status fallback)
+  is INCLUDED so a genuinely edited change or a distinct pipeline state does NOT collapse. Wired
+  only for <code>source == "gitlab"</code> in <code>webhook.py</code>; <code>MessageEvent.secondary_idempotency_key</code> is
+  <code>None</code> for every other channel (byte-for-byte unchanged behaviour).</li>
+<li><strong>Two windows, on purpose.</strong> Primary UUID key keeps the full <code>idempotency_window_seconds</code>
+  (already STRONGER than legacy's 2 s for exact-delivery retries). The secondary composite uses
+  a SHORT <code>_SECONDARY_DEDUP_WINDOW_S = 2</code> (matching legacy): a content-based key on the long
+  window would wrongly dedup two INTENTIONAL identical comments minutes apart.</li>
+<li><strong>Post-trigger ordering did NOT port — no precondition here.</strong> Legacy ran dedup <em>after</em>
+  <code>_determine_trigger</code> so an ignored <code>open</code> couldn't shadow a later <code>update</code>. ach-agent has <strong>no
+  harness-side trigger step</strong>: the webhook channel forwards <em>every</em> event to the agent, which
+  decides via prompt/MCP. There is no pre-dedup "ignore" that could shadow a later event, so the
+  ordering fix has no precondition — documented, not implemented.</li>
+<li><strong>Follow-up (separate gap): note-hook 422.</strong> <code>_parse_gitlab</code> (<code>webhook.py</code>) reads
+  <code>body["object_attributes"]["iid"]</code>, present on <strong>Merge Request Hooks</strong> but NOT on <strong>Note Hooks</strong>
+  (comments — <code>iid</code> lives under <code>body["merge_request"]["iid"]</code>), so note hooks currently 422.
+  <code>derive_gitlab_composite_key</code> already handles note shapes (future-proof), so closing that gap
+  needs only the parser, not the dedup. Not fixed here.</li>
+</ul>
+<hr />
+<h2 id="12-update-2026-07-02-plan-4-shipped-runaway-control">12. Update (2026-07-02): Plan 4 shipped (runaway control)</h2>
+<p><code>docs/superpowers/plans/2026-07-02-runaway-step-budget-abort.md</code> is implemented. Ported legacy
+<code>ackbot-process</code>'s runaway-turn control — a <strong>tool-call count</strong> bound complementing the existing
+<strong>time</strong> bound (<code>maxInvocationSeconds</code>).</p>
+<ul>
+<li><strong>Step-budget abort.</strong> <code>consume_sse_after_send</code> now counts DISTINCT tool <code>call_id</code>s (fallback
+  <code>part_id</code>) in a set — reconnect-resent snapshots (Plan 2) never inflate the count. At
+  <code>len(tool_call_ids) &gt;= max_tool_calls</code> (and not already aborted) it logs, sets <code>aborted</code>,
+  <code>await client.abort_session(session_id)</code>, and KEEPS consuming (<code>session.idle</code> arrives after the
+  abort). The outcome is surfaced via a mutable <code>stats</code> out-param (<code>tool_calls</code>, <code>aborted</code>), so the
+  <code>str</code> return is unchanged — <strong>Plan 2's <code>str</code>-return tests keep passing</strong>.</li>
+<li><strong>Wrap-up correction turn.</strong> In <code>run_invocation</code>, when <code>stats["aborted"]</code>, ONE wrap-up turn runs
+  (same opencode session, budget OFF) telling the model to stop calling tools and reply with ONLY
+  the terminal JSON object; its output flows through the normal <code>extract_terminal</code> (+ repair) path.
+  So both structured and free-form channels get a clean terminal object instead of a truncated
+  mid-tool turn.</li>
+<li><strong>Config: <code>engine.max_tool_calls</code> (<code>ge=0</code>), default 0 = OFF.</strong> Zero behaviour change vs pre-Plan-4
+  unless an operator opts in (recommend ~80); <code>maxInvocationSeconds</code> remains the always-on backstop.
+  Wired through <code>main._make_engine_runner</code> beside <code>terminal_output_retries</code>.</li>
+<li><strong>Tool-only correction did NOT port.</strong> Legacy's <code>has_text_beyond_action</code> retried a tool-only agent
+  that wrote prose then appended <code>{"action":"none"}</code>. NOT ported: ach-agent's terminal contract
+  EXPECTS prose + a trailing terminal object and <code>extract_terminal</code> <code>rfind</code>s the last <code>{"action"…}</code>,
+  so "text beyond the action" is normal, not an error — porting it would flag correct output as
+  broken. Documented, not implemented.</li>
+</ul>
+<h2 id="update-2026-07-02-note-hook-422-fixed-configurable-gitlab-events">Update (2026-07-02): note-hook 422 fixed + configurable GitLab events</h2>
+<ul>
+<li><strong>Confirmed defect.</strong> A GitLab <strong>Note Hook</strong> (MR/issue comment) 422'd: <code>_parse_gitlab</code> read
+  <code>body["object_attributes"]["iid"]</code>, present on Merge Request Hooks but NOT on Note Hooks (the
+  MR/issue iid lives under <code>merge_request.iid</code> / <code>issue.iid</code>). Repro:
+  <code>_parse_gitlab(note_hook) → KeyError: 'iid' → HTTP 422</code>. Repeated 422s risk GitLab
+  auto-disabling the webhook.</li>
+<li><strong>Fix — config-driven allowlist.</strong> New <code>WebhookBlock.gitlab_events:
+  list[Literal["merge_request","issue","note"]] | None</code> (None ⇒ default all three). <code>_parse_gitlab</code>
+  now returns <code>(delivery_context, session_key)</code> to ROUTE, <code>None</code> to <strong>accept-and-ignore (HTTP 200
+  <code>{"status":"ignored"}</code>)</strong>, and raises (→ 422) ONLY for a <em>routable-but-malformed</em> payload (e.g. an
+  MR-note with no <code>merge_request</code> block). Push/pipeline/tag/emoji/etc. → 200 ignored, never 422.</li>
+<li><strong>A note routes</strong> only when <code>"note"</code> AND its noteable base kind are both allowed — so
+  <code>["merge_request","note"]</code> routes MR + MR-comments but not issue-comments. Commit/snippet notes
+  have no derivable target → ignored.</li>
+<li><strong>session_key scheme (MR back-compat).</strong> MR hook &amp; MR-comment → <code>f"{project}:{mr_iid}"</code>
+  (UNCHANGED — a comment shares the MR's lane + opencode session). Issue hook &amp; issue-comment →
+  <code>f"{project}:issue:{issue_iid}"</code> (namespaced so MR <code>!7</code> and issue <code>#7</code> never collide).
+  <code>delivery_context</code> now carries <code>kind</code> + <code>target_type</code>; <code>build_engine_prompt</code> builds a per-kind
+  default (Review MR / Review issue / New comment …).</li>
+<li><strong>Harness stays a dumb pipe.</strong> No <code>@bot</code>-mention gating in the harness (legacy did that) — routed
+  events go to the agent; mention/trigger policy is a prompt concern, consistent with the
+  post-trigger-N/A dedup decision (§ above). Reuses the note-aware <code>derive_gitlab_composite_key</code> for
+  the secondary dedup key — no second dedup mechanism added.</li>
+</ul>
+<hr />
+<h2 id="13-b8-acceptance-coupled-to-engine-readiness-design-bug-not-in-legacy">13. B8 — acceptance coupled to engine readiness (design bug, not in legacy)</h2>
+<p><strong>The bug / repro.</strong> Clean boot with a real <code>ek</code>: <code>readyz</code> returns 200 within ~5s (adapters
+listening), but <code>webhook#1</code>/<code>webhook#2</code> immediately after both 503 with
+<code>reason=engine_not_ready</code>. A webhook-only GitLab MR reviewer processes <strong>zero</strong> webhooks out of
+the box. This is a deadlock, not a slow-start hiccup: the engine only starts on the first
+accepted invocation (<code>pool.acquire</code> inside the lane), but acceptance was gated on the engine
+already being ready — nothing ever breaks the cycle. Gate site (pre-fix): <code>http/app.py:105</code>,
+<code>if state["draining"] or (pool is not None and not pool.engine_has_been_ready_once): ... return
+JSONResponse({"detail": reason}, status_code=503)</code>. Twin gates existed in <code>channels/a2a.py</code>
+(<code>if self._pool is not None and not self._pool.engine_has_been_ready_once:</code> → failed
+<code>TaskStatusUpdateEvent("Service warming up")</code>) and <code>channels/cron.py</code> (same latch check → silent
+tick drop + <code>COLD_START_DROPS.inc()</code>).</p>
+<p><strong>Why this is a category error in a keyed pool.</strong> There is no single global engine to be
+"ready." The pool is <strong>keyed by <code>session_key</code></strong> (one agente ⇄ one key, <code>docs/references/2026-07-01-keyed-engine-pool.md</code>),
+and <code>session_key</code> isn't known until the inbound message is parsed (GitLab project+MR/issue,
+cron channel name, a2a context id, …). A global <code>engine_has_been_ready_once</code> latch answers a
+question that doesn't apply per-request: it can never correctly gate acceptance of a message
+whose key — and therefore whose engine instance — hasn't been created yet. The gate wasn't a
+race that needed tightening; it was checking the wrong thing.</p>
+<p><strong>Confirmed against legacy.</strong> <code>ackbot-process/src/handlers/gitlab/handler.py:359-360</code>:
+<div class="highlight"><pre><span></span><code><span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_processor</span><span class="o">.</span><span class="n">process_message</span><span class="p">(</span><span class="n">msg</span><span class="p">))</span>
+<span class="k">return</span> <span class="n">JSONResponse</span><span class="p">({</span><span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;accepted&quot;</span><span class="p">},</span> <span class="n">status_code</span><span class="o">=</span><span class="mi">202</span><span class="p">)</span>
+</code></pre></div>
+No engine-readiness gate anywhere in that handler or in <code>bus/processor.py</code>. The only 503 in
+legacy is backpressure (<code>MessageProcessor</code> docstring: "Requests that wait longer than expire
+seconds are dropped with a 503") — a queue/concurrency bound, not a boot-state check. The A′
+cold-start gate was an <code>ach-agent</code> invention with no legacy precedent.</p>
+<p><strong>Resolution (shipped, <code>1c362bd</code>).</strong> Decouple = restore legacy's 202-accept + lazy per-key
+engine start. Acceptance now depends <strong>only</strong> on harness readiness (routes up) and <code>draining</code>
+(SIGTERM straggler 503, D-12 — kept, correctly scoped to actual shutdown). All three
+<code>engine_has_been_ready_once</code> reads were deleted from the accept path: <code>http/app.py</code>
+pre-admission is now <code>if state["draining"]:</code> only; <code>channels/a2a.py</code> dropped the "Service
+warming up" failed-event branch; <code>channels/cron.py</code> dropped the tick-skip. The latch itself is
+still set in <code>pool.py</code> but nothing gates on it anymore — dead state, not a live invariant.
+Engine-launch failure is no longer silently absorbed: <code>engine_runner</code> now increments a new
+<code>ENGINE_LAUNCH_FAILURES</code> metric (<code>engine/metrics.py</code>) + WARN log, fired specifically when
+<code>pool.acquire</code> raises (not on downstream <code>run_invocation</code> failures) — an explicit signal,
+strictly better than the old blanket 503 that rejected traffic even when the eventual launch
+would have succeeded. <code>COLD_START_REJECTS</code>/<code>COLD_START_DROPS</code> are now dead metrics (no
+increment site left) — expected, not a regression.</p>
+<p><strong>Retired: the "boot pre-warm" band-aid.</strong> An earlier idea floated a throwaway
+<code>pool.acquire</code>/<code>release</code> at boot to flip the global latch before serving traffic. That doesn't
+fix a keyed pool — it just warms <em>one</em> key (or none, if the key isn't known yet) while leaving
+the same category error in place for every other key. Superseded by the decouple; not built.</p>
+<p><strong>Correlation <code>task_id</code> (Task 2, <code>22da452</code>/<code>73a0eb8</code>).</strong> The webhook 202 now carries a
+correlation handle: header <code>X-ACH-Task-Id</code> + body <code>{"status":"accepted","task_id":"&lt;uuid4hex&gt;"}</code>.
+It is logged by <code>engine_runner</code> for tracing, but is <strong>not persisted and not queryable</strong> —
+<code>MessageEvent.task_id</code> defaults to <code>""</code> for every non-webhook channel. A <strong>queryable task-status
+API</strong> (<code>GET /tasks/{task_id}</code>, a <code>TaskStore</code> with submitted→working→completed|failed states +
+TTL) and a <strong>push callback</strong> on completion are <strong>explicitly deferred</strong>, not built here: today's
+contract is fire-and-forget accept (matching legacy) plus a forward-compatible correlation id,
+same as A2A's native task/status path already covers for that channel.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

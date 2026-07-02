@@ -290,3 +290,31 @@ RTR-01 preserved) and mark (step 3).
   (comments — `iid` lives under `body["merge_request"]["iid"]`), so note hooks currently 422.
   `derive_gitlab_composite_key` already handles note shapes (future-proof), so closing that gap
   needs only the parser, not the dedup. Not fixed here.
+
+---
+
+## 12. Update (2026-07-02): Plan 4 shipped (runaway control)
+
+`docs/superpowers/plans/2026-07-02-runaway-step-budget-abort.md` is implemented. Ported legacy
+`ackbot-process`'s runaway-turn control — a **tool-call count** bound complementing the existing
+**time** bound (`maxInvocationSeconds`).
+
+- **Step-budget abort.** `consume_sse_after_send` now counts DISTINCT tool `call_id`s (fallback
+  `part_id`) in a set — reconnect-resent snapshots (Plan 2) never inflate the count. At
+  `len(tool_call_ids) >= max_tool_calls` (and not already aborted) it logs, sets `aborted`,
+  `await client.abort_session(session_id)`, and KEEPS consuming (`session.idle` arrives after the
+  abort). The outcome is surfaced via a mutable `stats` out-param (`tool_calls`, `aborted`), so the
+  `str` return is unchanged — **Plan 2's `str`-return tests keep passing**.
+- **Wrap-up correction turn.** In `run_invocation`, when `stats["aborted"]`, ONE wrap-up turn runs
+  (same opencode session, budget OFF) telling the model to stop calling tools and reply with ONLY
+  the terminal JSON object; its output flows through the normal `extract_terminal` (+ repair) path.
+  So both structured and free-form channels get a clean terminal object instead of a truncated
+  mid-tool turn.
+- **Config: `engine.max_tool_calls` (`ge=0`), default 0 = OFF.** Zero behaviour change vs pre-Plan-4
+  unless an operator opts in (recommend ~80); `maxInvocationSeconds` remains the always-on backstop.
+  Wired through `main._make_engine_runner` beside `terminal_output_retries`.
+- **Tool-only correction did NOT port.** Legacy's `has_text_beyond_action` retried a tool-only agent
+  that wrote prose then appended `{"action":"none"}`. NOT ported: ach-agent's terminal contract
+  EXPECTS prose + a trailing terminal object and `extract_terminal` `rfind`s the last `{"action"…}`,
+  so "text beyond the action" is normal, not an error — porting it would flag correct output as
+  broken. Documented, not implemented.

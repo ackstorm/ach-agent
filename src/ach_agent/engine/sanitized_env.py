@@ -182,6 +182,12 @@ def _resolve_log_level() -> int:
     return _LOG_LEVELS.get(os.environ.get("ACH_LOG_LEVEL", "").strip().lower(), logging.INFO)
 
 
+# Secret.env NAMES to redact from logs; filled post config-load by add_secret_redaction().
+# configure_logging() binds the redaction processor to THIS list object (captured by reference),
+# so add_secret_redaction updates it in place — no structlog reconfigure, no chain duplication.
+_SECRET_ENV_NAMES: list[str] = []
+
+
 def configure_logging() -> None:
     """Configure structlog with the redact_ek_processor in the processor chain.
 
@@ -196,6 +202,9 @@ def configure_logging() -> None:
             structlog.processors.TimeStamper(fmt="iso"),
             redact_ek_processor,  # SEC-01: must come before renderer
             redact_gitlab_token_processor,  # SEC-03: must come before renderer
+            make_redact_secret_env_processor(
+                _SECRET_ENV_NAMES
+            ),  # secret.env redaction (names set later)
             structlog.dev.ConsoleRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(_resolve_log_level()),
@@ -210,25 +219,11 @@ def configure_logging() -> None:
 
 
 def add_secret_redaction(env_names: list[str]) -> None:
-    """Re-configure structlog with a secret-env redaction processor added.
+    """Register secret.env NAMES for generic log redaction.
 
-    configure_logging() runs at module import time (before config load), so it cannot
-    know the operator's secret.env NAMES yet. Called once from main() after load_config,
-    this re-runs structlog.configure with make_redact_secret_env_processor(env_names)
-    inserted before the renderer — mirrors configure_logging's exact processor chain plus
-    the one extra processor, so ek_/GITLAB_TOKEN redaction keeps working unchanged.
+    configure_logging() (module import, before config load) already installed
+    make_redact_secret_env_processor bound to _SECRET_ENV_NAMES. Called once from main()
+    after load_config, this fills in the names via in-place mutation — the processor's
+    captured list ref sees it, so no structlog reconfigure (and no chain duplication).
     """
-    structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.stdlib.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            redact_ek_processor,  # SEC-01: must come before renderer
-            redact_gitlab_token_processor,  # SEC-03: must come before renderer
-            make_redact_secret_env_processor(env_names),  # generic secret.env redaction
-            structlog.dev.ConsoleRenderer(),
-        ],
-        wrapper_class=structlog.make_filtering_bound_logger(_resolve_log_level()),
-        context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(file=_StderrProxy()),  # type: ignore[arg-type]
-    )
+    _SECRET_ENV_NAMES[:] = env_names

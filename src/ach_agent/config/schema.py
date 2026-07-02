@@ -315,7 +315,7 @@ class SecretSource(BaseModel):
 
     env  → the harness reads the value from os.environ[NAME] at use time (hardened default:
            dumpable=0 hides it from the co-resident agent; the NAME must NOT be in
-           engine.forwardEnv — the boot guard rejects that).
+           engine.forwardEnv — the harness strips it from the forwarded set + WARNs).
     file → the harness reads the value from PATH at use time (volume-mount deployments;
            same-uid readable by the agent — weaker).
     """
@@ -326,13 +326,9 @@ class SecretSource(BaseModel):
     file: str = Field(default="")
 
     @model_validator(mode="after")
-    def _exactly_one(self) -> SecretSource:
+    def _check(self) -> SecretSource:
         if bool(self.env) == bool(self.file):
             raise ValueError("secret must set exactly one of {env, file}")
-        return self
-
-    @model_validator(mode="after")
-    def _valid_env_name(self) -> SecretSource:
         if self.env and not _ENV_NAME_RE.match(self.env):
             raise ValueError(f"secret.env is not a valid environment variable name: {self.env!r}")
         return self

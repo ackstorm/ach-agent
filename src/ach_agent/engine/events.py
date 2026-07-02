@@ -157,6 +157,25 @@ class OpenCodeUserMessage:
 
 
 @dataclass(slots=True, frozen=True)
+class OpenCodeUsage:
+    """Assistant message.updated — cumulative token/cost/duration for the turn.
+
+    opencode emits one message.updated per assistant message as it completes; the values
+    are cumulative for that message, so the consumer keeps the latest. Ported from
+    ackbot-process opencode_events.py (ach-agent had dropped this parse as "not needed").
+    """
+
+    session_id: str
+    message_id: str
+    input_tokens: int
+    output_tokens: int
+    cache_read: int
+    cache_write: int
+    cost: float
+    duration_ms: int
+
+
+@dataclass(slots=True, frozen=True)
 class OpenCodeStreamReady:
     """First event opencode emits on a fresh GET /event connection (server.connected).
 
@@ -187,6 +206,7 @@ OpenCodeEvent = (
     OpenCodeTextUpdate
     | OpenCodeToolUpdate
     | OpenCodeUserMessage
+    | OpenCodeUsage
     | OpenCodeStreamReady
     | OpenCodeSessionIdle
     | OpenCodeSessionError
@@ -222,7 +242,6 @@ def parse_opencode_event(data: dict[str, Any]) -> OpenCodeEvent | None:
       - session.status with type 'retry' (transient — NOT terminal)
       - message.part.updated for non-rendered parts (step-start/finish, snapshot, reasoning)
         and tool parts still in 'pending' state
-      - message.updated with role == 'assistant' (token/cost info — not needed here)
     """
     event_type = data.get("type", "")
     props = data.get("properties", {})
@@ -261,8 +280,23 @@ def parse_opencode_event(data: dict[str, Any]) -> OpenCodeEvent | None:
                 session_id=props.get("sessionID", info.get("sessionID", "")),
                 message_id=info.get("id", ""),
             )
-        # assistant message.updated carries token/cost info — not needed here
-        return None
+        # assistant message.updated carries cumulative token/cost info for the turn.
+        tokens = info.get("tokens", {})
+        cache = tokens.get("cache", {})
+        time_data = info.get("time", {})
+        created = time_data.get("created", 0)
+        completed = time_data.get("completed", 0)
+        duration_ms = int(completed - created) if completed and created else 0
+        return OpenCodeUsage(
+            session_id=props.get("sessionID", info.get("sessionID", "")),
+            message_id=info.get("id", ""),
+            input_tokens=tokens.get("input", 0),
+            output_tokens=tokens.get("output", 0),
+            cache_read=cache.get("read", 0),
+            cache_write=cache.get("write", 0),
+            cost=info.get("cost", 0.0),
+            duration_ms=duration_ms,
+        )
 
     if event_type == "server.connected":
         # First event on a new /event connection — subscription is live server-side.
@@ -317,6 +351,8 @@ class ReplyAccumulator:
         self._last_text_part_id: str | None = None
         self._tool_seen: set[tuple[str, str]] = set()
         self._chunks: list[str] = []
+        self._tool_part_ids: set[str] = set()
+        self._usage: OpenCodeUsage | None = None
 
     def text(self) -> str:
         """The full accumulated reply text."""
@@ -339,10 +375,23 @@ class ReplyAccumulator:
 
     def add_tool(self, event: OpenCodeToolUpdate) -> None:
         """Surface a tool-lifecycle update once per (part_id, status). Render-only chrome."""
+        self._tool_part_ids.add(event.part_id)
         key = (event.part_id, event.state.status)
         if self._on_tool is not None and key not in self._tool_seen:
             self._tool_seen.add(key)
             self._on_tool(event)
+
+    def add_usage(self, event: OpenCodeUsage) -> None:
+        """Capture the latest (cumulative) assistant usage for the turn."""
+        self._usage = event
+
+    def tool_count(self) -> int:
+        """Number of distinct tool calls in the turn (by part_id)."""
+        return len(self._tool_part_ids)
+
+    def usage(self) -> OpenCodeUsage | None:
+        """The latest assistant usage, or None if no message.updated arrived."""
+        return self._usage
 
     def _emit(self, chunk: str) -> None:
         self._chunks.append(chunk)

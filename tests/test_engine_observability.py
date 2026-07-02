@@ -50,3 +50,20 @@ def test_log_engine_tool_includes_title_and_truncated_output(capfd):
     # output is truncated to 300 chars — the 500-char field must not appear in full
     assert "x" * 500 not in out
     assert "x" * 300 in out
+
+
+def test_usage_round_trips_through_stats_for_summary(capfd):
+    """The accumulator's tool_count + usage are what the summary log reads from stats."""
+    from ach_agent.engine.events import OpenCodeUsage, ReplyAccumulator
+
+    acc = ReplyAccumulator()
+    acc.add_usage(OpenCodeUsage("s", "m1", 100, 40, 0, 0, 0.0031, 1200))
+    stats: dict = {"tool_count": acc.tool_count(), "usage": acc.usage()}
+
+    usage = stats["usage"]
+    # This mirrors exactly what _make_engine_runner logs:
+    assert stats["tool_count"] == 0
+    assert usage.input_tokens == 100
+    assert usage.output_tokens == 40
+    assert usage.cost == 0.0031
+    assert usage.duration_ms == 1200

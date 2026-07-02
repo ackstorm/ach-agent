@@ -520,6 +520,7 @@ def _make_engine_runner(
                 session_key=event.session_key,
                 prompt=full_prompt,
             )
+            turn_stats: dict[str, Any] = {}
             obj = await run_invocation(
                 server=server,
                 session_id=event.session_key,
@@ -530,6 +531,7 @@ def _make_engine_runner(
                 on_tool=on_tool,
                 reuse=reuse,
                 max_tool_calls=max_tool_calls,
+                stats=turn_stats,
             )
 
             text = str(obj.get("text", ""))
@@ -539,6 +541,17 @@ def _make_engine_runner(
                 session_key=event.session_key,
                 action=obj.get("action"),
                 text=text,
+            )
+            _usage = turn_stats.get("usage")
+            log.info(
+                "engine: turn summary",
+                channel=event.channel_name,
+                session_key=event.session_key,
+                tools=turn_stats.get("tool_count", 0),
+                input_tokens=getattr(_usage, "input_tokens", 0),
+                output_tokens=getattr(_usage, "output_tokens", 0),
+                cost_usd=getattr(_usage, "cost", 0.0),
+                duration_ms=getattr(_usage, "duration_ms", 0),
             )
 
             if future is not None:

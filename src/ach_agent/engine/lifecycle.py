@@ -485,6 +485,7 @@ async def run_invocation(
     on_tool: Callable[[OpenCodeToolUpdate], None] | None = None,
     reuse: bool = True,
     max_tool_calls: int = 0,
+    stats: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Orchestrate: subscribe SSE → send prompt → consume → return the terminal object.
 
@@ -526,7 +527,7 @@ async def run_invocation(
     # Subscribe to SSE FIRST, then send the message.
     # This ensures we don't miss the session.idle event. The lane bounds this await via
     # maxInvocationSeconds; a deadline cancels it (no inner timeout here).
-    stats: dict[str, Any] = {}
+    stats = stats if stats is not None else {}
     accumulated_text = await consume_sse_after_send(
         client,
         oc_session_id,
@@ -644,6 +645,7 @@ async def consume_sse_after_send(
         OpenCodeSessionIdle,
         OpenCodeTextUpdate,
         OpenCodeToolUpdate,
+        OpenCodeUsage,
         OpenCodeUserMessage,
         ReplyAccumulator,
         _consume_events_from_response,
@@ -764,6 +766,8 @@ async def consume_sse_after_send(
                                     "abort_session failed", session_id=session_id, exc_info=True
                                 )
                             # keep consuming — session.idle arrives after the abort
+                    elif isinstance(event, OpenCodeUsage):
+                        acc.add_usage(event)
                     elif isinstance(event, OpenCodeSessionIdle):
                         log.debug("session.idle received", session_id=session_id)
                         if stats is not None:
@@ -801,6 +805,9 @@ async def consume_sse_after_send(
             if terminal_error is not None:
                 raise terminal_error
             if terminal_idle:
+                if stats is not None:
+                    stats["tool_count"] = acc.tool_count()
+                    stats["usage"] = acc.usage()
                 return acc.text()
             if not reconnect:
                 break  # stream ended without a terminal event and no reconnectable drop

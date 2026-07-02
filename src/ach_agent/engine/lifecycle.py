@@ -514,6 +514,8 @@ async def run_invocation(
     emits session.idle on the SSE stream in real-time. If send_message completes
     before subscribe_events(), the session.idle event is missed and the consumer hangs.
     """
+    import aiohttp
+
     from ach_agent.engine.client import OpenCodeClient
 
     client = server._client
@@ -551,16 +553,41 @@ async def run_invocation(
     # This ensures we don't miss the session.idle event. The lane bounds this await via
     # maxInvocationSeconds; a deadline cancels it (no inner timeout here).
     stats = stats if stats is not None else {}
-    accumulated_text = await consume_sse_after_send(
-        client,
-        oc_session_id,
-        prompt,
-        on_text=on_text,
-        on_tool=on_tool,
-        is_alive=server.is_alive,
-        max_tool_calls=max_tool_calls,
-        stats=stats,
-    )
+    try:
+        accumulated_text = await consume_sse_after_send(
+            client,
+            oc_session_id,
+            prompt,
+            on_text=on_text,
+            on_tool=on_tool,
+            is_alive=server.is_alive,
+            max_tool_calls=max_tool_calls,
+            stats=stats,
+        )
+    except aiohttp.ClientResponseError as exc:
+        # Stale cached id: opencode pruned the session (e.g. home wiped between
+        # restarts) → POST /session/{id}/message 404s. Mint a fresh session, update
+        # the map, retry ONCE. A fresh id can't be stale and other statuses aren't
+        # staleness — propagate everything else.
+        if not (reused and exc.status == 404):
+            raise
+        log.warning(
+            "engine: cached opencode session stale — recreating",
+            session_key=session_id,
+            oc_session_id=oc_session_id,
+        )
+        oc_session_id = await _create_oc_session(client)
+        sessions[session_id] = oc_session_id
+        accumulated_text = await consume_sse_after_send(
+            client,
+            oc_session_id,
+            prompt,
+            on_text=on_text,
+            on_tool=on_tool,
+            is_alive=server.is_alive,
+            max_tool_calls=max_tool_calls,
+            stats=stats,
+        )
     if stats.get("aborted"):
         # Step-budget abort (Plan 4): the turn was cut mid-tool-loop, so accumulated_text may
         # lack a terminal object. Run ONE wrap-up turn (budget OFF, same opencode session) so the

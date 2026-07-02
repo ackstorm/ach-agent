@@ -1189,3 +1189,99 @@ async def test_run_invocation_freeform_abort_returns_wrapup_text() -> None:
     assert len(calls) == 2, "aborted free-form turn still runs the wrap-up"
     assert calls[1]["mtc"] == 0
     assert result == {"action": "none", "text": "final free-form summary"}
+
+
+# ---------------------------------------------------------------------------
+# stale cached session: 404 → recreate + retry once
+# ---------------------------------------------------------------------------
+
+
+def _client_response_error(status: int) -> "aiohttp.ClientResponseError":  # noqa: F821, UP037
+    import aiohttp
+
+    return aiohttp.ClientResponseError(
+        request_info=MagicMock(), history=(), status=status
+    )
+
+
+async def test_stale_cached_session_recreated_and_retried() -> None:
+    """Cached id 404s on the (new) server → mint fresh session, overwrite map, retry once."""
+    from ach_agent.engine.lifecycle import run_invocation
+
+    canned = '{"action":"none","text":"ok","thoughts":""}'
+    shared_map: dict[str, str] = {"key-a": "ses-stale"}
+    server = _server_with_client(19889, AsyncMock(return_value={"id": "ses-new"}))
+
+    with patch(
+        "ach_agent.engine.lifecycle.consume_sse_after_send",
+        new_callable=AsyncMock,
+        side_effect=[_client_response_error(404), canned],
+    ) as mock_consume:
+        result = await run_invocation(
+            server=server,
+            session_id="key-a",
+            prompt="p",
+            terminal_retries=1,
+            reuse=True,
+            oc_sessions=shared_map,
+        )
+
+    assert shared_map == {"key-a": "ses-new"}
+    server._client.create_session.assert_awaited_once()
+    assert mock_consume.call_args_list[0].args[1] == "ses-stale"
+    assert mock_consume.call_args_list[1].args[1] == "ses-new"
+    assert result["action"] == "none"
+
+
+async def test_404_on_fresh_session_propagates() -> None:
+    """A fresh (just-created) id cannot be 'stale' — 404 propagates, no retry loop."""
+    import aiohttp
+
+    from ach_agent.engine.lifecycle import run_invocation
+
+    shared_map: dict[str, str] = {}
+    server = _server_with_client(19890, AsyncMock(return_value={"id": "ses-x"}))
+
+    with patch(
+        "ach_agent.engine.lifecycle.consume_sse_after_send",
+        new_callable=AsyncMock,
+        side_effect=_client_response_error(404),
+    ) as mock_consume:
+        with pytest.raises(aiohttp.ClientResponseError):
+            await run_invocation(
+                server=server,
+                session_id="key-a",
+                prompt="p",
+                terminal_retries=1,
+                reuse=True,
+                oc_sessions=shared_map,
+            )
+
+    assert len(mock_consume.call_args_list) == 1  # no retry
+
+
+async def test_non_404_error_on_reused_session_propagates() -> None:
+    """Only 404 triggers the stale-recreate path; a 500 on a reused id propagates."""
+    import aiohttp
+
+    from ach_agent.engine.lifecycle import run_invocation
+
+    shared_map: dict[str, str] = {"key-a": "ses-cached"}
+    server = _server_with_client(19891, AsyncMock(return_value={"id": "ses-x"}))
+
+    with patch(
+        "ach_agent.engine.lifecycle.consume_sse_after_send",
+        new_callable=AsyncMock,
+        side_effect=_client_response_error(500),
+    ):
+        with pytest.raises(aiohttp.ClientResponseError):
+            await run_invocation(
+                server=server,
+                session_id="key-a",
+                prompt="p",
+                terminal_retries=1,
+                reuse=True,
+                oc_sessions=shared_map,
+            )
+
+    assert shared_map == {"key-a": "ses-cached"}  # map NOT overwritten

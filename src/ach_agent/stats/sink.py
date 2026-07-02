@@ -9,8 +9,9 @@ design spec §5.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -55,3 +56,75 @@ class StatsSink:
             self._queue.put_nowait(stat)
         except asyncio.QueueFull:
             metrics.STATS_DEGRADED.inc()
+
+    def _make_client(self) -> Any:
+        if self._client_factory is not None:
+            return self._client_factory()
+        import redis.asyncio as redis_asyncio
+
+        # redis.asyncio.from_url has no return annotation upstream, so --strict flags it
+        # as an untyped call. Route it through a typed factory alias (see channels/queue.py).
+        from_url = cast(Callable[..., Any], redis_asyncio.from_url)
+        return from_url(
+            self._redis_url,
+            socket_connect_timeout=0.5,
+            socket_timeout=0.5,
+            decode_responses=True,
+        )
+
+    async def start(self) -> None:
+        if self._queue is None or self._task is not None:
+            return
+        self._task = asyncio.create_task(self._run(), name="stats-writer")
+
+    async def stop(self) -> None:
+        if self._task is None:
+            return
+        if self._queue is not None:
+            try:
+                await asyncio.wait_for(self._queue.join(), timeout=2.0)
+            except TimeoutError:
+                pass
+        self._task.cancel()
+        try:
+            await self._task
+        except asyncio.CancelledError:
+            pass
+        self._task = None
+
+    async def _run(self) -> None:
+        assert self._queue is not None
+        backoff = 1.0
+        last_log = 0.0
+        while True:
+            client = None
+            try:
+                client = self._make_client()
+                while True:
+                    stat = await self._queue.get()
+                    try:
+                        minid = int((time.time() - self._retention_s) * 1000)
+                        await client.xadd(
+                            "ach:sessions",
+                            stat.to_entry(),
+                            minid=minid,
+                            approximate=True,
+                        )
+                        backoff = 1.0
+                    finally:
+                        self._queue.task_done()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — never let the writer die silently
+                now = time.time()
+                if now - last_log > 10:
+                    log.warning("stats: redis writer error", error=str(exc), backoff=backoff)
+                    last_log = now
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30.0)
+            finally:
+                if client is not None:
+                    try:
+                        await client.aclose()
+                    except Exception:  # noqa: BLE001
+                        pass

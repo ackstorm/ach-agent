@@ -430,6 +430,42 @@ async def test_cr01_empty_secret_path_rejects_request() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cr02_unset_env_secret_rejects_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-01/CR-02: schema-valid secret={env: NAME} whose env var is UNSET must REJECT.
+
+    Still-reachable runtime path the empty-secret migration left uncovered: unlike
+    test_cr01_empty_secret_path_rejects_request above (unconstructable — SecretSource
+    requires exactly one of {env, file}), this builds a perfectly schema-valid
+    SecretSource(env=...) and only leaves the *value* missing at request time.
+    resolve_secret() returns None for an unset env var, so auth must still fail-closed
+    (not admit, not hang on completion.wait()).
+    """
+    from a2a.types.a2a_pb2 import TASK_STATE_FAILED
+
+    from ach_agent.config.schema import A2AAuthBlock, A2ABlock, ChannelConfig, SecretSource
+
+    env_name = "ACH_SECRET_UNSET_XYZ"
+    monkeypatch.delenv(env_name, raising=False)
+
+    handler = _make_accepted_handler()
+    a2a_auth = A2AAuthBlock(header=_UNIT_TEST_HEADER, secret=SecretSource(env=env_name))
+    channel_cfg = ChannelConfig(name="test-a2a", type="a2a", a2a=A2ABlock(auth=a2a_auth))
+
+    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+    ctx = FakeContext(headers={})  # no auth header presented either
+    eq = MockEventQueue()
+
+    # Bounded: must complete quickly; would hang on buggy (fail-open) code
+    await asyncio.wait_for(bridge.execute(ctx, eq), timeout=2.0)
+
+    assert len(eq.events) == 1, f"Expected 1 failed event, got {len(eq.events)}"
+    assert eq.events[0].status.state == TASK_STATE_FAILED
+    handler.handle.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_cr02_unreadable_secret_file_rejects_request(tmp_path: pytest.TempPath) -> None:
     """CR-02: Unreadable/missing secret file must REJECT, not pass auth (empty-vs-empty).
 

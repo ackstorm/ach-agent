@@ -363,6 +363,29 @@ async def test_gitlab_token_auth_rejects_bad_token(tmp_path: pytest.TempPathFact
     assert handler._call_count == 0
 
 
+@pytest.mark.asyncio
+async def test_missing_secret_file_rejects_request(tmp_path: pytest.TempPathFactory) -> None:
+    """CR-02: schema-valid secret={file: PATH} whose file does NOT exist must REJECT.
+
+    resolve_secret() returns None on OSError (missing file), so _verify_header_token must
+    fail-closed rather than treat the unresolved secret as a pass. An otherwise-plausible
+    token is presented to prove the rejection comes from the unresolvable secret, not a
+    header mismatch.
+    """
+    missing_path = str(tmp_path / "does_not_exist")
+    cfg = _make_channel_cfg(missing_path)
+    handler = FakeHandler(RouterAdmitResult.ACCEPTED)
+    headers = _make_headers("some-plausible-token", event_uuid=str(uuid.uuid4()))
+    raw_body = json.dumps(MR_PAYLOAD).encode()
+
+    result = await handle_webhook_request(raw_body, headers, cfg, handler)
+
+    assert result.status_code == 401
+    assert handler._call_count == 0, (
+        "handler.handle() must NOT be called when secret file is missing"
+    )
+
+
 def test_header_token_auth(tmp_path) -> None:
     """header_token auth: static shared secret in a configurable header (constant-time)."""
     from ach_agent.channels.webhook import _verify_auth

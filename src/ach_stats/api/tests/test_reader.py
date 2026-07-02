@@ -6,11 +6,24 @@ from app.reader import parse_entry, read_coverage_start, read_recent, read_windo
 
 def test_parse_entry_v1_typed():
     fields = {
-        "v": "1", "ts": "1700000000000", "session_key": "k", "channel": "webhook",
-        "source": "gitlab", "model": "claude-opus-4-8", "provider": "unknown", "task": "Review !7",
-        "input_tokens": "1200", "output_tokens": "300", "cache_read": "5", "cache_write": "6",
-        "cost": "0.12", "turns": "4", "duration_ms": "4000", "tokens_per_s": "75.0",
-        "status": "completed", "retry": "false",
+        "v": "1",
+        "ts": "1700000000000",
+        "session_key": "k",
+        "channel": "webhook",
+        "source": "gitlab",
+        "model": "claude-opus-4-8",
+        "provider": "unknown",
+        "task": "Review !7",
+        "input_tokens": "1200",
+        "output_tokens": "300",
+        "cache_read": "5",
+        "cache_write": "6",
+        "cost": "0.12",
+        "turns": "4",
+        "duration_ms": "4000",
+        "tokens_per_s": "75.0",
+        "status": "completed",
+        "retry": "false",
     }
     e = parse_entry("1700000000000-0", fields)
     assert e["model"] == "claude-opus-4-8"

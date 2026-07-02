@@ -6,9 +6,22 @@ from app.aggregate import build_contract, build_leaderboard, build_totals, month
 
 def _row(**over):
     base = dict(
-        ts_ms=1, session_key="k", channel="cron", source="cron", model="glm-5-2", task="t",
-        input_tokens=100, output_tokens=50, cache_read=0, cache_write=0, cost=0.01, turns=1,
-        duration_ms=1000, tokens_per_s=50.0, status="completed", retry=False,
+        ts_ms=1,
+        session_key="k",
+        channel="cron",
+        source="cron",
+        model="glm-5-2",
+        task="t",
+        input_tokens=100,
+        output_tokens=50,
+        cache_read=0,
+        cache_write=0,
+        cost=0.01,
+        turns=1,
+        duration_ms=1000,
+        tokens_per_s=50.0,
+        status="completed",
+        retry=False,
     )
     base.update(over)
     return base
@@ -52,11 +65,12 @@ def test_leaderboard_groups_by_model_sorted_by_spend_desc():
 
 
 def test_leaderboard_derived_fields():
-    rows = [_row(model="glm-5-2", cost=0.50, output_tokens=1000, duration_ms=2000,
-                 input_tokens=1000)]
+    rows = [
+        _row(model="glm-5-2", cost=0.50, output_tokens=1000, duration_ms=2000, input_tokens=1000)
+    ]
     r = build_leaderboard(rows)["rows"][0]
-    assert r["speed_tok_s"] == 500.0            # 1000 tok / 2 s
-    assert r["cost_per_mtok"] == 250.0          # 0.50 / (2000 tokens / 1e6)
+    assert r["speed_tok_s"] == 500.0  # 1000 tok / 2 s
+    assert r["cost_per_mtok"] == 250.0  # 0.50 / (2000 tokens / 1e6)
 
 
 def test_month_start_respects_tz():
@@ -71,10 +85,13 @@ def test_month_start_respects_tz():
 def test_contract_partial_flags_when_coverage_after_window_start():
     now = 2_000_000_000_000
     contract = build_contract(
-        window_rows=[_row(cost=0.1)], recent_rows=[_row(cost=0.1)],
+        window_rows=[_row(cost=0.1)],
+        recent_rows=[_row(cost=0.1)],
         coverage_start_ms=1_999_999_999_999,  # later than range_start -> partial
-        now_ms=now, tz="UTC",
-        range_start_ms=1_000_000_000_000, range_end_ms=now,
+        now_ms=now,
+        tz="UTC",
+        range_start_ms=1_000_000_000_000,
+        range_end_ms=now,
     )
     assert contract["totals"]["partial"] is True
     assert contract["range"]["coverage_start"] == 1_999_999_999_999
@@ -84,10 +101,13 @@ def test_contract_partial_flags_when_coverage_after_window_start():
 def test_contract_not_partial_when_full_coverage():
     now = 2_000_000_000_000
     contract = build_contract(
-        window_rows=[_row(cost=0.1)], recent_rows=[_row(cost=0.1)],
+        window_rows=[_row(cost=0.1)],
+        recent_rows=[_row(cost=0.1)],
         coverage_start_ms=500_000_000_000,  # earlier than range_start -> complete
-        now_ms=now, tz="UTC",
-        range_start_ms=1_000_000_000_000, range_end_ms=now,
+        now_ms=now,
+        tz="UTC",
+        range_start_ms=1_000_000_000_000,
+        range_end_ms=now,
     )
     assert contract["totals"]["partial"] is False
 
@@ -95,9 +115,13 @@ def test_contract_not_partial_when_full_coverage():
 def test_contract_recent_shape():
     now = 2_000_000_000_000
     contract = build_contract(
-        window_rows=[], recent_rows=[_row(task="Review !7", status="aborted", retry=True)],
-        coverage_start_ms=None, now_ms=now, tz="UTC",
-        range_start_ms=1_000_000_000_000, range_end_ms=now,
+        window_rows=[],
+        recent_rows=[_row(task="Review !7", status="aborted", retry=True)],
+        coverage_start_ms=None,
+        now_ms=now,
+        tz="UTC",
+        range_start_ms=1_000_000_000_000,
+        range_end_ms=now,
     )
     rec = contract["recent"][0]
     assert rec["task"] == "Review !7"

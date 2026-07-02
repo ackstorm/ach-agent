@@ -48,8 +48,13 @@ def create_app() -> FastAPI:
         recent = await read_recent(client, 12)
         coverage = await read_coverage_start(client)
         contract = build_contract(
-            window_rows=window, recent_rows=recent, coverage_start_ms=coverage,
-            now_ms=now, tz=_tz(request), range_start_ms=start, range_end_ms=now,
+            window_rows=window,
+            recent_rows=recent,
+            coverage_start_ms=coverage,
+            now_ms=now,
+            tz=_tz(request),
+            range_start_ms=start,
+            range_end_ms=now,
         )
         return JSONResponse(contract)
 
@@ -58,9 +63,16 @@ def create_app() -> FastAPI:
         client = _redis(request)
         recent = await read_recent(client, n)
         payload = [
-            {"ts": r["ts_ms"], "task": r["task"], "model": r["model"],
-             "tokens": r["input_tokens"] + r["output_tokens"], "cost": r["cost"],
-             "turns": r["turns"], "status": r["status"], "retry": r["retry"]}
+            {
+                "ts": r["ts_ms"],
+                "task": r["task"],
+                "model": r["model"],
+                "tokens": r["input_tokens"] + r["output_tokens"],
+                "cost": r["cost"],
+                "turns": r["turns"],
+                "status": r["status"],
+                "retry": r["retry"],
+            }
             for r in recent
         ]
         return JSONResponse({"recent": payload})

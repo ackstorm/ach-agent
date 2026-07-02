@@ -22,16 +22,36 @@ def _seed_app():
     now = int(time.time() * 1000)
 
     async def seed():
-        await fake.xadd("ach:sessions",
-                        {"v": "1", "model": "claude-opus-4-8", "cost": "0.90",
-                         "output_tokens": "100", "duration_ms": "1000", "input_tokens": "100",
-                         "status": "completed", "turns": "2", "task": "Set up flags"},
-                        id=f"{now - 1000}-0")
-        await fake.xadd("ach:sessions",
-                        {"v": "1", "model": "glm-5-2", "cost": "0.10", "output_tokens": "50",
-                         "duration_ms": "1000", "input_tokens": "50", "status": "completed",
-                         "turns": "1", "task": "Add pagination"},
-                        id=f"{now - 500}-0")
+        await fake.xadd(
+            "ach:sessions",
+            {
+                "v": "1",
+                "model": "claude-opus-4-8",
+                "cost": "0.90",
+                "output_tokens": "100",
+                "duration_ms": "1000",
+                "input_tokens": "100",
+                "status": "completed",
+                "turns": "2",
+                "task": "Set up flags",
+            },
+            id=f"{now - 1000}-0",
+        )
+        await fake.xadd(
+            "ach:sessions",
+            {
+                "v": "1",
+                "model": "glm-5-2",
+                "cost": "0.10",
+                "output_tokens": "50",
+                "duration_ms": "1000",
+                "input_tokens": "50",
+                "status": "completed",
+                "turns": "1",
+                "task": "Add pagination",
+            },
+            id=f"{now - 500}-0",
+        )
 
     # No running loop in this sync test function, so asyncio.run() is safe (unlike
     # asyncio.get_event_loop().run_until_complete(), deprecated since 3.10/3.12).

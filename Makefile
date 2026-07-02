@@ -5,7 +5,7 @@ SHELL := /usr/bin/env bash
 
 OWNER ?= ackstorm
 IMG   ?= ghcr.io/$(OWNER)/ach-agent
-APP_DIR := src
+APP_DIR := src/ach_agent
 
 IN_DEVTOOLS ?=
 define container_target

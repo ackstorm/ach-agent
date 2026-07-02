@@ -34,8 +34,13 @@ def build_totals(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def build_leaderboard(rows: list[dict[str, Any]]) -> dict[str, Any]:
     by_model: dict[str, dict[str, float]] = defaultdict(
-        lambda: {"spend": 0.0, "sessions": 0.0, "output_tokens": 0.0, "duration_ms": 0.0,
-                 "total_tokens": 0.0}
+        lambda: {
+            "spend": 0.0,
+            "sessions": 0.0,
+            "output_tokens": 0.0,
+            "duration_ms": 0.0,
+            "total_tokens": 0.0,
+        }
     )
     for r in rows:
         m = by_model[r["model"]]
@@ -50,17 +55,19 @@ def build_leaderboard(rows: list[dict[str, Any]]) -> dict[str, Any]:
         provider, tag = resolve(model)
         speed = _safe_div(m["output_tokens"], m["duration_ms"] / 1000.0)
         cost_per_mtok = _safe_div(m["spend"], m["total_tokens"] / 1_000_000.0)
-        out.append({
-            "rank": 0,  # assigned after sort
-            "model": model,
-            "provider": provider,
-            "tag": tag,
-            "score": None,  # eval seam — Sub-project B fills this
-            "speed_tok_s": speed,
-            "cost_per_mtok": cost_per_mtok,
-            "spend": m["spend"],
-            "sessions": int(m["sessions"]),
-        })
+        out.append(
+            {
+                "rank": 0,  # assigned after sort
+                "model": model,
+                "provider": provider,
+                "tag": tag,
+                "score": None,  # eval seam — Sub-project B fills this
+                "speed_tok_s": speed,
+                "cost_per_mtok": cost_per_mtok,
+                "spend": m["spend"],
+                "sessions": int(m["sessions"]),
+            }
+        )
 
     out.sort(key=lambda r: r["spend"], reverse=True)
     for i, r in enumerate(out, start=1):
@@ -109,8 +116,10 @@ def build_contract(
     for r in month_rows:
         month_counts[r["model"]] += 1
     sessions_this_month = {
-        "rows": [{"model": m, "count": c} for m, c in
-                 sorted(month_counts.items(), key=lambda kv: kv[1], reverse=True)],
+        "rows": [
+            {"model": m, "count": c}
+            for m, c in sorted(month_counts.items(), key=lambda kv: kv[1], reverse=True)
+        ],
         "partial": coverage_start_ms is not None and coverage_start_ms > m_start,
     }
 
@@ -124,25 +133,43 @@ def build_contract(
         d["sessions"] += 1
         d["tokens"] += r["input_tokens"] + r["output_tokens"]
     series = [
-        {"date": day, "spend": v["spend"], "sessions": int(v["sessions"]),
-         "tokens": int(v["tokens"]),
-         "partial": coverage_start_ms is not None
-         and coverage_start_ms > int(datetime.strptime(day, "%Y-%m-%d")
-                                     .replace(tzinfo=ZoneInfo(tz)).timestamp() * 1000)}
+        {
+            "date": day,
+            "spend": v["spend"],
+            "sessions": int(v["sessions"]),
+            "tokens": int(v["tokens"]),
+            "partial": coverage_start_ms is not None
+            and coverage_start_ms
+            > int(
+                datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=ZoneInfo(tz)).timestamp() * 1000
+            ),
+        }
         for day, v in sorted(day_acc.items())
     ]
 
     recent = [
-        {"ts": r["ts_ms"], "task": r["task"], "model": r["model"],
-         "tokens": r["input_tokens"] + r["output_tokens"], "cost": r["cost"],
-         "turns": r["turns"], "status": r["status"], "retry": r["retry"]}
+        {
+            "ts": r["ts_ms"],
+            "task": r["task"],
+            "model": r["model"],
+            "tokens": r["input_tokens"] + r["output_tokens"],
+            "cost": r["cost"],
+            "turns": r["turns"],
+            "status": r["status"],
+            "retry": r["retry"],
+        }
         for r in recent_rows
     ]
 
     days = max(1, round((range_end_ms - range_start_ms) / 86_400_000))
     return {
-        "range": {"start": range_start_ms, "end": range_end_ms, "days": days,
-                  "coverage_start": coverage_start_ms, "tz": tz},
+        "range": {
+            "start": range_start_ms,
+            "end": range_end_ms,
+            "days": days,
+            "coverage_start": coverage_start_ms,
+            "tz": tz,
+        },
         "totals": totals,
         "leaderboard": leaderboard,
         "cost_per_session": cps,

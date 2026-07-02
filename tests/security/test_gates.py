@@ -40,3 +40,16 @@ def test_evaluate_gates_no_seccomp_is_soft_warning_only():
     hard, warn = evaluate_gates(uid=1000, cap_eff=0, seccomp=0)
     assert hard == []
     assert [name for name, _ in warn] == ["seccomp_filter"]
+
+
+def test_evaluate_gates_nonempty_bounding_set_is_soft_warning_only():
+    # Docker default bounding set (cap_drop: ALL not applied) — nudge, never a hard failure.
+    hard, warn = evaluate_gates(uid=1000, cap_eff=0, seccomp=2, cap_bnd=0xA80425FB)
+    assert hard == []
+    assert "cap_bounding_set" in [name for name, _ in warn]
+
+
+def test_evaluate_gates_empty_bounding_set_no_bounding_warn():
+    # cap_drop: ALL applied → CapBnd == 0 → no bounding-set warning.
+    _, warn = evaluate_gates(uid=1000, cap_eff=0, seccomp=2, cap_bnd=0)
+    assert "cap_bounding_set" not in [name for name, _ in warn]

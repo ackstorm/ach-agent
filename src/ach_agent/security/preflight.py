@@ -63,12 +63,15 @@ def _cap_has(cap_eff: int, bit: int) -> bool:
 
 
 def evaluate_gates(
-    uid: int, cap_eff: int, seccomp: int
+    uid: int, cap_eff: int, seccomp: int, cap_bnd: int = 0
 ) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     """Pure gate evaluator. Returns (hard_failures, warnings) as (name, detail) lists.
 
     Hard gates are exactly the properties that would defeat Class A hardening for a
-    same-UID peer. Everything else (seccomp) is defense-in-depth and warn-only.
+    same-UID peer. Everything else (seccomp, bounding set) is defense-in-depth and
+    warn-only. A non-empty bounding set (cap_drop: ALL not applied) is a nudge, NOT a
+    hard failure: no_new_privs already blocks a non-root child from acquiring any of
+    those caps via setuid/file-cap binaries, so the bounding set is a second wall.
     """
     hard: list[tuple[str, str]] = []
     warn: list[tuple[str, str]] = []
@@ -80,6 +83,13 @@ def evaluate_gates(
         hard.append(("no_cap_sys_admin", "CAP_SYS_ADMIN held — broad host access"))
     if seccomp != 2:
         warn.append(("seccomp_filter", f"no seccomp filter active (Seccomp={seccomp})"))
+    if cap_bnd != 0:
+        warn.append(
+            (
+                "cap_bounding_set",
+                f"bounding set not empty (CapBnd={cap_bnd:#x}) — consider cap_drop: ALL",
+            )
+        )
     return hard, warn
 
 
@@ -116,8 +126,9 @@ def check_gates() -> list[tuple[str, str]]:
         return []
     status = parse_status(Path("/proc/self/status").read_text(encoding="utf-8"))
     cap_eff = int(status.get("CapEff", "0"), 16)
+    cap_bnd = int(status.get("CapBnd", "0"), 16)
     seccomp = int(status.get("Seccomp", "0") or "0")
-    hard, warn = evaluate_gates(os.getuid(), cap_eff, seccomp)
+    hard, warn = evaluate_gates(os.getuid(), cap_eff, seccomp, cap_bnd)
     for name, detail in warn:
         log.warning("preflight: soft check", gate=name, detail=detail)
     return hard

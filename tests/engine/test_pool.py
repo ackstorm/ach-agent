@@ -230,23 +230,6 @@ async def test_dead_server_replaced_on_acquire() -> None:
     dead.stop.assert_awaited_once()
 
 
-async def test_ready_latch_set_on_first_start() -> None:
-    """engine_has_been_ready_once flips True on first successful start, stays True."""
-    pool = EnginePool()
-    fake = _make_fake_server(alive=True)
-
-    async def fake_start(cfg, session_key: str) -> ManagedServer:
-        return fake
-
-    pool._start_server = fake_start
-
-    assert pool.engine_has_been_ready_once is False
-    await pool.acquire("k1", _config())
-    assert pool.engine_has_been_ready_once is True
-    await pool.release("k1", ttl_seconds=0)
-    assert pool.engine_has_been_ready_once is True
-
-
 async def test_stop_all_stops_every_server() -> None:
     """stop_all() stops every live server and clears the pool."""
     pool = EnginePool()

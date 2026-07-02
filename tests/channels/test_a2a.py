@@ -117,18 +117,6 @@ def _authed_ctx(**kwargs: Any) -> "FakeContext":
     return FakeContext(**kwargs)
 
 
-def _make_ready_pool() -> MagicMock:
-    pool = MagicMock()
-    pool.engine_has_been_ready_once = True
-    return pool
-
-
-def _make_cold_pool() -> MagicMock:
-    pool = MagicMock()
-    pool.engine_has_been_ready_once = False
-    return pool
-
-
 def _make_accepted_handler() -> AsyncMock:
     handler = AsyncMock()
     handler.handle.return_value = RouterAdmitResult.ACCEPTED
@@ -158,7 +146,7 @@ async def test_a2a_header_auth_missing_header_enqueues_failed_event(
 
     handler = _make_accepted_handler()
     channel_cfg = _make_channel_cfg(secret_path=str(secret_file))
-    bridge = A2AAgentExecutorBridge(handler=handler, pool=_make_ready_pool(), channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     # Context with NO auth header
     ctx = FakeContext(headers={})
@@ -186,7 +174,7 @@ async def test_a2a_header_auth_wrong_header_enqueues_failed_event(
 
     handler = _make_accepted_handler()
     channel_cfg = _make_channel_cfg(secret_path=str(secret_file))
-    bridge = A2AAgentExecutorBridge(handler=handler, pool=_make_ready_pool(), channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     # Context with WRONG auth header
     ctx = FakeContext(headers={"x-a2a-custom-api-key": "wrong-secret"})
@@ -209,7 +197,7 @@ async def test_a2a_header_auth_correct_header_proceeds_to_dispatch(
 
     handler = _make_accepted_handler()
     channel_cfg = _make_channel_cfg(secret_path=str(secret_file))
-    bridge = A2AAgentExecutorBridge(handler=handler, pool=_make_ready_pool(), channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     ctx = FakeContext(headers={"x-a2a-custom-api-key": "correct-secret"})
     eq = MockEventQueue()
@@ -244,7 +232,7 @@ async def test_a2a_executor_bridge_builds_correct_message_event(
     """CHN-05: executor bridge builds MessageEvent with correct idempotency_key."""
     handler = _make_accepted_handler()
     channel_cfg = _make_authed_channel_cfg(tmp_path)
-    bridge = A2AAgentExecutorBridge(handler=handler, pool=_make_ready_pool(), channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     ctx = _authed_ctx(task_id="task-abc", context_id="ctx-1", text="hi there")
     eq = MockEventQueue()
@@ -271,7 +259,7 @@ async def test_a2a_session_key_uses_context_id(tmp_path: pytest.TempPath) -> Non
     """D-03: session_key = context_id when present."""
     handler = _make_accepted_handler()
     channel_cfg = _make_authed_channel_cfg(tmp_path)
-    bridge = A2AAgentExecutorBridge(handler=handler, pool=_make_ready_pool(), channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     ctx = _authed_ctx(task_id="task-1", context_id="ctx-999")
     eq = MockEventQueue()
@@ -298,7 +286,7 @@ async def test_a2a_session_key_fallback_to_task_id_when_no_context_id(
     """D-03: session_key = task_id when context_id is absent."""
     handler = _make_accepted_handler()
     channel_cfg = _make_authed_channel_cfg(tmp_path)
-    bridge = A2AAgentExecutorBridge(handler=handler, pool=_make_ready_pool(), channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     ctx = _authed_ctx(task_id="task-xyz", context_id="")
     eq = MockEventQueue()
@@ -330,7 +318,7 @@ async def test_a2a_engine_not_ready_routes_normally(tmp_path: pytest.TempPath) -
     """
     handler = _make_accepted_handler()
     channel_cfg = _make_authed_channel_cfg(tmp_path)
-    bridge = A2AAgentExecutorBridge(handler=handler, pool=_make_cold_pool(), channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     ctx = _authed_ctx(task_id="task-1")
     eq = MockEventQueue()
@@ -358,7 +346,7 @@ async def test_a2a_full_queue_enqueues_failed_event(tmp_path: pytest.TempPath) -
 
     handler = _make_full_queue_handler()
     channel_cfg = _make_authed_channel_cfg(tmp_path)
-    bridge = A2AAgentExecutorBridge(handler=handler, pool=_make_ready_pool(), channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     ctx = _authed_ctx(task_id="task-1")
     eq = MockEventQueue()
@@ -396,7 +384,7 @@ async def test_cr01_no_auth_block_rejects_request() -> None:
 
     channel_cfg = ChannelConfig(name="test-a2a-no-auth", type="a2a", a2a=None)
 
-    bridge = A2AAgentExecutorBridge(handler=handler, pool=_make_ready_pool(), channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
     ctx = FakeContext(headers={"x-a2a-custom-api-key": "any-value"})
     eq = MockEventQueue()
 
@@ -423,7 +411,7 @@ async def test_cr01_empty_secret_path_rejects_request() -> None:
     # secretPath="" — no file written, no auth configured
     channel_cfg = _make_channel_cfg(secret_path="")
 
-    bridge = A2AAgentExecutorBridge(handler=handler, pool=_make_ready_pool(), channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
     ctx = FakeContext(headers={})  # no auth header presented either
     eq = MockEventQueue()
 
@@ -451,7 +439,7 @@ async def test_cr02_unreadable_secret_file_rejects_request(tmp_path: pytest.Temp
     missing_path = str(tmp_path / "does_not_exist.txt")
     channel_cfg = _make_channel_cfg(secret_path=missing_path)
 
-    bridge = A2AAgentExecutorBridge(handler=handler, pool=_make_ready_pool(), channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
     # Caller sends no header — "" vs "" was previously True → auth "passed"
     ctx = FakeContext(headers={})
     eq = MockEventQueue()
@@ -484,7 +472,7 @@ async def test_cr04_concurrent_empty_key_calls_complete_independently(
 
     handler = _make_accepted_handler()
     channel_cfg = _make_channel_cfg(secret_path=str(secret_file))
-    bridge = A2AAgentExecutorBridge(handler=handler, pool=_make_ready_pool(), channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     # Provide correct auth header so requests pass auth and reach the session_key check
     auth_headers = {"x-a2a-custom-api-key": "test-secret"}
@@ -540,7 +528,7 @@ def test_build_a2a_app_constructs_sub_app(tmp_path: pytest.TempPath) -> None:
 
     channel_cfg = _make_authed_channel_cfg(tmp_path)
     bridge = A2AAgentExecutorBridge(
-        handler=_make_accepted_handler(), pool=_make_ready_pool(), channel_cfg=channel_cfg
+        handler=_make_accepted_handler(), channel_cfg=channel_cfg
     )
     agent_card = make_a2a_agent_card(channel_cfg.name)
 
@@ -567,7 +555,7 @@ async def test_a2a_signal_failure_enqueues_failed_event_and_unblocks(
 
     handler = _make_accepted_handler()
     channel_cfg = _make_authed_channel_cfg(tmp_path)
-    bridge = A2AAgentExecutorBridge(handler=handler, pool=_make_ready_pool(), channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     # Populate _pending exactly the way execute() would (mirror signal_completion setup).
     session_key = "ctx-fail"
@@ -594,7 +582,7 @@ async def test_a2a_signal_failure_unknown_session_key_is_noop(
     """signal_failure for an unknown session_key must not raise (mirror signal_completion)."""
     channel_cfg = _make_authed_channel_cfg(tmp_path)
     bridge = A2AAgentExecutorBridge(
-        handler=_make_accepted_handler(), pool=_make_ready_pool(), channel_cfg=channel_cfg
+        handler=_make_accepted_handler(), channel_cfg=channel_cfg
     )
 
     # Should log a warning and return without error.

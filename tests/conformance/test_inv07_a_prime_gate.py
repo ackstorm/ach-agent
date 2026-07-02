@@ -69,12 +69,9 @@ async def test_inv07_engine_not_ready_does_not_gate_acceptance(tmp_path: Any) ->
         delivery_adapter=None,
     )
 
-    # FakePool with engine_has_been_ready_once=False models the first warmup.
-    class _FakePool:
-        engine_has_been_ready_once: bool = False
-
-    pool = _FakePool()
-    app = create_app(channels=[channel_cfg], handler=router, pool=pool)
+    # There is no engine-readiness gate anymore — acceptance depends only on harness
+    # readiness (+ draining). The engine starts lazily per session_key in the lane.
+    app = create_app(channels=[channel_cfg], handler=router)
 
     headers = {
         "X-Gitlab-Token": "test-secret",

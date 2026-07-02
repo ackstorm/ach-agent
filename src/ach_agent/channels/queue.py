@@ -74,12 +74,10 @@ class QueueConsumer:
         self,
         channel_cfg: ChannelConfig,
         handler: MessageHandler,
-        pool: Any = None,  # EnginePool — accepted for symmetry with CronScheduler; unused
         redis_client: Any = None,
     ) -> None:
         self._cfg = channel_cfg
         self._handler = handler
-        self._pool = pool
         self._client = redis_client
         self._owns_client = redis_client is None
         self._task: asyncio.Task[None] | None = None

@@ -180,13 +180,6 @@ def test_inbound_route_dispatches(tmp_path: pytest.TempPathFactory) -> None:
 # ---------------------------------------------------------------------------
 
 
-class FakePool:
-    """Minimal fake EnginePool exposing engine_has_been_ready_once."""
-
-    def __init__(self, ready: bool = False) -> None:
-        self.engine_has_been_ready_once = ready
-
-
 def test_webhook_accepted_when_engine_not_started(tmp_path: pytest.TempPathFactory) -> None:
     """Decouple: POST /channels/.../events returns 202 even when
     engine_has_been_ready_once=False — acceptance no longer waits on the engine
@@ -196,8 +189,7 @@ def test_webhook_accepted_when_engine_not_started(tmp_path: pytest.TempPathFacto
     secret_file.write_text("s3cr3t")
     cfg = _make_channel_cfg(secret_path=str(secret_file))
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
-    pool = FakePool(ready=False)  # engine never started yet
-    app = create_app([cfg], handler, pool=pool)
+    app = create_app([cfg], handler)
 
     with TestClient(app) as client:
         resp = client.post(
@@ -211,26 +203,6 @@ def test_webhook_accepted_when_engine_not_started(tmp_path: pytest.TempPathFacto
     assert len(handler.events) == 1, "router must be called — acceptance is decoupled"
 
 
-def test_a_prime_pass_after_ready(tmp_path: pytest.TempPathFactory) -> None:
-    """POST /channels/.../events returns 202 when engine_has_been_ready_once=True."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
-    cfg = _make_channel_cfg(secret_path=str(secret_file))
-    handler = FakeHandler(RouterAdmitResult.ACCEPTED)
-    pool = FakePool(ready=True)  # engine ready
-    app = create_app([cfg], handler, pool=pool)
-
-    with TestClient(app) as client:
-        resp = client.post(
-            "/channels/gitlab-mr-review/events",
-            content=json.dumps(MR_PAYLOAD).encode(),
-            headers=_make_headers("s3cr3t", event_uuid=str(uuid.uuid4())),
-        )
-    assert resp.status_code == 202, (
-        f"POST must return 202 when engine ready, got {resp.status_code}"
-    )
-
-
 def test_webhook_503_only_when_draining(tmp_path: pytest.TempPathFactory) -> None:
     """D-12: 503 is emitted ONLY for draining — never for engine-not-ready.
 
@@ -240,8 +212,7 @@ def test_webhook_503_only_when_draining(tmp_path: pytest.TempPathFactory) -> Non
     secret_file.write_text("s3cr3t")
     cfg = _make_channel_cfg(secret_path=str(secret_file))
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
-    pool = FakePool(ready=False)  # engine not ready — must not be a 503 reason
-    app = create_app([cfg], handler, pool=pool)
+    app = create_app([cfg], handler)
 
     with TestClient(app) as client:
         resp = client.post(
@@ -273,8 +244,7 @@ def test_draining_503(tmp_path: pytest.TempPathFactory) -> None:
     secret_file.write_text("s3cr3t")
     cfg = _make_channel_cfg(secret_path=str(secret_file))
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
-    pool = FakePool(ready=True)  # engine ready — draining is the gate, not A′
-    app = create_app([cfg], handler, pool=pool)
+    app = create_app([cfg], handler)
 
     with TestClient(app) as client:
         # Simulate drain: set draining on the shared state dict exposed via app.extra

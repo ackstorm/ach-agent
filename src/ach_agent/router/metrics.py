@@ -34,20 +34,6 @@ EXPIRE_DROPS: prometheus_client.Counter = prometheus_client.Counter(
     "Events dropped on full queue (async-no-retry source_trait)",
 )
 
-# A′ cold-start gate: HTTP 503s issued before first engine warmup (DUR-02, D-06)
-COLD_START_REJECTS: prometheus_client.Counter = prometheus_client.Counter(
-    "router_cold_start_rejects_total",
-    "Inbound events rejected (503) during first engine warmup (A′ gate, DUR-02)",
-    ["channel"],
-)
-
-# A′ cold-start gate: cron ticks dropped during first warmup (DUR-02/DUR-04 loss mode)
-COLD_START_DROPS: prometheus_client.Counter = prometheus_client.Counter(
-    "router_cold_start_drops_total",
-    "Cron ticks dropped during first engine warmup (A′ gate + DUR-04 misfire loss mode)",
-    ["channel"],
-)
-
 # Persistence fail-open: dedup.db corrupt at startup (DUR-01, D-04b)
 PERSISTENCE_DEGRADED: prometheus_client.Counter = prometheus_client.Counter(
     "router_persistence_degraded_total",

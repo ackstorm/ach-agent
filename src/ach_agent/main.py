@@ -459,6 +459,10 @@ def _make_engine_runner(
         # set_exception), otherwise the awaiting route hangs forever. The except branches
         # below resolve it on every failure path.
         future = event.reply_future
+        # on_fail (a2a) MUST be signalled on every failure path too — otherwise the a2a
+        # executor's completion.wait() (no timeout) hangs forever. Read it here so the
+        # success branch AND the except branches below all resolve it.
+        on_fail = event.delivery_context.get("on_fail")
         server = None
         timed_out = False
         acquired = False
@@ -507,7 +511,6 @@ def _make_engine_runner(
             # The on_complete callable is injected by the A2A wiring closure in main.py
             # into event.delivery_context['on_complete'] before handler.handle() is called.
             on_complete = event.delivery_context.get("on_complete")
-            on_fail = event.delivery_context.get("on_fail")
             if on_complete is not None or on_fail is not None:
                 action = obj.get("action")
                 if action == "a2a_reply" and text.strip():
@@ -532,6 +535,8 @@ def _make_engine_runner(
             timed_out = True
             if future is not None and not future.done():
                 future.set_exception(InvocationTimeout(max_invocation_seconds))
+            if on_fail is not None:
+                on_fail(event.session_key, f"invocation timed out after {max_invocation_seconds}s")
             raise
         except Exception as exc:
             if not acquired:
@@ -550,6 +555,8 @@ def _make_engine_runner(
                 )
             if future is not None and not future.done():
                 future.set_exception(exc)
+            if on_fail is not None:
+                on_fail(event.session_key, f"engine failure: {exc}")
             raise
         finally:
             # Return the engine server to the pool. Slot release is owned by the lane:
@@ -1054,7 +1061,7 @@ async def main(
             continue
 
         # The bridge is created here (boot module) — engine_runner never imports it.
-        bridge = A2AAgentExecutorBridge(handler=None, pool=pool, channel_cfg=channel)
+        bridge = A2AAgentExecutorBridge(handler=None, channel_cfg=channel)
 
         # on_complete closure captures the bridge (W9: the closure lives in boot module,
         # engine tier stays unaware of A2A type).
@@ -1102,12 +1109,10 @@ async def main(
         log.info("a2a channel bridge built", channel_name=channel.name, mount_path=mount_path)
 
     # 6c. Create FastAPI app with all webhook channels.
-    # pool=pool threads the A′ gate (DUR-02) into the webhook route — live in production.
     # a2a_mounts threads the A2A sub-apps under the same socket (topology A).
     app = create_app(
         channels=webhook_channels,
         handler=router,
-        pool=pool,
         a2a_mounts=a2a_mounts,
     )
     # Expose state dict so _drain can flip draining/ready (same ref as app.extra['state'])
@@ -1124,7 +1129,7 @@ async def main(
     cron_channels = [ch for ch in cfg.channels if ch.type == "cron"]
     cron_scheduler: CronScheduler | None = None
     if cron_channels:
-        cron_scheduler = CronScheduler(cron_channels, handler=router, pool=pool)
+        cron_scheduler = CronScheduler(cron_channels, handler=router)
         await cron_scheduler.start()
         log.info(
             "cron scheduler started",
@@ -1137,7 +1142,7 @@ async def main(
     queue_channels = [ch for ch in cfg.channels if ch.type == "queue"]
     queue_consumers: list[QueueConsumer] = []
     for channel in queue_channels:
-        consumer = QueueConsumer(channel, handler=router, pool=pool)
+        consumer = QueueConsumer(channel, handler=router)
         await consumer.start()
         queue_consumers.append(consumer)
         log.info("queue consumer started", channel_name=channel.name, stream=channel.queue.key)  # type: ignore[union-attr]

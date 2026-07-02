@@ -83,7 +83,7 @@ async def test_cron_dispatches_correct_event(monkeypatch: pytest.MonkeyPatch) ->
 
     # Reset singleton counter for test isolation
     CronScheduler._instance_count = 0
-    scheduler = CronScheduler([channel_cfg], handler=handler, pool=None)
+    scheduler = CronScheduler([channel_cfg], handler=handler)
 
     # Run the scheduler's _run loop — it will raise _StopAfterOne after the first sleep
     with pytest.raises(_StopAfterOne):
@@ -153,7 +153,7 @@ async def test_cron_full_queue_logs_and_never_silent(
 
     # Reset singleton counter for test isolation
     CronScheduler._instance_count = 0
-    scheduler = CronScheduler([channel_cfg], handler=handler, pool=None)
+    scheduler = CronScheduler([channel_cfg], handler=handler)
 
     with pytest.raises(_StopAfterOne):
         await scheduler._run()
@@ -186,9 +186,6 @@ async def test_engine_not_ready_tick_routes_normally(monkeypatch: pytest.MonkeyP
     from ach_agent.channels.cron import CronScheduler
     from ach_agent.config.schema import ChannelConfig
 
-    class FakePool:
-        engine_has_been_ready_once = False
-
     call_count = 0
 
     async def fake_sleep(secs: float) -> None:
@@ -206,7 +203,7 @@ async def test_engine_not_ready_tick_routes_normally(monkeypatch: pytest.MonkeyP
 
     # Reset singleton counter for test isolation
     CronScheduler._instance_count = 0
-    scheduler = CronScheduler([channel_cfg], handler=handler, pool=FakePool())
+    scheduler = CronScheduler([channel_cfg], handler=handler)
 
     with pytest.raises(_StopAfterOne):
         await scheduler._run()
@@ -266,7 +263,7 @@ def test_singleton_invariant() -> None:
     channel_c2 = _make_channel_cfg("c2", "*/5 * * * *")
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
 
-    scheduler = CronScheduler([channel_c1, channel_c2], handler=handler, pool=None)  # type: ignore[list-item]
+    CronScheduler([channel_c1, channel_c2], handler=handler)  # type: ignore[list-item]
 
     assert CronScheduler._instance_count == 1, (
         f"D-09/SC#3: expected _instance_count == 1 after one CronScheduler construction, "

@@ -112,11 +112,9 @@ class A2AAgentExecutorBridge:
     def __init__(
         self,
         handler: MessageHandler | None,
-        pool: Any,
         channel_cfg: ChannelConfig,
     ) -> None:
         self._handler: MessageHandler | None = handler
-        self._pool = pool
         self._channel_cfg = channel_cfg
         # Maps session_key → (event_queue, completion_event)
         self._pending: dict[str, tuple[Any, asyncio.Event]] = {}

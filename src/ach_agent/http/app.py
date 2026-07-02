@@ -42,17 +42,17 @@ MAX_WEBHOOK_BODY_BYTES: int = 1 * 1024 * 1024  # 1 MiB
 def create_app(
     channels: Sequence[ChannelConfig],
     handler: MessageHandler,
-    pool: Any = None,  # EnginePool — unused by the pre-admission gate (decoupled); kept for callers
     a2a_mounts: Sequence[tuple[str, Any]] | None = None,  # [(path, sub_app), ...] — A2A sub-apps
 ) -> FastAPI:
     """Create the FastAPI app with all HTTP surface endpoints.
 
+    Acceptance is decoupled from engine readiness — the pre-admission gate is `draining`
+    only; the engine starts lazily per session_key in the lane (never a precondition for
+    accepting a message).
+
     Args:
         channels:  List of channel configs (looked up by name on each request).
         handler:   MessageHandler (Router) for router.handle(event) calls.
-        pool:      EnginePool instance. Acceptance is decoupled from engine readiness —
-                   the pre-admission gate no longer reads this; kept for backward
-                   compatibility with existing callers/tests.
 
     Returns:
         FastAPI application instance with lifespan, routes, and /metrics mount.

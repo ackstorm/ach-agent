@@ -185,13 +185,6 @@ MR_PAYLOAD: dict[str, Any] = {
 }
 
 
-class _FakePool:
-    """Minimal fake EnginePool for test isolation."""
-
-    def __init__(self, ready: bool = True) -> None:
-        self.engine_has_been_ready_once = ready
-
-
 @pytest.mark.asyncio
 async def test_sigterm_flips_readyz(tmp_path: Path) -> None:
     """DUR-03 / D-09: SIGTERM sets draining=True + ready=False → /readyz returns 503.
@@ -220,8 +213,7 @@ async def test_sigterm_flips_readyz(tmp_path: Path) -> None:
         delivery_adapter=None,
     )
 
-    pool = _FakePool(ready=True)
-    app = create_app(channels=[channel_cfg], handler=router, pool=pool)
+    app = create_app(channels=[channel_cfg], handler=router)
 
     # Flip state via the same dict the drain handler uses
     state: dict[str, Any] = app.extra["state"]
@@ -280,8 +272,7 @@ async def test_sigterm_stops_intake(tmp_path: Path) -> None:
         delivery_adapter=None,
     )
 
-    pool = _FakePool(ready=True)
-    app = create_app(channels=[channel_cfg], handler=router, pool=pool)
+    app = create_app(channels=[channel_cfg], handler=router)
     state: dict[str, Any] = app.extra["state"]
 
     # Set draining = True (as _drain does)
@@ -346,8 +337,7 @@ async def test_sigterm_drain_completes_inflight(tmp_path: Path) -> None:
         delivery_adapter=None,
     )
 
-    pool = _FakePool(ready=True)
-    app = create_app(channels=[channel_cfg], handler=router, pool=pool)
+    app = create_app(channels=[channel_cfg], handler=router)
     state: dict[str, Any] = app.extra["state"]
 
     # Record DRAIN_COMPLETED value before

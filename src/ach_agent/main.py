@@ -48,6 +48,7 @@ from ach_agent.config.schema import CodememMemory, HindsightMemory, Memory
 from ach_agent.engine.context import fetch_context
 from ach_agent.engine.hydrate import hydrate, resolve_model
 from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
+from ach_agent.engine.metrics import DRAIN_COMPLETED, ENGINE_LAUNCH_FAILURES
 from ach_agent.engine.sanitized_env import SanitizedEnv, configure_logging
 from ach_agent.http.app import create_app
 from ach_agent.router import Router
@@ -613,8 +614,6 @@ def _make_engine_runner(
                 # this session_key. Explicit metric + WARN (no silent drop): acceptance
                 # is decoupled from engine readiness, so this is where a launch failure
                 # first surfaces. Never log ek_/tokens — session_key + error string only.
-                from ach_agent.engine.metrics import ENGINE_LAUNCH_FAILURES
-
                 ENGINE_LAUNCH_FAILURES.inc()
                 log.warning(
                     "engine: launch failed (pool.acquire)",
@@ -664,8 +663,6 @@ async def _drain(
     No grace-deadline timer (D-10): maxInvocationSeconds watchdog + K8s SIGKILL backstop.
     Never logs ek_/GITLAB_TOKEN (T-03-07): log emits only path/count/reason fields.
     """
-    from ach_agent.engine.metrics import DRAIN_COMPLETED
-
     # 1. Flip draining flag + readyz NotReady (D-09, D-12 straggler gate)
     state["draining"] = True
     state["ready"] = False

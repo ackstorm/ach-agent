@@ -21,7 +21,6 @@ import pytest
 from ach_agent.channels.a2a import A2AAgentExecutorBridge
 from ach_agent.router.router import RouterAdmitResult
 
-
 # ---------------------------------------------------------------------------
 # Idempotency derivation (already GREEN from Plan 04-01, kept here for
 # completeness / regression guard)
@@ -110,7 +109,7 @@ def _make_authed_channel_cfg(monkeypatch: pytest.MonkeyPatch, name: str = "test-
     return _make_channel_cfg(name=name, env_name=_UNIT_TEST_ENV)
 
 
-def _authed_ctx(**kwargs: Any) -> "FakeContext":
+def _authed_ctx(**kwargs: Any) -> FakeContext:
     """Return a FakeContext pre-populated with the correct auth header for unit tests."""
     kwargs.setdefault("headers", {})
     kwargs["headers"][_UNIT_TEST_HEADER] = _UNIT_TEST_SECRET
@@ -463,7 +462,7 @@ async def test_cr02_unset_env_secret_rejects_request(
 
 
 @pytest.mark.asyncio
-async def test_cr02_unreadable_secret_file_rejects_request(
+async def test_cr02_unresolvable_env_secret_rejects_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """CR-02: Unresolvable secret (env var unset) must REJECT, not pass auth (empty-vs-empty).
@@ -568,9 +567,7 @@ def test_build_a2a_app_constructs_sub_app(monkeypatch: pytest.MonkeyPatch) -> No
     from ach_agent.channels.a2a import build_a2a_app, make_a2a_agent_card
 
     channel_cfg = _make_authed_channel_cfg(monkeypatch)
-    bridge = A2AAgentExecutorBridge(
-        handler=_make_accepted_handler(), channel_cfg=channel_cfg
-    )
+    bridge = A2AAgentExecutorBridge(handler=_make_accepted_handler(), channel_cfg=channel_cfg)
     agent_card = make_a2a_agent_card(channel_cfg.name)
 
     sub_app = build_a2a_app(agent_card, bridge)
@@ -622,9 +619,7 @@ async def test_a2a_signal_failure_unknown_session_key_is_noop(
 ) -> None:
     """signal_failure for an unknown session_key must not raise (mirror signal_completion)."""
     channel_cfg = _make_authed_channel_cfg(monkeypatch)
-    bridge = A2AAgentExecutorBridge(
-        handler=_make_accepted_handler(), channel_cfg=channel_cfg
-    )
+    bridge = A2AAgentExecutorBridge(handler=_make_accepted_handler(), channel_cfg=channel_cfg)
 
     # Should log a warning and return without error.
     bridge.signal_failure("does-not-exist", "reason")

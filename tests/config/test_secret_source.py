@@ -16,9 +16,9 @@ def test_secret_source_env_only_ok():
     assert s.env == "ACH_SECRET_X"
 
 
-def test_secret_source_both_rejected():
+def test_secret_source_file_key_rejected():
     with pytest.raises(ValidationError):
-        SecretSource(file="/p")  # file is no longer a known field
+        SecretSource(file="/p")  # file is no longer a field → extra_forbidden
 
 
 def test_secret_source_neither_rejected():

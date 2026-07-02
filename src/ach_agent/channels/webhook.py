@@ -4,7 +4,7 @@
 Locked decisions:
   - Auth: GitLab plain-token compare via hmac.compare_digest (NOT HMAC-SHA256 body sig).
     See RESEARCH.md Pitfall 1: GitLab sends X-Gitlab-Token as a plain secret string.
-  - Secret: read per-request from auth.secret (SecretSource: env|file) via resolve_secret();
+  - Secret: read per-request from auth.secret (SecretSource: env) via resolve_secret();
     NEVER stored as an instance attribute or long-lived variable (SEC-02, Pitfall 2).
   - delivery_context: {project_id, mr_iid} extracted at parse time and threaded through
     MessageEvent.delivery_context (D-07).

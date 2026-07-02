@@ -11,7 +11,7 @@ Locked decisions:
     engine starts lazily per session_key inside the lane (pool.acquire in engine_runner).
   - FULL_QUEUE (D-05/RTR-05): failed TaskStatusUpdateEvent, not silent drop.
   - source_trait = "async_no_retry": delivery bridge via signal_completion(session_key, text).
-  - Secret resolved LAZILY (SecretSource: env|file) at use time, NEVER cached or logged
+  - Secret resolved LAZILY (SecretSource: env) at use time, NEVER cached or logged
     (CONTRACT §3).
   - build_a2a_app(agent_card, executor): creates InMemoryTaskStore +
     LegacyRequestHandler + wires routes via add_a2a_routes_to_fastapi on a FastAPI sub-app.

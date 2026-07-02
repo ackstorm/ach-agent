@@ -14,6 +14,7 @@ import hashlib
 import hmac
 import json
 import uuid
+from typing import Any
 
 import pytest
 
@@ -427,3 +428,154 @@ async def test_github_leaves_secondary_key_none(tmp_path: pytest.TempPathFactory
     await handle_webhook_request(raw_body, headers, cfg, handler)
 
     assert handler.events[0].secondary_idempotency_key is None
+
+
+# ---------------------------------------------------------------------------
+# Configurable GitLab event routing (note-hook 422 fix)
+# ---------------------------------------------------------------------------
+
+NOTE_ON_MR_PAYLOAD = {
+    "object_kind": "note",
+    "project": {"id": 42, "name": "my-repo"},
+    "object_attributes": {"noteable_type": "MergeRequest", "note": "please rebase"},
+    "merge_request": {"iid": 7, "title": "Add feature X"},
+}
+
+ISSUE_PAYLOAD = {
+    "object_kind": "issue",
+    "project": {"id": 42, "name": "my-repo"},
+    "object_attributes": {"iid": 5, "title": "Bug report", "description": "boom"},
+}
+
+NOTE_ON_ISSUE_PAYLOAD = {
+    "object_kind": "note",
+    "project": {"id": 42, "name": "my-repo"},
+    "object_attributes": {"noteable_type": "Issue", "note": "still broken"},
+    "issue": {"iid": 5, "title": "Bug report"},
+}
+
+NOTE_ON_COMMIT_PAYLOAD = {
+    "object_kind": "note",
+    "project": {"id": 42, "name": "my-repo"},
+    "object_attributes": {"noteable_type": "Commit", "note": "nice"},
+}
+
+PIPELINE_PAYLOAD = {
+    "object_kind": "pipeline",
+    "project": {"id": 42, "name": "my-repo"},
+    "object_attributes": {"id": 999, "status": "success"},
+}
+
+NOTE_ON_MR_MISSING_MR = {
+    "object_kind": "note",
+    "project": {"id": 42, "name": "my-repo"},
+    "object_attributes": {"noteable_type": "MergeRequest", "note": "please rebase"},
+    # no "merge_request" block → routable-but-malformed → 422
+}
+
+
+def _make_cfg_events(secret_path: str, events: list[str] | None = None) -> ChannelConfig:
+    webhook: dict[str, Any] = {"auth": {"type": "gitlab_token", "secretPath": secret_path}}
+    if events is not None:
+        webhook["gitlab_events"] = events
+    return ChannelConfig.model_validate(
+        {"name": "gl", "type": "webhook", "source": "gitlab", "webhook": webhook}
+    )
+
+
+async def _post(payload: dict[str, Any], cfg: ChannelConfig, secret: str) -> tuple:
+    handler = FakeHandler(RouterAdmitResult.ACCEPTED)
+    headers = _make_headers(secret, event_uuid=str(uuid.uuid4()))
+    result = await handle_webhook_request(json.dumps(payload).encode(), headers, cfg, handler)
+    return result, handler
+
+
+@pytest.mark.asyncio
+async def test_mr_hook_default_routes_with_kind(tmp_path) -> None:
+    secret_file = tmp_path / "secret"
+    secret_file.write_text("s")
+    cfg = _make_cfg_events(str(secret_file))
+    result, handler = await _post(MR_PAYLOAD, cfg, "s")
+    assert result.status_code == 202
+    ev = handler.events[0]
+    assert ev.session_key == "42:7"
+    assert ev.delivery_context["kind"] == "merge_request"
+    assert ev.delivery_context["mr_iid"] == 7
+
+
+@pytest.mark.asyncio
+async def test_note_on_mr_routes_same_lane(tmp_path) -> None:
+    secret_file = tmp_path / "secret"
+    secret_file.write_text("s")
+    cfg = _make_cfg_events(str(secret_file))
+    result, handler = await _post(NOTE_ON_MR_PAYLOAD, cfg, "s")
+    assert result.status_code == 202
+    ev = handler.events[0]
+    assert ev.session_key == "42:7"
+    assert ev.delivery_context["kind"] == "note"
+    assert ev.delivery_context["target_type"] == "mr"
+    assert ev.delivery_context["mr_iid"] == 7
+
+
+@pytest.mark.asyncio
+async def test_issue_hook_routes_namespaced(tmp_path) -> None:
+    secret_file = tmp_path / "secret"
+    secret_file.write_text("s")
+    cfg = _make_cfg_events(str(secret_file))
+    result, handler = await _post(ISSUE_PAYLOAD, cfg, "s")
+    assert result.status_code == 202
+    ev = handler.events[0]
+    assert ev.session_key == "42:issue:5"
+    assert ev.delivery_context["kind"] == "issue"
+    assert ev.delivery_context["issue_iid"] == 5
+
+
+@pytest.mark.asyncio
+async def test_note_on_issue_routes_namespaced(tmp_path) -> None:
+    secret_file = tmp_path / "secret"
+    secret_file.write_text("s")
+    cfg = _make_cfg_events(str(secret_file))
+    result, handler = await _post(NOTE_ON_ISSUE_PAYLOAD, cfg, "s")
+    assert result.status_code == 202
+    assert handler.events[0].session_key == "42:issue:5"
+
+
+@pytest.mark.asyncio
+async def test_note_on_commit_ignored_200(tmp_path) -> None:
+    secret_file = tmp_path / "secret"
+    secret_file.write_text("s")
+    cfg = _make_cfg_events(str(secret_file))
+    result, handler = await _post(NOTE_ON_COMMIT_PAYLOAD, cfg, "s")
+    assert result.status_code == 200
+    assert result.body == {"status": "ignored"}
+    assert handler._call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_pipeline_ignored_200_not_422(tmp_path) -> None:
+    secret_file = tmp_path / "secret"
+    secret_file.write_text("s")
+    cfg = _make_cfg_events(str(secret_file))
+    result, handler = await _post(PIPELINE_PAYLOAD, cfg, "s")
+    assert result.status_code == 200
+    assert result.body == {"status": "ignored"}
+
+
+@pytest.mark.asyncio
+async def test_note_on_mr_ignored_when_mr_not_allowed(tmp_path) -> None:
+    secret_file = tmp_path / "secret"
+    secret_file.write_text("s")
+    cfg = _make_cfg_events(str(secret_file), events=["issue"])
+    result, handler = await _post(NOTE_ON_MR_PAYLOAD, cfg, "s")
+    assert result.status_code == 200
+    assert result.body == {"status": "ignored"}
+
+
+@pytest.mark.asyncio
+async def test_note_on_mr_missing_block_raises_422(tmp_path) -> None:
+    secret_file = tmp_path / "secret"
+    secret_file.write_text("s")
+    cfg = _make_cfg_events(str(secret_file))
+    result, handler = await _post(NOTE_ON_MR_MISSING_MR, cfg, "s")
+    assert result.status_code == 422
+    assert handler._call_count == 0

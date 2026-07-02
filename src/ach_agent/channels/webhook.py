@@ -40,6 +40,9 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
+# GitLab event kinds routed when a channel does not set webhook.gitlab_events.
+_DEFAULT_GITLAB_EVENTS = {"merge_request", "issue", "note"}
+
 
 @dataclass
 class WebhookResult:
@@ -108,18 +111,68 @@ def _verify_auth(auth: WebhookAuthBlock, lower_headers: dict[str, str], raw_body
             return True
 
 
-def _parse_gitlab(body: dict[str, Any]) -> tuple[dict[str, Any], str]:
-    """Parse a GitLab Merge Request Hook payload (D-07).
+def _parse_gitlab(body: dict[str, Any], allowed: set[str]) -> tuple[dict[str, Any], str] | None:
+    """Route a GitLab hook, accept-ignore (None), or raise on a routable-but-malformed payload.
 
-      body.project.id              → project_id (numeric, always int in GitLab)
-      body.object_attributes.iid   → mr_iid (MR internal ID, project-scoped)
+    Returns (delivery_context, session_key) when the event's kind is in `allowed` and a
+    per-conversation session_key can be derived; None to accept-and-ignore (HTTP 200); raises
+    KeyError/TypeError/ValueError only for a routable kind with a malformed payload (→ 422).
 
-    Returns (delivery_context, session_key). Raises KeyError/TypeError/ValueError
-    on missing/non-castable fields (mapped to 422 by the caller).
+    session_key scheme (collision-safe, MR back-compat):
+      MR hook & MR-comment    → f"{project_id}:{mr_iid}"        (UNCHANGED — shared lane)
+      Issue hook & issue-comment → f"{project_id}:issue:{issue_iid}"  (namespaced)
     """
-    project_id = int(body["project"]["id"])
-    mr_iid = int(body["object_attributes"]["iid"])
-    return {"project_id": project_id, "mr_iid": mr_iid}, f"{project_id}:{mr_iid}"
+    kind = body.get("object_kind", "")
+
+    if kind == "merge_request" and "merge_request" in allowed:
+        project_id = int(body["project"]["id"])
+        mr_iid = int(body["object_attributes"]["iid"])
+        return (
+            {
+                "project_id": project_id,
+                "kind": "merge_request",
+                "target_type": "mr",
+                "mr_iid": mr_iid,
+            },
+            f"{project_id}:{mr_iid}",
+        )
+
+    if kind == "issue" and "issue" in allowed:
+        project_id = int(body["project"]["id"])
+        issue_iid = int(body["object_attributes"]["iid"])
+        return (
+            {
+                "project_id": project_id,
+                "kind": "issue",
+                "target_type": "issue",
+                "issue_iid": issue_iid,
+            },
+            f"{project_id}:issue:{issue_iid}",
+        )
+
+    if kind == "note" and "note" in allowed:
+        noteable = str(body.get("object_attributes", {}).get("noteable_type", "")).lower()
+        project_id = int(body["project"]["id"])
+        if noteable == "mergerequest" and "merge_request" in allowed:
+            mr_iid = int(body["merge_request"]["iid"])
+            return (
+                {"project_id": project_id, "kind": "note", "target_type": "mr", "mr_iid": mr_iid},
+                f"{project_id}:{mr_iid}",
+            )
+        if noteable == "issue" and "issue" in allowed:
+            issue_iid = int(body["issue"]["iid"])
+            return (
+                {
+                    "project_id": project_id,
+                    "kind": "note",
+                    "target_type": "issue",
+                    "issue_iid": issue_iid,
+                },
+                f"{project_id}:issue:{issue_iid}",
+            )
+        return None  # comment on commit/snippet, or noteable kind not allowed → ignore
+
+    return None  # kind not allowed / not routable (push, pipeline, emoji, …) → ignore
 
 
 def _parse_github(body: dict[str, Any]) -> tuple[dict[str, Any], str]:
@@ -225,8 +278,17 @@ async def handle_webhook_request(
             delivery_context, session_key = _parse_github(body)
         elif source == "generic":
             delivery_context, session_key = _parse_generic(idempotency_key)
-        else:
-            delivery_context, session_key = _parse_gitlab(body)
+        else:  # source == "gitlab"
+            allowed = set(channel_cfg.webhook.gitlab_events or _DEFAULT_GITLAB_EVENTS)
+            parsed = _parse_gitlab(body, allowed)
+            if parsed is None:
+                log.info(
+                    "webhook: gitlab event ignored (not a routed kind)",
+                    channel=channel_cfg.name,
+                    object_kind=body.get("object_kind"),
+                )
+                return WebhookResult(status_code=200, body={"status": "ignored"})
+            delivery_context, session_key = parsed
     except (KeyError, TypeError, ValueError) as exc:
         log.warning(
             "webhook: payload missing required fields",

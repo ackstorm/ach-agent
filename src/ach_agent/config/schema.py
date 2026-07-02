@@ -326,6 +326,12 @@ class WebhookBlock(BaseModel):
 
     auth: WebhookAuthBlock = Field(default_factory=WebhookAuthBlock)
 
+    # Which GitLab event kinds this channel ROUTES to the agent. None → all routable kinds
+    # (merge_request, issue, note). Kinds not listed are accepted-and-ignored (HTTP 200), never
+    # 422 — so GitLab does not auto-disable the hook. A note (comment) routes only when "note"
+    # AND its noteable base kind (merge_request/issue) are both allowed.
+    gitlab_events: list[Literal["merge_request", "issue", "note"]] | None = None
+
 
 class A2AAuthBlock(BaseModel):
     """CONTRACT §2 a2a.auth sub-block (§14.6 / §3 bearer discipline)."""

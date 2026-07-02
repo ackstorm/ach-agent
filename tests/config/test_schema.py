@@ -207,6 +207,19 @@ def test_webhook_header_token_auth() -> None:
     assert a.type == "header_token" and a.header == "X-Api-Key"
 
 
+def test_webhook_gitlab_events() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import WebhookBlock
+
+    assert WebhookBlock().gitlab_events is None
+    b = WebhookBlock.model_validate({"gitlab_events": ["merge_request", "note"]})
+    assert b.gitlab_events == ["merge_request", "note"]
+    with pytest.raises(ValidationError):
+        WebhookBlock.model_validate({"gitlab_events": ["pipeline"]})
+
+
 def test_channel_session_and_expire_rejected() -> None:
     import pytest
     from pydantic import ValidationError

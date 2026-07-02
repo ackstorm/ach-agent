@@ -28,6 +28,12 @@ log = structlog.get_logger(__name__)
 # Default maxInvocationSeconds when not provided (conservative upper bound)
 _DEFAULT_MAX_INVOCATION_SECONDS: float = 300.0
 
+# Short window for the GitLab logical content composite (secondary dedup key). Deliberately
+# SHORT (legacy used 2s): a content-based key on the long idempotency window would wrongly
+# dedup two INTENTIONAL identical comments minutes apart. Exact-delivery retries are covered
+# by the primary UUID key on the full idempotency_window_seconds.
+_SECONDARY_DEDUP_WINDOW_S: int = 2
+
 
 class RouterAdmitResult(Enum):
     """Outcome of Router.handle() — used by channels to decide response action.
@@ -96,11 +102,13 @@ class Router:
         """
         # ORDER IS NORMATIVE — dedup MUST precede backpressure (CONTRACT §6.2)
         dedup_key = f"{event.channel_name}:{event.idempotency_key}"
+        sec = event.secondary_idempotency_key
+        sec_key = f"{event.channel_name}:sec:{sec}" if sec else None
 
-        # 1. DEDUP — cheapest check; must NOT consume a queue slot
-        if self._dedup.seen(dedup_key):
+        # 1. DEDUP — primary OR secondary; neither may consume a queue slot (RTR-01)
+        if self._dedup.seen(dedup_key) or (sec_key is not None and self._dedup.seen(sec_key)):
             DEDUP_DISCARDS.inc()
-            log.debug("dedup: duplicate discarded", key=dedup_key)
+            log.debug("dedup: duplicate discarded", key=dedup_key, secondary=sec_key)
             return RouterAdmitResult.DUPLICATE
 
         # 2. BACKPRESSURE — only reached for distinct events
@@ -128,8 +136,11 @@ class Router:
                 )
             return RouterAdmitResult.FULL_QUEUE
 
-        # 3. MARK dedup BEFORE enqueuing (mark-before-enqueue invariant)
+        # 3. MARK dedup BEFORE enqueuing (mark-before-enqueue invariant). Secondary on the
+        #    SHORT window — see _SECONDARY_DEDUP_WINDOW_S.
         self._dedup.mark(dedup_key, self._idempotency_window_seconds)
+        if sec_key is not None:
+            self._dedup.mark(sec_key, _SECONDARY_DEDUP_WINDOW_S)
         self._queued_total.inc()
 
         # 4. LANE — enqueue into per-session FIFO

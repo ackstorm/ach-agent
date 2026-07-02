@@ -146,7 +146,6 @@ async def test_roundtrip_launch_to_actions(mock_model_server, tmp_path):
     config = EngineConfig(
         binary_path=OPENCODE_BINARY,
         work_dir=str(tmp_path / "workspace"),
-        provider="openai",
         # Must use a model name known to opencode's internal registry
         model="gpt-4o-mini",
         system_prompt="You are a test assistant. Reply with JSON only.",

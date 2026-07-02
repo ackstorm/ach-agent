@@ -12,7 +12,7 @@ Locked decisions:
   - FULL_QUEUE (D-05/RTR-05): failed TaskStatusUpdateEvent, not silent drop.
   - source_trait = "async_no_retry": delivery bridge via signal_completion(session_key, text).
   - Secret read LAZILY from mounted path at use time, NEVER cached or logged (CONTRACT §3).
-  - build_a2a_app(agent_card, executor, rpc_prefix): creates InMemoryTaskStore +
+  - build_a2a_app(agent_card, executor): creates InMemoryTaskStore +
     LegacyRequestHandler + wires routes via add_a2a_routes_to_fastapi on a FastAPI sub-app.
 
 RTR-06: a2a.* imports ONLY inside this file — function-scoped, never at module level.
@@ -264,10 +264,6 @@ class A2AAgentExecutorBridge:
         loop = asyncio.get_running_loop()
         loop.create_task(_fail_async(event_queue, completion, reason))
 
-    def lookup_session_key_for_event(self, session_key: str) -> bool:
-        """Test helper: check if a session_key is currently pending."""
-        return session_key in self._pending
-
 
 async def _complete_async(event_queue: Any, completion: asyncio.Event, reply_text: str) -> None:
     """Schedule completed event and set the completion event from an async context."""
@@ -305,16 +301,14 @@ def make_a2a_agent_card(channel_name: str) -> Any:
 def build_a2a_app(
     agent_card: Any,
     executor: A2AAgentExecutorBridge,
-    rpc_prefix: str = "/",
 ) -> Any:
     """Build a FastAPI sub-app with A2A routes mounted.
 
     RTR-06: all a2a imports are function-scoped inside this function.
 
     Args:
-        agent_card:  a2a-sdk AgentCard (or None to skip agent card route).
+        agent_card:  a2a-sdk AgentCard.
         executor:    A2AAgentExecutorBridge instance.
-        rpc_prefix:  URL prefix for the JSON-RPC endpoint within the sub-app.
 
     Returns:
         A FastAPI application with A2A routes registered (mount it via app.mount).
@@ -347,8 +341,8 @@ def build_a2a_app(
     )
 
     sub_app = FastAPI(title="a2a-sub")
-    agent_card_routes = create_agent_card_routes(agent_card) if agent_card is not None else []
-    jsonrpc_routes = create_jsonrpc_routes(request_handler, rpc_url=rpc_prefix)
+    agent_card_routes = create_agent_card_routes(agent_card)
+    jsonrpc_routes = create_jsonrpc_routes(request_handler, rpc_url="/")
     rest_routes = create_rest_routes(request_handler)
 
     add_a2a_routes_to_fastapi(

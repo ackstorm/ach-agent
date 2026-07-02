@@ -830,22 +830,6 @@ async def main(
             prompts=[p.name for p in _ctx.prompts],
             artifacts=[a.name for a in _ctx.artifacts],
         )
-        # Boot-time tool probe (best-effort): list the tools each MCP server actually
-        # exposes for this ek and warn on empty. Surfaces an empty/unauthorized server
-        # (e.g. OAuth not granted) at boot instead of letting the model discover it
-        # mid-invocation and flail. Never breaks boot (list_mcp_tools swallows errors).
-        from ach_agent.engine.hydrate import list_mcp_tools
-
-        for _srv in manifest.mcp_servers:
-            _tools = await list_mcp_tools(_srv.endpoint, ek)
-            if _tools:
-                log.info("mcp tools", server=_srv.id, count=len(_tools), tools=_tools)
-            else:
-                log.warning(
-                    "mcp server exposes 0 tools — check ACH provisioning / OAuth consent",
-                    server=_srv.id,
-                )
-
         # A2A egress (Plan 3): expose peer agents as harness-hosted MCP tools so
         # opencode can call them. The ek_ stays in the harness (injected as the
         # peer auth header by A2AAgentClient). RTR-06: a2a_egress imports a2a-sdk
@@ -904,7 +888,6 @@ async def main(
         work_dir=engine_work_dir,
         codemem_db_path=codemem_db_path,
         codemem_project=codemem_project,
-        provider=cfg.model.type,
         model=cfg.model.name,
         params=cfg.model.params,
         # prompt.system = the inline agent persona + per-backend TOOLS_SPEC (boot-static).
@@ -912,10 +895,6 @@ async def main(
         steps=cfg.limits.max_steps,
         startup_timeout_seconds=cfg.engine.startup_timeout_seconds,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
-        # Idle TTL is resolved from engine.idle_ttl_seconds into the channel_ttl map below
-        # and applied at the pool.release site in engine_runner. This EngineConfig field is
-        # unused by the runner and kept at 0 for back-compat with EngineConfig consumers.
-        shared_ttl_seconds=0,
         model_base_url=model_base_url,
         mcp_local_urls=mcp_local_urls,
         # SEC-01 / ek-hygiene: opencode's env is clean-slate (base allowlist only). Extra
@@ -1063,25 +1042,11 @@ async def main(
         # The bridge is created here (boot module) — engine_runner never imports it.
         bridge = A2AAgentExecutorBridge(handler=None, channel_cfg=channel)
 
-        # on_complete closure captures the bridge (W9: the closure lives in boot module,
-        # engine tier stays unaware of A2A type).
-        def _make_on_complete(b: A2AAgentExecutorBridge) -> Any:
-            def on_complete(session_key: str, reply_text: str) -> None:
-                b.signal_completion(session_key, reply_text)
-
-            return on_complete
-
-        _on_complete = _make_on_complete(bridge)
-
-        # on_fail closure mirrors on_complete: emits a FAILED event when the terminal
-        # output is unusable (action != a2a_reply, or empty reply text).
-        def _make_on_fail(b: A2AAgentExecutorBridge) -> Any:
-            def on_fail(session_key: str, reason: str) -> None:
-                b.signal_failure(session_key, reason)
-
-            return on_fail
-
-        _on_fail = _make_on_fail(bridge)
+        # on_complete/on_fail (W9: bound here in the boot module, engine tier stays
+        # unaware of A2A type). on_fail mirrors on_complete: emits a FAILED event when
+        # the terminal output is unusable (action != a2a_reply, or empty reply text).
+        _on_complete = bridge.signal_completion
+        _on_fail = bridge.signal_failure
 
         # Wrap the router to inject on_complete + on_fail into delivery_context (W9 pattern).
         class _A2AHandler:
@@ -1102,7 +1067,7 @@ async def main(
         # Build the A2A AgentCard from channel config (minimal — receiver-only v1, spec §14.6).
         # make_a2a_agent_card keeps a2a.* imports inside channels/a2a.py (RTR-06 fence).
         agent_card = make_a2a_agent_card(channel.name)
-        sub_app = build_a2a_app(agent_card, bridge, rpc_prefix="/")
+        sub_app = build_a2a_app(agent_card, bridge)
         mount_path = f"/a2a/{channel.name}"
         a2a_mounts.append((mount_path, sub_app))
         a2a_bridges.append(bridge)

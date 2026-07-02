@@ -123,7 +123,6 @@ def test_opencode_json_never_contains_ek(tmp_path: Any, monkeypatch: Any) -> Non
 
     cfg = EngineConfig(
         model="openai.gpt-5",
-        provider="openai",
         model_base_url="http://127.0.0.1:9001/v1",
         mcp_local_urls={"mcp-gofetch": "http://127.0.0.1:9002/mcp/mcp-gofetch"},
     )

@@ -66,14 +66,11 @@ class EngineConfig:
     # .local/share/opencode (sessions — persist because HOME is stable), and node_modules.
     home: str = ""
     work_dir: str = "/workspace"
-    provider: str = "openai"
     model: str = "gpt-4o-mini"  # opencode validates model names; must be a known OpenAI model ID
     params: dict[str, object] = field(default_factory=dict)  # model params (temperature, …)
     system_prompt: str = ""
     steps: int = 50
     startup_timeout_seconds: int = 30
-    shared_enabled: bool = False
-    shared_ttl_seconds: int = 0
     max_invocation_seconds: int = 1800
     # MEM-01/D-02: optional MCP server URL for memory tools (present iff backend reachable).
     # Written to opencode.json before subprocess launch so the model either has memory tools
@@ -163,13 +160,6 @@ class ManagedServer:
         from ach_agent.engine.client import release_port
 
         release_port(self.port)
-
-    @property
-    def client(self) -> object:
-        """Return the OpenCodeClient; raises if not yet launched."""
-        if self._client is None:
-            raise RuntimeError("ManagedServer not yet launched — call launch() first")
-        return self._client
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +290,6 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig, session_ke
     log.debug(
         "opencode config written",
         path=str(config_path),
-        provider=config.provider,
     )
     return config_path
 
@@ -484,19 +473,6 @@ async def poll_ready(
         port=server.port,
     )
     sys.exit(1)
-
-
-async def send_message(server: ManagedServer, session_id: str, prompt: str) -> None:
-    """Submit a prompt to an existing opencode session via POST /session/{id}/message.
-
-    Wraps OpenCodeClient.send_message.
-    """
-    from ach_agent.engine.client import OpenCodeClient
-
-    client = server._client
-    if not isinstance(client, OpenCodeClient):
-        raise RuntimeError("ManagedServer has no client")
-    await client.send_message(session_id, prompt)
 
 
 async def run_invocation(

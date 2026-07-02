@@ -532,7 +532,7 @@ def test_build_a2a_app_constructs_sub_app(tmp_path: pytest.TempPath) -> None:
     )
     agent_card = make_a2a_agent_card(channel_cfg.name)
 
-    sub_app = build_a2a_app(agent_card, bridge, rpc_prefix="/")
+    sub_app = build_a2a_app(agent_card, bridge)
     assert isinstance(sub_app, FastAPI)
 
 
@@ -572,7 +572,7 @@ async def test_a2a_signal_failure_enqueues_failed_event_and_unblocks(
     assert len(eq.events) == 1
     assert eq.events[0].status.state == TASK_STATE_FAILED
     # session_key must be popped from pending
-    assert not bridge.lookup_session_key_for_event(session_key)
+    assert session_key not in bridge._pending
 
 
 @pytest.mark.asyncio

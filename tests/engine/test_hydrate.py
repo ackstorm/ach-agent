@@ -42,7 +42,7 @@ async def test_hydrate_parses_manifest(monkeypatch):
     monkeypatch.setattr("ach_agent.engine.hydrate._post_hydrate", fake_post)
     m = await hydrate("https://ach.example.com", "ek-abc")
     assert m.models == ["gemini.gemini-flash-latest"]  # property exposes the ids
-    assert m.model_entries[0].endpoint == "https://ach.example.com/v1"  # real endpoint kept
+    assert m.runtime.models[0].endpoint == "https://ach.example.com/v1"  # real endpoint kept
     assert m.mcp_servers[0].id == "mcp-google-calendar-ro"
     assert m.context.skills[0].download_url.endswith("/skill/frontend-design@anthropics-skills")
 

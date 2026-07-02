@@ -764,6 +764,129 @@ async def test_run_invocation_reuse_true_reuses_session() -> None:
     assert server._sessions.get("key-b") == "ses-reused"
 
 
+# ---------------------------------------------------------------------------
+# pool-owned session map: run_invocation(oc_sessions=...)
+# ---------------------------------------------------------------------------
+
+
+def _server_with_client(port: int, create_session: object) -> "ManagedServer":  # noqa: F821, UP037
+    """Fresh ManagedServer wired to a mock client (simulates one opencode process)."""
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.lifecycle import ManagedServer
+
+    mock_client = AsyncMock(spec=OpenCodeClient)
+    mock_client.create_session = create_session
+    server = ManagedServer(port=port)
+    mock_proc = MagicMock()
+    mock_proc.returncode = None
+    server._process = mock_proc
+    server._client = mock_client
+    return server
+
+
+async def test_run_invocation_pool_map_survives_server_replacement() -> None:
+    """The core feature: a NEW ManagedServer (idle-TTL restart) reuses the opencode
+    session id cached in the pool-owned map by the previous server — create_session
+    is never called on the second server."""
+    from ach_agent.engine.lifecycle import run_invocation
+
+    canned = '{"action":"none","text":"ok","thoughts":""}'
+    shared_map: dict[str, str] = {}
+
+    server1 = _server_with_client(
+        19885, AsyncMock(return_value={"id": "ses-persist"})
+    )
+    server2 = _server_with_client(
+        19886, AsyncMock(return_value={"id": "ses-WRONG-never-created"})
+    )
+
+    with patch(
+        "ach_agent.engine.lifecycle.consume_sse_after_send",
+        new_callable=AsyncMock,
+        return_value=canned,
+    ) as mock_consume:
+        await run_invocation(
+            server=server1,
+            session_id="key-a",
+            prompt="first",
+            terminal_retries=1,
+            reuse=True,
+            oc_sessions=shared_map,
+        )
+        # server1 died (TTL); server2 is the replacement — same map, no create.
+        await run_invocation(
+            server=server2,
+            session_id="key-a",
+            prompt="second",
+            terminal_retries=1,
+            reuse=True,
+            oc_sessions=shared_map,
+        )
+
+    assert shared_map == {"key-a": "ses-persist"}
+    server1._client.create_session.assert_awaited_once()
+    server2._client.create_session.assert_not_awaited()
+    # consume_sse_after_send(client, oc_session_id, prompt, ...) — positional arg 1
+    assert mock_consume.call_args_list[0].args[1] == "ses-persist"
+    assert mock_consume.call_args_list[1].args[1] == "ses-persist"
+
+
+async def test_run_invocation_reuse_false_ignores_pool_map() -> None:
+    """reuse=False (channel.session='none') never reads nor writes the pool map."""
+    from ach_agent.engine.lifecycle import run_invocation
+
+    canned = '{"action":"none","text":"ok","thoughts":""}'
+    shared_map: dict[str, str] = {"key-a": "ses-cached"}
+    server = _server_with_client(19887, AsyncMock(return_value={"id": "ses-fresh"}))
+
+    with patch(
+        "ach_agent.engine.lifecycle.consume_sse_after_send",
+        new_callable=AsyncMock,
+        return_value=canned,
+    ) as mock_consume:
+        await run_invocation(
+            server=server,
+            session_id="key-a",
+            prompt="p",
+            terminal_retries=1,
+            reuse=False,
+            oc_sessions=shared_map,
+        )
+
+    server._client.create_session.assert_awaited_once()  # fresh, not cached
+    assert mock_consume.call_args_list[0].args[1] == "ses-fresh"
+    assert shared_map == {"key-a": "ses-cached"}  # untouched
+
+
+async def test_run_invocation_logs_oc_session(capfd) -> None:
+    """Every turn logs which opencode session is used and whether it was reused."""
+    from ach_agent.engine.lifecycle import run_invocation
+
+    canned = '{"action":"none","text":"ok","thoughts":""}'
+    shared_map: dict[str, str] = {}
+    server = _server_with_client(19888, AsyncMock(return_value={"id": "ses-log-1"}))
+
+    with patch(
+        "ach_agent.engine.lifecycle.consume_sse_after_send",
+        new_callable=AsyncMock,
+        return_value=canned,
+    ):
+        await run_invocation(
+            server=server,
+            session_id="key-log",
+            prompt="p",
+            terminal_retries=1,
+            reuse=True,
+            oc_sessions=shared_map,
+        )
+
+    out, err = capfd.readouterr()
+    combined = out + err
+    assert "engine: opencode session" in combined
+    assert "ses-log-1" in combined
+    assert "reused" in combined
+
+
 async def test_stop_releases_reserved_port() -> None:
     """B7: ManagedServer.stop() frees the reserved port so it can be reused."""
     from ach_agent.engine import client as client_mod

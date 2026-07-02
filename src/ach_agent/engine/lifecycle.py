@@ -24,7 +24,7 @@ import re
 import shutil
 import signal
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, MutableMapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 if TYPE_CHECKING:
+    from ach_agent.engine.client import OpenCodeClient
     from ach_agent.engine.events import OpenCodeToolUpdate
 
 log = structlog.get_logger(__name__)
@@ -479,6 +480,15 @@ async def poll_ready(
     sys.exit(1)
 
 
+async def _create_oc_session(client: OpenCodeClient) -> str:
+    """POST /session and return the new ses_… id (raise if opencode returns none)."""
+    created = await client.create_session()
+    oc_session_id = str(created.get("id", ""))
+    if not oc_session_id:
+        raise RuntimeError(f"opencode create_session returned no id: {created!r}")
+    return oc_session_id
+
+
 async def run_invocation(
     server: ManagedServer,
     session_id: str,
@@ -490,6 +500,7 @@ async def run_invocation(
     reuse: bool = True,
     max_tool_calls: int = 0,
     stats: dict[str, Any] | None = None,
+    oc_sessions: MutableMapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Orchestrate: subscribe SSE → send prompt → consume → return the terminal object.
 
@@ -510,23 +521,31 @@ async def run_invocation(
         raise RuntimeError("ManagedServer has no client")
 
     # opencode requires a session created via POST /session before /session/{id}/message
-    # (sending to an arbitrary id → 500). Map the logical session_key → an opencode
-    # session id, created once per key and reused for conversational continuity.
+    # (unknown id → 404 NotFoundError, verified on 1.17.13). Map the logical session_key →
+    # an opencode session id, created once per key and reused for conversational continuity.
+    # oc_sessions is the pool-owned LRU: it outlives ManagedServers, and opencode persists
+    # sessions on disk under the shared home, so 'auto' survives idle-TTL restarts. Falls
+    # back to the per-server map when not provided (tests / ad-hoc callers).
     # When reuse=False (channel.session='none'), always create a fresh opencode session
-    # and never touch server._sessions (no read, no write).
+    # and never touch the map (no read, no write).
+    sessions = oc_sessions if oc_sessions is not None else server._sessions
+    reused = False
     if reuse:
-        oc_session_id = server._sessions.get(session_id)
-        if oc_session_id is None:
-            created = await client.create_session()
-            oc_session_id = str(created.get("id", ""))
-            if not oc_session_id:
-                raise RuntimeError(f"opencode create_session returned no id: {created!r}")
-            server._sessions[session_id] = oc_session_id
+        cached = sessions.get(session_id)
+        if cached is None:
+            oc_session_id = await _create_oc_session(client)
+            sessions[session_id] = oc_session_id
+        else:
+            oc_session_id = cached
+            reused = True
     else:
-        created = await client.create_session()
-        oc_session_id = str(created.get("id", ""))
-        if not oc_session_id:
-            raise RuntimeError(f"opencode create_session returned no id: {created!r}")
+        oc_session_id = await _create_oc_session(client)
+    log.info(
+        "engine: opencode session",
+        session_key=session_id,
+        oc_session_id=oc_session_id,
+        reused=reused,
+    )
 
     # Subscribe to SSE FIRST, then send the message.
     # This ensures we don't miss the session.idle event. The lane bounds this await via

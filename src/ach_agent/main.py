@@ -362,7 +362,7 @@ def _make_engine_runner(
     Fail-open: unreachable backend → exclude MCP server, log WARN + metric, run anyway.
 
     channel_ttl: {channel_name: idle_ttl_seconds} — the wait after a conversation ends
-    before the opencode server is stopped, a per-channel constant (see _CHANNEL_IDLE_TTL_S).
+    before the opencode server is stopped, built at boot from engine.idle_ttl_seconds.
     Unknown channels (e.g. the --tui console) default to 0 = stop immediately. --tui pins a
     held ref so 0 never actually stops it mid-session (see the console-mode pre-warm).
     """
@@ -593,18 +593,6 @@ async def _drain(
         dedup_store.close()
     DRAIN_COMPLETED.inc()
     log.info("drain: complete")
-
-
-# Per-channel idle TTL (seconds the opencode server lingers after a conversation ends
-# before it is stopped). A constant keyed by channel type — all v1 channels are 0, so the
-# server stops as soon as the conversation ends. Future channels may set a non-zero linger.
-# (--tui is NOT a channel: it pre-warms opencode at boot and holds it until Ctrl-C — see main.)
-_CHANNEL_IDLE_TTL_S: dict[str, float] = {
-    "webhook": 0.0,
-    "cron": 0.0,
-    "queue": 0.0,
-    "a2a": 0.0,
-}
 
 
 def _harness_log_dir() -> Path:
@@ -876,9 +864,9 @@ async def main(
         steps=cfg.limits.max_steps,
         startup_timeout_seconds=cfg.engine.startup_timeout_seconds,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
-        # Idle TTL is now a per-channel constant resolved in engine_runner (see
-        # _CHANNEL_IDLE_TTL_S). This field is unused by the runner and kept at 0 for
-        # back-compat with EngineConfig consumers.
+        # Idle TTL is resolved from engine.idle_ttl_seconds into the channel_ttl map below
+        # and applied at the pool.release site in engine_runner. This EngineConfig field is
+        # unused by the runner and kept at 0 for back-compat with EngineConfig consumers.
         shared_ttl_seconds=0,
         model_base_url=model_base_url,
         mcp_local_urls=mcp_local_urls,
@@ -892,8 +880,12 @@ async def main(
 
     # 6b. Build engine_runner. MEM-01/D-02: pass memory_cfg so engine_runner probes
     # before pool.acquire (Pitfall 3).
-    # Per-channel idle TTL (constant by channel type; all v1 channels are 0).
-    channel_ttl = {ch.name: _CHANNEL_IDLE_TTL_S.get(ch.type, 0.0) for ch in cfg.channels}
+    # engine.idle_ttl_seconds (default 60) keeps a keyed server warm after its last release
+    # so channel.session=auto persists the opencode session across events for the same
+    # session_key. Applied to every configured channel; an unknown channel_name still
+    # defaults to 0 at the release site (engine_runner). --tui is NOT a channel — it pins a
+    # held ref for the whole REPL, so this TTL never stops it mid-session.
+    channel_ttl = {ch.name: cfg.engine.idle_ttl_seconds for ch in cfg.channels}
     channels_by_name = {c.name: c for c in cfg.channels}
     memory_bank = cfg.memory.hindsight.bank if isinstance(cfg.memory, HindsightMemory) else ""
     engine_runner = _make_engine_runner(

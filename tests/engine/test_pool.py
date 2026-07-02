@@ -146,6 +146,51 @@ async def test_reacquire_cancels_pending_ttl() -> None:
     assert "k1" in pool._servers
 
 
+async def test_warm_reuse_within_ttl() -> None:
+    """acquire → release(ttl>0) → acquire returns the SAME server, started only once (B1)."""
+    pool = EnginePool()
+    calls = {"n": 0}
+    fake = _make_fake_server(alive=True)
+
+    async def fake_start(cfg, session_key: str) -> ManagedServer:
+        calls["n"] += 1
+        return fake
+
+    pool._start_server = fake_start
+
+    s1 = await pool.acquire("k1", _config())
+    await pool.release("k1", ttl_seconds=0.2)  # warm — expiry armed
+    s2 = await pool.acquire("k1", _config())  # within TTL — reuse, cancel expiry
+    assert s1 is fake and s2 is fake
+    assert calls["n"] == 1, "warm reuse must not start a second server"
+    fake.stop.assert_not_awaited()
+
+
+async def test_expire_rechecks_before_stop() -> None:
+    """A re-acquire during the TTL sleep must not be stopped by the stale _expire (B7).
+
+    release(ttl) arms _expire; a re-acquire before it fires bumps the ref back to 1 and
+    cancels the task. The race-safe recheck guarantees a server handed back out is never
+    stopped by an in-flight expiry.
+    """
+    pool = EnginePool()
+    fake = _make_fake_server(alive=True)
+
+    async def fake_start(cfg, session_key: str) -> ManagedServer:
+        return fake
+
+    pool._start_server = fake_start
+
+    await pool.acquire("k1", _config())
+    await pool.release("k1", ttl_seconds=0.01)  # arm expiry (fires very soon)
+    await pool.acquire("k1", _config())  # re-acquire: ref→1, expiry cancelled
+    await asyncio.sleep(0.05)  # let any stale _expire run past its sleep
+
+    fake.stop.assert_not_awaited()
+    assert "k1" in pool._servers, "re-acquired server must not be stopped by stale _expire"
+    assert pool._ref_counts.get("k1", 0) == 1
+
+
 async def test_ref_count_keeps_server_until_last_release() -> None:
     """Two acquires + one release keep the server; second release (ttl=0) stops it."""
     pool = EnginePool()

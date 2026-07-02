@@ -7,7 +7,9 @@ null-vs-0 discipline: an UNAVAILABLE figure (0 denominator) is None; a genuine z
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.model_meta import resolve
 
@@ -64,3 +66,87 @@ def build_leaderboard(rows: list[dict[str, Any]]) -> dict[str, Any]:
     for i, r in enumerate(out, start=1):
         r["rank"] = i
     return {"sorted_by": "spend", "rows": out}
+
+
+def month_start_ms(now_ms: int, tz: str) -> int:
+    zone = ZoneInfo(tz)
+    now = datetime.fromtimestamp(now_ms / 1000, tz=zone)
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return int(start.timestamp() * 1000)
+
+
+def _day_key(ts_ms: int, tz: str) -> str:
+    return datetime.fromtimestamp(ts_ms / 1000, tz=ZoneInfo(tz)).strftime("%Y-%m-%d")
+
+
+def build_contract(
+    *,
+    window_rows: list[dict[str, Any]],
+    recent_rows: list[dict[str, Any]],
+    coverage_start_ms: int | None,
+    now_ms: int,
+    tz: str,
+    range_start_ms: int,
+    range_end_ms: int,
+) -> dict[str, Any]:
+    partial = coverage_start_ms is not None and coverage_start_ms > range_start_ms
+
+    totals = build_totals(window_rows)
+    totals["partial"] = partial
+
+    leaderboard = build_leaderboard(window_rows)
+
+    # cost per session by model (avg cost per invocation).
+    cps: list[dict[str, Any]] = []
+    for row in leaderboard["rows"]:
+        avg = _safe_div(row["spend"], row["sessions"])
+        cps.append({"model": row["model"], "avg": avg})
+
+    # calendar month-to-date, in tz.
+    m_start = month_start_ms(now_ms, tz)
+    month_rows = [r for r in window_rows if r["ts_ms"] >= m_start]
+    month_counts: dict[str, int] = defaultdict(int)
+    for r in month_rows:
+        month_counts[r["model"]] += 1
+    sessions_this_month = {
+        "rows": [{"model": m, "count": c} for m, c in
+                 sorted(month_counts.items(), key=lambda kv: kv[1], reverse=True)],
+        "partial": coverage_start_ms is not None and coverage_start_ms > m_start,
+    }
+
+    # daily series.
+    day_acc: dict[str, dict[str, float]] = defaultdict(
+        lambda: {"spend": 0.0, "sessions": 0.0, "tokens": 0.0}
+    )
+    for r in window_rows:
+        d = day_acc[_day_key(r["ts_ms"], tz)]
+        d["spend"] += r["cost"]
+        d["sessions"] += 1
+        d["tokens"] += r["input_tokens"] + r["output_tokens"]
+    series = [
+        {"date": day, "spend": v["spend"], "sessions": int(v["sessions"]),
+         "tokens": int(v["tokens"]),
+         "partial": coverage_start_ms is not None
+         and coverage_start_ms > int(datetime.strptime(day, "%Y-%m-%d")
+                                     .replace(tzinfo=ZoneInfo(tz)).timestamp() * 1000)}
+        for day, v in sorted(day_acc.items())
+    ]
+
+    recent = [
+        {"ts": r["ts_ms"], "task": r["task"], "model": r["model"],
+         "tokens": r["input_tokens"] + r["output_tokens"], "cost": r["cost"],
+         "turns": r["turns"], "status": r["status"], "retry": r["retry"]}
+        for r in recent_rows
+    ]
+
+    days = max(1, round((range_end_ms - range_start_ms) / 86_400_000))
+    return {
+        "range": {"start": range_start_ms, "end": range_end_ms, "days": days,
+                  "coverage_start": coverage_start_ms, "tz": tz},
+        "totals": totals,
+        "leaderboard": leaderboard,
+        "cost_per_session": cps,
+        "sessions_this_month": sessions_this_month,
+        "series": series,
+        "recent": recent,
+    }

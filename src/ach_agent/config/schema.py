@@ -429,6 +429,26 @@ class QueueBlock(BaseModel):
 ChannelType = Literal["webhook", "cron", "queue", "a2a"]
 
 
+class SessionBlock(BaseModel):
+    """channel.session — conversation identity + growth bounds.
+
+    key: 'none' → fresh opencode session per event, DELETEd post-turn (no residue);
+         'auto' → the channel-derived session_key (per-MR for gitlab, name for cron…);
+         any other string → {{ }} template rendered per event (payload.* / internal.*);
+         an empty render falls back to 'none' behavior + WARN.
+    max_tokens: when the previous turn's input_tokens exceed this, apply `overflow`.
+    overflow: 'compact' → POST /session/{id}/compact in place (keeps memory);
+              'rotate' → drop the LRU entry + DELETE the old session (fresh start).
+    The router lane key (event.session_key) is NOT affected by any of this.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    key: str = "none"
+    max_tokens: int | None = Field(default=None, alias="maxTokens", gt=0)
+    overflow: Literal["compact", "rotate"] = "compact"
+
+
 class ChannelConfig(BaseModel):
     """CONTRACT_v3 §2 channel entry. extra=forbid catches unknown channel-level keys."""
 
@@ -438,12 +458,20 @@ class ChannelConfig(BaseModel):
     type: ChannelType  # Literal union rejects unknown types (CFG-03)
     concurrency: int = 1
     prompt: str | None = None
-    session: Literal["auto", "none"] = "auto"
+    session: SessionBlock = Field(default_factory=SessionBlock)
     source: Literal["gitlab", "github", "generic"] | None = None
     webhook: WebhookBlock | None = None
     cron: CronBlock | None = None
     queue: QueueBlock | None = None
     a2a: A2ABlock | None = None
+
+    @field_validator("session", mode="before")
+    @classmethod
+    def _session_shorthand(cls, v: Any) -> Any:
+        """YAML shorthand: `session: auto|none|"{{ … }}"` ≡ `session: {key: <str>}`."""
+        if isinstance(v, str):
+            return {"key": v}
+        return v
 
     @model_validator(mode="after")
     def check_type_block_coherence(self) -> ChannelConfig:

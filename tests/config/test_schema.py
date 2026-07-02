@@ -1069,8 +1069,9 @@ def test_prompt_system_omitted_is_none():
     assert PromptBlock.model_validate({"compose": "append"}).system is None
 
 
-def test_channel_session_defaults_auto_and_validates() -> None:
-    """channel.session defaults to 'auto', accepts 'none', rejects other strings."""
+def test_channel_session_block_and_shorthand() -> None:
+    """channel.session: defaults to key='none'; string shorthand maps to the block;
+    templates are valid keys; unknown block fields are rejected."""
     import pytest
     from pydantic import ValidationError
 
@@ -1078,10 +1079,40 @@ def test_channel_session_defaults_auto_and_validates() -> None:
 
     cron_block = {"cron": {"schedule": "* * * * *"}}
     c = ChannelConfig(name="c", type="cron", **cron_block)
-    assert c.session == "auto"
-    ChannelConfig(name="c", type="cron", session="none", **cron_block)
+    assert c.session.key == "none"
+    assert c.session.max_tokens is None
+    assert c.session.overflow == "compact"
+
+    # string shorthand: auto / none / template all become SessionBlock(key=...)
+    assert ChannelConfig(name="c", type="cron", session="auto", **cron_block).session.key == "auto"
+    assert ChannelConfig(name="c", type="cron", session="none", **cron_block).session.key == "none"
+    tmpl = "{{ internal.channel.name }}"
+    assert ChannelConfig(name="c", type="cron", session=tmpl, **cron_block).session.key == tmpl
+
+    # full block form
+    c2 = ChannelConfig(
+        name="c",
+        type="cron",
+        session={"key": "{{ payload.task_id }}", "maxTokens": 50000, "overflow": "rotate"},
+        **cron_block,
+    )
+    assert c2.session.key == "{{ payload.task_id }}"
+    assert c2.session.max_tokens == 50000
+    assert c2.session.overflow == "rotate"
+
+    # extra=forbid still bites inside the block
     with pytest.raises(ValidationError):
-        ChannelConfig(name="c", type="cron", session="sometimes", **cron_block)
+        ChannelConfig(name="c", type="cron", session={"mode": "auto"}, **cron_block)
+    # bad overflow value rejected
+    with pytest.raises(ValidationError):
+        ChannelConfig(
+            name="c", type="cron", session={"key": "auto", "overflow": "explode"}, **cron_block
+        )
+    # maxTokens must be positive
+    with pytest.raises(ValidationError):
+        ChannelConfig(
+            name="c", type="cron", session={"key": "auto", "maxTokens": 0}, **cron_block
+        )
 
 
 def test_schema_version_wrong_hard_fails(tmp_path: Path) -> None:

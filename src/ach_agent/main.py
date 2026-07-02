@@ -53,6 +53,7 @@ from ach_agent.engine.metrics import DRAIN_COMPLETED, ENGINE_LAUNCH_FAILURES
 from ach_agent.engine.sanitized_env import SanitizedEnv, configure_logging
 from ach_agent.http.app import create_app
 from ach_agent.router import Router
+from ach_agent.security.preflight import run_preflight
 from ach_agent.templating import build_template_context, render_template
 
 # configure_logging() is called at module TOP (not in main()) so that any
@@ -810,6 +811,11 @@ async def main(
       - one_shot_prompt (`--prompt TEXT`): run a single prompt non-interactively, print
         the reply, and exit (see run_one_shot). Highest precedence.
     """
+    # SEC: harden this process (dumpable=0 + no_new_privs) and refuse an unsafe host
+    # BEFORE the opencode peer is spawned and before ek_ is read into a Python local
+    # below (dumpable=0 also reowns the ek_ already in /proc/self/environ). Fail-closed
+    # unless ACH_INSECURE_ALLOW_DEGRADED=1. See security/preflight.py.
+    run_preflight()
     console_mode = tui_mode or debug_mode or one_shot_prompt is not None
     config_path = os.environ.get(CONFIG_PATH_ENV, DEFAULT_CONFIG_PATH)
 

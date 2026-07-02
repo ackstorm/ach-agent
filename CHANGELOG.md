@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.5.0] - 2026-07-02
+
+### Security
+- **Boot security preflight.** At startup the harness hardens its own process
+  (`PR_SET_DUMPABLE=0`, `PR_SET_NO_NEW_PRIVS=1`) so a co-resident opencode agent (same uid)
+  cannot read the harness's `/proc/<pid>/{environ,mem}` or ptrace it, and fail-closes on unsafe
+  host gates (running as root, `CAP_SYS_PTRACE`, `CAP_SYS_ADMIN`). A soft-warn nudges toward
+  dropping the capability bounding set. `ACH_INSECURE_ALLOW_DEGRADED=1` downgrades the host gates
+  to warnings for local dev; the two `prctl` hardenings are always enforced.
+- **Inbound-auth secrets are env-only.** `webhook.auth.secret` / `a2a.auth.secret` are read from
+  environment variables the operator injects (e.g. via `secretKeyRef`); the rendered config carries
+  env **names**, never values. Secret env values are redacted from logs, and any secret env name is
+  stripped from `engine.forwardEnv` (with a warning) so it never reaches opencode's clean-slate env.
+
+### Added
+- **Keyed engine pool.** The opencode engine pool is keyed by `session_key` — one agente ⇄ one
+  `session_key` (1:1). Distinct keys run parallel agentes; the same key reuses one, serialized by
+  the router lane. Per-session opencode config via `OPENCODE_CONFIG` over a shared HOME.
+- **Warm engine reuse + `channel.session: auto|none`.** Configurable idle TTL keeps an agente warm
+  for session continuity; `auto` reuses the opencode session across turns, `none` starts fresh.
+- **Engine resilience.** Bounded, health-gated SSE reconnect on the live invocation path;
+  mid-invocation liveness fails fast when opencode dies during a turn; a single owner enforces
+  `maxInvocationSeconds` with force-kill on timeout and reserved-port release on stop.
+- **Step-budget abort.** Runaway turns are bounded by tool-call count, followed by a wrap-up
+  correction turn so the agent still produces a terminal response.
+- **Per-turn observability.** Structured logs for the prompt, each tool call (once, completed/error),
+  and a per-turn summary (tools, tokens, cost, duration).
+- **Configurable GitLab event routing.** `webhook.gitlabEvents` selects which events route
+  (MR / issue / comments), ignores the rest, and never 422s on non-routable notes; per-kind default
+  prompts (MR / issue / comment). GitLab dual-key dedup adds a logical-content composite as a
+  secondary dedup key. Webhook 202 responses carry a correlation `X-ACH-Task-Id`.
+- **Memory backend package.** Per-`memory.type` boot-static tool spec in the system prompt;
+  `codemem.project` / `hindsight.bank` are `{{ }}`-templated from the event; strict nested
+  `memory.<type>.*` schema.
+- **Frozen config JSON Schema.** Published `docs/schemas/agent-config-v1.schema.json` with a drift
+  guard and `make schema` target.
+- **`ach-stats` service (sub-project A).** A standalone dashboard service reading the harness
+  `ach:sessions` redis stream and serving a usage leaderboard (FastAPI + React SPA). The harness gains
+  a non-blocking `StatsSink` (supervised redis writer with `XADD`+`MINID` trim, Prometheus counters).
+
+### Changed
+- **BREAKING — `auth.secretPath` removed; `auth.secret` is a `{env: NAME}` source.** File-backed
+  secrets are gone: a `{file}` source is rejected at config load. Operators must inject the secret as
+  an environment variable and reference it by name. Lockstep change with `ach-runtime`.
+- Webhook config key `gitlab_events` renamed to camelCase `gitlabEvents`.
+
+### Fixed
+- Messages are accepted independently of engine readiness (the acceptance path no longer blocks on a
+  warm engine), and the warm engine pool is stopped on graceful shutdown (no orphaned opencode).
+- `CODEMEM_PROJECT` is pinned so codemem cross-session recall works; the engine HOME layout uses the
+  contract-correct prompt path and an off-volume tmp dir.
+
 ## [0.4.1] - 2026-07-01
 
 ### Added

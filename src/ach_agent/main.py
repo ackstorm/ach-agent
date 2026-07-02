@@ -154,23 +154,39 @@ def _open_dedup_store(cfg: Any) -> Any:
             return InMemoryDedupStore()
 
 
+def _clean_tool_name(name: str) -> str:
+    """Collapse opencode's doubled MCP prefix for readability.
+
+    opencode ids MCP tools as ``<server>_<server>_<tool>`` (the server segment repeats,
+    e.g. ``mcp-gitlab-ro_mcp-gitlab-ro_gitlab_get_merge_request``). Render it as
+    ``<server>/<tool>``. Native tools (``grep``, ``bash``) have no such prefix and pass through.
+    """
+    parts = name.split("_", 2)
+    if len(parts) == 3 and parts[0] == parts[1]:
+        return f"{parts[0]}/{parts[2]}"
+    return name
+
+
 def _log_engine_tool(update: OpenCodeToolUpdate) -> None:
     """Default on_tool sink for channel invocations.
 
     run_invocation calls this as each tool moves running→completed/error. Wired only when
     the channel provides no on_tool of its own (--debug/console keep their own streaming
-    sinks), so a channel turn shows the tools it ran — the action title and its result —
-    instead of dead air.
+    sinks), so a channel turn shows the tools it ran — the action and its result — instead
+    of dead air. Empty ``action``/``detail`` are omitted so ``running`` lines stay terse.
     """
     state = update.state
+    fields: dict[str, Any] = {
+        "tool": _clean_tool_name(update.tool_name),
+        "status": state.status,
+    }
+    action = getattr(state, "title", "")
+    if action:
+        fields["action"] = action
     detail = getattr(state, "output", "") or getattr(state, "error", "")
-    log.info(
-        "engine: tool",
-        tool=update.tool_name,
-        status=state.status,
-        title=getattr(state, "title", ""),
-        detail=detail[:300],
-    )
+    if detail:
+        fields["detail"] = detail[:300]
+    log.info("engine: tool", **fields)
 
 
 def build_engine_prompt(

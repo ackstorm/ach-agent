@@ -52,6 +52,28 @@ def test_log_engine_tool_includes_title_and_truncated_output(capfd):
     assert "x" * 300 in out
 
 
+def test_log_engine_tool_cleans_doubled_mcp_prefix_and_omits_empty_fields(capfd):
+    """Doubled MCP prefix → server/tool, and empty action/detail are dropped on running."""
+    update = OpenCodeToolUpdate(
+        session_id="s1",
+        part_id="p1",
+        message_id="m1",
+        tool_name="mcp-gitlab-ro_mcp-gitlab-ro_gitlab_get_merge_request",
+        call_id="c1",
+        state=ToolStateRunning(),
+    )
+
+    _log_engine_tool(update)
+
+    out, err = capfd.readouterr()
+    combined = out + err
+    assert "mcp-gitlab-ro/gitlab_get_merge_request" in combined
+    assert "mcp-gitlab-ro_mcp-gitlab-ro_" not in combined
+    # a running tool has no title/output → those keys must not appear at all
+    assert "action=" not in combined
+    assert "detail=" not in combined
+
+
 def test_usage_round_trips_through_stats_for_summary(capfd):
     """The accumulator's tool_count + usage are what the summary log reads from stats."""
     from ach_agent.engine.events import OpenCodeUsage, ReplyAccumulator

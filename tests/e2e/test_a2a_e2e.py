@@ -62,9 +62,10 @@ _E2E_TEST_HEADER = "x-a2a-custom-api-key"
 
 def _make_a2a_channel_cfg(name: str = "a2a-test", secret_path: str = "") -> Any:
     """Build minimal A2A ChannelConfig with an optional secret path for auth testing."""
-    from ach_agent.config.schema import A2AAuthBlock, A2ABlock, ChannelConfig
+    from ach_agent.config.schema import A2AAuthBlock, A2ABlock, ChannelConfig, SecretSource
 
-    a2a_block = A2ABlock(auth=A2AAuthBlock(secretPath=secret_path))
+    secret = SecretSource(file=secret_path) if secret_path else None
+    a2a_block = A2ABlock(auth=A2AAuthBlock(secret=secret))
     return ChannelConfig(name=name, type="a2a", a2a=a2a_block)
 
 

@@ -57,7 +57,7 @@ def _make_channel_cfg(
             "type": "webhook",
             "source": "gitlab",
             "webhook": {
-                "auth": {"type": "gitlab_token", "secretPath": secret_path},
+                "auth": {"type": "gitlab_token", "secret": {"file": secret_path}},
             },
         }
     )
@@ -103,9 +103,7 @@ def test_readyz(tmp_path: pytest.TempPathFactory) -> None:
             return resp.status_code
 
     status_before = asyncio.run(get_readyz_no_lifespan())
-    assert status_before == 503, (
-        f"readyz must return 503 before lifespan, got {status_before}"
-    )
+    assert status_before == 503, f"readyz must return 503 before lifespan, got {status_before}"
 
     # Inside the TestClient context manager — lifespan is triggered → 200
     with TestClient(app) as client:
@@ -220,9 +218,7 @@ def test_webhook_503_only_when_draining(tmp_path: pytest.TempPathFactory) -> Non
             content=json.dumps(MR_PAYLOAD).encode(),
             headers=_make_headers("s3cr3t", event_uuid=str(uuid.uuid4())),
         )
-        assert resp.status_code == 202, (
-            f"engine-not-ready must never 503, got {resp.status_code}"
-        )
+        assert resp.status_code == 202, f"engine-not-ready must never 503, got {resp.status_code}"
 
         app.extra["state"]["draining"] = True
         resp = client.post(
@@ -230,9 +226,7 @@ def test_webhook_503_only_when_draining(tmp_path: pytest.TempPathFactory) -> Non
             content=json.dumps(MR_PAYLOAD).encode(),
             headers=_make_headers("s3cr3t", event_uuid=str(uuid.uuid4())),
         )
-        assert resp.status_code == 503, (
-            f"draining must return 503, got {resp.status_code}"
-        )
+        assert resp.status_code == 503, f"draining must return 503, got {resp.status_code}"
 
 
 def test_draining_503(tmp_path: pytest.TempPathFactory) -> None:
@@ -254,9 +248,7 @@ def test_draining_503(tmp_path: pytest.TempPathFactory) -> None:
             content=json.dumps(MR_PAYLOAD).encode(),
             headers=_make_headers("s3cr3t", event_uuid=str(uuid.uuid4())),
         )
-    assert resp.status_code == 503, (
-        f"D-12: draining gate must return 503, got {resp.status_code}"
-    )
+    assert resp.status_code == 503, f"D-12: draining gate must return 503, got {resp.status_code}"
     assert handler.events == [], "D-12: draining gate must prevent router from being called"
 
 
@@ -295,9 +287,7 @@ def test_oversized_body_via_content_length_returns_413(
     assert resp.status_code == 413, (
         f"T-02-05: oversized Content-Length must return 413, got {resp.status_code}"
     )
-    assert handler.events == [], (
-        "T-02-05: router must NOT be called for oversized body"
-    )
+    assert handler.events == [], "T-02-05: router must NOT be called for oversized body"
 
 
 def test_oversized_body_streaming_returns_413(tmp_path: pytest.TempPathFactory) -> None:
@@ -325,6 +315,4 @@ def test_oversized_body_streaming_returns_413(tmp_path: pytest.TempPathFactory) 
     assert resp.status_code == 413, (
         f"T-02-05: oversized streaming body must return 413, got {resp.status_code}"
     )
-    assert handler.events == [], (
-        "T-02-05: router must NOT be called for oversized body"
-    )
+    assert handler.events == [], "T-02-05: router must NOT be called for oversized body"

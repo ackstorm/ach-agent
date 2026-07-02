@@ -8,6 +8,7 @@ acceptance (deadlock: never accepted, so never started). Restored to legacy
 `draining` gate, never on engine state — the engine starts lazily per
 session_key. See docs/references/2026-07-01-router-pool-vs-legacy.md finding B8.
 """
+
 from __future__ import annotations
 
 import json
@@ -27,7 +28,7 @@ def _make_webhook_cfg(secret_path: str, name: str = "test-channel") -> ChannelCo
             "type": "webhook",
             "source": "gitlab",
             "webhook": {
-                "auth": {"type": "gitlab_token", "secretPath": secret_path},
+                "auth": {"type": "gitlab_token", "secret": {"file": secret_path}},
             },
         }
     )

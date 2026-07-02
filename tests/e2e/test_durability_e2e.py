@@ -66,7 +66,7 @@ def _make_webhook_cfg(
             "type": "webhook",
             "source": "gitlab",
             "webhook": {
-                "auth": {"type": "gitlab_token", "secretPath": secret_path},
+                "auth": {"type": "gitlab_token", "secret": {"file": secret_path}},
             },
         }
     )

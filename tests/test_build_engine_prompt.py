@@ -1,5 +1,5 @@
 from ach_agent.channels.message_event import MessageEvent
-from ach_agent.config.schema import ChannelConfig, WebhookBlock
+from ach_agent.config.schema import ChannelConfig, WebhookAuthBlock, WebhookBlock
 from ach_agent.main import build_engine_prompt
 
 
@@ -9,7 +9,7 @@ def _webhook_channel(prompt: str | None) -> ChannelConfig:
         type="webhook",
         source="gitlab",
         prompt=prompt,
-        webhook=WebhookBlock(),
+        webhook=WebhookBlock(auth=WebhookAuthBlock(type="none")),
     )
 
 

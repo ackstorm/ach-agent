@@ -64,6 +64,13 @@ engine:                                 # harness-local (operator-optional)
   home: /var/lib/ach-agent/home         # opencode HOME; derived from persistence if unset
   workDir: /workspace                   # cwd for the opencode subprocess
   startupTimeoutSeconds: 30             # engine + hydration must be ready within this, else exit
+  idleTtlSeconds: 60                    # keep an idle keyed agente warm this long after its last
+                                        # release (0 = stop immediately). Enables session:auto
+                                        # continuity + avoids cold-starting opencode every event.
+  maxToolCalls: 0                       # runaway control: abort a turn after N DISTINCT tool calls,
+                                        # then a wrap-up turn returns a valid terminal object. 0 = off
+                                        # (maxInvocationSeconds is the always-on time backstop).
+                                        # Distinct from limits.maxSteps (opencode's own step cap).
   forwardEnv:                           # default-deny: opencode env is clean-slate; ONLY these names
     - SSL_CERT_FILE                     # are forwarded from the harness env. NEVER list the ek_.
     - HTTPS_PROXY
@@ -86,7 +93,7 @@ channels:
       auth:
         type: gitlab_token              # gitlab_token | hmac | header_token | none
         secretPath: /etc/ach-agent/secrets/gitlab-webhook/secret   # a path, never a value
-      gitlab_events: [merge_request, note]   # route MR hooks + MR/issue comments; omit → MR+issue+note.
+      gitlabEvents: [merge_request, note]    # route MR hooks + MR/issue comments; omit → MR+issue+note.
                                              # Other kinds (push, pipeline, …) → HTTP 200 ignored, never 422.
 
   - name: generic-hook

@@ -64,6 +64,11 @@ engine:
   home: /tmp/ach-home
   workDir: /tmp/ach-home/workspace
   startupTimeoutSeconds: 30
+  # idleTtlSeconds: 60   # keep an idle agente warm this long (0 = stop after each turn).
+  #                      # Enables channel.session:auto continuity + skips cold starts. --tui
+  #                      # already holds the agente for the whole REPL, so this is a no-op there.
+  # maxToolCalls: 0      # runaway control: abort a turn after N distinct tool calls + wrap-up
+  #                      # turn (0 = off; maxInvocationSeconds is the always-on time backstop).
   # forwardEnv:
   #   - SSL_CERT_FILE
 

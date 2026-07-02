@@ -214,10 +214,14 @@ def test_webhook_gitlab_events() -> None:
     from ach_agent.config.schema import WebhookBlock
 
     assert WebhookBlock().gitlab_events is None
-    b = WebhookBlock.model_validate({"gitlab_events": ["merge_request", "note"]})
+    # Config key is camelCase `gitlabEvents` (renamed from snake_case — no dual name).
+    b = WebhookBlock.model_validate({"gitlabEvents": ["merge_request", "note"]})
     assert b.gitlab_events == ["merge_request", "note"]
     with pytest.raises(ValidationError):
-        WebhookBlock.model_validate({"gitlab_events": ["pipeline"]})
+        WebhookBlock.model_validate({"gitlabEvents": ["pipeline"]})
+    # snake_case is REJECTED (extra=forbid) — this is a rename, not an alias.
+    with pytest.raises(ValidationError):
+        WebhookBlock.model_validate({"gitlab_events": ["merge_request"]})
 
 
 def test_channel_session_and_expire_rejected() -> None:

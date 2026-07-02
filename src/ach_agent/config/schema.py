@@ -330,7 +330,9 @@ class WebhookBlock(BaseModel):
     # (merge_request, issue, note). Kinds not listed are accepted-and-ignored (HTTP 200), never
     # 422 — so GitLab does not auto-disable the hook. A note (comment) routes only when "note"
     # AND its noteable base kind (merge_request/issue) are both allowed.
-    gitlab_events: list[Literal["merge_request", "issue", "note"]] | None = None
+    gitlab_events: list[Literal["merge_request", "issue", "note"]] | None = Field(
+        default=None, alias="gitlabEvents"
+    )
 
 
 class A2AAuthBlock(BaseModel):

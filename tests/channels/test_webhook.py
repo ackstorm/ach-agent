@@ -477,7 +477,7 @@ NOTE_ON_MR_MISSING_MR = {
 def _make_cfg_events(secret_path: str, events: list[str] | None = None) -> ChannelConfig:
     webhook: dict[str, Any] = {"auth": {"type": "gitlab_token", "secretPath": secret_path}}
     if events is not None:
-        webhook["gitlab_events"] = events
+        webhook["gitlabEvents"] = events
     return ChannelConfig.model_validate(
         {"name": "gl", "type": "webhook", "source": "gitlab", "webhook": webhook}
     )

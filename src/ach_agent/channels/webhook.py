@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-# GitLab event kinds routed when a channel does not set webhook.gitlab_events.
+# GitLab event kinds routed when a channel does not set webhook.gitlabEvents.
 _DEFAULT_GITLAB_EVENTS = {"merge_request", "issue", "note"}
 
 

@@ -202,7 +202,7 @@ def test_webhook_header_token_auth() -> None:
     from ach_agent.config.schema import WebhookAuthBlock
 
     a = WebhookAuthBlock.model_validate(
-        {"type": "header_token", "header": "X-Api-Key", "secretPath": "/s"}
+        {"type": "header_token", "header": "X-Api-Key", "secret": {"file": "/s"}}
     )
     assert a.type == "header_token" and a.header == "X-Api-Key"
 
@@ -213,15 +213,19 @@ def test_webhook_gitlab_events() -> None:
 
     from ach_agent.config.schema import WebhookBlock
 
-    assert WebhookBlock().gitlab_events is None
+    # auth.type="none" sidesteps the (unrelated) secret-required validator so this test
+    # isolates gitlabEvents behavior only.
+    assert WebhookBlock.model_validate({"auth": {"type": "none"}}).gitlab_events is None
     # Config key is camelCase `gitlabEvents` (renamed from snake_case — no dual name).
-    b = WebhookBlock.model_validate({"gitlabEvents": ["merge_request", "note"]})
+    b = WebhookBlock.model_validate(
+        {"auth": {"type": "none"}, "gitlabEvents": ["merge_request", "note"]}
+    )
     assert b.gitlab_events == ["merge_request", "note"]
     with pytest.raises(ValidationError):
-        WebhookBlock.model_validate({"gitlabEvents": ["pipeline"]})
+        WebhookBlock.model_validate({"auth": {"type": "none"}, "gitlabEvents": ["pipeline"]})
     # snake_case is REJECTED (extra=forbid) — this is a rename, not an alias.
     with pytest.raises(ValidationError):
-        WebhookBlock.model_validate({"gitlab_events": ["merge_request"]})
+        WebhookBlock.model_validate({"auth": {"type": "none"}, "gitlab_events": ["merge_request"]})
 
 
 def test_channel_session_and_expire_rejected() -> None:
@@ -302,7 +306,7 @@ def test_load_valid_queue_config() -> None:
 
 
 def test_load_valid_a2a_config() -> None:
-    """CFG-06: valid v3 a2a fixture loads; mode and secretPath asserted."""
+    """CFG-06: valid v3 a2a fixture loads; mode and secret asserted."""
     from ach_agent.config import load_config
 
     config = load_config(str(FIXTURES_DIR / "config_a2a.json"))
@@ -311,7 +315,8 @@ def test_load_valid_a2a_config() -> None:
     assert ch.type == "a2a"
     assert ch.a2a is not None
     assert ch.a2a.mode == "async"
-    assert ch.a2a.auth.secret_path == "/etc/ach-agent/secrets/a2a/key"
+    assert ch.a2a.auth.secret is not None
+    assert ch.a2a.auth.secret.file == "/etc/ach-agent/secrets/a2a/key"
 
 
 # ---------------------------------------------------------------------------

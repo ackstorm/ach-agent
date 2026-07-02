@@ -55,7 +55,7 @@ def _make_channel_cfg(secret_path: str) -> ChannelConfig:
             "type": "webhook",
             "source": "gitlab",
             "webhook": {
-                "auth": {"type": "gitlab_token", "secretPath": secret_path},
+                "auth": {"type": "gitlab_token", "secret": {"file": secret_path}},
             },
         }
     )
@@ -271,7 +271,7 @@ async def test_github_source_parses_pr_and_hmac_auth(tmp_path: pytest.TempPathFa
             "name": "gh",
             "type": "webhook",
             "source": "github",
-            "webhook": {"auth": {"type": "hmac", "secretPath": str(secret_file)}},
+            "webhook": {"auth": {"type": "hmac", "secret": {"file": str(secret_file)}}},
         }
     )
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
@@ -305,7 +305,7 @@ async def test_hmac_auth_rejects_bad_signature(tmp_path: pytest.TempPathFactory)
             "name": "gh",
             "type": "webhook",
             "source": "github",
-            "webhook": {"auth": {"type": "hmac", "secretPath": str(secret_file)}},
+            "webhook": {"auth": {"type": "hmac", "secret": {"file": str(secret_file)}}},
         }
     )
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
@@ -366,11 +366,13 @@ async def test_gitlab_token_auth_rejects_bad_token(tmp_path: pytest.TempPathFact
 def test_header_token_auth(tmp_path) -> None:
     """header_token auth: static shared secret in a configurable header (constant-time)."""
     from ach_agent.channels.webhook import _verify_auth
-    from ach_agent.config.schema import WebhookAuthBlock
+    from ach_agent.config.schema import SecretSource, WebhookAuthBlock
 
     secret = tmp_path / "s"
     secret.write_text("topsecret")
-    auth = WebhookAuthBlock(type="header_token", header="X-Api-Key", secret_path=str(secret))
+    auth = WebhookAuthBlock(
+        type="header_token", header="X-Api-Key", secret=SecretSource(file=str(secret))
+    )
     assert _verify_auth(auth, {"x-api-key": "topsecret"}, b"") is True
     assert _verify_auth(auth, {"x-api-key": "wrong"}, b"") is False
     assert _verify_auth(auth, {}, b"") is False
@@ -413,7 +415,7 @@ async def test_github_leaves_secondary_key_none(tmp_path: pytest.TempPathFactory
             "name": "gh",
             "type": "webhook",
             "source": "github",
-            "webhook": {"auth": {"type": "hmac", "secretPath": str(secret_file)}},
+            "webhook": {"auth": {"type": "hmac", "secret": {"file": str(secret_file)}}},
         }
     )
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
@@ -475,7 +477,7 @@ NOTE_ON_MR_MISSING_MR = {
 
 
 def _make_cfg_events(secret_path: str, events: list[str] | None = None) -> ChannelConfig:
-    webhook: dict[str, Any] = {"auth": {"type": "gitlab_token", "secretPath": secret_path}}
+    webhook: dict[str, Any] = {"auth": {"type": "gitlab_token", "secret": {"file": secret_path}}}
     if events is not None:
         webhook["gitlabEvents"] = events
     return ChannelConfig.model_validate(

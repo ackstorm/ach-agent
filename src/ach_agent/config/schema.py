@@ -329,6 +329,21 @@ class SecretSource(BaseModel):
         return self
 
 
+def resolve_secret(src: SecretSource) -> str | None:
+    """Resolve a SecretSource to its value at use time (never cached — rotation).
+
+    Returns the stripped value, or None if unresolvable (env unset / file missing / unreadable)
+    so callers fail closed (reject the request) exactly as the file-only path did.
+    """
+    if src.env:
+        val = os.environ.get(src.env)
+        return val.strip() if val is not None else None
+    try:
+        return Path(src.file).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+
 class WebhookAuthBlock(BaseModel):
     """CONTRACT_v3 §2 webhook.auth sub-block."""
 

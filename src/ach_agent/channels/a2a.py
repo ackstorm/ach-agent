@@ -11,7 +11,8 @@ Locked decisions:
     engine starts lazily per session_key inside the lane (pool.acquire in engine_runner).
   - FULL_QUEUE (D-05/RTR-05): failed TaskStatusUpdateEvent, not silent drop.
   - source_trait = "async_no_retry": delivery bridge via signal_completion(session_key, text).
-  - Secret read LAZILY from mounted path at use time, NEVER cached or logged (CONTRACT §3).
+  - Secret resolved LAZILY (SecretSource: env|file) at use time, NEVER cached or logged
+    (CONTRACT §3).
   - build_a2a_app(agent_card, executor): creates InMemoryTaskStore +
     LegacyRequestHandler + wires routes via add_a2a_routes_to_fastapi on a FastAPI sub-app.
 
@@ -24,12 +25,12 @@ from __future__ import annotations
 
 import asyncio
 import hmac
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from ach_agent.channels.message_event import MessageEvent
+from ach_agent.config.schema import resolve_secret
 from ach_agent.router.dedup import derive_a2a_idempotency_key
 from ach_agent.router.metrics import CHANNEL_INBOUND
 from ach_agent.router.router import RouterAdmitResult
@@ -42,21 +43,6 @@ log = structlog.get_logger(__name__)
 
 # RTR-06: a2a imports are ONLY inside functions/methods below — never at module level.
 # Verified by: grep -nE "^import a2a|^from a2a" src/ach_agent/channels/a2a.py → zero results.
-
-
-def _read_secret(secret_path: str) -> str | None:
-    """Read secret value from mounted path at call time. NEVER cache or log (CONTRACT §3).
-
-    Returns None if the path is empty or the file cannot be read.
-    The caller MUST treat None as an auth failure (fail-closed — CR-02).
-    """
-    if not secret_path:
-        return None
-    try:
-        return Path(secret_path).read_text(encoding="utf-8").strip()
-    except OSError:
-        log.error("a2a: secret path not readable — rejecting all requests", path=secret_path)
-        return None
 
 
 def _status_event(state: str, text: str | None = None) -> Any:
@@ -120,10 +106,10 @@ class A2AAgentExecutorBridge:
           (3) Await completion signal (set by signal_completion via on_complete callback).
         """
         # (1) HEADER AUTH — spec §14.6 / T-04-13
-        # Fail-closed (CR-01): if no a2a sub-block or no secretPath configured,
+        # Fail-closed (CR-01): if no a2a sub-block or no secret configured,
         # reject the request rather than admitting unauthenticated callers.
         a2a_cfg = self._channel_cfg.a2a
-        if a2a_cfg is None or not a2a_cfg.auth.secret_path:
+        if a2a_cfg is None or a2a_cfg.auth.secret is None:
             log.warning(
                 "a2a: request rejected — no auth secret configured (fail-closed §14.6)",
                 channel=self._channel_cfg.name,
@@ -132,9 +118,13 @@ class A2AAgentExecutorBridge:
             return
 
         expected_header = a2a_cfg.auth.header  # e.g. "x-a2a-custom-api-key"
-        expected_value = _read_secret(a2a_cfg.auth.secret_path)
+        expected_value = resolve_secret(a2a_cfg.auth.secret)
         if expected_value is None:
-            # CR-02: unreadable/empty secret — never admit (empty-vs-empty must fail)
+            # CR-02: unresolvable/empty secret — never admit (empty-vs-empty must fail)
+            log.error(
+                "a2a: secret unresolvable — rejecting all requests",
+                channel=self._channel_cfg.name,
+            )
             await event_queue.enqueue_event(_status_event("failed", "Unauthorized"))
             return
 

@@ -51,7 +51,7 @@
         "mode": "async",
         "auth": {
           "header": "x-a2a-custom-api-key",
-          "secretPath": "/etc/ach-agent/secrets/a2a/key"
+          "secret": { "file": "/etc/ach-agent/secrets/a2a/key" }
         }
       }
     }

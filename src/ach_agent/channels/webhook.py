@@ -4,8 +4,8 @@
 Locked decisions:
   - Auth: GitLab plain-token compare via hmac.compare_digest (NOT HMAC-SHA256 body sig).
     See RESEARCH.md Pitfall 1: GitLab sends X-Gitlab-Token as a plain secret string.
-  - Secret: read per-request from auth.secret_path via Path.read_text(); NEVER stored
-    as an instance attribute or long-lived variable (SEC-02, Pitfall 2).
+  - Secret: read per-request from auth.secret (SecretSource: env|file) via resolve_secret();
+    NEVER stored as an instance attribute or long-lived variable (SEC-02, Pitfall 2).
   - delivery_context: {project_id, mr_iid} extracted at parse time and threaded through
     MessageEvent.delivery_context (D-07).
   - Idempotency key: derive_webhook_idempotency_key(headers) — X-Gitlab-Event-UUID or
@@ -26,12 +26,12 @@ import hmac
 import json
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from ach_agent.channels.message_event import MessageEvent
+from ach_agent.config.schema import SecretSource, resolve_secret
 from ach_agent.router.dedup import derive_gitlab_composite_key, derive_webhook_idempotency_key
 from ach_agent.router.router import RouterAdmitResult
 
@@ -56,49 +56,50 @@ class WebhookResult:
     task_id: str = ""
 
 
-def _verify_hmac(signature: str, secret_path: str, raw_body: bytes) -> bool:
+def _verify_hmac(signature: str, secret: SecretSource, raw_body: bytes) -> bool:
     """Verify GitHub-style HMAC-SHA256 body signature (X-Hub-Signature-256).
 
     The header value is `sha256=<hexdigest>`; we strip the prefix and compare in
-    constant time against HMAC-SHA256(secret, raw_body). Secret read per-request
-    from secret_path (SEC-02), never cached.
+    constant time against HMAC-SHA256(secret, raw_body). Secret resolved per-request
+    via resolve_secret (SEC-02), never cached.
     """
     if not signature:
         return False
     sig = signature[len("sha256=") :] if signature.startswith("sha256=") else signature
-    # SEC-02: read per-request, discard after use — NEVER assigned to long-lived attr
-    secret_bytes = Path(secret_path).read_text(encoding="utf-8").strip().encode("utf-8")
+    # SEC-02: resolve per-request, discard after use — NEVER assigned to long-lived attr
+    resolved = resolve_secret(secret)
+    if not resolved:
+        return False
+    secret_bytes = resolved.encode("utf-8")
     expected = hmac.new(secret_bytes, raw_body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(sig, expected)
 
 
-def _verify_header_token(header_token: str, secret_path: str) -> bool:
+def _verify_header_token(header_token: str, secret: SecretSource) -> bool:
     """Constant-time compare a static shared secret carried in a configurable header.
 
-    Secret read per-call from secret_path for rotation support (SEC-02). Empty header or
-    empty/unreadable secret → reject.
+    Secret resolved per-call via resolve_secret for rotation support (SEC-02). Empty
+    header or empty/unresolvable secret → reject.
     """
-    if not header_token or not secret_path:
+    resolved = resolve_secret(secret)
+    if not header_token or not resolved:
         return False
-    secret = Path(secret_path).read_text(encoding="utf-8").strip()
-    return bool(secret) and hmac.compare_digest(header_token, secret)
+    return hmac.compare_digest(header_token, resolved)
 
 
 def _verify_auth(auth: WebhookAuthBlock, lower_headers: dict[str, str], raw_body: bytes) -> bool:
     """Dispatch auth verification by auth.type (gitlab_token | hmac | header_token | none)."""
+    if auth.type == "none":
+        return True
+    # Schema requires auth.secret for every non-"none" type (WebhookAuthBlock validator).
+    assert auth.secret is not None, "webhook.auth.secret must be set for non-none auth types"
     match auth.type:
         case "gitlab_token":
-            return _verify_header_token(lower_headers.get("x-gitlab-token", ""), auth.secret_path)
+            return _verify_header_token(lower_headers.get("x-gitlab-token", ""), auth.secret)
         case "hmac":
-            return _verify_hmac(
-                lower_headers.get("x-hub-signature-256", ""), auth.secret_path, raw_body
-            )
+            return _verify_hmac(lower_headers.get("x-hub-signature-256", ""), auth.secret, raw_body)
         case "header_token":
-            return _verify_header_token(
-                lower_headers.get(auth.header.lower(), ""), auth.secret_path
-            )
-        case "none":
-            return True
+            return _verify_header_token(lower_headers.get(auth.header.lower(), ""), auth.secret)
 
 
 def _parse_gitlab(body: dict[str, Any], allowed: set[str]) -> tuple[dict[str, Any], str] | None:
@@ -230,7 +231,7 @@ async def handle_webhook_request(
     Args:
         raw_body:    Raw request body bytes (read by caller before JSON parse).
         headers:     Request headers dict (case-sensitive; caller normalises keys).
-        channel_cfg: Channel configuration carrying webhook.auth.secret_path.
+        channel_cfg: Channel configuration carrying webhook.auth.secret.
         handler:     MessageHandler (Router) to dispatch to.
 
     Returns:

@@ -88,9 +88,9 @@ def _make_channel_cfg(
     header: str = "x-a2a-custom-api-key",
 ) -> Any:
     """Build a minimal ChannelConfig-like object for unit tests."""
-    from ach_agent.config.schema import A2AAuthBlock, A2ABlock, ChannelConfig
+    from ach_agent.config.schema import A2AAuthBlock, A2ABlock, ChannelConfig, SecretSource
 
-    a2a_auth = A2AAuthBlock(header=header, secretPath=secret_path)
+    a2a_auth = A2AAuthBlock(header=header, secret=SecretSource(file=secret_path))
     a2a_block = A2ABlock(auth=a2a_auth)
     return ChannelConfig(name=name, type="a2a", a2a=a2a_block)
 
@@ -397,6 +397,11 @@ async def test_cr01_no_auth_block_rejects_request() -> None:
     handler.handle.assert_not_called()
 
 
+@pytest.mark.skip(
+    reason="v3 schema (SecretSource: exactly one of {env, file}) rejects an empty secret "
+    "at config-load, so 'no auth secret configured' is unconstructable here — mirrors "
+    "test_cr01_no_auth_block_rejects_request above"
+)
 @pytest.mark.asyncio
 async def test_cr01_empty_secret_path_rejects_request() -> None:
     """CR-01/CR-02: A2A channel with empty secretPath must REJECT, not admit.

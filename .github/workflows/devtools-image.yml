@@ -46,7 +46,7 @@ jobs:
           echo "latest=ghcr.io/$OWNER/ach-agent-devtools:latest" >> "$GITHUB_OUTPUT"
           echo "buildcache=ghcr.io/$OWNER/ach-agent-devtools:buildcache" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/devtools/Dockerfile

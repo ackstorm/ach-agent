@@ -173,15 +173,15 @@ async def test_cron_full_queue_logs_and_never_silent(
 
 
 # ---------------------------------------------------------------------------
-# DUR-02 / DUR-04: A′ cron drop + DUR-04 no-catch-up conformance (Plan 03-02)
+# Decouple: engine-not-ready no longer drops cron ticks (DUR-04 no-catch-up
+# conformance, below, is unaffected — that is a separate misfire-loss mode).
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_a_prime_cron_drop(monkeypatch: pytest.MonkeyPatch) -> None:
-    """DUR-02/DUR-04: cron tick dropped + COLD_START_DROPS incremented when engine_has_been_ready_once=False.
-
-    A′ gate fires after sleep but before event build — handler must NOT be called.
+async def test_engine_not_ready_tick_routes_normally(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Decouple: a tick with engine-not-ready (cold pool) is NOT skipped — it routes
+    normally. The engine starts lazily inside pool.acquire() (main.py engine_runner).
     """
     from ach_agent.channels.cron import CronScheduler
     from ach_agent.config.schema import ChannelConfig
@@ -214,9 +214,9 @@ async def test_a_prime_cron_drop(monkeypatch: pytest.MonkeyPatch) -> None:
     # Cleanup singleton counter
     CronScheduler._instance_count = 0
 
-    # A′ gate must have dropped the tick — handler NOT called (DUR-02)
-    assert len(handler.events) == 0, (
-        "DUR-02: A′ gate must drop cron tick and NOT call handler before engine ready"
+    # engine-not-ready must NOT skip the tick — it routes normally (lazy engine start)
+    assert len(handler.events) == 1, (
+        "engine-not-ready must not skip cron ticks — acceptance is decoupled"
     )
 
 

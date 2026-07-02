@@ -5,7 +5,7 @@ Covers:
   - derive_a2a_idempotency_key: task_id → a2a:{task_id}, empty → ms-timestamp
   - session_key = context_id (fallback to task_id)
   - Header auth (spec §14.6 / T-04-13): missing/wrong header → failed event, handler never called
-  - A′ gate: engine not ready → enqueue failed TaskStatusUpdateEvent (503-style)
+  - Decouple: engine not ready no longer gates dispatch — routes normally (lazy engine start)
   - FULL_QUEUE → enqueue failed event (never silent)
   - cancel() → enqueue canceled event
 """
@@ -318,15 +318,16 @@ async def test_a2a_session_key_fallback_to_task_id_when_no_context_id(
 
 
 # ---------------------------------------------------------------------------
-# A′ gate and FULL_QUEUE
+# Decouple acceptance from engine readiness + FULL_QUEUE
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_a2a_a_prime_gate_enqueues_failed_event(tmp_path: pytest.TempPath) -> None:
-    """D-06: A′ gate — engine not ready → enqueue failed TaskStatusUpdateEvent (503-style)."""
-    from a2a.types.a2a_pb2 import TASK_STATE_FAILED
-
+async def test_a2a_engine_not_ready_routes_normally(tmp_path: pytest.TempPath) -> None:
+    """Decouple: engine-not-ready (cold pool) no longer emits a "Service warming up"
+    failed event — the bridge routes to the handler like any other request. The engine
+    starts lazily inside pool.acquire() (main.py engine_runner), not at the channel layer.
+    """
     handler = _make_accepted_handler()
     channel_cfg = _make_authed_channel_cfg(tmp_path)
     bridge = A2AAgentExecutorBridge(handler=handler, pool=_make_cold_pool(), channel_cfg=channel_cfg)
@@ -334,11 +335,20 @@ async def test_a2a_a_prime_gate_enqueues_failed_event(tmp_path: pytest.TempPath)
     ctx = _authed_ctx(task_id="task-1")
     eq = MockEventQueue()
 
-    await bridge.execute(ctx, eq)
+    # We DON'T await completion here (no signal_completion called in this unit test),
+    # so we drive execute() until it blocks on completion.wait() using a task + cancel.
+    task = asyncio.create_task(bridge.execute(ctx, eq))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
 
-    assert len(eq.events) == 1
-    assert eq.events[0].status.state == TASK_STATE_FAILED
-    handler.handle.assert_not_called()
+    handler.handle.assert_called_once()
+    assert eq.events == [], "no failed event should be enqueued for engine-not-ready"
+
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 
 @pytest.mark.asyncio

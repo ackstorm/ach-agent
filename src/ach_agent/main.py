@@ -461,8 +461,10 @@ def _make_engine_runner(
         future = event.reply_future
         server = None
         timed_out = False
+        acquired = False
         try:
             server = await pool.acquire(event.session_key, invocation_engine_cfg)
+            acquired = True
             # MEM-01: append ## Memory section (summaries or unavailable note) to prompt.
             base_prompt = build_engine_prompt(
                 event,
@@ -532,6 +534,19 @@ def _make_engine_runner(
                 future.set_exception(InvocationTimeout(max_invocation_seconds))
             raise
         except Exception as exc:
+            if not acquired:
+                # pool.acquire itself failed — the agente could not be launched for
+                # this session_key. Explicit metric + WARN (no silent drop): acceptance
+                # is decoupled from engine readiness, so this is where a launch failure
+                # first surfaces. Never log ek_/tokens — session_key + error string only.
+                from ach_agent.engine.metrics import ENGINE_LAUNCH_FAILURES
+
+                ENGINE_LAUNCH_FAILURES.inc()
+                log.warning(
+                    "engine: launch failed (pool.acquire)",
+                    session_key=event.session_key,
+                    error=str(exc),
+                )
             if future is not None and not future.done():
                 future.set_exception(exc)
             raise

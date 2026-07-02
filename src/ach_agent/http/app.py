@@ -42,7 +42,7 @@ MAX_WEBHOOK_BODY_BYTES: int = 1 * 1024 * 1024  # 1 MiB
 def create_app(
     channels: Sequence[ChannelConfig],
     handler: MessageHandler,
-    pool: Any = None,  # EnginePool — None disables A′ gate (existing pool-less tests pass)
+    pool: Any = None,  # EnginePool — unused by the pre-admission gate (decoupled); kept for callers
     a2a_mounts: Sequence[tuple[str, Any]] | None = None,  # [(path, sub_app), ...] — A2A sub-apps
 ) -> FastAPI:
     """Create the FastAPI app with all HTTP surface endpoints.
@@ -50,8 +50,9 @@ def create_app(
     Args:
         channels:  List of channel configs (looked up by name on each request).
         handler:   MessageHandler (Router) for router.handle(event) calls.
-        pool:      EnginePool instance for A′ cold-start gate (DUR-02, D-06).
-                   None disables the gate (backward-compatible default).
+        pool:      EnginePool instance. Acceptance is decoupled from engine readiness —
+                   the pre-admission gate no longer reads this; kept for backward
+                   compatibility with existing callers/tests.
 
     Returns:
         FastAPI application instance with lifespan, routes, and /metrics mount.
@@ -91,33 +92,27 @@ def create_app(
         """Accept an inbound webhook event and dispatch it asynchronously.
 
         Stages:
-          0. Pre-admission gate: A′ cold-start (DUR-02, D-06) + draining (D-12) → 503
+          0. Pre-admission gate: draining (D-12) → 503 (acceptance is decoupled from
+             engine readiness — the engine starts lazily per session_key)
           1. Resolve channel config by name (404 if unknown — T-02-06)
           2. Read raw body BEFORE any JSON parse (Pattern 1)
           3. Dispatch to webhook adapter (HMAC verify → parse → dedup → router)
           4. For non-202 outcomes (401/200-dup/400/422/503), return as-is
           5. ACCEPTED → return 202 accept-and-process-async
         """
-        # 0. Pre-admission gate (DUR-02, D-06, D-12): reject before channel lookup + router.
+        # 0. Pre-admission gate (D-12): reject before channel lookup + router.
         # draining (D-12): straggler inbound during SIGTERM drain → retriable 503.
-        # A′ (DUR-02): engine not ready yet → 503, never a silent 200/202 (§6.4).
         # GitLab redelivers to the next pod on 503 — this is the correct behavior.
-        if state["draining"] or (pool is not None and not pool.engine_has_been_ready_once):
-            reason = "draining" if state["draining"] else "engine_not_ready"
+        # Acceptance is decoupled from engine readiness (the A′ gate was removed):
+        # the engine starts lazily per session_key inside the lane, never a
+        # precondition for accepting the message (mirrors legacy ackbot-process).
+        if state["draining"]:
             log.info(
                 "http: 503 pre-admission",
-                reason=reason,
+                reason="draining",
                 channel_name=channel_name,
             )
-            # Count only true cold-start rejects (WR-01): when draining is the
-            # reason, this is a drain-503, not a cold-start reject — do not
-            # corrupt COLD_START_REJECTS. `reason == "engine_not_ready"` implies
-            # not draining AND the engine has never been ready.
-            if reason == "engine_not_ready":
-                from ach_agent.router.metrics import COLD_START_REJECTS
-
-                COLD_START_REJECTS.labels(channel=channel_name).inc()
-            return JSONResponse({"detail": reason}, status_code=503)
+            return JSONResponse({"detail": "draining"}, status_code=503)
 
         # 1. Resolve channel config (T-02-06: 404 for unknown channel name)
         channel_cfg = channel_map.get(channel_name)

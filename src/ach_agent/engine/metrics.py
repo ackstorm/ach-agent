@@ -25,3 +25,12 @@ DRAIN_COMPLETED: prometheus_client.Counter = prometheus_client.Counter(
     "engine_drain_completed_total",
     "Graceful drain completed successfully (SIGTERM → sys.exit(0)) (DUR-03)",
 )
+
+# engine_launch_failures_total: incremented by main.py engine_runner when
+# pool.acquire() raises — the opencode agente could not be launched for this
+# session_key. Explicit observability (no silent drop) now that acceptance is
+# decoupled from engine readiness.
+ENGINE_LAUNCH_FAILURES: prometheus_client.Counter = prometheus_client.Counter(
+    "engine_launch_failures_total",
+    "opencode agente launches that failed in engine_runner (pool.acquire raised)",
+)

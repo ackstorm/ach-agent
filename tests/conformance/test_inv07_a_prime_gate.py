@@ -1,7 +1,12 @@
-"""CONTRACT §6.7: Proven-start gate A′ invariant (authoritative conformance test).
+"""Decouple acceptance from engine readiness (authoritative conformance test).
 
-Invariant: during the pod's first warmup, NACK/503 instead of buffering;
-accept-and-buffer only after the engine has been ready once.
+Formerly this asserted the "proven-start gate A′" (old CONTRACT §6.7): NACK/503
+during the pod's first warmup. That coupling was a design bug — a webhook-only
+deployment 503s every inbound event forever because the engine only starts on
+acceptance (deadlock: never accepted, so never started). Restored to legacy
+(ackbot-process) behavior: acceptance depends only on harness readiness and the
+`draining` gate, never on engine state — the engine starts lazily per
+session_key. See docs/references/2026-07-01-router-pool-vs-legacy.md finding B8.
 """
 from __future__ import annotations
 
@@ -36,13 +41,12 @@ MR_PAYLOAD: dict[str, Any] = {
 
 
 @pytest.mark.asyncio
-async def test_inv07_a_prime_gate(tmp_path: Any) -> None:
-    """§6.7: A′ proven-start gate — NACK/503 during first warmup — authoritative conformance.
+async def test_inv07_engine_not_ready_does_not_gate_acceptance(tmp_path: Any) -> None:
+    """Decouple: engine_has_been_ready_once=False must NOT block acceptance —
+    inbound events receive 202 and are routed, never a 503 for engine reasons.
 
-    CONTRACT perspective: when engine_has_been_ready_once is False (first warmup),
-    inbound events receive a 503 — never a 200/202 that would silently accept
-    and buffer. Accept-and-buffer is only valid after the engine has proven
-    its first startup (proven-start gate, spec §8.5).
+    The engine starts lazily per session_key inside the lane (pool.acquire in
+    engine_runner) — it is not a precondition for accepting the message.
     """
     from ach_agent.channels.message_event import MessageEvent
     from ach_agent.http.app import create_app
@@ -89,8 +93,8 @@ async def test_inv07_a_prime_gate(tmp_path: Any) -> None:
             headers=headers,
         )
 
-    assert resp.status_code == 503, (
-        f"§6.7: A′ gate — during first warmup (engine_has_been_ready_once=False) "
-        f"inbound must return 503 (NACK), not {resp.status_code}. "
-        "Accept-and-buffer is only valid after the engine has been ready once (spec §8.5)."
+    assert resp.status_code == 202, (
+        "Decouple: engine-not-ready must never gate acceptance — "
+        f"expected 202, got {resp.status_code}. Acceptance depends only on harness "
+        "readiness and the draining gate (never engine state)."
     )

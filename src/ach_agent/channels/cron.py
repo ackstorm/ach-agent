@@ -45,7 +45,8 @@ class CronScheduler:
       - DUR-04 no-catch-up: croniter.get_next() always computes NEXT future tick.
         croniter.get_next() from now always returns a tick strictly in the future —
         ticks missed while the pod was down are dropped (spec §30.1). Deliberate.
-      - A′ gate (DUR-02): drop + COLD_START_DROPS before first engine warmup.
+      - Acceptance is decoupled from engine readiness: a tick always routes — the
+        engine starts lazily per session_key inside the lane.
       - RTR-05 async_no_retry: FULL_QUEUE → drop+log warning, never silent.
       - D-09: idempotency_key = derive_cron_idempotency_key(name, scheduled next_dt),
               NOT datetime.now().
@@ -60,7 +61,7 @@ class CronScheduler:
         self,
         channels: list[ChannelConfig],
         handler: MessageHandler,
-        pool: Any = None,  # EnginePool — None disables A′ gate (dev/tests)
+        pool: Any = None,  # EnginePool — unused now (decoupled); kept for backward compat
     ) -> None:
         CronScheduler._instance_count += 1
         # Build slots: (channel_cfg, croniter_obj, next_dt)
@@ -129,25 +130,12 @@ class CronScheduler:
         """Fire one cron tick for the given channel.
 
         Preserves:
-        - A′ gate (DUR-02, D-06): drop tick during first engine warmup.
+        - Decoupled acceptance: a tick always routes, regardless of engine readiness —
+          the engine starts lazily per session_key inside the lane.
         - DUR-04 no-catch-up loss mode (comment preserved, behavior unchanged).
         - D-09: idempotency_key from scheduled tick, NOT now().
         - RTR-05: FULL_QUEUE → drop+log warning, never silent.
         """
-        # A′ gate (DUR-02, D-06): drop tick during first engine warmup.
-        # This is also the DUR-04 misfire loss mode — ticks during cold start are
-        # declared loss (spec §30.1), not caught up.
-        if self._pool is not None and not self._pool.engine_has_been_ready_once:
-            log.warning(
-                "cron: tick dropped — engine not ready (A′ cold-start gate, DUR-04 loss mode)",
-                channel=channel_cfg.name,
-                tick=scheduled_next_dt.strftime("%Y-%m-%dT%H:%M:%S"),
-            )
-            from ach_agent.router.metrics import COLD_START_DROPS
-
-            COLD_START_DROPS.labels(channel=channel_cfg.name).inc()
-            return
-
         # D-09: use SCHEDULED next_dt, NOT now() (Pitfall 5)
         idempotency_key = derive_cron_idempotency_key(channel_cfg.name, scheduled_next_dt)
         session_key = channel_cfg.name  # D-08: per-channel, all ticks on one lane

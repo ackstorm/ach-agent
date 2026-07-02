@@ -7,7 +7,8 @@ Locked decisions:
     BEFORE any executor dispatch; missing/wrong header → failed TaskStatusUpdateEvent,
     handler.handle NEVER called (T-04-13).
   - session_key = context_id (fallback task_id); idempotency = derive_a2a_idempotency_key.
-  - A′ gate (D-06): engine not ready → failed TaskStatusUpdateEvent (503-style), not silent.
+  - Acceptance is decoupled from engine readiness: no engine-readiness gate here — the
+    engine starts lazily per session_key inside the lane (pool.acquire in engine_runner).
   - FULL_QUEUE (D-05/RTR-05): failed TaskStatusUpdateEvent, not silent drop.
   - source_trait = "async_no_retry": delivery bridge via signal_completion(session_key, text).
   - Secret read LAZILY from mounted path at use time, NEVER cached or logged (CONTRACT §3).
@@ -30,7 +31,7 @@ import structlog
 
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.router.dedup import derive_a2a_idempotency_key
-from ach_agent.router.metrics import CHANNEL_INBOUND, COLD_START_DROPS
+from ach_agent.router.metrics import CHANNEL_INBOUND
 from ach_agent.router.router import RouterAdmitResult
 
 if TYPE_CHECKING:
@@ -125,9 +126,9 @@ class A2AAgentExecutorBridge:
 
         Order:
           (1) Header auth (spec §14.6) — BEFORE any dispatch.
-          (2) A′ gate — engine not ready → failed event (D-06).
-          (3) Route to handler; on FULL_QUEUE → failed event (D-05/RTR-05).
-          (4) Await completion signal (set by signal_completion via on_complete callback).
+          (2) Route to handler (decoupled from engine readiness); on FULL_QUEUE →
+              failed event (D-05/RTR-05).
+          (3) Await completion signal (set by signal_completion via on_complete callback).
         """
         # (1) HEADER AUTH — spec §14.6 / T-04-13
         # Fail-closed (CR-01): if no a2a sub-block or no secretPath configured,
@@ -165,17 +166,8 @@ class A2AAgentExecutorBridge:
             await event_queue.enqueue_event(_make_failed_status("Unauthorized"))
             return
 
-        # (2) A′ gate (D-06) — engine not ready-once
-        if self._pool is not None and not self._pool.engine_has_been_ready_once:
-            log.warning(
-                "a2a: request rejected — engine not ready (A′ cold-start gate)",
-                channel=self._channel_cfg.name,
-            )
-            COLD_START_DROPS.labels(channel=self._channel_cfg.name).inc()
-            await event_queue.enqueue_event(_make_failed_status("Service warming up"))
-            return
-
-        # (3) Build MessageEvent and dispatch to router seam
+        # (2) Build MessageEvent and dispatch to router seam. Decoupled from engine
+        # readiness (no gate here) — the engine starts lazily per session_key.
         task_id: str = getattr(context, "task_id", None) or ""
         context_id: str = getattr(context, "context_id", None) or ""
         session_key = context_id or task_id
@@ -225,7 +217,7 @@ class A2AAgentExecutorBridge:
             self._pending.pop(session_key, None)
             return
 
-        # (4) Await out-of-band completion from engine via signal_completion
+        # (3) Await out-of-band completion from engine via signal_completion
         await completion.wait()
 
     async def cancel(self, context: Any, event_queue: Any) -> None:

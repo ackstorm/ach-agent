@@ -142,3 +142,39 @@ async def test_timeout_force_kills_regardless_of_ttl() -> None:
     lane.cancel()
     await lane.wait_closed()
     assert recorded == [0.0], f"timeout release must force-kill (ttl=0), got {recorded}"
+
+
+async def test_engine_launch_failure_increments_metric_and_resolves_future() -> None:
+    """pool.acquire raising is an explicit launch failure (Step 5, decoupled acceptance):
+    ENGINE_LAUNCH_FAILURES.inc() + WARN, and the awaiting reply_future receives the
+    exception — no hang, no silent drop. server stays None, so release is never called.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from ach_agent.engine.metrics import ENGINE_LAUNCH_FAILURES
+
+    class _LaunchError(RuntimeError):
+        pass
+
+    fake_pool = MagicMock()
+    fake_pool.acquire = AsyncMock(side_effect=_LaunchError("opencode failed to start"))
+    fake_pool.release = AsyncMock()
+    router = _FakeRouter()
+
+    before = ENGINE_LAUNCH_FAILURES._value.get()
+
+    runner = await _build_runner(fake_pool, {"test-channel": 60.0})
+    lane = _make_lane(runner, 5.0, router)
+    event = make_event(channel_name="test-channel")
+    event.reply_future = asyncio.get_event_loop().create_future()
+    await lane.put(event)
+
+    with pytest.raises(_LaunchError):
+        await asyncio.wait_for(event.reply_future, 1.0)
+
+    after = ENGINE_LAUNCH_FAILURES._value.get()
+    lane.cancel()
+    await lane.wait_closed()
+
+    assert after - before == 1.0, f"expected ENGINE_LAUNCH_FAILURES +1, got {after - before}"
+    fake_pool.release.assert_not_called()

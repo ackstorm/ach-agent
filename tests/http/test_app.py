@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from pathlib import Path
 
 import httpx
 import pytest
@@ -172,7 +171,10 @@ def test_inbound_route_dispatches(tmp_path: pytest.TempPathFactory) -> None:
 
 
 # ---------------------------------------------------------------------------
-# DUR-02 / D-12: A′ cold-start gate + draining 503 tests (Plan 03-02)
+# Decouple acceptance from engine readiness (drop A′ gate; keep draining).
+# The A′ gate (engine_has_been_ready_once) has been removed from the
+# pre-admission check — a webhook-only deployment must not 503 forever
+# waiting on an engine that only starts lazily on acceptance (deadlock).
 # ---------------------------------------------------------------------------
 
 
@@ -183,16 +185,16 @@ class FakePool:
         self.engine_has_been_ready_once = ready
 
 
-def test_a_prime_503_before_ready(tmp_path: pytest.TempPathFactory) -> None:
-    """DUR-02: POST /channels/.../events returns 503 when engine_has_been_ready_once=False.
-
-    A′ gate fires before the router — handler.events must be empty (never called).
+def test_webhook_accepted_when_engine_not_started(tmp_path: pytest.TempPathFactory) -> None:
+    """Decouple: POST /channels/.../events returns 202 even when
+    engine_has_been_ready_once=False — acceptance no longer waits on the engine
+    (the reproduced cold-start deadlock, asserted fixed).
     """
     secret_file = tmp_path / "secret"
     secret_file.write_text("s3cr3t")
     cfg = _make_channel_cfg(secret_path=str(secret_file))
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
-    pool = FakePool(ready=False)  # engine not ready yet
+    pool = FakePool(ready=False)  # engine never started yet
     app = create_app([cfg], handler, pool=pool)
 
     with TestClient(app) as client:
@@ -201,17 +203,14 @@ def test_a_prime_503_before_ready(tmp_path: pytest.TempPathFactory) -> None:
             content=json.dumps(MR_PAYLOAD).encode(),
             headers=_make_headers("s3cr3t", event_uuid=str(uuid.uuid4())),
         )
-    assert resp.status_code == 503, (
-        f"DUR-02: A′ gate must return 503 before engine ready, got {resp.status_code}"
+    assert resp.status_code == 202, (
+        f"engine-not-ready must not block acceptance, got {resp.status_code}: {resp.text}"
     )
-    assert handler.events == [], "A′ gate must prevent router from being called"
+    assert len(handler.events) == 1, "router must be called — acceptance is decoupled"
 
 
 def test_a_prime_pass_after_ready(tmp_path: pytest.TempPathFactory) -> None:
-    """DUR-02: POST /channels/.../events returns 202 when engine_has_been_ready_once=True.
-
-    Normal admission via FakeHandler ACCEPTED — A′ gate passes through.
-    """
+    """POST /channels/.../events returns 202 when engine_has_been_ready_once=True."""
     secret_file = tmp_path / "secret"
     secret_file.write_text("s3cr3t")
     cfg = _make_channel_cfg(secret_path=str(secret_file))
@@ -226,8 +225,41 @@ def test_a_prime_pass_after_ready(tmp_path: pytest.TempPathFactory) -> None:
             headers=_make_headers("s3cr3t", event_uuid=str(uuid.uuid4())),
         )
     assert resp.status_code == 202, (
-        f"DUR-02: A′ gate must pass through after engine ready, got {resp.status_code}"
+        f"POST must return 202 when engine ready, got {resp.status_code}"
     )
+
+
+def test_webhook_503_only_when_draining(tmp_path: pytest.TempPathFactory) -> None:
+    """D-12: 503 is emitted ONLY for draining — never for engine-not-ready.
+
+    Same app/pool (engine never ready): before draining → 202; after draining → 503.
+    """
+    secret_file = tmp_path / "secret"
+    secret_file.write_text("s3cr3t")
+    cfg = _make_channel_cfg(secret_path=str(secret_file))
+    handler = FakeHandler(RouterAdmitResult.ACCEPTED)
+    pool = FakePool(ready=False)  # engine not ready — must not be a 503 reason
+    app = create_app([cfg], handler, pool=pool)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/channels/gitlab-mr-review/events",
+            content=json.dumps(MR_PAYLOAD).encode(),
+            headers=_make_headers("s3cr3t", event_uuid=str(uuid.uuid4())),
+        )
+        assert resp.status_code == 202, (
+            f"engine-not-ready must never 503, got {resp.status_code}"
+        )
+
+        app.extra["state"]["draining"] = True
+        resp = client.post(
+            "/channels/gitlab-mr-review/events",
+            content=json.dumps(MR_PAYLOAD).encode(),
+            headers=_make_headers("s3cr3t", event_uuid=str(uuid.uuid4())),
+        )
+        assert resp.status_code == 503, (
+            f"draining must return 503, got {resp.status_code}"
+        )
 
 
 def test_draining_503(tmp_path: pytest.TempPathFactory) -> None:
@@ -254,38 +286,6 @@ def test_draining_503(tmp_path: pytest.TempPathFactory) -> None:
         f"D-12: draining gate must return 503, got {resp.status_code}"
     )
     assert handler.events == [], "D-12: draining gate must prevent router from being called"
-
-
-def test_draining_503_does_not_count_cold_start_reject(tmp_path: Path) -> None:
-    """WR-01: when SIGTERM drain arrives before first warmup (draining AND not ready),
-    the 503 is a drain reject, not a cold-start reject — COLD_START_REJECTS must NOT
-    increment. The combined pre-admission gate reports reason='draining' and only
-    reason='engine_not_ready' may touch the cold-start counter.
-    """
-    from ach_agent.router.metrics import COLD_START_REJECTS
-
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
-    cfg = _make_channel_cfg(secret_path=str(secret_file))
-    handler = FakeHandler(RouterAdmitResult.ACCEPTED)
-    pool = FakePool(ready=False)  # engine NEVER ready yet AND draining → drain wins
-    app = create_app([cfg], handler, pool=pool)
-
-    counter = COLD_START_REJECTS.labels(channel="gitlab-mr-review")
-    before = counter._value.get()
-
-    with TestClient(app) as client:
-        app.extra["state"]["draining"] = True
-        resp = client.post(
-            "/channels/gitlab-mr-review/events",
-            content=json.dumps(MR_PAYLOAD).encode(),
-            headers=_make_headers("s3cr3t", event_uuid=str(uuid.uuid4())),
-        )
-
-    assert resp.status_code == 503, f"drain gate must return 503, got {resp.status_code}"
-    assert counter._value.get() == before, (
-        "WR-01: drain-503 (draining AND not-ready) must not increment COLD_START_REJECTS"
-    )
 
 
 # ---------------------------------------------------------------------------

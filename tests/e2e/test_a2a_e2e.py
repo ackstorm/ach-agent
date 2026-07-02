@@ -170,20 +170,26 @@ async def test_a2a_task_routes_to_engine_and_enqueues_completed_event(
 
 
 # ---------------------------------------------------------------------------
-# E2E: A′ gate — engine not ready → failed event, no dispatch
+# E2E: decouple — engine not ready (cold pool) still routes to the engine
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_a2a_a_prime_gate_enqueues_failed_event(tmp_path: pytest.TempPath) -> None:
-    """D-06: A′ gate during warmup → TaskStatusUpdateEvent(failed), no engine invocation."""
-    from a2a.types.a2a_pb2 import TASK_STATE_FAILED
+async def test_a2a_engine_not_ready_still_routes_to_engine(tmp_path: pytest.TempPath) -> None:
+    """Decouple: engine-not-ready (cold pool) no longer blocks dispatch — the task
+    routes through to the engine like any other request (lazy engine start).
+    """
+    from a2a.types.a2a_pb2 import TASK_STATE_COMPLETED
 
+    _REPLY_TEXT = "LGTM despite cold start"
     engine_invocations: list[Any] = []
 
     async def fake_engine_runner(event: MessageEvent, on_kill: Any) -> None:
         engine_invocations.append(event)
         on_kill()
+        on_complete = event.delivery_context.get("on_complete")
+        if on_complete is not None:
+            on_complete(event.session_key, _REPLY_TEXT)
 
     router = Router(
         max_concurrent_invocations=1,
@@ -195,18 +201,19 @@ async def test_a2a_a_prime_gate_enqueues_failed_event(tmp_path: pytest.TempPath)
     )
 
     channel_cfg = _make_a2a_channel_cfg_with_secret(tmp_path)
-    # Cold pool — engine not ready
-    bridge = A2AAgentExecutorBridge(handler=router, pool=_make_cold_pool(), channel_cfg=channel_cfg)
+    # Cold pool — engine not ready yet; must NOT block dispatch (decoupled)
+    bridge, _ = _build_bridge_with_router(router, _make_cold_pool(), channel_cfg)
 
     ctx = _authed_ctx(task_id="task-cold-1")
     eq = MockEventQueue()
 
-    await bridge.execute(ctx, eq)
+    # Execute with asyncio.timeout — no naked polling (CLAUDE.md)
+    async with asyncio.timeout(5.0):
+        await bridge.execute(ctx, eq)
 
-    assert len(eq.events) == 1
-    assert eq.events[0].status.state == TASK_STATE_FAILED
-    # Engine must NOT have been invoked (A′ gate fires before dispatch)
-    assert len(engine_invocations) == 0
+    completed_events = [e for e in eq.events if e.status.state == TASK_STATE_COMPLETED]
+    assert len(completed_events) == 1, f"Expected completed event, got: {eq.events}"
+    assert len(engine_invocations) == 1, "engine must be invoked despite cold pool (lazy start)"
 
 
 # ---------------------------------------------------------------------------

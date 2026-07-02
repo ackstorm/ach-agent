@@ -66,14 +66,11 @@ class EngineConfig:
     # .local/share/opencode (sessions — persist because HOME is stable), and node_modules.
     home: str = ""
     work_dir: str = "/workspace"
-    provider: str = "openai"
     model: str = "gpt-4o-mini"  # opencode validates model names; must be a known OpenAI model ID
     params: dict[str, object] = field(default_factory=dict)  # model params (temperature, …)
     system_prompt: str = ""
     steps: int = 50
     startup_timeout_seconds: int = 30
-    shared_enabled: bool = False
-    shared_ttl_seconds: int = 0
     max_invocation_seconds: int = 1800
     # MEM-01/D-02: optional MCP server URL for memory tools (present iff backend reachable).
     # Written to opencode.json before subprocess launch so the model either has memory tools
@@ -163,13 +160,6 @@ class ManagedServer:
         from ach_agent.engine.client import release_port
 
         release_port(self.port)
-
-    @property
-    def client(self) -> object:
-        """Return the OpenCodeClient; raises if not yet launched."""
-        if self._client is None:
-            raise RuntimeError("ManagedServer not yet launched — call launch() first")
-        return self._client
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +290,6 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig, session_ke
     log.debug(
         "opencode config written",
         path=str(config_path),
-        provider=config.provider,
     )
     return config_path
 
@@ -354,6 +343,10 @@ def build_opencode_env(
         value = os.environ.get(name)
         if value is not None:
             env[name] = value
+    # Exa web-search is on by default for every agente: the harness pins the enable flag so
+    # opencode always gets it without the operator listing it in forwardEnv. setdefault means a
+    # forwarded harness value (via forwardEnv) still wins if the operator sets one explicitly.
+    env.setdefault("OPENCODE_ENABLE_EXA", "true")
     # Pinned hardening — last word, overrides any inherited/forwarded value.
     env["HOME"] = str(ephemeral_home)
     env["TMPDIR"] = "/tmp"
@@ -486,19 +479,6 @@ async def poll_ready(
     sys.exit(1)
 
 
-async def send_message(server: ManagedServer, session_id: str, prompt: str) -> None:
-    """Submit a prompt to an existing opencode session via POST /session/{id}/message.
-
-    Wraps OpenCodeClient.send_message.
-    """
-    from ach_agent.engine.client import OpenCodeClient
-
-    client = server._client
-    if not isinstance(client, OpenCodeClient):
-        raise RuntimeError("ManagedServer has no client")
-    await client.send_message(session_id, prompt)
-
-
 async def run_invocation(
     server: ManagedServer,
     session_id: str,
@@ -509,6 +489,7 @@ async def run_invocation(
     on_tool: Callable[[OpenCodeToolUpdate], None] | None = None,
     reuse: bool = True,
     max_tool_calls: int = 0,
+    stats: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Orchestrate: subscribe SSE → send prompt → consume → return the terminal object.
 
@@ -550,7 +531,7 @@ async def run_invocation(
     # Subscribe to SSE FIRST, then send the message.
     # This ensures we don't miss the session.idle event. The lane bounds this await via
     # maxInvocationSeconds; a deadline cancels it (no inner timeout here).
-    stats: dict[str, Any] = {}
+    stats = stats if stats is not None else {}
     accumulated_text = await consume_sse_after_send(
         client,
         oc_session_id,
@@ -668,6 +649,7 @@ async def consume_sse_after_send(
         OpenCodeSessionIdle,
         OpenCodeTextUpdate,
         OpenCodeToolUpdate,
+        OpenCodeUsage,
         OpenCodeUserMessage,
         ReplyAccumulator,
         _consume_events_from_response,
@@ -788,6 +770,8 @@ async def consume_sse_after_send(
                                     "abort_session failed", session_id=session_id, exc_info=True
                                 )
                             # keep consuming — session.idle arrives after the abort
+                    elif isinstance(event, OpenCodeUsage):
+                        acc.add_usage(event)
                     elif isinstance(event, OpenCodeSessionIdle):
                         log.debug("session.idle received", session_id=session_id)
                         if stats is not None:
@@ -825,6 +809,9 @@ async def consume_sse_after_send(
             if terminal_error is not None:
                 raise terminal_error
             if terminal_idle:
+                if stats is not None:
+                    stats["tool_count"] = acc.tool_count()
+                    stats["usage"] = acc.usage()
                 return acc.text()
             if not reconnect:
                 break  # stream ended without a terminal event and no reconnectable drop

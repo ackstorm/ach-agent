@@ -106,8 +106,8 @@ async def test_inv01_queue_idempotency_from_message_id() -> None:
     )
     consumer = QueueConsumer(cfg, handler=_CapturingHandler(), redis_client=_FakeRedis())
 
-    await consumer._handle_message(b"1718900000000-0", {b"text": b"hello"})
-    await consumer._handle_message(b"1718900000001-0", {b"text": b"world"})
+    await consumer._handle_message("1718900000000-0", {"text": "hello"})
+    await consumer._handle_message("1718900000001-0", {"text": "world"})
 
     assert [e.idempotency_key for e in captured] == ["1718900000000-0", "1718900000001-0"], (
         "§6.1: queue idempotency_key must be the redis message id (distinct, never empty)"

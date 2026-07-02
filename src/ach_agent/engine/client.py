@@ -65,13 +65,6 @@ def find_free_port() -> int:
             port = int(s.getsockname()[1])
         if port not in _reserved_ports:
             _reserved_ports.add(port)
-            if attempt > 0:
-                log.info(
-                    "port reserved after retries",
-                    port=port,
-                    attempt=attempt,
-                    reserved=list(_reserved_ports),
-                )
             return port
         log.debug("port already reserved, retrying", port=port, attempt=attempt + 1)
     raise RuntimeError(

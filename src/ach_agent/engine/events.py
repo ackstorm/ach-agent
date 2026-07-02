@@ -4,7 +4,7 @@
 Provides:
   - parse_opencode_event: maps raw JSON event dict → typed event or None
   - ReplyAccumulator: shared text/tool reducer (prefix-dedup of cumulative snapshots)
-  - _consume_events_from_response / _iter_sse_events_from_client: shared SSE reader helpers
+  - _consume_events_from_response: shared SSE reader helper
   - EngineError / _SendFailed: terminal-signal exceptions
   The live SSE consumer (subscribe → send-once → consume, with bounded health-gated reconnect
   and mid-invocation liveness) lives in ``lifecycle.consume_sse_after_send`` and reuses these
@@ -157,6 +157,25 @@ class OpenCodeUserMessage:
 
 
 @dataclass(slots=True, frozen=True)
+class OpenCodeUsage:
+    """Assistant message.updated — cumulative token/cost/duration for the turn.
+
+    opencode emits one message.updated per assistant message as it completes; the values
+    are cumulative for that message, so the consumer keeps the latest. Ported from
+    ackbot-process opencode_events.py (ach-agent had dropped this parse as "not needed").
+    """
+
+    session_id: str
+    message_id: str
+    input_tokens: int
+    output_tokens: int
+    cache_read: int
+    cache_write: int
+    cost: float
+    duration_ms: int
+
+
+@dataclass(slots=True, frozen=True)
 class OpenCodeStreamReady:
     """First event opencode emits on a fresh GET /event connection (server.connected).
 
@@ -187,6 +206,7 @@ OpenCodeEvent = (
     OpenCodeTextUpdate
     | OpenCodeToolUpdate
     | OpenCodeUserMessage
+    | OpenCodeUsage
     | OpenCodeStreamReady
     | OpenCodeSessionIdle
     | OpenCodeSessionError
@@ -222,7 +242,6 @@ def parse_opencode_event(data: dict[str, Any]) -> OpenCodeEvent | None:
       - session.status with type 'retry' (transient — NOT terminal)
       - message.part.updated for non-rendered parts (step-start/finish, snapshot, reasoning)
         and tool parts still in 'pending' state
-      - message.updated with role == 'assistant' (token/cost info — not needed here)
     """
     event_type = data.get("type", "")
     props = data.get("properties", {})
@@ -261,8 +280,23 @@ def parse_opencode_event(data: dict[str, Any]) -> OpenCodeEvent | None:
                 session_id=props.get("sessionID", info.get("sessionID", "")),
                 message_id=info.get("id", ""),
             )
-        # assistant message.updated carries token/cost info — not needed here
-        return None
+        # assistant message.updated carries cumulative token/cost info for the turn.
+        tokens = info.get("tokens", {})
+        cache = tokens.get("cache", {})
+        time_data = info.get("time", {})
+        created = time_data.get("created", 0)
+        completed = time_data.get("completed", 0)
+        duration_ms = int(completed - created) if completed and created else 0
+        return OpenCodeUsage(
+            session_id=props.get("sessionID", info.get("sessionID", "")),
+            message_id=info.get("id", ""),
+            input_tokens=tokens.get("input", 0),
+            output_tokens=tokens.get("output", 0),
+            cache_read=cache.get("read", 0),
+            cache_write=cache.get("write", 0),
+            cost=info.get("cost", 0.0),
+            duration_ms=duration_ms,
+        )
 
     if event_type == "server.connected":
         # First event on a new /event connection — subscription is live server-side.
@@ -317,6 +351,8 @@ class ReplyAccumulator:
         self._last_text_part_id: str | None = None
         self._tool_seen: set[tuple[str, str]] = set()
         self._chunks: list[str] = []
+        self._tool_part_ids: set[str] = set()
+        self._usage: OpenCodeUsage | None = None
 
     def text(self) -> str:
         """The full accumulated reply text."""
@@ -339,34 +375,28 @@ class ReplyAccumulator:
 
     def add_tool(self, event: OpenCodeToolUpdate) -> None:
         """Surface a tool-lifecycle update once per (part_id, status). Render-only chrome."""
+        self._tool_part_ids.add(event.part_id)
         key = (event.part_id, event.state.status)
         if self._on_tool is not None and key not in self._tool_seen:
             self._tool_seen.add(key)
             self._on_tool(event)
 
+    def add_usage(self, event: OpenCodeUsage) -> None:
+        """Capture the latest (cumulative) assistant usage for the turn."""
+        self._usage = event
+
+    def tool_count(self) -> int:
+        """Number of distinct tool calls in the turn (by part_id)."""
+        return len(self._tool_part_ids)
+
+    def usage(self) -> OpenCodeUsage | None:
+        """The latest assistant usage, or None if no message.updated arrived."""
+        return self._usage
+
     def _emit(self, chunk: str) -> None:
         self._chunks.append(chunk)
         if self._on_text is not None:
             self._on_text(chunk)
-
-
-# ---------------------------------------------------------------------------
-# SSE iteration helper (split from the SSE consumer for testability)
-# ---------------------------------------------------------------------------
-
-
-def _iter_sse_events_from_client(
-    client: OpenCodeClient,
-    resp: Any,
-) -> Any:
-    """Thin wrapper around OpenCodeClient.iter_sse_events.
-
-    Returns an async generator that yields OpenCodeEvent objects.
-    Separated so tests can patch this without touching client internals.
-    """
-    from ach_agent.engine.client import OpenCodeClient as _OCC
-
-    return _OCC.iter_sse_events(resp)
 
 
 # ---------------------------------------------------------------------------
@@ -384,8 +414,10 @@ async def _consume_events_from_response(
     Designed to run as an asyncio.Task so it can be cancelled when a terminal
     event is detected. Cancellation cleanly stops the aiohttp content reader.
     """
+    from ach_agent.engine.client import OpenCodeClient as _OCC
+
     try:
-        async for event in _iter_sse_events_from_client(client, resp):
+        async for event in _OCC.iter_sse_events(resp):
             await result_queue.put(event)
     except asyncio.CancelledError:
         pass  # normal exit when cancelled by the live consumer (consume_sse_after_send)

@@ -25,7 +25,6 @@ def test_ek_never_in_opencode_json(tmp_path: Path, monkeypatch: Any) -> None:
 
     cfg = EngineConfig(
         model="gemini.gemini-flash-latest",
-        provider="openai",
         model_base_url="http://127.0.0.1:9001/v1",
         mcp_local_urls={"m": "http://127.0.0.1:9002/mcp/m"},
     )

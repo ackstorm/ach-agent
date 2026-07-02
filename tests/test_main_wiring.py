@@ -123,7 +123,6 @@ def test_opencode_json_never_contains_ek(tmp_path: Any, monkeypatch: Any) -> Non
 
     cfg = EngineConfig(
         model="openai.gpt-5",
-        provider="openai",
         model_base_url="http://127.0.0.1:9001/v1",
         mcp_local_urls={"mcp-gofetch": "http://127.0.0.1:9002/mcp/mcp-gofetch"},
     )
@@ -418,14 +417,14 @@ def test_channel_idle_ttl_from_config() -> None:
     """Idle TTL is built from engine.idle_ttl_seconds and applied to every configured channel."""
     from ach_agent.config.schema import EngineBlock
 
-    # Default keeps servers warm (60s) so channel.session=auto persists across events.
+    # Default keeps servers warm (30s) so channel.session=auto persists across events.
     idle_ttl = EngineBlock.model_validate({}).idle_ttl_seconds
-    assert idle_ttl == 60.0
+    assert idle_ttl == 30.0
 
     # Boot-time map (main._make_engine_runner wiring): {ch.name: engine.idle_ttl_seconds}.
     channels = [("hook", "webhook"), ("tick", "cron")]
     channel_ttl = {name: idle_ttl for name, _typ in channels}
-    assert channel_ttl == {"hook": 60.0, "tick": 60.0}
+    assert channel_ttl == {"hook": 30.0, "tick": 30.0}
     # An unknown channel (e.g. the --tui console) defaults to 0 at the release site.
     assert channel_ttl.get("tui-console", 0.0) == 0.0
 

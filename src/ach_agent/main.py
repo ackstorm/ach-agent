@@ -21,18 +21,23 @@ D-08: deliver.type: reply → event.reply_future resolved by engine_runner on th
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+import json
 import os
 import signal
 import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import structlog
 import uvicorn
+
+if TYPE_CHECKING:
+    from ach_agent.engine.events import OpenCodeToolUpdate
 
 from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a2a_agent_card
 from ach_agent.channels.cron import CronScheduler
@@ -44,6 +49,7 @@ from ach_agent.config.schema import CodememMemory, HindsightMemory, Memory
 from ach_agent.engine.context import fetch_context
 from ach_agent.engine.hydrate import hydrate, resolve_model
 from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
+from ach_agent.engine.metrics import DRAIN_COMPLETED, ENGINE_LAUNCH_FAILURES
 from ach_agent.engine.sanitized_env import SanitizedEnv, configure_logging
 from ach_agent.http.app import create_app
 from ach_agent.router import Router
@@ -148,6 +154,65 @@ def _open_dedup_store(cfg: Any) -> Any:
         except Exception:
             # Final fallback: in-memory (degraded mode, DB path still unusable)
             return InMemoryDedupStore()
+
+
+def _clean_tool_name(name: str) -> str:
+    """Collapse opencode's doubled MCP prefix for readability.
+
+    opencode ids MCP tools as ``<server>_<server>_<tool>`` (the server segment repeats,
+    e.g. ``mcp-gitlab-ro_mcp-gitlab-ro_gitlab_get_merge_request``). Render it as
+    ``<server>/<tool>``. Native tools (``grep``, ``bash``) have no such prefix and pass through.
+    """
+    parts = name.split("_", 2)
+    if len(parts) == 3 and parts[0] == parts[1]:
+        return f"{parts[0]}/{parts[2]}"
+    return name
+
+
+def _tool_detail(raw: str) -> str:
+    """Best-effort decode of a tool result for readable logging.
+
+    gitlab-mcp (and friends) return ``{"result": "<json-string>"}`` — doubly JSON-encoded,
+    which structlog then repr-escapes into an unreadable ``{\\n \\"...`` blob. Parse it, unwrap
+    a lone ``result`` string, and re-dump compact single-line JSON. Non-JSON output (file
+    reads, truncation notices) falls through to the raw text. Always truncated to 300 chars.
+    """
+    text = raw.strip()
+    try:
+        obj = json.loads(text)
+    except (ValueError, TypeError):
+        return text[:300]
+    if isinstance(obj, dict) and list(obj) == ["result"] and isinstance(obj["result"], str):
+        try:
+            obj = json.loads(obj["result"])
+        except (ValueError, TypeError):
+            obj = obj["result"]
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))[:300]
+
+
+def _log_engine_tool(update: OpenCodeToolUpdate) -> None:
+    """Default on_tool sink for channel invocations.
+
+    run_invocation calls this as each tool moves running→completed/error. Wired only when
+    the channel provides no on_tool of its own (--debug/console keep their own streaming
+    sinks), so a channel turn shows the tools it ran — the action and its result — instead
+    of dead air. The ``running`` transition is skipped so each tool logs ONCE (on
+    completed/error); the result is JSON-decoded for readability and both fields are bounded.
+    """
+    state = update.state
+    if state.status == "running":
+        return  # one line per tool — the completed/error transition carries the result
+    fields: dict[str, Any] = {
+        "tool": _clean_tool_name(update.tool_name),
+        "status": state.status,
+    }
+    action = getattr(state, "title", "")
+    if action:
+        fields["action"] = action[:200]
+    detail = getattr(state, "output", "") or getattr(state, "error", "")
+    if detail:
+        fields["detail"] = _tool_detail(detail)
+    log.info("engine: tool", **fields)
 
 
 def build_engine_prompt(
@@ -459,6 +524,10 @@ def _make_engine_runner(
         # set_exception), otherwise the awaiting route hangs forever. The except branches
         # below resolve it on every failure path.
         future = event.reply_future
+        # on_fail (a2a) MUST be signalled on every failure path too — otherwise the a2a
+        # executor's completion.wait() (no timeout) hangs forever. Read it here so the
+        # success branch AND the except branches below all resolve it.
+        on_fail = event.delivery_context.get("on_fail")
         server = None
         timed_out = False
         acquired = False
@@ -482,7 +551,18 @@ def _make_engine_runner(
             # Optional tool-lifecycle sink (the --debug console shows "⚙ running <tool>"
             # so a long-blocking tool call isn't dead air).
             on_tool = event.delivery_context.get("on_tool")
+            # Default observability sink: channels wire no on_tool (only --debug does), so
+            # without this a channel turn shows nothing about the tools it ran.
+            if on_tool is None:
+                on_tool = _log_engine_tool
             reuse = getattr(ch_cfg, "session", "auto") != "none"
+            log.info(
+                "engine: prompt",
+                channel=event.channel_name,
+                session_key=event.session_key,
+                prompt=full_prompt,
+            )
+            turn_stats: dict[str, Any] = {}
             obj = await run_invocation(
                 server=server,
                 session_id=event.session_key,
@@ -493,9 +573,28 @@ def _make_engine_runner(
                 on_tool=on_tool,
                 reuse=reuse,
                 max_tool_calls=max_tool_calls,
+                stats=turn_stats,
             )
 
             text = str(obj.get("text", ""))
+            log.info(
+                "engine: response",
+                channel=event.channel_name,
+                session_key=event.session_key,
+                action=obj.get("action"),
+                text=text,
+            )
+            _usage = turn_stats.get("usage")
+            log.info(
+                "engine: summary",
+                channel=event.channel_name,
+                session_key=event.session_key,
+                tools=turn_stats.get("tool_count", 0),
+                input_tokens=getattr(_usage, "input_tokens", 0),
+                output_tokens=getattr(_usage, "output_tokens", 0),
+                cost_usd=getattr(_usage, "cost", 0.0),
+                duration_ms=getattr(_usage, "duration_ms", 0),
+            )
 
             if future is not None:
                 # Reply mode: resolve the future the route is awaiting.
@@ -507,7 +606,6 @@ def _make_engine_runner(
             # The on_complete callable is injected by the A2A wiring closure in main.py
             # into event.delivery_context['on_complete'] before handler.handle() is called.
             on_complete = event.delivery_context.get("on_complete")
-            on_fail = event.delivery_context.get("on_fail")
             if on_complete is not None or on_fail is not None:
                 action = obj.get("action")
                 if action == "a2a_reply" and text.strip():
@@ -532,6 +630,8 @@ def _make_engine_runner(
             timed_out = True
             if future is not None and not future.done():
                 future.set_exception(InvocationTimeout(max_invocation_seconds))
+            if on_fail is not None:
+                on_fail(event.session_key, f"invocation timed out after {max_invocation_seconds}s")
             raise
         except Exception as exc:
             if not acquired:
@@ -539,8 +639,6 @@ def _make_engine_runner(
                 # this session_key. Explicit metric + WARN (no silent drop): acceptance
                 # is decoupled from engine readiness, so this is where a launch failure
                 # first surfaces. Never log ek_/tokens — session_key + error string only.
-                from ach_agent.engine.metrics import ENGINE_LAUNCH_FAILURES
-
                 ENGINE_LAUNCH_FAILURES.inc()
                 log.warning(
                     "engine: launch failed (pool.acquire)",
@@ -550,6 +648,8 @@ def _make_engine_runner(
                 )
             if future is not None and not future.done():
                 future.set_exception(exc)
+            if on_fail is not None:
+                on_fail(event.session_key, f"engine failure: {exc}")
             raise
         finally:
             # Return the engine server to the pool. Slot release is owned by the lane:
@@ -588,8 +688,6 @@ async def _drain(
     No grace-deadline timer (D-10): maxInvocationSeconds watchdog + K8s SIGKILL backstop.
     Never logs ek_/GITLAB_TOKEN (T-03-07): log emits only path/count/reason fields.
     """
-    from ach_agent.engine.metrics import DRAIN_COMPLETED
-
     # 1. Flip draining flag + readyz NotReady (D-09, D-12 straggler gate)
     state["draining"] = True
     state["ready"] = False
@@ -823,22 +921,6 @@ async def main(
             prompts=[p.name for p in _ctx.prompts],
             artifacts=[a.name for a in _ctx.artifacts],
         )
-        # Boot-time tool probe (best-effort): list the tools each MCP server actually
-        # exposes for this ek and warn on empty. Surfaces an empty/unauthorized server
-        # (e.g. OAuth not granted) at boot instead of letting the model discover it
-        # mid-invocation and flail. Never breaks boot (list_mcp_tools swallows errors).
-        from ach_agent.engine.hydrate import list_mcp_tools
-
-        for _srv in manifest.mcp_servers:
-            _tools = await list_mcp_tools(_srv.endpoint, ek)
-            if _tools:
-                log.info("mcp tools", server=_srv.id, count=len(_tools), tools=_tools)
-            else:
-                log.warning(
-                    "mcp server exposes 0 tools — check ACH provisioning / OAuth consent",
-                    server=_srv.id,
-                )
-
         # A2A egress (Plan 3): expose peer agents as harness-hosted MCP tools so
         # opencode can call them. The ek_ stays in the harness (injected as the
         # peer auth header by A2AAgentClient). RTR-06: a2a_egress imports a2a-sdk
@@ -897,7 +979,6 @@ async def main(
         work_dir=engine_work_dir,
         codemem_db_path=codemem_db_path,
         codemem_project=codemem_project,
-        provider=cfg.model.type,
         model=cfg.model.name,
         params=cfg.model.params,
         # prompt.system = the inline agent persona + per-backend TOOLS_SPEC (boot-static).
@@ -905,10 +986,6 @@ async def main(
         steps=cfg.limits.max_steps,
         startup_timeout_seconds=cfg.engine.startup_timeout_seconds,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
-        # Idle TTL is resolved from engine.idle_ttl_seconds into the channel_ttl map below
-        # and applied at the pool.release site in engine_runner. This EngineConfig field is
-        # unused by the runner and kept at 0 for back-compat with EngineConfig consumers.
-        shared_ttl_seconds=0,
         model_base_url=model_base_url,
         mcp_local_urls=mcp_local_urls,
         # SEC-01 / ek-hygiene: opencode's env is clean-slate (base allowlist only). Extra
@@ -1054,27 +1131,13 @@ async def main(
             continue
 
         # The bridge is created here (boot module) — engine_runner never imports it.
-        bridge = A2AAgentExecutorBridge(handler=None, pool=pool, channel_cfg=channel)
+        bridge = A2AAgentExecutorBridge(handler=None, channel_cfg=channel)
 
-        # on_complete closure captures the bridge (W9: the closure lives in boot module,
-        # engine tier stays unaware of A2A type).
-        def _make_on_complete(b: A2AAgentExecutorBridge) -> Any:
-            def on_complete(session_key: str, reply_text: str) -> None:
-                b.signal_completion(session_key, reply_text)
-
-            return on_complete
-
-        _on_complete = _make_on_complete(bridge)
-
-        # on_fail closure mirrors on_complete: emits a FAILED event when the terminal
-        # output is unusable (action != a2a_reply, or empty reply text).
-        def _make_on_fail(b: A2AAgentExecutorBridge) -> Any:
-            def on_fail(session_key: str, reason: str) -> None:
-                b.signal_failure(session_key, reason)
-
-            return on_fail
-
-        _on_fail = _make_on_fail(bridge)
+        # on_complete/on_fail (W9: bound here in the boot module, engine tier stays
+        # unaware of A2A type). on_fail mirrors on_complete: emits a FAILED event when
+        # the terminal output is unusable (action != a2a_reply, or empty reply text).
+        _on_complete = bridge.signal_completion
+        _on_fail = bridge.signal_failure
 
         # Wrap the router to inject on_complete + on_fail into delivery_context (W9 pattern).
         class _A2AHandler:
@@ -1095,19 +1158,17 @@ async def main(
         # Build the A2A AgentCard from channel config (minimal — receiver-only v1, spec §14.6).
         # make_a2a_agent_card keeps a2a.* imports inside channels/a2a.py (RTR-06 fence).
         agent_card = make_a2a_agent_card(channel.name)
-        sub_app = build_a2a_app(agent_card, bridge, rpc_prefix="/")
+        sub_app = build_a2a_app(agent_card, bridge)
         mount_path = f"/a2a/{channel.name}"
         a2a_mounts.append((mount_path, sub_app))
         a2a_bridges.append(bridge)
         log.info("a2a channel bridge built", channel_name=channel.name, mount_path=mount_path)
 
     # 6c. Create FastAPI app with all webhook channels.
-    # pool=pool threads the A′ gate (DUR-02) into the webhook route — live in production.
     # a2a_mounts threads the A2A sub-apps under the same socket (topology A).
     app = create_app(
         channels=webhook_channels,
         handler=router,
-        pool=pool,
         a2a_mounts=a2a_mounts,
     )
     # Expose state dict so _drain can flip draining/ready (same ref as app.extra['state'])
@@ -1124,7 +1185,7 @@ async def main(
     cron_channels = [ch for ch in cfg.channels if ch.type == "cron"]
     cron_scheduler: CronScheduler | None = None
     if cron_channels:
-        cron_scheduler = CronScheduler(cron_channels, handler=router, pool=pool)
+        cron_scheduler = CronScheduler(cron_channels, handler=router)
         await cron_scheduler.start()
         log.info(
             "cron scheduler started",
@@ -1137,7 +1198,7 @@ async def main(
     queue_channels = [ch for ch in cfg.channels if ch.type == "queue"]
     queue_consumers: list[QueueConsumer] = []
     for channel in queue_channels:
-        consumer = QueueConsumer(channel, handler=router, pool=pool)
+        consumer = QueueConsumer(channel, handler=router)
         await consumer.start()
         queue_consumers.append(consumer)
         log.info("queue consumer started", channel_name=channel.name, stream=channel.queue.key)  # type: ignore[union-attr]
@@ -1267,17 +1328,12 @@ def _parse_cli(argv: list[str]) -> tuple[bool, str | None, bool]:
     pipe-friendly). `--prompt TEXT` (or `--prompt=TEXT`) → single non-interactive prompt
     then exit. All ignore the configured channels; precedence is `--prompt` > `--debug` > `--tui`.
     """
-    tui = "--tui" in argv
-    debug = "--debug" in argv
-    prompt: str | None = None
-    for i, arg in enumerate(argv):
-        if arg == "--prompt" and i + 1 < len(argv):
-            prompt = argv[i + 1]
-            break
-        if arg.startswith("--prompt="):
-            prompt = arg[len("--prompt=") :]
-            break
-    return tui, prompt, debug
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--tui", action="store_true")
+    parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--prompt")
+    args, _unknown = parser.parse_known_args(argv)
+    return args.tui, args.prompt, args.debug
 
 
 if __name__ == "__main__":

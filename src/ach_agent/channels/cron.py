@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import structlog
 from croniter import croniter
@@ -61,7 +61,6 @@ class CronScheduler:
         self,
         channels: list[ChannelConfig],
         handler: MessageHandler,
-        pool: Any = None,  # EnginePool — unused now (decoupled); kept for backward compat
     ) -> None:
         CronScheduler._instance_count += 1
         # Build slots: (channel_cfg, croniter_obj, next_dt)
@@ -71,7 +70,6 @@ class CronScheduler:
             (ch, croniter(ch.cron.schedule, datetime.now(UTC)), None) for ch in channels if ch.cron
         ]
         self._handler = handler
-        self._pool = pool
         self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:

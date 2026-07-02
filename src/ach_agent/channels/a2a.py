@@ -12,7 +12,7 @@ Locked decisions:
   - FULL_QUEUE (D-05/RTR-05): failed TaskStatusUpdateEvent, not silent drop.
   - source_trait = "async_no_retry": delivery bridge via signal_completion(session_key, text).
   - Secret read LAZILY from mounted path at use time, NEVER cached or logged (CONTRACT §3).
-  - build_a2a_app(agent_card, executor, rpc_prefix): creates InMemoryTaskStore +
+  - build_a2a_app(agent_card, executor): creates InMemoryTaskStore +
     LegacyRequestHandler + wires routes via add_a2a_routes_to_fastapi on a FastAPI sub-app.
 
 RTR-06: a2a.* imports ONLY inside this file — function-scoped, never at module level.
@@ -59,43 +59,34 @@ def _read_secret(secret_path: str) -> str | None:
         return None
 
 
-def _make_failed_status(message: str) -> Any:
-    """Build a TaskStatusUpdateEvent with state=FAILED, final semantics."""
+def _status_event(state: str, text: str | None = None) -> Any:
+    """Build a TaskStatusUpdateEvent for a terminal a2a state.
+
+    state: "failed" | "canceled" | "completed" — maps to the a2a TASK_STATE_* enum.
+    text: single-part message text for FAILED/COMPLETED; CANCELED carries no message
+    (omitted entirely, matching the prior per-state builders).
+    """
     from a2a.types.a2a_pb2 import (
+        TASK_STATE_CANCELED,
+        TASK_STATE_COMPLETED,
         TASK_STATE_FAILED,
         Message,
         TaskStatus,
         TaskStatusUpdateEvent,
     )
 
-    msg = Message()
-    part = msg.parts.add()
-    part.text = message
-    status = TaskStatus(state=TASK_STATE_FAILED, message=msg)
-    return TaskStatusUpdateEvent(status=status)
-
-
-def _make_canceled_status() -> Any:
-    """Build a TaskStatusUpdateEvent with state=CANCELED."""
-    from a2a.types.a2a_pb2 import TASK_STATE_CANCELED, TaskStatus, TaskStatusUpdateEvent
-
-    status = TaskStatus(state=TASK_STATE_CANCELED)
-    return TaskStatusUpdateEvent(status=status)
-
-
-def _make_completed_status(reply_text: str) -> Any:
-    """Build a TaskStatusUpdateEvent with state=COMPLETED and reply text."""
-    from a2a.types.a2a_pb2 import (
-        TASK_STATE_COMPLETED,
-        Message,
-        TaskStatus,
-        TaskStatusUpdateEvent,
-    )
-
-    msg = Message()
-    part = msg.parts.add()
-    part.text = reply_text
-    status = TaskStatus(state=TASK_STATE_COMPLETED, message=msg)
+    state_map = {
+        "failed": TASK_STATE_FAILED,
+        "canceled": TASK_STATE_CANCELED,
+        "completed": TASK_STATE_COMPLETED,
+    }
+    if text is None:
+        status = TaskStatus(state=state_map[state])
+    else:
+        msg = Message()
+        part = msg.parts.add()
+        part.text = text
+        status = TaskStatus(state=state_map[state], message=msg)
     return TaskStatusUpdateEvent(status=status)
 
 
@@ -112,11 +103,9 @@ class A2AAgentExecutorBridge:
     def __init__(
         self,
         handler: MessageHandler | None,
-        pool: Any,
         channel_cfg: ChannelConfig,
     ) -> None:
         self._handler: MessageHandler | None = handler
-        self._pool = pool
         self._channel_cfg = channel_cfg
         # Maps session_key → (event_queue, completion_event)
         self._pending: dict[str, tuple[Any, asyncio.Event]] = {}
@@ -139,14 +128,14 @@ class A2AAgentExecutorBridge:
                 "a2a: request rejected — no auth secret configured (fail-closed §14.6)",
                 channel=self._channel_cfg.name,
             )
-            await event_queue.enqueue_event(_make_failed_status("Unauthorized"))
+            await event_queue.enqueue_event(_status_event("failed", "Unauthorized"))
             return
 
         expected_header = a2a_cfg.auth.header  # e.g. "x-a2a-custom-api-key"
         expected_value = _read_secret(a2a_cfg.auth.secret_path)
         if expected_value is None:
             # CR-02: unreadable/empty secret — never admit (empty-vs-empty must fail)
-            await event_queue.enqueue_event(_make_failed_status("Unauthorized"))
+            await event_queue.enqueue_event(_status_event("failed", "Unauthorized"))
             return
 
         # Retrieve presented header from call_context.state['headers'] (dict from
@@ -163,7 +152,7 @@ class A2AAgentExecutorBridge:
                 channel=self._channel_cfg.name,
                 header=expected_header,
             )
-            await event_queue.enqueue_event(_make_failed_status("Unauthorized"))
+            await event_queue.enqueue_event(_status_event("failed", "Unauthorized"))
             return
 
         # (2) Build MessageEvent and dispatch to router seam. Decoupled from engine
@@ -178,7 +167,9 @@ class A2AAgentExecutorBridge:
                 "a2a: request rejected — both context_id and task_id are empty",
                 channel=self._channel_cfg.name,
             )
-            await event_queue.enqueue_event(_make_failed_status("Missing task/context identifier"))
+            await event_queue.enqueue_event(
+                _status_event("failed", "Missing task/context identifier")
+            )
             return
         idempotency_key = derive_a2a_idempotency_key(task_id)
 
@@ -210,7 +201,7 @@ class A2AAgentExecutorBridge:
                 channel=self._channel_cfg.name,
             )
             self._pending.pop(session_key, None)
-            await event_queue.enqueue_event(_make_failed_status("Queue full"))
+            await event_queue.enqueue_event(_status_event("failed", "Queue full"))
             return
         if result == RouterAdmitResult.DUPLICATE:
             log.info("a2a: duplicate task_id — deduplicated", channel=self._channel_cfg.name)
@@ -227,7 +218,7 @@ class A2AAgentExecutorBridge:
         session_key = context_id or task_id or ""
         # Remove from pending if present
         self._pending.pop(session_key, None)
-        await event_queue.enqueue_event(_make_canceled_status())
+        await event_queue.enqueue_event(_status_event("canceled"))
         log.info("a2a: task canceled", channel=self._channel_cfg.name, session_key=session_key)
 
     def signal_completion(self, session_key: str, reply_text: str) -> None:
@@ -247,7 +238,7 @@ class A2AAgentExecutorBridge:
         # Schedule completed event enqueue + Event.set() as an async task.
         # signal_completion is called from a synchronous context (on_complete closure).
         loop = asyncio.get_running_loop()
-        loop.create_task(_complete_async(event_queue, completion, reply_text))
+        loop.create_task(_signal_async("completed", reply_text, event_queue, completion))
 
     def signal_failure(self, session_key: str, reason: str) -> None:
         """Called by the on_fail closure (boot) when the terminal output is unusable.
@@ -264,22 +255,12 @@ class A2AAgentExecutorBridge:
             return
         event_queue, completion = entry
         loop = asyncio.get_running_loop()
-        loop.create_task(_fail_async(event_queue, completion, reason))
-
-    def lookup_session_key_for_event(self, session_key: str) -> bool:
-        """Test helper: check if a session_key is currently pending."""
-        return session_key in self._pending
+        loop.create_task(_signal_async("failed", reason, event_queue, completion))
 
 
-async def _complete_async(event_queue: Any, completion: asyncio.Event, reply_text: str) -> None:
-    """Schedule completed event and set the completion event from an async context."""
-    await event_queue.enqueue_event(_make_completed_status(reply_text))
-    completion.set()
-
-
-async def _fail_async(event_queue: Any, completion: asyncio.Event, reason: str) -> None:
-    """Schedule a failed event and set the completion event from an async context."""
-    await event_queue.enqueue_event(_make_failed_status(reason))
+async def _signal_async(state: str, text: str, event_queue: Any, completion: asyncio.Event) -> None:
+    """Schedule a terminal status event and set the completion event from an async context."""
+    await event_queue.enqueue_event(_status_event(state, text))
     completion.set()
 
 
@@ -307,16 +288,14 @@ def make_a2a_agent_card(channel_name: str) -> Any:
 def build_a2a_app(
     agent_card: Any,
     executor: A2AAgentExecutorBridge,
-    rpc_prefix: str = "/",
 ) -> Any:
     """Build a FastAPI sub-app with A2A routes mounted.
 
     RTR-06: all a2a imports are function-scoped inside this function.
 
     Args:
-        agent_card:  a2a-sdk AgentCard (or None to skip agent card route).
+        agent_card:  a2a-sdk AgentCard.
         executor:    A2AAgentExecutorBridge instance.
-        rpc_prefix:  URL prefix for the JSON-RPC endpoint within the sub-app.
 
     Returns:
         A FastAPI application with A2A routes registered (mount it via app.mount).
@@ -349,8 +328,8 @@ def build_a2a_app(
     )
 
     sub_app = FastAPI(title="a2a-sub")
-    agent_card_routes = create_agent_card_routes(agent_card) if agent_card is not None else []
-    jsonrpc_routes = create_jsonrpc_routes(request_handler, rpc_url=rpc_prefix)
+    agent_card_routes = create_agent_card_routes(agent_card)
+    jsonrpc_routes = create_jsonrpc_routes(request_handler, rpc_url="/")
     rest_routes = create_rest_routes(request_handler)
 
     add_a2a_routes_to_fastapi(

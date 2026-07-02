@@ -63,10 +63,6 @@ class EnginePool:
         self._ttl_tasks: dict[str, asyncio.Task[None]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
-        # A′ proven-start latch (DUR-02, D-08-latch).
-        # Set True the first time ANY server starts successfully; never reset.
-        self.engine_has_been_ready_once: bool = False
-
         # _start_server is injectable for testing (replaced by tests with a fake).
         # In production it points to the lifecycle launch helper. It receives the
         # EngineConfig and session_key.
@@ -122,9 +118,6 @@ class EnginePool:
 
             log.info("EnginePool.acquire: starting new server", session_key=session_key)
             server = await self._start_server(config, session_key)
-            # A′ latch: _start_server only returns on success (poll_ready calls
-            # sys.exit(1) on failure), so reaching here proves the engine was ready.
-            self.engine_has_been_ready_once = True
             self._servers[session_key] = server
             self._ref_counts[session_key] = 1
             return server

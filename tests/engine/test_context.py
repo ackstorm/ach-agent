@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ach_agent.engine.context import _safe_extract, fetch_context
+from ach_agent.engine.context import fetch_context
 from ach_agent.engine.hydrate import Context, ContextItem
 from ach_agent.main import ach_state_dir, link_ach_state
 
@@ -43,11 +43,33 @@ async def test_skills_extract_flat_into_skills_dir(tmp_path: Path, monkeypatch) 
     assert not (skills_dir / "frontend-design@anthropics-skills").exists()
 
 
-def test_safe_extract_rejects_traversal(tmp_path: Path) -> None:
-    """_safe_extract rejects a tar member that escapes the destination dir."""
-    info = tarfile.TarInfo("../evil")
-    with pytest.raises(ValueError):
-        _safe_extract([info], tmp_path)
+@pytest.mark.asyncio
+async def test_fetch_context_rejects_traversal(tmp_path: Path, monkeypatch) -> None:
+    """fetch_context rejects a tar member that escapes the destination dir.
+
+    Protection is now native to tarfile.extractall(..., filter="data") (py3.12+):
+    a member path like "../evil" raises tarfile.OutsideDestinationError instead of
+    extracting outside the destination.
+    """
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        body = b"evil"
+        info = tarfile.TarInfo("../evil")
+        info.size = len(body)
+        tar.addfile(info, io.BytesIO(body))
+    blob = buf.getvalue()
+
+    async def fake_get_bytes(url: str, ek: str) -> bytes:
+        return blob
+
+    monkeypatch.setattr("ach_agent.engine.context._get_bytes", fake_get_bytes)
+
+    ctx = Context(skills=[ContextItem(name="malicious@anthropics-skills", downloadUrl="http://x")])
+    root = tmp_path / "state"
+    skills_dir = tmp_path / "home" / ".config" / "opencode" / "skills"
+
+    with pytest.raises(tarfile.TarError):
+        await fetch_context(ctx, "ek-test", root, skills_dir)
 
 
 @pytest.mark.asyncio

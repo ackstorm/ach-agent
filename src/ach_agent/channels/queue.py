@@ -55,13 +55,6 @@ _DEFAULT_REDIS_URL = "redis://localhost:6379"
 _CONSUMER_NAME = "c1"
 
 
-def _decode(value: Any) -> Any:
-    """Best-effort decode of redis bytes → str (ids and field keys/values)."""
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return value
-
-
 class QueueConsumer:
     """Redis Streams consumer for one queue channel (ackMode:onComplete).
 
@@ -74,12 +67,10 @@ class QueueConsumer:
         self,
         channel_cfg: ChannelConfig,
         handler: MessageHandler,
-        pool: Any = None,  # EnginePool — accepted for symmetry with CronScheduler; unused
         redis_client: Any = None,
     ) -> None:
         self._cfg = channel_cfg
         self._handler = handler
-        self._pool = pool
         self._client = redis_client
         self._owns_client = redis_client is None
         self._task: asyncio.Task[None] | None = None
@@ -98,8 +89,8 @@ class QueueConsumer:
             url = os.environ.get(_REDIS_URL_ENV, _DEFAULT_REDIS_URL)
             # redis.asyncio.from_url has no return annotation upstream, so --strict
             # flags it as an untyped call. Route it through a typed factory alias.
-            from_url = cast(Callable[[str], Any], redis_asyncio.from_url)
-            self._client = from_url(url)
+            from_url = cast(Callable[..., Any], redis_asyncio.from_url)
+            self._client = from_url(url, decode_responses=True)
 
         await self._ensure_group()
         self._task = asyncio.create_task(self._run())
@@ -181,8 +172,8 @@ class QueueConsumer:
         On handler raise: do NOT ack (stays pending for redelivery). The raise
         is caught here so one bad message never kills the loop.
         """
-        msg_id_str = str(_decode(message_id))
-        payload: dict[str, Any] = {str(_decode(k)): _decode(v) for k, v in (fields or {}).items()}
+        msg_id_str = str(message_id)
+        payload: dict[str, Any] = dict(fields or {})
 
         event = MessageEvent(
             idempotency_key=msg_id_str,  # CONTRACT §6.1: the redis message id, never empty

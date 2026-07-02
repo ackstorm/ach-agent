@@ -56,18 +56,6 @@ class FakeContext:
         return self._text
 
 
-def _make_ready_pool() -> MagicMock:
-    pool = MagicMock()
-    pool.engine_has_been_ready_once = True
-    return pool
-
-
-def _make_cold_pool() -> MagicMock:
-    pool = MagicMock()
-    pool.engine_has_been_ready_once = False
-    return pool
-
-
 _E2E_TEST_SECRET = "e2e-test-secret"
 _E2E_TEST_HEADER = "x-a2a-custom-api-key"
 
@@ -96,7 +84,6 @@ def _authed_ctx(**kwargs: Any) -> FakeContext:
 
 def _build_bridge_with_router(
     router: Router,
-    pool: Any,
     channel_cfg: Any,
 ) -> tuple[A2AAgentExecutorBridge, Any]:
     """Build a bridge + handler wrapper that injects on_complete into delivery_context.
@@ -118,7 +105,7 @@ def _build_bridge_with_router(
             return await router.handle(event)
 
     handler = _HandlerWithOnComplete()
-    bridge = A2AAgentExecutorBridge(handler=handler, pool=pool, channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
     return bridge, handler
 
 
@@ -153,8 +140,7 @@ async def test_a2a_task_routes_to_engine_and_enqueues_completed_event(
     )
 
     channel_cfg = _make_a2a_channel_cfg_with_secret(tmp_path)
-    pool = _make_ready_pool()
-    bridge, _ = _build_bridge_with_router(router, pool, channel_cfg)
+    bridge, _ = _build_bridge_with_router(router, channel_cfg)
 
     ctx = _authed_ctx(task_id="task-e2e-1", context_id="ctx-e2e-1", text="review this")
     eq = MockEventQueue()
@@ -167,6 +153,59 @@ async def test_a2a_task_routes_to_engine_and_enqueues_completed_event(
     completed_events = [e for e in eq.events if e.status.state == TASK_STATE_COMPLETED]
     assert len(completed_events) == 1, f"Expected completed event, got: {eq.events}"
     assert _REPLY_TEXT in completed_events[0].status.message.parts[0].text
+
+
+@pytest.mark.asyncio
+async def test_engine_runner_signals_on_fail_on_engine_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F1 regression: when the engine raises, engine_runner MUST call
+    delivery_context['on_fail'] (and still re-raise). Otherwise the a2a bridge — whose
+    execute() awaits completion.wait() with NO timeout — hangs forever.
+    """
+    from ach_agent.engine import lifecycle
+    from ach_agent.engine.lifecycle import EngineConfig
+    from ach_agent.main import _make_engine_runner
+
+    class _FakeServer:
+        def is_alive(self) -> bool:
+            return True
+
+    class _FakePool:
+        async def acquire(self, session_key: str, config: Any) -> _FakeServer:
+            return _FakeServer()
+
+        async def release(self, session_key: str, ttl_seconds: float) -> None:
+            return None
+
+    async def _boom(**_kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("engine exploded")
+
+    # _make_engine_runner imports run_invocation from lifecycle at call time → patch the source.
+    monkeypatch.setattr(lifecycle, "run_invocation", _boom)
+
+    runner = _make_engine_runner(
+        pool=_FakePool(),
+        engine_cfg=EngineConfig(),
+        max_invocation_seconds=30,
+        memory_cfg=None,
+    )
+
+    failures: list[tuple[str, str]] = []
+    event = MessageEvent(
+        idempotency_key="i-1",
+        session_key="ctx-fail-1",
+        channel_name="a2a",
+        payload={"text": "review this"},
+        delivery_context={"on_fail": lambda k, r: failures.append((k, r))},
+    )
+
+    with pytest.raises(RuntimeError, match="engine exploded"):
+        await runner(event, lambda: None)
+
+    assert len(failures) == 1 and failures[0][0] == "ctx-fail-1", (
+        "engine_runner must signal on_fail on an engine error — else the a2a executor hangs"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +241,7 @@ async def test_a2a_engine_not_ready_still_routes_to_engine(tmp_path: pytest.Temp
 
     channel_cfg = _make_a2a_channel_cfg_with_secret(tmp_path)
     # Cold pool — engine not ready yet; must NOT block dispatch (decoupled)
-    bridge, _ = _build_bridge_with_router(router, _make_cold_pool(), channel_cfg)
+    bridge, _ = _build_bridge_with_router(router, channel_cfg)
 
     ctx = _authed_ctx(task_id="task-cold-1")
     eq = MockEventQueue()
@@ -246,10 +285,9 @@ async def test_a2a_dedup_rejects_repeated_task_id(tmp_path: pytest.TempPath) -> 
     )
 
     channel_cfg = _make_a2a_channel_cfg_with_secret(tmp_path)
-    pool = _make_ready_pool()
 
     # First task — should succeed
-    bridge1, _ = _build_bridge_with_router(router, pool, channel_cfg)
+    bridge1, _ = _build_bridge_with_router(router, channel_cfg)
     ctx1 = _authed_ctx(task_id="task-dedup", context_id="ctx-dedup", text="hello")
     eq1 = MockEventQueue()
     async with asyncio.timeout(5.0):
@@ -259,7 +297,7 @@ async def test_a2a_dedup_rejects_repeated_task_id(tmp_path: pytest.TempPath) -> 
     assert len(engine_invocations) == 1
 
     # Second task with SAME task_id — should be deduplicated (DUPLICATE result, no completed event)
-    bridge2, _ = _build_bridge_with_router(router, pool, channel_cfg)
+    bridge2, _ = _build_bridge_with_router(router, channel_cfg)
     ctx2 = _authed_ctx(task_id="task-dedup", context_id="ctx-dedup", text="hello again")
     eq2 = MockEventQueue()
 

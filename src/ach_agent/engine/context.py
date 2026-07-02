@@ -22,14 +22,6 @@ async def _get_bytes(url: str, ek: str) -> bytes:
         return r.content
 
 
-def _safe_extract(members: list[tarfile.TarInfo], dest: Path) -> None:
-    dest_resolved = dest.resolve()
-    for member in members:
-        target = (dest / member.name).resolve()
-        if not target.is_relative_to(dest_resolved):
-            raise ValueError(f"unsafe tar member escapes destination: {member.name!r}")
-
-
 async def fetch_context(ctx: Context, ek: str, root: Path, skills_dir: Path) -> None:
     """Download + extract hydrated context.
 
@@ -55,6 +47,5 @@ async def fetch_context(ctx: Context, ek: str, root: Path, skills_dir: Path) -> 
             data = await _get_bytes(item.download_url, ek)
             target_dir = skills_dir if kind == "skills" else root / kind / item.name
             with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
-                _safe_extract(tar.getmembers(), target_dir)
                 target_dir.mkdir(parents=True, exist_ok=True)
                 tar.extractall(target_dir, filter="data")

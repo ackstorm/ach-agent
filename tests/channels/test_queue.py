@@ -53,11 +53,11 @@ class FakeRedis:
     messages once, then empty lists thereafter (so the loop would block/idle).
     """
 
-    def __init__(self, messages: list[tuple[bytes, dict[bytes, bytes]]], order: list[str]) -> None:
+    def __init__(self, messages: list[tuple[str, dict[str, str]]], order: list[str]) -> None:
         self._messages = messages
         self._order = order
         self.groups_created: list[tuple[str, str]] = []
-        self.acked: list[bytes] = []
+        self.acked: list[str] = []
         self._drained = False
 
     async def xgroup_create(
@@ -78,9 +78,9 @@ class FakeRedis:
             return []
         self._drained = True
         stream = next(iter(streams))
-        return [(stream.encode(), list(self._messages))]
+        return [(stream, list(self._messages))]
 
-    async def xack(self, name: str, groupname: str, *ids: bytes) -> int:
+    async def xack(self, name: str, groupname: str, *ids: str) -> int:
         self._order.append("xack")
         self.acked.extend(ids)
         return len(ids)
@@ -107,7 +107,7 @@ async def test_queue_dispatches_event_with_message_id() -> None:
     from ach_agent.channels.queue import QueueConsumer
 
     order: list[str] = []
-    messages = [(b"1700000000000-0", {b"foo": b"bar"})]
+    messages = [("1700000000000-0", {"foo": "bar"})]
     fake_redis = FakeRedis(messages, order)
     handler = FakeHandler(order, RouterAdmitResult.ACCEPTED)
     channel_cfg = _make_channel_cfg("jobs", "ach:jobs")
@@ -131,7 +131,7 @@ async def test_queue_acks_only_after_handle_returns() -> None:
     from ach_agent.channels.queue import QueueConsumer
 
     order: list[str] = []
-    messages = [(b"1700000000000-0", {b"foo": b"bar"})]
+    messages = [("1700000000000-0", {"foo": "bar"})]
     fake_redis = FakeRedis(messages, order)
     handler = FakeHandler(order, RouterAdmitResult.ACCEPTED)
     channel_cfg = _make_channel_cfg()
@@ -139,7 +139,7 @@ async def test_queue_acks_only_after_handle_returns() -> None:
     consumer = QueueConsumer(channel_cfg, handler=handler, redis_client=fake_redis)
     await consumer._consume_once()
 
-    assert fake_redis.acked == [b"1700000000000-0"], "message must be acked after processing"
+    assert fake_redis.acked == ["1700000000000-0"], "message must be acked after processing"
     # Order: handle MUST precede xack (onComplete semantics).
     assert order == ["handle", "xack"], f"handle must run before xack, got order={order!r}"
 
@@ -150,7 +150,7 @@ async def test_queue_no_ack_when_handler_raises() -> None:
     from ach_agent.channels.queue import QueueConsumer
 
     order: list[str] = []
-    messages = [(b"1700000000000-0", {b"foo": b"bar"})]
+    messages = [("1700000000000-0", {"foo": "bar"})]
     fake_redis = FakeRedis(messages, order)
     handler = FakeHandler(order, raises=True)
     channel_cfg = _make_channel_cfg()
@@ -169,7 +169,7 @@ async def test_queue_full_queue_acks_and_drops() -> None:
     from ach_agent.channels.queue import QueueConsumer
 
     order: list[str] = []
-    messages = [(b"1700000000000-0", {b"foo": b"bar"})]
+    messages = [("1700000000000-0", {"foo": "bar"})]
     fake_redis = FakeRedis(messages, order)
     handler = FakeHandler(order, RouterAdmitResult.FULL_QUEUE)
     channel_cfg = _make_channel_cfg()
@@ -177,7 +177,7 @@ async def test_queue_full_queue_acks_and_drops() -> None:
     consumer = QueueConsumer(channel_cfg, handler=handler, redis_client=fake_redis)
     await consumer._consume_once()
 
-    assert fake_redis.acked == [b"1700000000000-0"], (
+    assert fake_redis.acked == ["1700000000000-0"], (
         "FULL_QUEUE on async_no_retry must ack+drop (cron parity)"
     )
 

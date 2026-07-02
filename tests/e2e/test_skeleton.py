@@ -209,7 +209,7 @@ async def test_cron_skeleton_fires_log_invocation(
 
     # Reset singleton counter for test isolation
     CronScheduler._instance_count = 0
-    scheduler = CronScheduler(cron_channels, handler=router, pool=None)
+    scheduler = CronScheduler(cron_channels, handler=router)
     await scheduler.start()
 
     # Wait for the invocation to complete (with timeout to avoid hanging)

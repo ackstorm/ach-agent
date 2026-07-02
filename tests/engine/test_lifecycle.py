@@ -602,6 +602,25 @@ def test_build_opencode_env_forwards_configured_names(
     assert "ACH_TOKEN" not in env  # not named → not forwarded
 
 
+def test_build_opencode_env_pins_exa_enable_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OPENCODE_ENABLE_EXA is always passed to opencode; a forwarded value still wins."""
+    from ach_agent.engine.lifecycle import EngineConfig, build_opencode_env
+
+    cfg_path = tmp_path / ".config" / "opencode" / "opencode_k.json"
+
+    # Default: pinned true even when the harness env has nothing.
+    monkeypatch.delenv("OPENCODE_ENABLE_EXA", raising=False)
+    env = build_opencode_env(tmp_path, EngineConfig(), cfg_path)
+    assert env["OPENCODE_ENABLE_EXA"] == "true"
+
+    # An explicit forwardEnv value wins over the pinned default.
+    monkeypatch.setenv("OPENCODE_ENABLE_EXA", "false")
+    env = build_opencode_env(tmp_path, EngineConfig(forward_env=["OPENCODE_ENABLE_EXA"]), cfg_path)
+    assert env["OPENCODE_ENABLE_EXA"] == "false"
+
+
 def test_write_opencode_config_per_session_filename(tmp_path: Path) -> None:
     from ach_agent.engine.lifecycle import EngineConfig, write_opencode_config
 

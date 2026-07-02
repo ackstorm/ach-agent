@@ -10,10 +10,23 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest==9.1.1", "pytest-asyncio==1.4.0", "httpx>=0.28", "fakeredis>=2.26,<3"]
+dev = [
+    "pytest==9.1.1", "pytest-asyncio==1.4.0", "httpx>=0.28", "fakeredis>=2.26,<3",
+    "ruff==0.15.18", "mypy==2.1.0",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "PLW1514"]
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
 
 [build-system]
 requires = ["hatchling"]

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Favicon: the same shield-check brand mark shown next to the wordmark,
+         inlined as an SVG data URI (base-path independent — works under /ui). -->
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%2316c47f'%20stroke-width='2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M12%202%204%206v6c0%204.5%203.4%207.3%208%2010%204.6-2.7%208-5.5%208-10V6z'/%3E%3Cpath%20d='m9%2012%202%202%204-4'/%3E%3C/svg%3E"
+    />
+    <title>ach-stats</title>
+    <!-- Pre-paint theme: apply the stored/system theme before first paint so a
+         light-preference user never sees a dark flash. `class="dark"` above is
+         the no-JS fallback; this script corrects it. Mirrors lib/theme.ts. -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('ach-stats-theme');
+          if (t !== 'dark' && t !== 'light' && t !== 'pastel' && t !== 'red') {
+            t =
+              window.matchMedia &&
+              window.matchMedia('(prefers-color-scheme: light)').matches
+                ? 'light'
+                : 'dark';
+          }
+          var el = document.documentElement;
+          el.classList.remove('dark', 'light', 'pastel', 'red');
+          el.classList.add(t);
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

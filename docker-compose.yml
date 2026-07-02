@@ -30,6 +30,12 @@ services:
       # - ACH_MODEL_BASE_URL=https://your-model-gateway.example.com
       # - ACH_MODEL_HEADER=Authorization
       # - ACH_MODEL_TOKEN=Bearer ${MODEL_API_KEY}
+      # Stats sink (optional — unset ACH_STATS_REDIS_URL means Prometheus-only,
+      # no queue/writer). Points at the redis service below when the `stats`
+      # profile is used: `docker compose --profile stats up`.
+      - ACH_STATS_REDIS_URL=redis://redis:6379
+      - ACH_STATS_RETENTION=3024000
+      - ACH_STATS_TZ=Europe/Madrid
     volumes:
       - ./docker/sample-config.yaml:/etc/ach-agent/config.yaml:ro
     stdin_open: true   # keep STDIN open for the TUI REPL
@@ -50,3 +56,26 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+
+  # ach-stats sub-project (A): usage dashboard reading the harness's ach:sessions
+  # redis stream. Opt-in via profile so the default `docker compose up` (or the
+  # harness-only workflows above) doesn't require redis: `docker compose
+  # --profile stats up`.
+  redis:
+    image: redis:7-alpine
+    profiles: ["stats"]
+    ports:
+      - "6379:6379"
+
+  ach-stats:
+    build:
+      context: .
+      dockerfile: docker/stats.Dockerfile
+    profiles: ["stats"]
+    environment:
+      - ACH_STATS_REDIS_URL=redis://redis:6379
+      - ACH_STATS_TZ=Europe/Madrid
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis

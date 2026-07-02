@@ -1,0 +1,36 @@
+[project]
+name = "ach-stats"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.116.1",
+    "uvicorn[standard]==0.34.0",
+    "redis>=5,<6",
+    "pydantic>=2,<3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1", "pytest-asyncio==1.4.0", "httpx>=0.28", "fakeredis>=2.26,<3",
+    "ruff==0.15.18", "mypy==2.1.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "PLW1514"]
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]

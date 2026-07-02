@@ -1,4 +1,5 @@
 .planning/
+.worktrees/
 .uv-cache/
 .claude/
 CLAUDE.md

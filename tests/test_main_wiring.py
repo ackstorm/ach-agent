@@ -19,7 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ach_agent.channels.message_event import MessageEvent
-from ach_agent.config.schema import ChannelConfig
+from ach_agent.config.schema import ChannelConfig, SessionBlock
 from ach_agent.http.app import create_app
 from ach_agent.router.router import RouterAdmitResult
 
@@ -513,3 +513,154 @@ async def test_engine_runner_passes_pool_oc_sessions_to_run_invocation() -> None
         await runner(event, lambda: None)
 
     assert captured["oc_sessions"] is pool.oc_sessions
+
+
+# ---------------------------------------------------------------------------
+# session identity resolution + post-turn cleanup (session block)
+# ---------------------------------------------------------------------------
+
+
+class _SessPool:
+    def __init__(self) -> None:
+        self.oc_sessions: dict[str, str] = {}
+
+    async def acquire(self, _session_key: str, _cfg: Any) -> Any:
+        return object()
+
+    async def release(self, _session_key: str, ttl_seconds: float = 0.0) -> None:
+        return None
+
+
+def _sess_event(session_key: str = "lane-1", channel_name: str = "ch1") -> MessageEvent:
+    return MessageEvent(
+        idempotency_key="k1",
+        session_key=session_key,
+        channel_name=channel_name,
+        payload={"task_id": "T-42"},
+        delivery_context={},
+        source_trait="async_no_retry",
+    )
+
+
+def _sess_chcfg(session: SessionBlock) -> Any:
+    """Minimal channel-config stand-in: engine_runner only reads .type/.source/.session/.prompt."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(type="cron", source=None, session=session, prompt=None)
+
+
+async def _run_sess_case(
+    session: SessionBlock | None,
+    *,
+    input_tokens: int = 100,
+    oc_session_id: str = "ses-t1",
+    pool: _SessPool | None = None,
+) -> tuple[dict[str, Any], Any, Any, Any]:
+    """Drive engine_runner once. Returns (run_invocation kwargs, pool, discard/compact mocks)."""
+    from types import SimpleNamespace
+
+    import ach_agent.engine.lifecycle as lifecycle
+    from ach_agent.engine.lifecycle import EngineConfig
+    from ach_agent.main import _make_engine_runner
+
+    pool = pool if pool is not None else _SessPool()
+    captured: dict[str, Any] = {}
+
+    async def _fake_run(**kw: Any) -> dict[str, Any]:
+        captured.update(kw)
+        kw["stats"]["oc_session_id"] = oc_session_id
+        kw["stats"]["usage"] = SimpleNamespace(
+            input_tokens=input_tokens, output_tokens=1, cost=0.0, duration_ms=1
+        )
+        return {"action": "none", "text": ""}
+
+    channels = {"ch1": _sess_chcfg(session)} if session is not None else {}
+
+    with (
+        patch.object(lifecycle, "run_invocation", new=AsyncMock(side_effect=_fake_run)),
+        patch.object(lifecycle, "discard_oc_session", new_callable=AsyncMock) as discard,
+        patch.object(lifecycle, "compact_oc_session", new_callable=AsyncMock) as compact,
+    ):
+        runner = _make_engine_runner(
+            pool=pool,
+            engine_cfg=EngineConfig(),
+            max_invocation_seconds=30,
+            channels_by_name=channels,
+        )
+        await runner(_sess_event(), lambda: None)
+
+    return captured, pool, discard, compact
+
+
+async def test_session_none_fresh_and_deleted() -> None:
+    """key='none' (the default): reuse=False and the session is DELETEd post-turn."""
+    captured, _pool, discard, _compact = await _run_sess_case(SessionBlock())
+    assert captured["reuse"] is False
+    discard.assert_awaited_once()
+    assert discard.await_args.args[1] == "ses-t1"
+
+
+async def test_session_auto_reuses_lane_key() -> None:
+    """key='auto': conversation key = event.session_key, reuse=True, no delete."""
+    captured, _pool, discard, _compact = await _run_sess_case(SessionBlock(key="auto"))
+    assert captured["reuse"] is True
+    assert captured["session_id"] == "lane-1"
+    discard.assert_not_awaited()
+
+
+async def test_session_template_renders_conversation_key() -> None:
+    """A template key renders per event and becomes the conversation (map) key."""
+    captured, _pool, discard, _compact = await _run_sess_case(
+        SessionBlock(key="{{ payload.task_id }}")
+    )
+    assert captured["reuse"] is True
+    assert captured["session_id"] == "T-42"
+    discard.assert_not_awaited()
+
+
+async def test_session_template_empty_falls_back_to_none() -> None:
+    """A template that renders empty behaves as 'none': fresh + deleted (never key='')."""
+    captured, _pool, discard, _compact = await _run_sess_case(
+        SessionBlock(key="{{ payload.missing_field }}")
+    )
+    assert captured["reuse"] is False
+    discard.assert_awaited_once()
+
+
+async def test_no_channel_config_keeps_continuity() -> None:
+    """--tui console (no ChannelConfig) resolves to auto behavior: REPL continuity."""
+    captured, _pool, discard, _compact = await _run_sess_case(None)
+    assert captured["reuse"] is True
+    assert captured["session_id"] == "lane-1"
+    discard.assert_not_awaited()
+
+
+async def test_max_tokens_overflow_compact() -> None:
+    captured, _pool, discard, compact = await _run_sess_case(
+        SessionBlock(key="auto", max_tokens=50, overflow="compact"), input_tokens=51
+    )
+    compact.assert_awaited_once()
+    assert compact.await_args.args[1] == "ses-t1"
+    discard.assert_not_awaited()
+
+
+async def test_max_tokens_overflow_rotate() -> None:
+    """rotate: LRU entry dropped AND the old session deleted (clean)."""
+    pool = _SessPool()
+    pool.oc_sessions["lane-1"] = "ses-t1"
+    _captured, pool, discard, compact = await _run_sess_case(
+        SessionBlock(key="auto", max_tokens=50, overflow="rotate"),
+        input_tokens=51,
+        pool=pool,
+    )
+    assert "lane-1" not in pool.oc_sessions
+    discard.assert_awaited_once()
+    compact.assert_not_awaited()
+
+
+async def test_max_tokens_not_exceeded_no_action() -> None:
+    _captured, _pool, discard, compact = await _run_sess_case(
+        SessionBlock(key="auto", max_tokens=50, overflow="compact"), input_tokens=49
+    )
+    compact.assert_not_awaited()
+    discard.assert_not_awaited()

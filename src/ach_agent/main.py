@@ -458,7 +458,7 @@ def _make_engine_runner(
     held ref so 0 never actually stops it mid-session (see the console-mode pre-warm).
     """
     from ach_agent.engine.events import InvocationTimeout
-    from ach_agent.engine.lifecycle import run_invocation
+    from ach_agent.engine.lifecycle import compact_oc_session, discard_oc_session, run_invocation
     from ach_agent.stats.sink import build_session_stat
 
     ttl_by_channel = channel_ttl or {}
@@ -558,7 +558,26 @@ def _make_engine_runner(
             # without this a channel turn shows nothing about the tools it ran.
             if on_tool is None:
                 on_tool = _log_engine_tool
-            reuse = getattr(ch_cfg, "session", "auto") != "none"
+            # Conversation identity (session block). The router lane key
+            # (event.session_key) is NOT affected — only which opencode session
+            # this turn reuses. No ch_cfg (--tui console) → auto: REPL continuity.
+            session_cfg = getattr(ch_cfg, "session", None)
+            conv_key = event.session_key
+            if session_cfg is None or session_cfg.key == "auto":
+                reuse = True
+            elif session_cfg.key == "none":
+                reuse = False
+            else:
+                rendered = render_template(session_cfg.key, ctx).strip()
+                if rendered:
+                    conv_key, reuse = rendered, True
+                else:
+                    log.warning(
+                        "session: template rendered empty — falling back to none",
+                        channel=event.channel_name,
+                        template=session_cfg.key,
+                    )
+                    reuse = False
             log.info(
                 "engine: prompt",
                 channel=event.channel_name,
@@ -568,7 +587,7 @@ def _make_engine_runner(
             turn_stats: dict[str, Any] = {}
             obj = await run_invocation(
                 server=server,
-                session_id=event.session_key,
+                session_id=conv_key,
                 prompt=full_prompt,
                 terminal_retries=terminal_output_retries,
                 free_form=free_form,
@@ -599,6 +618,38 @@ def _make_engine_runner(
                 cost_usd=getattr(_usage, "cost", 0.0),
                 duration_ms=getattr(_usage, "duration_ms", 0),
             )
+            # Post-turn session hygiene. Skipped on timeout (this code is not reached
+            # when the lane cancels run_invocation) — that orphan is accepted, the
+            # server is force-killed anyway.
+            _oc_sid = turn_stats.get("oc_session_id", "")
+            if _oc_sid and not reuse:
+                # key='none' (or empty template render): stateless turn leaves no residue.
+                await discard_oc_session(server, _oc_sid)
+            elif (
+                _oc_sid
+                and session_cfg is not None
+                and session_cfg.max_tokens is not None
+                and getattr(_usage, "input_tokens", 0) > session_cfg.max_tokens
+            ):
+                if session_cfg.overflow == "compact":
+                    log.info(
+                        "session: maxTokens exceeded — compacting",
+                        session_key=event.session_key,
+                        oc_session_id=_oc_sid,
+                        input_tokens=getattr(_usage, "input_tokens", 0),
+                        max_tokens=session_cfg.max_tokens,
+                    )
+                    await compact_oc_session(server, _oc_sid)
+                else:  # rotate: drop the map entry + delete the old session (clean)
+                    log.info(
+                        "session: maxTokens exceeded — rotating",
+                        session_key=event.session_key,
+                        oc_session_id=_oc_sid,
+                        input_tokens=getattr(_usage, "input_tokens", 0),
+                        max_tokens=session_cfg.max_tokens,
+                    )
+                    pool.oc_sessions.pop(conv_key, None)
+                    await discard_oc_session(server, _oc_sid)
             if stats_sink is not None:
                 stats_sink.record(
                     build_session_stat(event, obj, turn_stats, ts_ms=int(time.time() * 1000))

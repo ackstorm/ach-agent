@@ -188,6 +188,26 @@ class OpenCodeClient:
             resp.raise_for_status()
             await resp.read()
 
+    async def delete_session(self, session_id: str) -> None:
+        """DELETE /session/{id} — remove the session from opencode's store.
+
+        Used by session.key='none' post-turn cleanup and overflow='rotate', so
+        stateless turns leave no residue in the persistent home (opencode.db).
+        """
+        assert self._session is not None, "Call open() first"
+        async with self._session.delete(f"{self._base_url}/session/{session_id}") as resp:
+            resp.raise_for_status()
+            await resp.read()
+
+    async def compact_session(self, session_id: str) -> None:
+        """POST /session/{id}/compact — summarize history in place (bounds tokens)."""
+        assert self._session is not None, "Call open() first"
+        async with self._session.post(
+            f"{self._base_url}/session/{session_id}/compact", json={}
+        ) as resp:
+            resp.raise_for_status()
+            await resp.read()
+
     async def subscribe_events(self) -> aiohttp.ClientResponse:
         """GET /event — open the SSE event stream.
 

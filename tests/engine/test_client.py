@@ -247,6 +247,59 @@ async def test_send_message():
 
 
 # ---------------------------------------------------------------------------
+# delete_session / compact_session
+# ---------------------------------------------------------------------------
+
+
+async def test_delete_session_issues_delete() -> None:
+    """delete_session issues DELETE /session/{id} (verified live: opencode 1.17 → 200)."""
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    deleted: list[str] = []
+
+    async def handle_delete(request: web.Request) -> web.Response:
+        deleted.append(request.match_info["sid"])
+        return web.Response(status=200, text="true")
+
+    app = web.Application()
+    app.router.add_delete("/session/{sid}", handle_delete)
+
+    async with TestClient(TestServer(app)) as tc:
+        from ach_agent.engine.client import OpenCodeClient
+
+        client = OpenCodeClient(str(tc.make_url("")))
+        async with client:
+            await client.delete_session("ses_del1")
+
+    assert deleted == ["ses_del1"]
+
+
+async def test_compact_session_issues_post() -> None:
+    """compact_session issues POST /session/{id}/compact with a JSON body."""
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    compacted: list[str] = []
+
+    async def handle_compact(request: web.Request) -> web.Response:
+        compacted.append(request.match_info["sid"])
+        return web.Response(status=200, text="{}")
+
+    app = web.Application()
+    app.router.add_post("/session/{sid}/compact", handle_compact)
+
+    async with TestClient(TestServer(app)) as tc:
+        from ach_agent.engine.client import OpenCodeClient
+
+        client = OpenCodeClient(str(tc.make_url("")))
+        async with client:
+            await client.compact_session("ses_cmp1")
+
+    assert compacted == ["ses_cmp1"]
+
+
+# ---------------------------------------------------------------------------
 # find_free_port
 # ---------------------------------------------------------------------------
 

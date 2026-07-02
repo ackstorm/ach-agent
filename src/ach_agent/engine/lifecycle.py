@@ -5,11 +5,12 @@ Constraint: No router or Hermes imports (D-08, RTR-06).
 
 Hardening implemented in 00-02:
   - H-01: 1MB SSE read buffer (in client.py)
-  - H-02: SSE reconnect with bounded retry (in events.py)
+  - H-02: bounded health-gated SSE reconnect + mid-invocation liveness on the live path
+    (consume_sse_after_send below; reuses events.py's shared reader/accumulator helpers)
   - H-03: Process-group kill (SIGTERM → 10s → SIGKILL) via _process_group_kill
   - H-05: stdout/stderr drain tasks (_drain_logs with 50-line tail, started at launch)
   - ENG-06: Startup deadline calls sys.exit(1), NOT raises
-  - ENG-07: maxInvocationSeconds watchdog via asyncio.timeout + on_kill seam
+  - maxInvocationSeconds: owned by the lane (router), NOT run_invocation (Plan 1)
 """
 
 from __future__ import annotations
@@ -41,6 +42,11 @@ log = structlog.get_logger(__name__)
 
 SHUTDOWN_TIMEOUT = 10  # seconds between SIGTERM and SIGKILL (H-03)
 _LOG_TAIL_SIZE = 50  # lines kept in stdout/stderr tail for diagnostics (H-05)
+# Mid-invocation liveness poll: how often the SSE consume loop wakes to check the engine is
+# still alive (B5) instead of blocking a flat 300s on a single queue.get(). The cumulative
+# 300s stall bound (reset on every real event) is preserved as the wedged-but-alive backstop.
+_LIVENESS_POLL_S = 5.0
+_SSE_STALL_S = 300.0  # cumulative no-event bound before giving up on a live-but-wedged stream
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +550,7 @@ async def run_invocation(
     # This ensures we don't miss the session.idle event. The lane bounds this await via
     # maxInvocationSeconds; a deadline cancels it (no inner timeout here).
     accumulated_text = await consume_sse_after_send(
-        client, oc_session_id, prompt, on_text=on_text, on_tool=on_tool
+        client, oc_session_id, prompt, on_text=on_text, on_tool=on_tool, is_alive=server.is_alive
     )
 
     # debug (not info): at INFO this line lands on stderr right as the streamed reply
@@ -573,7 +579,9 @@ async def run_invocation(
             "Reply with ONLY a terminal JSON object: "
             '{"action":"none","text":"..."} or {"action":"a2a_reply","text":"..."}.'
         )
-        accumulated_text = await consume_sse_after_send(client, oc_session_id, repair)
+        accumulated_text = await consume_sse_after_send(
+            client, oc_session_id, repair, is_alive=server.is_alive
+        )
         obj = extract_terminal(accumulated_text)
     return obj if obj is not None else {"action": "none", "text": accumulated_text}
 
@@ -584,11 +592,26 @@ async def consume_sse_after_send(
     prompt: str,
     on_text: Callable[[str], None] | None = None,
     on_tool: Callable[[OpenCodeToolUpdate], None] | None = None,
+    *,
+    is_alive: Callable[[], bool] | None = None,
+    max_reconnects: int = 3,
 ) -> str:
-    """Subscribe to SSE, send the prompt, then consume to session.idle.
+    """Subscribe to SSE, send the prompt ONCE, then consume to session.idle with reconnect.
 
-    The SSE subscription must happen before send_message because opencode emits
-    events in real-time. This helper ensures correct ordering.
+    The SSE subscription must happen before send_message because opencode emits events in
+    real-time. This helper ensures correct ordering, and additionally (B4/B5):
+
+    - **Reconnect (B4):** a transient SSE-reader drop (``aiohttp.ClientError``) mid-turn is
+      recovered by re-subscribing (up to ``max_reconnects``), gated on ``check_health()`` (and
+      ``is_alive()`` when given). The prompt is sent EXACTLY ONCE — ``result_queue``, the send
+      task, and the ``ReplyAccumulator`` persist across attempts; only ``resp`` + the reader
+      task are recreated. opencode resends growing cumulative snapshots, so the accumulator's
+      prefix-dedup means re-sent text is neither double-counted nor re-emitted via ``on_text``.
+      A send-POST failure (``_SendFailed``) is terminal — never reconnected.
+    - **Liveness (B5):** each queue wait uses a short ``_LIVENESS_POLL_S`` poll; on a poll
+      timeout, if ``is_alive()`` is False the invocation fails fast with ``engine_died`` instead
+      of hanging out the full ``_SSE_STALL_S`` bound (which is preserved, reset on every real
+      event, as the wedged-but-alive backstop).
 
     ``on_text``: optional sink called with each new text suffix as the assistant's
     message.part.updated snapshots grow (so a console prints the reply live instead of
@@ -597,7 +620,11 @@ async def consume_sse_after_send(
     completed / error). Lets a channel show "running a tool" — important when a tool
     such as calendar auth_wait blocks for minutes after the visible text is produced,
     which otherwise looks like a frozen, unfinished reply.
+    ``is_alive``: optional liveness probe (``ManagedServer.is_alive``); when None, liveness
+    degrades to the ``_SSE_STALL_S`` bound and reconnect gates only on ``check_health()``.
     """
+    import aiohttp
+
     from ach_agent.engine.client import OpenCodeClient
     from ach_agent.engine.events import (
         EngineError,
@@ -608,97 +635,137 @@ async def consume_sse_after_send(
         OpenCodeUserMessage,
         ReplyAccumulator,
         _consume_events_from_response,
+        _SendFailed,
     )
 
     assert isinstance(client, OpenCodeClient), "client must be OpenCodeClient"
 
+    loop = asyncio.get_running_loop()
+    # Persist ACROSS reconnect attempts: the reducer (opencode resends growing snapshots), the
+    # user-echo id set, the result queue, and the single send task. Only resp + sse_task are
+    # per-attempt.
     acc = ReplyAccumulator(on_text, on_tool)
     user_message_ids: set[str] = set()
-
-    # Subscribe to SSE first
-    resp = await client.subscribe_events()
     result_queue: asyncio.Queue = asyncio.Queue()  # type: ignore[type-arg]
-
-    # Start SSE reader task (listens from now)
-    sse_task = asyncio.create_task(_consume_events_from_response(client, resp, result_queue))
-    # send_task is created only after the readiness gate; declare it up-front so the finally
-    # can clean up whether or not we got that far (e.g. the gate raises an early SSE error).
     send_task: asyncio.Task[None] | None = None
+    sent = False
 
-    terminal_error: EngineError | None = None
-    terminal_idle = False
+    def _on_send_done(t: asyncio.Task) -> None:  # type: ignore[type-arg]
+        # A send-POST failure is terminal: wrap it so the loop never reconnects/re-sends.
+        exc = t.exception() if not t.cancelled() else None
+        if exc is not None:
+            result_queue.put_nowait(_SendFailed(exc))
 
     try:
-        # Gate the send on a confirmed-live subscription (inside the try so the finally still
-        # cancels sse_task + releases resp if the gate hits an early SSE error — CR-03).
-        await _await_subscription_ready(result_queue, session_id)
-
-        # opencode's POST /session/{id}/message is SYNCHRONOUS — it returns only when the whole
-        # turn has finished. Awaiting it before draining the queue would mean every event
-        # (received live by sse_task) sits in the queue and is replayed in ONE burst after the
-        # turn ends — so on_text/on_tool fire all at once at the end, and a blocking tool like
-        # calendar auth_wait (~120s) freezes ALL output until then. Fire it concurrently and
-        # consume the SSE stream live; session.idle (on the stream) is the real done signal.
-        # A send failure is surfaced by pushing the exception onto the queue (handled below).
-        send_task = asyncio.create_task(client.send_message(session_id, prompt))
-
-        def _on_send_done(t: asyncio.Task) -> None:  # type: ignore[type-arg]
-            if not t.cancelled() and t.exception() is not None:
-                result_queue.put_nowait(t.exception())
-
-        send_task.add_done_callback(_on_send_done)
-
-        while True:
+        for attempt in range(max_reconnects + 1):
+            resp = await client.subscribe_events()
+            sse_task = asyncio.create_task(
+                _consume_events_from_response(client, resp, result_queue)
+            )
+            terminal_error: EngineError | None = None
+            terminal_idle = False
+            reconnect = False
             try:
-                item = await asyncio.wait_for(result_queue.get(), timeout=300.0)
-            except TimeoutError:
-                raise EngineError("sse_timeout", "SSE stream stalled for 300s")
+                # Gate the send on a confirmed-live subscription. On a reconnect the fresh
+                # /event connection re-emits server.connected, so this re-gates correctly.
+                await _await_subscription_ready(result_queue, session_id)
 
-            if isinstance(item, Exception):
-                raise item
+                # opencode's POST /session/{id}/message is SYNCHRONOUS — it returns only when
+                # the whole turn has finished. Fire it concurrently and consume the SSE stream
+                # live (session.idle is the real done signal); awaiting it first would replay
+                # every event in one burst at the end. Sent ONCE — a reconnect must not re-send
+                # (that would start a duplicate turn).
+                if not sent:
+                    send_task = asyncio.create_task(client.send_message(session_id, prompt))
+                    send_task.add_done_callback(_on_send_done)
+                    sent = True
 
-            event = item
-            if isinstance(event, OpenCodeUserMessage):
-                user_message_ids.add(event.message_id)
-            elif isinstance(event, OpenCodeTextUpdate):
-                if event.message_id not in user_message_ids:
-                    acc.add_text(event.part_id, event.text)
-            elif isinstance(event, OpenCodeToolUpdate):
-                acc.add_tool(event)
-            elif isinstance(event, OpenCodeSessionIdle):
-                log.debug("session.idle received", session_id=session_id)
-                terminal_idle = True
-                break
-            elif isinstance(event, OpenCodeSessionError):
-                log.warning(
-                    "session.error received",
-                    session_id=session_id,
-                    error_type=event.error_type,
-                    message=event.message,
-                )
-                terminal_error = EngineError(event.error_type, event.message)
-                break
+                stall_deadline = loop.time() + _SSE_STALL_S
+                while True:
+                    try:
+                        item = await asyncio.wait_for(result_queue.get(), timeout=_LIVENESS_POLL_S)
+                    except TimeoutError:
+                        # Liveness poll (B5): a dead engine fails fast instead of waiting out
+                        # the full stall bound.
+                        if is_alive is not None and not is_alive():
+                            raise EngineError("engine_died", "opencode exited mid-invocation")
+                        if loop.time() >= stall_deadline:
+                            raise EngineError("sse_timeout", "SSE stream stalled for 300s")
+                        continue
+                    # A real item arrived — reset the wedged-but-alive backstop.
+                    stall_deadline = loop.time() + _SSE_STALL_S
+
+                    if isinstance(item, _SendFailed):
+                        raise item.original
+                    if isinstance(item, aiohttp.ClientError):
+                        # Reader drop (B4). An unhealthy/dead engine is terminal — surface the
+                        # real ClientError. A healthy engine reconnects while budget remains;
+                        # once the budget is spent the drop becomes sse_exhausted.
+                        healthy = (is_alive is None or is_alive()) and await client.check_health()
+                        if not healthy:
+                            raise item
+                        if attempt < max_reconnects:
+                            log.warning(
+                                "live SSE dropped, reconnecting",
+                                attempt=attempt + 1,
+                                max_reconnects=max_reconnects,
+                            )
+                            reconnect = True
+                            break
+                        raise EngineError(
+                            "sse_exhausted",
+                            f"SSE stream disconnected after {max_reconnects} reconnect attempts",
+                        )
+                    if isinstance(item, Exception):
+                        raise item
+
+                    event = item
+                    if isinstance(event, OpenCodeUserMessage):
+                        user_message_ids.add(event.message_id)
+                    elif isinstance(event, OpenCodeTextUpdate):
+                        if event.message_id not in user_message_ids:
+                            acc.add_text(event.part_id, event.text)
+                    elif isinstance(event, OpenCodeToolUpdate):
+                        acc.add_tool(event)
+                    elif isinstance(event, OpenCodeSessionIdle):
+                        log.debug("session.idle received", session_id=session_id)
+                        terminal_idle = True
+                        break
+                    elif isinstance(event, OpenCodeSessionError):
+                        log.warning(
+                            "session.error received",
+                            session_id=session_id,
+                            error_type=event.error_type,
+                            message=event.message,
+                        )
+                        terminal_error = EngineError(event.error_type, event.message)
+                        break
+            finally:
+                # Recreate the reader per attempt: cancel it + release this attempt's resp.
+                sse_task.cancel()
+                await asyncio.wait([sse_task], timeout=2.0)
+                try:
+                    await resp.release()
+                except Exception:  # noqa: BLE001
+                    pass
+
+            if terminal_error is not None:
+                raise terminal_error
+            if terminal_idle:
+                return acc.text()
+            if not reconnect:
+                break  # stream ended without a terminal event and no reconnectable drop
+
+        raise EngineError(
+            "sse_exhausted",
+            f"SSE stream disconnected after {max_reconnects} reconnect attempts",
+        )
     finally:
-        # Cancel both background tasks and drain them CONCURRENTLY under a single 2s budget
-        # (not 2s each) — the send task is normally already complete by session.idle but may
-        # be left hanging by a slow tool. asyncio.wait never raises task exceptions; the send
-        # exception was already retrieved by _on_send_done, the sse task swallows its own.
-        pending = [t for t in (sse_task, send_task) if t is not None]
-        for task in pending:
-            task.cancel()
-        if pending:
-            await asyncio.wait(pending, timeout=2.0)
-        try:
-            await resp.release()
-        except Exception:  # noqa: BLE001
-            pass
-
-    if terminal_error is not None:
-        raise terminal_error
-    if terminal_idle:
-        return acc.text()
-
-    raise EngineError("sse_exhausted", "SSE stream ended without session.idle")
+        # The send task persists across attempts; cancel it once at the very end. asyncio.wait
+        # never raises the task's exception (already retrieved by _on_send_done).
+        if send_task is not None:
+            send_task.cancel()
+            await asyncio.wait([send_task], timeout=2.0)
 
 
 async def _await_subscription_ready(result_queue: asyncio.Queue, session_id: str) -> None:  # type: ignore[type-arg]

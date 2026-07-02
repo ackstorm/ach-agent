@@ -1,22 +1,19 @@
 """Tests for engine/client.py and engine/events.py.
 
 Covers:
-  - test_consume_sse_to_idle: accumulated text deltas returned on session.idle
-  - test_consume_sse_to_error: EngineError raised on session.error
+  - parse_opencode_event: typed-event mapping (text/user-echo/idle/error/retry)
   - test_send_message: POST /session/{id}/message body shape
   - test_find_free_port_collision_retry: 00-02 hardening stub
-  - test_sse_reconnect: 00-02 hardening stub
+
+The live SSE consume + reconnect behavior is tested in test_lifecycle.py against
+lifecycle.consume_sse_after_send (the retired consume_sse_to_completion is gone).
 """
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from ach_agent.engine.events import (
-    EngineError,
-    consume_sse_to_completion,
     parse_opencode_event,
     OpenCodeSessionError,
     OpenCodeSessionIdle,
@@ -213,121 +210,6 @@ def test_parse_session_status_retry_returns_none():
 
 
 # ---------------------------------------------------------------------------
-# consume_sse_to_completion tests
-# ---------------------------------------------------------------------------
-
-
-async def _fake_iter_sse(events: list[dict]):
-    """Async generator yielding parsed events from a list of event dicts."""
-    from ach_agent.engine.events import parse_opencode_event as parse_ev
-
-    for data in events:
-        ev = parse_ev(data)
-        if ev is not None:
-            yield ev
-
-
-async def test_consume_sse_to_idle():
-    """Text deltas are accumulated and returned on session.idle."""
-    events = [
-        _user_message_event("ses_1", "msg_user"),
-        _text_part_event("ses_1", "msg_asst", "Hello "),
-        _text_part_event("ses_1", "msg_asst", "world"),
-        _session_status_retry_event("ses_1"),  # transient — must NOT terminate
-        _text_part_event("ses_1", "msg_asst", "!"),
-        _session_idle_event("ses_1"),
-    ]
-
-    from ach_agent.engine.client import OpenCodeClient
-
-    mock_client = AsyncMock(spec=OpenCodeClient)
-    mock_client.subscribe_events = AsyncMock(return_value=AsyncMock())
-
-    def _fake_iter(client, resp):
-        return _fake_iter_sse(events)
-
-    with patch("ach_agent.engine.events._iter_sse_events_from_client", new=_fake_iter):
-        result = await consume_sse_to_completion(mock_client, "ses_1")
-
-    # User-echo text is filtered (msg_user), assistant text accumulated
-    assert result == "Hello world!"
-
-
-async def test_consume_sse_to_idle_filters_user_echo():
-    """Text from user-echoed message IDs is NOT included in accumulation."""
-    events = [
-        _user_message_event("ses_1", "msg_user"),
-        # These two text parts belong to the user echo — should be filtered
-        _text_part_event("ses_1", "msg_user", "user prompt text"),
-        _text_part_event("ses_1", "msg_user", " more user text"),
-        # This one is the assistant response
-        _text_part_event("ses_1", "msg_asst", '{"actions":[]}'),
-        _session_idle_event("ses_1"),
-    ]
-
-    from ach_agent.engine.client import OpenCodeClient
-
-    mock_client = AsyncMock(spec=OpenCodeClient)
-    mock_client.subscribe_events = AsyncMock(return_value=AsyncMock())
-
-    def _fake_iter(client, resp):
-        return _fake_iter_sse(events)
-
-    with patch("ach_agent.engine.events._iter_sse_events_from_client", new=_fake_iter):
-        result = await consume_sse_to_completion(mock_client, "ses_1")
-
-    assert "user prompt text" not in result
-    assert '{"actions":[]}' in result
-
-
-async def test_consume_sse_to_error():
-    """EngineError is raised when session.error is received."""
-    events = [
-        _text_part_event("ses_1", "msg_asst", "some partial text"),
-        _session_error_event("ses_1", "auth_error", "Invalid API key"),
-    ]
-
-    from ach_agent.engine.client import OpenCodeClient
-
-    mock_client = AsyncMock(spec=OpenCodeClient)
-    mock_client.subscribe_events = AsyncMock(return_value=AsyncMock())
-
-    def _fake_iter(client, resp):
-        return _fake_iter_sse(events)
-
-    with patch("ach_agent.engine.events._iter_sse_events_from_client", new=_fake_iter):
-        with pytest.raises(EngineError) as exc_info:
-            await consume_sse_to_completion(mock_client, "ses_1")
-
-    assert exc_info.value.error_type == "auth_error"
-    assert "Invalid API key" in str(exc_info.value)
-
-
-async def test_sse_consumer_ignores_session_status_retry():
-    """SSE consumer does NOT terminate on session.status type=retry (transient)."""
-    events = [
-        _session_status_retry_event("ses_1"),
-        _session_status_retry_event("ses_1"),
-        _session_status_retry_event("ses_1"),
-        _text_part_event("ses_1", "msg_asst", "final answer"),
-        _session_idle_event("ses_1"),
-    ]
-
-    from ach_agent.engine.client import OpenCodeClient
-
-    mock_client = AsyncMock(spec=OpenCodeClient)
-    mock_client.subscribe_events = AsyncMock(return_value=AsyncMock())
-
-    def _fake_iter(client, resp):
-        return _fake_iter_sse(events)
-
-    with patch("ach_agent.engine.events._iter_sse_events_from_client", new=_fake_iter):
-        result = await consume_sse_to_completion(mock_client, "ses_1")
-
-    assert result == "final answer"
-
-
-# ---------------------------------------------------------------------------
 # test_send_message
 # ---------------------------------------------------------------------------
 
@@ -464,39 +346,3 @@ def test_find_free_port_collision_retry():
         # Clean up reserved ports used in this test
         _reserved_ports.discard(colliding_port)
         _reserved_ports.discard(result_port if "result_port" in dir() else 0)
-
-
-async def test_sse_reconnect():
-    """H-02: SSE consumer reconnects up to max_reconnects on ClientError if server healthy.
-
-    Feed a fake aiohttp client whose SSE stream raises ClientError; stub check_health()
-    True. Assert up to 3 reconnect attempts then re-raises on exhaustion.
-    """
-    import aiohttp
-    from unittest.mock import AsyncMock, patch
-
-    from ach_agent.engine.events import EngineError, consume_sse_to_completion
-    from ach_agent.engine.client import OpenCodeClient
-
-    attempt_count = 0
-
-    async def fake_iter_sse_with_error(client, resp):
-        nonlocal attempt_count
-        attempt_count += 1
-        # Raise ClientError to simulate SSE connection drop
-        raise aiohttp.ClientError("Connection dropped")
-        yield  # make it a generator (unreachable but required for async generator)
-
-    mock_client = AsyncMock(spec=OpenCodeClient)
-    mock_client.subscribe_events = AsyncMock(return_value=AsyncMock())
-    # Server is "healthy" so reconnect should be attempted
-    mock_client.check_health = AsyncMock(return_value=True)
-
-    with patch("ach_agent.engine.events._iter_sse_events_from_client", new=fake_iter_sse_with_error):
-        with pytest.raises((aiohttp.ClientError, EngineError)):
-            await consume_sse_to_completion(mock_client, "ses_reconnect", max_reconnects=3)
-
-    # Should have attempted max_reconnects+1 times (initial + 3 retries)
-    assert attempt_count == 4, (
-        f"Expected 4 SSE attempts (1 initial + 3 reconnects), got {attempt_count}"
-    )

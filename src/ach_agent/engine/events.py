@@ -3,8 +3,12 @@
 
 Provides:
   - parse_opencode_event: maps raw JSON event dict → typed event or None
-  - consume_sse_to_completion: consumes GET /event stream until terminal event
-  - EngineError: raised when session.error is the terminal event
+  - ReplyAccumulator: shared text/tool reducer (prefix-dedup of cumulative snapshots)
+  - _consume_events_from_response / _iter_sse_events_from_client: shared SSE reader helpers
+  - EngineError / _SendFailed: terminal-signal exceptions
+  The live SSE consumer (subscribe → send-once → consume, with bounded health-gated reconnect
+  and mid-invocation liveness) lives in ``lifecycle.consume_sse_after_send`` and reuses these
+  helpers.
 
 Constraint: No router or Hermes imports (D-08, RTR-06).
 
@@ -42,6 +46,20 @@ class EngineError(Exception):
         self.error_type = error_type
         self.message = message
         super().__init__(f"[{error_type}] {message}")
+
+
+class _SendFailed(Exception):
+    """Wraps a send_message failure so the SSE consume loop treats it as terminal.
+
+    A send-POST failure must NEVER trigger a reconnect/re-send — that would start a
+    duplicate opencode turn. The loop unwraps `.original` and raises it. A stream-reader
+    drop, by contrast, is pushed to the queue as the raw ``aiohttp.ClientError`` and IS
+    reconnectable.
+    """
+
+    def __init__(self, original: BaseException) -> None:
+        self.original = original
+        super().__init__(f"send_message failed: {original!r}")
 
 
 class InvocationTimeout(Exception):
@@ -333,7 +351,7 @@ class ReplyAccumulator:
 
 
 # ---------------------------------------------------------------------------
-# SSE iteration helper (split from consume_sse_to_completion for testability)
+# SSE iteration helper (split from the SSE consumer for testability)
 # ---------------------------------------------------------------------------
 
 
@@ -370,108 +388,6 @@ async def _consume_events_from_response(
         async for event in _iter_sse_events_from_client(client, resp):
             await result_queue.put(event)
     except asyncio.CancelledError:
-        pass  # normal exit when cancelled by consume_sse_to_completion
+        pass  # normal exit when cancelled by the live consumer (consume_sse_after_send)
     except Exception as exc:  # noqa: BLE001
         await result_queue.put(exc)  # signal error to the consumer
-
-
-async def consume_sse_to_completion(
-    client: OpenCodeClient,
-    session_id: str,
-    max_reconnects: int = 3,
-) -> str:
-    """Consume GET /event SSE stream until session.idle or session.error.
-
-    Returns accumulated assistant text, filtering out any text belonging to user message
-    echo IDs. message.part.updated carries the FULL cumulative text per part, so only the
-    new suffix is appended per part_id (see OpenCodeTextUpdate) — appending each snapshot
-    raw would duplicate the text.
-
-    Design: runs the SSE iterator in a separate asyncio.Task so it can be
-    cancelled immediately when a terminal event is detected. This avoids
-    hanging when opencode keeps the SSE connection open after session.idle
-    (it sends heartbeat events indefinitely).
-
-    Raises:
-        EngineError: if session.error is the terminal event.
-    """
-    user_message_ids: set[str] = set()
-    # Shared reducer: append only the new suffix per part_id (persisted across reconnect
-    # attempts, since opencode resends the same growing snapshots).
-    acc = ReplyAccumulator()
-
-    for attempt in range(max_reconnects + 1):
-        resp = await client.subscribe_events()
-        result_queue: asyncio.Queue = asyncio.Queue()  # type: ignore[type-arg]
-        task = asyncio.create_task(_consume_events_from_response(client, resp, result_queue))
-
-        terminal_error: EngineError | None = None
-        terminal_idle = False
-
-        try:
-            while True:
-                try:
-                    item = await asyncio.wait_for(result_queue.get(), timeout=300.0)
-                except TimeoutError:
-                    # 5-minute per-event timeout — something is very wrong
-                    raise EngineError("sse_timeout", "SSE stream stalled for 300s")
-
-                if isinstance(item, Exception):
-                    # Error from the consumer task
-                    import aiohttp
-
-                    if isinstance(item, aiohttp.ClientError) and attempt < max_reconnects:
-                        healthy = await client.check_health()
-                        if healthy:
-                            log.warning(
-                                "SSE connection dropped, reconnecting",
-                                attempt=attempt + 1,
-                                max_reconnects=max_reconnects,
-                            )
-                            break  # break to reconnect
-                    raise item
-
-                event = item
-                if isinstance(event, OpenCodeUserMessage):
-                    user_message_ids.add(event.message_id)
-                elif isinstance(event, OpenCodeTextUpdate):
-                    if event.message_id not in user_message_ids:
-                        acc.add_text(event.part_id, event.text)
-                elif isinstance(event, OpenCodeSessionIdle):
-                    log.debug("session.idle received", session_id=session_id)
-                    terminal_idle = True
-                    break
-                elif isinstance(event, OpenCodeSessionError):
-                    log.warning(
-                        "session.error received",
-                        session_id=session_id,
-                        error_type=event.error_type,
-                        message=event.message,
-                    )
-                    terminal_error = EngineError(event.error_type, event.message)
-                    break
-        finally:
-            # Cancel the SSE reader task to stop the aiohttp content reader
-            task.cancel()
-            try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
-            except (TimeoutError, asyncio.CancelledError):
-                pass
-            # Release the HTTP response
-            try:
-                await resp.release()
-            except Exception:  # noqa: BLE001
-                pass
-
-        if terminal_error is not None:
-            raise terminal_error
-        if terminal_idle:
-            return acc.text()
-        # No terminal event; attempt reconnect
-        if attempt >= max_reconnects:
-            break
-
-    raise EngineError(
-        "sse_exhausted",
-        f"SSE stream disconnected after {max_reconnects} reconnect attempts",
-    )

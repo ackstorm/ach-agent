@@ -5,7 +5,7 @@ message.part.updated text (RESEARCH expectation) or as a structured/typed SSE ev
 
 CONFIRMED FINDINGS (from investigative runs, recorded here for the phase):
   A1: CONFIRMED — {"actions":[...]} arrives as plain text in the LAST message.part.updated
-      event (part.type="text"). The text accumulation approach in consume_sse_to_completion
+      event (part.type="text"). The text accumulation approach in consume_sse_after_send
       correctly captures it.
   UNEXPECTED: opencode v1.16.0 uses the OpenAI Responses API (POST /v1/responses), NOT
       Chat Completions (POST /v1/chat/completions). The mock must implement /v1/responses.
@@ -130,7 +130,6 @@ async def test_roundtrip_launch_to_actions(mock_model_server, tmp_path):
       - The mock implements the full Responses API SSE event sequence
     """
     from ach_agent.engine.client import OpenCodeClient, find_free_port
-    from ach_agent.engine.events import consume_sse_to_completion, EngineError
     from ach_agent.engine.lifecycle import (
         EngineConfig,
         ManagedServer,

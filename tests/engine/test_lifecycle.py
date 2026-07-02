@@ -281,20 +281,26 @@ async def test_consume_releases_resp_on_early_sse_error() -> None:
     client.send_message.assert_not_awaited()  # gate raised before the prompt was sent
 
 
-async def test_consume_to_completion_dedups_cumulative_snapshots() -> None:
-    """consume_sse_to_completion appends only the new suffix per part — cumulative
-    message.part.updated snapshots must not be concatenated into duplicated text."""
+async def test_consume_filters_user_message_echo() -> None:
+    """Text belonging to user-echo message IDs is filtered from the accumulated reply.
+
+    (Live-path coverage preserved from the retired consume_sse_to_completion tests.)
+    """
     from ach_agent.engine import events as ev
     from ach_agent.engine.client import OpenCodeClient
     from ach_agent.engine.events import (
         OpenCodeSessionIdle,
+        OpenCodeStreamReady,
         OpenCodeTextUpdate,
-        consume_sse_to_completion,
+        OpenCodeUserMessage,
     )
+    from ach_agent.engine.lifecycle import consume_sse_after_send
 
     scripted = [
-        OpenCodeTextUpdate("s", "prtA", "msgA", "Hello"),
-        OpenCodeTextUpdate("s", "prtA", "msgA", "Hello world"),
+        OpenCodeStreamReady(),
+        OpenCodeUserMessage("s", "msg_user"),
+        OpenCodeTextUpdate("s", "prtU", "msg_user", "echoed user prompt"),  # filtered
+        OpenCodeTextUpdate("s", "prtA", "msg_asst", '{"actions":[]}'),  # kept
         OpenCodeSessionIdle("s"),
     ]
 
@@ -304,11 +310,245 @@ async def test_consume_to_completion_dedups_cumulative_snapshots() -> None:
 
     client = OpenCodeClient("http://127.0.0.1:0")
     client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
+    client.send_message = AsyncMock()  # type: ignore[method-assign]
 
     with patch.object(ev, "_consume_events_from_response", new=fake_consume):
-        text = await consume_sse_to_completion(client, "ses")
+        text = await consume_sse_after_send(client, "ses", "hi")
 
-    assert text == "Hello world", "cumulative snapshots deduped (not 'HelloHello world')"
+    assert "echoed user prompt" not in text, "user-echo text must be filtered"
+    assert text == '{"actions":[]}', "only assistant text is accumulated"
+
+
+# ---------------------------------------------------------------------------
+# B4: live-path SSE reconnect (send-once, health-gated, send/stream error split)
+# ---------------------------------------------------------------------------
+
+
+async def test_live_sse_reconnects_after_transient_drop() -> None:
+    """A transient SSE-reader drop reconnects (health-gated), sends once, no text dup."""
+    import aiohttp
+
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.events import (
+        OpenCodeSessionIdle,
+        OpenCodeStreamReady,
+        OpenCodeTextUpdate,
+    )
+    from ach_agent.engine.lifecycle import consume_sse_after_send
+
+    # Attempt 0: connect, grow part A, then the reader drops (ClientError).
+    # Attempt 1: connect, opencode RESENDS the cumulative snapshot, then idle.
+    scripts = [
+        [
+            OpenCodeStreamReady(),
+            OpenCodeTextUpdate("s", "prtA", "msgA", "Hola"),
+            OpenCodeTextUpdate("s", "prtA", "msgA", "Hola mundo"),
+            aiohttp.ClientError("connection reset"),
+        ],
+        [
+            OpenCodeStreamReady(),
+            OpenCodeTextUpdate("s", "prtA", "msgA", "Hola mundo"),  # resent snapshot
+            OpenCodeSessionIdle("s"),
+        ],
+    ]
+    calls = {"n": 0}
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        script = scripts[calls["n"]]
+        calls["n"] += 1
+        for e in script:
+            await queue.put(e)
+
+    client = OpenCodeClient("http://127.0.0.1:0")
+    client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
+    client.send_message = AsyncMock()  # type: ignore[method-assign]
+    client.check_health = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+    streamed: list[str] = []
+    with patch.object(ev, "_consume_events_from_response", new=fake_consume):
+        text = await consume_sse_after_send(client, "ses", "hi", on_text=streamed.append)
+
+    assert text == "Hola mundo", "resent snapshot deduped by the accumulator"
+    assert "".join(streamed) == "Hola mundo", "on_text did not re-emit the resent prefix"
+    assert client.send_message.await_count == 1, "prompt sent exactly once across reconnects"
+    assert client.subscribe_events.await_count == 2, "reconnected once (two subscribe_events)"
+
+
+async def test_live_send_failure_is_terminal_no_resend() -> None:
+    """A send_message failure is terminal — raised, never re-sent / reconnected."""
+    import aiohttp
+
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.events import OpenCodeStreamReady
+    from ach_agent.engine.lifecycle import consume_sse_after_send
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        # Only the readiness gate event; the send fails, no terminal ever arrives.
+        await queue.put(OpenCodeStreamReady())
+
+    client = OpenCodeClient("http://127.0.0.1:0")
+    client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
+    client.send_message = AsyncMock(side_effect=aiohttp.ClientError("post failed"))  # type: ignore[method-assign]
+    client.check_health = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+    with patch.object(ev, "_consume_events_from_response", new=fake_consume):
+        with pytest.raises(aiohttp.ClientError, match="post failed"):
+            await consume_sse_after_send(client, "ses", "hi")
+
+    assert client.send_message.await_count == 1, "send attempted exactly once"
+    assert client.subscribe_events.await_count == 1, "no reconnect on a send failure"
+
+
+async def test_live_sse_exhausts_reconnects() -> None:
+    """Every attempt's reader drops → EngineError('sse_exhausted') after max_reconnects."""
+    import aiohttp
+
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.events import EngineError, OpenCodeStreamReady
+    from ach_agent.engine.lifecycle import consume_sse_after_send
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        await queue.put(OpenCodeStreamReady())
+        await queue.put(aiohttp.ClientError("drop"))
+
+    client = OpenCodeClient("http://127.0.0.1:0")
+    client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
+    client.send_message = AsyncMock()  # type: ignore[method-assign]
+    client.check_health = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+    with patch.object(ev, "_consume_events_from_response", new=fake_consume):
+        with pytest.raises(EngineError, match="sse_exhausted"):
+            await consume_sse_after_send(client, "ses", "hi", max_reconnects=2)
+
+    assert client.send_message.await_count == 1, "sent once despite exhausted reconnects"
+    assert client.subscribe_events.await_count == 3, "attempt 0 + 2 reconnects"
+
+
+async def test_live_reconnect_gated_on_health() -> None:
+    """SSE drops but check_health() is False → no reconnect, original error raised."""
+    import aiohttp
+
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.events import OpenCodeStreamReady
+    from ach_agent.engine.lifecycle import consume_sse_after_send
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        await queue.put(OpenCodeStreamReady())
+        await queue.put(aiohttp.ClientError("drop"))
+
+    client = OpenCodeClient("http://127.0.0.1:0")
+    client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
+    client.send_message = AsyncMock()  # type: ignore[method-assign]
+    client.check_health = AsyncMock(return_value=False)  # type: ignore[method-assign]
+
+    with patch.object(ev, "_consume_events_from_response", new=fake_consume):
+        with pytest.raises(aiohttp.ClientError, match="drop"):
+            await consume_sse_after_send(client, "ses", "hi")
+
+    assert client.subscribe_events.await_count == 1, "unhealthy engine → no reconnect"
+
+
+# ---------------------------------------------------------------------------
+# B5: mid-invocation liveness — fail fast when opencode dies during a turn
+# ---------------------------------------------------------------------------
+
+
+async def test_engine_death_mid_invocation_fails_fast() -> None:
+    """A silent stream + dead engine raises engine_died within a poll, not the 300s stall."""
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.events import EngineError, OpenCodeStreamReady
+    from ach_agent.engine.lifecycle import consume_sse_after_send
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        # Gate event only, then silence — no terminal ever arrives (engine died).
+        await queue.put(OpenCodeStreamReady())
+
+    client = OpenCodeClient("http://127.0.0.1:0")
+    client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
+    client.send_message = AsyncMock()  # type: ignore[method-assign]
+
+    # Small poll so the test resolves fast; is_alive False → engine_died on first poll timeout.
+    with (
+        patch.object(ev, "_consume_events_from_response", new=fake_consume),
+        patch("ach_agent.engine.lifecycle._LIVENESS_POLL_S", 0.05),
+    ):
+        with pytest.raises(EngineError, match="engine_died"):
+            await asyncio.wait_for(
+                consume_sse_after_send(client, "ses", "hi", is_alive=lambda: False),
+                timeout=2.0,
+            )
+
+
+async def test_alive_engine_slow_but_not_dead_waits() -> None:
+    """A slow-but-alive engine (is_alive True) is NOT failed as dead; it completes on idle."""
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.events import (
+        OpenCodeSessionIdle,
+        OpenCodeStreamReady,
+        OpenCodeTextUpdate,
+    )
+    from ach_agent.engine.lifecycle import consume_sse_after_send
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        await queue.put(OpenCodeStreamReady())
+        await asyncio.sleep(0.15)  # spans a couple of poll intervals (0.05)
+        await queue.put(OpenCodeTextUpdate("s", "prtA", "msgA", "later"))
+        await queue.put(OpenCodeSessionIdle("s"))
+
+    client = OpenCodeClient("http://127.0.0.1:0")
+    client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
+    client.send_message = AsyncMock()  # type: ignore[method-assign]
+
+    with (
+        patch.object(ev, "_consume_events_from_response", new=fake_consume),
+        patch("ach_agent.engine.lifecycle._LIVENESS_POLL_S", 0.05),
+    ):
+        text = await asyncio.wait_for(
+            consume_sse_after_send(client, "ses", "hi", is_alive=lambda: True),
+            timeout=2.0,
+        )
+    assert text == "later", "slow-but-alive engine completes normally (no engine_died)"
+
+
+async def test_run_invocation_threads_is_alive() -> None:
+    """run_invocation passes is_alive=server.is_alive into every consume_sse_after_send call."""
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.lifecycle import ManagedServer, run_invocation
+
+    server = ManagedServer(port=19890)
+    mock_client = AsyncMock(spec=OpenCodeClient)
+    mock_client.create_session = AsyncMock(return_value={"id": "ses-x"})
+    server._client = mock_client
+    fake_proc = MagicMock()
+    fake_proc.returncode = None
+    server._process = fake_proc
+
+    seen_is_alive: list[Any] = []
+
+    async def fake_consume(_client: Any, _sid: str, _prompt: str, **kwargs: Any) -> str:
+        seen_is_alive.append(kwargs.get("is_alive"))
+        return '{"action":"none","text":"done"}'
+
+    with patch("ach_agent.engine.lifecycle.consume_sse_after_send", new=fake_consume):
+        await run_invocation(
+            server=server,
+            session_id="k",
+            prompt="hi",
+            terminal_retries=1,
+        )
+
+    assert seen_is_alive, "consume_sse_after_send was not called"
+    # Bound methods aren't identity-stable (each `server.is_alive` access makes a new object),
+    # but == compares (__self__, __func__) — so this asserts the SAME bound is_alive was passed.
+    assert all(cb == server.is_alive for cb in seen_is_alive), (
+        "run_invocation must thread is_alive=server.is_alive into every consume call"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -121,9 +121,7 @@ def test_unwired_channel_hard_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     # Monkeypatch WIRED_CHANNEL_TYPES to simulate a build where 'a2a' is not yet wired.
     # This exercises the D-02 gate without requiring a new schema literal.
     monkeypatch.setattr(main_module, "WIRED_CHANNEL_TYPES", frozenset({"cron", "webhook"}))
-
-    secret_file = tmp_path / "a2a_secret"
-    secret_file.write_text("dummy-secret", encoding="utf-8")
+    monkeypatch.setenv("ACH_SECRET_SKELETON_TEST", "dummy-secret")
 
     a2a_config: dict[str, Any] = {
         "schemaVersion": "1",
@@ -134,7 +132,10 @@ def test_unwired_channel_hard_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPat
             {
                 "name": "a2a-incoming",
                 "type": "a2a",
-                "a2a": {"mode": "async", "auth": {"secret": {"file": str(secret_file)}}},
+                "a2a": {
+                    "mode": "async",
+                    "auth": {"secret": {"env": "ACH_SECRET_SKELETON_TEST"}},
+                },
             }
         ],
     }

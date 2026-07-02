@@ -84,30 +84,30 @@ class FakeContext:
 
 def _make_channel_cfg(
     name: str = "test-a2a",
-    secret_path: str = "",
+    env_name: str = "",
     header: str = "x-a2a-custom-api-key",
 ) -> Any:
     """Build a minimal ChannelConfig-like object for unit tests."""
     from ach_agent.config.schema import A2AAuthBlock, A2ABlock, ChannelConfig, SecretSource
 
-    a2a_auth = A2AAuthBlock(header=header, secret=SecretSource(file=secret_path))
+    a2a_auth = A2AAuthBlock(header=header, secret=SecretSource(env=env_name))
     a2a_block = A2ABlock(auth=a2a_auth)
     return ChannelConfig(name=name, type="a2a", a2a=a2a_block)
 
 
 _UNIT_TEST_SECRET = "unit-test-secret"
 _UNIT_TEST_HEADER = "x-a2a-custom-api-key"
+_UNIT_TEST_ENV = "ACH_SECRET_A2A_TEST"
 
 
-def _make_authed_channel_cfg(tmp_path: Any, name: str = "test-a2a") -> Any:
-    """Build a ChannelConfig with a real secret file for tests that need auth to pass.
+def _make_authed_channel_cfg(monkeypatch: pytest.MonkeyPatch, name: str = "test-a2a") -> Any:
+    """Build a ChannelConfig with a real secret env var for tests that need auth to pass.
 
     After CR-01/CR-02 fix, tests that want to exercise post-auth logic (session keys,
     A′ gate, full queue, etc.) must provide a valid secret+header so auth passes.
     """
-    secret_file = tmp_path / "unit_test_secret"
-    secret_file.write_text(_UNIT_TEST_SECRET, encoding="utf-8")
-    return _make_channel_cfg(name=name, secret_path=str(secret_file))
+    monkeypatch.setenv(_UNIT_TEST_ENV, _UNIT_TEST_SECRET)
+    return _make_channel_cfg(name=name, env_name=_UNIT_TEST_ENV)
 
 
 def _authed_ctx(**kwargs: Any) -> "FakeContext":
@@ -136,16 +136,15 @@ def _make_full_queue_handler() -> AsyncMock:
 
 @pytest.mark.asyncio
 async def test_a2a_header_auth_missing_header_enqueues_failed_event(
-    tmp_path: pytest.TempPath,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """§14.6/T-04-13: missing x-a2a-custom-api-key header → failed event, handler NOT called."""
     from a2a.types.a2a_pb2 import TASK_STATE_FAILED
 
-    secret_file = tmp_path / "a2a_secret"
-    secret_file.write_text("correct-secret", encoding="utf-8")
+    monkeypatch.setenv(_UNIT_TEST_ENV, "correct-secret")
 
     handler = _make_accepted_handler()
-    channel_cfg = _make_channel_cfg(secret_path=str(secret_file))
+    channel_cfg = _make_channel_cfg(env_name=_UNIT_TEST_ENV)
     bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     # Context with NO auth header
@@ -164,16 +163,15 @@ async def test_a2a_header_auth_missing_header_enqueues_failed_event(
 
 @pytest.mark.asyncio
 async def test_a2a_header_auth_wrong_header_enqueues_failed_event(
-    tmp_path: pytest.TempPath,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """§14.6/T-04-13: wrong x-a2a-custom-api-key header → failed event, handler NOT called."""
     from a2a.types.a2a_pb2 import TASK_STATE_FAILED
 
-    secret_file = tmp_path / "a2a_secret"
-    secret_file.write_text("correct-secret", encoding="utf-8")
+    monkeypatch.setenv(_UNIT_TEST_ENV, "correct-secret")
 
     handler = _make_accepted_handler()
-    channel_cfg = _make_channel_cfg(secret_path=str(secret_file))
+    channel_cfg = _make_channel_cfg(env_name=_UNIT_TEST_ENV)
     bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     # Context with WRONG auth header
@@ -189,14 +187,13 @@ async def test_a2a_header_auth_wrong_header_enqueues_failed_event(
 
 @pytest.mark.asyncio
 async def test_a2a_header_auth_correct_header_proceeds_to_dispatch(
-    tmp_path: pytest.TempPath,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """§14.6: correct x-a2a-custom-api-key header → handler.handle IS called."""
-    secret_file = tmp_path / "a2a_secret"
-    secret_file.write_text("correct-secret", encoding="utf-8")
+    monkeypatch.setenv(_UNIT_TEST_ENV, "correct-secret")
 
     handler = _make_accepted_handler()
-    channel_cfg = _make_channel_cfg(secret_path=str(secret_file))
+    channel_cfg = _make_channel_cfg(env_name=_UNIT_TEST_ENV)
     bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     ctx = FakeContext(headers={"x-a2a-custom-api-key": "correct-secret"})
@@ -227,11 +224,11 @@ async def test_a2a_header_auth_correct_header_proceeds_to_dispatch(
 
 @pytest.mark.asyncio
 async def test_a2a_executor_bridge_builds_correct_message_event(
-    tmp_path: pytest.TempPath,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """CHN-05: executor bridge builds MessageEvent with correct idempotency_key."""
     handler = _make_accepted_handler()
-    channel_cfg = _make_authed_channel_cfg(tmp_path)
+    channel_cfg = _make_authed_channel_cfg(monkeypatch)
     bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     ctx = _authed_ctx(task_id="task-abc", context_id="ctx-1", text="hi there")
@@ -255,10 +252,10 @@ async def test_a2a_executor_bridge_builds_correct_message_event(
 
 
 @pytest.mark.asyncio
-async def test_a2a_session_key_uses_context_id(tmp_path: pytest.TempPath) -> None:
+async def test_a2a_session_key_uses_context_id(monkeypatch: pytest.MonkeyPatch) -> None:
     """D-03: session_key = context_id when present."""
     handler = _make_accepted_handler()
-    channel_cfg = _make_authed_channel_cfg(tmp_path)
+    channel_cfg = _make_authed_channel_cfg(monkeypatch)
     bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     ctx = _authed_ctx(task_id="task-1", context_id="ctx-999")
@@ -281,11 +278,11 @@ async def test_a2a_session_key_uses_context_id(tmp_path: pytest.TempPath) -> Non
 
 @pytest.mark.asyncio
 async def test_a2a_session_key_fallback_to_task_id_when_no_context_id(
-    tmp_path: pytest.TempPath,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """D-03: session_key = task_id when context_id is absent."""
     handler = _make_accepted_handler()
-    channel_cfg = _make_authed_channel_cfg(tmp_path)
+    channel_cfg = _make_authed_channel_cfg(monkeypatch)
     bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     ctx = _authed_ctx(task_id="task-xyz", context_id="")
@@ -311,13 +308,13 @@ async def test_a2a_session_key_fallback_to_task_id_when_no_context_id(
 
 
 @pytest.mark.asyncio
-async def test_a2a_engine_not_ready_routes_normally(tmp_path: pytest.TempPath) -> None:
+async def test_a2a_engine_not_ready_routes_normally(monkeypatch: pytest.MonkeyPatch) -> None:
     """Decouple: engine-not-ready (cold pool) no longer emits a "Service warming up"
     failed event — the bridge routes to the handler like any other request. The engine
     starts lazily inside pool.acquire() (main.py engine_runner), not at the channel layer.
     """
     handler = _make_accepted_handler()
-    channel_cfg = _make_authed_channel_cfg(tmp_path)
+    channel_cfg = _make_authed_channel_cfg(monkeypatch)
     bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     ctx = _authed_ctx(task_id="task-1")
@@ -340,12 +337,12 @@ async def test_a2a_engine_not_ready_routes_normally(tmp_path: pytest.TempPath) -
 
 
 @pytest.mark.asyncio
-async def test_a2a_full_queue_enqueues_failed_event(tmp_path: pytest.TempPath) -> None:
+async def test_a2a_full_queue_enqueues_failed_event(monkeypatch: pytest.MonkeyPatch) -> None:
     """D-05/RTR-05: FULL_QUEUE → enqueue failed event (not silent drop — there is a caller)."""
     from a2a.types.a2a_pb2 import TASK_STATE_FAILED
 
     handler = _make_full_queue_handler()
-    channel_cfg = _make_authed_channel_cfg(tmp_path)
+    channel_cfg = _make_authed_channel_cfg(monkeypatch)
     bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     ctx = _authed_ctx(task_id="task-1")
@@ -398,23 +395,23 @@ async def test_cr01_no_auth_block_rejects_request() -> None:
 
 
 @pytest.mark.skip(
-    reason="v3 schema (SecretSource: exactly one of {env, file}) rejects an empty secret "
-    "at config-load, so 'no auth secret configured' is unconstructable here — mirrors "
+    reason="v3 schema (SecretSource requires env) rejects an empty secret at config-load, "
+    "so 'no auth secret configured' is unconstructable here — mirrors "
     "test_cr01_no_auth_block_rejects_request above"
 )
 @pytest.mark.asyncio
 async def test_cr01_empty_secret_path_rejects_request() -> None:
-    """CR-01/CR-02: A2A channel with empty secretPath must REJECT, not admit.
+    """CR-01/CR-02: A2A channel with empty secret env must REJECT, not admit.
 
-    Empty secretPath means no auth secret is configured — fail-closed.
+    Empty secret.env means no auth secret is configured — fail-closed.
     Before the fix: auth is skipped, handler.handle() called, hangs on completion.wait().
     After the fix: execute() returns immediately with a failed event.
     """
     from a2a.types.a2a_pb2 import TASK_STATE_FAILED
 
     handler = _make_accepted_handler()
-    # secretPath="" — no file written, no auth configured
-    channel_cfg = _make_channel_cfg(secret_path="")
+    # env_name="" — no auth configured
+    channel_cfg = _make_channel_cfg(env_name="")
 
     bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
     ctx = FakeContext(headers={})  # no auth header presented either
@@ -466,19 +463,23 @@ async def test_cr02_unset_env_secret_rejects_request(
 
 
 @pytest.mark.asyncio
-async def test_cr02_unreadable_secret_file_rejects_request(tmp_path: pytest.TempPath) -> None:
-    """CR-02: Unreadable/missing secret file must REJECT, not pass auth (empty-vs-empty).
+async def test_cr02_unreadable_secret_file_rejects_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-02: Unresolvable secret (env var unset) must REJECT, not pass auth (empty-vs-empty).
 
-    _read_secret returns "" on OSError; old code does hmac.compare_digest("","")=True
-    when presented header is also empty, then hangs on completion.wait().
-    Fix: treat unreadable/empty secret as auth failure (reject immediately).
+    resolve_secret returns None when the env var is unset; old code did
+    hmac.compare_digest("","")=True when presented header is also empty, then hangs on
+    completion.wait(). Fix: treat unresolvable/empty secret as auth failure (reject
+    immediately).
     """
     from a2a.types.a2a_pb2 import TASK_STATE_FAILED
 
+    env_name = "ACH_SECRET_A2A_UNRESOLVABLE"
+    monkeypatch.delenv(env_name, raising=False)
+
     handler = _make_accepted_handler()
-    # Point to a non-existent path — OSError at read time
-    missing_path = str(tmp_path / "does_not_exist.txt")
-    channel_cfg = _make_channel_cfg(secret_path=missing_path)
+    channel_cfg = _make_channel_cfg(env_name=env_name)
 
     bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
     # Caller sends no header — "" vs "" was previously True → auth "passed"
@@ -495,7 +496,7 @@ async def test_cr02_unreadable_secret_file_rejects_request(tmp_path: pytest.Temp
 
 @pytest.mark.asyncio
 async def test_cr04_concurrent_empty_key_calls_complete_independently(
-    tmp_path: pytest.TempPath,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """CR-04: Two concurrent execute() with empty context_id+task_id must not collide/hang.
 
@@ -508,11 +509,10 @@ async def test_cr04_concurrent_empty_key_calls_complete_independently(
     """
     from a2a.types.a2a_pb2 import TASK_STATE_FAILED
 
-    secret_file = tmp_path / "a2a_secret"
-    secret_file.write_text("test-secret", encoding="utf-8")
+    monkeypatch.setenv(_UNIT_TEST_ENV, "test-secret")
 
     handler = _make_accepted_handler()
-    channel_cfg = _make_channel_cfg(secret_path=str(secret_file))
+    channel_cfg = _make_channel_cfg(env_name=_UNIT_TEST_ENV)
     bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     # Provide correct auth header so requests pass auth and reach the session_key check
@@ -561,13 +561,13 @@ def test_make_a2a_agent_card_builds_without_error() -> None:
     assert card.version == "1.0.0"
 
 
-def test_build_a2a_app_constructs_sub_app(tmp_path: pytest.TempPath) -> None:
+def test_build_a2a_app_constructs_sub_app(monkeypatch: pytest.MonkeyPatch) -> None:
     """build_a2a_app must wire LegacyRequestHandler with agent_card (Bug 2 guard)."""
     from fastapi import FastAPI
 
     from ach_agent.channels.a2a import build_a2a_app, make_a2a_agent_card
 
-    channel_cfg = _make_authed_channel_cfg(tmp_path)
+    channel_cfg = _make_authed_channel_cfg(monkeypatch)
     bridge = A2AAgentExecutorBridge(
         handler=_make_accepted_handler(), channel_cfg=channel_cfg
     )
@@ -584,7 +584,7 @@ def test_build_a2a_app_constructs_sub_app(tmp_path: pytest.TempPath) -> None:
 
 @pytest.mark.asyncio
 async def test_a2a_signal_failure_enqueues_failed_event_and_unblocks(
-    tmp_path: pytest.TempPath,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """signal_failure pops pending, enqueues a FAILED event, and sets the completion Event.
 
@@ -595,7 +595,7 @@ async def test_a2a_signal_failure_enqueues_failed_event_and_unblocks(
     from a2a.types.a2a_pb2 import TASK_STATE_FAILED
 
     handler = _make_accepted_handler()
-    channel_cfg = _make_authed_channel_cfg(tmp_path)
+    channel_cfg = _make_authed_channel_cfg(monkeypatch)
     bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
     # Populate _pending exactly the way execute() would (mirror signal_completion setup).
@@ -618,10 +618,10 @@ async def test_a2a_signal_failure_enqueues_failed_event_and_unblocks(
 
 @pytest.mark.asyncio
 async def test_a2a_signal_failure_unknown_session_key_is_noop(
-    tmp_path: pytest.TempPath,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """signal_failure for an unknown session_key must not raise (mirror signal_completion)."""
-    channel_cfg = _make_authed_channel_cfg(tmp_path)
+    channel_cfg = _make_authed_channel_cfg(monkeypatch)
     bridge = A2AAgentExecutorBridge(
         handler=_make_accepted_handler(), channel_cfg=channel_cfg
     )

@@ -21,14 +21,14 @@ import pytest
 from ach_agent.config.schema import ChannelConfig
 
 
-def _make_webhook_cfg(secret_path: str, name: str = "test-channel") -> ChannelConfig:
+def _make_webhook_cfg(env_name: str, name: str = "test-channel") -> ChannelConfig:
     return ChannelConfig.model_validate(
         {
             "name": name,
             "type": "webhook",
             "source": "gitlab",
             "webhook": {
-                "auth": {"type": "gitlab_token", "secret": {"file": secret_path}},
+                "auth": {"type": "gitlab_token", "secret": {"env": env_name}},
             },
         }
     )
@@ -42,7 +42,9 @@ MR_PAYLOAD: dict[str, Any] = {
 
 
 @pytest.mark.asyncio
-async def test_inv07_engine_not_ready_does_not_gate_acceptance(tmp_path: Any) -> None:
+async def test_inv07_engine_not_ready_does_not_gate_acceptance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Decouple: engine_has_been_ready_once=False must NOT block acceptance —
     inbound events receive 202 and are routed, never a 503 for engine reasons.
 
@@ -54,9 +56,8 @@ async def test_inv07_engine_not_ready_does_not_gate_acceptance(tmp_path: Any) ->
     from ach_agent.router import Router
     from ach_agent.router.dedup import InMemoryDedupStore
 
-    secret_file = tmp_path / "hmac_secret"
-    secret_file.write_text("test-secret")
-    channel_cfg = _make_webhook_cfg(str(secret_file))
+    monkeypatch.setenv("ACH_SECRET_INV07_TEST", "test-secret")
+    channel_cfg = _make_webhook_cfg("ACH_SECRET_INV07_TEST")
 
     async def fake_engine(event: MessageEvent, on_kill: Any) -> None:
         on_kill()

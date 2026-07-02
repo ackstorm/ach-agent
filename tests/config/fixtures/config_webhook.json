@@ -51,7 +51,7 @@
       "webhook": {
         "auth": {
           "type": "gitlab_token",
-          "secret": { "file": "/etc/ach-agent/secrets/gitlab-webhook/secret" }
+          "secret": { "env": "ACH_SECRET_GITLAB_WEBHOOK" }
         }
       }
     }

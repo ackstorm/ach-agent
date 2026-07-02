@@ -579,16 +579,11 @@
     },
     "SecretSource": {
       "additionalProperties": false,
-      "description": "CONTRACT_v3 §2 secret source — exactly one of {env, file}.\n\nenv  → the harness reads the value from os.environ[NAME] at use time (hardened default:\n       dumpable=0 hides it from the co-resident agent; the NAME must NOT be in\n       engine.forwardEnv — the harness strips it from the forwarded set + WARNs).\nfile → the harness reads the value from PATH at use time (volume-mount deployments;\n       same-uid readable by the agent — weaker).",
+      "description": "CONTRACT_v3 §2 secret source — env-only (no disk secrets).\n\nenv → the harness reads the value from os.environ[NAME] at use time (hardened default:\n      dumpable=0 hides it from the co-resident agent; the NAME must NOT be in\n      engine.forwardEnv — the harness strips it from the forwarded set + WARNs).",
       "properties": {
         "env": {
           "default": "",
           "title": "Env",
-          "type": "string"
-        },
-        "file": {
-          "default": "",
-          "title": "File",
           "type": "string"
         }
       },

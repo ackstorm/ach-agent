@@ -202,7 +202,7 @@ def test_webhook_header_token_auth() -> None:
     from ach_agent.config.schema import WebhookAuthBlock
 
     a = WebhookAuthBlock.model_validate(
-        {"type": "header_token", "header": "X-Api-Key", "secret": {"file": "/s"}}
+        {"type": "header_token", "header": "X-Api-Key", "secret": {"env": "ACH_SECRET_S"}}
     )
     assert a.type == "header_token" and a.header == "X-Api-Key"
 
@@ -316,7 +316,7 @@ def test_load_valid_a2a_config() -> None:
     assert ch.a2a is not None
     assert ch.a2a.mode == "async"
     assert ch.a2a.auth.secret is not None
-    assert ch.a2a.auth.secret.file == "/etc/ach-agent/secrets/a2a/key"
+    assert ch.a2a.auth.secret.env == "ACH_SECRET_A2A"
 
 
 # ---------------------------------------------------------------------------

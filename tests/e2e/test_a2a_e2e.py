@@ -58,22 +58,24 @@ class FakeContext:
 
 _E2E_TEST_SECRET = "e2e-test-secret"
 _E2E_TEST_HEADER = "x-a2a-custom-api-key"
+_E2E_TEST_ENV = "ACH_SECRET_A2A_E2E_TEST"
 
 
-def _make_a2a_channel_cfg(name: str = "a2a-test", secret_path: str = "") -> Any:
-    """Build minimal A2A ChannelConfig with an optional secret path for auth testing."""
+def _make_a2a_channel_cfg(name: str = "a2a-test", env_name: str = "") -> Any:
+    """Build minimal A2A ChannelConfig with an optional secret env var for auth testing."""
     from ach_agent.config.schema import A2AAuthBlock, A2ABlock, ChannelConfig, SecretSource
 
-    secret = SecretSource(file=secret_path) if secret_path else None
+    secret = SecretSource(env=env_name) if env_name else None
     a2a_block = A2ABlock(auth=A2AAuthBlock(secret=secret))
     return ChannelConfig(name=name, type="a2a", a2a=a2a_block)
 
 
-def _make_a2a_channel_cfg_with_secret(tmp_path: Any, name: str = "a2a-test") -> Any:
-    """Build A2A ChannelConfig with a real secret file for tests that exercise auth."""
-    secret_file = tmp_path / "e2e_test_secret"
-    secret_file.write_text(_E2E_TEST_SECRET, encoding="utf-8")
-    return _make_a2a_channel_cfg(name=name, secret_path=str(secret_file))
+def _make_a2a_channel_cfg_with_secret(
+    monkeypatch: pytest.MonkeyPatch, name: str = "a2a-test"
+) -> Any:
+    """Build A2A ChannelConfig with a real secret env var for tests that exercise auth."""
+    monkeypatch.setenv(_E2E_TEST_ENV, _E2E_TEST_SECRET)
+    return _make_a2a_channel_cfg(name=name, env_name=_E2E_TEST_ENV)
 
 
 def _authed_ctx(**kwargs: Any) -> FakeContext:
@@ -117,7 +119,7 @@ def _build_bridge_with_router(
 
 @pytest.mark.asyncio
 async def test_a2a_task_routes_to_engine_and_enqueues_completed_event(
-    tmp_path: pytest.TempPath,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """CHN-05 e2e: A2A inbound task → governed pipeline → TaskStatusUpdateEvent(completed)."""
     from a2a.types.a2a_pb2 import TASK_STATE_COMPLETED
@@ -140,7 +142,7 @@ async def test_a2a_task_routes_to_engine_and_enqueues_completed_event(
         delivery_adapter=None,
     )
 
-    channel_cfg = _make_a2a_channel_cfg_with_secret(tmp_path)
+    channel_cfg = _make_a2a_channel_cfg_with_secret(monkeypatch)
     bridge, _ = _build_bridge_with_router(router, channel_cfg)
 
     ctx = _authed_ctx(task_id="task-e2e-1", context_id="ctx-e2e-1", text="review this")
@@ -215,7 +217,7 @@ async def test_engine_runner_signals_on_fail_on_engine_error(
 
 
 @pytest.mark.asyncio
-async def test_a2a_engine_not_ready_still_routes_to_engine(tmp_path: pytest.TempPath) -> None:
+async def test_a2a_engine_not_ready_still_routes_to_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     """Decouple: engine-not-ready (cold pool) no longer blocks dispatch — the task
     routes through to the engine like any other request (lazy engine start).
     """
@@ -240,7 +242,7 @@ async def test_a2a_engine_not_ready_still_routes_to_engine(tmp_path: pytest.Temp
         delivery_adapter=None,
     )
 
-    channel_cfg = _make_a2a_channel_cfg_with_secret(tmp_path)
+    channel_cfg = _make_a2a_channel_cfg_with_secret(monkeypatch)
     # Cold pool — engine not ready yet; must NOT block dispatch (decoupled)
     bridge, _ = _build_bridge_with_router(router, channel_cfg)
 
@@ -262,7 +264,7 @@ async def test_a2a_engine_not_ready_still_routes_to_engine(tmp_path: pytest.Temp
 
 
 @pytest.mark.asyncio
-async def test_a2a_dedup_rejects_repeated_task_id(tmp_path: pytest.TempPath) -> None:
+async def test_a2a_dedup_rejects_repeated_task_id(monkeypatch: pytest.MonkeyPatch) -> None:
     """CHN-05/IDM-01: duplicate task_id → deduplicated (router drops second task)."""
     from a2a.types.a2a_pb2 import TASK_STATE_COMPLETED
 
@@ -285,7 +287,7 @@ async def test_a2a_dedup_rejects_repeated_task_id(tmp_path: pytest.TempPath) -> 
         delivery_adapter=None,
     )
 
-    channel_cfg = _make_a2a_channel_cfg_with_secret(tmp_path)
+    channel_cfg = _make_a2a_channel_cfg_with_secret(monkeypatch)
 
     # First task — should succeed
     bridge1, _ = _build_bridge_with_router(router, channel_cfg)

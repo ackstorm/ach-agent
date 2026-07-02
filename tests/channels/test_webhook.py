@@ -27,6 +27,10 @@ from ach_agent.router.router import RouterAdmitResult
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Dedicated env var name for auth-exercising tests in this file. monkeypatch.setenv/delenv
+# scope the value to each test, so reuse across tests is safe.
+SECRET_ENV = "ACH_SECRET_TEST"
+
 MR_PAYLOAD = {
     "object_kind": "merge_request",
     "project": {"id": 42, "name": "my-repo"},
@@ -48,14 +52,14 @@ class FakeHandler:
         return self._result
 
 
-def _make_channel_cfg(secret_path: str) -> ChannelConfig:
+def _make_channel_cfg(env_name: str = SECRET_ENV) -> ChannelConfig:
     return ChannelConfig.model_validate(
         {
             "name": "gitlab-mr-review",
             "type": "webhook",
             "source": "gitlab",
             "webhook": {
-                "auth": {"type": "gitlab_token", "secret": {"file": secret_path}},
+                "auth": {"type": "gitlab_token", "secret": {"env": env_name}},
             },
         }
     )
@@ -78,12 +82,11 @@ def _make_headers(secret: str, event_uuid: str | None = None) -> dict[str, str]:
 
 
 @pytest.mark.asyncio
-async def test_valid_token_accepted(tmp_path: pytest.TempPathFactory) -> None:
+async def test_valid_token_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
     """CHN-01 / SEC-02: valid X-Gitlab-Token → 202 Accepted."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("my-webhook-secret")
+    monkeypatch.setenv(SECRET_ENV, "my-webhook-secret")
 
-    cfg = _make_channel_cfg(str(secret_file))
+    cfg = _make_channel_cfg()
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
     headers = _make_headers("my-webhook-secret", event_uuid=str(uuid.uuid4()))
     raw_body = json.dumps(MR_PAYLOAD).encode()
@@ -96,12 +99,11 @@ async def test_valid_token_accepted(tmp_path: pytest.TempPathFactory) -> None:
 
 
 @pytest.mark.asyncio
-async def test_invalid_token_401(tmp_path: pytest.TempPathFactory) -> None:
+async def test_invalid_token_401(monkeypatch: pytest.MonkeyPatch) -> None:
     """CHN-01 / SEC-02: invalid X-Gitlab-Token → 401; handler.handle() NOT called."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("real-secret")
+    monkeypatch.setenv(SECRET_ENV, "real-secret")
 
-    cfg = _make_channel_cfg(str(secret_file))
+    cfg = _make_channel_cfg()
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
     headers = _make_headers("wrong-secret", event_uuid=str(uuid.uuid4()))
     raw_body = json.dumps(MR_PAYLOAD).encode()
@@ -113,12 +115,11 @@ async def test_invalid_token_401(tmp_path: pytest.TempPathFactory) -> None:
 
 
 @pytest.mark.asyncio
-async def test_mr_payload_extraction(tmp_path: pytest.TempPathFactory) -> None:
+async def test_mr_payload_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
     """CHN-01: MR payload fields (project_id, mr_iid) extracted into delivery_context (D-07)."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
 
-    cfg = _make_channel_cfg(str(secret_file))
+    cfg = _make_channel_cfg()
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
     headers = _make_headers("s3cr3t", event_uuid=str(uuid.uuid4()))
     raw_body = json.dumps(MR_PAYLOAD).encode()
@@ -134,12 +135,11 @@ async def test_mr_payload_extraction(tmp_path: pytest.TempPathFactory) -> None:
 
 
 @pytest.mark.asyncio
-async def test_dedup_key_from_event_uuid(tmp_path: pytest.TempPathFactory) -> None:
+async def test_dedup_key_from_event_uuid(monkeypatch: pytest.MonkeyPatch) -> None:
     """IDM-01: X-Gitlab-Event-UUID header used as idempotency key when present."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
 
-    cfg = _make_channel_cfg(str(secret_file))
+    cfg = _make_channel_cfg()
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
     event_uuid = "550e8400-e29b-41d4-a716-446655440000"
     headers = _make_headers("s3cr3t", event_uuid=event_uuid)
@@ -154,12 +154,11 @@ async def test_dedup_key_from_event_uuid(tmp_path: pytest.TempPathFactory) -> No
 
 
 @pytest.mark.asyncio
-async def test_dedup_key_fallback(tmp_path: pytest.TempPathFactory) -> None:
+async def test_dedup_key_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     """IDM-01: ms-timestamp fallback used as idempotency key when UUID header absent."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
 
-    cfg = _make_channel_cfg(str(secret_file))
+    cfg = _make_channel_cfg()
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
     # No X-Gitlab-Event-UUID in headers — fallback must kick in
     headers = _make_headers("s3cr3t", event_uuid=None)
@@ -176,12 +175,11 @@ async def test_dedup_key_fallback(tmp_path: pytest.TempPathFactory) -> None:
 
 
 @pytest.mark.asyncio
-async def test_http_status_map(tmp_path: pytest.TempPathFactory) -> None:
+async def test_http_status_map(monkeypatch: pytest.MonkeyPatch) -> None:
     """D-05: router outcomes map to correct HTTP statuses (202/200/503)."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
 
-    cfg = _make_channel_cfg(str(secret_file))
+    cfg = _make_channel_cfg()
     raw_body = json.dumps(MR_PAYLOAD).encode()
 
     # ACCEPTED → 202
@@ -207,16 +205,15 @@ async def test_http_status_map(tmp_path: pytest.TempPathFactory) -> None:
 
 
 @pytest.mark.asyncio
-async def test_secret_read_per_request(tmp_path: pytest.TempPathFactory) -> None:
-    """SEC-02: webhook secret is read from file per-request, never cached.
+async def test_secret_read_per_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SEC-02: webhook secret is read from env per-request, never cached.
 
-    Verifies by writing a new secret between two calls and observing that the
+    Verifies by rotating the env var between two calls and observing that the
     second call uses the NEW value — proving the secret is NOT cached.
     """
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("initial-secret")
+    monkeypatch.setenv(SECRET_ENV, "initial-secret")
 
-    cfg = _make_channel_cfg(str(secret_file))
+    cfg = _make_channel_cfg()
     raw_body = json.dumps(MR_PAYLOAD).encode()
 
     # First call succeeds with initial secret
@@ -226,8 +223,8 @@ async def test_secret_read_per_request(tmp_path: pytest.TempPathFactory) -> None
     )
     assert r1.status_code == 202, "First call with correct secret must succeed"
 
-    # Rotate the secret (rewrite the file)
-    secret_file.write_text("rotated-secret")
+    # Rotate the secret (re-set the env var)
+    monkeypatch.setenv(SECRET_ENV, "rotated-secret")
 
     # Second call with OLD secret must now fail (401) — proves no caching
     handler2 = FakeHandler(RouterAdmitResult.ACCEPTED)
@@ -261,17 +258,16 @@ GITHUB_PR_PAYLOAD = {
 
 
 @pytest.mark.asyncio
-async def test_github_source_parses_pr_and_hmac_auth(tmp_path: pytest.TempPathFactory) -> None:
+async def test_github_source_parses_pr_and_hmac_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     """github source: PR parse + HMAC-SHA256 auth → 202."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("gh-hmac-secret")
+    monkeypatch.setenv(SECRET_ENV, "gh-hmac-secret")
 
     cfg = ChannelConfig.model_validate(
         {
             "name": "gh",
             "type": "webhook",
             "source": "github",
-            "webhook": {"auth": {"type": "hmac", "secret": {"file": str(secret_file)}}},
+            "webhook": {"auth": {"type": "hmac", "secret": {"env": SECRET_ENV}}},
         }
     )
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
@@ -295,17 +291,16 @@ async def test_github_source_parses_pr_and_hmac_auth(tmp_path: pytest.TempPathFa
 
 
 @pytest.mark.asyncio
-async def test_hmac_auth_rejects_bad_signature(tmp_path: pytest.TempPathFactory) -> None:
+async def test_hmac_auth_rejects_bad_signature(monkeypatch: pytest.MonkeyPatch) -> None:
     """github source: wrong HMAC signature → 401, handler NOT called."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("gh-hmac-secret")
+    monkeypatch.setenv(SECRET_ENV, "gh-hmac-secret")
 
     cfg = ChannelConfig.model_validate(
         {
             "name": "gh",
             "type": "webhook",
             "source": "github",
-            "webhook": {"auth": {"type": "hmac", "secret": {"file": str(secret_file)}}},
+            "webhook": {"auth": {"type": "hmac", "secret": {"env": SECRET_ENV}}},
         }
     )
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
@@ -323,7 +318,7 @@ async def test_hmac_auth_rejects_bad_signature(tmp_path: pytest.TempPathFactory)
 
 
 @pytest.mark.asyncio
-async def test_generic_source_uses_request_id_key(tmp_path: pytest.TempPathFactory) -> None:
+async def test_generic_source_uses_request_id_key() -> None:
     """generic source: no payload requirements; session_key == idempotency_key."""
     cfg = ChannelConfig.model_validate(
         {
@@ -347,12 +342,11 @@ async def test_generic_source_uses_request_id_key(tmp_path: pytest.TempPathFacto
 
 
 @pytest.mark.asyncio
-async def test_gitlab_token_auth_rejects_bad_token(tmp_path: pytest.TempPathFactory) -> None:
+async def test_gitlab_token_auth_rejects_bad_token(monkeypatch: pytest.MonkeyPatch) -> None:
     """gitlab source + gitlab_token auth: wrong X-Gitlab-Token → 401."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("real-secret")
+    monkeypatch.setenv(SECRET_ENV, "real-secret")
 
-    cfg = _make_channel_cfg(str(secret_file))
+    cfg = _make_channel_cfg()
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
     headers = _make_headers("wrong-secret", event_uuid=str(uuid.uuid4()))
     raw_body = json.dumps(MR_PAYLOAD).encode()
@@ -364,16 +358,16 @@ async def test_gitlab_token_auth_rejects_bad_token(tmp_path: pytest.TempPathFact
 
 
 @pytest.mark.asyncio
-async def test_missing_secret_file_rejects_request(tmp_path: pytest.TempPathFactory) -> None:
-    """CR-02: schema-valid secret={file: PATH} whose file does NOT exist must REJECT.
+async def test_unset_env_secret_rejects_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CR-02: schema-valid secret={env: NAME} whose env var is UNSET must REJECT.
 
-    resolve_secret() returns None on OSError (missing file), so _verify_header_token must
+    resolve_secret() returns None when the env var is unset, so _verify_header_token must
     fail-closed rather than treat the unresolved secret as a pass. An otherwise-plausible
     token is presented to prove the rejection comes from the unresolvable secret, not a
     header mismatch.
     """
-    missing_path = str(tmp_path / "does_not_exist")
-    cfg = _make_channel_cfg(missing_path)
+    monkeypatch.delenv(SECRET_ENV, raising=False)
+    cfg = _make_channel_cfg()
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
     headers = _make_headers("some-plausible-token", event_uuid=str(uuid.uuid4()))
     raw_body = json.dumps(MR_PAYLOAD).encode()
@@ -382,19 +376,18 @@ async def test_missing_secret_file_rejects_request(tmp_path: pytest.TempPathFact
 
     assert result.status_code == 401
     assert handler._call_count == 0, (
-        "handler.handle() must NOT be called when secret file is missing"
+        "handler.handle() must NOT be called when the secret env var is unset"
     )
 
 
-def test_header_token_auth(tmp_path) -> None:
+def test_header_token_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     """header_token auth: static shared secret in a configurable header (constant-time)."""
     from ach_agent.channels.webhook import _verify_auth
     from ach_agent.config.schema import SecretSource, WebhookAuthBlock
 
-    secret = tmp_path / "s"
-    secret.write_text("topsecret")
+    monkeypatch.setenv(SECRET_ENV, "topsecret")
     auth = WebhookAuthBlock(
-        type="header_token", header="X-Api-Key", secret=SecretSource(file=str(secret))
+        type="header_token", header="X-Api-Key", secret=SecretSource(env=SECRET_ENV)
     )
     assert _verify_auth(auth, {"x-api-key": "topsecret"}, b"") is True
     assert _verify_auth(auth, {"x-api-key": "wrong"}, b"") is False
@@ -407,14 +400,13 @@ def test_header_token_auth(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_gitlab_sets_secondary_idempotency_key(tmp_path: pytest.TempPathFactory) -> None:
+async def test_gitlab_sets_secondary_idempotency_key(monkeypatch: pytest.MonkeyPatch) -> None:
     """gitlab source: secondary_idempotency_key == composite; primary still the UUID."""
     from ach_agent.router.dedup import derive_gitlab_composite_key
 
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
 
-    cfg = _make_channel_cfg(str(secret_file))
+    cfg = _make_channel_cfg()
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
     event_uuid = str(uuid.uuid4())
     headers = _make_headers("s3cr3t", event_uuid=event_uuid)
@@ -428,17 +420,16 @@ async def test_gitlab_sets_secondary_idempotency_key(tmp_path: pytest.TempPathFa
 
 
 @pytest.mark.asyncio
-async def test_github_leaves_secondary_key_none(tmp_path: pytest.TempPathFactory) -> None:
+async def test_github_leaves_secondary_key_none(monkeypatch: pytest.MonkeyPatch) -> None:
     """github source: secondary_idempotency_key stays None (gitlab-only in v1)."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("gh-hmac-secret")
+    monkeypatch.setenv(SECRET_ENV, "gh-hmac-secret")
 
     cfg = ChannelConfig.model_validate(
         {
             "name": "gh",
             "type": "webhook",
             "source": "github",
-            "webhook": {"auth": {"type": "hmac", "secret": {"file": str(secret_file)}}},
+            "webhook": {"auth": {"type": "hmac", "secret": {"env": SECRET_ENV}}},
         }
     )
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
@@ -499,8 +490,8 @@ NOTE_ON_MR_MISSING_MR = {
 }
 
 
-def _make_cfg_events(secret_path: str, events: list[str] | None = None) -> ChannelConfig:
-    webhook: dict[str, Any] = {"auth": {"type": "gitlab_token", "secret": {"file": secret_path}}}
+def _make_cfg_events(env_name: str = SECRET_ENV, events: list[str] | None = None) -> ChannelConfig:
+    webhook: dict[str, Any] = {"auth": {"type": "gitlab_token", "secret": {"env": env_name}}}
     if events is not None:
         webhook["gitlabEvents"] = events
     return ChannelConfig.model_validate(
@@ -516,10 +507,9 @@ async def _post(payload: dict[str, Any], cfg: ChannelConfig, secret: str) -> tup
 
 
 @pytest.mark.asyncio
-async def test_mr_hook_default_routes_with_kind(tmp_path) -> None:
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s")
-    cfg = _make_cfg_events(str(secret_file))
+async def test_mr_hook_default_routes_with_kind(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events()
     result, handler = await _post(MR_PAYLOAD, cfg, "s")
     assert result.status_code == 202
     ev = handler.events[0]
@@ -529,10 +519,9 @@ async def test_mr_hook_default_routes_with_kind(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_note_on_mr_routes_same_lane(tmp_path) -> None:
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s")
-    cfg = _make_cfg_events(str(secret_file))
+async def test_note_on_mr_routes_same_lane(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events()
     result, handler = await _post(NOTE_ON_MR_PAYLOAD, cfg, "s")
     assert result.status_code == 202
     ev = handler.events[0]
@@ -543,10 +532,9 @@ async def test_note_on_mr_routes_same_lane(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_issue_hook_routes_namespaced(tmp_path) -> None:
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s")
-    cfg = _make_cfg_events(str(secret_file))
+async def test_issue_hook_routes_namespaced(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events()
     result, handler = await _post(ISSUE_PAYLOAD, cfg, "s")
     assert result.status_code == 202
     ev = handler.events[0]
@@ -556,20 +544,18 @@ async def test_issue_hook_routes_namespaced(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_note_on_issue_routes_namespaced(tmp_path) -> None:
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s")
-    cfg = _make_cfg_events(str(secret_file))
+async def test_note_on_issue_routes_namespaced(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events()
     result, handler = await _post(NOTE_ON_ISSUE_PAYLOAD, cfg, "s")
     assert result.status_code == 202
     assert handler.events[0].session_key == "42:issue:5"
 
 
 @pytest.mark.asyncio
-async def test_note_on_commit_ignored_200(tmp_path) -> None:
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s")
-    cfg = _make_cfg_events(str(secret_file))
+async def test_note_on_commit_ignored_200(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events()
     result, handler = await _post(NOTE_ON_COMMIT_PAYLOAD, cfg, "s")
     assert result.status_code == 200
     assert result.body == {"status": "ignored"}
@@ -577,31 +563,30 @@ async def test_note_on_commit_ignored_200(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_pipeline_ignored_200_not_422(tmp_path) -> None:
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s")
-    cfg = _make_cfg_events(str(secret_file))
+async def test_pipeline_ignored_200_not_422(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events()
     result, handler = await _post(PIPELINE_PAYLOAD, cfg, "s")
     assert result.status_code == 200
     assert result.body == {"status": "ignored"}
 
 
 @pytest.mark.asyncio
-async def test_note_on_mr_ignored_when_mr_not_allowed(tmp_path) -> None:
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s")
-    cfg = _make_cfg_events(str(secret_file), events=["issue"])
+async def test_note_on_mr_ignored_when_mr_not_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events(events=["issue"])
     result, handler = await _post(NOTE_ON_MR_PAYLOAD, cfg, "s")
     assert result.status_code == 200
     assert result.body == {"status": "ignored"}
 
 
 @pytest.mark.asyncio
-async def test_commit_note_missing_project_still_ignored_200(tmp_path) -> None:
+async def test_commit_note_missing_project_still_ignored_200(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Non-routable note (commit) must accept-ignore (200) even if project block is absent."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s")
-    cfg = _make_cfg_events(str(secret_file))
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events()
     payload = {
         "object_kind": "note",
         "object_attributes": {"noteable_type": "Commit", "note": "nice"},
@@ -613,10 +598,9 @@ async def test_commit_note_missing_project_still_ignored_200(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_note_on_mr_missing_block_raises_422(tmp_path) -> None:
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s")
-    cfg = _make_cfg_events(str(secret_file))
+async def test_note_on_mr_missing_block_raises_422(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events()
     result, handler = await _post(NOTE_ON_MR_MISSING_MR, cfg, "s")
     assert result.status_code == 422
     assert handler._call_count == 0
@@ -628,12 +612,11 @@ async def test_note_on_mr_missing_block_raises_422(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_accepted_response_carries_task_id(tmp_path: pytest.TempPathFactory) -> None:
+async def test_accepted_response_carries_task_id(monkeypatch: pytest.MonkeyPatch) -> None:
     """202 accept: WebhookResult.task_id is a non-empty uuid, echoed in the body."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
 
-    cfg = _make_channel_cfg(str(secret_file))
+    cfg = _make_channel_cfg()
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
     headers = _make_headers("s3cr3t", event_uuid=str(uuid.uuid4()))
     raw_body = json.dumps(MR_PAYLOAD).encode()
@@ -651,12 +634,11 @@ async def test_accepted_response_carries_task_id(tmp_path: pytest.TempPathFactor
 
 
 @pytest.mark.asyncio
-async def test_distinct_events_get_distinct_task_ids(tmp_path: pytest.TempPathFactory) -> None:
+async def test_distinct_events_get_distinct_task_ids(monkeypatch: pytest.MonkeyPatch) -> None:
     """Two distinct webhook requests get two distinct task_ids."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
 
-    cfg = _make_channel_cfg(str(secret_file))
+    cfg = _make_channel_cfg()
     raw_body = json.dumps(MR_PAYLOAD).encode()
 
     handler1 = FakeHandler(RouterAdmitResult.ACCEPTED)
@@ -672,12 +654,11 @@ async def test_distinct_events_get_distinct_task_ids(tmp_path: pytest.TempPathFa
 
 
 @pytest.mark.asyncio
-async def test_non_accepted_responses_have_no_task_id(tmp_path: pytest.TempPathFactory) -> None:
+async def test_non_accepted_responses_have_no_task_id(monkeypatch: pytest.MonkeyPatch) -> None:
     """DUPLICATE (200) / FULL_QUEUE (503) bodies are unchanged — no task_id."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
 
-    cfg = _make_channel_cfg(str(secret_file))
+    cfg = _make_channel_cfg()
     raw_body = json.dumps(MR_PAYLOAD).encode()
 
     handler_dup = FakeHandler(RouterAdmitResult.DUPLICATE)

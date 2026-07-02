@@ -311,25 +311,22 @@ class CapabilityBlock(BaseModel):
 
 
 class SecretSource(BaseModel):
-    """CONTRACT_v3 §2 secret source — exactly one of {env, file}.
+    """CONTRACT_v3 §2 secret source — env-only (no disk secrets).
 
-    env  → the harness reads the value from os.environ[NAME] at use time (hardened default:
-           dumpable=0 hides it from the co-resident agent; the NAME must NOT be in
-           engine.forwardEnv — the harness strips it from the forwarded set + WARNs).
-    file → the harness reads the value from PATH at use time (volume-mount deployments;
-           same-uid readable by the agent — weaker).
+    env → the harness reads the value from os.environ[NAME] at use time (hardened default:
+          dumpable=0 hides it from the co-resident agent; the NAME must NOT be in
+          engine.forwardEnv — the harness strips it from the forwarded set + WARNs).
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     env: str = Field(default="")
-    file: str = Field(default="")
 
     @model_validator(mode="after")
     def _check(self) -> SecretSource:
-        if bool(self.env) == bool(self.file):
-            raise ValueError("secret must set exactly one of {env, file}")
-        if self.env and not _ENV_NAME_RE.match(self.env):
+        if not self.env:
+            raise ValueError("secret.env is required")
+        if not _ENV_NAME_RE.match(self.env):
             raise ValueError(f"secret.env is not a valid environment variable name: {self.env!r}")
         return self
 
@@ -337,16 +334,10 @@ class SecretSource(BaseModel):
 def resolve_secret(src: SecretSource) -> str | None:
     """Resolve a SecretSource to its value at use time (never cached — rotation).
 
-    Returns the stripped value, or None if unresolvable (env unset / file missing / unreadable)
-    so callers fail closed (reject the request) exactly as the file-only path did.
+    Returns the stripped env value, or None if the env var is unset (fail closed).
     """
-    if src.env:
-        val = os.environ.get(src.env)
-        return val.strip() if val is not None else None
-    try:
-        return Path(src.file).read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
+    val = os.environ.get(src.env)
+    return val.strip() if val is not None else None
 
 
 class WebhookAuthBlock(BaseModel):

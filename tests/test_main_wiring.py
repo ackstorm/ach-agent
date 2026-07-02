@@ -49,7 +49,7 @@ MR_PAYLOAD = {
 
 def _make_webhook_cfg(
     name: str,
-    secret_path: str,
+    env_name: str,
 ) -> ChannelConfig:
     return ChannelConfig.model_validate(
         {
@@ -57,7 +57,7 @@ def _make_webhook_cfg(
             "type": "webhook",
             "source": "gitlab",
             "webhook": {
-                "auth": {"type": "gitlab_token", "secret": {"file": secret_path}},
+                "auth": {"type": "gitlab_token", "secret": {"env": env_name}},
             },
         }
     )
@@ -77,11 +77,10 @@ def _gitlab_headers(secret: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def test_gitlab_comment_webhook_returns_202(tmp_path: Any) -> None:
+def test_gitlab_comment_webhook_returns_202(monkeypatch: pytest.MonkeyPatch) -> None:
     """gitlab_comment webhook: POST to registered route returns 202 (D-04 accept-async)."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("test_secret")
-    cfg = _make_webhook_cfg("gitlab-mr-review", str(secret_file))
+    monkeypatch.setenv("ACH_SECRET_MAIN_WIRING_TEST", "test_secret")
+    cfg = _make_webhook_cfg("gitlab-mr-review", "ACH_SECRET_MAIN_WIRING_TEST")
 
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
     app = create_app([cfg], handler)

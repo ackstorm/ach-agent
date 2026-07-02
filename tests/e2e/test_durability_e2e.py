@@ -57,7 +57,7 @@ def _make_persistence_cfg(
 
 
 def _make_webhook_cfg(
-    secret_path: str,
+    env_name: str,
     name: str = "gitlab-mr-review",
 ) -> ChannelConfig:
     return ChannelConfig.model_validate(
@@ -66,7 +66,7 @@ def _make_webhook_cfg(
             "type": "webhook",
             "source": "gitlab",
             "webhook": {
-                "auth": {"type": "gitlab_token", "secret": {"file": secret_path}},
+                "auth": {"type": "gitlab_token", "secret": {"env": env_name}},
             },
         }
     )
@@ -186,7 +186,7 @@ MR_PAYLOAD: dict[str, Any] = {
 
 
 @pytest.mark.asyncio
-async def test_sigterm_flips_readyz(tmp_path: Path) -> None:
+async def test_sigterm_flips_readyz(monkeypatch: pytest.MonkeyPatch) -> None:
     """DUR-03 / D-09: SIGTERM sets draining=True + ready=False → /readyz returns 503.
 
     Tests via the shared state dict (app.extra['state']) directly — same path
@@ -197,9 +197,8 @@ async def test_sigterm_flips_readyz(tmp_path: Path) -> None:
     from ach_agent.router import Router
     from ach_agent.router.dedup import InMemoryDedupStore
 
-    secret_file = tmp_path / "hmac_secret"
-    secret_file.write_text("s3cr3t")
-    channel_cfg = _make_webhook_cfg(str(secret_file))
+    monkeypatch.setenv("ACH_SECRET_DUR_TEST", "s3cr3t")
+    channel_cfg = _make_webhook_cfg("ACH_SECRET_DUR_TEST")
 
     async def fake_engine(event: MessageEvent, on_kill: Any) -> None:
         on_kill()
@@ -242,7 +241,7 @@ async def test_sigterm_flips_readyz(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_sigterm_stops_intake(tmp_path: Path) -> None:
+async def test_sigterm_stops_intake(monkeypatch: pytest.MonkeyPatch) -> None:
     """DUR-03 / D-12: draining=True → POST /channels/.../events returns 503 (straggler gate).
 
     No router handler should be invoked.
@@ -254,9 +253,8 @@ async def test_sigterm_stops_intake(tmp_path: Path) -> None:
 
     handler_called = False
 
-    secret_file = tmp_path / "hmac_secret"
-    secret_file.write_text("s3cr3t")
-    channel_cfg = _make_webhook_cfg(str(secret_file))
+    monkeypatch.setenv("ACH_SECRET_DUR_TEST", "s3cr3t")
+    channel_cfg = _make_webhook_cfg("ACH_SECRET_DUR_TEST")
 
     async def fake_engine(event: MessageEvent, on_kill: Any) -> None:
         nonlocal handler_called
@@ -296,7 +294,7 @@ async def test_sigterm_stops_intake(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_sigterm_drain_completes_inflight(tmp_path: Path) -> None:
+async def test_sigterm_drain_completes_inflight(monkeypatch: pytest.MonkeyPatch) -> None:
     """DUR-03 / D-11: _drain awaits in-flight lane work, then returns cleanly.
 
     An in-flight engine invocation that takes ~0.3s is started before _drain is
@@ -317,9 +315,8 @@ async def test_sigterm_drain_completes_inflight(tmp_path: Path) -> None:
     inflight_done: asyncio.Event = asyncio.Event()
     work_started: asyncio.Event = asyncio.Event()
 
-    secret_file = tmp_path / "hmac_secret"
-    secret_file.write_text("s3cr3t")
-    channel_cfg = _make_webhook_cfg(str(secret_file))
+    monkeypatch.setenv("ACH_SECRET_DUR_TEST", "s3cr3t")
+    channel_cfg = _make_webhook_cfg("ACH_SECRET_DUR_TEST")
 
     async def slow_engine(event: MessageEvent, on_kill: Any) -> None:
         """Simulate a ~0.3s in-flight invocation."""

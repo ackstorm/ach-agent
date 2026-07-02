@@ -14,17 +14,11 @@ from ach_agent.config.schema import (
 def test_secret_source_env_only_ok():
     s = SecretSource(env="ACH_SECRET_X")
     assert s.env == "ACH_SECRET_X"
-    assert s.file == ""
-
-
-def test_secret_source_file_only_ok():
-    s = SecretSource(file="/etc/ach-agent/secrets/x")
-    assert s.file == "/etc/ach-agent/secrets/x"
 
 
 def test_secret_source_both_rejected():
     with pytest.raises(ValidationError):
-        SecretSource(env="X", file="/p")
+        SecretSource(file="/p")  # file is no longer a known field
 
 
 def test_secret_source_neither_rejected():

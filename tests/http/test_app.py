@@ -47,9 +47,12 @@ MR_PAYLOAD = {
 }
 
 
+SECRET_ENV = "ACH_SECRET_TEST"
+
+
 def _make_channel_cfg(
     name: str = "gitlab-mr-review",
-    secret_path: str = "/dev/null",
+    env_name: str = SECRET_ENV,
 ) -> ChannelConfig:
     return ChannelConfig.model_validate(
         {
@@ -57,7 +60,7 @@ def _make_channel_cfg(
             "type": "webhook",
             "source": "gitlab",
             "webhook": {
-                "auth": {"type": "gitlab_token", "secret": {"file": secret_path}},
+                "auth": {"type": "gitlab_token", "secret": {"env": env_name}},
             },
         }
     )
@@ -79,16 +82,15 @@ def _make_headers(secret: str, event_uuid: str | None = None) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def test_readyz(tmp_path: pytest.TempPathFactory) -> None:
+def test_readyz(monkeypatch: pytest.MonkeyPatch) -> None:
     """HTTP-02: GET /readyz returns 503 before lifespan, 200 after (Pitfall 6).
 
     Uses FastAPI TestClient which triggers the lifespan on __enter__.
     Before entering the TestClient context: readyz → 503 (not ready).
     Inside the TestClient context (lifespan running): readyz → 200 (ready).
     """
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
-    cfg = _make_channel_cfg(secret_path=str(secret_file))
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
+    cfg = _make_channel_cfg()
     handler = FakeHandler()
     app = create_app([cfg], handler)
 
@@ -113,11 +115,10 @@ def test_readyz(tmp_path: pytest.TempPathFactory) -> None:
         )
 
 
-def test_healthz(tmp_path: pytest.TempPathFactory) -> None:
+def test_healthz(monkeypatch: pytest.MonkeyPatch) -> None:
     """HTTP-03: GET /healthz always returns 200 while process is alive."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
-    cfg = _make_channel_cfg(secret_path=str(secret_file))
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
+    cfg = _make_channel_cfg()
     handler = FakeHandler()
     app = create_app([cfg], handler)
 
@@ -127,11 +128,10 @@ def test_healthz(tmp_path: pytest.TempPathFactory) -> None:
         assert resp.json() == {"status": "ok"}
 
 
-def test_metrics(tmp_path: pytest.TempPathFactory) -> None:
+def test_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
     """HTTP-04: GET /metrics returns Prometheus metrics via make_asgi_app()."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
-    cfg = _make_channel_cfg(secret_path=str(secret_file))
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
+    cfg = _make_channel_cfg()
     handler = FakeHandler()
     app = create_app([cfg], handler)
 
@@ -145,11 +145,10 @@ def test_metrics(tmp_path: pytest.TempPathFactory) -> None:
         )
 
 
-def test_inbound_route_dispatches(tmp_path: pytest.TempPathFactory) -> None:
+def test_inbound_route_dispatches(monkeypatch: pytest.MonkeyPatch) -> None:
     """HTTP-01: POST /channels/{name}/events dispatches to webhook adapter → 202."""
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
-    cfg = _make_channel_cfg(secret_path=str(secret_file))
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
+    cfg = _make_channel_cfg()
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
     app = create_app([cfg], handler)
 
@@ -178,14 +177,13 @@ def test_inbound_route_dispatches(tmp_path: pytest.TempPathFactory) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_webhook_accepted_when_engine_not_started(tmp_path: pytest.TempPathFactory) -> None:
+def test_webhook_accepted_when_engine_not_started(monkeypatch: pytest.MonkeyPatch) -> None:
     """Decouple: POST /channels/.../events returns 202 even when
     engine_has_been_ready_once=False — acceptance no longer waits on the engine
     (the reproduced cold-start deadlock, asserted fixed).
     """
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
-    cfg = _make_channel_cfg(secret_path=str(secret_file))
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
+    cfg = _make_channel_cfg()
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
     app = create_app([cfg], handler)
 
@@ -201,14 +199,13 @@ def test_webhook_accepted_when_engine_not_started(tmp_path: pytest.TempPathFacto
     assert len(handler.events) == 1, "router must be called — acceptance is decoupled"
 
 
-def test_webhook_503_only_when_draining(tmp_path: pytest.TempPathFactory) -> None:
+def test_webhook_503_only_when_draining(monkeypatch: pytest.MonkeyPatch) -> None:
     """D-12: 503 is emitted ONLY for draining — never for engine-not-ready.
 
     Same app/pool (engine never ready): before draining → 202; after draining → 503.
     """
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
-    cfg = _make_channel_cfg(secret_path=str(secret_file))
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
+    cfg = _make_channel_cfg()
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
     app = create_app([cfg], handler)
 
@@ -229,14 +226,13 @@ def test_webhook_503_only_when_draining(tmp_path: pytest.TempPathFactory) -> Non
         assert resp.status_code == 503, f"draining must return 503, got {resp.status_code}"
 
 
-def test_draining_503(tmp_path: pytest.TempPathFactory) -> None:
+def test_draining_503(monkeypatch: pytest.MonkeyPatch) -> None:
     """D-12: POST returns 503 when state['draining']=True (straggler during drain).
 
     Sets draining via app.extra["state"] after lifespan entry. Handler must not be called.
     """
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
-    cfg = _make_channel_cfg(secret_path=str(secret_file))
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
+    cfg = _make_channel_cfg()
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
     app = create_app([cfg], handler)
 
@@ -258,16 +254,15 @@ def test_draining_503(tmp_path: pytest.TempPathFactory) -> None:
 
 
 def test_oversized_body_via_content_length_returns_413(
-    tmp_path: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """T-02-05: Content-Length exceeding cap → 413 before router is called.
 
     RED: no MAX_WEBHOOK_BODY_BYTES cap exists yet — today the request is
     accepted and the handler is called, so this test FAILS at the 413 assert.
     """
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
-    cfg = _make_channel_cfg(secret_path=str(secret_file))
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
+    cfg = _make_channel_cfg()
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
     app = create_app([cfg], handler)
 
@@ -290,15 +285,14 @@ def test_oversized_body_via_content_length_returns_413(
     assert handler.events == [], "T-02-05: router must NOT be called for oversized body"
 
 
-def test_oversized_body_streaming_returns_413(tmp_path: pytest.TempPathFactory) -> None:
+def test_oversized_body_streaming_returns_413(monkeypatch: pytest.MonkeyPatch) -> None:
     """T-02-05: body exceeding cap mid-stream → 413, router NOT called.
 
     RED: no streaming cap implemented — today the body is fully buffered and
     the request reaches the router, so this test FAILS at the 413 assert.
     """
-    secret_file = tmp_path / "secret"
-    secret_file.write_text("s3cr3t")
-    cfg = _make_channel_cfg(secret_path=str(secret_file))
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
+    cfg = _make_channel_cfg()
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
     app = create_app([cfg], handler)
 

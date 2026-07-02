@@ -190,21 +190,44 @@ def build_engine_prompt(
     if text:
         return str(text)
 
-    # Webhook MR path: build prompt from delivery_context + MR fields
-    project_id = event.delivery_context.get("project_id", "")
-    mr_iid = event.delivery_context.get("mr_iid", "")
+    # Webhook path: build prompt from delivery_context + payload, per event kind.
+    # Missing "kind" defaults to merge_request (back-compat with pre-Task-1 events).
+    dc = event.delivery_context
+    project_id = dc.get("project_id", "")
+    kind = dc.get("kind", "merge_request")
 
     obj_attrs: dict[str, Any] = {}
     raw_obj_attrs = event.payload.get("object_attributes")
     if isinstance(raw_obj_attrs, dict):
         obj_attrs = raw_obj_attrs
 
+    if kind == "note":
+        # A comment on an MR or issue: give the agent the note body + the target reference
+        # so it can fetch context via MCP. Never emit an empty "Review MR !." line.
+        target_type = dc.get("target_type", "")
+        if target_type == "issue":
+            ref = f"issue #{dc.get('issue_iid', '')}"
+        else:
+            ref = f"MR !{dc.get('mr_iid', '')}"
+        raw_user = event.payload.get("user")
+        user = raw_user.get("username", "") if isinstance(raw_user, dict) else ""
+        note = obj_attrs.get("note", "")
+        header = f"New comment on {ref} in project {project_id}"
+        header = f"{header} by {user}:" if user else f"{header}:"
+        parts = [header]
+        if note:
+            parts.append(str(note))
+        return " ".join(parts)
+
     title = obj_attrs.get("title", "")
     description = obj_attrs.get("description", "")
 
-    parts = [
-        f"Review MR !{mr_iid} in project {project_id}.",
-    ]
+    if kind == "issue":
+        issue_iid = dc.get("issue_iid", "")
+        parts = [f"Review issue #{issue_iid} in project {project_id}."]
+    else:  # merge_request (default)
+        mr_iid = dc.get("mr_iid", "")
+        parts = [f"Review MR !{mr_iid} in project {project_id}."]
     if title:
         parts.append(f"Title: {title}")
     if description:

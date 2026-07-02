@@ -98,7 +98,12 @@ def test_gitlab_comment_webhook_returns_202(tmp_path: Any) -> None:
     # Verify delivery_context was extracted and passed in the event
     assert len(handler.events) == 1
     event = handler.events[0]
-    assert event.delivery_context == {"project_id": 42, "mr_iid": 7}
+    assert event.delivery_context == {
+        "project_id": 42,
+        "kind": "merge_request",
+        "target_type": "mr",
+        "mr_iid": 7,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +226,80 @@ def test_build_engine_prompt_cron_uses_scheduled_tick() -> None:
     assert prompt == tick, (
         f"WR-07: cron prompt must be the scheduled_tick value, got: {prompt!r}"
     )
+
+
+def test_build_engine_prompt_issue_uses_issue_reference() -> None:
+    from ach_agent.main import build_engine_prompt
+
+    event = MessageEvent(
+        idempotency_key="k",
+        session_key="42:issue:5",
+        channel_name="gl",
+        payload={
+            "object_kind": "issue",
+            "project": {"id": 42},
+            "object_attributes": {"iid": 5, "title": "Bug report", "description": "boom"},
+        },
+        delivery_context={"project_id": 42, "kind": "issue", "target_type": "issue", "issue_iid": 5},
+        source_trait="sync",
+    )
+
+    prompt = build_engine_prompt(event)
+    assert "issue #5" in prompt
+    assert "MR" not in prompt
+    assert "Bug report" in prompt
+
+
+def test_build_engine_prompt_note_on_mr_includes_comment_and_ref() -> None:
+    from ach_agent.main import build_engine_prompt
+
+    event = MessageEvent(
+        idempotency_key="k",
+        session_key="42:7",
+        channel_name="gl",
+        payload={
+            "object_kind": "note",
+            "project": {"id": 42},
+            "user": {"username": "alice"},
+            "object_attributes": {"noteable_type": "MergeRequest", "note": "please rebase"},
+            "merge_request": {"iid": 7},
+        },
+        delivery_context={"project_id": 42, "kind": "note", "target_type": "mr", "mr_iid": 7},
+        source_trait="sync",
+    )
+
+    prompt = build_engine_prompt(event)
+    assert "please rebase" in prompt
+    assert "MR !7" in prompt
+    assert "Review MR !." not in prompt
+
+
+def test_build_engine_prompt_note_on_issue_includes_comment_and_ref() -> None:
+    from ach_agent.main import build_engine_prompt
+
+    event = MessageEvent(
+        idempotency_key="k",
+        session_key="42:issue:5",
+        channel_name="gl",
+        payload={
+            "object_kind": "note",
+            "project": {"id": 42},
+            "user": {"username": "bob"},
+            "object_attributes": {"noteable_type": "Issue", "note": "still broken"},
+            "issue": {"iid": 5},
+        },
+        delivery_context={
+            "project_id": 42,
+            "kind": "note",
+            "target_type": "issue",
+            "issue_iid": 5,
+        },
+        source_trait="sync",
+    )
+
+    prompt = build_engine_prompt(event)
+    assert "still broken" in prompt
+    assert "issue #5" in prompt
 
 
 # ---------------------------------------------------------------------------

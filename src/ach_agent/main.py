@@ -154,6 +154,16 @@ def _open_dedup_store(cfg: Any) -> Any:
             return InMemoryDedupStore()
 
 
+def _log_engine_tool(update: OpenCodeToolUpdate) -> None:
+    """Default on_tool sink for channel invocations.
+
+    run_invocation calls this as each tool moves running→completed/error. Wired only when
+    the channel provides no on_tool of its own (--debug/console keep their own streaming
+    sinks), so a channel turn shows the tools it ran instead of dead air.
+    """
+    log.info("engine: tool", tool=update.tool_name, status=update.state.status)
+
+
 def build_engine_prompt(
     event: MessageEvent,
     channel_cfg: Any = None,
@@ -490,7 +500,17 @@ def _make_engine_runner(
             # Optional tool-lifecycle sink (the --debug console shows "⚙ running <tool>"
             # so a long-blocking tool call isn't dead air).
             on_tool = event.delivery_context.get("on_tool")
+            # Default observability sink: channels wire no on_tool (only --debug does), so
+            # without this a channel turn shows nothing about the tools it ran.
+            if on_tool is None:
+                on_tool = _log_engine_tool
             reuse = getattr(ch_cfg, "session", "auto") != "none"
+            log.info(
+                "engine: prompt dispatched",
+                channel=event.channel_name,
+                session_key=event.session_key,
+                prompt=full_prompt,
+            )
             obj = await run_invocation(
                 server=server,
                 session_id=event.session_key,
@@ -504,6 +524,13 @@ def _make_engine_runner(
             )
 
             text = str(obj.get("text", ""))
+            log.info(
+                "engine: terminal result",
+                channel=event.channel_name,
+                session_key=event.session_key,
+                action=obj.get("action"),
+                text=text,
+            )
 
             if future is not None:
                 # Reply mode: resolve the future the route is awaiting.

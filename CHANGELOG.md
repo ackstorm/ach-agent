@@ -54,6 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Webhook config key `gitlab_events` renamed to camelCase `gitlabEvents`.
 
 ### Fixed
+- **HTTP server always boots** so `healthz`/`readyz`/`metrics` are reachable for every config —
+  including cron-only / queue-only agents with no inbound HTTP channel (CONTRACT §4). Previously the
+  server was gated on a webhook/a2a channel, so k8s liveness/readiness probes could kill those pods.
 - Messages are accepted independently of engine readiness (the acceptance path no longer blocks on a
   warm engine), and the warm engine pool is stopped on graceful shutdown (no orphaned opencode).
 - `CODEMEM_PROJECT` is pinned so codemem cross-session recall works; the engine HOME layout uses the

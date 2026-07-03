@@ -113,9 +113,7 @@ class _SqliteSessionMap(MutableMapping[str, str]):
             raise KeyError(key)
         # Bump recency so an actively-read key survives LRU eviction (see __setitem__).
         try:
-            self._con.execute(
-                "UPDATE oc_sessions SET last_used=? WHERE key=?", (time.time(), key)
-            )
+            self._con.execute("UPDATE oc_sessions SET last_used=? WHERE key=?", (time.time(), key))
             self._con.commit()
         except sqlite3.Error:
             log.warning("session map: last_used bump failed", key=key, exc_info=True)
@@ -133,8 +131,7 @@ class _SqliteSessionMap(MutableMapping[str, str]):
     def __setitem__(self, key: str, value: str) -> None:
         try:
             self._con.execute(
-                "INSERT OR REPLACE INTO oc_sessions (key, oc_session_id, last_used) "
-                "VALUES (?,?,?)",
+                "INSERT OR REPLACE INTO oc_sessions (key, oc_session_id, last_used) VALUES (?,?,?)",
                 (key, value, time.time()),
             )
             # Bound the table: keep only the maxsize most-recently-used rows (the row just
@@ -168,16 +165,11 @@ class _SqliteSessionMap(MutableMapping[str, str]):
         return str(row[0])
 
     def __contains__(self, key: object) -> bool:
-        row = self._con.execute(
-            "SELECT 1 FROM oc_sessions WHERE key=?", (key,)
-        ).fetchone()
+        row = self._con.execute("SELECT 1 FROM oc_sessions WHERE key=?", (key,)).fetchone()
         return row is not None
 
     def __iter__(self) -> Iterator[str]:
-        return (
-            str(r[0])
-            for r in self._con.execute("SELECT key FROM oc_sessions").fetchall()
-        )
+        return (str(r[0]) for r in self._con.execute("SELECT key FROM oc_sessions").fetchall())
 
     def __len__(self) -> int:
         row = self._con.execute("SELECT COUNT(*) FROM oc_sessions").fetchone()

@@ -78,7 +78,7 @@ _MODEL_ENDPOINT_PREFIX: dict[str, str] = {
 
 CONFIG_PATH_ENV = "ACH_CONFIG_PATH"
 DEFAULT_CONFIG_PATH = "/etc/ach-agent/config.json"
-PID_FILE = Path("/var/run/ach-agent.pid")
+PID_FILE = Path("/tmp/ach-agent.pid")
 
 
 def _write_pid_file(pid_path: Path) -> None:
@@ -159,6 +159,43 @@ def _open_dedup_store(cfg: Any) -> Any:
         except Exception:
             # Final fallback: in-memory (degraded mode, DB path still unusable)
             return InMemoryDedupStore()
+
+
+def _open_session_store(cfg: Any) -> Any:
+    """Select the pool's session_key → opencode-session map per persistence config.
+
+    persistence.enabled=false → in-memory _LRUSessionMap (volatile, current behavior).
+    persistence.enabled=true  → _SqliteSessionMap on mountPath/state/state.db, so
+      channel.session='auto' continuity survives a full harness restart; bounded to
+      maxsize rows (LRU by last_used).
+
+    Fail-OPEN (unlike _open_dedup_store, which fail-CLOSES): a missing mount or a DB
+    error degrades to the in-memory map + WARN + PERSISTENCE_DEGRADED, because losing
+    conversational continuity is a soft degrade, not a duplicate-firing hazard.
+
+    Call AFTER _open_dedup_store: that opens/repairs state.db first, so this second WAL
+    connection just adds the oc_sessions table to an already-valid file.
+    """
+    from ach_agent.engine.pool import _LRUSessionMap, _SqliteSessionMap
+    from ach_agent.router.metrics import PERSISTENCE_DEGRADED
+
+    if not cfg.persistence.enabled:
+        return _LRUSessionMap()
+
+    db_path = Path(cfg.persistence.mount_path) / "state" / "state.db"
+    try:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        store = _SqliteSessionMap(db_path)
+        log.info("durable session map opened", db_path=str(db_path), rows=len(store))
+        return store
+    except Exception as exc:  # noqa: BLE001 — fail-open to in-memory (degraded, not fatal)
+        log.warning(
+            "session map open failed — using in-memory (fail-open)",
+            db_path=str(db_path),
+            error=str(exc),
+        )
+        PERSISTENCE_DEGRADED.inc()
+        return _LRUSessionMap()
 
 
 def _clean_tool_name(name: str) -> str:
@@ -1161,7 +1198,12 @@ async def main(
         # capability.filter.exclude.tools — disabled in opencode.json (withheld from model).
         exclude_tools=cfg.capability.filter.exclude.tools,
     )
-    pool = EnginePool()
+    # D-03/D-04: dedup store first — it opens/repairs state.db (fail-closed on a bad
+    # mount). Then the session map shares that now-valid file (fail-open). The pool
+    # owns the session map so run_invocation reuses opencode sessions across restarts.
+    dedup_store = _open_dedup_store(cfg)
+    session_store = _open_session_store(cfg)
+    pool = EnginePool(oc_sessions=session_store)
 
     # Best-effort stats sink (harness-local, ACH_STATS_* — never part of CONTRACT_v3).
     # Unset ACH_STATS_REDIS_URL → Prometheus-only, no queue/writer.
@@ -1207,8 +1249,6 @@ async def main(
     )
 
     # Step 6 (cont.): construct Router with all limits from config (RTR-03/04)
-    # D-03/D-04: select dedup store from persistence config (fail-split policy).
-    dedup_store = _open_dedup_store(cfg)
     router = Router(
         max_concurrent_invocations=cfg.limits.max_concurrent_invocations,
         max_queued_total=cfg.limits.max_queued_total,
@@ -1293,6 +1333,8 @@ async def main(
         finally:
             # Stop any warm-held engine server (idle TTL may not have elapsed at EOF).
             await pool.stop_all()
+            if hasattr(pool.oc_sessions, "close"):
+                pool.oc_sessions.close()
             await stop_model_proxies()
             if mcp_proxy is not None:
                 await mcp_proxy.stop()
@@ -1494,6 +1536,8 @@ async def main(
         # own process group) would survive the harness exit and orphan (leaking the port).
         # Idempotent; also cancels the pending TTL tasks.
         await pool.stop_all()
+        if hasattr(pool.oc_sessions, "close"):
+            pool.oc_sessions.close()
         # Plan 2: tear down the localhost proxies (closes their aiohttp runners/sessions).
         await stop_model_proxies()
         if mcp_proxy is not None:

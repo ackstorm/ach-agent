@@ -86,6 +86,7 @@ class FileBackedDedupStore:
         self._con = sqlite3.connect(str(db_path), check_same_thread=False)
         self._con.execute("PRAGMA journal_mode=WAL")
         self._con.execute("PRAGMA synchronous=NORMAL")
+        self._con.execute("PRAGMA busy_timeout=5000")  # state.db shared w/ session map — wait
         self._con.execute(
             "CREATE TABLE IF NOT EXISTS dedup (key TEXT PRIMARY KEY, expiry REAL NOT NULL)"
         )

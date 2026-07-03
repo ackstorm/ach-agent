@@ -24,7 +24,7 @@ async def test_codemem_type_returns_empty_2tuple(monkeypatch: pytest.MonkeyPatch
         called["prepare_memory"] = True
         return (True, "## Memory\nx")
 
-    monkeypatch.setattr("ach_agent.memory.adapter.prepare_memory", _boom)
+    monkeypatch.setattr("ach_agent.memory.hindsight.prepare_memory", _boom)
 
     # CodememParams() is now valid — db_path defaults to None, project defaults to "ach-agent"
     params = CodememParams(db_path="/var/lib/codemem/a.db")
@@ -43,7 +43,7 @@ async def test_hindsight_type_uses_probe(monkeypatch: pytest.MonkeyPatch) -> Non
     async def _ok(_cfg: object) -> tuple[bool, str]:
         return (True, "## Memory\nx")
 
-    monkeypatch.setattr("ach_agent.memory.adapter.prepare_memory", _ok)
+    monkeypatch.setattr("ach_agent.memory.hindsight.prepare_memory", _ok)
 
     cfg = HindsightMemory(type="hindsight", hindsight=HindsightParams(endpoint="http://mem:8080"))
     mcp_servers, memory_prompt = await m.select_memory_wiring_async(cfg)

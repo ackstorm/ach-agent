@@ -138,7 +138,7 @@ async def test_hindsight_path_produces_no_codemem_entry(
     async def _ok(_cfg: object) -> tuple[bool, str]:
         return (True, "## Memory\nx")
 
-    monkeypatch.setattr("ach_agent.memory.adapter.prepare_memory", _ok)
+    monkeypatch.setattr("ach_agent.memory.hindsight.prepare_memory", _ok)
 
     cfg_mem = HindsightMemory(type="hindsight", hindsight=HindsightParams(endpoint="http://mem:8080"))
     mcp_servers, memory_prompt = await select_memory_wiring_async(cfg_mem)

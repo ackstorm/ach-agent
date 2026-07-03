@@ -495,7 +495,7 @@ async def select_memory_wiring_async(
     if not isinstance(memory_cfg, HindsightMemory):
         return [], ""
 
-    from ach_agent.memory.adapter import prepare_memory
+    from ach_agent.memory.hindsight import prepare_memory
 
     mem_available, memory_prompt = await prepare_memory(memory_cfg)
     mcp_servers = [memory_cfg.hindsight.endpoint] if mem_available else []
@@ -1282,7 +1282,7 @@ async def main(
                 # remote MCP server is resolved here so the pre-warmed opencode.json matches.
                 warm_mcp_servers: list[str] = []
                 if isinstance(cfg.memory, HindsightMemory):
-                    from ach_agent.memory.adapter import prepare_memory
+                    from ach_agent.memory.hindsight import prepare_memory
 
                     _mem_ok, _ = await prepare_memory(cfg.memory)
                     if _mem_ok:

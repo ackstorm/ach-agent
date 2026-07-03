@@ -23,7 +23,7 @@ async def test_prompt_injection() -> None:
     and an EngineConfig built with the result CONTAINS the memory MCP server entry."""
     from ach_agent.config.schema import HindsightMemory, HindsightParams
     from ach_agent.engine.lifecycle import EngineConfig
-    from ach_agent.memory.adapter import prepare_memory
+    from ach_agent.memory.hindsight import prepare_memory
 
     endpoint = "http://hindsight.svc:8080"
     summary_text = "### coding-habits\nPrefers test-driven development."
@@ -87,7 +87,7 @@ async def test_fail_open() -> None:
 
     from ach_agent.config.schema import HindsightMemory, HindsightParams
     from ach_agent.engine.lifecycle import EngineConfig
-    from ach_agent.memory.adapter import prepare_memory
+    from ach_agent.memory.hindsight import prepare_memory
 
     cfg = HindsightMemory(
         type="hindsight",
@@ -188,7 +188,7 @@ async def test_engine_runner_reachable_branch() -> None:
 
     with (
         patch(
-            "ach_agent.memory.adapter.prepare_memory",
+            "ach_agent.memory.hindsight.prepare_memory",
             new=AsyncMock(return_value=(True, memory_section)),
         ),
         patch("ach_agent.engine.lifecycle.run_invocation", fake_run_invocation),
@@ -271,7 +271,7 @@ async def test_engine_runner_degraded_path() -> None:
     # No exception must propagate (MEM-02 fail-open)
     with (
         patch(
-            "ach_agent.memory.adapter.prepare_memory",
+            "ach_agent.memory.hindsight.prepare_memory",
             new=AsyncMock(return_value=(False, degraded_section)),
         ),
         patch("ach_agent.engine.lifecycle.run_invocation", fake_run_invocation),

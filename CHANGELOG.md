@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Changed
+- **BREAKING: `channel.session` is now a block**, not `auto|none`. Shape:
+  `{key, maxTokens, overflow}` (string shorthand `session: auto|none|"{{ … }}"` still maps to
+  `{key: …}`). **Default changed to `key: "none"`** — conversation memory across turns is now
+  opt-in, not automatic; the operator sets a `{{ }}` key template to enable it (e.g.
+  `{{ payload.task_id }}` for a queue channel). `none` deletes its opencode session post-turn
+  instead of leaking one row per event into the persistent home.
+- `maxTokens` + `overflow: compact|rotate` bound conversation growth: `compact` calls
+  `POST /session/{id}/compact` in place (default once memory is opted into); `rotate` evicts the
+  LRU entry and deletes the old session.
+
+### Added
+- **Persistent `session_key` → opencode-session map**, pool-owned (LRU), with a 404 stale-id
+  fallback: `channel.session: auto`-style continuity now survives idle-TTL opencode server
+  restarts instead of resetting to a fresh conversation.
+- `oc_session_id` exposed via stats for observability into which opencode session a turn landed on.
+- **Stats dashboard**: daily usage chart (spend/sessions/tokens toggle), a sessions-this-month
+  breakdown panel, and 7d/30d/90d range presets on the Leaderboard UI.
+
+### Fixed
+- Session-stat `model` field now comes from the configured engine, not the opencode reply object
+  (which never carried model metadata) — it no longer reports `"unknown"`.
+
+See `docs/references/2026-07-02-session-identity-and-bounds.md` for the full design rationale.
+
 ## [0.5.0] - 2026-07-02
 
 ### Security

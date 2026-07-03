@@ -131,9 +131,13 @@ class StatsSink:
 
 
 def build_session_stat(
-    event: Any, obj: dict[str, Any], turn_stats: dict[str, Any], *, ts_ms: int
+    event: Any, obj: dict[str, Any], turn_stats: dict[str, Any], *, model: str, ts_ms: int
 ) -> SessionStat:
-    """Map the engine turn-summary outputs to a SessionStat. Pure; unit-testable."""
+    """Map the engine turn-summary outputs to a SessionStat. Pure; unit-testable.
+
+    model comes from the configured engine (obj is the agent's terminal-contract
+    reply — action/text — it never carries model metadata).
+    """
     usage = turn_stats.get("usage")
     aborted = bool(turn_stats.get("aborted"))
     return SessionStat.build(
@@ -141,7 +145,7 @@ def build_session_stat(
         session_key=getattr(event, "session_key", "unknown"),
         channel=getattr(event, "channel_name", "unknown"),
         source=getattr(event, "source", getattr(event, "channel_name", "unknown")),
-        model=str(obj.get("model", "unknown")),
+        model=model,
         provider="unknown",  # provider is resolved by the stats service's model-map (A2), not here
         raw_task=str(obj.get("text", "")),
         input_tokens=getattr(usage, "input_tokens", 0),

@@ -652,7 +652,13 @@ def _make_engine_runner(
                     await discard_oc_session(server, _oc_sid)
             if stats_sink is not None:
                 stats_sink.record(
-                    build_session_stat(event, obj, turn_stats, ts_ms=int(time.time() * 1000))
+                    build_session_stat(
+                        event,
+                        obj,
+                        turn_stats,
+                        model=engine_cfg.model,
+                        ts_ms=int(time.time() * 1000),
+                    )
                 )
 
             if future is not None:

@@ -351,6 +351,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#follow-ups-063" class="md-nav__link">
+    <span class="md-ellipsis">
+      Follow-ups (0.6.3)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#note-the-phantom-hydration-names-ach-side-not-the-harness" class="md-nav__link">
     <span class="md-ellipsis">
       Note — the "phantom" hydration names (ACH-side, not the harness)
@@ -458,6 +467,18 @@ openai path already drops <code>Authorization</code>).</p>
 <li>Test: <code>test_write_opencode_config_provider_by_model_type</code> locks the gemini + openai paths.</li>
 </ul>
 <p><code>model_type</code> defaults to <code>openai</code>, so existing configs / tests are unchanged.</p>
+<h2 id="follow-ups-063">Follow-ups (0.6.3)</h2>
+<ul>
+<li><strong><code>provider.&lt;id&gt;.whitelist = [&lt;model&gt;]</code></strong> — restricts opencode's model picker (notably the
+  TUI) to the single configured model. A built-in provider otherwise exposes its whole catalog,
+  letting the TUI / agent pick a model ACH never granted.</li>
+<li><strong><code>model.params</code> → per-model <code>options</code></strong> (<code>provider.&lt;id&gt;.models.&lt;model&gt;.options</code>), not
+  provider-level options. opencode forwards model options as per-call <code>providerOptions</code>, so this
+  is where reasoning/generation knobs apply: gemini <code>thinkingConfig.thinkingLevel</code> (<code>low|high</code>) /
+  <code>thinkingBudget</code> (tokens), openai <code>reasoningEffort</code>, <code>temperature</code>. Provider-level options stay
+  connection-only (<code>apiKey</code>/<code>baseURL</code>). Verified live: a cron agent with
+  <code>params.thinkingConfig.thinkingLevel: low</code> renders correctly and the gemini turn succeeds.</li>
+</ul>
 <h2 id="note-the-phantom-hydration-names-ach-side-not-the-harness">Note — the "phantom" hydration names (ACH-side, not the harness)</h2>
 <p><code>/platform/hydrate</code> returns both <code>gemini.gemini-flash-latest</code> <strong>and</strong> bare
 <code>gemini-flash-latest</code>, but litellm's <code>/v1/models</code> catalog only lists the dotted

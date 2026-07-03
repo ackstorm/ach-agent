@@ -69,7 +69,6 @@ ENV PATH="/opt/codemem/bin:${PATH}"
 # present-but-broken codemem would pass the probe and crash opencode's stdio child at runtime.
 # Failing the build here closes the "broken (not missing)" half of the fail-open invariant.
 RUN codemem --version
-COPY src/ ./src/
 
 # Bake a minimal default contract so a collaborator can run the image with only an EK
 # and an ACH endpoint (no mounted files):

@@ -21,7 +21,6 @@ RTR-06: a2a-sdk imports are function-scoped (never module-level), mirroring
 from __future__ import annotations
 
 import asyncio
-import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -37,67 +36,6 @@ log = structlog.get_logger(__name__)
 # RTR-06: a2a imports are ONLY inside functions/methods below — never module level.
 # Verified by: grep -nE "^import a2a|^from a2a" src/ach_agent/engine/a2a_egress.py
 #   → zero results.
-
-
-# ---------------------------------------------------------------------------
-# A2ANotificationStore — in-memory task → completion map (ported verbatim)
-# ---------------------------------------------------------------------------
-
-
-class A2ANotificationStore:
-    """Tracks pending async A2A tasks and resolves them via push notifications."""
-
-    def __init__(self, ttl_seconds: float = 3600.0) -> None:
-        self._ttl = ttl_seconds
-        self._futures: dict[str, asyncio.Future[dict[str, Any]]] = {}
-        self._registered_at: dict[str, float] = {}
-        self._log = log.bind(component="A2ANotificationStore")
-
-    def register_task(self, task_id: str) -> asyncio.Future[dict[str, Any]]:
-        """Register a pending task. Returns a Future resolved on notification."""
-        loop = asyncio.get_running_loop()
-        fut: asyncio.Future[dict[str, Any]] = loop.create_future()
-        self._futures[task_id] = fut
-        self._registered_at[task_id] = time.monotonic()
-        self._log.info("registered task for push notification", task_id=task_id)
-        return fut
-
-    def notify_completion(self, task_id: str, result: dict[str, Any]) -> bool:
-        """Notify that a task completed. Returns True if task was registered."""
-        fut = self._futures.pop(task_id, None)
-        self._registered_at.pop(task_id, None)
-        if fut is None:
-            self._log.debug("notification for unknown task", task_id=task_id)
-            return False
-        if not fut.done():
-            fut.set_result(result)
-            self._log.info("resolved task via push notification", task_id=task_id)
-        return True
-
-    async def wait_for_task(self, task_id: str, timeout: float = 300.0) -> dict[str, Any] | None:
-        """Wait for a push notification for task_id. None on timeout/unknown."""
-        fut = self._futures.get(task_id)
-        if fut is None:
-            self._log.warning("wait_for_task: task not registered", task_id=task_id)
-            return None
-        try:
-            return await asyncio.wait_for(asyncio.shield(fut), timeout=timeout)
-        except TimeoutError:
-            self._log.info("timeout waiting for push notification", task_id=task_id)
-            return None
-
-    def cleanup_expired(self) -> int:
-        """Remove expired tasks. Returns count removed."""
-        now = time.monotonic()
-        expired = [tid for tid, ts in self._registered_at.items() if now - ts >= self._ttl]
-        for tid in expired:
-            fut = self._futures.pop(tid, None)
-            self._registered_at.pop(tid, None)
-            if fut and not fut.done():
-                fut.cancel()
-        if expired:
-            self._log.info("cleaned up expired registrations", count=len(expired))
-        return len(expired)
 
 
 # ---------------------------------------------------------------------------
@@ -290,14 +228,13 @@ def build_a2a_tools(
     agents: list[A2AAgent],
     ek: str | None = None,
     client_factory: Callable[[A2AAgent], A2AAgentClient] | None = None,
-    _store: A2ANotificationStore | None = None,
 ) -> list[ToolSpec]:
     """Build MCP ToolSpecs that let opencode call peer A2A agents.
 
     For each agent (name = ``agent.id``) three tools are produced:
       - ``a2a_{name}``        blocking: send_task → {"ok", "result"}
       - ``a2a_{name}_async``  fire-and-forget: send_task_async → {"ok", "task_id"}
-      - ``a2a_{name}_status`` poll/wait: get_task_status | store.wait_for_task
+      - ``a2a_{name}_status`` poll/wait: get_task_status | client.wait_task
 
     Handlers NEVER raise — peer/timeout errors become {"ok": False, "error": ...}.
 
@@ -305,26 +242,22 @@ def build_a2a_tools(
         agents:         peer agents from the hydration manifest.
         ek:             ACH ek_ injected as the peer auth header (stays in harness).
         client_factory: test injection hook; default builds a real A2AAgentClient.
-        _store:         shared notification store (one per call); injectable for tests.
     """
     if client_factory is None:
 
         def client_factory(agent: A2AAgent) -> A2AAgentClient:
             return A2AAgentClient(url=agent.endpoint, api_key=ek, timeout=120.0)
 
-    store = _store if _store is not None else A2ANotificationStore()
     tools: list[ToolSpec] = []
 
     for agent in agents:
         name = agent.id
         client = client_factory(agent)
-        tools.extend(_make_agent_tools(name, client, store))
+        tools.extend(_make_agent_tools(name, client))
     return tools
 
 
-def _make_agent_tools(
-    name: str, client: A2AAgentClient, store: A2ANotificationStore
-) -> list[ToolSpec]:
+def _make_agent_tools(name: str, client: A2AAgentClient) -> list[ToolSpec]:
     """Build the three ToolSpecs for one peer, binding name/client per closure.
 
     Mirrors ackbot's ``make_blocking(name)`` factory pattern — defining the
@@ -343,7 +276,6 @@ def _make_agent_tools(
     async def fire(prompt: str, context_id: str | None = None) -> dict[str, Any]:
         try:
             task_id = await client.send_task_async(prompt, context_id=context_id)
-            store.register_task(task_id)
             return {"ok": True, "task_id": task_id}
         except Exception as exc:  # noqa: BLE001 — tools must never raise
             log.warning("a2a egress async call failed", agent=name, error=str(exc))
@@ -352,22 +284,15 @@ def _make_agent_tools(
     async def status(task_id: str, wait: bool = False, timeout: float = 300.0) -> dict[str, Any]:
         try:
             if wait:
-                resolved = await store.wait_for_task(task_id, timeout=timeout)
-                if resolved is None:
-                    return {
-                        "ok": False,
-                        "error": f"timeout waiting for task {task_id}",
-                    }
-                return {
-                    "ok": True,
-                    "status": resolved.get("status"),
-                    "result": resolved.get("result"),
-                }
-            polled = await client.get_task_status(task_id)
+                resolved = await client.wait_task(task_id, timeout=timeout)
+                if resolved.get("status") == "timeout":
+                    return {"ok": False, "error": resolved.get("error")}
+            else:
+                resolved = await client.get_task_status(task_id)
             return {
                 "ok": True,
-                "status": polled.get("status"),
-                "result": polled.get("result"),
+                "status": resolved.get("status"),
+                "result": resolved.get("result"),
             }
         except Exception as exc:  # noqa: BLE001 — tools must never raise
             log.warning("a2a egress status call failed", agent=name, error=str(exc))

@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Any
 
 from ach_agent.engine.a2a_egress import (
-    A2ANotificationStore,
     ToolSpec,
     build_a2a_tools,
 )
@@ -63,7 +62,7 @@ class FakeClient:
         return self.status_result
 
     async def wait_task(
-        self, task_id: str, timeout: float = 300.0
+        self, task_id: str, timeout: float = 300.0, poll_interval: float = 2.0
     ) -> dict[str, Any]:
         self.calls.append(("wait_task", (task_id, timeout)))
         if self.raises:
@@ -178,33 +177,40 @@ async def test_status_tool_no_wait_polls() -> None:
     assert ("get_task_status", ("t1",)) in client.calls
 
 
-async def test_status_tool_wait_resolves_via_notification_store() -> None:
-    import asyncio
-
-    # Shared store is internal; we drive completion by first registering the
-    # task through the async tool, then notifying via the store the tools share.
-    client = FakeClient(async_task_id="t-wait")
-    store = A2ANotificationStore()
-    tools = build_a2a_tools(
-        [_agent("rev")], client_factory=_factory(client), _store=store
+async def test_status_tool_wait_polls_via_client_wait_task() -> None:
+    client = FakeClient(
+        status_result={
+            "task_id": "t-wait",
+            "status": "completed",
+            "result": "done!",
+            "error": None,
+        }
     )
-    # register the task
-    await _by_name(tools, "a2a_rev_async").handler(prompt="go")
-
-    async def _notify() -> None:
-        await asyncio.sleep(0.01)
-        store.notify_completion(
-            "t-wait", {"status": "completed", "result": "done!"}
-        )
-
-    notifier = asyncio.create_task(_notify())
+    tools = build_a2a_tools([_agent("rev")], client_factory=_factory(client))
     out = await _by_name(tools, "a2a_rev_status").handler(
         task_id="t-wait", wait=True, timeout=5.0
     )
-    await notifier
     assert out["ok"] is True
     assert out["status"] == "completed"
     assert out["result"] == "done!"
+    assert ("wait_task", ("t-wait", 5.0)) in client.calls
+
+
+async def test_status_tool_wait_timeout_maps_to_not_ok() -> None:
+    client = FakeClient(
+        status_result={
+            "task_id": "t-slow",
+            "status": "timeout",
+            "result": None,
+            "error": "timeout after 5.0s waiting for task",
+        }
+    )
+    tools = build_a2a_tools([_agent("rev")], client_factory=_factory(client))
+    out = await _by_name(tools, "a2a_rev_status").handler(
+        task_id="t-slow", wait=True, timeout=5.0
+    )
+    assert out["ok"] is False
+    assert "timeout" in out["error"]
 
 
 async def test_status_tool_error_is_caught() -> None:
@@ -235,28 +241,3 @@ async def test_per_agent_closures_bind_correct_client() -> None:
     out_b = await _by_name(tools, "a2a_beta").handler(prompt="x")
     assert out_a == {"ok": True, "result": "from-alpha"}
     assert out_b == {"ok": True, "result": "from-beta"}
-
-
-# ---------------------------------------------------------------------------
-# notification store unit behaviour
-# ---------------------------------------------------------------------------
-
-
-async def test_notification_store_wait_unknown_returns_none() -> None:
-    store = A2ANotificationStore()
-    assert await store.wait_for_task("nope", timeout=0.1) is None
-
-
-async def test_notification_store_register_then_notify() -> None:
-    import asyncio
-
-    store = A2ANotificationStore()
-    store.register_task("t1")
-
-    async def _notify() -> None:
-        await asyncio.sleep(0.01)
-        assert store.notify_completion("t1", {"result": "ok"}) is True
-
-    asyncio.create_task(_notify())
-    got = await store.wait_for_task("t1", timeout=5.0)
-    assert got == {"result": "ok"}

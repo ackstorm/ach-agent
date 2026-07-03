@@ -28,7 +28,7 @@ wheels = [
 
 [[package]]
 name = "ach-agent"
-version = "0.6.3"
+version = "0.6.4"
 source = { editable = "." }
 dependencies = [
     { name = "a2a-sdk" },

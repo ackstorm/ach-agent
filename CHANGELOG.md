@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.6.4] - 2026-07-03
+
+### Changed
+- **Repo-wide dead-code sweep** (ponytail audit): dropped unused `A2ANotificationStore`,
+  `SanitizedEnv`, `OnKillCallback`, `_trace_sse` wrapper, `memory/adapter.py` re-export shim,
+  router `AtomicCounter` (→ plain `int`), dead `Lane.is_done`, an inert channel-registration
+  loop in `main.py`, the D-03 `user_consented` throwaway field, and `ach_stats`' unused
+  `pydantic` dependency. Data-driven rewrite of the channel type/block coherence validator
+  (same error messages). No behavior change — net ~-420 lines.
+
 ## [0.6.3] - 2026-07-03
 
 ### Added

@@ -375,3 +375,75 @@ def test_pool_owns_oc_sessions_map() -> None:
     pool = EnginePool()
     assert isinstance(pool.oc_sessions, _LRUSessionMap)
     assert len(pool.oc_sessions) == 0
+
+
+# ---------------------------------------------------------------------------
+# _SqliteSessionMap (session_key → ses_ persisted to state.db, disk-resident)
+# ---------------------------------------------------------------------------
+
+
+def test_sqlite_session_map_survives_reopen(tmp_path):
+    """Values written before close() are present after a fresh open (restart)."""
+    from ach_agent.engine.pool import _SqliteSessionMap
+
+    db = tmp_path / "state.db"
+    m = _SqliteSessionMap(db)
+    m["gitlab:server:42"] = "ses-a"
+    m["cron:nightly"] = "ses-b"
+    m.close()
+
+    m2 = _SqliteSessionMap(db)  # simulate a harness restart
+    assert m2.get("gitlab:server:42") == "ses-a"
+    assert m2.get("cron:nightly") == "ses-b"
+    m2.close()
+
+
+def test_sqlite_session_map_get_missing_returns_default(tmp_path):
+    from ach_agent.engine.pool import _SqliteSessionMap
+
+    m = _SqliteSessionMap(tmp_path / "state.db")
+    assert m.get("nope") is None
+    assert m.get("nope", "fallback") == "fallback"
+    m.close()
+
+
+def test_sqlite_session_map_evicts_lru_keeps_active(tmp_path):
+    """Over maxsize → the LEAST-recently-USED row is evicted; a read-active key survives."""
+    from ach_agent.engine.pool import _SqliteSessionMap
+
+    db = tmp_path / "state.db"
+    m = _SqliteSessionMap(db, maxsize=2)
+    m["a"] = "1"
+    m["b"] = "2"
+    assert m.get("a") == "1"  # bump "a" → "b" is now least-recently-used
+    m["c"] = "3"  # over cap → evicts "b", not the just-read "a"
+    assert "a" in m
+    assert "b" not in m
+    assert m.get("c") == "3"
+    m.close()
+
+
+def test_sqlite_session_map_cap_bounds_row_count(tmp_path):
+    from ach_agent.engine.pool import _SqliteSessionMap
+
+    m = _SqliteSessionMap(tmp_path / "state.db", maxsize=3)
+    for i in range(5):
+        m[f"k{i}"] = f"v{i}"
+    assert len(m) == 3  # only the 3 most-recently-used rows remain
+    m.close()
+
+
+def test_sqlite_session_map_pop_deletes_row(tmp_path):
+    """pop() removes the row so it does not reappear after reopen."""
+    from ach_agent.engine.pool import _SqliteSessionMap
+
+    db = tmp_path / "state.db"
+    m = _SqliteSessionMap(db)
+    m["lane-1"] = "ses-a"
+    assert m.pop("lane-1", None) == "ses-a"
+    assert m.pop("lane-1", None) is None  # idempotent
+    m.close()
+
+    m2 = _SqliteSessionMap(db)
+    assert m2.get("lane-1") is None
+    m2.close()

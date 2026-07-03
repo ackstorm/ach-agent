@@ -25,8 +25,10 @@ Constraint: No router or Hermes imports (D-08, RTR-06).
 from __future__ import annotations
 
 import asyncio
+import sqlite3
+import time
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator, MutableMapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -48,7 +50,7 @@ class _LRUSessionMap(OrderedDict[str, str]):
     404, handled by run_invocation's recreate-and-retry guard).
     """
 
-    def __init__(self, maxsize: int = 256) -> None:
+    def __init__(self, maxsize: int = 1024) -> None:
         super().__init__()
         self.maxsize = maxsize
 
@@ -65,6 +67,125 @@ class _LRUSessionMap(OrderedDict[str, str]):
         self.move_to_end(key)
         while len(self) > self.maxsize:
             self.popitem(last=False)
+
+
+class _SqliteSessionMap(MutableMapping[str, str]):
+    """Disk-resident session_key → opencode session id map, persisted in state.db.
+
+    No in-memory copy: every lookup is an indexed SELECT and every mutation a small
+    write, straight to state.db. A turn does ONE get (+ at most one set) and turns are
+    seconds apart (an LLM call), so per-turn SQL is negligible — and RAM stays flat no
+    matter how many session_keys accumulate. This is what lets channel.session='auto'
+    survive a full harness restart: after a restart a repeat event for the same
+    session_key resolves to the opencode session opencode still holds on its own disk.
+
+    Bounded to ``maxsize`` rows by LEAST-RECENTLY-USED: get() bumps last_used, and each
+    set() prunes everything outside the maxsize most-recently-used rows — so an actively
+    read key (e.g. gitlab:server:42, hit every turn) is never evicted while idle mappings
+    drop. Shares state.db with the dedup store via a second WAL connection (busy_timeout
+    absorbs the rare cross-writer lock).
+
+    Persistence never breaks a turn: a SELECT failure returns the default (→ the caller
+    mints a fresh opencode session, handled by run_invocation's 404 guard); a write
+    failure is swallowed with a WARN.
+    """
+
+    def __init__(self, db_path: Path, maxsize: int = 1024) -> None:
+        self._maxsize = maxsize
+        self._con = sqlite3.connect(str(db_path), check_same_thread=False)
+        self._con.execute("PRAGMA journal_mode=WAL")
+        self._con.execute("PRAGMA synchronous=NORMAL")
+        self._con.execute("PRAGMA busy_timeout=5000")
+        self._con.execute(
+            "CREATE TABLE IF NOT EXISTS oc_sessions "
+            "(key TEXT PRIMARY KEY, oc_session_id TEXT NOT NULL, last_used REAL NOT NULL)"
+        )
+        self._con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_oc_sessions_last_used ON oc_sessions(last_used)"
+        )
+        self._con.commit()
+
+    def __getitem__(self, key: str) -> str:
+        row = self._con.execute(
+            "SELECT oc_session_id FROM oc_sessions WHERE key=?", (key,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(key)
+        # Bump recency so an actively-read key survives LRU eviction (see __setitem__).
+        try:
+            self._con.execute(
+                "UPDATE oc_sessions SET last_used=? WHERE key=?", (time.time(), key)
+            )
+            self._con.commit()
+        except sqlite3.Error:
+            log.warning("session map: last_used bump failed", key=key, exc_info=True)
+        return str(row[0])
+
+    def get(self, key: str, default: str | None = None) -> str | None:  # type: ignore[override]
+        try:
+            return self[key]
+        except KeyError:
+            return default
+        except sqlite3.Error:
+            log.warning("session map: lookup failed (treating as miss)", key=key, exc_info=True)
+            return default
+
+    def __setitem__(self, key: str, value: str) -> None:
+        try:
+            self._con.execute(
+                "INSERT OR REPLACE INTO oc_sessions (key, oc_session_id, last_used) "
+                "VALUES (?,?,?)",
+                (key, value, time.time()),
+            )
+            # Bound the table: keep only the maxsize most-recently-used rows (the row just
+            # inserted has the newest last_used, so it is always among them).
+            self._con.execute(
+                "DELETE FROM oc_sessions WHERE key NOT IN "
+                "(SELECT key FROM oc_sessions ORDER BY last_used DESC LIMIT ?)",
+                (self._maxsize,),
+            )
+            self._con.commit()
+        except sqlite3.Error:
+            log.warning("session map: persist failed", key=key, exc_info=True)
+
+    def __delitem__(self, key: str) -> None:
+        cur = self._con.execute("DELETE FROM oc_sessions WHERE key=?", (key,))
+        self._con.commit()
+        if cur.rowcount == 0:
+            raise KeyError(key)
+
+    def pop(self, key: str, default: str | None = None) -> str | None:  # type: ignore[override]
+        row = self._con.execute(
+            "SELECT oc_session_id FROM oc_sessions WHERE key=?", (key,)
+        ).fetchone()
+        if row is None:
+            return default
+        try:
+            self._con.execute("DELETE FROM oc_sessions WHERE key=?", (key,))
+            self._con.commit()
+        except sqlite3.Error:
+            log.warning("session map: pop-delete failed", key=key, exc_info=True)
+        return str(row[0])
+
+    def __contains__(self, key: object) -> bool:
+        row = self._con.execute(
+            "SELECT 1 FROM oc_sessions WHERE key=?", (key,)
+        ).fetchone()
+        return row is not None
+
+    def __iter__(self) -> Iterator[str]:
+        return (
+            str(r[0])
+            for r in self._con.execute("SELECT key FROM oc_sessions").fetchall()
+        )
+
+    def __len__(self) -> int:
+        row = self._con.execute("SELECT COUNT(*) FROM oc_sessions").fetchone()
+        return int(row[0]) if row else 0
+
+    def close(self) -> None:
+        """Close the SQLite connection (called on harness shutdown)."""
+        self._con.close()
 
 
 class EnginePool:

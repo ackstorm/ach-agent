@@ -57,8 +57,9 @@ test: ## pytest (all tests, excluding e2e)
 _test:
 	uv run pytest tests/ -q --ignore=tests/e2e
 
-.PHONY: test-fast
+.PHONY: test-fast _test-fast
 test-fast: test ## alias of test (kept for hooks / muscle memory)
+_test-fast: _test
 
 .PHONY: conformance _conformance
 conformance: ## Run CONTRACT §6 conformance suite (11 named invariants, D-10)

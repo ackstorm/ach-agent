@@ -244,6 +244,61 @@ def test_cron_no_catchup_after_restart() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Timezone: cron ticks fire at the channel's configured local time, not UTC.
+# ---------------------------------------------------------------------------
+
+
+def test_cron_honors_configured_timezone() -> None:
+    """`0 8 * * *` with timezone Europe/Madrid must fire at 08:00 LOCAL, not 08:00 UTC.
+
+    Regression: the timezone field was parsed but never passed to croniter, so ticks
+    were computed in UTC (08:00 UTC = 10:00 CEST). Asserted DST-proof by checking the
+    tick's hour in Madrid == 8 (holds under both CET and CEST).
+    """
+    from zoneinfo import ZoneInfo
+
+    from ach_agent.channels.cron import CronScheduler
+    from ach_agent.config.schema import ChannelConfig
+
+    raw = {
+        "name": "morning",
+        "type": "cron",
+        "cron": {"schedule": "0 8 * * *", "timezone": "Europe/Madrid"},
+    }
+    channel_cfg = ChannelConfig.model_validate(raw)
+
+    CronScheduler._instance_count = 0
+    scheduler = CronScheduler([channel_cfg], handler=FakeHandler())
+    CronScheduler._instance_count = 0
+
+    from datetime import datetime
+
+    cron = scheduler._slots[0][1]
+    next_tick: datetime = cron.get_next(datetime)
+
+    local = next_tick.astimezone(ZoneInfo("Europe/Madrid"))
+    assert local.hour == 8, (
+        f"cron tick must land at 08:00 Europe/Madrid, got {local.isoformat()} "
+        f"(UTC {next_tick.astimezone(UTC).isoformat()}) — timezone field ignored?"
+    )
+
+
+def test_cron_invalid_timezone_rejected_at_parse() -> None:
+    """Unknown IANA tz fails loud at config-parse (trust boundary), not mid-boot."""
+    import pytest as _pytest
+
+    from ach_agent.config.schema import ChannelConfig
+
+    raw = {
+        "name": "morning",
+        "type": "cron",
+        "cron": {"schedule": "0 8 * * *", "timezone": "Mars/Olympus_Mons"},
+    }
+    with _pytest.raises(Exception, match="timezone"):
+        ChannelConfig.model_validate(raw)
+
+
+# ---------------------------------------------------------------------------
 # D-09 / SC#3: CronScheduler singleton invariant
 # ---------------------------------------------------------------------------
 

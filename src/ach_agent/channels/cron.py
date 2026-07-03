@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 import structlog
 from croniter import croniter
@@ -66,8 +67,14 @@ class CronScheduler:
         # Build slots: (channel_cfg, croniter_obj, next_dt)
         # next_dt starts as None; computed lazily on first _run() iteration.
         # DUR-04: croniter initialized from now() — get_next() always returns future tick.
+        # Anchor croniter to a tz-aware "now" in the channel's configured timezone so
+        # `0 8 * * *` fires at 08:00 local, not 08:00 UTC (schema validates the tz).
+        # get_next(datetime) then returns tz-aware ticks; subtraction against
+        # datetime.now(UTC) in _run() stays correct (both aware).
         self._slots: list[tuple[ChannelConfig, croniter, datetime | None]] = [
-            (ch, croniter(ch.cron.schedule, datetime.now(UTC)), None) for ch in channels if ch.cron
+            (ch, croniter(ch.cron.schedule, datetime.now(ZoneInfo(ch.cron.timezone))), None)
+            for ch in channels
+            if ch.cron
         ]
         self._handler = handler
         self._task: asyncio.Task[None] | None = None

@@ -407,6 +407,22 @@ class CronBlock(BaseModel):
     schedule: str  # cron expression, e.g. "* * * * *"
     timezone: str = "UTC"  # IANA tz, e.g. "Europe/Madrid"
 
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, v: str) -> str:
+        """Reject unknown IANA zones at parse time (trust boundary).
+
+        Without this, an invalid tz surfaces only when CronScheduler builds
+        ZoneInfo(v) at boot — an obscure ZoneInfoNotFoundError mid-startup.
+        """
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown IANA timezone: {v!r}") from exc
+        return v
+
 
 class QueueBlock(BaseModel):
     """CONTRACT_v3 §2 queue channel sub-block (redis-only in v1, §7)."""

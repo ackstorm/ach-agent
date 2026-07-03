@@ -18,7 +18,7 @@
     
     
       
-        <title>Session identity + bounds (channel.session block) - ach-agent</title>
+        <title>Stats & observability — sink design, stream contract, tool trace (2026-07-03) - ach-agent</title>
       
     
     
@@ -70,7 +70,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#session-identity-bounds-channelsession-block" class="md-skip">
+        <a href="#stats-observability-sink-design-stream-contract-tool-trace-2026-07-03" class="md-skip">
           Skip to content
         </a>
       
@@ -106,7 +106,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Session identity + bounds (channel.session block)
+              Stats &amp; observability — sink design, stream contract, tool trace (2026-07-03)
             
           </span>
         </div>
@@ -324,27 +324,36 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#decision" class="md-nav__link">
+  <a href="#decisions" class="md-nav__link">
     <span class="md-ellipsis">
-      Decision
+      Decisions
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#verified-against-opencode-11713-live" class="md-nav__link">
+  <a href="#stream-field-contracts-v1" class="md-nav__link">
     <span class="md-ellipsis">
-      Verified against opencode 1.17.13 (live)
+      Stream field contracts (v="1")
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#accepted-residue-deferred" class="md-nav__link">
+  <a href="#prometheus-surface" class="md-nav__link">
     <span class="md-ellipsis">
-      Accepted residue / deferred
+      Prometheus surface
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deferred-accepted-ceilings" class="md-nav__link">
+    <span class="md-ellipsis">
+      Deferred / accepted ceilings
     </span>
   </a>
   
@@ -377,74 +386,88 @@
   
 
 
-<h1 id="session-identity-bounds-channelsession-block">Session identity + bounds (channel.session block)</h1>
-<p><strong>Date:</strong> 2026-07-02
-<strong>Status:</strong> accepted</p>
-<blockquote>
-<p><strong>Update (2026-07-03, v0.6.1, <code>2940182</code>):</strong> the config <em>shape</em> below was reworked. The
-overloaded <code>key</code> field split into an explicit <code>type: auto | none | custom</code> discriminator
-(<code>SessionBlock</code>, <code>config/schema.py</code>); <code>key</code> now holds <em>only</em> the <code>{{ }}</code> template and is
-required iff <code>type == "custom"</code>, forbidden otherwise. <strong>Default is <code>type: "none"</code></strong> (not
-<code>key: "none"</code>). Shorthand: <code>auto|none</code> → <code>{type: v}</code>; any other string → <code>{type: "custom",
-key: v}</code>. The <em>behavior</em> (stateless default, template render, maxTokens/overflow) is
-unchanged — only the field layout moved.</p>
-</blockquote>
+<h1 id="stats-observability-sink-design-stream-contract-tool-trace-2026-07-03">Stats &amp; observability — sink design, stream contract, tool trace (2026-07-03)</h1>
+<p><strong>Date:</strong> 2026-07-03
+<strong>Status:</strong> Shipped (on <code>main</code>, v0.6.x). Harness-local, env-gated, NOT part of <code>CONTRACT_v3</code>.</p>
+<p>Records the <em>why</em> of the per-invocation + per-tool observability path: the harness-side sink
+(<code>src/ach_agent/stats/</code>), the redis-stream contract the separate <code>ach-stats</code> reader consumes,
+the Prometheus surface, and the Tier-1 tool trace. Plans:
+<code>docs/superpowers/plans/2026-07-02-stats-sink-harness-a1.md</code> (sink),
+<code>docs/superpowers/plans/2026-07-02-stats-container-a2.md</code> (reader/UI).</p>
 <h2 id="problem">Problem</h2>
-<p><code>session: auto|none</code> conflated two identities. <code>session_key</code> is (1) the router
-lane key — ordering, dedup, concurrency, pool — and (2) the conversation identity
-— which opencode session a turn reuses. They coincide for gitlab (per-MR) but
-diverge everywhere else: a stateless cron wants a lane but no conversation; a
-queue wants one FIFO lane but per-task conversations; a webhook may want the
-emitter to name the conversation (header — deferred, see below).</p>
-<p><code>auto</code> as default also meant unbounded conversation growth by accident, and
-<code>none</code> leaked one opencode session row per event into the persistent home
-(sessions are stored in SQLite under <code>~/.local/share/opencode/opencode.db</code> and
-were never deleted).</p>
-<h2 id="decision">Decision</h2>
+<p>The harness runs managed agents but emitted nothing durable about <em>what they did</em> — tokens,
+cost, duration, tool use, per session. Two consumers want different shapes: operators want
+live aggregates (<code>/metrics</code>), and a dashboard (<code>ach-stats</code>, <code>src/ach_stats/</code> + React UI) wants
+queryable per-invocation history. Neither may slow or break a turn — the router hot path and
+<code>maxInvocationSeconds</code> bound are load-bearing; observability is not.</p>
+<h2 id="decisions">Decisions</h2>
+<ol>
+<li><strong>Two-tier sink, never in the hot path.</strong> <code>StatsSink.record()</code> does ONLY an inline
+   Prometheus <code>observe()</code> + a <code>queue.put_nowait()</code> — it never awaits and never raises
+   (<code>sink.py</code>). A single supervised writer task owns the redis client and drains a bounded
+   queue via <code>XADD</code>. A full queue increments <code>ach_agent_stats_degraded_total</code> and drops the
+   record — degrade, never block.</li>
+<li><strong>Redis stream = cross-component contract.</strong> The harness <em>writes</em> streams; <code>ach-stats</code>
+   <em>reads</em> them; the two deploy independently. So every entry carries <code>v="1"</code> — a breaking
+   field change bumps <code>v</code>. Stream (not direct DB write) gives decoupling, replay, and retention
+   via <code>XADD ... MINID</code> (default 35 days, <code>ACH_STATS_RETENTION</code>).</li>
+<li><strong>Two streams, one writer class.</strong> <code>ach:sessions</code> (one entry per invocation, <code>SessionStat</code>)
+   and <code>ach:tools</code> (one entry per tool call, <code>ToolStat</code>). <code>StatsSink</code> is parametrized by
+   <code>stream</code> + an <code>on_record</code> metrics hook so the queue/backoff/reconnect/retention writer is
+   shared, not duplicated.</li>
+<li><strong>Prometheus labels stay low-cardinality</strong> — <code>model</code>, <code>channel</code>, <code>tool</code>, <code>tool_type</code>,
+   <code>status</code> only. NEVER <code>session_key</code> or task text (cardinality explosion). Per-session detail
+   lives in the stream, not in metric labels.</li>
+<li><strong>Env-gated, harness-local.</strong> <code>ACH_STATS_REDIS_URL</code> unset → Prometheus-only (no queue, no
+   writer). These <code>ACH_STATS_*</code> vars are harness-local and deliberately NOT in <code>CONTRACT_v3</code>
+   (the operator does not render them).</li>
+<li><strong><code>provider</code> resolved downstream.</strong> Both stats set <code>provider="unknown"</code>; the <code>ach-stats</code>
+   service maps model→provider (its "A2" model-map). The harness stays dumb about provider
+   naming.</li>
+<li><strong>Tier-1 tool trace reuses SSE, no new infra.</strong> opencode's SSE already emits per-tool
+   lifecycle events (<code>OpenCodeToolUpdate</code>: tool name, call_id, input, output/error, status),
+   already parsed for rendering + count, then discarded. Tier 1 records them: a per-invocation
+   <code>on_tool</code> wrapper (<code>main.py:_make_tool_recorder</code>) stamps a monotonic start on <code>running</code>,
+   computes duration on <code>completed</code>/<code>error</code>, dedups per <code>call_id</code>, and writes a <code>ToolStat</code>.
+   Metrics always on; <code>ach:tools</code> stream only when redis is configured.</li>
+<li><strong>OTel alignment, not adoption.</strong> <code>ToolStat</code> fields are OTel <code>gen_ai.*</code>-named
+   (<code>tool</code>→<code>gen_ai.tool.name</code>, <code>session_key</code>→<code>gen_ai.conversation.id</code>, <code>status=error</code>→
+   <code>error.type</code>) so a future OTLP export maps 1:1 — but no OTel SDK, no spans/traces. That
+   (Tier 2) is deferred until a collector consumes them. Cost has no OTel metric by design;
+   we keep <code>ach_agent_turn_cost_usd_total</code> regardless.</li>
+</ol>
+<h2 id="stream-field-contracts-v1">Stream field contracts (<code>v="1"</code>)</h2>
 <ul>
-<li><code>channel.session</code> becomes a block: <code>key</code> / <code>maxTokens</code> / <code>overflow</code>
-  (string shorthand <code>session: auto|none|"{{ … }}"</code> maps to <code>{key: …}</code>).</li>
-<li><strong>Default <code>key: "none"</code></strong> — the human operator opts into memory explicitly.
-  <code>none</code> deletes its session post-turn: stateless = no residue.</li>
-<li><code>key</code> accepts a <code>{{ }}</code> template (existing zero-dep engine) rendered per event:
-  <code>{{ internal.channel.name }}</code> (conversational cron), <code>{{ payload.task_id }}</code>
-  (queue per task). Empty render → <code>none</code> + WARN (never a <code>""</code> shared key).</li>
-<li>The <strong>router lane key is untouched</strong> — this feature only selects which opencode
-  session the engine reuses. Router invariants (dedup → backpressure → lane, the
-  three bounds) are frozen.</li>
-<li><code>maxTokens</code> + <code>overflow</code>: post-turn check of the turn's <code>input_tokens</code>;
-  <code>compact</code> = POST /session/{id}/compact in place (default — if the operator
-  opted into memory, keep it); <code>rotate</code> = drop LRU entry + DELETE old session.</li>
-<li>No <code>ChannelConfig</code> (--tui console) → <code>auto</code> behavior (REPL continuity).</li>
+<li><strong><code>ach:sessions</code></strong> (<code>SessionStat.to_entry</code>): <code>ts</code>, <code>session_key</code>, <code>channel</code>, <code>source</code>,
+  <code>model</code>, <code>provider</code>, <code>task</code> (redacted+truncated), <code>input_tokens</code>, <code>output_tokens</code>,
+  <code>cache_read</code>, <code>cache_write</code>, <code>cost</code>, <code>turns</code>, <code>duration_ms</code>, <code>tokens_per_s</code>, <code>status</code>,
+  <code>retry</code>.</li>
+<li><strong><code>ach:tools</code></strong> (<code>ToolStat.to_entry</code>): <code>ts</code>, <code>session_key</code>, <code>channel</code>, <code>source</code>, <code>model</code>,
+  <code>provider</code>, <code>tool</code>, <code>tool_type</code> (mcp|builtin), <code>status</code> (completed|error), <code>duration_ms</code>
+  (<code>""</code> when the <code>running</code> event was missed), <code>input_size</code>, <code>output_size</code>, <code>error</code>
+  (truncated). Stores SIZES, never raw args/result (secrets/bloat).</li>
 </ul>
-<h2 id="verified-against-opencode-11713-live">Verified against opencode 1.17.13 (live)</h2>
+<h2 id="prometheus-surface">Prometheus surface</h2>
+<p><code>ach_agent_sessions_total</code>, <code>ach_agent_turn_tokens_total{direction}</code>,
+<code>ach_agent_turn_cost_usd_total</code>, <code>ach_agent_turns_total</code>, <code>ach_agent_turn_duration_seconds</code>,
+<code>ach_agent_stats_degraded_total</code>; and per-tool <code>ach_agent_tool_calls_total{tool,tool_type,
+status}</code> + <code>ach_agent_tool_duration_seconds{tool,tool_type}</code>.</p>
+<h2 id="deferred-accepted-ceilings">Deferred / accepted ceilings</h2>
 <ul>
-<li>Sessions persist in SQLite under HOME; a fresh <code>opencode serve</code> on the same
-  home lists old sessions and accepts <code>POST /session/{old_id}/message</code> → 200.</li>
-<li>Unknown id → 404 <code>NotFoundError</code> (clean JSON), not 500.</li>
-<li><code>DELETE /session/{id}</code> → 200, removed from listing.</li>
-<li><code>POST /session/{id}/compact</code> (<code>{}</code> body) → 200. <code>summarize</code> needs a body → unused.</li>
-</ul>
-<h2 id="accepted-residue-deferred">Accepted residue / deferred</h2>
-<ul>
-<li>LRU eviction (&gt;256 live conversations) orphans the evicted <code>ses_</code> row on disk —
-  no client is at hand at eviction time. Janitor sweep (GET /session, delete
-  unmapped) only if it ever hurts.</li>
-<li>Timeout-cancelled turns skip post-turn cleanup — orphan accepted, the server is
-  force-killed anyway.</li>
-<li><code>header.*</code>-based session keys wait on threading inbound headers across the
-  channel→router seam (the <code>header</code> template namespace is reserved and empty by
-  design). A header template today renders empty → safe <code>none</code> fallback.</li>
-<li>The <code>session_key → ses_</code> map is in-memory (harness restart = fresh
-  conversations). Disk persistence is a clean future upgrade — the 404
-  stale-guard already covers a map entry outliving opencode's store.</li>
+<li><strong>Tool duration = SSE arrival delta</strong> (<code>running</code>→terminal), not opencode's own tool clock.
+  Miss the <code>running</code> event → <code>duration_ms</code> None, count still recorded. Good enough; upgrade
+  path is parsing opencode's <code>state.time</code> if precision ever matters.</li>
+<li><strong>No raw tool args/result captured</strong> — sizes only. Add behind a flag if a consumer needs them.</li>
+<li><strong>Tier 2 (OTLP spans/traces)</strong> not built — add when a collector exists.</li>
+<li><strong><code>ach:tools</code> has no UI drill-down yet</strong> — the stream mirrors <code>ach:sessions</code> for a future
+  per-tool view, same as <code>ach:sessions</code> predated the leaderboard.</li>
+<li><strong>Eval/quality score</strong> (per-invocation grading) is a separate future sub-project (B).</li>
 </ul>
 <h2 id="related">Related</h2>
 <ul>
-<li><code>docs/references/2026-07-01-keyed-engine-pool.md</code> (lane/pool identity)</li>
-<li><code>docs/superpowers/plans/2026-07-02-persistent-oc-session-map.md</code> (substrate:
-  pool-owned LRU + 404 guard)</li>
-<li><code>docs/superpowers/plans/2026-07-02-session-identity-and-bounds.md</code> (this plan)</li>
+<li><code>docs/references/2026-07-01-keyed-engine-pool.md</code> (session_key identity feeding the streams)</li>
+<li><code>docs/superpowers/plans/2026-07-02-stats-sink-harness-a1.md</code> / <code>-stats-container-a2.md</code></li>
+<li>OTel GenAI semconv: <code>github.com/open-telemetry/semantic-conventions-genai</code> (field-name source)</li>
 </ul>
 
 

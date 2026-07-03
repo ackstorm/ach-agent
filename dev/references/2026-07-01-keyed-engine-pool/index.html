@@ -544,6 +544,14 @@
 <strong>Branch:</strong> <code>feat/keyed-engine-pool</code> (7 commits).
 <strong>Built with:</strong> superpowers <code>writing-plans</code> + <code>subagent-driven-development</code> (fresh implementer per task,
 per-task review, whole-branch review). Plan: <code>docs/superpowers/plans/2026-07-01-keyed-engine-pool.md</code>.</p>
+<blockquote>
+<p><strong>Stale note (2026-07-03):</strong> two §3 claims drifted. The <code>engine_has_been_ready_once</code> gate
+(and <code>COLD_START_REJECTS</code>/<code>COLD_START_DROPS</code>) is described as surviving as dead state — it has
+since been <strong>fully deleted</strong> (acceptance now gates only on harness readiness + <code>draining</code>; see
+router doc B8). The §5 follow-ups <code>session: auto|none</code> and codemem/hindsight templating have
+<strong>shipped</strong> (<code>SessionBlock</code> in <code>config/schema.py</code>). Core pool design (shared HOME + per-session
+<code>opencode&lt;suffix&gt;.json</code>, keyed pool) is unchanged and current.</p>
+</blockquote>
 <p>This document records the whole reasoning session — not just the diff — so the <em>why</em> survives.</p>
 <hr />
 <h2 id="1-why-we-did-this">1. Why we did this</h2>

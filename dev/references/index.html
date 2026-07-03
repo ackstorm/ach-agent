@@ -13,19 +13,19 @@
       
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+      <link rel="icon" href="../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>Session identity + bounds (channel.session block) - ach-agent</title>
+        <title>Decision records & design notes - ach-agent</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,7 +44,7 @@
       
     
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -70,7 +70,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#session-identity-bounds-channelsession-block" class="md-skip">
+        <a href="#decision-records-design-notes" class="md-skip">
           Skip to content
         </a>
       
@@ -86,7 +86,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+    <a href=".." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -106,7 +106,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Session identity + bounds (channel.session block)
+              Decision records &amp; design notes
             
           </span>
         </div>
@@ -205,7 +205,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+    <a href=".." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -235,7 +235,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -255,7 +255,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../getting-started/" class="md-nav__link">
+      <a href="../getting-started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -275,7 +275,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/" class="md-nav__link">
+      <a href="../configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -308,59 +308,6 @@
     
   
   
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#problem" class="md-nav__link">
-    <span class="md-ellipsis">
-      Problem
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#decision" class="md-nav__link">
-    <span class="md-ellipsis">
-      Decision
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#verified-against-opencode-11713-live" class="md-nav__link">
-    <span class="md-ellipsis">
-      Verified against opencode 1.17.13 (live)
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#accepted-residue-deferred" class="md-nav__link">
-    <span class="md-ellipsis">
-      Accepted residue / deferred
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#related" class="md-nav__link">
-    <span class="md-ellipsis">
-      Related
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
 </nav>
                   </div>
                 </div>
@@ -377,75 +324,51 @@
   
 
 
-<h1 id="session-identity-bounds-channelsession-block">Session identity + bounds (channel.session block)</h1>
-<p><strong>Date:</strong> 2026-07-02
-<strong>Status:</strong> accepted</p>
-<blockquote>
-<p><strong>Update (2026-07-03, v0.6.1, <code>2940182</code>):</strong> the config <em>shape</em> below was reworked. The
-overloaded <code>key</code> field split into an explicit <code>type: auto | none | custom</code> discriminator
-(<code>SessionBlock</code>, <code>config/schema.py</code>); <code>key</code> now holds <em>only</em> the <code>{{ }}</code> template and is
-required iff <code>type == "custom"</code>, forbidden otherwise. <strong>Default is <code>type: "none"</code></strong> (not
-<code>key: "none"</code>). Shorthand: <code>auto|none</code> → <code>{type: v}</code>; any other string → <code>{type: "custom",
-key: v}</code>. The <em>behavior</em> (stateless default, template render, maxTokens/overflow) is
-unchanged — only the field layout moved.</p>
-</blockquote>
-<h2 id="problem">Problem</h2>
-<p><code>session: auto|none</code> conflated two identities. <code>session_key</code> is (1) the router
-lane key — ordering, dedup, concurrency, pool — and (2) the conversation identity
-— which opencode session a turn reuses. They coincide for gitlab (per-MR) but
-diverge everywhere else: a stateless cron wants a lane but no conversation; a
-queue wants one FIFO lane but per-task conversations; a webhook may want the
-emitter to name the conversation (header — deferred, see below).</p>
-<p><code>auto</code> as default also meant unbounded conversation growth by accident, and
-<code>none</code> leaked one opencode session row per event into the persistent home
-(sessions are stored in SQLite under <code>~/.local/share/opencode/opencode.db</code> and
-were never deleted).</p>
-<h2 id="decision">Decision</h2>
-<ul>
-<li><code>channel.session</code> becomes a block: <code>key</code> / <code>maxTokens</code> / <code>overflow</code>
-  (string shorthand <code>session: auto|none|"{{ … }}"</code> maps to <code>{key: …}</code>).</li>
-<li><strong>Default <code>key: "none"</code></strong> — the human operator opts into memory explicitly.
-  <code>none</code> deletes its session post-turn: stateless = no residue.</li>
-<li><code>key</code> accepts a <code>{{ }}</code> template (existing zero-dep engine) rendered per event:
-  <code>{{ internal.channel.name }}</code> (conversational cron), <code>{{ payload.task_id }}</code>
-  (queue per task). Empty render → <code>none</code> + WARN (never a <code>""</code> shared key).</li>
-<li>The <strong>router lane key is untouched</strong> — this feature only selects which opencode
-  session the engine reuses. Router invariants (dedup → backpressure → lane, the
-  three bounds) are frozen.</li>
-<li><code>maxTokens</code> + <code>overflow</code>: post-turn check of the turn's <code>input_tokens</code>;
-  <code>compact</code> = POST /session/{id}/compact in place (default — if the operator
-  opted into memory, keep it); <code>rotate</code> = drop LRU entry + DELETE old session.</li>
-<li>No <code>ChannelConfig</code> (--tui console) → <code>auto</code> behavior (REPL continuity).</li>
-</ul>
-<h2 id="verified-against-opencode-11713-live">Verified against opencode 1.17.13 (live)</h2>
-<ul>
-<li>Sessions persist in SQLite under HOME; a fresh <code>opencode serve</code> on the same
-  home lists old sessions and accepts <code>POST /session/{old_id}/message</code> → 200.</li>
-<li>Unknown id → 404 <code>NotFoundError</code> (clean JSON), not 500.</li>
-<li><code>DELETE /session/{id}</code> → 200, removed from listing.</li>
-<li><code>POST /session/{id}/compact</code> (<code>{}</code> body) → 200. <code>summarize</code> needs a body → unused.</li>
-</ul>
-<h2 id="accepted-residue-deferred">Accepted residue / deferred</h2>
-<ul>
-<li>LRU eviction (&gt;256 live conversations) orphans the evicted <code>ses_</code> row on disk —
-  no client is at hand at eviction time. Janitor sweep (GET /session, delete
-  unmapped) only if it ever hurts.</li>
-<li>Timeout-cancelled turns skip post-turn cleanup — orphan accepted, the server is
-  force-killed anyway.</li>
-<li><code>header.*</code>-based session keys wait on threading inbound headers across the
-  channel→router seam (the <code>header</code> template namespace is reserved and empty by
-  design). A header template today renders empty → safe <code>none</code> fallback.</li>
-<li>The <code>session_key → ses_</code> map is in-memory (harness restart = fresh
-  conversations). Disk persistence is a clean future upgrade — the 404
-  stale-guard already covers a map entry outliving opencode's store.</li>
-</ul>
-<h2 id="related">Related</h2>
-<ul>
-<li><code>docs/references/2026-07-01-keyed-engine-pool.md</code> (lane/pool identity)</li>
-<li><code>docs/superpowers/plans/2026-07-02-persistent-oc-session-map.md</code> (substrate:
-  pool-owned LRU + 404 guard)</li>
-<li><code>docs/superpowers/plans/2026-07-02-session-identity-and-bounds.md</code> (this plan)</li>
-</ul>
+<h1 id="decision-records-design-notes">Decision records &amp; design notes</h1>
+<p>Design/decision write-ups for significant changes (the <em>why</em>, not just the diff). One file per
+decision, prefixed <code>YYYY-MM-DD-</code> so <code>ls</code> sorts chronologically. Add a row below when you add a doc.</p>
+<table>
+<thead>
+<tr>
+<th>Date</th>
+<th>Doc</th>
+<th>Status</th>
+<th>What it decides</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2026-07-01</td>
+<td><a href="2026-07-01-keyed-engine-pool/">keyed-engine-pool</a></td>
+<td>Shipped (<code>c57c92a</code>)</td>
+<td>EnginePool keyed by <code>session_key</code>: one opencode server per key, per-key HOME isolation, <code>channel.session</code> reuse.</td>
+</tr>
+<tr>
+<td>2026-07-01</td>
+<td><a href="2026-07-01-router-pool-vs-legacy/">router-pool-vs-legacy</a></td>
+<td>Decisions</td>
+<td>Router / pool / session lifecycle vs legacy <code>ackbot-process</code>: what to keep vs port; splits into follow-up plans.</td>
+</tr>
+<tr>
+<td>2026-07-02</td>
+<td><a href="2026-07-02-session-identity-and-bounds/">session-identity-and-bounds</a></td>
+<td>Accepted</td>
+<td><code>channel.session</code> becomes a block: separates <code>session_key</code> (lane/pool) from the oc-session reuse key; <code>maxTokens</code> + overflow bounds.</td>
+</tr>
+<tr>
+<td>2026-07-03</td>
+<td><a href="2026-07-03-stats-observability/">stats-observability</a></td>
+<td>Shipped</td>
+<td>Two-tier stats sink (Prometheus + redis stream), <code>v="1"</code> stream contract (<code>ach:sessions</code> + <code>ach:tools</code>), Tier-1 tool trace, OTel <code>gen_ai.*</code> alignment.</td>
+</tr>
+<tr>
+<td>2026-07-03</td>
+<td><a href="2026-07-03-provider-by-model-type/">provider-by-model-type</a></td>
+<td>Shipped</td>
+<td><code>model.type</code> selects the opencode provider + native wire: gemini→built-in <code>google</code> on <code>/gemini/v1beta</code>, anthropic→built-in <code>anthropic</code>, openai→custom <code>ach</code>. Fixes <code>type: gemini</code> hitting <code>/v1/chat/completions</code>.</td>
+</tr>
+</tbody>
+</table>
 
 
 
@@ -492,10 +415,10 @@ were never deleted).</p>
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    <script id="__config" type="application/json">{"base": "..", "features": [], "search": "../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
     
   </body>

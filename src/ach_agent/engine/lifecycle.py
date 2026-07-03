@@ -229,15 +229,24 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig, session_ke
     #   anthropic → built-in "anthropic" (@ai-sdk/anthropic) on the native /v1/messages wire.
     provider_id, npm = _PROVIDER_BY_TYPE.get(config.model_type, _PROVIDER_BY_TYPE["openai"])
     provider_block: dict[str, object] = {
+        # Restrict opencode's model picker to the single configured model. Without it a built-in
+        # provider (google/anthropic) exposes its whole catalog — so the TUI lets you pick a
+        # model ACH never granted, and the agent could switch off the operator's choice.
+        "whitelist": [config.model],
+        # Provider-level options are connection-only (opencode passes model.options as the
+        # per-call providerOptions). apiKey is a dummy — the localhost proxy injects the real ek_.
         "options": {
             "apiKey": api_key,
             "baseURL": base_url,
-            **config.params,
         },
-        # Register the hydrated model id explicitly. ACH model ids (e.g. "gemini-flash-latest")
-        # are not always in opencode's built-in provider catalog; without this opencode raises
-        # ProviderModelNotFoundError.
-        "models": {config.model: {}},
+        # Register the hydrated model id explicitly (ACH ids like "gemini-flash-latest" aren't
+        # always in opencode's built-in catalog → ProviderModelNotFoundError). model.params land
+        # here, in the model's `options`, because opencode forwards them as per-call
+        # providerOptions — this is where reasoning/generation knobs live (gemini
+        # `thinkingConfig.thinkingLevel|thinkingBudget`, openai `reasoningEffort`, temperature).
+        # ponytail: whole params dict → model options; add a separate field if a provider-level
+        # option (e.g. `timeout`) is ever needed there.
+        "models": {config.model: {"options": dict(config.params)}},
     }
     if npm:  # only a CUSTOM provider id needs npm + a display name; built-ins are known
         provider_block["npm"] = npm

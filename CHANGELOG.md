@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.6.3] - 2026-07-03
+
+### Added
+- **`provider.<id>.whitelist = [<model>]`** in the generated `opencode.json` — restricts
+  opencode's model picker (notably the TUI) to the single configured model, so a built-in
+  provider (google/anthropic) no longer exposes its whole catalog and the agent can't switch
+  off the operator's model.
+
+### Changed
+- **`model.params` now renders into per-model `options`** (`provider.<id>.models.<model>.options`)
+  instead of provider-level options. opencode forwards model options as per-call
+  `providerOptions`, so this is where reasoning/generation knobs take effect — gemini
+  `thinkingConfig.thinkingLevel` (`low|high`) / `thinkingBudget` (tokens), openai
+  `reasoningEffort`, `temperature`, etc. Provider-level options stay connection-only
+  (`apiKey`/`baseURL`). Existing configs (no `params`) are unaffected.
+
 ## [0.6.2] - 2026-07-03
 
 ### Fixed

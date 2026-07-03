@@ -64,6 +64,18 @@ openai path already drops `Authorization`).
 
 `model_type` defaults to `openai`, so existing configs / tests are unchanged.
 
+## Follow-ups (0.6.3)
+
+- **`provider.<id>.whitelist = [<model>]`** — restricts opencode's model picker (notably the
+  TUI) to the single configured model. A built-in provider otherwise exposes its whole catalog,
+  letting the TUI / agent pick a model ACH never granted.
+- **`model.params` → per-model `options`** (`provider.<id>.models.<model>.options`), not
+  provider-level options. opencode forwards model options as per-call `providerOptions`, so this
+  is where reasoning/generation knobs apply: gemini `thinkingConfig.thinkingLevel` (`low|high`) /
+  `thinkingBudget` (tokens), openai `reasoningEffort`, `temperature`. Provider-level options stay
+  connection-only (`apiKey`/`baseURL`). Verified live: a cron agent with
+  `params.thinkingConfig.thinkingLevel: low` renders correctly and the gemini turn succeeds.
+
 ## Note — the "phantom" hydration names (ACH-side, not the harness)
 
 `/platform/hydrate` returns both `gemini.gemini-flash-latest` **and** bare

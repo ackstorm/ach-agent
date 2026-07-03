@@ -31,7 +31,6 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
 
 import structlog
 import uvicorn
@@ -66,11 +65,14 @@ log = structlog.get_logger(__name__)
 # D-02: only channel types wired in this build
 WIRED_CHANNEL_TYPES: frozenset[str] = frozenset({"cron", "webhook", "a2a", "queue"})
 
-# Plan 2: model.type → ACH compat-endpoint path prefix fronted by the model proxy.
-# opencode's baseURL becomes "http://127.0.0.1:<port>/<prefix>".
+# model.type → ACH compat-endpoint path prefix fronted by the model proxy. opencode's
+# provider baseURL becomes "http://127.0.0.1:<port>/<prefix>". Each type hits its NATIVE wire:
+# openai → /v1 (chat/completions), gemini → /gemini/v1beta (generateContent), anthropic →
+# /anthropic (messages). The type is authoritative — the harness does NOT round-trip a gemini
+# model through the OpenAI wire (that leaks gemini thought-signatures into tool_call ids).
 _MODEL_ENDPOINT_PREFIX: dict[str, str] = {
     "openai": "v1",
-    "gemini": "gemini",
+    "gemini": "gemini/v1beta",
     "anthropic": "anthropic",
 }
 
@@ -99,10 +101,11 @@ def _open_dedup_store(cfg: Any) -> Any:
     """Select and open the dedup store per persistence config (D-03/D-04).
 
     persistence.enabled=false → InMemoryDedupStore (no disk dependency).
-    persistence.enabled=true  → FileBackedDedupStore on mountPath/dedup.db.
+    persistence.enabled=true  → FileBackedDedupStore on mountPath/state/state.db
+      (shared harness sqlite; dedup is its first table, more may follow).
       Missing / non-writable mount → sys.exit(1) fail-closed (D-04a,
       mirrors ENG-06 poll_ready exit pattern).
-      Corrupt dedup.db → fail-open: move aside, start fresh, WARN +
+      Corrupt state.db → fail-open: move aside, start fresh, WARN +
       PERSISTENCE_DEGRADED metric (D-04b, T-03-08: file preserved for forensics).
 
     Never logs ek_ / GITLAB_TOKEN values (T-03-07 mitigation).
@@ -123,7 +126,8 @@ def _open_dedup_store(cfg: Any) -> Any:
         )
         sys.exit(1)
 
-    db_path = mount / "dedup.db"
+    db_path = mount / "state" / "state.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
         store = FileBackedDedupStore(db_path)
@@ -136,14 +140,14 @@ def _open_dedup_store(cfg: Any) -> Any:
         try:
             db_path.rename(aside_path)
             log.warning(
-                "dedup.db corrupt — moved aside, starting fresh (fail-open)",
+                "state.db corrupt — moved aside, starting fresh (fail-open)",
                 db_path=str(db_path),
                 aside_path=str(aside_path),
                 error=str(exc),
             )
         except OSError as rename_exc:
             log.warning(
-                "dedup.db corrupt and could not be moved aside — retrying fresh store",
+                "state.db corrupt and could not be moved aside — retrying fresh store",
                 db_path=str(db_path),
                 error=str(exc),
                 rename_error=str(rename_exc),
@@ -1011,8 +1015,8 @@ async def main(
     mcp_proxy: McpProxy | None = None
     if ek:
         manifest = await hydrate(cfg.capability.ach.base_url, ek)
-        # hard-fail (sys.exit 1) if model absent; returns the entry (with its real endpoint).
-        model_entry = resolve_model(manifest, cfg.model.name)
+        # hard-fail (sys.exit 1) if the configured model is absent from the hydrated set.
+        resolve_model(manifest, cfg.model.name)
         # capability.filter.exclude — governance gate ABOVE the model. Skills are dropped
         # from the hydrated context BEFORE fetch (never downloaded); MCP servers are excluded
         # from the localhost proxy (never fronted, so opencode never discovers them).
@@ -1064,14 +1068,11 @@ async def main(
                     auth_header=model_up_header,
                 )
         model_proxy_base = await start_model_proxy(model_up_base, model_up_token, model_up_header)
-        # Use the hydrated model's REAL endpoint path (ACH may serve a gemini.* model at
-        # /v1, not /gemini). Fall back to the type→prefix map only when the hydrated set is
-        # empty (local dev) or carries no endpoint.
+        # model.type is authoritative for the wire. The hydration manifest reports every model
+        # at /v1 (openai-compat) even for gemini, so we DON'T read the manifest endpoint here —
+        # doing so forced a type:gemini model onto /v1/chat/completions. resolve_model above
+        # still validates membership (hard-fails if the name is absent).
         prefix = _MODEL_ENDPOINT_PREFIX[cfg.model.type]
-        if model_entry is not None and model_entry.endpoint:
-            endpoint_path = urlsplit(model_entry.endpoint).path.strip("/")
-            if endpoint_path:
-                prefix = endpoint_path
         model_base_url = f"{model_proxy_base}/{prefix}"
         _ctx = manifest.context
         log.info(
@@ -1144,6 +1145,7 @@ async def main(
         codemem_db_path=codemem_db_path,
         codemem_project=codemem_project,
         model=cfg.model.name,
+        model_type=cfg.model.type,
         params=cfg.model.params,
         # prompt.system = the inline agent persona + per-backend TOOLS_SPEC (boot-static).
         system_prompt=_system_prompt,

@@ -28,7 +28,9 @@ log = structlog.get_logger(__name__)
 # Inbound auth headers are dropped because the proxy injects ACH's own (`x-ach-key`):
 # opencode sends a dummy `Authorization` bearer; we strip it and any client-supplied
 # `x-ach-key`, then add the real ek_ as `x-ach-key` (ACH's auth scheme — Bearer 401s).
-_DROP_REQUEST_HEADERS = frozenset({"host", "content-length", "authorization", "x-ach-key"})
+_DROP_REQUEST_HEADERS = frozenset(
+    {"host", "content-length", "authorization", "x-ach-key", "x-goog-api-key"}
+)
 _DROP_RESPONSE_HEADERS = frozenset({"content-length", "transfer-encoding", "content-encoding"})
 
 _Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]

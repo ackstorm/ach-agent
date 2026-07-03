@@ -642,6 +642,38 @@ def test_write_opencode_config_per_session_filename(tmp_path: Path) -> None:
     assert (cfg_dir / "personality" / f"system_prompt{path.name[len('opencode'):-len('.json')]}.txt").is_file()
 
 
+def test_write_opencode_config_provider_by_model_type(tmp_path: Path) -> None:
+    """model.type selects the opencode provider + model ref (not a hardcoded openai wire).
+
+    gemini → built-in "google" (no npm, native /v1beta wire); openai → custom "ach"
+    backed by @ai-sdk/openai-compatible. Regression lock for the type:gemini fix.
+    """
+    import json
+
+    from ach_agent.engine.lifecycle import EngineConfig, write_opencode_config
+
+    # gemini: built-in google provider, model ref google/<name>, no npm field.
+    g = EngineConfig(
+        model="gemini-flash-latest",
+        model_type="gemini",
+        model_base_url="http://127.0.0.1:9/gemini/v1beta",
+    )
+    oc = json.loads(write_opencode_config(tmp_path, g, "k").read_text(encoding="utf-8"))
+    assert oc["enabled_providers"] == ["google"]
+    assert oc["model"] == "google/gemini-flash-latest"
+    assert oc["small_model"] == "google/gemini-flash-latest"
+    assert "gemini-flash-latest" in oc["provider"]["google"]["models"]
+    assert "npm" not in oc["provider"]["google"]  # built-in provider needs no npm
+    assert oc["provider"]["google"]["options"]["baseURL"].endswith("/gemini/v1beta")
+
+    # openai (default type): custom ach provider on the lenient openai-compatible parser.
+    o = EngineConfig(model="ackstorm.smart", model_base_url="http://127.0.0.1:9/v1")
+    oc = json.loads(write_opencode_config(tmp_path, o, "k2").read_text(encoding="utf-8"))
+    assert oc["enabled_providers"] == ["ach"]
+    assert oc["model"] == "ach/ackstorm.smart"
+    assert oc["provider"]["ach"]["npm"] == "@ai-sdk/openai-compatible"
+
+
 def test_build_opencode_env_sets_opencode_config(tmp_path: Path) -> None:
     from ach_agent.engine.lifecycle import EngineConfig, build_opencode_env
 

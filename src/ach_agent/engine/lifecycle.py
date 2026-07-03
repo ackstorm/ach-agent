@@ -49,6 +49,15 @@ _LOG_TAIL_SIZE = 50  # lines kept in stdout/stderr tail for diagnostics (H-05)
 _LIVENESS_POLL_S = 5.0
 _SSE_STALL_S = 300.0  # cumulative no-event bound before giving up on a live-but-wedged stream
 
+# model.type → (opencode provider id, npm package). Empty npm == an opencode built-in provider
+# (google/anthropic) whose package opencode already knows; only the custom "ach" id needs npm.
+# The provider's baseURL is set to the model-proxy path for that type (main._MODEL_ENDPOINT_PREFIX).
+_PROVIDER_BY_TYPE: dict[str, tuple[str, str]] = {
+    "openai": ("ach", "@ai-sdk/openai-compatible"),
+    "gemini": ("google", ""),
+    "anthropic": ("anthropic", ""),
+}
+
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -68,6 +77,9 @@ class EngineConfig:
     home: str = ""
     work_dir: str = "/workspace"
     model: str = "gpt-4o-mini"  # opencode validates model names; must be a known OpenAI model ID
+    # model.type — selects the opencode provider + wire (openai→ach/openai-compatible,
+    # gemini→built-in google, anthropic→built-in anthropic). See _PROVIDER_BY_TYPE.
+    model_type: str = "openai"
     params: dict[str, object] = field(default_factory=dict)  # model params (temperature, …)
     system_prompt: str = ""
     steps: int = 50
@@ -206,13 +218,30 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig, session_ke
     api_key = "local-proxy"  # placeholder; real ek_ injected by the localhost proxy
     base_url = config.model_base_url
 
-    # opencode provider: a CUSTOM provider id backed by @ai-sdk/openai-compatible (lenient
-    # parser) instead of opencode's bundled @ai-sdk/openai (strict). The strict provider
-    # crashes ("text part not found") on ACH/litellm's gemini compat wire, which leaks
-    # gemini thought-signatures into tool_call ids and sends tool_calls with null content.
-    # @ai-sdk/openai-compatible tolerates it (verified against real ACH). A custom id is
-    # required — opencode honors the `npm` field only for non-builtin provider ids.
-    provider_id = "ach"
+    # opencode provider is selected by model.type (_PROVIDER_BY_TYPE):
+    #   openai    → CUSTOM id "ach" backed by @ai-sdk/openai-compatible (lenient parser) instead
+    #               of opencode's bundled @ai-sdk/openai (strict, crashes "text part not found"
+    #               on ACH/litellm's openai-compat wire). A custom id is required — opencode
+    #               honors `npm` only for non-builtin ids.
+    #   gemini    → built-in "google" (@ai-sdk/google) on the NATIVE /v1beta generateContent
+    #               wire; avoids round-tripping gemini through chat/completions (which leaks
+    #               gemini thought-signatures into tool_call ids). Verified against real ACH.
+    #   anthropic → built-in "anthropic" (@ai-sdk/anthropic) on the native /v1/messages wire.
+    provider_id, npm = _PROVIDER_BY_TYPE.get(config.model_type, _PROVIDER_BY_TYPE["openai"])
+    provider_block: dict[str, object] = {
+        "options": {
+            "apiKey": api_key,
+            "baseURL": base_url,
+            **config.params,
+        },
+        # Register the hydrated model id explicitly. ACH model ids (e.g. "gemini-flash-latest")
+        # are not always in opencode's built-in provider catalog; without this opencode raises
+        # ProviderModelNotFoundError.
+        "models": {config.model: {}},
+    }
+    if npm:  # only a CUSTOM provider id needs npm + a display name; built-ins are known
+        provider_block["npm"] = npm
+        provider_block["name"] = "ACH"
     oc_config: dict[str, object] = {
         "autoupdate": False,
         "permission": "allow",
@@ -224,21 +253,7 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig, session_ke
         # so pin it to the configured model (registered + working) to avoid the error.
         "small_model": f"{provider_id}/{config.model}",
         "enabled_providers": [provider_id],
-        "provider": {
-            provider_id: {
-                "npm": "@ai-sdk/openai-compatible",
-                "name": "ACH",
-                "options": {
-                    "apiKey": api_key,
-                    "baseURL": base_url,
-                    **config.params,
-                },
-                # Register the hydrated model id explicitly. ACH model ids
-                # (e.g. "gemini.gemini-flash-latest") are not in opencode's built-in
-                # provider catalog; without this opencode raises ProviderModelNotFoundError.
-                "models": {config.model: {}},
-            }
-        },
+        "provider": {provider_id: provider_block},
         "instructions": [str(prompt_path.resolve())],  # append-mode system prompt
         "agent": {
             "build": {

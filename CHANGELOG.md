@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.6.2] - 2026-07-03
+
+### Fixed
+- **`model.type` now selects the opencode provider and native wire.** A `type: gemini` model
+  was written to `opencode.json` on the `ach` / `@ai-sdk/openai-compatible` provider pointing
+  at `/v1`, so every invocation hit `/v1/chat/completions` and litellm 400'd
+  (`Invalid model name passed in model=gemini-flash-latest`). Two causes, both ignoring the
+  type: the provider block was hardcoded to `ach`, and the model-proxy path was taken from the
+  hydration manifest endpoint (ACH reports every model at `/v1`). Now `model.type` drives both:
+  `gemini` → built-in `google` provider on `/gemini/v1beta` (native `generateContent`),
+  `anthropic` → built-in `anthropic`, `openai` → custom `ach` (unchanged). The proxy also drops
+  the dummy `x-goog-api-key` so it never reaches ACH. See
+  `docs/references/2026-07-03-provider-by-model-type.md`.
+
 ## [0.6.1] - 2026-07-03
 
 ### Changed

@@ -6,9 +6,9 @@ Task 1 (store selection, RED gate):
   - test_store_selection_in_memory: _open_dedup_store with persistence.enabled=False
     returns an InMemoryDedupStore.
   - test_store_selection_file_backed: persistence.enabled=True + writable tmp_path
-    returns a FileBackedDedupStore and creates ${mount}/dedup.db.
+    returns a FileBackedDedupStore and creates ${mount}/state/state.db.
   - test_missing_mount_exits: persistence.enabled=True + missing mount → SystemExit.
-  - test_corrupt_db_fail_open: corrupt dedup.db → fail-open, usable store, metric inc.
+  - test_corrupt_db_fail_open: corrupt state.db → fail-open, usable store, metric inc.
 
 Task 2 (drain, RED gate):
   - test_sigterm_flips_readyz: draining=True + ready=False → /readyz 503.
@@ -101,7 +101,7 @@ def test_store_selection_in_memory() -> None:
 def test_store_selection_file_backed(tmp_path: Path) -> None:
     """DUR-01 / D-03: persistence.enabled=True + writable mount → FileBackedDedupStore.
 
-    Asserts the dedup.db file is created in the mountPath directory.
+    Asserts the state.db file is created in the mountPath/state directory.
     """
     from ach_agent.main import _open_dedup_store
     from ach_agent.router.dedup import FileBackedDedupStore
@@ -111,8 +111,8 @@ def test_store_selection_file_backed(tmp_path: Path) -> None:
     assert isinstance(store, FileBackedDedupStore), (
         f"Expected FileBackedDedupStore, got {type(store).__name__}"
     )
-    db_path = tmp_path / "dedup.db"
-    assert db_path.exists(), f"Expected dedup.db at {db_path}, not found"
+    db_path = tmp_path / "state" / "state.db"
+    assert db_path.exists(), f"Expected state.db at {db_path}, not found"
     # Cleanup
     store.close()
 
@@ -129,7 +129,7 @@ def test_missing_mount_exits() -> None:
 
 
 def test_corrupt_db_fail_open(tmp_path: Path) -> None:
-    """DUR-01 / D-04b: corrupt dedup.db → fail-open (move aside, fresh store, metric inc).
+    """DUR-01 / D-04b: corrupt state.db → fail-open (move aside, fresh store, metric inc).
 
     The store must work (can mark/seen) and PERSISTENCE_DEGRADED must be incremented.
     Must NOT raise SystemExit.
@@ -137,8 +137,9 @@ def test_corrupt_db_fail_open(tmp_path: Path) -> None:
     from ach_agent.main import _open_dedup_store
     from ach_agent.router.metrics import PERSISTENCE_DEGRADED
 
-    # Plant a garbage file as dedup.db
-    db_path = tmp_path / "dedup.db"
+    # Plant a garbage file as state.db
+    db_path = tmp_path / "state" / "state.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     db_path.write_bytes(b"THIS IS NOT A VALID SQLITE DATABASE GARBAGE BYTES")
 
     # Record metric value before (use prometheus collect() — no private attrs)
@@ -161,11 +162,12 @@ def test_corrupt_db_fail_open(tmp_path: Path) -> None:
 
     # Corrupt file must have been moved aside (not deleted).
     # _open_dedup_store uses db_path.with_suffix(f".corrupt.{ts}.db"), so
-    # "dedup.db" → "dedup.corrupt.{ts}.db" (with_suffix replaces the last suffix).
-    aside_files = list(tmp_path.glob("dedup.corrupt.*.db"))
+    # "state.db" → "state.corrupt.{ts}.db" (with_suffix replaces the last suffix).
+    state_dir = tmp_path / "state"
+    aside_files = list(state_dir.glob("state.corrupt.*.db"))
     assert len(aside_files) >= 1, (
-        f"Corrupt dedup.db must be moved aside; no aside file found in {tmp_path}. "
-        f"Files present: {list(tmp_path.iterdir())}"
+        f"Corrupt state.db must be moved aside; no aside file found in {state_dir}. "
+        f"Files present: {list(state_dir.iterdir())}"
     )
 
     # Cleanup

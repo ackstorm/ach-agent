@@ -12,7 +12,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
-    { name = "pydantic" },
     { name = "redis" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -30,7 +29,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = "==0.116.1" },
-    { name = "pydantic", specifier = ">=2,<3" },
     { name = "redis", specifier = ">=5,<6" },
     { name = "uvicorn", extras = ["standard"], specifier = "==0.34.0" },
 ]

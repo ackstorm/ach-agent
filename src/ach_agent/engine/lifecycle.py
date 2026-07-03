@@ -490,7 +490,7 @@ async def _create_oc_session(client: OpenCodeClient) -> str:
 
 
 async def discard_oc_session(server: ManagedServer, oc_session_id: str) -> None:
-    """DELETE the opencode session, best-effort (session.key='none' / overflow='rotate').
+    """DELETE the opencode session, best-effort (session type='none' / overflow='rotate').
 
     Failure leaves an orphan row in opencode.db — disk residue only, never worth
     failing the event over. WARN and move on.

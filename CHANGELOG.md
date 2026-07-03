@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.6.1] - 2026-07-03
+
+### Changed
+- **BREAKING (refines 0.6.0): `channel.session` shape reworked** from an overloaded `key`
+  (one field meaning `"none"` / `"auto"` / a `{{ }}` template) to a `type` discriminator:
+  `type: auto|none|custom` (default `none`). `key` is now the `{{ }}` template only — **required
+  iff `type: custom`**, rejected otherwise. `maxTokens` / `overflow` unchanged and still apply to
+  `auto` / `custom`. String shorthand still works: `session: auto|none` → `{type}`; any other
+  string (a template) → `{type: custom, key: <str>}`. The router lane key (`event.session_key`)
+  is untouched.
+
 ## [0.6.0] - 2026-07-03
 
 ### Changed

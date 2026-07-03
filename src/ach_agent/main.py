@@ -617,19 +617,20 @@ def _make_engine_runner(
             # this turn reuses. No ch_cfg (--tui console) → auto: REPL continuity.
             session_cfg = getattr(ch_cfg, "session", None)
             conv_key = event.session_key
-            if session_cfg is None or session_cfg.key == "auto":
+            if session_cfg is None or session_cfg.type == "auto":
                 reuse = True
-            elif session_cfg.key == "none":
+            elif session_cfg.type == "none":
                 reuse = False
-            else:
-                rendered = render_template(session_cfg.key, ctx).strip()
+            else:  # custom: render the key template per event (validator guarantees key set)
+                tmpl = session_cfg.key or ""
+                rendered = render_template(tmpl, ctx).strip()
                 if rendered:
                     conv_key, reuse = rendered, True
                 else:
                     log.warning(
                         "session: template rendered empty — falling back to none",
                         channel=event.channel_name,
-                        template=session_cfg.key,
+                        template=tmpl,
                     )
                     reuse = False
             log.info(

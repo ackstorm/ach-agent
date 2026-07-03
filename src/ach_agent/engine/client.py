@@ -191,7 +191,7 @@ class OpenCodeClient:
     async def delete_session(self, session_id: str) -> None:
         """DELETE /session/{id} — remove the session from opencode's store.
 
-        Used by session.key='none' post-turn cleanup and overflow='rotate', so
+        Used by session type='none' post-turn cleanup and overflow='rotate', so
         stateless turns leave no residue in the persistent home (opencode.db).
         """
         assert self._session is not None, "Call open() first"

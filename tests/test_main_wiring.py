@@ -602,7 +602,7 @@ async def test_session_none_fresh_and_deleted() -> None:
 
 async def test_session_auto_reuses_lane_key() -> None:
     """key='auto': conversation key = event.session_key, reuse=True, no delete."""
-    captured, _pool, discard, _compact = await _run_sess_case(SessionBlock(key="auto"))
+    captured, _pool, discard, _compact = await _run_sess_case(SessionBlock(type="auto"))
     assert captured["reuse"] is True
     assert captured["session_id"] == "lane-1"
     discard.assert_not_awaited()
@@ -611,7 +611,7 @@ async def test_session_auto_reuses_lane_key() -> None:
 async def test_session_template_renders_conversation_key() -> None:
     """A template key renders per event and becomes the conversation (map) key."""
     captured, _pool, discard, _compact = await _run_sess_case(
-        SessionBlock(key="{{ payload.task_id }}")
+        SessionBlock(type="custom", key="{{ payload.task_id }}")
     )
     assert captured["reuse"] is True
     assert captured["session_id"] == "T-42"
@@ -621,7 +621,7 @@ async def test_session_template_renders_conversation_key() -> None:
 async def test_session_template_empty_falls_back_to_none() -> None:
     """A template that renders empty behaves as 'none': fresh + deleted (never key='')."""
     captured, _pool, discard, _compact = await _run_sess_case(
-        SessionBlock(key="{{ payload.missing_field }}")
+        SessionBlock(type="custom", key="{{ payload.missing_field }}")
     )
     assert captured["reuse"] is False
     discard.assert_awaited_once()
@@ -637,7 +637,7 @@ async def test_no_channel_config_keeps_continuity() -> None:
 
 async def test_max_tokens_overflow_compact() -> None:
     captured, _pool, discard, compact = await _run_sess_case(
-        SessionBlock(key="auto", max_tokens=50, overflow="compact"), input_tokens=51
+        SessionBlock(type="auto", max_tokens=50, overflow="compact"), input_tokens=51
     )
     compact.assert_awaited_once()
     assert compact.await_args.args[1] == "ses-t1"
@@ -649,7 +649,7 @@ async def test_max_tokens_overflow_rotate() -> None:
     pool = _SessPool()
     pool.oc_sessions["lane-1"] = "ses-t1"
     _captured, pool, discard, compact = await _run_sess_case(
-        SessionBlock(key="auto", max_tokens=50, overflow="rotate"),
+        SessionBlock(type="auto", max_tokens=50, overflow="rotate"),
         input_tokens=51,
         pool=pool,
     )
@@ -660,7 +660,7 @@ async def test_max_tokens_overflow_rotate() -> None:
 
 async def test_max_tokens_not_exceeded_no_action() -> None:
     _captured, _pool, discard, compact = await _run_sess_case(
-        SessionBlock(key="auto", max_tokens=50, overflow="compact"), input_tokens=49
+        SessionBlock(type="auto", max_tokens=50, overflow="compact"), input_tokens=49
     )
     compact.assert_not_awaited()
     discard.assert_not_awaited()

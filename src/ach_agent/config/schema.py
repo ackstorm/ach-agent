@@ -448,11 +448,13 @@ ChannelType = Literal["webhook", "cron", "queue", "a2a"]
 class SessionBlock(BaseModel):
     """channel.session — conversation identity + growth bounds.
 
-    key: 'none' → fresh opencode session per event, DELETEd post-turn (no residue);
-         'auto' → the channel-derived session_key (per-MR for gitlab, name for cron…);
-         any other string → {{ }} template rendered per event (payload.* / internal.*);
-         an empty render falls back to 'none' behavior + WARN.
-    max_tokens: when the previous turn's input_tokens exceed this, apply `overflow`.
+    type: 'none'   → fresh opencode session per event, DELETEd post-turn (no residue);
+          'auto'   → reuse the channel-derived session_key (per-MR for gitlab, name for cron…);
+          'custom' → reuse the session under `key` ({{ }} template rendered per event).
+    key: the {{ }} template (payload.* / internal.*). REQUIRED iff type=='custom',
+         FORBIDDEN otherwise. An empty render falls back to 'none' behavior + WARN.
+    max_tokens: when the previous turn's input_tokens exceed this, apply `overflow`
+                (applies to 'auto'/'custom'; ignored for 'none').
     overflow: 'compact' → POST /session/{id}/compact in place (keeps memory);
               'rotate' → drop the LRU entry + DELETE the old session (fresh start).
     The router lane key (event.session_key) is NOT affected by any of this.
@@ -460,9 +462,22 @@ class SessionBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    key: str = "none"
+    type: Literal["auto", "none", "custom"] = "none"
+    key: str | None = None
     max_tokens: int | None = Field(default=None, alias="maxTokens", gt=0)
     overflow: Literal["compact", "rotate"] = "compact"
+
+    @model_validator(mode="after")
+    def _check_key(self) -> SessionBlock:
+        """`key` is the discriminated payload of type='custom': required there, banned elsewhere."""
+        if self.type == "custom":
+            if not (self.key and self.key.strip()):
+                raise ValueError("session: type='custom' requires a non-empty 'key' template")
+        elif self.key is not None:
+            raise ValueError(
+                f"session: 'key' is only valid with type='custom' (got type='{self.type}')"
+            )
+        return self
 
 
 class ChannelConfig(BaseModel):
@@ -484,9 +499,12 @@ class ChannelConfig(BaseModel):
     @field_validator("session", mode="before")
     @classmethod
     def _session_shorthand(cls, v: Any) -> Any:
-        """YAML shorthand: `session: auto|none|"{{ … }}"` ≡ `session: {key: <str>}`."""
+        """YAML shorthand: `session: auto|none` ≡ `{type: <str>}`; any other string
+        (a {{ }} template) ≡ `{type: custom, key: <str>}`."""
         if isinstance(v, str):
-            return {"key": v}
+            if v in ("auto", "none"):
+                return {"type": v}
+            return {"type": "custom", "key": v}
         return v
 
     @model_validator(mode="after")

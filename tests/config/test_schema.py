@@ -1079,39 +1079,55 @@ def test_channel_session_block_and_shorthand() -> None:
 
     cron_block = {"cron": {"schedule": "* * * * *"}}
     c = ChannelConfig(name="c", type="cron", **cron_block)
-    assert c.session.key == "none"
+    assert c.session.type == "none"
+    assert c.session.key is None
     assert c.session.max_tokens is None
     assert c.session.overflow == "compact"
 
-    # string shorthand: auto / none / template all become SessionBlock(key=...)
-    assert ChannelConfig(name="c", type="cron", session="auto", **cron_block).session.key == "auto"
-    assert ChannelConfig(name="c", type="cron", session="none", **cron_block).session.key == "none"
+    # string shorthand: auto / none → {type}; any other string (a template) → {type: custom, key}
+    s_auto = ChannelConfig(name="c", type="cron", session="auto", **cron_block).session
+    assert s_auto.type == "auto" and s_auto.key is None
+    s_none = ChannelConfig(name="c", type="cron", session="none", **cron_block).session
+    assert s_none.type == "none" and s_none.key is None
     tmpl = "{{ internal.channel.name }}"
-    assert ChannelConfig(name="c", type="cron", session=tmpl, **cron_block).session.key == tmpl
+    s_tmpl = ChannelConfig(name="c", type="cron", session=tmpl, **cron_block).session
+    assert s_tmpl.type == "custom" and s_tmpl.key == tmpl
 
     # full block form
     c2 = ChannelConfig(
         name="c",
         type="cron",
-        session={"key": "{{ payload.task_id }}", "maxTokens": 50000, "overflow": "rotate"},
+        session={
+            "type": "custom",
+            "key": "{{ payload.task_id }}",
+            "maxTokens": 50000,
+            "overflow": "rotate",
+        },
         **cron_block,
     )
     assert c2.session.key == "{{ payload.task_id }}"
     assert c2.session.max_tokens == 50000
     assert c2.session.overflow == "rotate"
 
+    # type='custom' requires a non-empty key; key is forbidden on auto/none
+    with pytest.raises(ValidationError):
+        ChannelConfig(name="c", type="cron", session={"type": "custom"}, **cron_block)
+    with pytest.raises(ValidationError):
+        ChannelConfig(
+            name="c", type="cron", session={"type": "auto", "key": "x"}, **cron_block
+        )
     # extra=forbid still bites inside the block
     with pytest.raises(ValidationError):
         ChannelConfig(name="c", type="cron", session={"mode": "auto"}, **cron_block)
     # bad overflow value rejected
     with pytest.raises(ValidationError):
         ChannelConfig(
-            name="c", type="cron", session={"key": "auto", "overflow": "explode"}, **cron_block
+            name="c", type="cron", session={"type": "auto", "overflow": "explode"}, **cron_block
         )
     # maxTokens must be positive
     with pytest.raises(ValidationError):
         ChannelConfig(
-            name="c", type="cron", session={"key": "auto", "maxTokens": 0}, **cron_block
+            name="c", type="cron", session={"type": "auto", "maxTokens": 0}, **cron_block
         )
 
 

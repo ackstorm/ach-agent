@@ -3,7 +3,7 @@
 
 Covers the five resolution cases per the boot-helper contract:
   (a) persistence-enabled derivation of db_path
-  (b) persistence-disabled derivation → /tmp/ach-home/codemem/codemem.db
+  (b) persistence-disabled derivation → /tmp/ach-home/state/codemem.db
   (c) explicit dbPath + project override
   (d) hindsight memory → ("", "")  — not codemem, pass-through
   (e) codemem config but binary not on PATH → ("", "") fail-open
@@ -42,7 +42,7 @@ def _cfg(memory: dict | None = None, persistence: dict | None = None) -> AgentCo
 
 
 def test_resolve_derives_db_path_from_persistence(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When db_path is None and persistence.enabled, db_path derives to <mountPath>/codemem/codemem.db."""
+    """When db_path is None and persistence.enabled, db_path derives to <mountPath>/state/codemem.db."""
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/codemem")
 
     from ach_agent.main import resolve_codemem_wiring
@@ -53,7 +53,7 @@ def test_resolve_derives_db_path_from_persistence(monkeypatch: pytest.MonkeyPatc
     )
     db_path, project = resolve_codemem_wiring(cfg)
 
-    assert db_path == "/var/lib/ach-agent/codemem/codemem.db"
+    assert db_path == "/var/lib/ach-agent/state/codemem.db"
     assert project == "ach-agent"
 
 
@@ -63,7 +63,7 @@ def test_resolve_derives_db_path_from_persistence(monkeypatch: pytest.MonkeyPatc
 
 
 def test_resolve_derives_db_path_tmp_when_no_persistence(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When db_path is None and persistence.enabled=False, db_path derives to /tmp/ach-home/codemem/codemem.db."""
+    """When db_path is None and persistence.enabled=False, db_path derives to /tmp/ach-home/state/codemem.db."""
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/codemem")
 
     from ach_agent.main import resolve_codemem_wiring
@@ -74,7 +74,7 @@ def test_resolve_derives_db_path_tmp_when_no_persistence(monkeypatch: pytest.Mon
     )
     db_path, project = resolve_codemem_wiring(cfg)
 
-    assert db_path == "/tmp/ach-home/codemem/codemem.db"
+    assert db_path == "/tmp/ach-home/state/codemem.db"
     assert project == "ach-agent"
 
 

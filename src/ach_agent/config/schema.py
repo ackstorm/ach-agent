@@ -215,8 +215,8 @@ class CodememParams(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     # Absolute path to the codemem SQLite DB. OMITTED → the harness derives it at boot from
-    # persistence (<mountPath>/codemem/codemem.db when persistence.enabled, else
-    # /tmp/ach-home/codemem/codemem.db). Set it to override. Operator config (trusted); never
+    # persistence (<mountPath>/state/codemem.db when persistence.enabled, else
+    # /tmp/ach-home/state/codemem.db). Set it to override. Operator config (trusted); never
     # templated per-repo, never from inbound payload.
     db_path: str | None = Field(default=None, alias="dbPath")
     # Stable project namespace (passed to codemem as CODEMEM_PROJECT). Fixed default so

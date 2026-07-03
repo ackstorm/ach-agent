@@ -40,8 +40,8 @@ def resolve_codemem_wiring(cfg: Any) -> tuple[str, str]:
     PATH (fail-open, MEM-02/D-02: degrade, increment MEMORY_DEGRADED, never raise).
 
     db_path derives from persistence when omitted (mirrors resolve_engine_paths):
-      - persistence.enabled → <mountPath>/codemem/codemem.db
-      - else                → /tmp/ach-home/codemem/codemem.db
+      - persistence.enabled → <mountPath>/state/codemem.db
+      - else                → /tmp/ach-home/state/codemem.db
     project defaults to the schema constant ("ach-agent"); both are config-overridable.
     """
     from ach_agent.config.schema import CodememMemory
@@ -60,6 +60,6 @@ def resolve_codemem_wiring(cfg: Any) -> tuple[str, str]:
 
     cm = cfg.memory.codemem
     base = cfg.persistence.mount_path if cfg.persistence.enabled else "/tmp/ach-home"
-    db_path = cm.db_path or f"{base}/codemem/codemem.db"
+    db_path = cm.db_path or f"{base}/state/codemem.db"
     log.info("memory: codemem backend active", db_path=db_path, project=cm.project)
     return db_path, cm.project

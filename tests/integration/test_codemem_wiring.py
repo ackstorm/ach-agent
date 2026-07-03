@@ -92,7 +92,7 @@ async def test_codemem_config_flows_into_opencode_json(
 async def test_codemem_derived_db_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """codemem with no dbPath + persistence.enabled → db derives to <mountPath>/codemem/codemem.db."""
+    """codemem with no dbPath + persistence.enabled → db derives to <mountPath>/state/codemem.db."""
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/codemem")
 
     cfg = _cfg(
@@ -101,7 +101,7 @@ async def test_codemem_derived_db_path(
     )
     db_path, project = resolve_codemem_wiring(cfg)
 
-    assert db_path == "/var/lib/ach-agent/codemem/codemem.db"
+    assert db_path == "/var/lib/ach-agent/state/codemem.db"
     assert project == "ach-agent"
 
 

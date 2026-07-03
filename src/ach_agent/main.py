@@ -892,6 +892,20 @@ async def _drain(
     log.info("drain: complete")
 
 
+class _A2AHandler:
+    """Router wrapper injecting on_complete/on_fail into delivery_context (W9 pattern)."""
+
+    def __init__(self, rtr: Any, fn: Any, fn_fail: Any) -> None:
+        self._rtr = rtr
+        self._fn = fn
+        self._fn_fail = fn_fail
+
+    async def handle(self, event: MessageEvent) -> Any:
+        event.delivery_context["on_complete"] = self._fn
+        event.delivery_context["on_fail"] = self._fn_fail
+        return await self._rtr.handle(event)
+
+
 def _harness_log_dir() -> Path:
     """Volatile dir for transient harness logs (e.g. the --tui attach log).
 
@@ -1368,19 +1382,6 @@ async def main(
         _on_fail = bridge.signal_failure
 
         # Wrap the router to inject on_complete + on_fail into delivery_context (W9 pattern).
-        class _A2AHandler:
-            """Handler wrapper that injects on_complete/on_fail into delivery_context."""
-
-            def __init__(self, rtr: Any, fn: Any, fn_fail: Any) -> None:
-                self._rtr = rtr
-                self._fn = fn
-                self._fn_fail = fn_fail
-
-            async def handle(self, event: MessageEvent) -> Any:
-                event.delivery_context["on_complete"] = self._fn
-                event.delivery_context["on_fail"] = self._fn_fail
-                return await self._rtr.handle(event)
-
         bridge._handler = _A2AHandler(router, _on_complete, _on_fail)
 
         # Build the A2A AgentCard from channel config (minimal — receiver-only v1, spec §14.6).
@@ -1403,7 +1404,6 @@ async def main(
     state: dict[str, Any] = app.extra["state"]
 
     # Step 7: wire channel adapters (D-08: one CronScheduler for ALL cron channels, SC#3)
-    seen_channel_names: set[str] = set()
     tasks: list[asyncio.Task[None]] = []
     uv_server: Any = None  # captured below when uvicorn boots (always)
 
@@ -1430,32 +1430,7 @@ async def main(
         queue_consumers.append(consumer)
         log.info("queue consumer started", channel_name=channel.name, stream=channel.queue.key)  # type: ignore[union-attr]
 
-    for channel in cfg.channels:
-        if channel.name in seen_channel_names:
-            log.error(
-                "duplicate channel name — skipping",
-                channel_name=channel.name,
-            )
-            continue
-        seen_channel_names.add(channel.name)
-
-        if channel.type == "cron":
-            # Already handled above by CronScheduler (D-08/SC#3) — skip per-channel task.
-            pass
-        elif channel.type == "queue":
-            # Already handled above by its QueueConsumer — skip per-channel task.
-            log.info("queue channel registered", channel_name=channel.name)
-        elif channel.type == "webhook":
-            # Webhook channels are served by uvicorn via the FastAPI app (started below).
-            # Route is already registered in create_app() for all webhook_channels.
-            log.info(
-                "webhook channel registered",
-                channel_name=channel.name,
-            )
-        elif channel.type == "a2a":
-            # A2A channel: bridge + sub-app already built above and mounted in create_app.
-            # uvicorn must be started to serve A2A HTTP requests (topology A, T-04-17).
-            log.info("a2a channel registered", channel_name=channel.name)
+    log.info("channels registered", names=[ch.name for ch in cfg.channels])
 
     # Boot uvicorn UNCONDITIONALLY (CONTRACT §4): healthz/readyz/metrics MUST always be
     # reachable, even for cron-only or queue-only configs with no inbound HTTP channel —
@@ -1495,18 +1470,13 @@ async def main(
 
     log.info("ach-agent started", channel_count=len(tasks))
 
-    if tasks:
-        # Wait for SIGTERM/SIGINT OR all tasks to finish (tasks loop forever normally)
-        shutdown_task = asyncio.create_task(shutdown_event.wait())
-        await asyncio.wait(
-            [shutdown_task, *tasks],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-    else:
-        # Defensive fallback: uvicorn is now booted unconditionally so `tasks` is never
-        # empty here, but if that ever changes, still wait for SIGTERM rather than exit
-        # immediately and orphan background tasks (CR-03).
-        await shutdown_event.wait()
+    # Wait for SIGTERM/SIGINT OR all tasks to finish (tasks loop forever normally).
+    # uvicorn boots unconditionally, so `tasks` is never empty.
+    shutdown_task = asyncio.create_task(shutdown_event.wait())
+    await asyncio.wait(
+        [shutdown_task, *tasks],
+        return_when=asyncio.FIRST_COMPLETED,
+    )
 
     if shutdown_event.is_set():
         # Stop queue consumers BEFORE draining. Unlike HTTP/cron intake, queue consumers
@@ -1541,12 +1511,11 @@ async def main(
             await mcp_proxy.stop()
         await stats_sink.stop()
         await tool_sink.stop()
-        if tasks:
-            # uvicorn's serve() task returns on its own once should_exit=True; await it
-            # so its lifespan shutdown completes before asyncio.run tears the loop down.
-            # This avoids the force-cancel CancelledError traceback the old sys.exit(0)
-            # produced — the process now exits 0 cleanly.
-            await asyncio.gather(*tasks, return_exceptions=True)
+        # uvicorn's serve() task returns on its own once should_exit=True; await it
+        # so its lifespan shutdown completes before asyncio.run tears the loop down.
+        # This avoids the force-cancel CancelledError traceback the old sys.exit(0)
+        # produced — the process now exits 0 cleanly.
+        await asyncio.gather(*tasks, return_exceptions=True)
         log.info("ach-agent shutdown complete")
     else:
         # Normal termination (all tasks completed without SIGTERM — rare in prod)

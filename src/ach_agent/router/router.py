@@ -18,7 +18,6 @@ from typing import Any
 import structlog
 
 from ach_agent.channels.message_event import MessageEvent
-from ach_agent.router.admission import AtomicCounter
 from ach_agent.router.dedup import DedupStore
 from ach_agent.router.metrics import BACKPRESSURE_REJECTS, DEDUP_DISCARDS, EXPIRE_DROPS
 from ach_agent.router.slots import SlotManager
@@ -55,7 +54,7 @@ class Router:
       RTR-01: dedup precedes backpressure (ORDER IS NORMATIVE, §6.2)
       RTR-02: per-session FIFO serialization (one Lane per session_key)
       RTR-03: maxConcurrentInvocations enforced via asyncio.Semaphore
-      RTR-04: maxQueuedTotal enforced via AtomicCounter
+      RTR-04: maxQueuedTotal enforced via a plain int counter
       RTR-05: full queue is NEVER silent (FULL_QUEUE / drop+log+metric)
 
     Constructor parameters match the conftest.py router fixture (01-02).
@@ -86,8 +85,9 @@ class Router:
         )
 
         # queued_total: count of events waiting in lane queues OR being processed
-        # AtomicCounter is safe in single-threaded asyncio (no locks needed)
-        self._queued_total: AtomicCounter = AtomicCounter()
+        # Plain int is safe in single-threaded asyncio (no locks needed): inc/dec
+        # only run on the event loop thread (router.handle + lane consumers).
+        self._queued_total: int = 0
 
         # Lane map: session_key → Lane (bounded by eviction, Pitfall 6)
         self._lanes: dict[str, Any] = {}  # dict[str, Lane] — deferred import avoided
@@ -112,28 +112,20 @@ class Router:
             return RouterAdmitResult.DUPLICATE
 
         # 2. BACKPRESSURE — only reached for distinct events
-        if self._queued_total.get() >= self._max_queued_total:
+        if self._queued_total >= self._max_queued_total:
             BACKPRESSURE_REJECTS.inc()
             # RTR-05: full queue is NEVER silent (CONTRACT §6.4, Pitfall 3)
-            if event.source_trait == "async_no_retry":
+            dropped = event.source_trait == "async_no_retry"
+            if dropped:
                 EXPIRE_DROPS.inc()
-                log.warning(
-                    "router: drop — queue full",
-                    source_trait=event.source_trait,
-                    session_key=event.session_key,
-                    idempotency_key=event.idempotency_key,
-                    queued=self._queued_total.get(),
-                    max_queued_total=self._max_queued_total,
-                )
-            else:
-                log.warning(
-                    "router: backpressure — queue full",
-                    source_trait=event.source_trait,
-                    session_key=event.session_key,
-                    idempotency_key=event.idempotency_key,
-                    queued=self._queued_total.get(),
-                    max_queued_total=self._max_queued_total,
-                )
+            log.warning(
+                "router: drop — queue full" if dropped else "router: backpressure — queue full",
+                source_trait=event.source_trait,
+                session_key=event.session_key,
+                idempotency_key=event.idempotency_key,
+                queued=self._queued_total,
+                max_queued_total=self._max_queued_total,
+            )
             return RouterAdmitResult.FULL_QUEUE
 
         # 3. MARK dedup BEFORE enqueuing (mark-before-enqueue invariant). Secondary on the
@@ -141,7 +133,7 @@ class Router:
         self._dedup.mark(dedup_key, self._idempotency_window_seconds)
         if sec_key is not None:
             self._dedup.mark(sec_key, _SECONDARY_DEDUP_WINDOW_S)
-        self._queued_total.inc()
+        self._queued_total += 1
 
         # 4. LANE — enqueue into per-session FIFO
         lane = self._get_or_create_lane(event.session_key, event.channel_name)
@@ -188,7 +180,7 @@ class Router:
         outcome, so queued_total is released exactly once per invocation whether
         the engine completed normally, timed out, or errored (Pitfall 4 / RTR-04).
         """
-        self._queued_total.dec()
+        self._queued_total -= 1
 
     @property
     def lanes(self) -> dict[str, Any]:

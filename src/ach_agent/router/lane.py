@@ -70,10 +70,6 @@ class Lane:
         """Enqueue an event into this lane's FIFO queue."""
         await self._queue.put(event)
 
-    def is_done(self) -> bool:
-        """True if the consumer task has finished (for eviction check)."""
-        return self._task.done()
-
     async def _consume(self) -> None:
         """Consumer loop: drain the queue one event at a time (FIFO, RTR-02).
 

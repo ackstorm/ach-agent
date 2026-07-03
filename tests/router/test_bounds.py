@@ -129,7 +129,7 @@ async def test_queued_total_released_when_engine_skips_on_kill() -> None:
         await asyncio.sleep(0)  # let the lane consumer run and decrement
     await asyncio.sleep(0.05)
 
-    assert router._queued_total.get() == 0, (
+    assert router._queued_total == 0, (
         "queued_total leaked — the lane must decrement even when the engine "
         "never calls on_kill (RTR-04)"
     )
@@ -171,7 +171,7 @@ async def test_timeout_path_does_not_over_release() -> None:
         await router.handle(make_event(idempotency_key=f"t{i}", session_key=f"st{i}"))
     await asyncio.sleep(0.05)
 
-    assert router._queued_total.get() == 0, (
+    assert router._queued_total == 0, (
         "queued_total over-decremented (went negative) on the timeout path"
     )
     # Semaphore capacity must be exactly the configured cap — not inflated by

@@ -29,10 +29,10 @@ async def test_secondary_key_dedups_when_primary_differs(router, fake_engine) ->
     b = _event_with_secondary("uuid-2", "gl:merge_request:42:7:alice:hashX")  # diff UUID, same composite
 
     assert await router.handle(a) == RouterAdmitResult.ACCEPTED
-    assert router._queued_total.get() == 1
+    assert router._queued_total == 1
 
     assert await router.handle(b) == RouterAdmitResult.DUPLICATE
-    assert router._queued_total.get() == 1, "secondary duplicate MUST NOT consume a queue slot (RTR-01)"
+    assert router._queued_total == 1, "secondary duplicate MUST NOT consume a queue slot (RTR-01)"
 
 
 @pytest.mark.asyncio

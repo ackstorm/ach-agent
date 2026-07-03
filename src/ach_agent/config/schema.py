@@ -511,44 +511,20 @@ class ChannelConfig(BaseModel):
     def check_type_block_coherence(self) -> ChannelConfig:
         """D-04: enforce channel type↔sub-block coherence at config load time.
 
-        Each channel type requires its sub-block and forbids foreign sub-blocks.
-        Raises ValueError (wrapped by Pydantic into ValidationError → sys.exit(1)).
+        The channel type names its required sub-block (type Literal == field name,
+        1:1); every other type's block is forbidden. webhook additionally requires
+        'source'. Raises ValueError (wrapped by Pydantic into ValidationError →
+        sys.exit(1)).
         """
         t = self.type
-        if t == "webhook":
-            if self.webhook is None:
-                raise ValueError(
-                    f"channel '{self.name}': type='webhook' requires a 'webhook' block"
-                )
-            if self.source is None:
-                raise ValueError(f"channel '{self.name}': type='webhook' requires 'source' field")
-            for foreign in ("cron", "queue", "a2a"):
-                if getattr(self, foreign) is not None:
-                    raise ValueError(
-                        f"channel '{self.name}': type='webhook' forbids '{foreign}' block"
-                    )
-        elif t == "cron":
-            if self.cron is None:
-                raise ValueError(f"channel '{self.name}': type='cron' requires a 'cron' block")
-            for foreign in ("webhook", "queue", "a2a"):
-                if getattr(self, foreign) is not None:
-                    raise ValueError(
-                        f"channel '{self.name}': type='cron' forbids '{foreign}' block"
-                    )
-        elif t == "queue":
-            if self.queue is None:
-                raise ValueError(f"channel '{self.name}': type='queue' requires a 'queue' block")
-            for foreign in ("webhook", "cron", "a2a"):
-                if getattr(self, foreign) is not None:
-                    raise ValueError(
-                        f"channel '{self.name}': type='queue' forbids '{foreign}' block"
-                    )
-        elif t == "a2a":
-            if self.a2a is None:
-                raise ValueError(f"channel '{self.name}': type='a2a' requires an 'a2a' block")
-            for foreign in ("webhook", "cron", "queue"):
-                if getattr(self, foreign) is not None:
-                    raise ValueError(f"channel '{self.name}': type='a2a' forbids '{foreign}' block")
+        if getattr(self, t) is None:
+            article = "an" if t == "a2a" else "a"
+            raise ValueError(f"channel '{self.name}': type='{t}' requires {article} '{t}' block")
+        if t == "webhook" and self.source is None:
+            raise ValueError(f"channel '{self.name}': type='webhook' requires 'source' field")
+        for foreign in ("webhook", "cron", "queue", "a2a"):
+            if foreign != t and getattr(self, foreign) is not None:
+                raise ValueError(f"channel '{self.name}': type='{t}' forbids '{foreign}' block")
         return self
 
 

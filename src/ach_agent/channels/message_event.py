@@ -51,11 +51,6 @@ class MessageEvent:
     source_trait: Literal["sync", "async_no_retry"] = "async_no_retry"
     received_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     reply_future: asyncio.Future[str] | None = field(default=None, compare=False, repr=False)
-    # D-03: Phase 5 throwaway consent marker.
-    # True = structured consent signal present (exercised by test fixtures only in v1).
-    # ALL channel adapters leave this False in v1 — the real derivation is V1.1 CR.
-    # Do NOT build per-channel consent derivation logic here.
-    user_consented: bool = field(default=False)
     # Correlation id (uuid4 hex) echoed to the caller on the webhook 202 accept and logged
     # by engine_runner for log/trace correlation ONLY — not persisted, not queryable.
     task_id: str = ""

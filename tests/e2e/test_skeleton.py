@@ -211,8 +211,6 @@ async def test_cron_skeleton_fires_log_invocation(
 
     monkeypatch.setattr("ach_agent.channels.cron.asyncio.sleep", one_shot_sleep)
 
-    # Reset singleton counter for test isolation
-    CronScheduler._instance_count = 0
     scheduler = CronScheduler(cron_channels, handler=router)
     await scheduler.start()
 
@@ -222,7 +220,6 @@ async def test_cron_skeleton_fires_log_invocation(
             await invocation_done.wait()
     finally:
         await scheduler.stop()
-        CronScheduler._instance_count = 0
 
     assert len(fake_engine.invocations) == 1, (
         f"Expected 1 invocation, got {len(fake_engine.invocations)}"

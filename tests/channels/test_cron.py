@@ -81,16 +81,11 @@ async def test_cron_dispatches_correct_event(monkeypatch: pytest.MonkeyPatch) ->
     channel_cfg = ChannelConfig.model_validate(raw)
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
 
-    # Reset singleton counter for test isolation
-    CronScheduler._instance_count = 0
     scheduler = CronScheduler([channel_cfg], handler=handler)
 
     # Run the scheduler's _run loop — it will raise _StopAfterOne after the first sleep
     with pytest.raises(_StopAfterOne):
         await scheduler._run()
-
-    # Cleanup singleton counter
-    CronScheduler._instance_count = 0
 
     assert len(handler.events) == 1, "Expected exactly one event emitted"
     event = handler.events[0]
@@ -151,15 +146,10 @@ async def test_cron_full_queue_logs_and_never_silent(
     channel_cfg = ChannelConfig.model_validate(raw)
     handler = FakeHandler(RouterAdmitResult.FULL_QUEUE)
 
-    # Reset singleton counter for test isolation
-    CronScheduler._instance_count = 0
     scheduler = CronScheduler([channel_cfg], handler=handler)
 
     with pytest.raises(_StopAfterOne):
         await scheduler._run()
-
-    # Cleanup singleton counter
-    CronScheduler._instance_count = 0
 
     assert len(handler.events) == 1, "Handler must have been called (to emit FULL_QUEUE)"
     # Logs go to STDERR (STDOUT carries only the agent reply); check both so the test
@@ -201,15 +191,10 @@ async def test_engine_not_ready_tick_routes_normally(monkeypatch: pytest.MonkeyP
     channel_cfg = ChannelConfig.model_validate(raw)
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
 
-    # Reset singleton counter for test isolation
-    CronScheduler._instance_count = 0
     scheduler = CronScheduler([channel_cfg], handler=handler)
 
     with pytest.raises(_StopAfterOne):
         await scheduler._run()
-
-    # Cleanup singleton counter
-    CronScheduler._instance_count = 0
 
     # engine-not-ready must NOT skip the tick — it routes normally (lazy engine start)
     assert len(handler.events) == 1, (
@@ -267,9 +252,7 @@ def test_cron_honors_configured_timezone() -> None:
     }
     channel_cfg = ChannelConfig.model_validate(raw)
 
-    CronScheduler._instance_count = 0
     scheduler = CronScheduler([channel_cfg], handler=FakeHandler())
-    CronScheduler._instance_count = 0
 
     from datetime import datetime
 
@@ -303,28 +286,16 @@ def test_cron_invalid_timezone_rejected_at_parse() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_singleton_invariant() -> None:
-    """D-09/SC#3: exactly one CronScheduler instance per process under multi-cron config.
-
-    Constructs ONE CronScheduler with two cron channels and asserts _instance_count == 1.
-    Resets counter for test isolation.
-    """
+def test_single_scheduler_drives_all_channels() -> None:
+    """D-09/SC#3: ONE CronScheduler drives ALL cron channels — one slot per channel."""
     from ach_agent.channels.cron import CronScheduler
-
-    # Reset for test isolation
-    CronScheduler._instance_count = 0
 
     channel_c1 = _make_channel_cfg("c1", "* * * * *")
     channel_c2 = _make_channel_cfg("c2", "*/5 * * * *")
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
 
-    CronScheduler([channel_c1, channel_c2], handler=handler)  # type: ignore[list-item]
+    scheduler = CronScheduler([channel_c1, channel_c2], handler=handler)  # type: ignore[list-item]
 
-    assert CronScheduler._instance_count == 1, (
-        f"D-09/SC#3: expected _instance_count == 1 after one CronScheduler construction, "
-        f"got {CronScheduler._instance_count}"
+    assert len(scheduler._slots) == 2, (
+        f"D-09/SC#3: one scheduler holds one slot per cron channel, got {len(scheduler._slots)}"
     )
-
-    # Cleanup: reset for isolation (stop() would decrement but needs running loop;
-    # direct reset is sufficient for this sync unit test)
-    CronScheduler._instance_count = 0

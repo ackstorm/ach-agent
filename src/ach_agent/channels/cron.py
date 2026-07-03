@@ -6,7 +6,6 @@ Locked decisions:
   - Idempotency key: derive_cron_idempotency_key(name, scheduled_tick) only
     (the scheduled instant, not datetime.now() — Pitfall 5 / D-09).
   - Single CronScheduler per process multiplexing ALL cron channels (D-08, SC#3).
-  - _instance_count: class-level counter for D-09 singleton assertion test.
 
 RTR-06: NEVER import from hermes_agent.* here.
 
@@ -40,7 +39,6 @@ class CronScheduler:
     """Single scheduler multiplexing all cron channels (D-08/D-09).
 
     Invariant: exactly one instance per process. main.py constructs exactly one.
-    _instance_count: class-level counter for D-09 singleton assertion test.
 
     Preserved from run_cron_channel:
       - DUR-04 no-catch-up: croniter.get_next() always computes NEXT future tick.
@@ -56,14 +54,11 @@ class CronScheduler:
     do NOT advance non-due croniter objects (stateful; can skip ticks).
     """
 
-    _instance_count: int = 0  # D-09: singleton test increments/decrements this
-
     def __init__(
         self,
         channels: list[ChannelConfig],
         handler: MessageHandler,
     ) -> None:
-        CronScheduler._instance_count += 1
         # Build slots: (channel_cfg, croniter_obj, next_dt)
         # next_dt starts as None; computed lazily on first _run() iteration.
         # DUR-04: croniter initialized from now() — get_next() always returns future tick.
@@ -84,11 +79,10 @@ class CronScheduler:
         self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
-        """Cancel + await the scheduler task; decrement _instance_count for test isolation."""
+        """Cancel + await the scheduler task."""
         if self._task is not None and not self._task.done():
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
-        CronScheduler._instance_count -= 1
 
     async def _run(self) -> None:
         """Single loop: compute all next ticks, sleep to earliest, fire due channels.

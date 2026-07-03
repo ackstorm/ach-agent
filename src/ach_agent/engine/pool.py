@@ -208,17 +208,19 @@ class EnginePool:
     Constraint: No router or Hermes imports (D-08, RTR-06).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, oc_sessions: MutableMapping[str, str] | None = None) -> None:
         self._servers: dict[str, ManagedServer] = {}
         self._ref_counts: dict[str, int] = {}
         self._ttl_tasks: dict[str, asyncio.Task[None]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
         # session_key → opencode session id (ses_…). Pool-owned so it outlives
-        # individual ManagedServers: channel.session='auto' reuses the persisted
-        # opencode session across idle-TTL restarts (threaded into run_invocation
-        # by engine_runner as oc_sessions).
-        self.oc_sessions = _LRUSessionMap()
+        # individual ManagedServers. Injectable so main can swap in a state.db-backed
+        # map when persistence.enabled (survives a full harness restart); defaults to
+        # the in-memory LRU (volatile, survives only idle-TTL server restarts).
+        self.oc_sessions: MutableMapping[str, str] = (
+            oc_sessions if oc_sessions is not None else _LRUSessionMap()
+        )
 
         # _start_server is injectable for testing (replaced by tests with a fake).
         # In production it points to the lifecycle launch helper. It receives the

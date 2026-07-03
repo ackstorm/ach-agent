@@ -447,3 +447,21 @@ def test_sqlite_session_map_pop_deletes_row(tmp_path):
     m2 = _SqliteSessionMap(db)
     assert m2.get("lane-1") is None
     m2.close()
+
+
+def test_pool_accepts_injected_session_map():
+    """A caller (main._open_session_store) can inject the disk-resident map."""
+    from ach_agent.engine.pool import EnginePool
+
+    injected: dict[str, str] = {"lane-1": "ses-a"}
+    pool = EnginePool(oc_sessions=injected)
+    assert pool.oc_sessions is injected
+
+
+def test_pool_default_session_map_is_lru_still():
+    """No arg → still an in-memory _LRUSessionMap (unchanged default)."""
+    from ach_agent.engine.pool import EnginePool, _LRUSessionMap
+
+    pool = EnginePool()
+    assert isinstance(pool.oc_sessions, _LRUSessionMap)
+    assert len(pool.oc_sessions) == 0

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.6.0] - 2026-07-03
+
 ### Changed
 - **BREAKING: `channel.session` is now a block**, not `auto|none`. Shape:
   `{key, maxTokens, overflow}` (string shorthand `session: auto|none|"{{ … }}"` still maps to

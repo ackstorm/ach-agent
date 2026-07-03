@@ -7,7 +7,7 @@ that may emit a log line):
   2. load_config(path)          <- hard-fail on schema mismatch (CFG-02)
   3. D-02 gate: reject unwired channel types (hard-fail, non-zero exit)
   4. Write PID file             <- Pitfall 11: single-replica guard
-  5. Construct Router (wraps SanitizedEnv engine launch)
+  5. Construct Router
   6b. Build engine_runner (CR-01: branches on event.reply_future for reply mode;
       relays the terminal text — egress is the agent's via external MCP tools)
   6c. Create FastAPI app via create_app(channels, router)
@@ -49,7 +49,7 @@ from ach_agent.engine.context import fetch_context
 from ach_agent.engine.hydrate import hydrate, resolve_model
 from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
 from ach_agent.engine.metrics import DRAIN_COMPLETED, ENGINE_LAUNCH_FAILURES
-from ach_agent.engine.sanitized_env import SanitizedEnv, add_secret_redaction, configure_logging
+from ach_agent.engine.sanitized_env import add_secret_redaction, configure_logging
 from ach_agent.http.app import create_app
 from ach_agent.router import Router
 from ach_agent.security.preflight import run_preflight
@@ -535,8 +535,8 @@ def _make_engine_runner(
     - async mode (neither): nothing to deliver. Egress already happened via the
         agent's external MCP tool calls — the harness never posts on the model's behalf.
 
-    SanitizedEnv is used to build the subprocess launch env (SEC-01 /
-    T-01-EK folded todo): the engine_cfg carries paths, never ek_ values.
+    The subprocess launch env is built by build_opencode_env (SEC-01): the
+    engine_cfg carries paths, never ek_ values.
 
     memory_cfg (MEM-01/MEM-02/D-02): optional MemoryBlock from config.memory.
     When present, prepare_memory is called BEFORE pool.acquire so the opencode.json
@@ -556,9 +556,6 @@ def _make_engine_runner(
     channels_by_name = channels_by_name or {}
 
     async def engine_runner(event: MessageEvent, on_kill: Callable[[], None]) -> None:
-        # Build sanitized launch env — ek_ is never read into a local variable
-        _sanitized = SanitizedEnv(os.environ.copy())  # noqa: F841 — used by launch
-
         # Resolve channel cfg early so ctx can be built before the memory probe.
         ch_cfg = channels_by_name.get(event.channel_name)
         ctx = build_template_context(

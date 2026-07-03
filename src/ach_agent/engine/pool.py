@@ -164,10 +164,6 @@ class _SqliteSessionMap(MutableMapping[str, str]):
             log.warning("session map: pop-delete failed", key=key, exc_info=True)
         return str(row[0])
 
-    def __contains__(self, key: object) -> bool:
-        row = self._con.execute("SELECT 1 FROM oc_sessions WHERE key=?", (key,)).fetchone()
-        return row is not None
-
     def __iter__(self) -> Iterator[str]:
         return (str(r[0]) for r in self._con.execute("SELECT key FROM oc_sessions").fetchall())
 

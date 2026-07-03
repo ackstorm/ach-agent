@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""SanitizedEnv and structlog redaction processors.
+"""structlog redaction processors.
 
 SEC-01: ek_ presented as bearer, never logged or forwarded to tool backends.
 SEC-03: GITLAB_TOKEN value never logged (token-in-logs safety net).
-The SanitizedEnv class wraps the subprocess env dict; the redact_ek_processor
-and redact_gitlab_token_processor strip secrets before structlog renders log lines.
+The redact_ek_processor and redact_gitlab_token_processor strip secrets before
+structlog renders log lines.
 
 Constraint:
   - No router or Hermes imports (D-08, RTR-06).
@@ -104,44 +104,6 @@ def make_redact_secret_env_processor(env_names: list[str]) -> structlog.typing.P
         return event_dict
 
     return _proc
-
-
-class SanitizedEnv:
-    """Env dict wrapper that never exposes ek_ values in repr/logging.
-
-    Wraps the subprocess environment so Python tracebacks and log statements
-    that print local variables cannot leak the ACH_API_KEY value (SEC-01 /
-    T-00-EK, Pitfall 6).
-
-    Usage::
-
-        env = SanitizedEnv(os.environ.copy())
-        proc = await asyncio.create_subprocess_exec(..., env=env.as_dict())
-        log.info("launching", env=repr(env))  # ek_ values are [REDACTED] in log
-    """
-
-    def __init__(self, env: dict[str, str]) -> None:
-        self._env = env
-
-    def as_dict(self) -> dict[str, str]:
-        """Return the raw env dict for passing to subprocess.
-
-        The subprocess needs the real values (opencode dereferences
-        {env:ACH_API_KEY} at runtime). Only repr/logging is masked.
-        """
-        return self._env
-
-    def __repr__(self) -> str:
-        """Safe repr for logging — masks ek_ values with [REDACTED]."""
-        masked = {
-            k: _EK_PATTERN.sub("[REDACTED]", v) if isinstance(v, str) else v
-            for k, v in self._env.items()
-        }
-        return f"SanitizedEnv({masked!r})"
-
-    def __str__(self) -> str:
-        """Safe str — same as repr."""
-        return self.__repr__()
 
 
 class _StderrProxy:

@@ -256,11 +256,8 @@ def test_ek_never_logged_in_skeleton(
         input={"text": "hello"},
     )
     # Simulate what would happen if ACH_API_KEY leaked into a log call
-    # (SanitizedEnv repr logs as [REDACTED]; raw ek_ value must never appear)
-    from ach_agent.engine.sanitized_env import SanitizedEnv
-
-    sanitized = SanitizedEnv(os.environ.copy())
-    log.info("env check", env_repr=repr(sanitized))
+    # (redact_ek_processor scrubs it; raw ek_ value must never appear)
+    log.info("env check", env=os.environ.copy())
 
     output = stream.getvalue()
     assert "ek_test_sentinel_do_not_log" not in output, (

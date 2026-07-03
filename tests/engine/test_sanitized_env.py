@@ -1,4 +1,4 @@
-"""SanitizedEnv and ek_ redaction tests: SEC-01.
+"""ek_ redaction tests: SEC-01.
 
 Implements the CI secret-leakage test required by the plan's threat model (T-00-EK).
 """
@@ -21,15 +21,11 @@ def test_ek_never_logged(capsys: pytest.CaptureFixture[str], fake_ek_env: None) 
     "ek_test_sentinel_do_not_log" as ACH_API_KEY. Any code path that logs
     env dicts, tracebacks, or subprocess launch args must not leak the value.
 
-    SanitizedEnv and redact_ek_processor protect against this.
+    redact_ek_processor protects against this.
     """
     import structlog
 
-    from ach_agent.engine.sanitized_env import (
-        SanitizedEnv,
-        configure_logging,
-        redact_ek_processor,
-    )
+    from ach_agent.engine.sanitized_env import configure_logging, redact_ek_processor
 
     # Configure structlog with redaction processor
     configure_logging()
@@ -37,10 +33,9 @@ def test_ek_never_logged(capsys: pytest.CaptureFixture[str], fake_ek_env: None) 
     # Build env from os.environ (which has the fake ek_ key via fake_ek_env fixture)
     env = os.environ.copy()
 
-    # Log the SanitizedEnv repr — must not leak the sentinel
-    sanitized = SanitizedEnv(env)
+    # Log the raw env dict — redact_ek_processor must scrub the sentinel
     log = structlog.get_logger("test")
-    log.info("env repr", env_repr=repr(sanitized))
+    log.info("env dict", env=env)
 
     # Also log a dict directly that contains an ek_ value
     log.info("env dict logging", env={"ACH_API_KEY": "ek_test_sentinel_do_not_log"})
@@ -72,31 +67,6 @@ def test_redact_ek_processor_nested_dict() -> None:
     result = redact_ek_processor(None, "info", event_dict)
     assert result["env"]["ACH_API_KEY"] == "[REDACTED]"
     assert result["env"]["OTHER"] == "ok"
-
-
-def test_sanitized_env_repr_masks_ek() -> None:
-    """SanitizedEnv.__repr__ masks ek_ values."""
-    from ach_agent.engine.sanitized_env import SanitizedEnv
-
-    env = {"ACH_API_KEY": "ek_super_secret_value", "NORMAL_VAR": "visible"}
-    sanitized = SanitizedEnv(env)
-    repr_str = repr(sanitized)
-    assert "ek_super_secret_value" not in repr_str, "repr must not leak ek_ value"
-    assert "[REDACTED]" in repr_str, "repr must show [REDACTED] for ek_ values"
-    assert "NORMAL_VAR" in repr_str, "repr should show non-secret keys"
-    assert "visible" in repr_str, "repr should show non-secret values"
-
-
-def test_sanitized_env_as_dict_returns_real_values() -> None:
-    """SanitizedEnv.as_dict() returns the real env dict (for subprocess launch)."""
-    from ach_agent.engine.sanitized_env import SanitizedEnv
-
-    env = {"ACH_API_KEY": "ek_real_key_for_subprocess", "NORMAL": "value"}
-    sanitized = SanitizedEnv(env)
-    real = sanitized.as_dict()
-    # The real dict must have the actual value (subprocess needs it)
-    assert real["ACH_API_KEY"] == "ek_real_key_for_subprocess"
-    assert real["NORMAL"] == "value"
 
 
 # ---------------------------------------------------------------------------

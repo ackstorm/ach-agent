@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import Leaderboard from './Leaderboard';
@@ -26,13 +26,33 @@ const base = {
         speed_tok_s: 63, cost_per_mtok: 31.5, spend: 0.9, sessions: 2 },
     ],
   },
-  cost_per_session: [], sessions_this_month: { rows: [], partial: false }, series: [], recent: [],
+  cost_per_session: [],
+  sessions_this_month: { rows: [{ model: 'glm-5-2', count: 2 }], partial: false },
+  series: [{ date: '2026-06-01', spend: 0.9, sessions: 2, tokens: 100, partial: false }],
+  recent: [],
 };
 
 test('renders ranked model and unrated score', async () => {
   renderPage(base);
   await waitFor(() => expect(screen.getByText('claude-opus-4-8')).toBeInTheDocument());
   expect(screen.getByText(/unrated/i)).toBeInTheDocument();
+});
+
+test('renders the daily chart and sessions-this-month panels', async () => {
+  renderPage(base);
+  await waitFor(() => expect(screen.getByText('Daily Usage')).toBeInTheDocument());
+  expect(screen.getByText('Sessions This Month')).toBeInTheDocument();
+});
+
+test('range preset click refetches with the new days value', async () => {
+  renderPage(base);
+  await waitFor(() => expect(screen.getByText('claude-opus-4-8')).toBeInTheDocument());
+  const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+  fetchMock.mockClear();
+  fireEvent.click(screen.getByText('30d'));
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('days=30')),
+  );
 });
 
 test('renders the partial banner when totals.partial', async () => {

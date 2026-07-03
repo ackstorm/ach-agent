@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import prometheus_client
 
-from ach_agent.stats.models import SessionStat
+from ach_agent.stats.models import SessionStat, ToolStat
 
 SESSIONS_TOTAL = prometheus_client.Counter(
     "ach_agent_sessions_total", "Invocations recorded", ["model", "channel"]
@@ -30,6 +30,16 @@ STATS_DEGRADED = prometheus_client.Counter(
     "ach_agent_stats_degraded_total", "Session records dropped (queue full / writer error)"
 )
 
+# Per-tool (Tier 1 agent trace). Labels are low-cardinality: tool is the cleaned name (finite
+# tool set), tool_type ∈ {mcp,builtin}, status ∈ {completed,error}. NEVER session_key.
+# gen_ai.execute_tool.duration analogue; count carries the pass/fail split.
+TOOL_CALLS_TOTAL = prometheus_client.Counter(
+    "ach_agent_tool_calls_total", "Tool executions", ["tool", "tool_type", "status"]
+)
+TOOL_DURATION_SECONDS = prometheus_client.Histogram(
+    "ach_agent_tool_duration_seconds", "Per-tool execution duration", ["tool", "tool_type"]
+)
+
 
 def observe(stat: SessionStat) -> None:
     """Apply all counters/histogram from one invocation record. Always safe, in-process."""
@@ -41,3 +51,10 @@ def observe(stat: SessionStat) -> None:
     TURN_COST_USD_TOTAL.labels(stat.model, stat.channel).inc(stat.cost)
     TURNS_TOTAL.labels(stat.model, stat.channel).inc(stat.turns)
     TURN_DURATION_SECONDS.labels(stat.model).observe(stat.duration_ms / 1000.0)
+
+
+def observe_tool(stat: ToolStat) -> None:
+    """One tool call → count (always) + duration histogram (only when a start was stamped)."""
+    TOOL_CALLS_TOTAL.labels(stat.tool, stat.tool_type, stat.status).inc()
+    if stat.duration_ms is not None:
+        TOOL_DURATION_SECONDS.labels(stat.tool, stat.tool_type).observe(stat.duration_ms / 1000.0)

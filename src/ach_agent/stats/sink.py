@@ -11,31 +11,43 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import structlog
 
 from ach_agent.stats import metrics
-from ach_agent.stats.models import SessionStat
+from ach_agent.stats.models import SessionStat, ToolStat
 
 log = structlog.get_logger()
 
 _DEFAULT_RETENTION_S = 3_024_000  # 35 days
 
 
+class _StreamEntry(Protocol):
+    def to_entry(self) -> dict[str, str]: ...
+
+
 class StatsSink:
+    """Bounded, non-blocking writer to a single redis stream. Reused for both the per-session
+    (``ach:sessions``) and per-tool (``ach:tools``) streams — only the stream name and the inline
+    metrics hook differ; the queue/backoff/reconnect/retention writer is shared."""
+
     def __init__(
         self,
         redis_url: str | None,
         *,
+        stream: str = "ach:sessions",
+        on_record: Callable[[Any], None] = metrics.observe,
         retention_s: int = _DEFAULT_RETENTION_S,
         maxsize: int = 256,
         client_factory: Callable[[], Any] | None = None,
     ) -> None:
         self._redis_url = redis_url
+        self._stream = stream
+        self._on_record = on_record
         self._retention_s = retention_s
         self._client_factory = client_factory
-        self._queue: asyncio.Queue[SessionStat] | None = (
+        self._queue: asyncio.Queue[_StreamEntry] | None = (
             asyncio.Queue(maxsize=maxsize) if redis_url else None
         )
         self._task: asyncio.Task[None] | None = None
@@ -44,10 +56,10 @@ class StatsSink:
     def enabled(self) -> bool:
         return self._redis_url is not None
 
-    def record(self, stat: SessionStat) -> None:
+    def record(self, stat: _StreamEntry) -> None:
         """Inline metrics + non-blocking enqueue. Never awaits, never raises."""
         try:
-            metrics.observe(stat)
+            self._on_record(stat)
         except Exception:  # noqa: BLE001 — metrics must never break a turn
             pass
         if self._queue is None:
@@ -105,7 +117,7 @@ class StatsSink:
                     try:
                         minid = int((time.time() - self._retention_s) * 1000)
                         await client.xadd(
-                            "ach:sessions",
+                            self._stream,
                             stat.to_entry(),
                             minid=minid,
                             approximate=True,
@@ -157,4 +169,38 @@ def build_session_stat(
         duration_ms=getattr(usage, "duration_ms", 0),
         status="aborted" if aborted else "completed",
         retry=bool(turn_stats.get("retry", False)),
+    )
+
+
+def build_tool_stat(
+    update: Any,
+    *,
+    session_key: str,
+    channel: str,
+    source: str,
+    model: str,
+    tool: str,
+    tool_type: str,
+    duration_ms: int | None,
+    ts_ms: int,
+) -> ToolStat:
+    """Map one terminal OpenCodeToolUpdate (completed/error) to a ToolStat. Pure; unit-testable."""
+    state = update.state
+    output = getattr(state, "output", "") or ""
+    error = getattr(state, "error", "") or ""
+    inp = getattr(state, "input", None)
+    return ToolStat(
+        ts_ms=ts_ms,
+        session_key=session_key,
+        channel=channel,
+        source=source,
+        model=model,
+        provider="unknown",  # resolved by the stats service's model-map (A2), as with sessions
+        tool=tool,
+        tool_type=tool_type,
+        status=state.status,
+        duration_ms=duration_ms,
+        input_size=len(str(inp)) if inp else 0,
+        output_size=len(output) if output else len(error),
+        error=error[:300],
     )

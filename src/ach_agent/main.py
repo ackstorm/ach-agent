@@ -216,6 +216,55 @@ def _log_engine_tool(update: OpenCodeToolUpdate) -> None:
     log.info("engine: tool", **fields)
 
 
+def _make_tool_recorder(
+    inner: Callable[[OpenCodeToolUpdate], None],
+    tool_sink: Any,
+    event: MessageEvent,
+    model: str,
+) -> Callable[[OpenCodeToolUpdate], None]:
+    """Wrap an on_tool sink to also record one ToolStat per tool call (Tier 1 agent trace).
+
+    Stamps a monotonic start on the ``running`` transition; on the ``completed``/``error``
+    transition computes the duration and records once per call_id, then delegates to ``inner``
+    (the channel's sink or _log_engine_tool). Per-invocation state — a fresh map each turn.
+    """
+    from ach_agent.stats.sink import build_tool_stat
+
+    starts: dict[str, float] = {}
+    done: set[str] = set()
+    source = getattr(event, "source", event.channel_name)
+
+    def on_tool(update: OpenCodeToolUpdate) -> None:
+        cid = update.call_id or update.part_id
+        status = update.state.status
+        if status == "running":
+            starts.setdefault(cid, time.monotonic())
+        elif status in ("completed", "error") and cid not in done:
+            done.add(cid)
+            start = starts.pop(cid, None)
+            # ponytail: duration from SSE arrival (running→terminal), not opencode's own tool
+            # clock — needs the running event; missing it → duration None (count still recorded).
+            dur_ms = int((time.monotonic() - start) * 1000) if start is not None else None
+            display = _clean_tool_name(update.tool_name)
+            tool_type = "mcp" if "/" in display else "builtin"
+            tool_sink.record(
+                build_tool_stat(
+                    update,
+                    session_key=event.session_key,
+                    channel=event.channel_name,
+                    source=source,
+                    model=model,
+                    tool=display,
+                    tool_type=tool_type,
+                    duration_ms=dur_ms,
+                    ts_ms=int(time.time() * 1000),
+                )
+            )
+        inner(update)
+
+    return on_tool
+
+
 def build_engine_prompt(
     event: MessageEvent,
     channel_cfg: Any = None,
@@ -424,6 +473,7 @@ def _make_engine_runner(
     agent_name: str = "",
     memory_bank: str = "",
     stats_sink: Any = None,
+    tool_sink: Any = None,
 ) -> Callable[..., Any]:
     """Build the engine_runner callable injected into the Router.
 
@@ -558,6 +608,10 @@ def _make_engine_runner(
             # without this a channel turn shows nothing about the tools it ran.
             if on_tool is None:
                 on_tool = _log_engine_tool
+            # Tier 1 agent trace: record one ToolStat per tool call (metrics always; ach:tools
+            # stream when ACH_STATS_REDIS_URL is set). Wraps whatever on_tool renders/logs.
+            if tool_sink is not None:
+                on_tool = _make_tool_recorder(on_tool, tool_sink, event, engine_cfg.model)
             # Conversation identity (session block). The router lane key
             # (event.session_key) is NOT affected — only which opencode session
             # this turn reuses. No ch_cfg (--tui console) → auto: REPL continuity.
@@ -1108,13 +1162,21 @@ async def main(
 
     # Best-effort stats sink (harness-local, ACH_STATS_* — never part of CONTRACT_v3).
     # Unset ACH_STATS_REDIS_URL → Prometheus-only, no queue/writer.
+    from ach_agent.stats import metrics as stats_metrics
     from ach_agent.stats.sink import StatsSink
 
-    stats_sink = StatsSink(
-        os.environ.get("ACH_STATS_REDIS_URL"),
-        retention_s=int(os.environ.get("ACH_STATS_RETENTION", "3024000")),
-    )
+    _stats_redis = os.environ.get("ACH_STATS_REDIS_URL")
+    _stats_retention = int(os.environ.get("ACH_STATS_RETENTION", "3024000"))
+    stats_sink = StatsSink(_stats_redis, retention_s=_stats_retention)
     await stats_sink.start()
+    # Tier 1 agent trace: same writer machinery pointed at ach:tools with the per-tool metrics.
+    tool_sink = StatsSink(
+        _stats_redis,
+        stream="ach:tools",
+        on_record=stats_metrics.observe_tool,
+        retention_s=_stats_retention,
+    )
+    await tool_sink.start()
 
     # 6b. Build engine_runner. MEM-01/D-02: pass memory_cfg so engine_runner probes
     # before pool.acquire (Pitfall 3).
@@ -1138,6 +1200,7 @@ async def main(
         agent_name=cfg.agent.name,
         memory_bank=memory_bank,
         stats_sink=stats_sink,
+        tool_sink=tool_sink,
     )
 
     # Step 6 (cont.): construct Router with all limits from config (RTR-03/04)
@@ -1233,6 +1296,7 @@ async def main(
             if hasattr(dedup_store, "close"):
                 dedup_store.close()
             await stats_sink.stop()
+            await tool_sink.stop()
         log.info("ach-agent: session ended")
         return
 
@@ -1432,6 +1496,7 @@ async def main(
         if mcp_proxy is not None:
             await mcp_proxy.stop()
         await stats_sink.stop()
+        await tool_sink.stop()
         if tasks:
             # uvicorn's serve() task returns on its own once should_exit=True; await it
             # so its lifespan shutdown completes before asyncio.run tears the loop down.

@@ -4,6 +4,13 @@
 follow-up plans (see §8); the first is
 `docs/superpowers/plans/2026-07-01-engine-timeout-warm-reuse.md`.
 
+> **Stale note (2026-07-03):** all four §8 follow-up plans + B8 have **shipped** (the doc
+> self-tracks this in §9–13). Residual drift: §4 B1 says `channel.session: auto` is the default —
+> it is now a `SessionBlock` with default `type: "none"` (`config/schema.py`, v0.6.1); §9 says
+> `engine.idle_ttl_seconds` default **60** — now **30** (`schema.py:84`); §13 calls
+> `engine_has_been_ready_once`/`COLD_START_*` "dead state still present" — since **fully deleted**.
+> File:line anchors have drifted a few lines (structure unchanged). Core analysis is current.
+
 **Trigger:** the question *"are we reinventing in `ach-agent` what `ackbot-process` already had — for
 process launch, session keys, session management, idle/TTL, locks, multiple inputs, the bus and the
 channels?"*

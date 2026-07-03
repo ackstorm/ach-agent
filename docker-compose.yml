@@ -38,6 +38,11 @@ services:
       - ACH_STATS_TZ=Europe/Madrid
     volumes:
       - ./docker/sample-config.yaml:/etc/ach-agent/config.yaml:ro
+    # Drop all Linux capabilities: the harness needs none, and an empty bounding
+    # set is the second wall behind dumpable=0 (silences the cap_bounding_set
+    # preflight nudge). See src/ach_agent/security/preflight.py.
+    cap_drop:
+      - ALL
     stdin_open: true   # keep STDIN open for the TUI REPL
     tty: true          # allocate a TTY (interactive console)
 

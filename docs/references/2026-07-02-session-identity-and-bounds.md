@@ -3,6 +3,14 @@
 **Date:** 2026-07-02
 **Status:** accepted
 
+> **Update (2026-07-03, v0.6.1, `2940182`):** the config *shape* below was reworked. The
+> overloaded `key` field split into an explicit `type: auto | none | custom` discriminator
+> (`SessionBlock`, `config/schema.py`); `key` now holds *only* the `{{ }}` template and is
+> required iff `type == "custom"`, forbidden otherwise. **Default is `type: "none"`** (not
+> `key: "none"`). Shorthand: `auto|none` → `{type: v}`; any other string → `{type: "custom",
+> key: v}`. The *behavior* (stateless default, template render, maxTokens/overflow) is
+> unchanged — only the field layout moved.
+
 ## Problem
 
 `session: auto|none` conflated two identities. `session_key` is (1) the router

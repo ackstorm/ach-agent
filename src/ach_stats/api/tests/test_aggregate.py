@@ -128,3 +128,10 @@ def test_contract_recent_shape():
     assert rec["task"] == "Review !7"
     assert rec["status"] == "aborted"
     assert rec["retry"] is True
+
+
+def test_resolve_model_meta():
+    from app.aggregate import resolve
+
+    assert resolve("claude-opus-4-8") == ("Anthropic", "Frontier")
+    assert resolve("mystery-model-9") == ("unknown", None)

@@ -7,14 +7,14 @@ RUN npm ci
 COPY src/ach_stats/ui/ ./
 RUN npm run build
 
-# Stage 2 — python deps (uv, matching the harness image's convention). Installed by
-# exact name/pin (not `uv pip install .`) so this stage needs only pyproject.toml,
-# not the app/ source — the runtime stage below copies app/ as plain files.
+# Stage 2 — python deps (uv, matching the harness image's convention). Deps come from
+# pyproject.toml (single source of truth — no duplicated pin list); `-r pyproject.toml`
+# installs only [project.dependencies], no app build needed.
 FROM python:3.12-slim AS deps
 WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:0.11.21 /uv /usr/local/bin/uv
-RUN uv pip install --system --no-cache-dir --target=/app/site-packages \
-    "fastapi==0.116.1" "uvicorn[standard]==0.34.0" "redis>=5,<6" "pydantic>=2,<3" \
+COPY src/ach_stats/api/pyproject.toml ./pyproject.toml
+RUN uv pip install --system --no-cache-dir --target=/app/site-packages -r pyproject.toml \
  && find /app/site-packages -type d -name "__pycache__" -prune -exec rm -rf {} +
 
 # Stage 3 — runtime

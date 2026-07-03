@@ -6,7 +6,6 @@ dependencies = [
     "fastapi==0.116.1",
     "uvicorn[standard]==0.34.0",
     "redis>=5,<6",
-    "pydantic>=2,<3",
 ]
 
 [dependency-groups]
@@ -26,7 +25,6 @@ select = ["E", "F", "I", "UP", "PLW1514"]
 
 [tool.mypy]
 strict = true
-plugins = ["pydantic.mypy"]
 
 [build-system]
 requires = ["hatchling"]

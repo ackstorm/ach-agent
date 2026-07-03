@@ -11,7 +11,17 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app.model_meta import resolve
+# Static model -> (provider, tag) map. provider/tag are metadata, never measured (spec §4.4).
+_META: dict[str, tuple[str, str | None]] = {
+    "claude-opus-4-8": ("Anthropic", "Frontier"),
+    "claude-fable-5": ("Anthropic", "Mythos-tier"),
+    "claude-sonnet-5": ("Anthropic", "Balanced"),
+    "glm-5-2": ("Zhipu AI", "Open Weight"),
+}
+
+
+def resolve(model: str) -> tuple[str, str | None]:
+    return _META.get(model, ("unknown", None))
 
 
 def _safe_div(n: float, d: float) -> float | None:

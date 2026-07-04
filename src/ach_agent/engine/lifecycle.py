@@ -559,11 +559,24 @@ async def compact_oc_session(server: ManagedServer, oc_session_id: str) -> None:
         log.warning("engine: session compact failed", oc_session_id=oc_session_id, exc_info=True)
 
 
+def _terminal_object_hint(action: str) -> str:
+    """The single terminal JSON object we ask the model to emit on a wrap/repair turn,
+    shown as an example to reproduce — channel-aware.
+
+    a2a turns demand a2a_reply; async turns demand none. Showing only the ONE action the
+    channel expects means an a2a repair turn never re-exposes 'none' (the token we work to
+    keep out of a2a turns via build_output_instructions in main.py)."""
+    if action == "a2a_reply":
+        return '{"action":"a2a_reply","text":"..."}'
+    return '{"action":"none","text":"..."}'
+
+
 async def run_invocation(
     server: ManagedServer,
     session_id: str,
     prompt: str,
     terminal_retries: int,
+    terminal_action: str = "none",
     free_form: bool = False,
     on_text: Callable[[str], None] | None = None,
     on_tool: Callable[[OpenCodeToolUpdate], None] | None = None,
@@ -673,7 +686,7 @@ async def run_invocation(
         wrap = (
             "You have reached your tool-call budget for this turn. Do NOT call any more tools. "
             "Reply now with ONLY the terminal JSON object "
-            '({"action":"none","text":"..."} or {"action":"a2a_reply","text":"..."}) '
+            f"({_terminal_object_hint(terminal_action)}) "
             "summarizing what you found and did."
         )
         accumulated_text = await consume_sse_after_send(
@@ -709,8 +722,7 @@ async def run_invocation(
     obj = extract_terminal(accumulated_text)
     if obj is None and terminal_retries > 0:
         repair = (
-            "Reply with ONLY a terminal JSON object: "
-            '{"action":"none","text":"..."} or {"action":"a2a_reply","text":"..."}.'
+            f"Reply with ONLY a terminal JSON object: {_terminal_object_hint(terminal_action)}."
         )
         accumulated_text = await consume_sse_after_send(
             client, oc_session_id, repair, is_alive=server.is_alive

@@ -1455,3 +1455,14 @@ async def test_compact_oc_session_calls_client() -> None:
 
     await compact_oc_session(server, "ses-z")
     mock_client.compact_session.assert_awaited_once_with("ses-z")
+
+
+def test_terminal_object_hint_is_channel_aware():
+    # a2a repair/wrap turns show ONLY a2a_reply; every other action shows none.
+    from ach_agent.engine.lifecycle import _terminal_object_hint
+
+    assert _terminal_object_hint("a2a_reply") == '{"action":"a2a_reply","text":"..."}'
+    assert "none" not in _terminal_object_hint("a2a_reply")
+    assert _terminal_object_hint("none") == '{"action":"none","text":"..."}'
+    # unknown/default action falls back to the none stub
+    assert _terminal_object_hint("whatever") == '{"action":"none","text":"..."}'

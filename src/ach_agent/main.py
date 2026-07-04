@@ -392,6 +392,62 @@ def build_engine_prompt(
     return " ".join(parts)
 
 
+# Harness-owned terminal-contract directive, appended per channel class to every
+# structured turn (NOT free-form tui). The terminal JSON envelope is harness IP — the
+# harness parses it — so operators never hand-write it in channel.prompt. This is the
+# ONLY per-turn place the model is told which action its final object must carry; without
+# it a model can emit a valid-but-wrong {"action":"none"} on an a2a turn, which
+# extract_terminal accepts and the a2a path (main.py) then delivers to the caller as a
+# FAILURE (on_fail). See CONTRACT_v3 §8.
+#
+# Each block exposes ONLY the action its channel class expects — the a2a block never
+# names "none" (naming the wrong action just plants it: pink-elephant). The matching
+# lifecycle repair/wrap turns are kept action-consistent via run_invocation(terminal_action=…).
+A2A_OUTPUT_INSTRUCTIONS = (
+    "<output_format>\n"
+    "Do your reasoning and tool work first. Then END your reply with exactly one compact "
+    "JSON object on its own line — this object is the ONLY thing delivered to the caller:\n"
+    '{"action":"a2a_reply","text":"<RESULT>","thoughts":"<OPTIONAL>"}\n'
+    '"text" is what the caller reads — keep it non-empty. Single line, keys in this order, '
+    "no code fences.\n"
+    "</output_format>"
+)
+
+NONE_OUTPUT_INSTRUCTIONS = (
+    "<output_format>\n"
+    "Do your reasoning and tool work first. Then END your reply with exactly one compact "
+    "JSON object on its own line:\n"
+    '{"action":"none","text":"<SUMMARY>","thoughts":"<OPTIONAL>"}\n'
+    "Do all real work through your tools; this object only reports completion. Single line, "
+    "keys in this order, no code fences.\n"
+    "</output_format>"
+)
+
+
+def terminal_action_for(channel_cfg: Any, free_form: bool) -> str:
+    """The terminal action this turn's channel class expects — the single source of truth
+    the harness reuses for both the up-front <output_format> block and the lifecycle
+    repair/wrap turns. a2a → 'a2a_reply'; every other class (and a missing type) → 'none'.
+    free_form (--tui) has no contract and skips extraction, so its value is unused ('none').
+    """
+    if not free_form and getattr(channel_cfg, "type", None) == "a2a":
+        return "a2a_reply"
+    return "none"
+
+
+def build_output_instructions(channel_cfg: Any, free_form: bool) -> str:
+    """Return the harness-owned <output_format> block for this turn, or "".
+
+    free_form (--tui console) → "" (no terminal contract). Otherwise the block for the
+    channel class's expected action (terminal_action_for): a2a_reply for a2a, none else.
+    """
+    if free_form:
+        return ""
+    if terminal_action_for(channel_cfg, free_form) == "a2a_reply":
+        return A2A_OUTPUT_INSTRUCTIONS
+    return NONE_OUTPUT_INSTRUCTIONS
+
+
 def resolve_engine_paths(cfg: Any) -> tuple[str, str]:
     """Resolve the opencode HOME and the agent workDir from the contract.
 
@@ -636,6 +692,14 @@ def _make_engine_runner(
             # Free-form channels (--tui console) carry no terminal contract: return
             # the raw reply, no terminal extraction/repair (delivery_context marker).
             free_form = bool(event.delivery_context.get("free_form"))
+            # Harness-owned terminal-contract directive, per channel class. Appended LAST
+            # (after the message + any memory block) so it wins on recency; tui gets none.
+            # The same action drives the lifecycle repair/wrap turns (terminal_action below)
+            # so an a2a repair turn never re-exposes 'none'.
+            _terminal_action = terminal_action_for(ch_cfg, free_form)
+            _output_instructions = build_output_instructions(ch_cfg, free_form)
+            if _output_instructions:
+                full_prompt = f"{full_prompt}\n\n{_output_instructions}"
             # Optional live-text sink (the --debug console sets this to stream the reply
             # as it's produced, so a slow trailing tool call doesn't hide the text).
             on_text = event.delivery_context.get("on_text")
@@ -683,6 +747,7 @@ def _make_engine_runner(
                 session_id=conv_key,
                 prompt=full_prompt,
                 terminal_retries=terminal_output_retries,
+                terminal_action=_terminal_action,
                 free_form=free_form,
                 on_text=on_text,
                 on_tool=on_tool,

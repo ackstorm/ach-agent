@@ -157,6 +157,11 @@ async def test_a2a_task_routes_to_engine_and_enqueues_completed_event(
     assert len(completed_events) == 1, f"Expected completed event, got: {eq.events}"
     assert _REPLY_TEXT in completed_events[0].status.message.parts[0].text
 
+    # Regression: the completed event must carry the inbound ids, else a2a-sdk's
+    # TaskManager.save_task_event raises "Context in event doesn't match TaskManager ...".
+    assert completed_events[0].task_id == "task-e2e-1"
+    assert completed_events[0].context_id == "ctx-e2e-1"
+
 
 @pytest.mark.asyncio
 async def test_engine_runner_signals_on_fail_on_engine_error(

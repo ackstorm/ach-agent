@@ -294,14 +294,17 @@ def make_a2a_agent_card(channel_name: str) -> Any:
 
     # NOTE: a2a.types.a2a_pb2.AgentCard has no top-level `url` field — the protobuf
     # schema advertises service endpoints via `supported_interfaces`. Passing url=
-    # raised ValueError at runtime (untested path). Receiver-only v1 is served at a
-    # known mount prefix, so the endpoint URL is not advertised on the card here.
-    # TODO(a2a): advertise the endpoint via supported_interfaces in a follow-up.
+    # raised ValueError at runtime (untested path). The legacy top-level `url` (required
+    # by a2a-sdk 0.3.x consumers) is injected in the served dict by build_a2a_app, not here.
+    # defaultInputModes/defaultOutputModes ARE real 1.x fields and required by 0.3.x, so we
+    # set them on the object (they serialize; empty repeated fields would be dropped).
     return AgentCard(
         name=channel_name,
         description=f"ach-agent A2A receiver for channel {channel_name}",
         version="1.0.0",
         capabilities=AgentCapabilities(),
+        default_input_modes=["text"],
+        default_output_modes=["text"],
     )
 
 
@@ -322,14 +325,17 @@ def build_a2a_app(
     """
     from a2a.server.agent_execution.agent_executor import AgentExecutor
     from a2a.server.request_handlers.default_request_handler import LegacyRequestHandler
+    from a2a.server.request_handlers.response_helpers import agent_card_to_dict
     from a2a.server.routes import (
-        create_agent_card_routes,
         create_jsonrpc_routes,
         create_rest_routes,
     )
     from a2a.server.routes.fastapi_routes import add_a2a_routes_to_fastapi
     from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
     from fastapi import FastAPI
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
 
     # A2AAgentExecutorBridge is NOT a real AgentExecutor subclass (avoids module-level
     # a2a imports). Wrap it in a thin adapter that the SDK accepts.
@@ -348,7 +354,27 @@ def build_a2a_app(
     )
 
     sub_app = FastAPI(title="a2a-sub")
-    agent_card_routes = create_agent_card_routes(agent_card)
+
+    # Cross-version-compatible card. The 1.x AgentCard drops top-level `url` (advertises
+    # endpoints via supported_interfaces) and omits empty `skills`; a2a-sdk 0.3.x consumers
+    # (e.g. LiteLLM proxy <= v1.90.x, which pins a2a-sdk<1.0) REQUIRE `url` and `skills`
+    # and fail card validation without them. defaultInputModes/defaultOutputModes (also
+    # required by 0.3.x) are set on the AgentCard itself in make_a2a_agent_card. Here we
+    # inject only the two fields that cannot live on the 1.x object. 1.x consumers are
+    # unaffected: parse_agent_card pops a legacy `url` into supportedInterfaces and parses
+    # leniently (ignore_unknown_fields). Served at BOTH the canonical agent-card.json and
+    # the legacy agent.json, since create_agent_card_routes serves only the former.
+    async def _compat_agent_card(request: Request) -> JSONResponse:
+        card = agent_card_to_dict(agent_card)
+        prefix = request.url.path.split("/.well-known/")[0]  # -> /a2a/<channel>
+        card.setdefault("skills", [])
+        card.setdefault("url", f"{str(request.base_url).rstrip('/')}{prefix}")
+        return JSONResponse(card)
+
+    agent_card_routes = [
+        Route(p, _compat_agent_card, methods=["GET"])
+        for p in ("/.well-known/agent-card.json", "/.well-known/agent.json")
+    ]
     jsonrpc_routes = create_jsonrpc_routes(request_handler, rpc_url="/")
     rest_routes = create_rest_routes(request_handler)
 

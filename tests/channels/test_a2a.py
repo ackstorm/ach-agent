@@ -574,6 +574,38 @@ def test_build_a2a_app_constructs_sub_app(monkeypatch: pytest.MonkeyPatch) -> No
     assert isinstance(sub_app, FastAPI)
 
 
+def test_agent_card_is_0_3_x_compatible(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Served card must satisfy a2a-sdk 0.3.x consumers (e.g. LiteLLM proxy, which pins
+    a2a-sdk<1.0): top-level `url` + `skills` + defaultInput/OutputModes, at BOTH the
+    canonical agent-card.json and the legacy agent.json. The 1.x AgentCard drops `url`
+    and omits empty `skills`, so build_a2a_app injects them into the served dict."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from ach_agent.channels.a2a import build_a2a_app, make_a2a_agent_card
+
+    channel_cfg = _make_authed_channel_cfg(monkeypatch)
+    bridge = A2AAgentExecutorBridge(handler=_make_accepted_handler(), channel_cfg=channel_cfg)
+    sub_app = build_a2a_app(make_a2a_agent_card("review"), bridge)
+
+    parent = FastAPI()
+    parent.mount("/a2a/review", sub_app)  # mirror main.py's mount prefix
+    client = TestClient(parent)
+
+    for path in (
+        "/a2a/review/.well-known/agent-card.json",
+        "/a2a/review/.well-known/agent.json",
+    ):
+        resp = client.get(path)
+        assert resp.status_code == 200, path
+        card = resp.json()
+        # the four fields a2a-sdk 0.3.x requires but the 1.x card does not serve
+        assert card["url"].endswith("/a2a/review"), path
+        assert card["skills"] == [], path
+        assert card["defaultInputModes"] == ["text"], path
+        assert card["defaultOutputModes"] == ["text"], path
+
+
 # ---------------------------------------------------------------------------
 # signal_failure — FAILED callback on invalid terminal output
 # ---------------------------------------------------------------------------

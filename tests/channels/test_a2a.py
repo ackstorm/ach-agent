@@ -606,6 +606,42 @@ def test_agent_card_is_0_3_x_compatible(monkeypatch: pytest.MonkeyPatch) -> None
         assert card["defaultOutputModes"] == ["text"], path
 
 
+def test_agent_card_advertises_1x_jsonrpc_interface(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 1.x client must pick the native JSON-RPC transport (`SendMessage`), not the legacy
+    CompatJsonRpcTransport (`message/send`, which our handler -32601s). That requires the card
+    to advertise an explicit supportedInterfaces at protocolVersion 1.0; otherwise
+    parse_agent_card synthesizes a 0.3.0 interface from `url` and the client goes legacy."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from ach_agent.channels.a2a import build_a2a_app, make_a2a_agent_card
+
+    channel_cfg = _make_authed_channel_cfg(monkeypatch)
+    bridge = A2AAgentExecutorBridge(handler=_make_accepted_handler(), channel_cfg=channel_cfg)
+    sub_app = build_a2a_app(make_a2a_agent_card("review"), bridge)
+    parent = FastAPI()
+    parent.mount("/a2a/review", sub_app)
+
+    card = TestClient(parent).get("/a2a/review/.well-known/agent-card.json").json()
+
+    # explicit native 1.x interface present
+    assert card["protocolVersion"] == "1.0"
+    assert card["preferredTransport"] == "JSONRPC"
+    assert any(
+        i["protocolBinding"] == "JSONRPC" and i["protocolVersion"] == "1.0"
+        for i in card["supportedInterfaces"]
+    )
+    # and the a2a-sdk 1.x resolver reads it as a NON-legacy (1.0) interface, not 0.3.0
+    from a2a.client.card_resolver import parse_agent_card
+
+    parsed = parse_agent_card(dict(card))
+    versions = [i.protocol_version for i in parsed.supported_interfaces]
+    assert versions and all(v == "1.0" for v in versions), versions
+    # still 0.3.x-compatible
+    assert card["url"].endswith("/a2a/review")
+    assert card["skills"] == []
+
+
 # ---------------------------------------------------------------------------
 # signal_failure — FAILED callback on invalid terminal output
 # ---------------------------------------------------------------------------

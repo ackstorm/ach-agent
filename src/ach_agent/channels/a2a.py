@@ -359,16 +359,30 @@ def build_a2a_app(
     # endpoints via supported_interfaces) and omits empty `skills`; a2a-sdk 0.3.x consumers
     # (e.g. LiteLLM proxy <= v1.90.x, which pins a2a-sdk<1.0) REQUIRE `url` and `skills`
     # and fail card validation without them. defaultInputModes/defaultOutputModes (also
-    # required by 0.3.x) are set on the AgentCard itself in make_a2a_agent_card. Here we
-    # inject only the two fields that cannot live on the 1.x object. 1.x consumers are
-    # unaffected: parse_agent_card pops a legacy `url` into supportedInterfaces and parses
-    # leniently (ignore_unknown_fields). Served at BOTH the canonical agent-card.json and
+    # required by 0.3.x) are set on the AgentCard itself in make_a2a_agent_card. The
+    # endpoint url is per-request (base_url), so it — and the interface advertisement — must
+    # be injected here, not on the object. Served at BOTH the canonical agent-card.json and
     # the legacy agent.json, since create_agent_card_routes serves only the former.
+    #
+    # supportedInterfaces advertises a NATIVE 1.x JSON-RPC interface at protocolVersion 1.0.
+    # Without it, a 1.x client's parse_agent_card synthesizes an interface from the top-level
+    # `url` and defaults its protocolVersion to 0.3.0 → the client factory selects the legacy
+    # CompatJsonRpcTransport and sends the JSON-RPC method `message/send`, which our 1.x
+    # handler rejects with -32601 (it speaks `SendMessage`). Advertising the 1.0 interface
+    # makes the client pick JsonRpcTransport → `SendMessage`. 0.3.x consumers ignore the
+    # unknown supportedInterfaces/preferredTransport/protocolVersion and read url + skills.
     async def _compat_agent_card(request: Request) -> JSONResponse:
         card = agent_card_to_dict(agent_card)
         prefix = request.url.path.split("/.well-known/")[0]  # -> /a2a/<channel>
+        endpoint = f"{str(request.base_url).rstrip('/')}{prefix}"
         card.setdefault("skills", [])
-        card.setdefault("url", f"{str(request.base_url).rstrip('/')}{prefix}")
+        card.setdefault("url", endpoint)
+        card.setdefault("protocolVersion", "1.0")
+        card.setdefault("preferredTransport", "JSONRPC")
+        card.setdefault(
+            "supportedInterfaces",
+            [{"url": endpoint, "protocolBinding": "JSONRPC", "protocolVersion": "1.0"}],
+        )
         return JSONResponse(card)
 
     agent_card_routes = [

@@ -599,7 +599,7 @@ async def test_a2a_signal_failure_enqueues_failed_event_and_unblocks(
     session_key = "ctx-fail"
     eq = MockEventQueue()
     completion = asyncio.Event()
-    bridge._pending[session_key] = (eq, completion)
+    bridge._pending[session_key] = (eq, completion, "task-fail", session_key)
 
     bridge.signal_failure(session_key, "bad terminal")
 
@@ -609,6 +609,9 @@ async def test_a2a_signal_failure_enqueues_failed_event_and_unblocks(
     assert completion.is_set()
     assert len(eq.events) == 1
     assert eq.events[0].status.state == TASK_STATE_FAILED
+    # ids must be stamped so TaskManager.save_task_event accepts the event
+    assert eq.events[0].task_id == "task-fail"
+    assert eq.events[0].context_id == session_key
     # session_key must be popped from pending
     assert session_key not in bridge._pending
 

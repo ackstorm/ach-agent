@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.6.6] - 2026-07-04
+
+### Added
+- **Per-channel terminal output-format directive.** The harness now appends a channel-class
+  `<output_format>` block to every structured turn (a2a → `a2a_reply`; webhook/cron/queue →
+  `none`; tui skipped), telling the model which terminal action its final object must carry.
+  Nothing did this per turn before, so a model could emit a valid-but-wrong
+  `{"action":"none"}` on an a2a turn — which `extract_terminal` accepts (the repair turn
+  never fires) and the a2a path delivers to the caller as a FAILURE. `terminal_action_for`
+  is the single source of truth, reused for the up-front block and the lifecycle repair/wrap
+  turns, so an a2a turn never sees `none` on any surface.
+- **`{{ payload | json }}` template filter.** Serializes a whole container (dict/list) as
+  compact JSON — the only way to emit a non-scalar. Scalar paths still substitute as before;
+  a genuinely missing path still renders empty.
+
+### Fixed
+- **A2A agent card is now parseable by a2a-sdk 0.3.x consumers (e.g. LiteLLM proxy).** The
+  card at `/.well-known/agent-card.json` (built with a2a-sdk 1.1.0) omitted the top-level
+  `url` and `skills` that 0.3.x requires, breaking card resolution for consumers pinned to
+  `a2a-sdk<1.0` (which resolve the card before every `message/send`). The served dict now
+  injects `url` + `skills: []`; `defaultInputModes`/`defaultOutputModes` (also required by
+  0.3.x) are set on the card; and the card is served at the legacy `/.well-known/agent.json`
+  too. Safe for 1.x consumers (lenient `parse_agent_card`). Verified against real 0.3.24.
+
 ## [0.6.5] - 2026-07-04
 
 ### Fixed

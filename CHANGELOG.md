@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.6.8] - 2026-07-04
+
+### Added
+- **A2A `message/send` now supports non-blocking delivery.** `execute()` emits one interim
+  `WORKING` `TaskStatusUpdateEvent` before it blocks on the out-of-band completion. This gives
+  the a2a-sdk's existing non-blocking path (`SendMessageConfiguration.return_immediately`, which
+  runs `execute()` as a background producer and breaks on the first task-creating event) an event
+  to break on — so a caller sending `return_immediately: true` gets its `task_id` back immediately
+  and polls `GetTask` for the terminal result, instead of holding the request for the whole engine
+  run. The blocking path (`return_immediately: false`, e.g. the LiteLLM proxy) is unchanged: the
+  aggregator processes but does not break on `WORKING` and still returns the terminal `COMPLETED`
+  task. The engine and the `{action, text}` terminal contract are untouched; the whole change is
+  the interim event, placed after all reject branches so no rejected request emits a dangling
+  `WORKING`. Verified end-to-end against a2a-sdk 1.1.0 (task_id returned in ~1-5ms vs a 50ms
+  engine; `GetTask` returns `COMPLETED` after completion).
+
 ## [0.6.7] - 2026-07-04
 
 ### Fixed

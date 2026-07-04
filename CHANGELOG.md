@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.6.7] - 2026-07-04
+
+### Fixed
+- **A2A card now advertises a native 1.x JSON-RPC interface — 1.x clients invoke it instead
+  of `-32601`.** Follow-up to v0.6.6. With `url` present but no `supportedInterfaces`, a
+  a2a-sdk 1.x client's `parse_agent_card` synthesized an interface from `url` and defaulted
+  its `protocolVersion` to `0.3.0` → the client factory chose the legacy
+  `CompatJsonRpcTransport` and sent JSON-RPC `message/send`, which our 1.x handler rejects
+  with `-32601` (it speaks `SendMessage`). The served card now advertises
+  `supportedInterfaces: [{protocolBinding: JSONRPC, protocolVersion: "1.0"}]` +
+  `preferredTransport` + top-level `protocolVersion: "1.0"`, so 1.x clients pick
+  `JsonRpcTransport` (`SendMessage`). 0.3.x consumers ignore the unknown fields and still
+  read `url` + `skills` — verified the served card validates under a2a-sdk 0.3.24 and parses
+  as a non-legacy 1.0 interface under 1.1.0.
+
 ## [0.6.6] - 2026-07-04
 
 ### Added

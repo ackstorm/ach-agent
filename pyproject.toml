@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ach-agent"
-version = "0.6.6"
+version = "0.6.7"
 description = "ACH Agent — execution plane harness for the ACH ecosystem"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"

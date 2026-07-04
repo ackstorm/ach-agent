@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.6.5] - 2026-07-04
+
+### Fixed
+- **A2A channel: terminal status events now carry `task_id`/`context_id`.** `_status_event`
+  built every `TaskStatusUpdateEvent` with empty ids, so a2a-sdk 1.1.0's
+  `TaskManager.save_task_event` raised `InvalidParamsError("Context in event doesn't match
+  TaskManager ...")` and every `message:send` returned HTTP 500 — the engine reply was
+  computed but never delivered. The ids are now threaded from the `RequestContext` into all
+  emit paths (auth/reject, cancel, and the out-of-band completion/failure callbacks, which
+  read them from a `_pending` 4-tuple).
+
+### Added
+- **`prompt.compose` replace wired via `agent.build.prompt`** — the composed prompt override
+  now flows through the opencode agent build.
+
 ## [0.6.4] - 2026-07-03
 
 ### Changed

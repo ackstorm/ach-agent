@@ -45,12 +45,17 @@ log = structlog.get_logger(__name__)
 # Verified by: grep -nE "^import a2a|^from a2a" src/ach_agent/channels/a2a.py → zero results.
 
 
-def _status_event(state: str, text: str | None = None) -> Any:
+def _status_event(
+    state: str, text: str | None = None, task_id: str = "", context_id: str = ""
+) -> Any:
     """Build a TaskStatusUpdateEvent for a terminal a2a state.
 
     state: "failed" | "canceled" | "completed" — maps to the a2a TASK_STATE_* enum.
     text: single-part message text for FAILED/COMPLETED; CANCELED carries no message
     (omitted entirely, matching the prior per-state builders).
+    task_id/context_id: MUST match the TaskManager's ids or save_task_event raises
+    InvalidParamsError("Context in event doesn't match TaskManager ...") — the event's
+    ids are validated against the ids the manager captured from the inbound message.
     """
     from a2a.types.a2a_pb2 import (
         TASK_STATE_CANCELED,
@@ -73,7 +78,7 @@ def _status_event(state: str, text: str | None = None) -> Any:
         part = msg.parts.add()
         part.text = text
         status = TaskStatus(state=state_map[state], message=msg)
-    return TaskStatusUpdateEvent(status=status)
+    return TaskStatusUpdateEvent(task_id=task_id, context_id=context_id, status=status)
 
 
 class A2AAgentExecutorBridge:
@@ -93,8 +98,11 @@ class A2AAgentExecutorBridge:
     ) -> None:
         self._handler: MessageHandler | None = handler
         self._channel_cfg = channel_cfg
-        # Maps session_key → (event_queue, completion_event)
-        self._pending: dict[str, tuple[Any, asyncio.Event]] = {}
+        # Maps session_key → (event_queue, completion_event, task_id, context_id).
+        # task_id/context_id are kept so the terminal event enqueued out-of-band by
+        # signal_completion/signal_failure matches the TaskManager's ids (save_task_event
+        # rejects a mismatch).
+        self._pending: dict[str, tuple[Any, asyncio.Event, str, str]] = {}
 
     async def execute(self, context: Any, event_queue: Any) -> None:
         """AgentExecutor.execute implementation.
@@ -105,6 +113,11 @@ class A2AAgentExecutorBridge:
               failed event (D-05/RTR-05).
           (3) Await completion signal (set by signal_completion via on_complete callback).
         """
+        # Extract task/context ids up front so EVERY terminal event we enqueue (including
+        # the early auth-reject paths) carries ids matching the TaskManager.
+        task_id: str = getattr(context, "task_id", None) or ""
+        context_id: str = getattr(context, "context_id", None) or ""
+
         # (1) HEADER AUTH — spec §14.6 / T-04-13
         # Fail-closed (CR-01): if no a2a sub-block or no secret configured,
         # reject the request rather than admitting unauthenticated callers.
@@ -114,7 +127,9 @@ class A2AAgentExecutorBridge:
                 "a2a: request rejected — no auth secret configured (fail-closed §14.6)",
                 channel=self._channel_cfg.name,
             )
-            await event_queue.enqueue_event(_status_event("failed", "Unauthorized"))
+            await event_queue.enqueue_event(
+                _status_event("failed", "Unauthorized", task_id, context_id)
+            )
             return
 
         expected_header = a2a_cfg.auth.header  # e.g. "x-a2a-custom-api-key"
@@ -125,7 +140,9 @@ class A2AAgentExecutorBridge:
                 "a2a: secret unresolvable — rejecting all requests",
                 channel=self._channel_cfg.name,
             )
-            await event_queue.enqueue_event(_status_event("failed", "Unauthorized"))
+            await event_queue.enqueue_event(
+                _status_event("failed", "Unauthorized", task_id, context_id)
+            )
             return
 
         # Retrieve presented header from call_context.state['headers'] (dict from
@@ -142,13 +159,13 @@ class A2AAgentExecutorBridge:
                 channel=self._channel_cfg.name,
                 header=expected_header,
             )
-            await event_queue.enqueue_event(_status_event("failed", "Unauthorized"))
+            await event_queue.enqueue_event(
+                _status_event("failed", "Unauthorized", task_id, context_id)
+            )
             return
 
         # (2) Build MessageEvent and dispatch to router seam. Decoupled from engine
         # readiness (no gate here) — the engine starts lazily per session_key.
-        task_id: str = getattr(context, "task_id", None) or ""
-        context_id: str = getattr(context, "context_id", None) or ""
         session_key = context_id or task_id
         # CR-04: reject when both identifiers are empty — prevents _pending[""] collision
         # where a second concurrent call overwrites the first coroutine's Event.
@@ -158,7 +175,7 @@ class A2AAgentExecutorBridge:
                 channel=self._channel_cfg.name,
             )
             await event_queue.enqueue_event(
-                _status_event("failed", "Missing task/context identifier")
+                _status_event("failed", "Missing task/context identifier", task_id, context_id)
             )
             return
         idempotency_key = derive_a2a_idempotency_key(task_id)
@@ -173,7 +190,7 @@ class A2AAgentExecutorBridge:
 
         # Register pending BEFORE dispatch so signal_completion can find it
         completion = asyncio.Event()
-        self._pending[session_key] = (event_queue, completion)
+        self._pending[session_key] = (event_queue, completion, task_id, context_id)
 
         event = MessageEvent(
             idempotency_key=idempotency_key,
@@ -191,7 +208,9 @@ class A2AAgentExecutorBridge:
                 channel=self._channel_cfg.name,
             )
             self._pending.pop(session_key, None)
-            await event_queue.enqueue_event(_status_event("failed", "Queue full"))
+            await event_queue.enqueue_event(
+                _status_event("failed", "Queue full", task_id, context_id)
+            )
             return
         if result == RouterAdmitResult.DUPLICATE:
             log.info("a2a: duplicate task_id — deduplicated", channel=self._channel_cfg.name)
@@ -208,7 +227,7 @@ class A2AAgentExecutorBridge:
         session_key = context_id or task_id or ""
         # Remove from pending if present
         self._pending.pop(session_key, None)
-        await event_queue.enqueue_event(_status_event("canceled"))
+        await event_queue.enqueue_event(_status_event("canceled", None, task_id, context_id))
         log.info("a2a: task canceled", channel=self._channel_cfg.name, session_key=session_key)
 
     def signal_completion(self, session_key: str, reply_text: str) -> None:
@@ -224,11 +243,13 @@ class A2AAgentExecutorBridge:
                 session_key=session_key,
             )
             return
-        event_queue, completion = entry
+        event_queue, completion, task_id, context_id = entry
         # Schedule completed event enqueue + Event.set() as an async task.
         # signal_completion is called from a synchronous context (on_complete closure).
         loop = asyncio.get_running_loop()
-        loop.create_task(_signal_async("completed", reply_text, event_queue, completion))
+        loop.create_task(
+            _signal_async("completed", reply_text, event_queue, completion, task_id, context_id)
+        )
 
     def signal_failure(self, session_key: str, reason: str) -> None:
         """Called by the on_fail closure (boot) when the terminal output is unusable.
@@ -243,14 +264,23 @@ class A2AAgentExecutorBridge:
                 session_key=session_key,
             )
             return
-        event_queue, completion = entry
+        event_queue, completion, task_id, context_id = entry
         loop = asyncio.get_running_loop()
-        loop.create_task(_signal_async("failed", reason, event_queue, completion))
+        loop.create_task(
+            _signal_async("failed", reason, event_queue, completion, task_id, context_id)
+        )
 
 
-async def _signal_async(state: str, text: str, event_queue: Any, completion: asyncio.Event) -> None:
+async def _signal_async(
+    state: str,
+    text: str,
+    event_queue: Any,
+    completion: asyncio.Event,
+    task_id: str = "",
+    context_id: str = "",
+) -> None:
     """Schedule a terminal status event and set the completion event from an async context."""
-    await event_queue.enqueue_event(_status_event(state, text))
+    await event_queue.enqueue_event(_status_event(state, text, task_id, context_id))
     completion.set()
 
 

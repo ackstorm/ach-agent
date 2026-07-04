@@ -735,3 +735,40 @@ async def test_a2a_signal_failure_unknown_session_key_is_noop(
 
     # Should log a warning and return without error.
     bridge.signal_failure("does-not-exist", "reason")
+
+
+# ---------------------------------------------------------------------------
+# Terminal sequence regression guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a2a_terminal_sequence_is_working_then_completed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A full accepted turn enqueues WORKING (interim) then COMPLETED (terminal), in order,
+    both carrying ids matching the TaskManager. This is the sequence the SDK's background
+    consumer persists to the task_store for GetTask polling."""
+    from a2a.types.a2a_pb2 import TASK_STATE_COMPLETED, TASK_STATE_WORKING
+
+    handler = _make_accepted_handler()
+    channel_cfg = _make_authed_channel_cfg(monkeypatch)
+    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+
+    ctx = _authed_ctx(task_id="task-seq", context_id="ctx-seq")
+    eq = MockEventQueue()
+
+    task = asyncio.create_task(bridge.execute(ctx, eq))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    # Interim WORKING is in flight; now the engine delivers.
+    bridge.signal_completion("ctx-seq", "done")
+    await asyncio.wait_for(task, timeout=2.0)  # signal_completion sets the Event → execute returns
+
+    states = [e.status.state for e in eq.events]
+    assert states == [TASK_STATE_WORKING, TASK_STATE_COMPLETED]
+    assert eq.events[-1].status.message.parts[0].text == "done"
+    for e in eq.events:
+        assert e.task_id == "task-seq"
+        assert e.context_id == "ctx-seq"

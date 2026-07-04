@@ -2,7 +2,9 @@
 """Deterministic {{ }} template substitution for config-authored strings.
 
 Greenfield, zero-dependency. Pure dict/list path traversal — NOT jinja, NOT eval:
-no logic, no loops, no attribute access, no method calls. One filter: default("literal").
+no logic, no loops, no attribute access, no method calls. Two filters: default("literal")
+and json (serializes ANY value — incl. dicts/lists — as compact JSON; the only way to
+emit a whole container, e.g. {{ payload | json }}).
 
 Namespaces (roots of the context dict): `payload`, `header`, `internal`. There is NO
 `env` namespace — process env (where the ek_ lives) is structurally unreachable from a
@@ -15,6 +17,7 @@ memory bank+tags design note); tag-omit semantics live in that resolver, not her
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -22,13 +25,35 @@ import structlog
 
 log = structlog.get_logger(__name__)
 
-# {{ ns.a.b.c }}  or  {{ ns.a.b | default("x") }} — whitespace inside braces ignored.
+# {{ ns.a.b.c }} | {{ ns.a.b | default("x") }} | {{ ns | json }} — ws inside braces ignored.
 _TOKEN_RE = re.compile(
     r"\{\{\s*"
     r"([A-Za-z0-9_.\-]+)"  # group 1: dotted path
-    r'(?:\s*\|\s*default\(\s*"([^"]*)"\s*\))?'  # group 2: optional default literal
+    r"(?:\s*\|\s*"
+    r'(?:default\(\s*"([^"]*)"\s*\)'  # group 2: default literal
+    r"|(json)))?"  # group 3: the json filter
     r"\s*\}\}"
 )
+
+_MISSING = object()  # sentinel: distinguishes a missing path from a present null/container.
+
+
+def _resolve_raw(context: dict[str, Any], dotted_path: str) -> Any:
+    """Pure traversal (dict keys / list int indices). Returns the value at the path,
+    which MAY be a container or null; returns `_MISSING` when a segment is absent."""
+    cur: Any = context
+    for seg in dotted_path.split("."):
+        if isinstance(cur, dict):
+            if seg not in cur:
+                return _MISSING
+            cur = cur[seg]
+        elif isinstance(cur, list):
+            if not (seg.isdigit() and int(seg) < len(cur)):
+                return _MISSING
+            cur = cur[int(seg)]
+        else:
+            return _MISSING
+    return cur
 
 
 def resolve_path(context: dict[str, Any], dotted_path: str) -> str | None:
@@ -37,18 +62,7 @@ def resolve_path(context: dict[str, Any], dotted_path: str) -> str | None:
     None means a segment was missing OR the value is a container (dict/list) or null —
     not a usable scalar. Pure traversal: dict keys and list integer indices only.
     """
-    cur: Any = context
-    for seg in dotted_path.split("."):
-        if isinstance(cur, dict):
-            if seg not in cur:
-                return None
-            cur = cur[seg]
-        elif isinstance(cur, list):
-            if not (seg.isdigit() and int(seg) < len(cur)):
-                return None
-            cur = cur[int(seg)]
-        else:
-            return None
+    cur = _resolve_raw(context, dotted_path)
     # bool is a subclass of int — both are acceptable scalars.
     if isinstance(cur, (str, int, float, bool)):
         return str(cur)
@@ -56,15 +70,23 @@ def resolve_path(context: dict[str, Any], dotted_path: str) -> str | None:
 
 
 def render_template(template: str, context: dict[str, Any]) -> str:
-    """Substitute every {{ path }} / {{ path | default("x") }} token.
+    """Substitute every {{ path }} / {{ path | default("x") }} / {{ path | json }} token.
 
     Per token: scalar found → its value; missing/non-scalar with default → default;
-    missing/non-scalar without default → empty string (logged).
+    missing/non-scalar without default → empty string (logged). The `json` filter is the
+    exception: it serializes whatever is present (dict, list, scalar, or null) as compact
+    JSON, and only a genuinely missing path falls back to empty.
     """
 
     def _sub(m: re.Match[str]) -> str:
         path = m.group(1)
         default = m.group(2)
+        if m.group(3):  # | json — serialize any present value (incl. dict/list/null)
+            raw = _resolve_raw(context, path)
+            if raw is _MISSING:
+                log.warning("template: unresolved token -> empty", path=path)
+                return ""
+            return json.dumps(raw, ensure_ascii=False, sort_keys=True, default=str)
         value = resolve_path(context, path)
         if value is not None:
             return value

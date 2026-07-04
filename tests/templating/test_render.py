@@ -78,6 +78,19 @@ def test_header_namespace_reserved_empty():
     assert resolve_path(_ctx(), "header.x-api-key") is None
 
 
+def test_render_json_filter_serializes_container():
+    # {{ payload | json }} — the only way to emit a whole dict/list
+    out = render_template("body={{ payload.project | json }}", _ctx())
+    assert out == 'body={"full_name": "backend/payments"}'
+    assert render_template("{{ payload.commits | json }}", _ctx()) == '[{"id": "abc"}]'
+
+
+def test_render_json_filter_scalar_and_missing():
+    assert render_template("{{ payload.project.full_name | json }}", _ctx()) == '"backend/payments"'
+    # genuinely missing path → empty (not "null")
+    assert render_template("x={{ payload.nope | json }};", _ctx()) == "x=;"
+
+
 def test_project_template_renders_session_key() -> None:
     """Task 3 contract: {{ internal.session.key }} renders to the session key; literals pass through."""
     ctx = build_template_context(

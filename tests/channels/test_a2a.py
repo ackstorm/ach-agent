@@ -307,6 +307,42 @@ async def test_a2a_session_key_fallback_to_task_id_when_no_context_id(
 
 
 @pytest.mark.asyncio
+async def test_a2a_execute_emits_interim_working_before_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-blocking support: execute() emits one interim WORKING event after a successful
+    admit and BEFORE completion.wait(), so the SDK's consume_and_break_on_interrupt
+    (blocking=False) has a task-creating event to break on and can return task_id now.
+    The WORKING event must be non-terminal and carry ids matching the TaskManager."""
+    from a2a.types.a2a_pb2 import TASK_STATE_WORKING
+
+    handler = _make_accepted_handler()
+    channel_cfg = _make_authed_channel_cfg(monkeypatch)
+    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+
+    ctx = _authed_ctx(task_id="task-w", context_id="ctx-w")
+    eq = MockEventQueue()
+
+    task = asyncio.create_task(bridge.execute(ctx, eq))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    # Dispatched, now blocked on completion.wait() — the interim WORKING event is present.
+    handler.handle.assert_called_once()
+    assert len(eq.events) == 1
+    evt = eq.events[0]
+    assert evt.status.state == TASK_STATE_WORKING
+    assert evt.task_id == "task-w"
+    assert evt.context_id == "ctx-w"
+
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+@pytest.mark.asyncio
 async def test_a2a_engine_not_ready_routes_normally(monkeypatch: pytest.MonkeyPatch) -> None:
     """Decouple: engine-not-ready (cold pool) no longer emits a "Service warming up"
     failed event — the bridge routes to the handler like any other request. The engine
@@ -326,7 +362,12 @@ async def test_a2a_engine_not_ready_routes_normally(monkeypatch: pytest.MonkeyPa
     await asyncio.sleep(0)
 
     handler.handle.assert_called_once()
-    assert eq.events == [], "no failed event should be enqueued for engine-not-ready"
+    # After dispatch the bridge emits one interim WORKING event (non-blocking support),
+    # not a failed "service warming up" event. The engine still starts lazily in the lane.
+    from a2a.types.a2a_pb2 import TASK_STATE_WORKING
+
+    assert len(eq.events) == 1
+    assert eq.events[0].status.state == TASK_STATE_WORKING
 
     task.cancel()
     try:

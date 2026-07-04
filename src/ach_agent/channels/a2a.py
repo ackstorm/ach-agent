@@ -50,8 +50,8 @@ def _status_event(
 ) -> Any:
     """Build a TaskStatusUpdateEvent for a terminal a2a state.
 
-    state: "failed" | "canceled" | "completed" — maps to the a2a TASK_STATE_* enum.
-    text: single-part message text for FAILED/COMPLETED; CANCELED carries no message
+    state: "failed" | "canceled" | "completed" | "working" — maps to the a2a TASK_STATE_* enum.
+    text: single-part message text for FAILED/COMPLETED; CANCELED and WORKING carry no message
     (omitted entirely, matching the prior per-state builders).
     task_id/context_id: MUST match the TaskManager's ids or save_task_event raises
     InvalidParamsError("Context in event doesn't match TaskManager ...") — the event's
@@ -61,6 +61,7 @@ def _status_event(
         TASK_STATE_CANCELED,
         TASK_STATE_COMPLETED,
         TASK_STATE_FAILED,
+        TASK_STATE_WORKING,
         Message,
         TaskStatus,
         TaskStatusUpdateEvent,
@@ -70,6 +71,7 @@ def _status_event(
         "failed": TASK_STATE_FAILED,
         "canceled": TASK_STATE_CANCELED,
         "completed": TASK_STATE_COMPLETED,
+        "working": TASK_STATE_WORKING,
     }
     if text is None:
         status = TaskStatus(state=state_map[state])
@@ -216,6 +218,16 @@ class A2AAgentExecutorBridge:
             log.info("a2a: duplicate task_id — deduplicated", channel=self._channel_cfg.name)
             self._pending.pop(session_key, None)
             return
+
+        # Emit ONE interim WORKING event so the a2a-sdk non-blocking path has a
+        # task-creating event to break on: with SendMessageConfiguration.return_immediately
+        # the handler's consume_and_break_on_interrupt(blocking=False) returns the task_id
+        # after this event, then persists the later terminal event to the task_store for
+        # GetTask polling. In the blocking path the aggregator ignores WORKING and waits for
+        # the terminal event, so this is harmless there. Ids match the TaskManager
+        # (save_task_event validates them). ponytail: the SDK owns the block/non-block fork
+        # via its own flag — no branch here.
+        await event_queue.enqueue_event(_status_event("working", None, task_id, context_id))
 
         # (3) Await out-of-band completion from engine via signal_completion
         await completion.wait()

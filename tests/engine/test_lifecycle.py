@@ -8,6 +8,7 @@ Per-Task Verification Map (00-VALIDATION.md):
   ENG-07: test_watchdog_metric         — implemented by 00-02
   H-05:   test_drain_tasks_started     — implemented by 00-02
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -49,7 +50,11 @@ async def test_launch_subprocess(tmp_path: Path) -> None:
     config.work_dir = str(tmp_path)
 
     # Patch check_health to avoid real HTTP calls
-    with patch("ach_agent.engine.client.OpenCodeClient.check_health", new_callable=AsyncMock, return_value=True):
+    with patch(
+        "ach_agent.engine.client.OpenCodeClient.check_health",
+        new_callable=AsyncMock,
+        return_value=True,
+    ):
         server = await launch(port=19876, ephemeral_home=tmp_path, config=config, session_key="k1")
 
     try:
@@ -141,7 +146,11 @@ async def test_drain_tasks_started(tmp_path: Path) -> None:
 
     with (
         patch("ach_agent.engine.lifecycle.asyncio.create_task", side_effect=recording_create_task),
-        patch("ach_agent.engine.client.OpenCodeClient.check_health", new_callable=AsyncMock, return_value=True),
+        patch(
+            "ach_agent.engine.client.OpenCodeClient.check_health",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         server = await launch(port=19879, ephemeral_home=tmp_path, config=config, session_key="k1")
 
@@ -149,10 +158,7 @@ async def test_drain_tasks_started(tmp_path: Path) -> None:
         # Should have created exactly two drain tasks (stdout + stderr)
         # There may be additional tasks if asyncio creates background tasks,
         # but drain tasks for _drain_logs must be among them.
-        drain_task_count = sum(
-            1 for t in created_tasks
-            if not t.done() or not t.cancelled()
-        )
+        drain_task_count = sum(1 for t in created_tasks if not t.done() or not t.cancelled())
         assert len(created_tasks) >= 2, (
             f"Expected at least 2 drain tasks (stdout + stderr), got {len(created_tasks)}"
         )
@@ -639,7 +645,9 @@ def test_write_opencode_config_per_session_filename(tmp_path: Path) -> None:
     # (CONTRACT §3.2), NOT a shared system_prompt.txt and NOT top-level personality/
     assert not (cfg_dir / "personality" / "system_prompt.txt").exists()
     assert not (tmp_path / "personality").exists()
-    assert (cfg_dir / "personality" / f"system_prompt{path.name[len('opencode'):-len('.json')]}.txt").is_file()
+    assert (
+        cfg_dir / "personality" / f"system_prompt{path.name[len('opencode') : -len('.json')]}.txt"
+    ).is_file()
 
 
 def test_write_opencode_config_provider_by_model_type(tmp_path: Path) -> None:
@@ -680,6 +688,46 @@ def test_write_opencode_config_provider_by_model_type(tmp_path: Path) -> None:
     assert oc["enabled_providers"] == ["ach"]
     assert oc["model"] == "ach/ackstorm.smart"
     assert oc["provider"]["ach"]["npm"] == "@ai-sdk/openai-compatible"
+
+
+def test_write_opencode_config_prompt_compose(tmp_path: Path) -> None:
+    """prompt.compose: append → top-level `instructions`; replace → `agent.build.prompt`.
+
+    opencode `session/llm/request.ts`: `agent.prompt` replaces the model-default base prompt;
+    `instructions` is always appended. Empty persona + replace falls back to append (never
+    blank the base).
+    """
+    import json
+
+    from ach_agent.engine.lifecycle import EngineConfig, write_opencode_config
+
+    base = {"model_base_url": "http://127.0.0.1:9/v1", "system_prompt": "You are ACH."}
+
+    # append (default): persona via top-level instructions, no agent.build.prompt override.
+    app = json.loads(
+        write_opencode_config(tmp_path, EngineConfig(**base), "a").read_text(encoding="utf-8")
+    )
+    assert app["instructions"] and app["instructions"][0].endswith(".txt")
+    assert "prompt" not in app["agent"]["build"]
+
+    # replace: persona via agent.build.prompt ({file:...}), no top-level instructions.
+    rep = json.loads(
+        write_opencode_config(tmp_path, EngineConfig(compose="replace", **base), "b").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "instructions" not in rep
+    assert rep["agent"]["build"]["prompt"].startswith("{file:") and rep["agent"]["build"][
+        "prompt"
+    ].endswith(".txt}")
+
+    # replace + empty persona → fall back to append (do not blank the base prompt).
+    empty = json.loads(
+        write_opencode_config(tmp_path, EngineConfig(compose="replace"), "c").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "instructions" in empty and "prompt" not in empty["agent"]["build"]
 
 
 def test_build_opencode_env_sets_opencode_config(tmp_path: Path) -> None:
@@ -833,12 +881,8 @@ async def test_run_invocation_pool_map_survives_server_replacement() -> None:
     canned = '{"action":"none","text":"ok","thoughts":""}'
     shared_map: dict[str, str] = {}
 
-    server1 = _server_with_client(
-        19885, AsyncMock(return_value={"id": "ses-persist"})
-    )
-    server2 = _server_with_client(
-        19886, AsyncMock(return_value={"id": "ses-WRONG-never-created"})
-    )
+    server1 = _server_with_client(19885, AsyncMock(return_value={"id": "ses-persist"}))
+    server2 = _server_with_client(19886, AsyncMock(return_value={"id": "ses-WRONG-never-created"}))
 
     with patch(
         "ach_agent.engine.lifecycle.consume_sse_after_send",
@@ -1057,9 +1101,7 @@ async def test_step_budget_aborts_after_threshold() -> None:
     client = _tool_client()
     stats: dict[str, Any] = {}
     with patch.object(ev, "_consume_events_from_response", new=fake_consume):
-        text = await consume_sse_after_send(
-            client, "ses", "hi", max_tool_calls=3, stats=stats
-        )
+        text = await consume_sse_after_send(client, "ses", "hi", max_tool_calls=3, stats=stats)
 
     client.abort_session.assert_awaited_once_with("ses")
     assert stats["aborted"] is True
@@ -1245,9 +1287,7 @@ async def test_run_invocation_freeform_abort_returns_wrapup_text() -> None:
 def _client_response_error(status: int) -> "aiohttp.ClientResponseError":  # noqa: F821, UP037
     import aiohttp
 
-    return aiohttp.ClientResponseError(
-        request_info=MagicMock(), history=(), status=status
-    )
+    return aiohttp.ClientResponseError(request_info=MagicMock(), history=(), status=status)
 
 
 async def test_stale_cached_session_recreated_and_retried() -> None:

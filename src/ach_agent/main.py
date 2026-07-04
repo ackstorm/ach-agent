@@ -1197,6 +1197,8 @@ async def main(
         params=cfg.model.params,
         # prompt.system = the inline agent persona + per-backend TOOLS_SPEC (boot-static).
         system_prompt=_system_prompt,
+        # prompt.compose: append (top-level instructions) | replace (agent.build.prompt).
+        compose=cfg.prompt.compose if cfg.prompt else "append",
         steps=cfg.limits.max_steps,
         startup_timeout_seconds=cfg.engine.startup_timeout_seconds,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,

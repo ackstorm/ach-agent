@@ -507,6 +507,10 @@
       "properties": {
         "compose": {
           "default": "append",
+          "enum": [
+            "append",
+            "replace"
+          ],
           "title": "Compose",
           "type": "string"
         },

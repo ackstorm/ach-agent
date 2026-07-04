@@ -82,6 +82,10 @@ class EngineConfig:
     model_type: str = "openai"
     params: dict[str, object] = field(default_factory=dict)  # model params (temperature, …)
     system_prompt: str = ""
+    # prompt.compose (CONTRACT §2): "append" → persona via top-level `instructions` (after
+    # opencode's model-default base prompt); "replace" → persona via `agent.build.prompt`
+    # (instead of the default). Empty persona + replace falls back to append (never blank the base).
+    compose: str = "append"
     steps: int = 50
     startup_timeout_seconds: int = 30
     max_invocation_seconds: int = 1800
@@ -263,7 +267,6 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig, session_ke
         "small_model": f"{provider_id}/{config.model}",
         "enabled_providers": [provider_id],
         "provider": {provider_id: provider_block},
-        "instructions": [str(prompt_path.resolve())],  # append-mode system prompt
         "agent": {
             "build": {
                 "steps": config.steps,
@@ -276,6 +279,16 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig, session_ke
             "plan": {"disable": True},
         },
     }
+
+    # prompt.compose layering (opencode `session/llm/request.ts`: `agent.prompt` REPLACES the
+    # model-default base prompt, else the default is used; `instructions` is always appended
+    # after either). replace → persona as agent.build.prompt; append (default) → top-level
+    # `instructions`. Empty persona + replace would blank the base prompt, so fall back to append.
+    build_agent = oc_config["agent"]["build"]  # type: ignore[index]
+    if config.compose == "replace" and config.system_prompt:
+        build_agent["prompt"] = f"{{file:{prompt_path.resolve()}}}"
+    else:
+        oc_config["instructions"] = [str(prompt_path.resolve())]
 
     # Register MCP servers in opencode.json pre-launch (no runtime tool-registration API).
     # opencode 1.16 schema (verified live): `mcp.<id> = {type:"remote", url, enabled:true}`

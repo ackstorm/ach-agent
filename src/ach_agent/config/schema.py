@@ -178,9 +178,14 @@ class PromptBlock(BaseModel):
 
     # text | file | ach source; omitted → no persona (""). The plain-string form is rejected.
     system: SystemPrompt | None = None
-    # Contract-reserved (CONTRACT §2): the operator renders it; the harness accepts it but
-    # does NOT yet execute layering. Do not remove without a coordinated CONTRACT_v3 change.
-    compose: str = "append"
+    # CONTRACT §2 layering mode, rendered by the operator:
+    #   append  → persona is appended AFTER opencode's model-default base prompt (top-level
+    #             `instructions`); default.
+    #   replace → persona REPLACES opencode's model-default base prompt (`agent.build.prompt`);
+    #             env/mcp/skills/tools are unaffected (opencode `session/llm/request.ts`).
+    # "replace" extends the accepted enum → must land lockstep with ach-runtime (the operator
+    # renders `compose`). Was contract-reserved (append-only, accepted-not-executed).
+    compose: Literal["append", "replace"] = "append"
 
 
 class HindsightParams(BaseModel):

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.7.0] - 2026-07-05
+
+### Added
+- **Harness-hosted memory MCP facade.** The agent no longer talks to the raw Hindsight MCP
+  (≈30 tools, including destructive `delete_bank`/`create_bank`). The harness hosts an in-process
+  localhost MCP facade exposing exactly four agent-facing tools — `memory_recall(query, tags?)`,
+  `memory_reflect(query, tags?)`, `memory_get_mental_model(id)`, `memory_retain(content, tags?)` —
+  and injects the harness-owned `bank_id` plus the admin auth per call. opencode's `memory-0`
+  server points at the facade, never at Hindsight; the raw endpoint, `bank_id`, and the admin
+  secret never reach opencode.
+- **Boot-once memory provisioning.** `provision_memory` ensures the bank and creates/refreshes
+  the configured mental models in Hindsight at startup (fail-open — never blocks boot).
+
+### Changed
+- **BREAKING (`memory.hindsight` config).** `mentalModels` is now a list of objects
+  (`{id, name, sourceQuery, autoRefresh?, maxTokens?}`) instead of `[]string` — the harness needs
+  the source queries to provision the models. New optional `auth` (env-only admin secret, Bearer;
+  omit for an internal/no-auth URL) and `mission`. The `ach-runtime` operator must render the
+  richer block (separate PR); until then only hand-authored local configs exercise it.
+
+### Fixed
+- **Static Hindsight bank enforced.** `memory.hindsight.bank` now rejects templating (`{{ }}`) at
+  config load (T-04-03), and the divergent per-event bank rendering was removed — the mental-model
+  fetch, the facade, and the prompt's `{{ memory.bank }}` all use one static bank. Per-repo
+  partitioning is via tags, not a templated bank.
+
 ## [0.6.8] - 2026-07-04
 
 ### Added

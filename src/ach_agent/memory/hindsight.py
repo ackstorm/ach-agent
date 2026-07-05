@@ -220,3 +220,68 @@ def _inc_memory_degraded() -> None:
         metrics.MEMORY_DEGRADED.inc()
     except Exception:
         pass
+
+
+async def provision_memory(memory_cfg: object) -> None:
+    """Provision the bank + mental models in Hindsight (boot-once, idempotent, fail-open).
+
+    No-op unless ``memory_cfg`` is a HindsightMemory with a resolvable admin secret (or no
+    auth configured, i.e. an internal URL). Never raises — a provisioning failure degrades
+    memory, it does not stop boot.
+    """
+    from ach_agent.config.schema import HindsightMemory
+
+    if not isinstance(memory_cfg, HindsightMemory):
+        return
+    params = memory_cfg.hindsight
+    ok, secret = resolve_memory_secret(params)  # secret may be None (internal URL)
+    if not ok:
+        log.warning(
+            "memory: auth configured but env unset — skipping provisioning", bank_id=params.bank
+        )
+        return
+
+    try:
+        await call_hindsight(
+            params.endpoint,
+            secret,
+            HINDSIGHT_CREATE_BANK,
+            {"bank_id": params.bank, "name": params.bank, "mission": params.mission or None},
+        )
+        for spec in params.mental_models:
+            try:
+                await call_hindsight(
+                    params.endpoint,
+                    secret,
+                    HINDSIGHT_CREATE_MENTAL_MODEL,
+                    {
+                        "bank_id": params.bank,
+                        "name": spec.name,
+                        "source_query": spec.source_query,
+                        "mental_model_id": spec.id,
+                        "max_tokens": spec.max_tokens,
+                        "trigger_refresh_after_consolidation": spec.auto_refresh,
+                    },
+                )
+            except Exception as exc:  # one bad model must not abort the rest
+                log.warning("memory: create_mental_model failed", model=spec.id, error=str(exc))
+        for spec in params.mental_models:
+            if spec.auto_refresh:
+                try:
+                    await call_hindsight(
+                        params.endpoint,
+                        secret,
+                        HINDSIGHT_REFRESH_MENTAL_MODEL,
+                        {"bank_id": params.bank, "mental_model_id": spec.id},
+                    )
+                except Exception as exc:
+                    log.warning("memory: refresh_mental_model failed", model=spec.id, error=str(exc))
+        log.info(
+            "memory: provisioning complete",
+            bank_id=params.bank,
+            models=len(params.mental_models),
+        )
+    except Exception as exc:  # ensure_bank failed → degrade, never raise
+        log.warning(
+            "memory: provisioning failed — running degraded", bank_id=params.bank, error=str(exc)
+        )

@@ -43,9 +43,13 @@ prompt:
 memory:                                 # omit if unused; fail-open (backend down → run without it)
   type: hindsight                       # hindsight | codemem — discriminated union (required)
   hindsight:
-    endpoint: http://hindsight.engineering.svc:8080
-    bank: gitlab-pr-review              # static memory bank_id (the agent's mission namespace)
-    mentalModels: [architecture, conventions, recurring-issues]
+    endpoint: http://hindsight.engineering.svc:8080/mcp
+    bank: gitlab-pr-review              # static bank_id, harness-owned; agent never sees it (tags, not templating)
+    auth: {env: ACH_SECRET_MEMORY_HINDSIGHT}  # OPTIONAL — omit for an internal/no-auth URL. Bearer admin secret, NOT the ek_ (operator generates the ACH_SECRET_* name)
+    mission: AI code reviewer           # optional; passed to create_bank at boot
+    mentalModels:                       # rich specs the harness provisions + reads at boot
+      - {id: architecture, name: Architecture, sourceQuery: "What is the architecture?", autoRefresh: true}
+      - {id: conventions, name: Conventions, sourceQuery: "What are the coding conventions?"}
   # codemem backend (local stdio MCP, model-managed) — alternative to hindsight:
   # memory:
   #   type: codemem

@@ -44,13 +44,18 @@ prompt:
     text: "You are a concise software-engineering assistant."
   compose: append
 
-# Optional memory (fail-open). `bank` is the static memory bank_id (the agent's mission
-# namespace). Per-event tag partitioning is a separate future layer — not configured here.
+# Optional memory (fail-open). `bank` is the static, harness-owned bank_id; the agent never
+# sees it (per-repo split is via tags, not templating). The agent reaches Hindsight only
+# through the harness facade; `auth` is the admin Bearer (NOT the ek_), OPTIONAL for a no-auth URL.
 # memory:
-#   endpoint: http://hindsight.engineering.svc:8080
-#   mission: "AI code reviewer"
-#   bank: gitlab-pr-review
-#   mentalModels: [architecture, conventions]
+#   type: hindsight
+#   hindsight:
+#     endpoint: http://hindsight.engineering.svc:8080/mcp
+#     bank: gitlab-pr-review
+#     auth: {env: ACH_SECRET_MEMORY_HINDSIGHT}   # operator generates the ACH_SECRET_* name
+#     mission: "AI code reviewer"
+#     mentalModels:
+#       - {id: architecture, name: Architecture, sourceQuery: "What is the architecture?", autoRefresh: true}
 
 # Engine knobs (harness-local; operator-optional). workDir + startupTimeoutSeconds live here.
 # opencode's subprocess env is built clean-slate: it inherits ONLY a small base allowlist

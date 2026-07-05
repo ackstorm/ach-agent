@@ -48,14 +48,14 @@ def test_hindsight_memory_direct() -> None:
             "hindsight": {
                 "endpoint": "http://mem:8080",
                 "bank": "gitlab-pr-review",
-                "mentalModels": ["m1"],
+                "mentalModels": [{"id": "m1", "name": "M1", "sourceQuery": "q?"}],
             },
         }
     )
     assert m.type == "hindsight"
     assert m.hindsight.endpoint == "http://mem:8080"
     assert m.hindsight.bank == "gitlab-pr-review"
-    assert m.hindsight.mental_models == ["m1"]
+    assert m.hindsight.mental_models[0].id == "m1"
 
 
 # ---------------------------------------------------------------------------

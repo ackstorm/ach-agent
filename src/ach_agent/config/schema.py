@@ -188,17 +188,35 @@ class PromptBlock(BaseModel):
     compose: Literal["append", "replace"] = "append"
 
 
+class MentalModelSpec(BaseModel):
+    """A pinned reflection the harness provisions into Hindsight at boot (CONTRACT §2)."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    id: str
+    name: str
+    source_query: str = Field(alias="sourceQuery")
+    auto_refresh: bool = Field(default=False, alias="autoRefresh")
+    max_tokens: int = Field(default=2048, alias="maxTokens")
+
+
 class HindsightParams(BaseModel):
     """Hindsight backend params — the ``memory.hindsight`` sub-block (CONTRACT §2)."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     endpoint: str
-    # Static memory bank_id (the memory namespace for this agent's mission, e.g.
-    # "gitlab-pr-review"). Per-event tag-based partitioning is a separate future layer
-    # (see the memory bank+tags design note) and does NOT change this static field.
+    # Static memory bank_id (harness-owned; the agent never sees or sets it). Per-repo
+    # partitioning is via tags, NEVER by templating bank from inbound payload (T-04-03).
     bank: str = ""
-    mental_models: list[str] = Field(default_factory=list, alias="mentalModels")
+    # Admin secret for the harness→Hindsight path (Bearer). NOT the ek_. env-only; resolved
+    # at use time; never logged / forwarded to opencode. OPTIONAL — omit when Hindsight is on
+    # an internal/no-auth URL. If set but the env var is unset at runtime → fail-open degrade.
+    auth: SecretSource | None = None
+    # Optional mission string passed to create_bank at provisioning.
+    mission: str = ""
+    # Rich specs the harness provisions (create_mental_model) + reads (get_mental_model).
+    mental_models: list[MentalModelSpec] = Field(default_factory=list, alias="mentalModels")
 
 
 class HindsightMemory(BaseModel):

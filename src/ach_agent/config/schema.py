@@ -218,6 +218,17 @@ class HindsightParams(BaseModel):
     # Rich specs the harness provisions (create_mental_model) + reads (get_mental_model).
     mental_models: list[MentalModelSpec] = Field(default_factory=list, alias="mentalModels")
 
+    @model_validator(mode="after")
+    def _bank_static(self) -> HindsightParams:
+        # T-04-03: bank is harness-owned + static — NEVER templated. Payload is untrusted (a
+        # templated bank could select another tenant's memory), and the boot-started facade uses
+        # the static bank, so a {{ }} bank would silently diverge from the mental-model fetch.
+        if "{{" in self.bank:
+            raise ValueError(
+                "memory.hindsight.bank must be static — templating ({{ }}) is not allowed"
+            )
+        return self
+
 
 class HindsightMemory(BaseModel):
     """CONTRACT §2 memory block — Hindsight backend (fail-open §31).

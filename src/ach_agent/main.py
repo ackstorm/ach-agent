@@ -628,23 +628,13 @@ def _make_engine_runner(
             session_key=event.session_key,
         )
 
-        # Bank (hindsight) — render before the probe so the rendered value flows into both
-        # the hindsight fetch and the memory section of the prompt. Probe stays BEFORE
-        # pool.acquire (MEM-01/MEM-02/D-02, "Pitfall 3"). When bank has no {{ token,
-        # effective_* aliases are the original values — zero behavior change.
-        effective_memory_cfg = memory_cfg
-        effective_bank = memory_bank
-        if isinstance(memory_cfg, HindsightMemory) and "{{" in memory_cfg.hindsight.bank:
-            effective_bank = render_template(memory_cfg.hindsight.bank, ctx)
-            updated_hindsight = memory_cfg.hindsight.model_copy(update={"bank": effective_bank})
-            effective_memory_cfg = memory_cfg.model_copy(update={"hindsight": updated_hindsight})
-
         # MEM-01/MEM-02/D-02: probe memory backend BEFORE pool.acquire (Pitfall 3).
         # prepare_memory never raises (fail-open contract).
         # When unavailable: MEMORY_DEGRADED incremented + WARN logged inside prepare_memory.
-        mcp_servers, memory_prompt = await select_memory_wiring_async(
-            effective_memory_cfg, memory_facade_url
-        )
+        # bank is static (T-04-03, schema-enforced: no {{ }}) — the mental-model fetch, the
+        # boot-started facade, and the prompt's {{ memory.bank }} all use the SAME value, so
+        # there is no per-event bank rendering to keep them in sync.
+        mcp_servers, memory_prompt = await select_memory_wiring_async(memory_cfg, memory_facade_url)
 
         # Build per-invocation engine config with the (dynamic) hindsight MCP server iff
         # reachable (D-02). codemem fields are static per-agent and already on engine_cfg from
@@ -691,7 +681,7 @@ def _make_engine_runner(
                 event,
                 channel_cfg=ch_cfg,
                 agent_name=agent_name,
-                memory_bank=effective_bank,
+                memory_bank=memory_bank,
             )
             full_prompt = f"{base_prompt}\n\n{memory_prompt}" if memory_prompt else base_prompt
             # Free-form channels (--tui console) carry no terminal contract: return

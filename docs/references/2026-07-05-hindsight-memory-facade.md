@@ -97,10 +97,10 @@ bank would not even reach the agent's recall/retain path.
   render for `memory.hindsight` must emit the rich `mentalModels` objects, the `auth` env
   NAME, and `mission`. Until that lands, this schema is only usable via hand-authored local
   configs.
-- **Residual bank-templating in `engine_runner`.** The pre-facade per-event bank templating
-  (`effective_bank`, main.py) still feeds the mental-model *fetch* path but is now inconsistent
-  with the facade's static bank. It is harmless when `bank` has no `{{ }}` (the common case);
-  reconcile or remove it if templated banks are ever intended (they should not be — use tags).
+- ~~**Residual bank-templating in `engine_runner`.**~~ RESOLVED (2026-07-05, follow-up commit):
+  `bank` templating is now rejected at config load (`HindsightParams._bank_static`, T-04-03) and
+  the per-event `effective_bank` path was removed — the fetch, the facade, and the prompt's
+  `{{ memory.bank }}` all use the one static bank. Per-repo partitioning is via tags, not bank.
 - **Boot `list_tools` probe.** The `HINDSIGHT_*` names are module constants verified against the
   live deployment; a boot probe logging the actual tool names would catch a future rename
   loudly rather than via a swallowed 404.

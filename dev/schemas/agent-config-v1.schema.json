@@ -392,6 +392,17 @@
       "additionalProperties": false,
       "description": "Hindsight backend params — the ``memory.hindsight`` sub-block (CONTRACT §2).",
       "properties": {
+        "auth": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SecretSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "bank": {
           "default": "",
           "title": "Bank",
@@ -403,10 +414,15 @@
         },
         "mentalModels": {
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/MentalModelSpec"
           },
           "title": "Mentalmodels",
           "type": "array"
+        },
+        "mission": {
+          "default": "",
+          "title": "Mission",
+          "type": "string"
         }
       },
       "required": [
@@ -451,6 +467,41 @@
         }
       },
       "title": "LimitsBlock",
+      "type": "object"
+    },
+    "MentalModelSpec": {
+      "additionalProperties": false,
+      "description": "A pinned reflection the harness provisions into Hindsight at boot (CONTRACT §2).",
+      "properties": {
+        "autoRefresh": {
+          "default": false,
+          "title": "Autorefresh",
+          "type": "boolean"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "maxTokens": {
+          "default": 2048,
+          "title": "Maxtokens",
+          "type": "integer"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "sourceQuery": {
+          "title": "Sourcequery",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "sourceQuery"
+      ],
+      "title": "MentalModelSpec",
       "type": "object"
     },
     "ModelBlock": {

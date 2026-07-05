@@ -367,6 +367,12 @@ decision, prefixed <code>YYYY-MM-DD-</code> so <code>ls</code> sorts chronologic
 <td>Shipped</td>
 <td><code>model.type</code> selects the opencode provider + native wire: gemini→built-in <code>google</code> on <code>/gemini/v1beta</code>, anthropic→built-in <code>anthropic</code>, openai→custom <code>ach</code>. Fixes <code>type: gemini</code> hitting <code>/v1/chat/completions</code>.</td>
 </tr>
+<tr>
+<td>2026-07-05</td>
+<td><a href="2026-07-05-hindsight-memory-facade/">hindsight-memory-facade</a></td>
+<td>Shipped</td>
+<td>Harness-hosted 4-tool MCP facade fronts Hindsight (bank_id + admin Bearer injected); boot-once provisioning of bank + mental models; <code>mentalModels</code> becomes rich specs; optional <code>auth</code>; per-repo via tags, not bank templating.</td>
+</tr>
 </tbody>
 </table>
 

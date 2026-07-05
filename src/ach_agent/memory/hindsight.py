@@ -43,8 +43,8 @@ TOOLS_SPEC = """\
 Memory tools (the harness fills the memory bank for you — do NOT pass a bank id):
 - `memory_recall(query, tags?)`: search past memories by topic or filename.
 - `memory_reflect(query, tags?)`: synthesize across memories — patterns, not single facts.
-- `memory_get_mental_model(mental_model_id)`: read a pre-built summary (ids are in the ## Memory section).
-- `memory_retain(content, tags?)`: store an insight for future sessions. Tag it (e.g. tags=["repo:<name>"])."""
+- `memory_get_mental_model(mental_model_id)`: read a pre-built summary (see ## Memory for ids).
+- `memory_retain(content, tags?)`: save an insight for later. Tag it, e.g. tags=["repo:<name>"]."""
 
 
 def hindsight_auth_headers(secret: str | None) -> dict[str, str]:
@@ -169,9 +169,7 @@ async def prepare_memory(
 
         ok, secret = resolve_memory_secret(params)
         if not ok:
-            log.warning(
-                "memory: auth configured but env unset — running degraded", bank_id=bank_id
-            )
+            log.warning("memory: auth configured but env unset — running degraded", bank_id=bank_id)
             _inc_memory_degraded()
             return False, "## Memory\n\nUnavailable (auth unset)."
 
@@ -275,7 +273,9 @@ async def provision_memory(memory_cfg: object) -> None:
                         {"bank_id": params.bank, "mental_model_id": spec.id},
                     )
                 except Exception as exc:
-                    log.warning("memory: refresh_mental_model failed", model=spec.id, error=str(exc))
+                    log.warning(
+                        "memory: refresh_mental_model failed", model=spec.id, error=str(exc)
+                    )
         log.info(
             "memory: provisioning complete",
             bank_id=params.bank,

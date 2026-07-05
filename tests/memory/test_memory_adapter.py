@@ -100,6 +100,7 @@ async def test_fail_open() -> None:
     # Sample the MEMORY_DEGRADED counter before the call
     # We use prometheus_client's internal registry to get the current value.
     from ach_agent.router.metrics import MEMORY_DEGRADED
+
     before = MEMORY_DEGRADED._value.get()  # type: ignore[attr-defined]
 
     # Monkeypatch probe to simulate unreachable backend
@@ -114,9 +115,7 @@ async def test_fail_open() -> None:
 
     # MEM-02: backend unreachable → available=False, section mentions Unavailable
     assert not available, "MEM-02: backend unreachable must return available=False"
-    assert "Unavailable" in section, (
-        f"MEM-02: section must mention 'Unavailable', got: {section!r}"
-    )
+    assert "Unavailable" in section, f"MEM-02: section must mention 'Unavailable', got: {section!r}"
 
     # MEM-02: MEMORY_DEGRADED counter must be incremented exactly once
     assert after == before + 1.0, (
@@ -186,9 +185,10 @@ async def test_engine_runner_reachable_branch() -> None:
     )
     on_kill = lambda: None  # noqa: E731
 
+    facade_url = "http://127.0.0.1:7/mcp"
     with (
         patch(
-            "ach_agent.memory.hindsight.prepare_memory",
+            "ach_agent.main.prepare_memory",
             new=AsyncMock(return_value=(True, memory_section)),
         ),
         patch("ach_agent.engine.lifecycle.run_invocation", fake_run_invocation),
@@ -198,16 +198,19 @@ async def test_engine_runner_reachable_branch() -> None:
             engine_cfg=base_engine_cfg,
             max_invocation_seconds=60,
             memory_cfg=memory_cfg,
+            memory_facade_url=facade_url,
         )
         await runner(event, on_kill)
 
-    # D-02 reachable branch: EngineConfig passed to pool.acquire CONTAINS memory server
+    # D-02 reachable branch: EngineConfig passed to pool.acquire CONTAINS the FACADE url
+    # (the agent reaches Hindsight only through the facade), NOT the raw endpoint.
     assert captured_acquire_cfg, "pool.acquire was not called"
     cfg_used = captured_acquire_cfg[0]
-    assert endpoint in cfg_used.mcp_servers, (
-        f"D-02 (reachable): EngineConfig.mcp_servers must contain {endpoint!r}, "
+    assert cfg_used.mcp_servers == [facade_url], (
+        f"D-02 (reachable): EngineConfig.mcp_servers must be the facade url {facade_url!r}, "
         f"got: {cfg_used.mcp_servers!r}"
     )
+    assert endpoint not in cfg_used.mcp_servers, "raw hindsight endpoint must never be wired"
 
     # MEM-01: ## Memory summaries in the prompt passed to run_invocation
     assert captured_prompt, "run_invocation was not called"
@@ -271,7 +274,7 @@ async def test_engine_runner_degraded_path() -> None:
     # No exception must propagate (MEM-02 fail-open)
     with (
         patch(
-            "ach_agent.memory.hindsight.prepare_memory",
+            "ach_agent.main.prepare_memory",
             new=AsyncMock(return_value=(False, degraded_section)),
         ),
         patch("ach_agent.engine.lifecycle.run_invocation", fake_run_invocation),
@@ -289,8 +292,7 @@ async def test_engine_runner_degraded_path() -> None:
     assert captured_acquire_cfg, "pool.acquire was not called"
     cfg_used = captured_acquire_cfg[0]
     assert cfg_used.mcp_servers == [], (
-        f"D-02 (unreachable): EngineConfig.mcp_servers must be empty, "
-        f"got: {cfg_used.mcp_servers!r}"
+        f"D-02 (unreachable): EngineConfig.mcp_servers must be empty, got: {cfg_used.mcp_servers!r}"
     )
 
     # Invocation must complete despite degraded memory (no retry, no fail)

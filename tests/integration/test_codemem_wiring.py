@@ -62,7 +62,10 @@ async def test_codemem_config_flows_into_opencode_json(
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/codemem")
 
     cfg = _cfg(
-        memory={"type": "codemem", "codemem": {"dbPath": "/var/lib/codemem/agent.db", "project": "ach-agent"}}
+        memory={
+            "type": "codemem",
+            "codemem": {"dbPath": "/var/lib/codemem/agent.db", "project": "ach-agent"},
+        }
     )
     db_path, project = resolve_codemem_wiring(cfg)
 
@@ -89,9 +92,7 @@ async def test_codemem_config_flows_into_opencode_json(
     }
 
 
-async def test_codemem_derived_db_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_codemem_derived_db_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """codemem with no dbPath + persistence.enabled → db derives to <mountPath>/state/codemem.db."""
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/codemem")
 
@@ -138,12 +139,18 @@ async def test_hindsight_path_produces_no_codemem_entry(
     async def _ok(_cfg: object) -> tuple[bool, str]:
         return (True, "## Memory\nx")
 
-    monkeypatch.setattr("ach_agent.memory.hindsight.prepare_memory", _ok)
+    import ach_agent.main as m
 
-    cfg_mem = HindsightMemory(type="hindsight", hindsight=HindsightParams(endpoint="http://mem:8080"))
-    mcp_servers, memory_prompt = await select_memory_wiring_async(cfg_mem)
+    monkeypatch.setattr(m, "prepare_memory", _ok)
 
-    assert mcp_servers == ["http://mem:8080"]
+    facade_url = "http://127.0.0.1:7/mcp"
+    cfg_mem = HindsightMemory(
+        type="hindsight", hindsight=HindsightParams(endpoint="http://mem:8080")
+    )
+    mcp_servers, memory_prompt = await select_memory_wiring_async(cfg_mem, facade_url)
+
+    # mcp_servers carries the harness FACADE url, never the raw hindsight endpoint.
+    assert mcp_servers == [facade_url]
     assert memory_prompt == "## Memory\nx"
 
     engine_cfg = EngineConfig(
@@ -159,9 +166,9 @@ async def test_hindsight_path_produces_no_codemem_entry(
     # No codemem entry for hindsight path
     assert "codemem" not in oc_mcp
 
-    # Hindsight endpoint registered as memory-0 with the correct remote shape
+    # Facade url registered as memory-0 with the correct remote shape
     assert oc_mcp.get("memory-0") == {
         "type": "remote",
-        "url": "http://mem:8080",
+        "url": facade_url,
         "enabled": True,
     }

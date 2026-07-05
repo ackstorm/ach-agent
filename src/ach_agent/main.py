@@ -51,6 +51,8 @@ from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_p
 from ach_agent.engine.metrics import DRAIN_COMPLETED, ENGINE_LAUNCH_FAILURES
 from ach_agent.engine.sanitized_env import add_secret_redaction, configure_logging
 from ach_agent.http.app import create_app
+from ach_agent.memory.facade import MemoryFacade
+from ach_agent.memory.hindsight import prepare_memory, provision_memory
 from ach_agent.router import Router
 from ach_agent.security.preflight import run_preflight
 from ach_agent.templating import build_template_context, render_template
@@ -541,20 +543,20 @@ def resolve_system_prompt(prompt_block: Any, state_dir: Path) -> str:
 
 async def select_memory_wiring_async(
     memory_cfg: Memory | None,
+    facade_url: str | None,
 ) -> tuple[list[str], str]:
-    """Resolve (mcp_servers, memory_prompt) for one invocation — HINDSIGHT only.
+    """Probe memory + build the prompt section; return the FACADE url (not the raw endpoint).
 
-    Hindsight probes its endpoint per-invocation (fail-open): register the endpoint as a
-    remote MCP server iff reachable, plus the '## Memory' prompt. codemem is NOT handled here
-    — it is static per-agent and resolved once at boot (resolve_codemem_wiring → engine_cfg).
+    The agent only ever reaches Hindsight through the harness facade, so the mcp_servers list
+    carries the facade URL. Gated by prepare_memory's probe (D-02 fail-open) AND by the facade
+    actually being up. codemem is NOT handled here — it is static per-agent and resolved once
+    at boot (resolve_codemem_wiring → engine_cfg).
     """
     if not isinstance(memory_cfg, HindsightMemory):
         return [], ""
 
-    from ach_agent.memory.hindsight import prepare_memory
-
     mem_available, memory_prompt = await prepare_memory(memory_cfg)
-    mcp_servers = [memory_cfg.hindsight.endpoint] if mem_available else []
+    mcp_servers = [facade_url] if (mem_available and facade_url) else []
     return mcp_servers, memory_prompt
 
 
@@ -571,6 +573,7 @@ def _make_engine_runner(
     memory_bank: str = "",
     stats_sink: Any = None,
     tool_sink: Any = None,
+    memory_facade_url: str | None = None,
 ) -> Callable[..., Any]:
     """Build the engine_runner callable injected into the Router.
 
@@ -639,7 +642,9 @@ def _make_engine_runner(
         # MEM-01/MEM-02/D-02: probe memory backend BEFORE pool.acquire (Pitfall 3).
         # prepare_memory never raises (fail-open contract).
         # When unavailable: MEMORY_DEGRADED incremented + WARN logged inside prepare_memory.
-        mcp_servers, memory_prompt = await select_memory_wiring_async(effective_memory_cfg)
+        mcp_servers, memory_prompt = await select_memory_wiring_async(
+            effective_memory_cfg, memory_facade_url
+        )
 
         # Build per-invocation engine config with the (dynamic) hindsight MCP server iff
         # reachable (D-02). codemem fields are static per-agent and already on engine_cfg from
@@ -983,7 +988,7 @@ def _harness_log_dir() -> Path:
 
 
 def collect_secret_env_names(cfg: Any) -> list[str]:
-    """Every secret.env name across webhook + a2a channel auth."""
+    """Every secret.env name across webhook + a2a channel auth + the memory admin secret."""
     names: list[str] = []
     for ch in cfg.channels:
         wh = getattr(ch, "webhook", None)
@@ -992,6 +997,11 @@ def collect_secret_env_names(cfg: Any) -> list[str]:
         a2a = getattr(ch, "a2a", None)
         if a2a is not None and a2a.auth.secret is not None and a2a.auth.secret.env:
             names.append(a2a.auth.secret.env)
+    # memory.hindsight.auth: the admin secret joins the same forwardEnv-strip + log-redaction
+    # path as channel secrets. No-auth memory config → nothing appended.
+    mem = getattr(cfg, "memory", None)
+    if isinstance(mem, HindsightMemory) and mem.hindsight.auth is not None:
+        names.append(mem.hindsight.auth.env)
     return names
 
 
@@ -1099,6 +1109,9 @@ async def main(
     engine_home, engine_work_dir = resolve_engine_paths(cfg)
     state_dir = link_ach_state(engine_home, engine_work_dir)
 
+    # Boot-once memory provisioning (ensure bank + mental models). Fail-open (never raises).
+    await provision_memory(cfg.memory)
+
     # Step 3: D-02 gate — reject unwired channel types before serving.
     # Skipped under --tui/--prompt: configured channels are ignored in console mode.
     for channel in cfg.channels if not console_mode else []:
@@ -1126,6 +1139,11 @@ async def main(
     model_base_url: str = ""
     mcp_local_urls: dict[str, str] = {}
     mcp_proxy: McpProxy | None = None
+    # Harness-hosted memory facade: the agent reaches Hindsight ONLY through this localhost
+    # MCP server (bank_id + admin auth injected). Started beside the proxies below; None when
+    # memory is not a Hindsight config or its auth env is unset (fail-open, run without memory).
+    memory_facade: MemoryFacade | None = None
+    memory_facade_url: str | None = None
     if ek:
         manifest = await hydrate(cfg.capability.ach.base_url, ek)
         # hard-fail (sys.exit 1) if the configured model is absent from the hydrated set.
@@ -1151,6 +1169,22 @@ async def main(
         mcp_local_urls = await mcp_proxy.start(manifest.mcp_servers, ek, exclude=_exclude_servers)
         if _exclude_servers:
             log.info("filter: mcp servers excluded", excluded=sorted(_exclude_servers))
+        # Start the memory facade beside the proxies. The agent points at THIS url, never at
+        # Hindsight. Uses the admin secret (NOT the ek_); secret may be None (internal URL).
+        if isinstance(cfg.memory, HindsightMemory):
+            from ach_agent.memory.hindsight import resolve_memory_secret
+
+            _ok, _mem_secret = resolve_memory_secret(cfg.memory.hindsight)
+            if _ok:
+                memory_facade = MemoryFacade(
+                    cfg.memory.hindsight.endpoint, _mem_secret, cfg.memory.hindsight.bank
+                )
+                memory_facade_url = await memory_facade.start()
+            else:
+                log.warning(
+                    "memory: auth configured but env unset — facade not started; "
+                    "running without memory"
+                )
         # Model-proxy upstream override (dev/test only — A/B a different model backend,
         # e.g. litellm direct, to isolate forwarder buffering). MODEL-ONLY: hydration + MCP
         # stay on the ACH coords above; only the model proxy's upstream + auth swap. The
@@ -1324,6 +1358,7 @@ async def main(
         memory_bank=memory_bank,
         stats_sink=stats_sink,
         tool_sink=tool_sink,
+        memory_facade_url=memory_facade_url,
     )
 
     # Step 6 (cont.): construct Router with all limits from config (RTR-03/04)
@@ -1363,11 +1398,9 @@ async def main(
                 # remote MCP server is resolved here so the pre-warmed opencode.json matches.
                 warm_mcp_servers: list[str] = []
                 if isinstance(cfg.memory, HindsightMemory):
-                    from ach_agent.memory.hindsight import prepare_memory
-
                     _mem_ok, _ = await prepare_memory(cfg.memory)
-                    if _mem_ok:
-                        warm_mcp_servers = [cfg.memory.hindsight.endpoint]
+                    if _mem_ok and memory_facade_url:
+                        warm_mcp_servers = [memory_facade_url]
                 from ach_agent.channels.tui import _CONSOLE_SESSION_KEY
 
                 warm_codemem_project = engine_cfg.codemem_project
@@ -1416,6 +1449,8 @@ async def main(
             await stop_model_proxies()
             if mcp_proxy is not None:
                 await mcp_proxy.stop()
+            if memory_facade is not None:
+                await memory_facade.stop()
             if hasattr(dedup_store, "close"):
                 dedup_store.close()
             await stats_sink.stop()
@@ -1576,6 +1611,8 @@ async def main(
         await stop_model_proxies()
         if mcp_proxy is not None:
             await mcp_proxy.stop()
+        if memory_facade is not None:
+            await memory_facade.stop()
         await stats_sink.stop()
         await tool_sink.stop()
         # uvicorn's serve() task returns on its own once should_exit=True; await it

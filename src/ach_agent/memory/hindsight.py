@@ -18,20 +18,78 @@ import asyncio
 from typing import TYPE_CHECKING
 
 import structlog
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
+from mcp.shared._httpx_utils import create_mcp_http_client
 
 if TYPE_CHECKING:
-    from ach_agent.config.schema import HindsightMemory
+    from ach_agent.config.schema import HindsightMemory, HindsightParams
 
 log = structlog.get_logger(__name__)
 
 TYPE = "hindsight"
 
+# Tool names on the live Hindsight deployment (verified 2026-07-05). A boot list_tools
+# probe (facade) logs the real names so a rename is caught, not silently 404'd.
+HINDSIGHT_RECALL = "hindsight_recall"
+HINDSIGHT_REFLECT = "hindsight_reflect"
+HINDSIGHT_RETAIN = "hindsight_retain"
+HINDSIGHT_GET_MENTAL_MODEL = "hindsight_get_mental_model"
+HINDSIGHT_CREATE_BANK = "hindsight_create_bank"
+HINDSIGHT_CREATE_MENTAL_MODEL = "hindsight_create_mental_model"
+HINDSIGHT_REFRESH_MENTAL_MODEL = "hindsight_refresh_mental_model"
+
 TOOLS_SPEC = """\
-Use `bank_id` and mental model IDs from the ## Memory section in the event prompt.
-- `memory_get_mental_model(bank_id, mental_model_id)`: read a pre-built summary.
-- `memory_recall(bank_id, query)`: search past memories by topic or filename.
-- `memory_reflect(bank_id, query)`: synthesize across memories — patterns, not single facts.
-- `memory_retain(bank_id, content, tags)`: store an insight for future sessions."""
+Memory tools (the harness fills the memory bank for you — do NOT pass a bank id):
+- `memory_recall(query, tags?)`: search past memories by topic or filename.
+- `memory_reflect(query, tags?)`: synthesize across memories — patterns, not single facts.
+- `memory_get_mental_model(mental_model_id)`: read a pre-built summary (ids are in the ## Memory section).
+- `memory_retain(content, tags?)`: store an insight for future sessions. Tag it (e.g. tags=["repo:<name>"])."""
+
+
+def hindsight_auth_headers(secret: str | None) -> dict[str, str]:
+    """Admin auth header (assumed Bearer). Empty when no secret — internal/no-auth URL."""
+    return {"Authorization": f"Bearer {secret}"} if secret else {}
+
+
+async def call_hindsight(
+    endpoint: str, secret: str | None, tool: str, args: dict[str, object]
+) -> str:
+    """Call one Hindsight MCP tool; return first text content ('' if none).
+
+    The single harness→Hindsight seam (probe/fetch/provision/facade all route here so tests
+    monkeypatch one function). ``secret`` (if any) is used only to build headers — never logged.
+
+    NOTE: the installed mcp ``streamable_http_client`` takes no ``headers=`` kwarg; auth is
+    injected via a pre-built httpx client (``create_mcp_http_client(headers=...)``, which also
+    applies the SDK's recommended MCP timeouts) passed as ``http_client=``. We own that client's
+    lifecycle (the transport only closes clients it created), hence the ``async with``.
+    """
+    headers = hindsight_auth_headers(secret)
+    async with create_mcp_http_client(headers=headers or None) as http_client:
+        async with streamable_http_client(endpoint, http_client=http_client) as (read, write, _):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool(tool, args)
+                if not result.content:
+                    return ""
+                text: str = getattr(result.content[0], "text", "")
+                return text
+
+
+def resolve_memory_secret(params: HindsightParams) -> tuple[bool, str | None]:
+    """(ok, secret) gate reused by prepare/provision/main.
+
+    (True, None)  → no auth configured (internal URL) — proceed unauthenticated.
+    (False, None) → auth configured but env unset (misconfig) — caller degrades.
+    (True, secret)→ auth resolved — proceed with Bearer.
+    """
+    from ach_agent.config.schema import resolve_secret
+
+    if params.auth is None:
+        return True, None
+    secret = resolve_secret(params.auth)
+    return (False, None) if secret is None else (True, secret)
 
 
 async def probe_memory_endpoint(endpoint: str, timeout: float = 2.0) -> bool:
@@ -57,31 +115,27 @@ async def probe_memory_endpoint(endpoint: str, timeout: float = 2.0) -> bool:
 
 async def fetch_mental_model_summaries(
     endpoint: str,
+    secret: str | None,
     bank_id: str,
     mental_model_ids: list[str],
 ) -> str:
     """Fetch mental model summaries and return a '## Memory\\n...' section string.
 
-    Per-call mcp.client.streamable_http pattern (clean-room from ackbot hindsight.py).
+    Routes through the single ``call_hindsight`` seam (admin-authed, corrected tool name).
     Partial failures (single model unreachable): log warning + skip that model, never raise.
     Returns '## Memory\\n\\nUnavailable' if all fetches fail or mental_model_ids is empty.
     """
-    from mcp import ClientSession
-    from mcp.client.streamable_http import streamable_http_client
-
     sections: list[str] = []
     for mid in mental_model_ids:
         try:
-            async with streamable_http_client(endpoint) as (read, write, _):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    result = await session.call_tool(
-                        "memory_get_mental_model",
-                        {"bank_id": bank_id, "mental_model_id": mid},
-                    )
-                    text = getattr(result.content[0], "text", "") if result.content else ""
-                    if text:
-                        sections.append(f"### {mid}\n{text}")
+            text = await call_hindsight(
+                endpoint,
+                secret,
+                HINDSIGHT_GET_MENTAL_MODEL,
+                {"bank_id": bank_id, "mental_model_id": mid},
+            )
+            if text:
+                sections.append(f"### {mid}\n{text}")
         except Exception as exc:
             log.warning(
                 "memory: mental model fetch failed — skipping",
@@ -113,6 +167,14 @@ async def prepare_memory(
         params = memory_cfg.hindsight
         bank_id = params.bank
 
+        ok, secret = resolve_memory_secret(params)
+        if not ok:
+            log.warning(
+                "memory: auth configured but env unset — running degraded", bank_id=bank_id
+            )
+            _inc_memory_degraded()
+            return False, "## Memory\n\nUnavailable (auth unset)."
+
         available = await probe_memory_endpoint(params.endpoint)
         if not available:
             log.warning(
@@ -126,8 +188,9 @@ async def prepare_memory(
         log.info("memory: hindsight backend active", endpoint=params.endpoint, bank_id=bank_id)
         prompt_section = await fetch_mental_model_summaries(
             endpoint=params.endpoint,
+            secret=secret,
             bank_id=bank_id,
-            mental_model_ids=params.mental_models,
+            mental_model_ids=[m.id for m in params.mental_models],
         )
         return True, prompt_section
 

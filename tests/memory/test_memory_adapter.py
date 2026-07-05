@@ -34,7 +34,7 @@ async def test_prompt_injection() -> None:
         hindsight=HindsightParams(
             endpoint=endpoint,
             bank="test-scope",
-            mental_models=["coding-habits"],
+            mental_models=[{"id": "coding-habits", "name": "Coding Habits", "sourceQuery": "?"}],
         ),
     )
 
@@ -148,7 +148,7 @@ async def test_engine_runner_reachable_branch() -> None:
         hindsight=HindsightParams(
             endpoint=endpoint,
             bank="test-scope",
-            mental_models=["coding-habits"],
+            mental_models=[{"id": "coding-habits", "name": "Coding Habits", "sourceQuery": "?"}],
         ),
     )
     base_engine_cfg = EngineConfig()

@@ -14,7 +14,7 @@ RUN apt-get update -qq \
 # codemem is a Node.js CLI (npm). opencode spawns it as a stdio MCP child:
 # `codemem mcp --db-path <db>`. Install into an isolated prefix so one COPY brings
 # the package + its (native) deps into the runtime. bookworm matches runtime glibc.
-FROM node:24-bookworm-slim AS codemem-bin
+FROM node:26-bookworm-slim AS codemem-bin
 ARG CODEMEM_VERSION=0.37.1
 RUN npm install -g --prefix /opt/codemem "codemem@${CODEMEM_VERSION}" \
  && /opt/codemem/bin/codemem --version

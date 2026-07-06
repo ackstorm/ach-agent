@@ -13,12 +13,20 @@ memory/hindsight.py:_hindsight_session).
 from __future__ import annotations
 
 import base64
+import io
+import shutil
+import tarfile
+import tempfile
 from contextlib import asynccontextmanager
+from pathlib import Path
 from urllib.parse import quote
 
+import structlog
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
+
+log = structlog.get_logger(__name__)
 
 
 def build_archive_uri(project: str, ref: str, subpath: str | None) -> str:
@@ -52,3 +60,37 @@ async def read_repo_archive(
         result = await session.read_resource(uri)
     blob = result.contents[0].blob  # BlobResourceContents.blob is base64 (application/gzip)
     return base64.b64decode(blob)
+
+
+def extract_archive(data: bytes, tmp_base: str, project: str, ref: str) -> str:
+    """Extract gzip tar `data` into a fresh mkdtemp dir under tmp_base; return the repo root.
+
+    GitLab archives nest everything under one top dir; when that holds, the repo root is that
+    single child (so callers land inside the tree). Uses filter="data" to block path traversal.
+    """
+    Path(tmp_base).mkdir(parents=True, exist_ok=True)
+    dest = tempfile.mkdtemp(prefix=f"{project}-{ref[:12]}-", dir=tmp_base)
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
+        tf.extractall(dest, filter="data")
+    children = [c for c in Path(dest).iterdir()]
+    if len(children) == 1 and children[0].is_dir():
+        return str(children[0])
+    return dest
+
+
+def sweep_stale(tmp_base: str, ttl_seconds: float, now: float) -> int:
+    """rmtree every direct child of tmp_base older than ttl_seconds. Returns count removed."""
+    base = Path(tmp_base)
+    if not base.is_dir():
+        return 0
+    removed = 0
+    for child in base.iterdir():
+        try:
+            if now - child.stat().st_mtime > ttl_seconds:
+                shutil.rmtree(child, ignore_errors=True)
+                removed += 1
+        except OSError:  # noqa: PERF203 — child vanished mid-sweep; ignore
+            continue
+    if removed:
+        log.info("repo checkout sweep", base=tmp_base, removed=removed)
+    return removed

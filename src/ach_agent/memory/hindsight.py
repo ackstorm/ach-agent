@@ -246,6 +246,7 @@ async def provision_memory(memory_cfg: object) -> None:
             HINDSIGHT_CREATE_BANK,
             {"bank_id": params.bank, "name": params.bank, "mission": params.mission or None},
         )
+        log.info("memory: bank ensured", bank_id=params.bank)
         for spec in params.mental_models:
             try:
                 await call_hindsight(
@@ -261,6 +262,7 @@ async def provision_memory(memory_cfg: object) -> None:
                         "trigger_refresh_after_consolidation": spec.auto_refresh,
                     },
                 )
+                log.info("memory: mental_model ensured", model=spec.id)
             except Exception as exc:  # one bad model must not abort the rest
                 log.warning("memory: create_mental_model failed", model=spec.id, error=str(exc))
         for spec in params.mental_models:
@@ -272,6 +274,7 @@ async def provision_memory(memory_cfg: object) -> None:
                         HINDSIGHT_REFRESH_MENTAL_MODEL,
                         {"bank_id": params.bank, "mental_model_id": spec.id},
                     )
+                    log.info("memory: mental_model refresh triggered", model=spec.id)
                 except Exception as exc:
                     log.warning(
                         "memory: refresh_mental_model failed", model=spec.id, error=str(exc)

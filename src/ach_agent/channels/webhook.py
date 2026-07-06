@@ -290,6 +290,7 @@ async def handle_webhook_request(
                     "webhook: gitlab event ignored (not a routed kind)",
                     channel=channel_cfg.name,
                     object_kind=body.get("object_kind"),
+                    noteable_type=body.get("object_attributes", {}).get("noteable_type"),
                 )
                 return WebhookResult(status_code=200, body={"status": "ignored"})
             delivery_context, session_key = parsed

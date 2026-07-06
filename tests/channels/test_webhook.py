@@ -552,6 +552,44 @@ async def test_mr_hook_default_routes_with_kind(monkeypatch: pytest.MonkeyPatch)
 
 
 @pytest.mark.asyncio
+async def test_mr_hook_extracts_head_sha(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events()
+    payload = {
+        "object_kind": "merge_request",
+        "project": {"id": 42, "name": "my-repo"},
+        "object_attributes": {"iid": 7, "title": "x", "last_commit": {"id": "9af2c1e0deadbeef"}},
+    }
+    result, handler = await _post(payload, cfg, "s")
+    assert result.status_code == 202
+    assert handler.events[0].delivery_context["head_sha"] == "9af2c1e0deadbeef"
+
+
+@pytest.mark.asyncio
+async def test_note_on_mr_extracts_head_sha(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events()
+    payload = {
+        "object_kind": "note",
+        "project": {"id": 42},
+        "merge_request": {"iid": 7, "last_commit": {"id": "abc123"}},
+        "object_attributes": {"noteable_type": "MergeRequest", "note": "please rebase"},
+    }
+    result, handler = await _post(payload, cfg, "s")
+    assert result.status_code == 202
+    assert handler.events[0].delivery_context["head_sha"] == "abc123"
+
+
+@pytest.mark.asyncio
+async def test_mr_hook_without_head_sha_omits_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events()
+    result, handler = await _post(MR_PAYLOAD, cfg, "s")  # MR_PAYLOAD has no last_commit
+    assert result.status_code == 202
+    assert "head_sha" not in handler.events[0].delivery_context
+
+
+@pytest.mark.asyncio
 async def test_note_on_mr_routes_same_lane(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(SECRET_ENV, "s")
     cfg = _make_cfg_events()

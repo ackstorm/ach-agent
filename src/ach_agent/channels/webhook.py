@@ -111,6 +111,16 @@ def _gitlab_actor(body: dict[str, Any]) -> str:
     return str((body.get("user") or {}).get("username", "") or body.get("user_username", ""))
 
 
+def _mr_head_sha(container: dict[str, Any]) -> str:
+    """The MR source-branch head commit SHA from a merge_request/note payload block.
+
+    `container` is object_attributes (MR hook) or the merge_request block (note hook).
+    Empty string if absent — never raises.
+    """
+    last = container.get("last_commit")
+    return str(last.get("id", "")) if isinstance(last, dict) else ""
+
+
 def _parse_gitlab(body: dict[str, Any], allowed: set[str]) -> tuple[dict[str, Any], str] | None:
     """Route a GitLab hook, accept-ignore (None), or raise on a routable-but-malformed payload.
 
@@ -127,15 +137,16 @@ def _parse_gitlab(body: dict[str, Any], allowed: set[str]) -> tuple[dict[str, An
     if kind == "merge_request" and "merge_request" in allowed:
         project_id = int(body["project"]["id"])
         mr_iid = int(body["object_attributes"]["iid"])
-        return (
-            {
-                "project_id": project_id,
-                "kind": "merge_request",
-                "target_type": "mr",
-                "mr_iid": mr_iid,
-            },
-            f"{project_id}:{mr_iid}",
-        )
+        dc: dict[str, Any] = {
+            "project_id": project_id,
+            "kind": "merge_request",
+            "target_type": "mr",
+            "mr_iid": mr_iid,
+        }
+        head_sha = _mr_head_sha(body["object_attributes"])
+        if head_sha:
+            dc["head_sha"] = head_sha
+        return (dc, f"{project_id}:{mr_iid}")
 
     if kind == "issue" and "issue" in allowed:
         project_id = int(body["project"]["id"])
@@ -161,10 +172,11 @@ def _parse_gitlab(body: dict[str, Any], allowed: set[str]) -> tuple[dict[str, An
         if noteable == "mergerequest" and "merge_request" in allowed:
             project_id = int(body["project"]["id"])
             mr_iid = int(body["merge_request"]["iid"])
-            return (
-                {"project_id": project_id, "kind": "note", "target_type": "mr", "mr_iid": mr_iid},
-                f"{project_id}:{mr_iid}",
-            )
+            dc = {"project_id": project_id, "kind": "note", "target_type": "mr", "mr_iid": mr_iid}
+            head_sha = _mr_head_sha(body["merge_request"])
+            if head_sha:
+                dc["head_sha"] = head_sha
+            return (dc, f"{project_id}:{mr_iid}")
         if noteable == "issue" and "issue" in allowed:
             project_id = int(body["project"]["id"])
             issue_iid = int(body["issue"]["iid"])

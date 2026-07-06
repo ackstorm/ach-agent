@@ -37,6 +37,7 @@ import uvicorn
 
 if TYPE_CHECKING:
     from ach_agent.engine.events import OpenCodeToolUpdate
+    from ach_agent.engine.hydrate import McpServer
 
 from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a2a_agent_card
 from ach_agent.channels.cron import CronScheduler
@@ -541,6 +542,14 @@ def resolve_system_prompt(prompt_block: Any, state_dir: Path) -> str:
     return target.read_text(encoding="utf-8")
 
 
+def resolve_repo_archive_endpoint(mcp_servers: list[McpServer], server_id: str) -> str | None:
+    """The endpoint of the hydrated McpServer whose id == server_id, or None."""
+    for s in mcp_servers:
+        if s.id == server_id:
+            return s.endpoint
+    return None
+
+
 async def select_memory_wiring_async(
     memory_cfg: Memory | None,
     facade_url: str | None,
@@ -574,6 +583,7 @@ def _make_engine_runner(
     stats_sink: Any = None,
     tool_sink: Any = None,
     memory_facade_url: str | None = None,
+    repo_facade_url: str | None = None,
 ) -> Callable[..., Any]:
     """Build the engine_runner callable injected into the Router.
 
@@ -635,6 +645,11 @@ def _make_engine_runner(
         # boot-started facade, and the prompt's {{ memory.bank }} all use the SAME value, so
         # there is no per-event bank rendering to keep them in sync.
         mcp_servers, memory_prompt = await select_memory_wiring_async(memory_cfg, memory_facade_url)
+        # The repo-checkout facade (if enabled) is a static localhost MCP server; append it to
+        # every invocation alongside the (dynamic) memory facade — the agent reaches gitlab-mcp's
+        # archive resource ONLY through it (ek injected harness-side).
+        if repo_facade_url:
+            mcp_servers = [*mcp_servers, repo_facade_url]
 
         # Build per-invocation engine config with the (dynamic) hindsight MCP server iff
         # reachable (D-02). codemem fields are static per-agent and already on engine_cfg from
@@ -1134,6 +1149,12 @@ async def main(
     # memory is not a Hindsight config or its auth env is unset (fail-open, run without memory).
     memory_facade: MemoryFacade | None = None
     memory_facade_url: str | None = None
+    # Harness-hosted repo-checkout facade: exposes `checkout_repo`, reading gitlab-mcp's archive
+    # resource harness-side (ek as x-ach-key, never seen by the agent). None when disabled or the
+    # gitlab endpoint/ek is missing (fail-open, run without the tool). Declared here so shutdown
+    # can stop it even though it is constructed inside the `if ek:` block below.
+    repo_facade: Any = None
+    repo_facade_url: str | None = None
     if ek:
         manifest = await hydrate(cfg.capability.ach.base_url, ek)
         # hard-fail (sys.exit 1) if the configured model is absent from the hydrated set.
@@ -1174,6 +1195,22 @@ async def main(
                 log.warning(
                     "memory: auth configured but env unset — facade not started; "
                     "running without memory"
+                )
+        # Start the repo-checkout facade beside the proxies (engine.repoCheckout.enabled).
+        # It fronts gitlab-mcp's archive resource with the ek_ (x-ach-key), so the agent gets a
+        # local checkout without ever seeing the ek_ or the raw endpoint.
+        rc = cfg.engine.repo_checkout
+        if rc.enabled:
+            gl_endpoint = resolve_repo_archive_endpoint(manifest.mcp_servers, rc.mcp_server_id)
+            if gl_endpoint:
+                from ach_agent.engine.repo_facade import RepoCheckoutFacade
+
+                repo_facade = RepoCheckoutFacade(gl_endpoint, ek, rc.tmp_base, rc.ttl_seconds)
+                repo_facade_url = await repo_facade.start()
+            else:
+                log.warning(
+                    "repo checkout enabled but gitlab endpoint not in manifest — tool not wired",
+                    mcp_server_id=rc.mcp_server_id,
                 )
         # Model-proxy upstream override (dev/test only — A/B a different model backend,
         # e.g. litellm direct, to isolate forwarder buffering). MODEL-ONLY: hydration + MCP
@@ -1349,6 +1386,7 @@ async def main(
         stats_sink=stats_sink,
         tool_sink=tool_sink,
         memory_facade_url=memory_facade_url,
+        repo_facade_url=repo_facade_url,
     )
 
     # Step 6 (cont.): construct Router with all limits from config (RTR-03/04)
@@ -1391,6 +1429,10 @@ async def main(
                     _mem_ok, _ = await prepare_memory(cfg.memory)
                     if _mem_ok and memory_facade_url:
                         warm_mcp_servers = [memory_facade_url]
+                # The repo-checkout facade is static (no probe) — include it in the pre-warmed
+                # opencode.json so the console session sees checkout_repo from the first prompt.
+                if repo_facade_url:
+                    warm_mcp_servers = [*warm_mcp_servers, repo_facade_url]
                 from ach_agent.channels.tui import _CONSOLE_SESSION_KEY
 
                 warm_codemem_project = engine_cfg.codemem_project
@@ -1441,6 +1483,8 @@ async def main(
                 await mcp_proxy.stop()
             if memory_facade is not None:
                 await memory_facade.stop()
+            if repo_facade is not None:
+                await repo_facade.stop()
             if hasattr(dedup_store, "close"):
                 dedup_store.close()
             await stats_sink.stop()
@@ -1603,6 +1647,8 @@ async def main(
             await mcp_proxy.stop()
         if memory_facade is not None:
             await memory_facade.stop()
+        if repo_facade is not None:
+            await repo_facade.stop()
         await stats_sink.stop()
         await tool_sink.stop()
         # uvicorn's serve() task returns on its own once should_exit=True; await it

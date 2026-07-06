@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.7.1] - 2026-07-06
+
+### Added
+- **Richer memory facade tool descriptions.** The four agent-facing memory tools now carry
+  descriptions a cold agent can act on (when to use each, `recall` vs `reflect`, "a mental model
+  is a living auto-refreshing summary") plus `Field` descriptions for `tags` and `mental_model_id`.
+- **Memory provisioning is observable.** `provision_memory` now logs `bank ensured` and a per-model
+  `mental_model ensured` / `mental_model refresh triggered` on the happy path — previously only the
+  final `provisioning complete` (a config count, not a success count) and failures were logged.
+- **Webhook ignore log carries `noteable_type`.** A dropped GitLab `note` now logs its
+  `noteable_type`, so an ignored comment is diagnosable (issue/commit/snippet vs a routable MR note).
+
+### Fixed
+- **`call_hindsight` no longer returns tool-level errors as data.** A Hindsight `isError` result
+  (e.g. `Unknown tool`, bad bank) was read as `content[0].text` and returned as a valid string —
+  so the error masqueraded as a memory/summary: it was injected into the `## Memory` prompt block,
+  returned to the agent from `memory_recall`/`memory_retain` with `status=completed`, and let boot
+  provisioning report hollow success while `create_bank`/`create_mental_model` silently failed. The
+  seam now raises on `isError`, so every caller degrades and logs loud (facade → "unavailable",
+  fetch → skip model, provision → "running degraded") and a backend/version mismatch surfaces at
+  boot instead of poisoning the agent's context.
+
 ## [0.7.0] - 2026-07-05
 
 ### Added

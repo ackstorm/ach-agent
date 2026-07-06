@@ -58,6 +58,29 @@ class LimitsBlock(BaseModel):
     terminal_output_retries: int = Field(default=1, alias="terminalOutputRetries")
 
 
+class RepoCheckoutBlock(BaseModel):
+    """engine.repoCheckout — expose the harness `checkout_repo` tool (gitlab archive → workDir).
+
+    enabled=False → tool not wired. When enabled, mcpServerId names the hydrated McpServer.id
+    whose endpoint serves the `gitlab://{project}/archive/{ref}` resource. tmpBase is the parent
+    dir for per-checkout mkdtemp dirs; ttlSeconds bounds how long a stale checkout lingers before
+    the next call sweeps it (Option A: no exact session-close deletion — /tmp is ephemeral).
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    enabled: bool = False
+    mcp_server_id: str = Field(default="", alias="mcpServerId")
+    tmp_base: str = Field(default="/tmp/gitlab", alias="tmpBase")
+    ttl_seconds: float = Field(default=3600.0, ge=0, alias="ttlSeconds")
+
+    @model_validator(mode="after")
+    def _check(self) -> RepoCheckoutBlock:
+        if self.enabled and not self.mcp_server_id:
+            raise ValueError("engine.repoCheckout.mcpServerId is required when enabled")
+        return self
+
+
 class EngineBlock(BaseModel):
     """Engine runtime knobs (harness-local; operator-optional).
 
@@ -86,6 +109,9 @@ class EngineBlock(BaseModel):
     # wrap-up turn so the model still returns a valid terminal object. 0 disables counting/abort;
     # maxInvocationSeconds remains the always-on time backstop. Recommend ~80 when opting in.
     max_tool_calls: int = Field(default=0, ge=0, alias="maxToolCalls")
+    repo_checkout: RepoCheckoutBlock = Field(
+        default_factory=RepoCheckoutBlock, alias="repoCheckout"
+    )
 
 
 class PersistenceBlock(BaseModel):

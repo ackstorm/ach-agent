@@ -336,6 +336,9 @@
           "title": "Maxtoolcalls",
           "type": "integer"
         },
+        "repoCheckout": {
+          "$ref": "#/$defs/RepoCheckoutBlock"
+        },
         "startupTimeoutSeconds": {
           "default": 30,
           "title": "Startuptimeoutseconds",
@@ -624,6 +627,35 @@
         "key"
       ],
       "title": "QueueBlock",
+      "type": "object"
+    },
+    "RepoCheckoutBlock": {
+      "additionalProperties": false,
+      "description": "engine.repoCheckout — expose the harness `checkout_repo` tool (gitlab archive → workDir).\n\nenabled=False → tool not wired. When enabled, mcpServerId names the hydrated McpServer.id\nwhose endpoint serves the `gitlab://{project}/archive/{ref}` resource. tmpBase is the parent\ndir for per-checkout mkdtemp dirs; ttlSeconds bounds how long a stale checkout lingers before\nthe next call sweeps it (Option A: no exact session-close deletion — /tmp is ephemeral).",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "mcpServerId": {
+          "default": "",
+          "title": "Mcpserverid",
+          "type": "string"
+        },
+        "tmpBase": {
+          "default": "/tmp/gitlab",
+          "title": "Tmpbase",
+          "type": "string"
+        },
+        "ttlSeconds": {
+          "default": 3600.0,
+          "minimum": 0,
+          "title": "Ttlseconds",
+          "type": "number"
+        }
+      },
+      "title": "RepoCheckoutBlock",
       "type": "object"
     },
     "SecretSource": {

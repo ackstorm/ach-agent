@@ -801,6 +801,18 @@
         "auth": {
           "$ref": "#/$defs/WebhookAuthBlock"
         },
+        "botUsername": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Botusername"
+        },
         "gitlabEvents": {
           "anyOf": [
             {
@@ -820,6 +832,21 @@
           ],
           "default": null,
           "title": "Gitlabevents"
+        },
+        "triggerUsers": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Triggerusers"
         }
       },
       "title": "WebhookBlock",

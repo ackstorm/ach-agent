@@ -102,6 +102,15 @@ def _verify_auth(auth: WebhookAuthBlock, lower_headers: dict[str, str], raw_body
             return _verify_header_token(lower_headers.get(auth.header.lower(), ""), auth.secret)
 
 
+def _gitlab_actor(body: dict[str, Any]) -> str:
+    """The GitLab username that authored the hook (empty string if absent).
+
+    Same extraction as derive_gitlab_composite_key (dedup.py): user.username with a
+    user_username fallback. Used by the loop-guard + actor-allowlist gates.
+    """
+    return str((body.get("user") or {}).get("username", "") or body.get("user_username", ""))
+
+
 def _parse_gitlab(body: dict[str, Any], allowed: set[str]) -> tuple[dict[str, Any], str] | None:
     """Route a GitLab hook, accept-ignore (None), or raise on a routable-but-malformed payload.
 
@@ -142,7 +151,10 @@ def _parse_gitlab(body: dict[str, Any], allowed: set[str]) -> tuple[dict[str, An
         )
 
     if kind == "note" and "note" in allowed:
-        noteable = str(body.get("object_attributes", {}).get("noteable_type", "")).lower()
+        attrs = body.get("object_attributes", {}) or {}
+        if attrs.get("system"):
+            return None  # gitlab-generated system note (label/assignee change) → ignore
+        noteable = str(attrs.get("noteable_type", "")).lower()
         # project_id is read INSIDE the routable branches only — a non-routable note
         # (commit/snippet, or a base kind not allowed) must accept-and-ignore (200), so it
         # must not raise on a malformed project block before reaching the `return None`.
@@ -294,6 +306,23 @@ async def handle_webhook_request(
                 )
                 return WebhookResult(status_code=200, body={"status": "ignored"})
             delivery_context, session_key = parsed
+            # ACTOR GATES (gitlab only, pre-enqueue). Loop-guard first, then allowlist.
+            actor = _gitlab_actor(body)
+            wh = channel_cfg.webhook
+            if wh.bot_username and actor == wh.bot_username:
+                log.info(
+                    "webhook: gitlab event ignored (self-authored — loop guard)",
+                    channel=channel_cfg.name,
+                    actor=actor,
+                )
+                return WebhookResult(status_code=200, body={"status": "ignored"})
+            if wh.trigger_users is not None and actor not in wh.trigger_users:
+                log.info(
+                    "webhook: gitlab event ignored (actor not in triggerUsers)",
+                    channel=channel_cfg.name,
+                    actor=actor,
+                )
+                return WebhookResult(status_code=200, body={"status": "ignored"})
     except (KeyError, TypeError, ValueError) as exc:
         log.warning(
             "webhook: payload missing required fields",

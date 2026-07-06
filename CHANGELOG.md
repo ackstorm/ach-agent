@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.7.3] - 2026-07-06
+
+### Added
+- **GitLab loop-guard + actor allowlist (webhook channel).** Two opt-in, gitlab-only fields on
+  the webhook block, both enforced pre-enqueue (a dropped event returns HTTP 200
+  `{"status":"ignored"}`, never reaches the router):
+  - `botUsername` — the GitLab username the agent posts AS (the egress PAT's user, a distinct fact
+    from `agent.name`). When set, inbound events authored by this user, plus gitlab-generated
+    system notes, are dropped so the agent never re-triggers on its own comments/MRs. Replaces the
+    previous prompt-only self-guarding.
+  - `triggerUsers` — actor allowlist; only these GitLab usernames may trigger the agent (applies to
+    every routed kind: mr/issue/note). Omit/null → any author triggers.
+  Ported from the legacy `ackbot-process` gitlab handler (`bot_username`, `push_users`).
+
 ## [0.7.2] - 2026-07-06
 
 ### Fixed

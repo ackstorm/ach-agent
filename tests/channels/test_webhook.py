@@ -490,13 +490,46 @@ NOTE_ON_MR_MISSING_MR = {
 }
 
 
-def _make_cfg_events(env_name: str = SECRET_ENV, events: list[str] | None = None) -> ChannelConfig:
+def _make_cfg_events(
+    env_name: str = SECRET_ENV,
+    events: list[str] | None = None,
+    bot_username: str | None = None,
+    trigger_users: list[str] | None = None,
+) -> ChannelConfig:
     webhook: dict[str, Any] = {"auth": {"type": "gitlab_token", "secret": {"env": env_name}}}
     if events is not None:
         webhook["gitlabEvents"] = events
+    if bot_username is not None:
+        webhook["botUsername"] = bot_username
+    if trigger_users is not None:
+        webhook["triggerUsers"] = trigger_users
     return ChannelConfig.model_validate(
         {"name": "gl", "type": "webhook", "source": "gitlab", "webhook": webhook}
     )
+
+
+def _note_by(username: str, *, system: bool = False) -> dict[str, Any]:
+    """A note-on-MR hook authored by `username` (project 42, MR 7)."""
+    attrs: dict[str, Any] = {"noteable_type": "MergeRequest", "note": "please rebase"}
+    if system:
+        attrs["system"] = True
+    return {
+        "object_kind": "note",
+        "user": {"username": username},
+        "project": {"id": 42},
+        "merge_request": {"iid": 7},
+        "object_attributes": attrs,
+    }
+
+
+def _mr_by(username: str) -> dict[str, Any]:
+    """A merge_request hook authored by `username` (project 42, MR 7)."""
+    return {
+        "object_kind": "merge_request",
+        "user": {"username": username},
+        "project": {"id": 42, "name": "my-repo"},
+        "object_attributes": {"iid": 7, "title": "x", "state": "opened"},
+    }
 
 
 async def _post(payload: dict[str, Any], cfg: ChannelConfig, secret: str) -> tuple:
@@ -603,6 +636,85 @@ async def test_note_on_mr_missing_block_raises_422(monkeypatch: pytest.MonkeyPat
     cfg = _make_cfg_events()
     result, handler = await _post(NOTE_ON_MR_MISSING_MR, cfg, "s")
     assert result.status_code == 422
+    assert handler._call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Actor gates: botUsername loop-guard + triggerUsers allowlist (gitlab only)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_self_authored_dropped_by_bot_username(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Event authored by botUsername → 200 ignored, never enqueued (loop guard)."""
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events(bot_username="ackbot")
+    result, handler = await _post(_note_by("ackbot"), cfg, "s")
+    assert result.status_code == 200
+    assert result.body == {"status": "ignored"}
+    assert handler._call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_other_author_passes_when_bot_username_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """botUsername gate drops only the bot — a human author still routes."""
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events(bot_username="ackbot")
+    result, handler = await _post(_note_by("alice"), cfg, "s")
+    assert result.status_code == 202
+    assert handler._call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_trigger_users_allows_listed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Author in triggerUsers → routes."""
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events(trigger_users=["alice", "bob"])
+    result, handler = await _post(_note_by("alice"), cfg, "s")
+    assert result.status_code == 202
+    assert handler._call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_trigger_users_drops_unlisted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Author not in triggerUsers → 200 ignored, never enqueued."""
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events(trigger_users=["alice"])
+    result, handler = await _post(_note_by("mallory"), cfg, "s")
+    assert result.status_code == 200
+    assert result.body == {"status": "ignored"}
+    assert handler._call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_trigger_users_gates_mr_hook_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Allowlist applies to every routed kind, not just notes (MR hook by unlisted user)."""
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events(trigger_users=["alice"])
+    result, handler = await _post(_mr_by("bob"), cfg, "s")
+    assert result.status_code == 200
+    assert result.body == {"status": "ignored"}
+    assert handler._call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_no_actor_config_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both gates unset (default) → any author routes (off by default)."""
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events()
+    result, handler = await _post(_note_by("anyone"), cfg, "s")
+    assert result.status_code == 202
+    assert handler._call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_system_note_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GitLab system notes (label/assignee changes) → 200 ignored regardless of config."""
+    monkeypatch.setenv(SECRET_ENV, "s")
+    cfg = _make_cfg_events()
+    result, handler = await _post(_note_by("alice", system=True), cfg, "s")
+    assert result.status_code == 200
+    assert result.body == {"status": "ignored"}
     assert handler._call_count == 0
 
 

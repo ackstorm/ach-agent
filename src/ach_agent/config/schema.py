@@ -408,6 +408,19 @@ class WebhookBlock(BaseModel):
         default=None, alias="gitlabEvents"
     )
 
+    # GitLab loop-guard: the GitLab username the agent posts AS (the egress PAT's user, NOT
+    # agent.name — a distinct fact the operator must supply). When set, inbound gitlab events
+    # authored by this user, plus gitlab-generated system notes, are dropped pre-enqueue (HTTP
+    # 200 ignored) so the agent never re-triggers on its own comments/MRs. None → guard off
+    # (the agent must then self-guard via prompt). gitlab source only.
+    bot_username: str | None = Field(default=None, alias="botUsername")
+
+    # GitLab actor allowlist: only these GitLab usernames may trigger the agent. None → no
+    # filter (any author triggers). Non-empty → events authored by anyone NOT listed are
+    # dropped pre-enqueue (HTTP 200 ignored). Applies to every routed kind (mr/issue/note).
+    # gitlab source only.
+    trigger_users: list[str] | None = Field(default=None, alias="triggerUsers")
+
 
 class A2AAuthBlock(BaseModel):
     """CONTRACT §2 a2a.auth sub-block (§14.6 / §3 bearer discipline)."""

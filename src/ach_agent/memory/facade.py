@@ -12,10 +12,12 @@ opencode's ``memory-0`` MCP server points at this facade's URL, not at Hindsight
 from __future__ import annotations
 
 import asyncio
+from typing import Annotated
 
 import structlog
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 from ach_agent.memory.hindsight import (
     HINDSIGHT_GET_MENTAL_MODEL,
@@ -52,32 +54,89 @@ class MemoryFacade:
 
     def _register_tools(self) -> None:
         @self._mcp.tool(
-            name="memory_recall", description="Search past memories by topic or filename."
+            name="memory_recall",
+            description=(
+                "Semantic search over stored memories; returns the facts/insights most "
+                "relevant to `query` (ranked by relevance, not recency). Call this BEFORE "
+                "acting to pull prior context on a topic, file, decision, or person. "
+                "Returns plain text, or an 'unavailable' note if memory is down."
+            ),
         )
-        async def memory_recall(query: str, tags: list[str] | None = None) -> str:
+        async def memory_recall(
+            query: str,
+            tags: Annotated[
+                list[str] | None,
+                Field(
+                    description="Optional scope filter, e.g. ['repo:my-service']. "
+                    "Omit to search everything."
+                ),
+            ] = None,
+        ) -> str:
             return await self._invoke(HINDSIGHT_RECALL, {"query": query, "tags": tags})
 
         @self._mcp.tool(
             name="memory_reflect",
-            description="Synthesize across memories — patterns, not single facts.",
+            description=(
+                "Synthesize an answer ACROSS many memories — patterns, themes, a summary — "
+                "instead of returning individual facts (use `memory_recall` for specific "
+                "facts). Ask things like 'what recurring problems have we seen' or 'what's "
+                "the general approach here'. Broader and slower than recall."
+            ),
         )
-        async def memory_reflect(query: str, tags: list[str] | None = None) -> str:
+        async def memory_reflect(
+            query: str,
+            tags: Annotated[
+                list[str] | None,
+                Field(
+                    description="Optional scope filter, e.g. ['repo:my-service']. "
+                    "Omit to search everything."
+                ),
+            ] = None,
+        ) -> str:
             return await self._invoke(HINDSIGHT_REFLECT, {"query": query, "tags": tags})
 
         @self._mcp.tool(
             name="memory_get_mental_model",
-            description="Read a pre-built mental-model summary by id.",
+            description=(
+                "Read a mental model — a living summary of one fixed topic (e.g. "
+                "architecture, conventions) that Hindsight auto-refreshes as memories grow. "
+                "Fetch by short id when you need that topic's current overview without "
+                "searching. The available ids also head your Memory context section."
+            ),
         )
-        async def memory_get_mental_model(mental_model_id: str) -> str:
+        async def memory_get_mental_model(
+            mental_model_id: Annotated[
+                str,
+                Field(
+                    description=(
+                        "Id of the model to read; shown as headers in your Memory context "
+                        "section, e.g. 'architecture', 'conventions'."
+                    )
+                ),
+            ],
+        ) -> str:
             return await self._invoke(
                 HINDSIGHT_GET_MENTAL_MODEL, {"mental_model_id": mental_model_id}
             )
 
         @self._mcp.tool(
             name="memory_retain",
-            description="Store an insight for future sessions. Tag it, e.g. tags=['repo:<name>'].",
+            description=(
+                "Store a durable insight for FUTURE sessions — decisions, conventions, "
+                "recurring bugs, gotchas — not transient chatter about the current task. "
+                "Tag it so it can be scoped on recall later, e.g. tags=['repo:my-service']."
+            ),
         )
-        async def memory_retain(content: str, tags: list[str] | None = None) -> str:
+        async def memory_retain(
+            content: str,
+            tags: Annotated[
+                list[str] | None,
+                Field(
+                    default=None,
+                    description="Scope tags for later filtering, e.g. ['repo:my-service'].",
+                ),
+            ] = None,
+        ) -> str:
             return await self._invoke(HINDSIGHT_RETAIN, {"content": content, "tags": tags})
 
     async def start(self) -> str:

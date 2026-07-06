@@ -15,6 +15,7 @@ RTR-06: no router.* imports used here (only MEMORY_DEGRADED metric is imported a
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import structlog
@@ -39,6 +40,43 @@ HINDSIGHT_CREATE_BANK = "hindsight_create_bank"
 HINDSIGHT_CREATE_MENTAL_MODEL = "hindsight_create_mental_model"
 HINDSIGHT_REFRESH_MENTAL_MODEL = "hindsight_refresh_mental_model"
 
+_CANONICAL_TOOLS = (
+    HINDSIGHT_RECALL,
+    HINDSIGHT_REFLECT,
+    HINDSIGHT_RETAIN,
+    HINDSIGHT_GET_MENTAL_MODEL,
+    HINDSIGHT_CREATE_BANK,
+    HINDSIGHT_CREATE_MENTAL_MODEL,
+    HINDSIGHT_REFRESH_MENTAL_MODEL,
+)
+
+# canonical name -> the name the live deployment actually publishes. Populated once at boot by
+# init_hindsight_tool_aliases (a tools/list probe); empty = identity (call_hindsight falls back to
+# the canonical name). Handles gateways that (un)prefix tools, e.g. `recall` vs `hindsight_recall`.
+_TOOL_ALIASES: dict[str, str] = {}
+
+
+def build_tool_aliases(published: list[str]) -> dict[str, str]:
+    """Map each canonical `hindsight_*` tool to the published name (exact/unprefixed/re-prefixed).
+
+    A gateway may publish `hindsight_recall`; the raw service may publish `recall` (or `x_recall`).
+    Prefer an exact match, then the bare suffix, then any name ending in `_<suffix>`.
+    """
+    names = set(published)
+    aliases: dict[str, str] = {}
+    for canonical in _CANONICAL_TOOLS:
+        suffix = canonical.removeprefix("hindsight_")
+        if canonical in names:
+            aliases[canonical] = canonical
+        elif suffix in names:
+            aliases[canonical] = suffix
+        else:
+            match = next((p for p in published if p.endswith("_" + suffix)), None)
+            if match is not None:
+                aliases[canonical] = match
+    return aliases
+
+
 TOOLS_SPEC = """\
 Memory tools (the harness fills the memory bank for you — do NOT pass a bank id):
 - `memory_recall(query, tags?)`: search past memories by topic or filename.
@@ -52,6 +90,50 @@ def hindsight_auth_headers(secret: str | None) -> dict[str, str]:
     return {"Authorization": f"Bearer {secret}"} if secret else {}
 
 
+@asynccontextmanager
+async def _hindsight_session(endpoint: str, secret: str | None):  # type: ignore[no-untyped-def]
+    """Open an initialized Hindsight MCP session (shared by call + tool discovery).
+
+    NOTE: the installed mcp ``streamable_http_client`` takes no ``headers=`` kwarg; auth is
+    injected via a pre-built httpx client (``create_mcp_http_client(headers=...)``, which also
+    applies the SDK's recommended MCP timeouts) passed as ``http_client=``. We own that client's
+    lifecycle (the transport only closes clients it created), hence the nested ``async with``.
+    """
+    headers = hindsight_auth_headers(secret)
+    async with create_mcp_http_client(headers=headers or None) as http_client:
+        async with streamable_http_client(endpoint, http_client=http_client) as (read, write, _):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                yield session
+
+
+async def init_hindsight_tool_aliases(endpoint: str, secret: str | None) -> dict[str, str]:
+    """Boot-once: list the endpoint's tools and map canonical names → published names.
+
+    Sets the module ``_TOOL_ALIASES`` so every ``call_hindsight`` targets the real name even when
+    the deployment (un)prefixes tools. Fail-open: on any error, leaves aliases empty (identity).
+    """
+    try:
+        async with _hindsight_session(endpoint, secret) as session:
+            listed = await session.list_tools()
+        published = [t.name for t in listed.tools]
+    except Exception as exc:
+        log.warning("memory: tool discovery failed — using canonical names", error=str(exc))
+        return {}
+    aliases = build_tool_aliases(published)
+    _TOOL_ALIASES.clear()
+    _TOOL_ALIASES.update(aliases)
+    remapped = {c: a for c, a in aliases.items() if a != c}
+    missing = [c for c in _CANONICAL_TOOLS if c not in aliases]
+    log.info(
+        "memory: hindsight tools resolved",
+        resolved=len(aliases),
+        remapped=remapped or None,
+        missing=missing or None,
+    )
+    return aliases
+
+
 async def call_hindsight(
     endpoint: str, secret: str | None, tool: str, args: dict[str, object]
 ) -> str:
@@ -59,26 +141,20 @@ async def call_hindsight(
 
     The single harness→Hindsight seam (probe/fetch/provision/facade all route here so tests
     monkeypatch one function). ``secret`` (if any) is used only to build headers — never logged.
-
-    NOTE: the installed mcp ``streamable_http_client`` takes no ``headers=`` kwarg; auth is
-    injected via a pre-built httpx client (``create_mcp_http_client(headers=...)``, which also
-    applies the SDK's recommended MCP timeouts) passed as ``http_client=``. We own that client's
-    lifecycle (the transport only closes clients it created), hence the ``async with``.
+    ``tool`` is a canonical ``hindsight_*`` name; it is translated through ``_TOOL_ALIASES``
+    (populated at boot) to whatever the live deployment publishes.
     """
-    headers = hindsight_auth_headers(secret)
-    async with create_mcp_http_client(headers=headers or None) as http_client:
-        async with streamable_http_client(endpoint, http_client=http_client) as (read, write, _):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool(tool, args)
-                text: str = getattr(result.content[0], "text", "") if result.content else ""
-                # A tool-level error (e.g. unknown tool / bad bank) comes back as a normal
-                # result with isError=True, NOT an exception. Raise so every caller degrades
-                # (facade → "unavailable", fetch → skip model, provision → "failed") and logs
-                # loud — instead of the error text masquerading as a valid memory/summary.
-                if getattr(result, "isError", False):
-                    raise RuntimeError(f"hindsight tool {tool!r} errored: {text}")
-                return text
+    async with _hindsight_session(endpoint, secret) as session:
+        actual = _TOOL_ALIASES.get(tool, tool)
+        result = await session.call_tool(actual, args)
+        text: str = getattr(result.content[0], "text", "") if result.content else ""
+        # A tool-level error (e.g. unknown tool / bad bank) comes back as a normal
+        # result with isError=True, NOT an exception. Raise so every caller degrades
+        # (facade → "unavailable", fetch → skip model, provision → "failed") and logs
+        # loud — instead of the error text masquerading as a valid memory/summary.
+        if getattr(result, "isError", False):
+            raise RuntimeError(f"hindsight tool {tool!r} (as {actual!r}) errored: {text}")
+        return text
 
 
 def resolve_memory_secret(params: HindsightParams) -> tuple[bool, str | None]:
@@ -242,6 +318,10 @@ async def provision_memory(memory_cfg: object) -> None:
             "memory: auth configured but env unset — skipping provisioning", bank_id=params.bank
         )
         return
+
+    # Discover the deployment's real tool names FIRST (a gateway may (un)prefix them); every
+    # call_hindsight below — and the per-turn facade/fetch paths — then targets the right name.
+    await init_hindsight_tool_aliases(params.endpoint, secret)
 
     try:
         await call_hindsight(

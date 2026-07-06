@@ -101,3 +101,36 @@ async def test_call_hindsight_raises_on_tool_error(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Unknown tool"):
         await hs.call_hindsight("https://hs/mcp", None, hs.HINDSIGHT_RECALL, {"query": "q"})
+
+
+def test_build_tool_aliases_prefixed_identity():
+    published = [
+        "hindsight_recall",
+        "hindsight_reflect",
+        "hindsight_retain",
+        "hindsight_get_mental_model",
+        "hindsight_create_bank",
+        "hindsight_create_mental_model",
+        "hindsight_refresh_mental_model",
+        "hindsight_delete_bank",  # extra tool — ignored
+    ]
+    aliases = hs.build_tool_aliases(published)
+    assert aliases[hs.HINDSIGHT_RECALL] == "hindsight_recall"
+    assert aliases[hs.HINDSIGHT_GET_MENTAL_MODEL] == "hindsight_get_mental_model"
+    assert len(aliases) == 7
+
+
+def test_build_tool_aliases_unprefixed():
+    published = ["recall", "reflect", "retain", "get_mental_model", "create_bank",
+                 "create_mental_model", "refresh_mental_model"]
+    aliases = hs.build_tool_aliases(published)
+    assert aliases[hs.HINDSIGHT_RECALL] == "recall"
+    assert aliases[hs.HINDSIGHT_GET_MENTAL_MODEL] == "get_mental_model"
+    # the three *_mental_model tools must not collide
+    assert aliases[hs.HINDSIGHT_CREATE_MENTAL_MODEL] == "create_mental_model"
+    assert aliases[hs.HINDSIGHT_REFRESH_MENTAL_MODEL] == "refresh_mental_model"
+
+
+def test_build_tool_aliases_missing_dropped():
+    aliases = hs.build_tool_aliases(["recall"])  # only one published
+    assert aliases == {hs.HINDSIGHT_RECALL: "recall"}

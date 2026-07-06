@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.7.2] - 2026-07-06
+
+### Fixed
+- **Adapt to the deployment's real Hindsight tool names.** The harness called canonical
+  `hindsight_*` names directly against the configured endpoint. A gateway (e.g.
+  `api.ackstorm.ai/mcp/hindsight`) prefixes aggregated tools with the server alias, but the raw
+  in-cluster service (`hindsight-api.svc:8888`) may publish them **unprefixed** (`recall` vs
+  `hindsight_recall`) — so every call returned `Unknown tool` and memory died silently. At boot
+  (`init_hindsight_tool_aliases`, start of `provision_memory`) the harness now runs a `tools/list`
+  probe and maps each canonical name to whatever the endpoint actually publishes (exact, bare
+  suffix, or `*_<suffix>`); `call_hindsight` routes through that map. Fail-open — on discovery
+  error the canonical names are used unchanged.
+
 ## [0.7.1] - 2026-07-06
 
 ### Added

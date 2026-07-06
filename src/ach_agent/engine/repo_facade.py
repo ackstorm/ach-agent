@@ -71,12 +71,8 @@ class RepoCheckoutFacade:
             ),
         )
         async def checkout_repo(
-            project: Annotated[
-                str, Field(description="Numeric GitLab project id (e.g. '1234').")
-            ],
-            ref: Annotated[
-                str, Field(description="Commit SHA to check out (the MR head SHA).")
-            ],
+            project: Annotated[str, Field(description="Numeric GitLab project id (e.g. '1234').")],
+            ref: Annotated[str, Field(description="Commit SHA to check out (the MR head SHA).")],
             subpath: Annotated[
                 str | None,
                 Field(description="Optional subtree, e.g. 'src/app', to stay small."),

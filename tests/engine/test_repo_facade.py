@@ -19,7 +19,9 @@ def _targz(top: str) -> bytes:
 
 
 @pytest.mark.asyncio
-async def test_checkout_returns_path_on_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_checkout_returns_path_on_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def _fake_read(endpoint, ek, project, ref, subpath=None):  # type: ignore[no-untyped-def]
         return _targz("repo-abc-abc")
 

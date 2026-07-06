@@ -54,7 +54,10 @@ async def _archive_session(endpoint: str, ek: str):  # type: ignore[no-untyped-d
 async def read_repo_archive(
     endpoint: str, ek: str, project: str, ref: str, subpath: str | None = None
 ) -> bytes:
-    """Read the archive resource → decoded gzip tar bytes. RAISES on read error (over-cap/auth/404)."""
+    """Read the archive resource → decoded gzip tar bytes.
+
+    RAISES on read error (over-cap / auth / GitLab 403/404) — no silent truncation.
+    """
     uri = build_archive_uri(project, ref, subpath)
     async with _archive_session(endpoint, ek) as session:
         result = await session.read_resource(uri)

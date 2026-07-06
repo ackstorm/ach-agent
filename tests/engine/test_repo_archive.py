@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import base64
+import io
+import os
+import tarfile
+import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -10,7 +15,9 @@ from ach_agent.engine import repo_archive
 
 
 def test_build_uri_whole_repo() -> None:
-    assert repo_archive.build_archive_uri("1234", "9af2c1e0", None) == "gitlab://1234/archive/9af2c1e0"
+    assert (
+        repo_archive.build_archive_uri("1234", "9af2c1e0", None) == "gitlab://1234/archive/9af2c1e0"
+    )
 
 
 def test_build_uri_subpath_keeps_slashes() -> None:
@@ -50,7 +57,9 @@ async def test_read_repo_archive_decodes_blob(monkeypatch: pytest.MonkeyPatch) -
         yield _Session()
 
     monkeypatch.setattr(repo_archive, "_archive_session", _fake_session)
-    out = await repo_archive.read_repo_archive("https://mcp.example/gitlab", "ek_test", "1234", "abc")
+    out = await repo_archive.read_repo_archive(
+        "https://mcp.example/gitlab", "ek_test", "1234", "abc"
+    )
     assert out == raw
 
 
@@ -67,13 +76,6 @@ async def test_read_repo_archive_propagates_error(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(repo_archive, "_archive_session", _fake_session)
     with pytest.raises(RuntimeError, match="exceeds cap"):
         await repo_archive.read_repo_archive("e", "k", "1234", "abc")
-
-
-import io
-import os
-import tarfile
-import time
-from pathlib import Path
 
 
 def _make_targz(top: str, files: dict[str, bytes]) -> bytes:

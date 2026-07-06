@@ -66,3 +66,38 @@ async def test_call_hindsight_passes_headers_and_returns_text(monkeypatch):
     assert seen["auth"] == "Bearer sekret"
     assert seen["tool"] == "hindsight_recall"
     assert seen["args"] == {"query": "q"}
+
+
+@pytest.mark.asyncio
+async def test_call_hindsight_raises_on_tool_error(monkeypatch):
+    """A tool-level error (isError=True) must raise, not return the error text as data."""
+
+    class _Content:
+        text = "Unknown tool: 'hindsight_recall'"
+
+    class _Result:
+        content = [_Content()]
+        isError = True
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def initialize(self):
+            pass
+
+        async def call_tool(self, tool, args):
+            return _Result()
+
+    @asynccontextmanager
+    async def _fake_client(url, *, http_client=None, **k):
+        yield (object(), object(), object())
+
+    monkeypatch.setattr(hs, "streamable_http_client", _fake_client)
+    monkeypatch.setattr(hs, "ClientSession", lambda read, write: _Session())
+
+    with pytest.raises(RuntimeError, match="Unknown tool"):
+        await hs.call_hindsight("https://hs/mcp", None, hs.HINDSIGHT_RECALL, {"query": "q"})

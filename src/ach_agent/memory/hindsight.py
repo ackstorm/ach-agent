@@ -71,9 +71,13 @@ async def call_hindsight(
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 result = await session.call_tool(tool, args)
-                if not result.content:
-                    return ""
-                text: str = getattr(result.content[0], "text", "")
+                text: str = getattr(result.content[0], "text", "") if result.content else ""
+                # A tool-level error (e.g. unknown tool / bad bank) comes back as a normal
+                # result with isError=True, NOT an exception. Raise so every caller degrades
+                # (facade → "unavailable", fetch → skip model, provision → "failed") and logs
+                # loud — instead of the error text masquerading as a valid memory/summary.
+                if getattr(result, "isError", False):
+                    raise RuntimeError(f"hindsight tool {tool!r} errored: {text}")
                 return text
 
 

@@ -45,9 +45,19 @@ from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.queue import QueueConsumer
 from ach_agent.channels.tui import run_one_shot, run_tui_console
 from ach_agent.config import load_config
-from ach_agent.config.schema import CodememMemory, HindsightMemory, Memory
+from ach_agent.config.schema import (
+    CodememMemory,
+    HindsightMemory,
+    LocalMcpServer,
+    McpServerConfig,
+    Memory,
+    RemoteMcpServer,
+    RepoCheckoutParams,
+    RepoCheckoutServer,
+)
 from ach_agent.engine.context import fetch_context
 from ach_agent.engine.hydrate import hydrate, resolve_model
+from ach_agent.engine.mcp_passthrough import to_opencode_entry
 from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
 from ach_agent.engine.metrics import DRAIN_COMPLETED, ENGINE_LAUNCH_FAILURES
 from ach_agent.engine.sanitized_env import add_secret_redaction, configure_logging
@@ -555,6 +565,39 @@ def resolve_system_prompt(prompt_block: Any, state_dir: Path) -> str:
         log.error("prompt.system file not found under .ach-state", path=str(target))
         sys.exit(1)
     return target.read_text(encoding="utf-8")
+
+
+def collect_passthrough_mcp(
+    mcp_servers: dict[str, McpServerConfig],
+) -> dict[str, dict[str, object]]:
+    """Normalize every local/remote entry to an opencode.json mcp.<name> value.
+
+    repoCheckout entries are skipped — the harness hosts those itself (facade), they are not
+    passed through to opencode.
+    """
+    out: dict[str, dict[str, object]] = {}
+    for name, spec in mcp_servers.items():
+        if isinstance(spec, (LocalMcpServer, RemoteMcpServer)):
+            out[name] = to_opencode_entry(spec)
+    return out
+
+
+def find_repo_checkout(
+    mcp_servers: dict[str, McpServerConfig],
+) -> tuple[str, RepoCheckoutParams] | None:
+    """The (name, params) of the repoCheckout entry, or None.
+
+    ponytail: one repoCheckout facade per agent (the only real case). If several are declared,
+    take the first and WARN — supporting N facades is unneeded plumbing until asked.
+    """
+    found: tuple[str, RepoCheckoutParams] | None = None
+    for name, spec in mcp_servers.items():
+        if isinstance(spec, RepoCheckoutServer):
+            if found is not None:
+                log.warning("multiple repoCheckout mcpServers — using first", ignored=name)
+                continue
+            found = (name, spec.repo_checkout)
+    return found
 
 
 def resolve_repo_archive_endpoint(mcp_servers: list[McpServer], server_id: str) -> str | None:
@@ -1214,21 +1257,26 @@ async def main(
                     "memory: auth configured but env unset — facade not started; "
                     "running without memory"
                 )
-        # Start the repo-checkout facade beside the proxies (engine.repoCheckout.enabled).
+        # Start the repo-checkout facade beside the proxies (mcpServers type=repoCheckout).
         # It fronts gitlab-mcp's archive resource with the ek_ (x-ach-key), so the agent gets a
         # local checkout without ever seeing the ek_ or the raw endpoint.
-        rc = cfg.engine.repo_checkout
-        if rc.enabled:
-            gl_endpoint = resolve_repo_archive_endpoint(manifest.mcp_servers, rc.mcp_server_id)
+        _rc = find_repo_checkout(cfg.mcp_servers)
+        if _rc is not None:
+            _rc_name, _rc_params = _rc
+            gl_endpoint = resolve_repo_archive_endpoint(
+                manifest.mcp_servers, _rc_params.source_mcp_server_id
+            )
             if gl_endpoint:
                 from ach_agent.engine.repo_facade import RepoCheckoutFacade
 
-                repo_facade = RepoCheckoutFacade(gl_endpoint, ek, rc.tmp_base, rc.ttl_seconds)
+                repo_facade = RepoCheckoutFacade(
+                    gl_endpoint, ek, _rc_params.tmp_base, _rc_params.ttl_seconds
+                )
                 repo_facade_url = await repo_facade.start()
             else:
                 log.warning(
-                    "repo checkout enabled but gitlab endpoint not in manifest — tool not wired",
-                    mcp_server_id=rc.mcp_server_id,
+                    "repoCheckout: source mcp server not in manifest — tool not wired",
+                    source_mcp_server_id=_rc_params.source_mcp_server_id,
                 )
         # Model-proxy upstream override (dev/test only — A/B a different model backend,
         # e.g. litellm direct, to isolate forwarder buffering). MODEL-ONLY: hydration + MCP
@@ -1331,6 +1379,7 @@ async def main(
     _spec = tools_spec_for(cfg.memory)
     _system_prompt = f"{_persona}\n\n## Memory Tools\n{_spec}" if _spec else _persona
 
+    passthrough_mcp = collect_passthrough_mcp(cfg.mcp_servers)
     engine_cfg = EngineConfig(
         home=engine_home,
         work_dir=engine_work_dir,
@@ -1354,6 +1403,7 @@ async def main(
         forward_env=effective_forward_env,
         # capability.filter.exclude.tools — disabled in opencode.json (withheld from model).
         exclude_tools=cfg.capability.filter.exclude.tools,
+        extra_mcp_servers=passthrough_mcp,
     )
     # D-03/D-04: dedup store first — it opens/repairs state.db (fail-closed on a bad
     # mount). Then the session map shares that now-valid file (fail-open). The pool

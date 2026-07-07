@@ -469,6 +469,41 @@
       "title": "LimitsBlock",
       "type": "object"
     },
+    "LocalMcpServer": {
+      "additionalProperties": false,
+      "description": "PASSTHROUGH: opencode LAUNCHES this as a stdio subprocess.",
+      "properties": {
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Args",
+          "type": "array"
+        },
+        "command": {
+          "title": "Command",
+          "type": "string"
+        },
+        "env": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Env",
+          "type": "array"
+        },
+        "type": {
+          "const": "local",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "command"
+      ],
+      "title": "LocalMcpServer",
+      "type": "object"
+    },
     "MentalModelSpec": {
       "additionalProperties": false,
       "description": "A pinned reflection the harness provisions into Hindsight at boot (CONTRACT §2).",
@@ -624,6 +659,80 @@
         "key"
       ],
       "title": "QueueBlock",
+      "type": "object"
+    },
+    "RemoteMcpServer": {
+      "additionalProperties": false,
+      "description": "PASSTHROUGH: opencode CONNECTS directly to a remote MCP endpoint.",
+      "properties": {
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Headers",
+          "type": "object"
+        },
+        "type": {
+          "const": "remote",
+          "title": "Type",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "url"
+      ],
+      "title": "RemoteMcpServer",
+      "type": "object"
+    },
+    "RepoCheckoutParams": {
+      "additionalProperties": false,
+      "description": "Params for the harness-hosted repoCheckout facade (the `checkout_repo` tool).",
+      "properties": {
+        "sourceMcpServerId": {
+          "title": "Sourcemcpserverid",
+          "type": "string"
+        },
+        "tmpBase": {
+          "default": "/tmp/gitlab",
+          "title": "Tmpbase",
+          "type": "string"
+        },
+        "ttlSeconds": {
+          "default": 3600.0,
+          "minimum": 0,
+          "title": "Ttlseconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "sourceMcpServerId"
+      ],
+      "title": "RepoCheckoutParams",
+      "type": "object"
+    },
+    "RepoCheckoutServer": {
+      "additionalProperties": false,
+      "description": "INTERNAL: the harness HOSTS this MCP (FastMCP facade), injecting the ek_.",
+      "properties": {
+        "repoCheckout": {
+          "$ref": "#/$defs/RepoCheckoutParams"
+        },
+        "type": {
+          "const": "repoCheckout",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "repoCheckout"
+      ],
+      "title": "RepoCheckoutServer",
       "type": "object"
     },
     "SecretSource": {
@@ -879,6 +988,31 @@
     },
     "limits": {
       "$ref": "#/$defs/LimitsBlock"
+    },
+    "mcpServers": {
+      "additionalProperties": {
+        "discriminator": {
+          "mapping": {
+            "local": "#/$defs/LocalMcpServer",
+            "remote": "#/$defs/RemoteMcpServer",
+            "repoCheckout": "#/$defs/RepoCheckoutServer"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/RepoCheckoutServer"
+          },
+          {
+            "$ref": "#/$defs/LocalMcpServer"
+          },
+          {
+            "$ref": "#/$defs/RemoteMcpServer"
+          }
+        ]
+      },
+      "title": "Mcpservers",
+      "type": "object"
     },
     "memory": {
       "anyOf": [

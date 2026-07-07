@@ -108,6 +108,10 @@ class EngineConfig:
     # Stable codemem project namespace (config memory.codemem.project → CODEMEM_PROJECT env).
     # Required in config; carried here so the codemem MCP entry pins a consistent project.
     codemem_project: str = ""
+    # Passthrough MCP servers (mcpServers type local|remote), pre-normalized to opencode.json
+    # mcp.<name> entries by engine.mcp_passthrough.to_opencode_entry. opencode connects to these
+    # DIRECTLY (not via the localhost proxy). Static per-agent (boot-computed from cfg.mcp_servers).
+    extra_mcp_servers: dict[str, dict[str, object]] = field(default_factory=dict)
     # SEC-01 / ek-hygiene: extra env var NAMES the operator wants forwarded from the harness
     # env into the opencode subprocess (engine.forwardEnv). The opencode env is built
     # clean-slate from a small base allowlist (see build_opencode_env) — nothing else is
@@ -321,6 +325,10 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig, session_ke
                 "CODEMEM_PROJECT": config.codemem_project,
             },
         }
+    # Passthrough MCP servers (mcpServers local|remote) — opencode connects directly.
+    # Keyed by operator-chosen name; last-writer-wins is impossible (config map keys unique).
+    for name, entry in config.extra_mcp_servers.items():
+        mcp_block[name] = entry
     if mcp_block:
         oc_config["mcp"] = mcp_block
     config_path = config_dir / f"opencode{suffix}.json"

@@ -58,29 +58,6 @@ class LimitsBlock(BaseModel):
     terminal_output_retries: int = Field(default=1, alias="terminalOutputRetries")
 
 
-class RepoCheckoutBlock(BaseModel):
-    """engine.repoCheckout — expose the harness `checkout_repo` tool (gitlab archive → workDir).
-
-    enabled=False → tool not wired. When enabled, mcpServerId names the hydrated McpServer.id
-    whose endpoint serves the `gitlab://{project}/archive/{ref}` resource. tmpBase is the parent
-    dir for per-checkout mkdtemp dirs; ttlSeconds bounds how long a stale checkout lingers before
-    the next call sweeps it (Option A: no exact session-close deletion — /tmp is ephemeral).
-    """
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    enabled: bool = False
-    mcp_server_id: str = Field(default="", alias="mcpServerId")
-    tmp_base: str = Field(default="/tmp/gitlab", alias="tmpBase")
-    ttl_seconds: float = Field(default=3600.0, ge=0, alias="ttlSeconds")
-
-    @model_validator(mode="after")
-    def _check(self) -> RepoCheckoutBlock:
-        if self.enabled and not self.mcp_server_id:
-            raise ValueError("engine.repoCheckout.mcpServerId is required when enabled")
-        return self
-
-
 class EngineBlock(BaseModel):
     """Engine runtime knobs (harness-local; operator-optional).
 
@@ -109,9 +86,6 @@ class EngineBlock(BaseModel):
     # wrap-up turn so the model still returns a valid terminal object. 0 disables counting/abort;
     # maxInvocationSeconds remains the always-on time backstop. Recommend ~80 when opting in.
     max_tool_calls: int = Field(default=0, ge=0, alias="maxToolCalls")
-    repo_checkout: RepoCheckoutBlock = Field(
-        default_factory=RepoCheckoutBlock, alias="repoCheckout"
-    )
 
 
 class PersistenceBlock(BaseModel):
@@ -314,6 +288,60 @@ class CodememMemory(BaseModel):
 # Strict discriminated union on `type` — `type` is REQUIRED (no default, no backward-compat
 # coercion). An unknown/missing `type`, a flat block, or a mismatched sub-block hard-fails.
 Memory = Annotated[HindsightMemory | CodememMemory, Field(discriminator="type")]
+
+
+# ---------------------------------------------------------------------------
+# mcpServers — harness-managed MCP servers (CONTRACT_v3 §2a, ADDENDUM-mcpservers)
+# ---------------------------------------------------------------------------
+
+
+class RepoCheckoutParams(BaseModel):
+    """Params for the harness-hosted repoCheckout facade (the `checkout_repo` tool)."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    # The hydrated runtime.mcpServers[].id whose endpoint serves the
+    # gitlab://{project}/archive/{ref} resource the harness reads (harness-side, with the ek_).
+    source_mcp_server_id: str = Field(alias="sourceMcpServerId")
+    tmp_base: str = Field(default="/tmp/gitlab", alias="tmpBase")
+    ttl_seconds: float = Field(default=3600.0, ge=0, alias="ttlSeconds")
+
+
+class RepoCheckoutServer(BaseModel):
+    """INTERNAL: the harness HOSTS this MCP (FastMCP facade), injecting the ek_."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    type: Literal["repoCheckout"]
+    repo_checkout: RepoCheckoutParams = Field(alias="repoCheckout")
+
+
+class LocalMcpServer(BaseModel):
+    """PASSTHROUGH: opencode LAUNCHES this as a stdio subprocess."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    type: Literal["local"]
+    command: str
+    args: list[str] = Field(default_factory=list)
+    env: list[str] = Field(default_factory=list)  # env NAMES only; never the ek_
+
+
+class RemoteMcpServer(BaseModel):
+    """PASSTHROUGH: opencode CONNECTS directly to a remote MCP endpoint."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    type: Literal["remote"]
+    url: str
+    headers: dict[str, str] = Field(default_factory=dict)  # values are ${env:NAME} refs
+
+
+# Strict discriminated union on `type` (mirror of the Memory union). Named *Config to avoid
+# clashing with engine.hydrate.McpServer (the hydrated {id,endpoint} external server).
+McpServerConfig = Annotated[
+    RepoCheckoutServer | LocalMcpServer | RemoteMcpServer, Field(discriminator="type")
+]
 
 
 # ---------------------------------------------------------------------------
@@ -623,6 +651,7 @@ class AgentConfig(BaseModel):
     memory: Memory | None = None
     limits: LimitsBlock = Field(default_factory=LimitsBlock)
     engine: EngineBlock = Field(default_factory=EngineBlock)
+    mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict, alias="mcpServers")
     persistence: PersistenceBlock = Field(default_factory=PersistenceBlock)
     health: HealthBlock = Field(default_factory=HealthBlock)
     channels: list[ChannelConfig] = Field(default_factory=list)

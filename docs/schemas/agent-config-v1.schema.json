@@ -336,9 +336,6 @@
           "title": "Maxtoolcalls",
           "type": "integer"
         },
-        "repoCheckout": {
-          "$ref": "#/$defs/RepoCheckoutBlock"
-        },
         "startupTimeoutSeconds": {
           "default": 30,
           "title": "Startuptimeoutseconds",
@@ -470,6 +467,41 @@
         }
       },
       "title": "LimitsBlock",
+      "type": "object"
+    },
+    "LocalMcpServer": {
+      "additionalProperties": false,
+      "description": "PASSTHROUGH: opencode LAUNCHES this as a stdio subprocess.",
+      "properties": {
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Args",
+          "type": "array"
+        },
+        "command": {
+          "title": "Command",
+          "type": "string"
+        },
+        "env": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Env",
+          "type": "array"
+        },
+        "type": {
+          "const": "local",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "command"
+      ],
+      "title": "LocalMcpServer",
       "type": "object"
     },
     "MentalModelSpec": {
@@ -629,18 +661,40 @@
       "title": "QueueBlock",
       "type": "object"
     },
-    "RepoCheckoutBlock": {
+    "RemoteMcpServer": {
       "additionalProperties": false,
-      "description": "engine.repoCheckout — expose the harness `checkout_repo` tool (gitlab archive → workDir).\n\nenabled=False → tool not wired. When enabled, mcpServerId names the hydrated McpServer.id\nwhose endpoint serves the `gitlab://{project}/archive/{ref}` resource. tmpBase is the parent\ndir for per-checkout mkdtemp dirs; ttlSeconds bounds how long a stale checkout lingers before\nthe next call sweeps it (Option A: no exact session-close deletion — /tmp is ephemeral).",
+      "description": "PASSTHROUGH: opencode CONNECTS directly to a remote MCP endpoint.",
       "properties": {
-        "enabled": {
-          "default": false,
-          "title": "Enabled",
-          "type": "boolean"
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Headers",
+          "type": "object"
         },
-        "mcpServerId": {
-          "default": "",
-          "title": "Mcpserverid",
+        "type": {
+          "const": "remote",
+          "title": "Type",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "url"
+      ],
+      "title": "RemoteMcpServer",
+      "type": "object"
+    },
+    "RepoCheckoutParams": {
+      "additionalProperties": false,
+      "description": "Params for the harness-hosted repoCheckout facade (the `checkout_repo` tool).",
+      "properties": {
+        "sourceMcpServerId": {
+          "title": "Sourcemcpserverid",
           "type": "string"
         },
         "tmpBase": {
@@ -655,7 +709,30 @@
           "type": "number"
         }
       },
-      "title": "RepoCheckoutBlock",
+      "required": [
+        "sourceMcpServerId"
+      ],
+      "title": "RepoCheckoutParams",
+      "type": "object"
+    },
+    "RepoCheckoutServer": {
+      "additionalProperties": false,
+      "description": "INTERNAL: the harness HOSTS this MCP (FastMCP facade), injecting the ek_.",
+      "properties": {
+        "repoCheckout": {
+          "$ref": "#/$defs/RepoCheckoutParams"
+        },
+        "type": {
+          "const": "repoCheckout",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "repoCheckout"
+      ],
+      "title": "RepoCheckoutServer",
       "type": "object"
     },
     "SecretSource": {
@@ -911,6 +988,31 @@
     },
     "limits": {
       "$ref": "#/$defs/LimitsBlock"
+    },
+    "mcpServers": {
+      "additionalProperties": {
+        "discriminator": {
+          "mapping": {
+            "local": "#/$defs/LocalMcpServer",
+            "remote": "#/$defs/RemoteMcpServer",
+            "repoCheckout": "#/$defs/RepoCheckoutServer"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/RepoCheckoutServer"
+          },
+          {
+            "$ref": "#/$defs/LocalMcpServer"
+          },
+          {
+            "$ref": "#/$defs/RemoteMcpServer"
+          }
+        ]
+      },
+      "title": "Mcpservers",
+      "type": "object"
     },
     "memory": {
       "anyOf": [

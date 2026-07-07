@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.7.4] - 2026-07-07
+
+### Added
+- **`mcpServers` config block.** New top-level map keyed by server name, STRICT discriminated union
+  on `type` — harness-managed MCP servers, a distinct namespace from `runtime.mcpServers` (hydrate's
+  ACH-fronted `{id,endpoint}` externals):
+  - `repoCheckout` — harness-hosted `checkout_repo(project, ref, subpath?)` tool. Gives the agent an
+    **on-disk** repo tree (full-tree `rg`, run tests, build) by reading gitlab-mcp's
+    `gitlab://{project}/archive/{ref}` resource **harness-side** with the `ek_` (`x-ach-key`),
+    base64-decoding the gzip tar and extracting under `tmpBase` (path-traversal-safe via `tarfile`
+    `filter="data"`). Fail-soft; TTL-swept on the next call (`ttlSeconds`). The gitlab MR/note channel
+    stamps `head_sha`; the engine prompt gets a one-line `checkout_repo(...)` hint only when the
+    facade is wired and a head SHA is present.
+  - `local` — PASSTHROUGH stdio MCP: opencode launches the subprocess directly (no ACH proxy).
+    Normalized into `opencode.json` `mcp.<name>` (`command` array); `env` lists env NAMES (never the
+    `ek_`), resolved harness-side at write time.
+  - `remote` — PASSTHROUGH remote MCP: opencode connects directly. `headers` values are `${env:NAME}`
+    refs, expanded at `opencode.json` write time.
+
+### Changed
+- **`engine.repoCheckout` → `mcpServers` (`type: repoCheckout`).** The repo-checkout tool's config
+  source moved out of the engine block into the new top-level `mcpServers` map (`mcpServerId` →
+  `sourceMcpServerId`). Behaviour of the facade is unchanged. Breaking config-schema change, but the
+  `engine.repoCheckout` block was never released — clean break, no CR migration.
+
 ## [0.7.3] - 2026-07-06
 
 ### Added

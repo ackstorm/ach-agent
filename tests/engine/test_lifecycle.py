@@ -730,6 +730,28 @@ def test_write_opencode_config_prompt_compose(tmp_path: Path) -> None:
     assert "instructions" in empty and "prompt" not in empty["agent"]["build"]
 
 
+def test_write_opencode_config_tool_disables_reach_subagents(tmp_path: Path) -> None:
+    """exclude_tools + the `question` disable apply to build AND the built-in subagents.
+
+    build can delegate via the `task` tool to opencode's `general`/`explore` subagents.
+    agent.<name>.tools does not inherit from build, so a subagent would otherwise re-expose
+    a tool the operator withheld (exclude_tools) — a capability-filter bypass.
+    """
+    import json
+
+    from ach_agent.engine.lifecycle import EngineConfig, write_opencode_config
+
+    oc = json.loads(
+        write_opencode_config(
+            tmp_path, EngineConfig(exclude_tools=["bash", "webfetch"]), "k"
+        ).read_text(encoding="utf-8")
+    )
+    for agent in ("build", "general", "explore"):
+        tools = oc["agent"][agent]["tools"]
+        assert tools["question"] is False, f"{agent}: question must be disabled"
+        assert tools["bash"] is False and tools["webfetch"] is False, f"{agent}: exclude bypass"
+
+
 def test_build_opencode_env_sets_opencode_config(tmp_path: Path) -> None:
     from ach_agent.engine.lifecycle import EngineConfig, build_opencode_env
 

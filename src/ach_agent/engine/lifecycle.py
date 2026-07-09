@@ -259,6 +259,8 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig, session_ke
     if npm:  # only a CUSTOM provider id needs npm + a display name; built-ins are known
         provider_block["npm"] = npm
         provider_block["name"] = "ACH"
+    # Tool disables shared by build and the subagents it can delegate to (see agent block below).
+    subagent_tools = {"question": False, **{t: False for t in config.exclude_tools}}
     oc_config: dict[str, object] = {
         "autoupdate": False,
         "permission": "allow",
@@ -271,15 +273,16 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig, session_ke
         "small_model": f"{provider_id}/{config.model}",
         "enabled_providers": [provider_id],
         "provider": {provider_id: provider_block},
+        # Same tool disables on build AND the built-in subagents it can reach via the `task`
+        # tool (general, explore) — opencode's agent.<name>.tools does NOT inherit from build:
+        #   - `question`: interactive tool that dead-ends in the harness's single prompt→reply
+        #     turn (no channel to feed an answer back) — blocks, then times out.
+        #   - exclude_tools: capability.filter withholdings; a delegated subagent turn must not
+        #     re-expose a tool the operator withheld from build.
         "agent": {
-            "build": {
-                "steps": config.steps,
-                # Disable opencode's interactive `question` tool. The harness runs a single
-                # prompt→reply turn with no channel to feed an answer back into a running
-                # opencode turn, so an asked question dead-ends (blocks, then times out).
-                # Removing it forces the agent to answer in text instead.
-                "tools": {"question": False, **{t: False for t in config.exclude_tools}},
-            },
+            "build": {"steps": config.steps, "tools": subagent_tools},
+            "general": {"tools": subagent_tools},
+            "explore": {"tools": subagent_tools},
             "plan": {"disable": True},
         },
     }

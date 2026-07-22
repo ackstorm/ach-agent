@@ -16,7 +16,11 @@ RUN apt-get update -qq \
 # the package + its (native) deps into the runtime. bookworm matches runtime glibc.
 FROM node:26-bookworm-slim AS codemem-bin
 ARG CODEMEM_VERSION=0.37.1
-RUN npm install -g --prefix /opt/codemem "codemem@${CODEMEM_VERSION}" \
+# better-sqlite3 (codemem dep) has no prebuilt binary for Node 26 yet; node-gyp
+# needs python3+make+g++ to compile it from source.
+RUN apt-get update -qq \
+ && apt-get install -y --no-install-recommends python3 make g++ \
+ && npm install -g --prefix /opt/codemem "codemem@${CODEMEM_VERSION}" \
  && /opt/codemem/bin/codemem --version
 
 # ── Builder stage ────────────────────────────────────────────────────────────

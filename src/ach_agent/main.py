@@ -1135,7 +1135,9 @@ async def _run_opencode_attach(
     with open(log_path, "a", encoding="utf-8") as log_fh:
         sys.stderr = log_fh
         try:
-            proc = await asyncio.create_subprocess_exec(binary, "attach", url, "--pure", env=env)
+            proc = await asyncio.create_subprocess_exec(
+                binary, "attach", url, "--pure", "--mini", env=env
+            )
             await proc.wait()
         finally:
             sys.stderr = real_stderr

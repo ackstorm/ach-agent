@@ -386,7 +386,7 @@ def test_find_free_port_collision_retry():
                 pass
 
     try:
-        with patch("ach_agent.engine.client.socket.socket", FakeSocket):
+        with patch("ach_agent.engine.opencode.client.socket.socket", FakeSocket):
             result_port = find_free_port()
 
         # Result port must NOT be in the pre-seeded collision set

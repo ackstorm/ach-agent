@@ -313,7 +313,7 @@ async def test_default_start_server_uses_config_home(tmp_path: Path, monkeypatch
 
     monkeypatch.setattr("ach_agent.engine.lifecycle.launch", fake_launch)
     monkeypatch.setattr("ach_agent.engine.lifecycle.poll_ready", fake_poll)
-    monkeypatch.setattr("ach_agent.engine.client.find_free_port", lambda: 12345)
+    monkeypatch.setattr("ach_agent.engine.opencode.client.find_free_port", lambda: 12345)
 
     home = tmp_path / "home"
     cfg = EngineConfig(home=str(home))

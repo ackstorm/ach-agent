@@ -31,9 +31,9 @@ import structlog
 if TYPE_CHECKING:
     from ach_agent.engine.client import OpenCodeClient
 
-from ach_agent.engine.base.events import (  # noqa: F401
-    EngineError,
-    InvocationTimeout,
+from ach_agent.engine.base.events import EngineError as EngineError
+from ach_agent.engine.base.events import InvocationTimeout as InvocationTimeout
+from ach_agent.engine.base.events import (
     OpenCodeToolUpdate,
     OpenCodeUsage,
     ToolState,

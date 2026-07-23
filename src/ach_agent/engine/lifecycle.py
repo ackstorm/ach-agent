@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 # EngineConfig now lives in engine/base/driver.py (SP1 seam). Re-exported here so every
 # existing `from ach_agent.engine.lifecycle import EngineConfig` keeps resolving unchanged.
 from ach_agent.engine.base.driver import (
-    EngineConfig,  # noqa: E402  (kept beside other engine imports)
+    EngineConfig as EngineConfig,  # noqa: E402  (kept beside other engine imports)
 )
 
 log = structlog.get_logger(__name__)

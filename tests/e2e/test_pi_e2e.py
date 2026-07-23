@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -13,8 +14,6 @@ import pytest
 
 from ach_agent.engine.base.driver import EngineConfig
 from ach_agent.engine.pi.driver import PiDriver
-
-pytestmark = pytest.mark.e2e
 
 PI = shutil.which("pi")
 if PI is None:
@@ -71,6 +70,14 @@ async def test_pi_turn_and_ek_never_on_disk_or_in_subprocess(
 ) -> None:
     monkeypatch.setenv("ACH_TOKEN", "ek_e2e_secret_marker")
     monkeypatch.setenv("ACH_API_KEY", "ek_api_secret_marker")
+    adapter_candidates = [
+        os.environ.get("PI_MCP_ADAPTER_PATH", ""),
+        "/opt/pi-mcp-adapter",
+        str(Path.home() / ".pi/agent/npm/node_modules/pi-mcp-adapter"),
+    ]
+    adapter_path = next((path for path in adapter_candidates if path and Path(path).is_dir()), None)
+    if adapter_path is None:
+        pytest.skip("pi-mcp-adapter not installed or pinned in the image")
     runner, base_url = await _start_stub_server()
     server: Any = None
     try:
@@ -83,7 +90,7 @@ async def test_pi_turn_and_ek_never_on_disk_or_in_subprocess(
             model_type="openai",
             model_base_url=f"{base_url}/v1",
             mcp_servers=[f"{base_url}/mcp"],
-            pi_mcp_adapter_path="/home/coder/.pi/agent/npm/node_modules/pi-mcp-adapter",
+            pi_mcp_adapter_path=adapter_path,
         )
         driver = PiDriver()
         server = await driver.launch(cfg, "e2e-key")

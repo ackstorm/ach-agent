@@ -1422,6 +1422,11 @@ async def main(
             if cfg.engine.type == "pi" and cfg.engine.pi is not None
             else "opencode"
         ),
+        pi_mcp_adapter_path=(
+            cfg.engine.pi.mcp_adapter_path
+            if cfg.engine.type == "pi" and cfg.engine.pi is not None
+            else ""
+        ),
     )
     # D-03/D-04: dedup store first — it opens/repairs state.db (fail-closed on a bad
     # mount). Then the session map shares that now-valid file (fail-open). The pool

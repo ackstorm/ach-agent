@@ -4,6 +4,7 @@
 Isolated here so a real-pi mismatch is a one-line fix and unit-test fixtures stay
 in sync.
 """
+
 from __future__ import annotations
 
 # Commands (harness → pi, over stdin)

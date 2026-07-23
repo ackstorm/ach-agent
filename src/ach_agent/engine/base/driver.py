@@ -74,6 +74,8 @@ class EngineConfig:
     # capability.filter.exclude.tools — opencode tool ids to disable in opencode.json
     # (agent.build.tools[<id>]=False), withholding them from the model.
     exclude_tools: list[str] = field(default_factory=list)
+    # Optional path to the vendored pi-mcp-adapter package. Empty selects the image default.
+    pi_mcp_adapter_path: str = ""
 
     # SP1: which driver runs this config. "opencode" | "pi". Selects the EngineDriver in
     # _make_engine_runner (main.py) and namespaces the pool sessions map (base/pool.py) so an

@@ -3,6 +3,7 @@
 
 Framing is deliberately byte-oriented: split only on LF and strip a trailing CR.
 """
+
 from __future__ import annotations
 
 import asyncio

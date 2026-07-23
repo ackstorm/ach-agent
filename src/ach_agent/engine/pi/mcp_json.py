@@ -32,7 +32,7 @@ def build_mcp_json(cfg: EngineConfig) -> dict[str, Any]:
     for server_id, url in cfg.mcp_local_urls.items():
         servers[server_id] = {"url": url}
     for name, entry in cfg.extra_mcp_servers.items():
-        servers[name] = _passthrough_to_pi(entry)  # type: ignore[arg-type]
+        servers[name] = _passthrough_to_pi(entry)
     if cfg.codemem_db_path:
         servers["codemem"] = {
             "command": "codemem",

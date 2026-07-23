@@ -333,7 +333,7 @@ def test_harness_log_dir_is_volatile_tmp() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _LRUSessionMap + EnginePool.oc_sessions (persistent session_key → ses_ map)
+# _LRUSessionMap + EnginePool.sessions (persistent session_key → ses_ map)
 # ---------------------------------------------------------------------------
 
 
@@ -370,10 +370,11 @@ def test_lru_session_map_get_missing_returns_default() -> None:
 
 
 def test_pool_owns_oc_sessions_map() -> None:
-    from ach_agent.engine.pool import EnginePool, _LRUSessionMap
+    from ach_agent.engine.pool import EnginePool, _LRUSessionMap, _NamespacedSessionMap
 
     pool = EnginePool()
-    assert isinstance(pool.oc_sessions, _LRUSessionMap)
+    assert isinstance(pool.oc_sessions, _NamespacedSessionMap)
+    assert isinstance(pool.oc_sessions._inner, _LRUSessionMap)
     assert len(pool.oc_sessions) == 0
 
 
@@ -453,15 +454,19 @@ def test_pool_accepts_injected_session_map():
     """A caller (main._open_session_store) can inject the disk-resident map."""
     from ach_agent.engine.pool import EnginePool
 
-    injected: dict[str, str] = {"lane-1": "ses-a"}
+    injected: dict[str, str] = {"opencode:lane-1": "ses-a"}
     pool = EnginePool(oc_sessions=injected)
-    assert pool.oc_sessions is injected
+    assert pool.oc_sessions is pool.sessions
+    assert pool.sessions.get("lane-1") == "ses-a"
+    pool.sessions["lane-1"] = "ses-b"
+    assert injected == {"opencode:lane-1": "ses-b"}
 
 
 def test_pool_default_session_map_is_lru_still():
     """No arg → still an in-memory _LRUSessionMap (unchanged default)."""
-    from ach_agent.engine.pool import EnginePool, _LRUSessionMap
+    from ach_agent.engine.pool import EnginePool, _LRUSessionMap, _NamespacedSessionMap
 
     pool = EnginePool()
-    assert isinstance(pool.oc_sessions, _LRUSessionMap)
+    assert isinstance(pool.oc_sessions, _NamespacedSessionMap)
+    assert isinstance(pool.oc_sessions._inner, _LRUSessionMap)
     assert len(pool.oc_sessions) == 0

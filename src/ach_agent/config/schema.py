@@ -16,7 +16,16 @@ from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, Literal
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -58,18 +67,80 @@ class LimitsBlock(BaseModel):
     terminal_output_retries: int = Field(default=1, alias="terminalOutputRetries")
 
 
+def _default_input() -> list[Literal["text", "image"]]:
+    return ["text"]
+
+
+class PiModelCapabilities(BaseModel):
+    """Pi-only model capability descriptor (models.json fields; CONTRACT engine.pi.model).
+
+    NOT `model.params` (the open, per-call passthrough dict on `ModelBlock` above) —
+    these values are never sent to the model API call. The harness reads them to build
+    Pi's `models.json` model descriptor. Absent fields fall back to Pi's own builtin
+    defaults (same values), so an `engine.pi` block that omits `model` entirely behaves
+    exactly like today's hardcoded output.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    reasoning: StrictBool = False
+    input: list[Literal["text", "image"]] = Field(
+        default_factory=_default_input,
+        json_schema_extra={
+            "oneOf": [
+                {
+                    "prefixItems": [{"const": "text"}],
+                    "minItems": 1,
+                    "maxItems": 1,
+                },
+                {
+                    "prefixItems": [{"const": "text"}, {"const": "image"}],
+                    "minItems": 2,
+                    "maxItems": 2,
+                },
+            ]
+        },
+    )
+    context_window: Annotated[StrictInt, Field(gt=0)] = Field(default=128000, alias="contextWindow")
+    max_tokens: Annotated[StrictInt, Field(gt=0)] = Field(default=16384, alias="maxTokens")
+
+    @field_validator("input")
+    @classmethod
+    def _supported_input_shapes(
+        cls, value: list[Literal["text", "image"]]
+    ) -> list[Literal["text", "image"]]:
+        if value not in (["text"], ["text", "image"]):
+            raise ValueError('must be exactly ["text"] or ["text", "image"]')
+        return value
+
+
 class PiEngineBlock(BaseModel):
     """Pi-engine sub-block (consulted only when engine.type == 'pi').
 
     `binaryPath` pins the `pi` executable; `mcpAdapterPath` is the vendored pi-mcp-adapter
     package path referenced from Pi's settings.json `packages` (never a runtime `pi install`).
     Empty `mcpAdapterPath` → the driver falls back to the image's vendored default (SP2 pins it).
+
+    `model` is Pi's typed capability descriptor (reasoning/input/contextWindow/maxTokens).
+    `thinkingLevel` selects the `--thinking` level passed to `pi` at launch — it requires
+    `model.reasoning: true` (hard-fail otherwise) and is never forced/defaulted by the
+    harness; the operator states both explicitly.
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     binary_path: str = Field(default="pi", alias="binaryPath")
     mcp_adapter_path: str = Field(default="", alias="mcpAdapterPath")
+    model: PiModelCapabilities = Field(default_factory=PiModelCapabilities)
+    thinking_level: Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"] | None = (
+        Field(default=None, alias="thinkingLevel")
+    )
+
+    @model_validator(mode="after")
+    def _thinking_level_requires_reasoning(self) -> PiEngineBlock:
+        if self.thinking_level is not None and not self.model.reasoning:
+            raise ValueError("engine.pi.thinkingLevel requires engine.pi.model.reasoning=true")
+        return self
 
 
 class EngineBlock(BaseModel):

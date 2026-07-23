@@ -50,3 +50,21 @@ def test_rendered_fixtures_validate_against_schema(fixture: Path) -> None:
     schema = json.loads(_ARTIFACT.read_text(encoding="utf-8"))
     instance = json.loads(fixture.read_text(encoding="utf-8"))
     Draft202012Validator(schema).validate(instance)
+
+
+def test_pi_input_schema_exposes_only_supported_ordered_shapes() -> None:
+    schema = json.loads(_ARTIFACT.read_text(encoding="utf-8"))
+    input_schema = schema["$defs"]["PiModelCapabilities"]["properties"]["input"]
+    validator = Draft202012Validator(input_schema)
+
+    assert validator.is_valid(["text"])
+    assert validator.is_valid(["text", "image"])
+    for invalid in (
+        [],
+        ["image"],
+        ["text", "text"],
+        ["image", "text"],
+        ["text", "image", "image"],
+        ["audio"],
+    ):
+        assert not validator.is_valid(invalid)

@@ -1,0 +1,68 @@
+{
+  "schemaVersion": "1",
+  "agent": {
+    "name": "pi-reasoning-test-agent"
+  },
+  "model": {
+    "name": "openai.gpt-5",
+    "type": "openai",
+    "params": {
+      "temperature": 1
+    }
+  },
+  "engine": {
+    "workDir": "/workspace",
+    "startupTimeoutSeconds": 30,
+    "type": "pi",
+    "pi": {
+      "binaryPath": "pi",
+      "mcpAdapterPath": "/opt/pi-mcp-adapter/node_modules/pi-mcp-adapter",
+      "model": {
+        "reasoning": true,
+        "input": ["text"],
+        "contextWindow": 200000,
+        "maxTokens": 32000
+      },
+      "thinkingLevel": "high"
+    }
+  },
+  "capability": {
+    "type": "ach",
+    "ach": {
+      "baseUrl": "https://ach.example.com",
+      "environment": "production"
+    },
+    "filter": {
+      "exclude": {
+        "tools": []
+      }
+    }
+  },
+  "limits": {
+    "maxConcurrentInvocations": 1,
+    "maxInvocationSeconds": 1800,
+    "maxQueuedTotal": 100,
+    "idempotencyWindowSeconds": 3600,
+    "maxSteps": 50,
+    "terminalOutputRetries": 1
+  },
+  "persistence": {
+    "enabled": false,
+    "mountPath": "/var/lib/ach-agent"
+  },
+  "health": {
+    "host": "0.0.0.0",
+    "port": 8000
+  },
+  "channels": [
+    {
+      "name": "heartbeat",
+      "type": "cron",
+      "concurrency": 1,
+      "cron": {
+        "schedule": "* * * * *",
+        "timezone": "Europe/Madrid"
+      }
+    }
+  ]
+}

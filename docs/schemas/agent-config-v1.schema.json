@@ -609,7 +609,7 @@
     },
     "PiEngineBlock": {
       "additionalProperties": false,
-      "description": "Pi-engine sub-block (consulted only when engine.type == 'pi').\n\n`binaryPath` pins the `pi` executable; `mcpAdapterPath` is the vendored pi-mcp-adapter\npackage path referenced from Pi's settings.json `packages` (never a runtime `pi install`).\nEmpty `mcpAdapterPath` → the driver falls back to the image's vendored default (SP2 pins it).",
+      "description": "Pi-engine sub-block (consulted only when engine.type == 'pi').\n\n`binaryPath` pins the `pi` executable; `mcpAdapterPath` is the vendored pi-mcp-adapter\npackage path referenced from Pi's settings.json `packages` (never a runtime `pi install`).\nEmpty `mcpAdapterPath` → the driver falls back to the image's vendored default (SP2 pins it).\n\n`model` is Pi's typed capability descriptor (reasoning/input/contextWindow/maxTokens).\n`thinkingLevel` selects the `--thinking` level passed to `pi` at launch — it requires\n`model.reasoning: true` (hard-fail otherwise) and is never forced/defaulted by the\nharness; the operator states both explicitly.",
       "properties": {
         "binaryPath": {
           "default": "pi",
@@ -620,9 +620,92 @@
           "default": "",
           "title": "Mcpadapterpath",
           "type": "string"
+        },
+        "model": {
+          "$ref": "#/$defs/PiModelCapabilities"
+        },
+        "thinkingLevel": {
+          "anyOf": [
+            {
+              "enum": [
+                "off",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thinkinglevel"
         }
       },
       "title": "PiEngineBlock",
+      "type": "object"
+    },
+    "PiModelCapabilities": {
+      "additionalProperties": false,
+      "description": "Pi-only model capability descriptor (models.json fields; CONTRACT engine.pi.model).\n\nNOT `model.params` (the open, per-call passthrough dict on `ModelBlock` above) —\nthese values are never sent to the model API call. The harness reads them to build\nPi's `models.json` model descriptor. Absent fields fall back to Pi's own builtin\ndefaults (same values), so an `engine.pi` block that omits `model` entirely behaves\nexactly like today's hardcoded output.",
+      "properties": {
+        "contextWindow": {
+          "default": 128000,
+          "exclusiveMinimum": 0,
+          "title": "Contextwindow",
+          "type": "integer"
+        },
+        "input": {
+          "items": {
+            "enum": [
+              "text",
+              "image"
+            ],
+            "type": "string"
+          },
+          "oneOf": [
+            {
+              "maxItems": 1,
+              "minItems": 1,
+              "prefixItems": [
+                {
+                  "const": "text"
+                }
+              ]
+            },
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "const": "text"
+                },
+                {
+                  "const": "image"
+                }
+              ]
+            }
+          ],
+          "title": "Input",
+          "type": "array"
+        },
+        "maxTokens": {
+          "default": 16384,
+          "exclusiveMinimum": 0,
+          "title": "Maxtokens",
+          "type": "integer"
+        },
+        "reasoning": {
+          "default": false,
+          "title": "Reasoning",
+          "type": "boolean"
+        }
+      },
+      "title": "PiModelCapabilities",
       "type": "object"
     },
     "PromptBlock": {

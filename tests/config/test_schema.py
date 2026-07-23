@@ -67,7 +67,7 @@ _VALID_WEBHOOK_BASE: dict = {
             "name": "test-webhook",
             "type": "webhook",
             "source": "gitlab",
-            "webhook": {"auth": {"type": "gitlab_token", "secretPath": "/etc/secret"}},
+            "webhook": {"auth": {"type": "gitlab_token", "secret": {"env": "SECRET"}}},
         }
     ],
 }
@@ -98,6 +98,186 @@ _VALID_CRON_BASE: dict = {
         }
     ],
 }
+
+
+def _pi_engine_base(**pi_overrides: object) -> dict:
+    """_VALID_WEBHOOK_BASE with engine.type=pi; pi_overrides merge into engine.pi."""
+    return {
+        **_VALID_WEBHOOK_BASE,
+        "engine": {
+            "workDir": "/workspace",
+            "startupTimeoutSeconds": 30,
+            "type": "pi",
+            "pi": {
+                "binaryPath": "pi",
+                "mcpAdapterPath": "/opt/pi-mcp-adapter/node_modules/pi-mcp-adapter",
+                **pi_overrides,
+            },
+        },
+    }
+
+
+def test_pi_engine_model_capability_defaults_when_absent(tmp_path: Path) -> None:
+    config = _load_raw(tmp_path, _pi_engine_base())
+    assert config.engine.pi is not None
+    assert config.engine.pi.model.reasoning is False
+    assert config.engine.pi.model.input == ["text"]
+    assert config.engine.pi.model.context_window == 128000
+    assert config.engine.pi.model.max_tokens == 16384
+    assert config.engine.pi.thinking_level is None
+
+
+def test_pi_engine_model_capability_explicit_reasoning_and_thinking(tmp_path: Path) -> None:
+    config = _load_raw(
+        tmp_path,
+        _pi_engine_base(
+            model={
+                "reasoning": True,
+                "input": ["text", "image"],
+                "contextWindow": 200000,
+                "maxTokens": 32000,
+            },
+            thinkingLevel="high",
+        ),
+    )
+    pi = config.engine.pi
+    assert pi is not None
+    assert pi.model.reasoning is True
+    assert pi.model.input == ["text", "image"]
+    assert pi.model.context_window == 200000
+    assert pi.model.max_tokens == 32000
+    assert pi.thinking_level == "high"
+
+
+def test_pi_thinking_level_without_reasoning_hard_fails(tmp_path: Path) -> None:
+    from ach_agent.config import load_config
+
+    raw = _pi_engine_base(thinkingLevel="high")  # model.reasoning defaults to False
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+def test_pi_thinking_level_invalid_value_hard_fails(tmp_path: Path) -> None:
+    from ach_agent.config import load_config
+
+    raw = _pi_engine_base(model={"reasoning": True}, thinkingLevel="ultra")
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+@pytest.mark.parametrize(
+    "invalid_input",
+    [
+        [],
+        ["image"],
+        ["text", "text"],
+        ["image", "text"],
+        ["text", "image", "image"],
+        ["audio"],
+    ],
+)
+def test_pi_model_input_rejects_every_shape_except_supported_ordered_shapes(
+    tmp_path: Path, invalid_input: list[str]
+) -> None:
+    from ach_agent.config import load_config
+
+    raw = _pi_engine_base(model={"input": invalid_input})
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("reasoning", "true"),
+        ("reasoning", 1),
+        ("contextWindow", "128000"),
+        ("contextWindow", 128000.0),
+        ("contextWindow", True),
+        ("maxTokens", "16384"),
+        ("maxTokens", 16384.0),
+        ("maxTokens", False),
+        ("maxTokens", 0),
+    ],
+)
+def test_pi_model_strict_scalars_reject_coercion_and_non_positive_values(
+    tmp_path: Path, field: str, invalid_value: object
+) -> None:
+    from ach_agent.config import load_config
+
+    raw = _pi_engine_base(model={field: invalid_value})
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
+
+
+@pytest.mark.parametrize(
+    "invalid_input",
+    [
+        [],
+        ["image"],
+        ["text", "text"],
+        ["image", "text"],
+        ["text", "image", "image"],
+        ["audio"],
+    ],
+)
+def test_pi_model_input_error_is_value_validation_not_extra_field(
+    invalid_input: list[str],
+) -> None:
+    """Keep the red phase honest: today's PiEngineBlock rejects the whole `model`
+    field as extra, which must not masquerade as proof that these shapes are checked."""
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import PiModelCapabilities
+
+    with pytest.raises(ValidationError) as exc_info:
+        PiModelCapabilities.model_validate({"input": invalid_input})
+    errors = exc_info.value.errors()
+    assert any(error["loc"][0] == "input" for error in errors)
+    assert all(error["type"] != "extra_forbidden" for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("reasoning", "true"),
+        ("reasoning", 1),
+        ("contextWindow", "128000"),
+        ("contextWindow", 128000.0),
+        ("maxTokens", "16384"),
+        ("maxTokens", 16384.0),
+    ],
+)
+def test_pi_model_scalar_error_is_strict_validation_not_extra_field(
+    field: str, invalid_value: object
+) -> None:
+    """Prove the field itself rejects coercion after it becomes a recognized key."""
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import PiModelCapabilities
+
+    with pytest.raises(ValidationError) as exc_info:
+        PiModelCapabilities.model_validate({field: invalid_value})
+    errors = exc_info.value.errors()
+    expected_loc = {
+        "reasoning": ("reasoning",),
+        "contextWindow": ("contextWindow",),
+        "maxTokens": ("maxTokens",),
+    }[field]
+    assert any(error["loc"] == expected_loc for error in errors)
+    assert all(error["type"] != "extra_forbidden" for error in errors)
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +637,7 @@ def test_malformed_yaml_hard_fails(tmp_path: Path) -> None:
     from ach_agent.config import load_config
 
     config_file = tmp_path / "broken.yml"
-    config_file.write_text("schemaVersion: \"1\"\n  bad: : indentation:\n", encoding="utf-8")
+    config_file.write_text('schemaVersion: "1"\n  bad: : indentation:\n', encoding="utf-8")
 
     with pytest.raises(SystemExit) as exc_info:
         load_config(str(config_file))
@@ -1113,9 +1293,7 @@ def test_channel_session_block_and_shorthand() -> None:
     with pytest.raises(ValidationError):
         ChannelConfig(name="c", type="cron", session={"type": "custom"}, **cron_block)
     with pytest.raises(ValidationError):
-        ChannelConfig(
-            name="c", type="cron", session={"type": "auto", "key": "x"}, **cron_block
-        )
+        ChannelConfig(name="c", type="cron", session={"type": "auto", "key": "x"}, **cron_block)
     # extra=forbid still bites inside the block
     with pytest.raises(ValidationError):
         ChannelConfig(name="c", type="cron", session={"mode": "auto"}, **cron_block)
@@ -1126,9 +1304,7 @@ def test_channel_session_block_and_shorthand() -> None:
         )
     # maxTokens must be positive
     with pytest.raises(ValidationError):
-        ChannelConfig(
-            name="c", type="cron", session={"type": "auto", "maxTokens": 0}, **cron_block
-        )
+        ChannelConfig(name="c", type="cron", session={"type": "auto", "maxTokens": 0}, **cron_block)
 
 
 def test_schema_version_wrong_hard_fails(tmp_path: Path) -> None:

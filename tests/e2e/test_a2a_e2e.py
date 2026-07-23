@@ -171,7 +171,7 @@ async def test_engine_runner_signals_on_fail_on_engine_error(
     delivery_context['on_fail'] (and still re-raise). Otherwise the a2a bridge — whose
     execute() awaits completion.wait() with NO timeout — hangs forever.
     """
-    from ach_agent.engine import lifecycle
+    from ach_agent.engine.base import terminal
     from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.main import _make_engine_runner
 
@@ -180,7 +180,7 @@ async def test_engine_runner_signals_on_fail_on_engine_error(
             return True
 
     class _FakePool:
-        oc_sessions: dict[str, str] = {}
+        sessions: dict[str, str] = {}
 
         async def acquire(self, session_key: str, config: Any) -> _FakeServer:
             return _FakeServer()
@@ -188,14 +188,18 @@ async def test_engine_runner_signals_on_fail_on_engine_error(
         async def release(self, session_key: str, ttl_seconds: float) -> None:
             return None
 
-    async def _boom(**_kwargs: Any) -> dict[str, Any]:
+    async def _boom(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         raise RuntimeError("engine exploded")
 
-    # _make_engine_runner imports run_invocation from lifecycle at call time → patch the source.
-    monkeypatch.setattr(lifecycle, "run_invocation", _boom)
+    # _make_engine_runner imports run_contract_turn from base.terminal at call time —
+    # patch the source.
+    monkeypatch.setattr(terminal, "run_contract_turn", _boom)
+
+    from ach_agent.engine.opencode.driver import OpencodeDriver
 
     runner = _make_engine_runner(
         pool=_FakePool(),
+        driver=OpencodeDriver(),
         engine_cfg=EngineConfig(),
         max_invocation_seconds=30,
         memory_cfg=None,

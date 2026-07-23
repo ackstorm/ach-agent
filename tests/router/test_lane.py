@@ -67,10 +67,12 @@ async def test_lane_timeout_increments_watchdog_metric() -> None:
 
 async def _build_runner(fake_pool, channel_ttl: dict[str, float]):
     from ach_agent.engine.lifecycle import EngineConfig
+    from ach_agent.engine.opencode.driver import OpencodeDriver
     from ach_agent.main import _make_engine_runner
 
     return _make_engine_runner(
         pool=fake_pool,
+        driver=OpencodeDriver(),
         engine_cfg=EngineConfig(),
         max_invocation_seconds=1,
         channel_ttl=channel_ttl,
@@ -90,13 +92,13 @@ async def test_reply_future_resolved_on_timeout() -> None:
     fake_pool.release = AsyncMock()
     router = _FakeRouter()
 
-    async def slow_run_invocation(**kwargs: object) -> dict[str, object]:
+    async def slow_run_contract_turn(*args: object, **kwargs: object) -> dict[str, object]:
         await asyncio.sleep(5)
         return {"action": "none", "text": ""}
 
     from unittest.mock import patch
 
-    with patch("ach_agent.engine.lifecycle.run_invocation", slow_run_invocation):
+    with patch("ach_agent.engine.base.terminal.run_contract_turn", slow_run_contract_turn):
         runner = await _build_runner(fake_pool, {"test-channel": 60.0})
         lane = _make_lane(runner, 0.05, router)
         event = make_event(channel_name="test-channel")
@@ -124,11 +126,11 @@ async def test_timeout_force_kills_regardless_of_ttl() -> None:
     fake_pool.release = record_release
     router = _FakeRouter()
 
-    async def slow_run_invocation(**kwargs: object) -> dict[str, object]:
+    async def slow_run_contract_turn(*args: object, **kwargs: object) -> dict[str, object]:
         await asyncio.sleep(5)
         return {"action": "none", "text": ""}
 
-    with patch("ach_agent.engine.lifecycle.run_invocation", slow_run_invocation):
+    with patch("ach_agent.engine.base.terminal.run_contract_turn", slow_run_contract_turn):
         runner = await _build_runner(fake_pool, {"test-channel": 60.0})
         lane = _make_lane(runner, 0.05, router)
         await lane.put(make_event(channel_name="test-channel"))

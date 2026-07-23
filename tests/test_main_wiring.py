@@ -470,17 +470,18 @@ def test_channel_idle_ttl_from_config() -> None:
 
 
 async def test_engine_runner_passes_pool_oc_sessions_to_run_invocation() -> None:
-    """engine_runner threads the pool-owned session map into run_invocation."""
+    """engine_runner threads the pool-owned session map into run_contract_turn."""
     from typing import Any
 
-    import ach_agent.engine.lifecycle as lifecycle
+    import ach_agent.engine.base.terminal as terminal
     from ach_agent.channels.message_event import MessageEvent
     from ach_agent.engine.lifecycle import EngineConfig
+    from ach_agent.engine.opencode.driver import OpencodeDriver
     from ach_agent.main import _make_engine_runner
 
     class _Pool:
         def __init__(self) -> None:
-            self.oc_sessions: dict[str, str] = {}
+            self.sessions: dict[str, str] = {}
 
         async def acquire(self, _session_key: str, _cfg: Any) -> Any:
             return object()
@@ -491,7 +492,7 @@ async def test_engine_runner_passes_pool_oc_sessions_to_run_invocation() -> None
     pool = _Pool()
     captured: dict[str, Any] = {}
 
-    async def _fake_run(**kw: Any) -> dict[str, Any]:
+    async def _fake_run(*_args: Any, **kw: Any) -> dict[str, Any]:
         captured.update(kw)
         return {"action": "none", "text": ""}
 
@@ -504,15 +505,16 @@ async def test_engine_runner_passes_pool_oc_sessions_to_run_invocation() -> None
         source_trait="async_no_retry",
     )
 
-    with patch.object(lifecycle, "run_invocation", new=AsyncMock(side_effect=_fake_run)):
+    with patch.object(terminal, "run_contract_turn", new=AsyncMock(side_effect=_fake_run)):
         runner = _make_engine_runner(
             pool=pool,
+            driver=OpencodeDriver(),
             engine_cfg=EngineConfig(),
             max_invocation_seconds=30,
         )
         await runner(event, lambda: None)
 
-    assert captured["oc_sessions"] is pool.oc_sessions
+    assert captured["sessions"] is pool.sessions
 
 
 # ---------------------------------------------------------------------------
@@ -522,7 +524,7 @@ async def test_engine_runner_passes_pool_oc_sessions_to_run_invocation() -> None
 
 class _SessPool:
     def __init__(self) -> None:
-        self.oc_sessions: dict[str, str] = {}
+        self.sessions: dict[str, str] = {}
 
     async def acquire(self, _session_key: str, _cfg: Any) -> Any:
         return object()
@@ -549,6 +551,32 @@ def _sess_chcfg(session: SessionBlock) -> Any:
     return SimpleNamespace(type="cron", source=None, session=session, prompt=None)
 
 
+class _FakeDriver:
+    """Minimal EngineDriver double: only discard_session/compact_session are exercised
+    by post-turn hygiene here (run_contract_turn itself is patched out)."""
+
+    engine_type = "opencode"
+
+    def __init__(self) -> None:
+        self.discard_session = AsyncMock()
+        self.compact_session = AsyncMock()
+
+    def skills_dir(self, home: Any) -> Any:
+        raise NotImplementedError
+
+    async def launch(self, cfg: Any, session_key: str) -> Any:
+        raise NotImplementedError
+
+    async def health(self, server: Any) -> bool:
+        raise NotImplementedError
+
+    async def run_turn(self, server: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    async def stop(self, server: Any) -> None:
+        raise NotImplementedError
+
+
 async def _run_sess_case(
     session: SessionBlock | None,
     *,
@@ -556,19 +584,20 @@ async def _run_sess_case(
     oc_session_id: str = "ses-t1",
     pool: _SessPool | None = None,
 ) -> tuple[dict[str, Any], Any, Any, Any]:
-    """Drive engine_runner once. Returns (run_invocation kwargs, pool, discard/compact mocks)."""
+    """Drive engine_runner once. Returns (run_contract_turn kwargs, pool, discard/compact mocks)."""
     from types import SimpleNamespace
 
-    import ach_agent.engine.lifecycle as lifecycle
+    import ach_agent.engine.base.terminal as terminal
     from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.main import _make_engine_runner
 
     pool = pool if pool is not None else _SessPool()
     captured: dict[str, Any] = {}
+    driver = _FakeDriver()
 
-    async def _fake_run(**kw: Any) -> dict[str, Any]:
+    async def _fake_run(*_args: Any, **kw: Any) -> dict[str, Any]:
         captured.update(kw)
-        kw["stats"]["oc_session_id"] = oc_session_id
+        kw["stats"]["session_ref"] = oc_session_id
         kw["stats"]["usage"] = SimpleNamespace(
             input_tokens=input_tokens, output_tokens=1, cost=0.0, duration_ms=1
         )
@@ -576,20 +605,17 @@ async def _run_sess_case(
 
     channels = {"ch1": _sess_chcfg(session)} if session is not None else {}
 
-    with (
-        patch.object(lifecycle, "run_invocation", new=AsyncMock(side_effect=_fake_run)),
-        patch.object(lifecycle, "discard_oc_session", new_callable=AsyncMock) as discard,
-        patch.object(lifecycle, "compact_oc_session", new_callable=AsyncMock) as compact,
-    ):
+    with patch.object(terminal, "run_contract_turn", new=AsyncMock(side_effect=_fake_run)):
         runner = _make_engine_runner(
             pool=pool,
+            driver=driver,
             engine_cfg=EngineConfig(),
             max_invocation_seconds=30,
             channels_by_name=channels,
         )
         await runner(_sess_event(), lambda: None)
 
-    return captured, pool, discard, compact
+    return captured, pool, driver.discard_session, driver.compact_session
 
 
 async def test_session_none_fresh_and_deleted() -> None:
@@ -604,7 +630,7 @@ async def test_session_auto_reuses_lane_key() -> None:
     """key='auto': conversation key = event.session_key, reuse=True, no delete."""
     captured, _pool, discard, _compact = await _run_sess_case(SessionBlock(type="auto"))
     assert captured["reuse"] is True
-    assert captured["session_id"] == "lane-1"
+    assert captured["conv_key"] == "lane-1"
     discard.assert_not_awaited()
 
 
@@ -614,7 +640,7 @@ async def test_session_template_renders_conversation_key() -> None:
         SessionBlock(type="custom", key="{{ payload.task_id }}")
     )
     assert captured["reuse"] is True
-    assert captured["session_id"] == "T-42"
+    assert captured["conv_key"] == "T-42"
     discard.assert_not_awaited()
 
 
@@ -631,7 +657,7 @@ async def test_no_channel_config_keeps_continuity() -> None:
     """--tui console (no ChannelConfig) resolves to auto behavior: REPL continuity."""
     captured, _pool, discard, _compact = await _run_sess_case(None)
     assert captured["reuse"] is True
-    assert captured["session_id"] == "lane-1"
+    assert captured["conv_key"] == "lane-1"
     discard.assert_not_awaited()
 
 
@@ -647,13 +673,13 @@ async def test_max_tokens_overflow_compact() -> None:
 async def test_max_tokens_overflow_rotate() -> None:
     """rotate: LRU entry dropped AND the old session deleted (clean)."""
     pool = _SessPool()
-    pool.oc_sessions["lane-1"] = "ses-t1"
+    pool.sessions["lane-1"] = "ses-t1"
     _captured, pool, discard, compact = await _run_sess_case(
         SessionBlock(type="auto", max_tokens=50, overflow="rotate"),
         input_tokens=51,
         pool=pool,
     )
-    assert "lane-1" not in pool.oc_sessions
+    assert "lane-1" not in pool.sessions
     discard.assert_awaited_once()
     compact.assert_not_awaited()
 

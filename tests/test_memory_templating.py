@@ -25,7 +25,7 @@ class _CapturingPool:
 
     def __init__(self) -> None:
         self.acquired_cfgs: list[EngineConfig] = []
-        self.oc_sessions: dict[str, str] = {}
+        self.sessions: dict[str, str] = {}
 
     async def acquire(self, _session_key: str, cfg: Any) -> Any:
         self.acquired_cfgs.append(cfg)
@@ -49,9 +49,10 @@ def _make_event(session_key: str) -> MessageEvent:
 @pytest.mark.asyncio
 async def test_codemem_project_template_rendered_into_acquire_cfg() -> None:
     """engine_runner renders {{ internal.session.key }} into codemem_project before pool.acquire."""
-    import ach_agent.engine.lifecycle as lifecycle
+    import ach_agent.engine.base.terminal as terminal
+    from ach_agent.engine.opencode.driver import OpencodeDriver
 
-    async def _fake_run(**_kw: Any) -> dict[str, Any]:
+    async def _fake_run(*_args: Any, **_kw: Any) -> dict[str, Any]:
         return {"action": "none", "text": ""}
 
     pool = _CapturingPool()
@@ -61,9 +62,10 @@ async def test_codemem_project_template_rendered_into_acquire_cfg() -> None:
     )
     base_cfg = EngineConfig(codemem_project="{{ internal.session.key }}")
 
-    with patch.object(lifecycle, "run_invocation", new=AsyncMock(side_effect=_fake_run)):
+    with patch.object(terminal, "run_contract_turn", new=AsyncMock(side_effect=_fake_run)):
         runner = _make_engine_runner(
             pool=pool,
+            driver=OpencodeDriver(),
             engine_cfg=base_cfg,
             max_invocation_seconds=30,
             memory_cfg=memory_cfg,
@@ -79,18 +81,20 @@ async def test_codemem_project_template_rendered_into_acquire_cfg() -> None:
 @pytest.mark.asyncio
 async def test_codemem_project_literal_passes_through() -> None:
     """engine_runner leaves a literal codemem_project unchanged (no {{ token)."""
-    import ach_agent.engine.lifecycle as lifecycle
+    import ach_agent.engine.base.terminal as terminal
+    from ach_agent.engine.opencode.driver import OpencodeDriver
 
-    async def _fake_run(**_kw: Any) -> dict[str, Any]:
+    async def _fake_run(*_args: Any, **_kw: Any) -> dict[str, Any]:
         return {"action": "none", "text": ""}
 
     pool = _CapturingPool()
     memory_cfg = CodememMemory(type="codemem", codemem=CodememParams(project="ach-agent"))
     base_cfg = EngineConfig(codemem_project="ach-agent")
 
-    with patch.object(lifecycle, "run_invocation", new=AsyncMock(side_effect=_fake_run)):
+    with patch.object(terminal, "run_contract_turn", new=AsyncMock(side_effect=_fake_run)):
         runner = _make_engine_runner(
             pool=pool,
+            driver=OpencodeDriver(),
             engine_cfg=base_cfg,
             max_invocation_seconds=30,
             memory_cfg=memory_cfg,

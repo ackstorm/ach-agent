@@ -137,6 +137,7 @@ async def test_engine_runner_reachable_branch() -> None:
     from ach_agent.channels.message_event import MessageEvent
     from ach_agent.config.schema import HindsightMemory, HindsightParams
     from ach_agent.engine.lifecycle import EngineConfig
+    from ach_agent.engine.opencode.driver import OpencodeDriver
     from ach_agent.main import _make_engine_runner
 
     endpoint = "http://hindsight.svc:8080"
@@ -152,7 +153,7 @@ async def test_engine_runner_reachable_branch() -> None:
     )
     base_engine_cfg = EngineConfig()
 
-    # Track the EngineConfig seen by pool.acquire and the prompt seen by run_invocation
+    # Track the EngineConfig seen by pool.acquire and the prompt seen by run_contract_turn
     captured_acquire_cfg: list[EngineConfig] = []
     captured_prompt: list[str] = []
 
@@ -171,7 +172,7 @@ async def test_engine_runner_reachable_branch() -> None:
     fake_invocation_result.actions = []
     fake_invocation_result.get = lambda k, d=None: d  # dict-like fallback
 
-    async def fake_run_invocation(**kwargs: object) -> MagicMock:
+    async def fake_run_contract_turn(*_args: object, **kwargs: object) -> MagicMock:
         captured_prompt.append(str(kwargs.get("prompt", "")))
         return fake_invocation_result
 
@@ -191,10 +192,11 @@ async def test_engine_runner_reachable_branch() -> None:
             "ach_agent.main.prepare_memory",
             new=AsyncMock(return_value=(True, memory_section)),
         ),
-        patch("ach_agent.engine.lifecycle.run_invocation", fake_run_invocation),
+        patch("ach_agent.engine.base.terminal.run_contract_turn", fake_run_contract_turn),
     ):
         runner = _make_engine_runner(
             pool=fake_pool,
+            driver=OpencodeDriver(),
             engine_cfg=base_engine_cfg,
             max_invocation_seconds=60,
             memory_cfg=memory_cfg,
@@ -212,8 +214,8 @@ async def test_engine_runner_reachable_branch() -> None:
     )
     assert endpoint not in cfg_used.mcp_servers, "raw hindsight endpoint must never be wired"
 
-    # MEM-01: ## Memory summaries in the prompt passed to run_invocation
-    assert captured_prompt, "run_invocation was not called"
+    # MEM-01: ## Memory summaries in the prompt passed to run_contract_turn
+    assert captured_prompt, "run_contract_turn was not called"
     assert "## Memory" in captured_prompt[0], (
         f"MEM-01: ## Memory section must be in prompt, got: {captured_prompt[0]!r}"
     )
@@ -225,6 +227,7 @@ async def test_engine_runner_degraded_path() -> None:
     from ach_agent.channels.message_event import MessageEvent
     from ach_agent.config.schema import HindsightMemory, HindsightParams
     from ach_agent.engine.lifecycle import EngineConfig
+    from ach_agent.engine.opencode.driver import OpencodeDriver
     from ach_agent.main import _make_engine_runner
 
     endpoint = "http://hindsight.svc:8080"
@@ -257,7 +260,7 @@ async def test_engine_runner_degraded_path() -> None:
     fake_invocation_result.actions = []
     fake_invocation_result.get = lambda k, d=None: d
 
-    async def fake_run_invocation(**kwargs: object) -> MagicMock:
+    async def fake_run_contract_turn(*_args: object, **kwargs: object) -> MagicMock:
         invocation_called.append(True)
         return fake_invocation_result
 
@@ -277,10 +280,11 @@ async def test_engine_runner_degraded_path() -> None:
             "ach_agent.main.prepare_memory",
             new=AsyncMock(return_value=(False, degraded_section)),
         ),
-        patch("ach_agent.engine.lifecycle.run_invocation", fake_run_invocation),
+        patch("ach_agent.engine.base.terminal.run_contract_turn", fake_run_contract_turn),
     ):
         runner = _make_engine_runner(
             pool=fake_pool,
+            driver=OpencodeDriver(),
             engine_cfg=base_engine_cfg,
             max_invocation_seconds=60,
             memory_cfg=memory_cfg,
@@ -297,5 +301,5 @@ async def test_engine_runner_degraded_path() -> None:
 
     # Invocation must complete despite degraded memory (no retry, no fail)
     assert invocation_called, (
-        "run_invocation was not called — invocation must complete even in degraded mode"
+        "run_contract_turn was not called — invocation must complete even in degraded mode"
     )

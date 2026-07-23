@@ -648,8 +648,8 @@ def _make_engine_runner(
     """Build the engine_runner callable injected into the Router.
 
     The runner is called by Lane as: engine_runner(event, on_kill).
-    It acquires a ManagedServer from the pool, calls run_invocation (which returns
-    the single terminal object), then relays the terminal `text`:
+    It acquires a ManagedServer from the pool, calls run_contract_turn(driver, ...)
+    (which returns the single terminal object), then relays the terminal `text`:
 
     - reply mode (event.reply_future is not None):
         set_result(text) on the future. The route is awaiting this future to return
@@ -677,8 +677,8 @@ def _make_engine_runner(
     Unknown channels (e.g. the --tui console) default to 0 = stop immediately. --tui pins a
     held ref so 0 never actually stops it mid-session (see the console-mode pre-warm).
     """
+    from ach_agent.engine.base.terminal import run_contract_turn
     from ach_agent.engine.events import InvocationTimeout
-    from ach_agent.engine.lifecycle import compact_oc_session, discard_oc_session, run_invocation
     from ach_agent.stats.sink import build_session_stat
 
     ttl_by_channel = channel_ttl or {}
@@ -815,19 +815,20 @@ def _make_engine_runner(
                 prompt=full_prompt,
             )
             turn_stats: dict[str, Any] = {}
-            obj = await run_invocation(
-                server=server,
-                session_id=conv_key,
+            obj = await run_contract_turn(
+                driver,
+                server,
+                conv_key=conv_key,
                 prompt=full_prompt,
-                terminal_retries=terminal_output_retries,
-                terminal_action=_terminal_action,
+                reuse=reuse,
+                sessions=pool.sessions,
                 free_form=free_form,
+                terminal_action=_terminal_action,
+                terminal_retries=terminal_output_retries,
                 on_text=on_text,
                 on_tool=on_tool,
-                reuse=reuse,
                 max_tool_calls=max_tool_calls,
                 stats=turn_stats,
-                oc_sessions=pool.oc_sessions,
             )
 
             text = str(obj.get("text", ""))
@@ -850,14 +851,14 @@ def _make_engine_runner(
                 duration_ms=getattr(_usage, "duration_ms", 0),
             )
             # Post-turn session hygiene. Skipped on timeout (this code is not reached
-            # when the lane cancels run_invocation) — that orphan is accepted, the
+            # when the lane cancels the turn) — that orphan is accepted, the
             # server is force-killed anyway.
-            _oc_sid = turn_stats.get("oc_session_id", "")
-            if _oc_sid and not reuse:
+            _sid = turn_stats.get("session_ref", "")
+            if _sid and not reuse:
                 # key='none' (or empty template render): stateless turn leaves no residue.
-                await discard_oc_session(server, _oc_sid)
+                await driver.discard_session(server, _sid)
             elif (
-                _oc_sid
+                _sid
                 and session_cfg is not None
                 and session_cfg.max_tokens is not None
                 and getattr(_usage, "input_tokens", 0) > session_cfg.max_tokens
@@ -866,21 +867,21 @@ def _make_engine_runner(
                     log.info(
                         "session: maxTokens exceeded — compacting",
                         session_key=event.session_key,
-                        oc_session_id=_oc_sid,
+                        session_ref=_sid,
                         input_tokens=getattr(_usage, "input_tokens", 0),
                         max_tokens=session_cfg.max_tokens,
                     )
-                    await compact_oc_session(server, _oc_sid)
+                    await driver.compact_session(server, _sid)
                 else:  # rotate: drop the map entry + delete the old session (clean)
                     log.info(
                         "session: maxTokens exceeded — rotating",
                         session_key=event.session_key,
-                        oc_session_id=_oc_sid,
+                        session_ref=_sid,
                         input_tokens=getattr(_usage, "input_tokens", 0),
                         max_tokens=session_cfg.max_tokens,
                     )
-                    pool.oc_sessions.pop(conv_key, None)
-                    await discard_oc_session(server, _oc_sid)
+                    pool.sessions.pop(conv_key, None)
+                    await driver.discard_session(server, _sid)
             if stats_sink is not None:
                 stats_sink.record(
                     build_session_stat(
@@ -1371,7 +1372,7 @@ async def main(
 
     # Step 5: build the engine pool. Egress is the agent's via external MCP tools —
     # the harness has no delivery adapter (it never posts on the model's behalf).
-    from ach_agent.engine.base.driver import EngineConfig, EngineDriver
+    from ach_agent.engine.base.driver import EngineConfig
     from ach_agent.engine.base.pool import EnginePool
     from ach_agent.engine.opencode.driver import OpencodeDriver
 

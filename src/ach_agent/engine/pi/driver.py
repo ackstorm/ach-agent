@@ -191,7 +191,9 @@ class PiDriver:
                 if usage is not None:
                     stats["usage"] = usage
                     continue
-                if pe.is_settled(event) or event.get("type") == EV_AGENT_END:
+                if pe.is_settled(event) or (
+                    event.get("type") == EV_AGENT_END and not event.get("willRetry", False)
+                ):
                     break
         except asyncio.CancelledError:
             with contextlib.suppress(Exception):

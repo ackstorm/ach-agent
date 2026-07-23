@@ -79,19 +79,35 @@ def pi_tool_update(ev: dict[str, Any], session_ref: str) -> OpenCodeToolUpdate |
 
 
 def pi_usage(ev: dict[str, Any], session_ref: str) -> OpenCodeUsage | None:
-    """Map a Pi usage event to OpenCodeUsage, when it has a usage block."""
-    usage = ev.get("usage")
+    """Map Pi's assistant message usage to the shared usage shape.
+
+    Pi 0.79 nests usage under ``event.message.usage`` and uses the short
+    ``input``/``output`` token names. Keep the older top-level vocabulary as a
+    compatibility fallback for scripted/older RPC producers.
+    """
+    message = ev.get("message")
+    message_doc = message if isinstance(message, dict) else {}
+    usage = message_doc.get("usage")
+    if not isinstance(usage, dict):
+        usage = ev.get("usage")
     if not isinstance(usage, dict):
         return None
+    cost = usage.get("cost")
+    cost_total = cost.get("total", 0) if isinstance(cost, dict) else usage.get("costUsd", 0.0)
+    message_id = message_doc.get("id", ev.get("messageId", ""))
+    input_tokens = usage.get("input", usage.get("inputTokens", 0))
+    output_tokens = usage.get("output", usage.get("outputTokens", 0))
+    cache_read = usage.get("cacheRead", usage.get("cacheReadTokens", 0))
+    cache_write = usage.get("cacheWrite", usage.get("cacheWriteTokens", 0))
     return OpenCodeUsage(
         session_id=session_ref,
-        message_id=str(ev.get("messageId", "")),
-        input_tokens=int(usage.get("inputTokens", 0) or 0),
-        output_tokens=int(usage.get("outputTokens", 0) or 0),
-        cache_read=int(usage.get("cacheReadTokens", 0) or 0),
-        cache_write=int(usage.get("cacheWriteTokens", 0) or 0),
-        cost=float(usage.get("costUsd", 0.0) or 0.0),
-        duration_ms=int(usage.get("durationMs", 0) or 0),
+        message_id=str(message_id),
+        input_tokens=int(input_tokens or 0),
+        output_tokens=int(output_tokens or 0),
+        cache_read=int(cache_read or 0),
+        cache_write=int(cache_write or 0),
+        cost=float(cost_total or 0.0),
+        duration_ms=int(usage.get("durationMs", ev.get("durationMs", 0)) or 0),
     )
 
 

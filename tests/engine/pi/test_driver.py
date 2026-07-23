@@ -9,6 +9,7 @@ import pytest
 from ach_agent.engine.base.driver import TurnResult
 from ach_agent.engine.pi.driver import PiDriver
 from ach_agent.engine.pi.protocol import (
+    EV_AGENT_END,
     EV_AGENT_SETTLED,
     EV_ASSISTANT_INNER,
     EV_INNER_TEXT_DELTA,
@@ -148,3 +149,68 @@ async def test_cancel_sends_abort() -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
     assert {"type": "abort"} in client.sent
+
+
+async def test_usage_is_stored_in_stats() -> None:
+    client = _ScriptedClient(
+        [
+            {"type": EV_SESSION_CREATED, F_SESSION_PATH: "/s/usage.json"},
+            {
+                "type": "message_end",
+                "message": {
+                    "id": "msg-usage",
+                    "usage": {
+                        "input": 12,
+                        "output": 8,
+                        "cacheRead": 4,
+                        "cacheWrite": 1,
+                        "cost": {"total": 0.42},
+                    },
+                },
+            },
+            _text("done"),
+            {"type": EV_AGENT_SETTLED},
+        ]
+    )
+    stats: dict[str, Any] = {}
+    await PiDriver().run_turn(
+        _Server(client),
+        conv_key="usage",
+        prompt="p",
+        reuse=True,
+        sessions={},
+        on_text=None,
+        on_tool=None,
+        max_tool_calls=0,
+        stats=stats,
+    )
+    mapped = stats["usage"]
+    assert mapped.input_tokens == 12
+    assert mapped.output_tokens == 8
+    assert mapped.cache_read == 4
+    assert mapped.cache_write == 1
+    assert mapped.cost == 0.42
+
+
+async def test_agent_end_will_retry_is_not_terminal() -> None:
+    client = _ScriptedClient(
+        [
+            {"type": EV_SESSION_CREATED, F_SESSION_PATH: "/s/retry.json"},
+            _text("before"),
+            {"type": EV_AGENT_END, "willRetry": True},
+            _text("after"),
+            {"type": EV_AGENT_END, "willRetry": False},
+        ]
+    )
+    result = await PiDriver().run_turn(
+        _Server(client),
+        conv_key="retry",
+        prompt="p",
+        reuse=True,
+        sessions={},
+        on_text=None,
+        on_tool=None,
+        max_tool_calls=0,
+        stats={},
+    )
+    assert result.text == "beforeafter"

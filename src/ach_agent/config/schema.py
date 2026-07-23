@@ -58,6 +58,20 @@ class LimitsBlock(BaseModel):
     terminal_output_retries: int = Field(default=1, alias="terminalOutputRetries")
 
 
+class PiEngineBlock(BaseModel):
+    """Pi-engine sub-block (consulted only when engine.type == 'pi').
+
+    `binaryPath` pins the `pi` executable; `mcpAdapterPath` is the vendored pi-mcp-adapter
+    package path referenced from Pi's settings.json `packages` (never a runtime `pi install`).
+    Empty `mcpAdapterPath` → the driver falls back to the image's vendored default (SP2 pins it).
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    binary_path: str = Field(default="pi", alias="binaryPath")
+    mcp_adapter_path: str = Field(default="", alias="mcpAdapterPath")
+
+
 class EngineBlock(BaseModel):
     """Engine runtime knobs (harness-local; operator-optional).
 
@@ -86,6 +100,11 @@ class EngineBlock(BaseModel):
     # wrap-up turn so the model still returns a valid terminal object. 0 disables counting/abort;
     # maxInvocationSeconds remains the always-on time backstop. Recommend ~80 when opting in.
     max_tool_calls: int = Field(default=0, ge=0, alias="maxToolCalls")
+    # SP1: which engine runs this agent. Canonical wire name is "pi" (runtime spec §7.4 amended
+    # from the reserved "pymono"). Selects the EngineDriver in main._make_engine_runner.
+    type: Literal["opencode", "pi"] = Field(default="opencode", alias="type")
+    # Pi sub-block — only consulted when type == "pi"; optional so opencode configs never carry it.
+    pi: PiEngineBlock | None = Field(default=None, alias="pi")
 
 
 class PersistenceBlock(BaseModel):

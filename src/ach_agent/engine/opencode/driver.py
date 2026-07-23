@@ -94,6 +94,13 @@ class OpencodeDriver:
                 oc_session_id, reused = cached, True
         else:
             oc_session_id = await oc._create_oc_session(client)
+        import structlog
+        structlog.get_logger(__name__).info(
+            "engine: opencode session",
+            session_key=conv_key,
+            oc_session_id=oc_session_id,
+            reused=reused,
+        )
         stats["session_ref"] = oc_session_id
         stats["oc_session_id"] = oc_session_id
         try:

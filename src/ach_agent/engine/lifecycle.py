@@ -518,15 +518,8 @@ async def compact_oc_session(server: ManagedServer, oc_session_id: str) -> None:
 
 
 def _terminal_object_hint(action: str) -> str:
-    """The single terminal JSON object we ask the model to emit on a wrap/repair turn,
-    shown as an example to reproduce — channel-aware.
-
-    a2a turns demand a2a_reply; async turns demand none. Showing only the ONE action the
-    channel expects means an a2a repair turn never re-exposes 'none' (the token we work to
-    keep out of a2a turns via build_output_instructions in main.py)."""
-    if action == "a2a_reply":
-        return '{"action":"a2a_reply","text":"..."}'
-    return '{"action":"none","text":"..."}'
+    from ach_agent.engine.base.terminal import _terminal_object_hint as _hint
+    return _hint(action)
 
 
 async def run_invocation(
@@ -543,150 +536,28 @@ async def run_invocation(
     stats: dict[str, Any] | None = None,
     oc_sessions: MutableMapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Orchestrate: subscribe SSE → send prompt → consume → return the terminal object.
+    """Back-compat opencode entrypoint — now a thin delegation to the engine-agnostic
+    terminal contract (SP1 §4.3). Kept so existing callers/tests are unchanged; Phase 6
+    switches engine_runner to call run_contract_turn directly."""
+    from ach_agent.engine.base.terminal import run_contract_turn
+    from ach_agent.engine.opencode.driver import OpencodeDriver
 
-    No self-timeout: the lane owns the single authoritative maxInvocationSeconds bound
-    (RTR-04). When the lane's deadline fires it cancels this coroutine; the caller
-    (engine_runner) resolves the reply_future with InvocationTimeout and force-releases the
-    pooled server (ttl=0), which stops the runaway process. This function therefore neither
-    times out nor kills — it just runs the turn.
-
-    IMPORTANT: SSE subscription MUST happen before send_message because opencode
-    emits session.idle on the SSE stream in real-time. If send_message completes
-    before subscribe_events(), the session.idle event is missed and the consumer hangs.
-    """
-    import aiohttp
-
-    from ach_agent.engine.client import OpenCodeClient
-
-    client = server._client
-    if not isinstance(client, OpenCodeClient):
-        raise RuntimeError("ManagedServer has no client")
-
-    # opencode requires a session created via POST /session before /session/{id}/message
-    # (unknown id → 404 NotFoundError, verified on 1.17.13). Map the logical session_key →
-    # an opencode session id, created once per key and reused for conversational continuity.
-    # oc_sessions is the pool-owned LRU: it outlives ManagedServers, and opencode persists
-    # sessions on disk under the shared home, so 'auto' survives idle-TTL restarts. Falls
-    # back to the per-server map when not provided (tests / ad-hoc callers).
-    # When reuse=False (channel.session='none'), always create a fresh opencode session
-    # and never touch the map (no read, no write).
     sessions = oc_sessions if oc_sessions is not None else server._sessions
-    reused = False
-    if reuse:
-        cached = sessions.get(session_id)
-        if cached is None:
-            oc_session_id = await _create_oc_session(client)
-            sessions[session_id] = oc_session_id
-        else:
-            oc_session_id = cached
-            reused = True
-    else:
-        oc_session_id = await _create_oc_session(client)
-    log.info(
-        "engine: opencode session",
-        session_key=session_id,
-        oc_session_id=oc_session_id,
-        reused=reused,
+    return await run_contract_turn(
+        OpencodeDriver(),
+        server,
+        conv_key=session_id,
+        prompt=prompt,
+        reuse=reuse,
+        sessions=sessions,
+        free_form=free_form,
+        terminal_action=terminal_action,
+        terminal_retries=terminal_retries,
+        on_text=on_text,
+        on_tool=on_tool,
+        max_tool_calls=max_tool_calls,
+        stats=stats,
     )
-
-    # Subscribe to SSE FIRST, then send the message.
-    # This ensures we don't miss the session.idle event. The lane bounds this await via
-    # maxInvocationSeconds; a deadline cancels it (no inner timeout here).
-    stats = stats if stats is not None else {}
-    stats["oc_session_id"] = oc_session_id
-    try:
-        accumulated_text = await consume_sse_after_send(
-            client,
-            oc_session_id,
-            prompt,
-            on_text=on_text,
-            on_tool=on_tool,
-            is_alive=server.is_alive,
-            max_tool_calls=max_tool_calls,
-            stats=stats,
-        )
-    except aiohttp.ClientResponseError as exc:
-        # Stale cached id: opencode pruned the session (e.g. home wiped between
-        # restarts) → POST /session/{id}/message 404s. Mint a fresh session, update
-        # the map, retry ONCE. A fresh id can't be stale and other statuses aren't
-        # staleness — propagate everything else.
-        if not (reused and exc.status == 404):
-            raise
-        log.warning(
-            "engine: cached opencode session stale — recreating",
-            session_key=session_id,
-            oc_session_id=oc_session_id,
-        )
-        oc_session_id = await _create_oc_session(client)
-        sessions[session_id] = oc_session_id
-        stats["oc_session_id"] = oc_session_id
-        accumulated_text = await consume_sse_after_send(
-            client,
-            oc_session_id,
-            prompt,
-            on_text=on_text,
-            on_tool=on_tool,
-            is_alive=server.is_alive,
-            max_tool_calls=max_tool_calls,
-            stats=stats,
-        )
-    if stats.get("aborted"):
-        # Step-budget abort (Plan 4): the turn was cut mid-tool-loop, so accumulated_text may
-        # lack a terminal object. Run ONE wrap-up turn (budget OFF, same opencode session) so the
-        # model stops calling tools and emits a clean terminal object; its output then flows
-        # through the normal extract/repair path below.
-        # NOTE: legacy also ran a "tool-only correction" (has_text_beyond_action) — NOT ported:
-        # ach-agent's terminal contract expects prose + a trailing terminal object and
-        # extract_terminal rfinds the last {"action"...}, so "text beyond the action" is normal
-        # here, not an error to correct. Only the step-budget abort/wrap-up transfers.
-        log.warning("step-budget abort — running wrap-up turn", session_id=session_id)
-        wrap = (
-            "You have reached your tool-call budget for this turn. Do NOT call any more tools. "
-            "Reply now with ONLY the terminal JSON object "
-            f"({_terminal_object_hint(terminal_action)}) "
-            "summarizing what you found and did."
-        )
-        accumulated_text = await consume_sse_after_send(
-            client,
-            oc_session_id,
-            wrap,
-            on_text=on_text,
-            on_tool=on_tool,
-            is_alive=server.is_alive,
-            max_tool_calls=0,  # never abort the wrap-up
-        )
-
-    # debug (not info): at INFO this line lands on stderr right as the streamed reply
-    # finishes on stdout, gluing onto the last reply char on a shared TTY.
-    log.debug(
-        "invocation complete",
-        session_id=session_id,
-        text_length=len(accumulated_text),
-    )
-
-    # Free-form mode (--tui console): no terminal contract — return the raw reply text
-    # verbatim. The terminal-extraction + repair turn below is for the structured
-    # channels (a2a_reply / none); applying it to a console chat reply would fire a
-    # pointless extra model turn and could print the repair output instead of the reply.
-    if free_form:
-        return {"action": "none", "text": accumulated_text}
-
-    # Extract the single terminal object from accumulated SSE text. One backstop
-    # repair turn if absent — then fall back to a synthetic none-action carrying the
-    # raw text so the caller always receives a dict with an "action" key.
-    from ach_agent.engine.validator import extract_terminal
-
-    obj = extract_terminal(accumulated_text)
-    if obj is None and terminal_retries > 0:
-        repair = (
-            f"Reply with ONLY a terminal JSON object: {_terminal_object_hint(terminal_action)}."
-        )
-        accumulated_text = await consume_sse_after_send(
-            client, oc_session_id, repair, is_alive=server.is_alive
-        )
-        obj = extract_terminal(accumulated_text)
-    return obj if obj is not None else {"action": "none", "text": accumulated_text}
 
 
 async def consume_sse_after_send(

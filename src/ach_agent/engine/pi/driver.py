@@ -20,9 +20,11 @@ from ach_agent.engine.pi.mcp_json import build_mcp_json
 from ach_agent.engine.pi.models_json import build_models_json
 from ach_agent.engine.pi.protocol import (
     CMD_ABORT,
+    CMD_GET_STATE,
     CMD_NEW_SESSION,
     CMD_PROMPT,
     CMD_SWITCH_SESSION,
+    EV_AGENT_END,
     EV_EOF,
     EV_SESSION_CREATED,
     F_SESSION_PATH,
@@ -114,6 +116,14 @@ class PiDriver:
                 raise PiRpcError("pi ended before session_created")
             if event.get("type") == EV_SESSION_CREATED:
                 return str(event.get(F_SESSION_PATH, "") or "")
+            if event.get("type") == "response" and event.get("command") == CMD_NEW_SESSION:
+                await client.send({"type": CMD_GET_STATE})
+                continue
+            if event.get("type") == "response" and event.get("command") == CMD_GET_STATE:
+                data = event.get("data") or {}
+                session_path = data.get("sessionFile") if isinstance(data, dict) else None
+                if session_path:
+                    return str(session_path)
 
     async def run_turn(
         self,
@@ -181,7 +191,7 @@ class PiDriver:
                 if usage is not None:
                     stats["usage"] = usage
                     continue
-                if pe.is_settled(event):
+                if pe.is_settled(event) or event.get("type") == EV_AGENT_END:
                     break
         except asyncio.CancelledError:
             with contextlib.suppress(Exception):

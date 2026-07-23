@@ -20,12 +20,17 @@ from ach_agent.engine.pi.protocol import (
     EV_MESSAGE_UPDATE,
     EV_TOOL_END,
     EV_TOOL_START,
+    F_ARGS,
     F_CALL_ID,
+    F_DELTA,
     F_ERROR,
     F_INPUT,
+    F_IS_ERROR,
     F_OUTPUT,
+    F_RESULT,
     F_TEXT,
     F_TITLE,
+    F_TOOL_CALL_ID,
     F_TOOL_NAME,
 )
 
@@ -36,7 +41,7 @@ def pi_text_delta(ev: dict[str, Any]) -> str | None:
         return None
     inner = ev.get(EV_ASSISTANT_INNER) or {}
     if isinstance(inner, dict) and inner.get("type") == EV_INNER_TEXT_DELTA:
-        text = inner.get(F_TEXT, "")
+        text = inner.get(F_DELTA, inner.get(F_TEXT, ""))
         return str(text) if text else None
     return None
 
@@ -46,16 +51,23 @@ def pi_tool_update(ev: dict[str, Any], session_ref: str) -> OpenCodeToolUpdate |
     kind = ev.get("type")
     if kind not in (EV_TOOL_START, EV_TOOL_END):
         return None
-    call_id = str(ev.get(F_CALL_ID, "") or "")
+    call_id = str(ev.get(F_TOOL_CALL_ID, ev.get(F_CALL_ID, "")) or "")
     tool_name = str(ev.get(F_TOOL_NAME, "") or "")
-    input_value = ev.get(F_INPUT)
+    input_value = ev.get(F_ARGS, ev.get(F_INPUT))
     tool_input = input_value if isinstance(input_value, dict) else None
     if kind == EV_TOOL_START:
         state: ToolState = ToolStateRunning(input=tool_input, title=str(ev.get(F_TITLE, "")))
-    elif ev.get(F_ERROR):
-        state = ToolStateError(error=str(ev.get(F_ERROR)), input=tool_input)
+    elif ev.get(F_IS_ERROR) or ev.get(F_ERROR):
+        error = ev.get(F_ERROR) or ev.get(F_RESULT, "")
+        state = ToolStateError(error=str(error), input=tool_input)
     else:
-        state = ToolStateCompleted(output=str(ev.get(F_OUTPUT, "")), input=tool_input)
+        result = ev.get(F_RESULT, ev.get(F_OUTPUT, ""))
+        if isinstance(result, dict):
+            content = result.get("content", [])
+            result = "".join(
+                str(item.get("text", "")) for item in content if isinstance(item, dict)
+            )
+        state = ToolStateCompleted(output=str(result), input=tool_input)
     return OpenCodeToolUpdate(
         session_id=session_ref,
         part_id=call_id,

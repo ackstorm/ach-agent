@@ -17,12 +17,24 @@ _PI_PROVIDER_BY_TYPE: dict[str, tuple[str, str]] = {
 def build_models_json(cfg: EngineConfig) -> tuple[dict[str, Any], str]:
     """Return the models document and provider name passed to Pi."""
     provider, api = _PI_PROVIDER_BY_TYPE.get(cfg.model_type, _PI_PROVIDER_BY_TYPE["openai"])
+    model = {
+        "id": cfg.model,
+        "name": cfg.model,
+        "reasoning": False,
+        "input": ["text"],
+        "contextWindow": 128000,
+        "maxTokens": 16384,
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+    }
     doc: dict[str, Any] = {
-        provider: {
-            "api": api,
-            "baseUrl": cfg.model_base_url,
-            "apiKey": "local-proxy",
-            "headers": {},
+        "providers": {
+            provider: {
+                "api": api,
+                "baseUrl": cfg.model_base_url,
+                "apiKey": "local-proxy",
+                "headers": {},
+                "models": [model],
+            }
         }
     }
     return doc, provider

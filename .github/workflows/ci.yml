@@ -49,3 +49,28 @@ jobs:
       - run: |
           docker run --rm -v "$PWD:/repo:ro" zricethezav/gitleaks:latest \
             detect --source=/repo --redact --no-banner --config=/repo/.gitleaks.toml
+
+  e2e-pi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned Pi + adapter (versions read from the Dockerfile)
+        run: |
+          set -euo pipefail
+          PI_VERSION=$(grep -oP 'ARG PI_VERSION=\K\S+' Dockerfile)
+          PI_MCP_ADAPTER_VERSION=$(grep -oP 'ARG PI_MCP_ADAPTER_VERSION=\K\S+' Dockerfile)
+          npm install -g --ignore-scripts "@earendil-works/pi-coding-agent@${PI_VERSION}"
+          npm install --ignore-scripts --prefix "$HOME/pi-adapter" \
+            "pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION}"
+          echo "PI_MCP_ADAPTER_PATH=$HOME/pi-adapter/node_modules/pi-mcp-adapter" >> "$GITHUB_ENV"
+          pi --version
+      - name: Install uv
+        run: pip install uv
+      - run: uv sync --frozen
+      - run: uv run pytest tests/e2e/test_pi_e2e.py -v

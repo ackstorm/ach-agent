@@ -123,8 +123,8 @@ class EngineDriver(Protocol):
         session_ref: str | None = None,
         on_text: Callable[[str], None] | None = None,
         on_tool: Callable[[OpenCodeToolUpdate], None] | None = None,
-        max_tool_calls: int = 0,
-        stats: dict[str, Any] | None = None,
+        max_tool_calls: int,
+        stats: dict[str, Any],
     ) -> TurnResult:
         """Run ONE prompt. If ``session_ref`` is given, continue exactly that engine session
         (repair/wrap-up) and bypass ``conv_key``/``reuse``/the map. Writes the final ref into

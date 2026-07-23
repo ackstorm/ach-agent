@@ -52,8 +52,8 @@ def test_stub_satisfies_engine_driver_protocol() -> None:
             session_ref: str | None = None,
             on_text: Callable[[str], None] | None = None,
             on_tool: Callable[[Any], None] | None = None,
-            max_tool_calls: int = 0,
-            stats: dict[str, Any] | None = None,
+            max_tool_calls: int,
+            stats: dict[str, Any],
         ) -> TurnResult:
             return TurnResult(text="", session_ref="ses_1")
 
@@ -62,3 +62,13 @@ def test_stub_satisfies_engine_driver_protocol() -> None:
         async def stop(self, server: Any) -> None: ...
 
     assert isinstance(_Stub(), EngineDriver)
+
+
+def test_run_turn_max_tool_calls_and_stats_are_required_kwonly() -> None:
+    # Canonical contract (index.md Shared interface contract): max_tool_calls and stats
+    # have NO default and stats is not Optional — callers must always supply both.
+    import inspect
+
+    sig = inspect.signature(EngineDriver.run_turn)
+    assert sig.parameters["max_tool_calls"].default is inspect.Parameter.empty
+    assert sig.parameters["stats"].default is inspect.Parameter.empty

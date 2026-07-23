@@ -23,6 +23,20 @@ RUN apt-get update -qq \
  && npm install -g --prefix /opt/codemem "codemem@${CODEMEM_VERSION}" \
  && /opt/codemem/bin/codemem --version
 
+# ── pi stage ───────────────────────────────────────────────────────────────
+# Pi is the second engine (`pi --mode rpc`, JSONL over stdio). It + the pi-mcp-adapter
+# are npm (Node/TS); reuse the same Node 26 the runtime already carries for codemem.
+# --ignore-scripts: skip package postinstall (supply-chain hygiene; the ek never reaches Pi).
+FROM node:26-bookworm-slim AS pi-bin
+ARG PI_VERSION=0.81.1
+ARG PI_MCP_ADAPTER_VERSION=2.11.0
+RUN npm install -g --ignore-scripts --prefix /opt/pi \
+      "@earendil-works/pi-coding-agent@${PI_VERSION}" \
+ && npm install --ignore-scripts --prefix /opt/pi-mcp-adapter \
+      "pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION}" \
+ && test -f /opt/pi/bin/pi \
+ && test -f /opt/pi-mcp-adapter/node_modules/pi-mcp-adapter/package.json
+
 # ── Builder stage ────────────────────────────────────────────────────────────
 FROM python:3.12-slim AS builder
 WORKDIR /app
@@ -74,6 +88,17 @@ ENV PATH="/opt/codemem/bin:${PATH}"
 # present-but-broken codemem would pass the probe and crash opencode's stdio child at runtime.
 # Failing the build here closes the "broken (not missing)" half of the fail-open invariant.
 RUN codemem --version
+
+# Pi (Node) runtime: the global pi prefix + the vendored adapter tree. `pi` on PATH; its
+# shebang resolves `node` (already COPYed for codemem, also on PATH).
+COPY --from=pi-bin /opt/pi /opt/pi
+COPY --from=pi-bin /opt/pi-mcp-adapter /opt/pi-mcp-adapter
+ENV PATH="/opt/pi/bin:${PATH}"
+# Runtime smoke: prove pi EXECUTES in the final image (python:3.12-slim libs, not the build
+# stage) and the adapter package is present — closes the "present-but-broken" fail-open half,
+# same as codemem's `--version` gate above.
+RUN pi --version \
+ && test -f /opt/pi-mcp-adapter/node_modules/pi-mcp-adapter/package.json
 
 # Bake a minimal default contract so a collaborator can run the image with only an EK
 # and an ACH endpoint (no mounted files):

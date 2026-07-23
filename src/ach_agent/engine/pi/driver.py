@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from ach_agent.engine.lifecycle import ManagedServer
 
 log = structlog.get_logger(__name__)
-_DEFAULT_PI_MCP_ADAPTER = "/opt/pi-mcp-adapter"
+_DEFAULT_PI_MCP_ADAPTER = "/opt/pi-mcp-adapter/node_modules/pi-mcp-adapter"
 
 
 class PiDriver:

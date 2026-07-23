@@ -72,7 +72,7 @@ async def test_pi_turn_and_ek_never_on_disk_or_in_subprocess(
     monkeypatch.setenv("ACH_API_KEY", "ek_api_secret_marker")
     adapter_candidates = [
         os.environ.get("PI_MCP_ADAPTER_PATH", ""),
-        "/opt/pi-mcp-adapter",
+        "/opt/pi-mcp-adapter/node_modules/pi-mcp-adapter",
         str(Path.home() / ".pi/agent/npm/node_modules/pi-mcp-adapter"),
     ]
     adapter_path = next((path for path in adapter_candidates if path and Path(path).is_dir()), None)

@@ -4,6 +4,7 @@
 Re-exported here so existing `from ach_agent.engine.client import …` sites keep resolving.
 NOTE: module-level function/submodule `patch()` targets must use the opencode.client path.
 """
+
 from ach_agent.engine.opencode.client import (  # noqa: F401
     OpenCodeClient,
     _reserved_ports,

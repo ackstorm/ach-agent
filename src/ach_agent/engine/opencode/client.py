@@ -24,7 +24,7 @@ from typing import Any
 import aiohttp
 import structlog
 
-from ach_agent.engine.events import OpenCodeEvent, parse_opencode_event
+from ach_agent.engine.opencode.events import OpenCodeEvent, parse_opencode_event
 
 log = structlog.get_logger(__name__)
 

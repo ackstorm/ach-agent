@@ -1,0 +1,698 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>Design: Pi second engine (SP2 — ops, contract & e2e) - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#design-pi-second-engine-sp2-ops-contract-e2e" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Design: Pi second engine (SP2 — ops, contract &amp; e2e)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-goal-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Goal &amp; context
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-scope-two-repos" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Scope — two repos
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-key-facts-established" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Key facts established
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-dockerfile-pi-bin-stage-item-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Dockerfile — pi-bin stage (item 1)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-contract_v3-cross-repo-contract-polish-item-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. CONTRACT_v3 — cross-repo contract polish (item 2)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-stats-mapping-polish-item-3" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Stats-mapping polish (item 3)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-e2e-matrix-item-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. e2e matrix (item 4)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-operator-handoff-ach-item-5-prompt" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Operator handoff — ../ach (item 5, prompt)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-security-ek_-hygiene-unchanged" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Security / ek_ hygiene (unchanged)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-scope-fence" class="md-nav__link">
+    <span class="md-ellipsis">
+      10. Scope fence
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-risks-open-items" class="md-nav__link">
+    <span class="md-ellipsis">
+      11. Risks / open items
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-open-decisions-need-your-call-before-the-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      12. Open decisions (need your call before the plan)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#13-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      13. References
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="design-pi-second-engine-sp2-ops-contract-e2e">Design: Pi second engine (SP2 — ops, contract &amp; e2e)</h1>
+<p><strong>Status:</strong> draft design, pre-plan (feeds <code>Skill(superpowers:writing-plans)</code>)
+<strong>Date:</strong> 2026-07-23
+<strong>Author:</strong> brainstorm w/ Juan Carlos
+<strong>Depends on:</strong> SP1 (<code>2026-07-23-pi-engine-driver-sp1-design.md</code>) — the EngineDriver seam +
+Pi RPC driver + harness <code>engine.type</code> config. SP1 delivers the <em>code</em>; SP2 makes it <em>deployable</em>.</p>
+<blockquote>
+<p><strong>Scope note:</strong> <code>../ach-runtime</code> (the <code>AgentRuntime</code> CRD) is <strong>out of SP2 scope</strong> — the
+operator coordination is only with <code>../ach</code> (the <code>AgentProfile</code> that renders the harness
+config). If the runtime CRD ever needs <code>engine.type: pi</code>, that is a separate <code>../ach-runtime</code>
+repo cycle, not this plan.</p>
+</blockquote>
+<hr />
+<h2 id="1-goal-context">1. Goal &amp; context</h2>
+<p>SP1 built a fully egress-capable Pi engine and the <code>engine.type: opencode|pi</code> harness config
+seam (<code>config/schema.py:61</code> <code>PiEngineBlock{binaryPath, mcpAdapterPath}</code>, <code>engine/pi/driver.py</code>).
+But nothing yet <strong>ships</strong> Pi: the runtime image has no <code>pi</code> binary, the <code>../ach</code> operator can't
+render <code>engine.type: pi</code>, and Pi has no e2e that actually boots the binary. SP2
+closes exactly that gap — <strong>ops + contract + e2e</strong> — so a control plane can render
+<code>engine.type: pi</code> and get a working agente.</p>
+<p><strong>Non-goal:</strong> SP2 adds <strong>no new engine behavior and no new IP</strong>. Router invariants, lane
+ordering, and the three finite bounds are untouched. No new engine <em>types</em> beyond <code>pi</code>
+(<code>claudeCode</code>/<code>codex</code>/… stay reserved in runtime-spec §7.4).</p>
+<h2 id="2-scope-two-repos">2. Scope — two repos</h2>
+<p>SP2 straddles two repos. The Python repo I execute directly; the <code>../ach</code> Go change is packaged
+as a <strong>detailed handoff prompt</strong> for the ACH operator agent.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Item</th>
+<th>Repo</th>
+<th>Execution</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Dockerfile <code>pi-bin</code> stage (pin Pi + pi-mcp-adapter)</td>
+<td><strong>ach-agent</strong></td>
+<td>here</td>
+</tr>
+<tr>
+<td>2</td>
+<td>CONTRACT_v3 <code>engine.pi</code> cross-repo contract polish</td>
+<td><strong>ach-agent</strong></td>
+<td>here</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Stats-mapping polish beyond parity (Pi turn → <code>TurnStat</code>)</td>
+<td><strong>ach-agent</strong></td>
+<td>here</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Broad e2e matrix (image-boot Pi turn + MCP + durability + a2a)</td>
+<td><strong>ach-agent</strong></td>
+<td>here</td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>AgentProfile.engine</code> renders <code>type</code>/<code>pi</code> into the harness config</td>
+<td><strong>../ach</strong></td>
+<td>handoff prompt</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Cross-repo release ordering (hard constraint):</strong> the ach-agent <strong>image must ship <code>pi</code>
+before</strong> <code>../ach</code> advertises <code>engine.type: pi</code> — otherwise a rendered config references a binary
+the image lacks. Item 1 (+ a released image tag) is the gate for item 5.</p>
+<h2 id="3-key-facts-established">3. Key facts established</h2>
+<ul>
+<li><strong>Harness config is already done (SP1).</strong> <code>PiEngineBlock{binary_path="pi",
+  mcp_adapter_path=""}</code> (<code>config/schema.py:61-72</code>); empty <code>mcpAdapterPath</code> → driver default
+  <code>/opt/pi-mcp-adapter</code> (<code>engine/pi/driver.py:39</code>). SP2 only has to make those paths <em>exist in
+  the image</em> and <em>reachable from the CRDs</em>.</li>
+<li><strong>Pi + pi-mcp-adapter are npm packages</strong> (<code>@earendil-works/pi-coding-agent</code>,
+  <code>pi-mcp-adapter</code>). The runtime image <strong>already carries Node 26</strong> (the <code>codemem-bin</code> stage,
+  <code>Dockerfile:17</code>, <code>COPY node</code> at <code>:69</code>) — Pi reuses that one <code>node</code> binary; no second runtime.</li>
+<li><strong>Dockerfile stages today:</strong> <code>opencode-bin</code> → <code>codemem-bin</code> → <code>builder</code> → runtime
+  (<code>Dockerfile:1-104</code>). The <code>codemem-bin</code> stage is the exact template for a Pi npm stage
+  (npm <code>--prefix</code> install + one COPY + a <code>--version</code> runtime smoke).</li>
+<li><strong>e2e already exists but skips.</strong> <code>tests/e2e/test_pi_e2e.py</code> skips unless <code>shutil.which("pi")</code>
+  and an adapter dir resolve (<code>:18-20,73-80</code>); it already asserts <code>ACH_API_KEY</code> absent from the
+  Pi subprocess env (<code>:120</code>). SP2 makes the binary+adapter present so the skip lifts in CI.</li>
+<li><strong>Operator seam = <code>../ach</code> only.</strong> <code>api/ach/v1alpha1/agentprofile_types.go:41-58</code> —
+  <code>EngineSpec</code> is the harness-local <code>engine.*</code> block (<strong>no <code>type</code> field yet</strong>) that renders into
+  CONTRACT_v3's <code>engine</code>. This is the one operator surface SP2 touches. (<code>../ach-runtime</code>'s
+  <code>AgentRuntime.engine.type</code> enum is deliberately out of scope, see the scope note above.)</li>
+<li><strong>Stats.</strong> <code>stats/models.py:TurnStat{input_tokens, output_tokens, cost, tokens_per_s}</code>;
+  SP1 mapped Pi assistant usage (commit <code>389126e</code>). "Beyond parity" = don't leave <code>cost</code>/
+  <code>tokens_per_s</code> at zero for a Pi turn if Pi reports usage.</li>
+</ul>
+<h2 id="4-dockerfile-pi-bin-stage-item-1">4. Dockerfile — <code>pi-bin</code> stage (item 1)</h2>
+<p>Mirror <code>codemem-bin</code>. New stage installs both npm packages into an isolated prefix, pins both
+versions as <code>ARG</code>s, and the runtime stage COPYs the prefix + puts <code>pi</code> on PATH and the adapter
+at <code>/opt/pi-mcp-adapter</code> (the driver default). Build-time smoke: <code>pi --version</code> <strong>and</strong> assert
+the adapter dir is non-empty — closes the "present-but-broken" half of fail-open, same as
+codemem's <code>codemem --version</code> (<code>Dockerfile:76</code>).</p>
+<div class="highlight"><pre><span></span><code><span class="c"># ── pi stage ───────────────────────────────────────────────────────────────</span>
+<span class="k">FROM</span><span class="w"> </span><span class="s">node:26-bookworm-slim</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="s">pi-bin</span>
+<span class="k">ARG</span><span class="w"> </span><span class="nv">PI_VERSION</span><span class="o">=</span>&lt;PIN&gt;
+<span class="k">ARG</span><span class="w"> </span><span class="nv">PI_MCP_ADAPTER_VERSION</span><span class="o">=</span>&lt;PIN&gt;
+<span class="k">RUN</span><span class="w"> </span>npm<span class="w"> </span>install<span class="w"> </span>-g<span class="w"> </span>--prefix<span class="w"> </span>/opt/pi<span class="w"> </span><span class="s2">&quot;@earendil-works/pi-coding-agent@</span><span class="si">${</span><span class="nv">PI_VERSION</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>npm<span class="w"> </span>install<span class="w"> </span>--prefix<span class="w"> </span>/opt/pi-mcp-adapter<span class="w"> </span><span class="s2">&quot;pi-mcp-adapter@</span><span class="si">${</span><span class="nv">PI_MCP_ADAPTER_VERSION</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="c"># runtime stage additions:</span>
+<span class="k">COPY</span><span class="w"> </span>--from<span class="o">=</span>pi-bin<span class="w"> </span>/opt/pi<span class="w"> </span>/opt/pi
+<span class="k">COPY</span><span class="w"> </span>--from<span class="o">=</span>pi-bin<span class="w"> </span>/opt/pi-mcp-adapter<span class="w"> </span>/opt/pi-mcp-adapter
+<span class="k">ENV</span><span class="w"> </span><span class="nv">PATH</span><span class="o">=</span><span class="s2">&quot;/opt/pi/bin:</span><span class="si">${</span><span class="nv">PATH</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="k">RUN</span><span class="w"> </span>pi<span class="w"> </span>--version<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">test</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>ls<span class="w"> </span>-A<span class="w"> </span>/opt/pi-mcp-adapter<span class="k">)</span><span class="s2">&quot;</span>
+</code></pre></div>
+<p>Exact prefix layout / whether the adapter is a <code>packages:[path]</code> dir vs an installed
+<code>node_modules</code> subtree is pinned at plan time against the real npm tarballs (SP1's
+<code>build_pi_settings(mcp_adapter_path)</code> consumes it, <code>engine/pi/config.py:17-22</code>).</p>
+<h2 id="5-contract_v3-cross-repo-contract-polish-item-2">5. CONTRACT_v3 — cross-repo contract polish (item 2)</h2>
+<p>CONTRACT_v3 already carries <code>engine.type: opencode|pi</code> + <code>engine.pi</code> (<code>:121-123</code>). SP2 makes it
+a <em>complete</em> cross-repo contract: document <code>engine.pi.{binaryPath, mcpAdapterPath}</code> as the
+rendered seam, state that <strong><code>../ach</code> renders it</strong> (the harness validates it), and record the
+image-ships-before-operator-advertises ordering rule (§2). Pure docs; no schema change (SP1
+froze the schema).</p>
+<h2 id="6-stats-mapping-polish-item-3">6. Stats-mapping polish (item 3)</h2>
+<p>Add a unit test that a Pi turn produces a fully-populated <code>TurnStat</code> (tokens <strong>and</strong> <code>cost</code>
+<strong>and</strong> <code>tokens_per_s</code>, correct <code>model</code> label). If SP1 left <code>cost=0</code> for Pi, close it to match
+opencode's source (see open decision D-3). One test, one mapping fix if needed — not a rewrite.</p>
+<h2 id="7-e2e-matrix-item-4">7. e2e matrix (item 4)</h2>
+<p>The "broad e2e" is the <strong>engine-parametrized</strong> set, plus one image-boot proof:</p>
+<ul>
+<li><strong>Image-boot Pi turn</strong> — build the runtime image, <code>docker run</code> it with a stub ek + ACH
+  endpoint, drive one Pi turn, assert a reply. This is the authority that packaging works
+  (SP1 §10 precedent: the real binary is the source of truth, unit tests use fixtures).</li>
+<li>Lift the skips on <code>test_pi_e2e.py</code> in CI (binary now present).</li>
+<li>Pi counterparts of the existing opencode e2e where they carry engine-specific risk: MCP
+  structured egress (<code>test_opencode_mcp_structured_e2e.py</code>), durability
+  (<code>test_durability_e2e.py</code>), a2a (<code>test_a2a_e2e.py</code>). Parametrize by engine rather than
+  copy-paste where the harness path is identical.</li>
+<li><strong>Hygiene assertion stays concrete:</strong> ek (<code>ACH_*</code>/<code>ek_</code>) absent from the Pi subprocess env,
+  <code>models.json</code>, <code>mcp.json</code>, and the adapter (already asserted in <code>test_pi_e2e.py:120</code>).</li>
+</ul>
+<h2 id="8-operator-handoff-ach-item-5-prompt">8. Operator handoff — <code>../ach</code> (item 5, prompt)</h2>
+<p><code>api/ach/v1alpha1/agentprofile_types.go</code> <code>EngineSpec</code> (<code>:41</code>):
+- Add <code>Type string</code> (<code>+optional</code>; omitted → harness default) and
+  <code>Pi *PiEngineSpec{BinaryPath, McpAdapterPath string}</code>.
+- Render both into the harness <code>engine</code> block (the render path that produces CONTRACT_v3's
+  <code>engine.type</code>/<code>engine.pi</code>).
+- Regen CRD. Add a render test asserting <code>engine.type: pi</code> + <code>engine.pi.*</code> reach the config.</p>
+<h2 id="9-security-ek_-hygiene-unchanged">9. Security / <code>ek_</code> hygiene (unchanged)</h2>
+<p>Every SP1 invariant carries over verbatim: the ek never appears in Pi's env, <code>models.json</code>,
+<code>settings.json</code>, <code>mcp.json</code>, or the pi-mcp-adapter. SP2 adds only build-time packaging and CRD
+fields — none of which carry secrets (CRDs carry env <strong>names</strong>, never values).</p>
+<h2 id="10-scope-fence">10. Scope fence</h2>
+<p><strong>In SP2:</strong> Dockerfile <code>pi-bin</code> stage (pinned); CONTRACT cross-repo polish; stats-mapping polish
++ its test; image-boot + parametrized e2e; <code>../ach</code> <code>engine.type</code>/<code>pi</code> render (delivered as a
+handoff prompt).</p>
+<p><strong>Out:</strong> <code>../ach-runtime</code> <code>AgentRuntime.engine.type</code> (separate repo cycle); new engine types
+beyond <code>pi</code>; Helm chart pi presets beyond the CRD field; Pi performance tuning; any router /
+lane / bounds change.</p>
+<h2 id="11-risks-open-items">11. Risks / open items</h2>
+<ul>
+<li><strong>pi-mcp-adapter is single-maintainer npm</strong> (carried from SP1 §12): pin + one-time review; ek
+  never reaches it. Vendoring mechanism = open decision D-1.</li>
+<li><strong>Pi × adapter version compat:</strong> pin both <code>ARG</code>s; build-time <code>pi --version</code> + adapter-dir
+  non-empty smoke catches a bad pin. A field-name drift is a one-line fix (SP1 isolated Pi wire
+  literals in <code>pi/protocol.py</code>).</li>
+<li><strong>Image size:</strong> the <code>pi-bin</code> npm tree adds to the (already Node-carrying) image; both engines
+  share the single <code>node</code> binary, so the delta is the JS packages only. Accepted.</li>
+<li><strong>Cross-repo release ordering</strong> (§2): image-with-pi must be released before <code>../ach</code> advertises
+  <code>engine.type: pi</code>. The handoff prompt states this as a precondition.</li>
+</ul>
+<h2 id="12-open-decisions-need-your-call-before-the-plan">12. Open decisions (need your call before the plan)</h2>
+<ul>
+<li><strong>D-1 — adapter vendoring:</strong> npm-install-pinned in the Dockerfile (recommend — matches the
+  <code>codemem-bin</code> pattern exactly, no repo bloat) <strong>vs</strong> git-vendor the adapter into the repo.</li>
+<li><strong>D-2 — <code>../ach</code> <code>EngineSpec.Type</code>:</strong> free <code>string</code> (harness is the enforcer, mirrors the
+  block's "unset → harness default" style) <strong>vs</strong> enum-lock to <code>opencode;pi</code> (duplicates the
+  runtime CRD's validation earlier). Recommend <strong>free string</strong>.</li>
+<li><strong>D-3 — Pi <code>cost</code> source:</strong> compute from <code>tokens × price-table</code> <strong>vs</strong> Pi-reported usage.
+  Recommend <strong>whatever opencode already does</strong> (strict parity — check its mapping at plan time).</li>
+<li><strong>D-4 — e2e in CI:</strong> run the image-boot Pi e2e in CI (CI image carries Node-pi) as the
+  authority <strong>vs</strong> keep Pi e2e skip-guarded / local-only. Recommend <strong>image-boot in CI</strong> (SP1
+  §10 "real binary is the authority" precedent).</li>
+</ul>
+<h2 id="13-references">13. References</h2>
+<ul>
+<li>SP1: <code>docs/superpowers/specs/2026-07-23-pi-engine-driver-sp1-design.md</code>, plan folder
+  <code>docs/superpowers/plans/2026-07-23-pi-engine-driver-sp1/</code></li>
+<li>ach-agent: <code>Dockerfile</code> (codemem-bin template <code>:17-24,69-76</code>), <code>config/schema.py:61</code>,
+  <code>engine/pi/{driver,config}.py</code>, <code>tests/e2e/test_pi_e2e.py</code>, <code>stats/models.py</code>,
+  <code>docs/plan/CONTRACT_v3.md:121-123</code></li>
+<li><code>../ach</code>: <code>api/ach/v1alpha1/agentprofile_types.go:41-58</code> (+ render path under
+  <code>internal/platformapi/render</code>)</li>
+<li>Pi docs / pi-mcp-adapter: see SP1 §13</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../../..", "features": [], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

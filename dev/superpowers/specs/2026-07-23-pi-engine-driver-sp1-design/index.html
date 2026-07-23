@@ -1,0 +1,810 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>Design: Pi as a second engine (SP1 — egress-capable Pi engine) - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#design-pi-as-a-second-engine-sp1-egress-capable-pi-engine" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Design: Pi as a second engine (SP1 — egress-capable Pi engine)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-goal-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Goal &amp; context
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-decomposition" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Decomposition
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-key-facts-established-pis-integration-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Key facts established (Pi's integration surface)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-approach-a-symmetric-enginedriver" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Approach A — symmetric EngineDriver
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Approach A — symmetric EngineDriver">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-package-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.1 Package layout
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-the-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.2 The protocol
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-terminal-contract-fine-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.3 Terminal contract — Fine boundary
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-pi-driver-internals" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Pi driver internals
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Pi driver internals">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-launch-pidriverlaunch" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.1 Launch (PiDriver.launch)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-rpc-client-pirpcpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.2 RPC client (pi/rpc.py)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#53-the-turn-pidriverrun_turn" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.3 The turn (PiDriver.run_turn)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#54-session-model-durable" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.4 Session model — Durable
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#55-bounds-abort-invariants-preserved" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.5 Bounds &amp; abort (invariants preserved)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-mcp-egress-the-a2amcp-is-a-must-requirement" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. MCP egress (the "a2a/MCP is a must" requirement)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-config-seam" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Config seam
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-security-ek_-hygiene-unchanged-invariants" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Security / ek_ hygiene (unchanged invariants)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-observability-stats" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Observability / stats
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-test-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      10. Test strategy
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-scope-fence" class="md-nav__link">
+    <span class="md-ellipsis">
+      11. Scope fence
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-risks-open-items" class="md-nav__link">
+    <span class="md-ellipsis">
+      12. Risks / open items
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#13-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      13. References
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="design-pi-as-a-second-engine-sp1-egress-capable-pi-engine">Design: Pi as a second engine (SP1 — egress-capable Pi engine)</h1>
+<p><strong>Status:</strong> approved design, pre-plan
+<strong>Date:</strong> 2026-07-23
+<strong>Author:</strong> brainstorm w/ Juan Carlos
+<strong>Feeds:</strong> <code>Skill(superpowers:writing-plans)</code> → implementation plan</p>
+<hr />
+<h2 id="1-goal-context">1. Goal &amp; context</h2>
+<p>Add <strong>Pi</strong> (<code>pi.dev</code> / <code>github.com/earendil-works/pi</code>, npm <code>@earendil-works/pi-coding-agent</code>,
+Node/TS) as a second engine alongside the currently-hardcoded <strong>opencode</strong>. Pi fills the
+<code>pymono</code> slot reserved in <code>docs/spec/ach-agent-runtime-spec-v1_4_2.md</code> §7.4. (The user's "py
+agent" is Pi; the "pymono" label is the spec's engine-type name.)</p>
+<p><strong>The router is not touched.</strong> <code>router/lane.py</code> already calls the engine as an opaque injected
+callable <code>engine_runner(event, on_kill)</code> and never imports <code>engine/</code> (D-08 / RTR-06). All
+opencode specifics live in one closure, <code>main.py:685 engine_runner</code>, over four seams:
+<code>EngineConfig</code> (opencode fields), <code>pool.acquire → ManagedServer</code>, <code>run_invocation</code>, and
+<code>pool.oc_sessions</code>. SP1 abstracts exactly those.</p>
+<p><strong>Non-goal:</strong> SP1 does not change router invariants, lane ordering, or the three finite bounds.
+The conformance suite must stay green throughout.</p>
+<h2 id="2-decomposition">2. Decomposition</h2>
+<p>Two sub-projects; each gets its own spec → plan → implementation cycle.</p>
+<ul>
+<li><strong>SP1 (this doc) — a fully egress-capable Pi engine.</strong> EngineDriver seam + Pi RPC driver +
+  skills + model + MCP egress (which subsumes memory / repo-checkout / external-MCP /
+  passthrough / codemem / a2a-egress). Exit criterion: <strong>egress parity with opencode.</strong></li>
+<li><strong>SP2 — ops + contract + e2e.</strong> Dockerfile (pin Pi + pi-mcp-adapter), cross-repo CONTRACT +
+  <code>ach-runtime</code> operator <code>engine.type</code>, stats-mapping polish, broad e2e.</li>
+</ul>
+<h2 id="3-key-facts-established-pis-integration-surface">3. Key facts established (Pi's integration surface)</h2>
+<ul>
+<li><strong>Transport:</strong> Pi has <strong>no</strong> HTTP+SSE. Drive via <code>pi --mode rpc</code> = JSONL over stdin/stdout
+  (strict LF framing; <strong>not</strong> <code>readline</code> — U+2028/9 hazard). Docs ship a Python client skeleton.</li>
+<li><strong>Skills:</strong> Pi implements the <strong>same Agent Skills standard</strong> (SKILL.md + frontmatter) as
+  opencode. Loads from <code>~/.agents/skills</code>, settings <code>skills:[]</code>, or <code>--skill</code>. The harness's
+  hydrated skill tarballs drop in nearly unchanged.</li>
+<li><strong>Model + <code>ek_</code>:</strong> declared purely in a config file — <code>$PI_CODING_AGENT_DIR/models.json</code>
+  (<code>baseUrl</code>, <code>api</code>, dummy <code>apiKey</code>, <code>headers</code> with <code>$ENV</code> interpolation). <strong>Zero TypeScript</strong>
+  for the model path. Point <code>baseUrl</code> at the localhost model proxy; the proxy injects <code>ek_</code>.</li>
+<li><strong>MCP:</strong> Pi has <strong>no native MCP</strong>. Use vendored <strong>pi-mcp-adapter</strong>
+  (<code>github.com/nicobailon/pi-mcp-adapter</code>, TS, MIT). Its <code>mcp.json</code> shape
+  <code>{mcpServers:{name:{command/args/env | url/headers}}}</code> maps ~1:1 to ach-agent's <code>mcpServers</code>
+  block and the harness's runtime <code>mcp_servers</code> list.</li>
+<li><strong>Isolation primitive:</strong> <code>$PI_CODING_AGENT_DIR</code> relocates Pi's agent dir (settings, models.json,
+  mcp.json, skills, caches) — the <code>OPENCODE_CONFIG</code> analog for the keyed engine pool.</li>
+<li><strong>a2a / memory / repo-checkout are localhost MCP servers</strong> — they ride the one <code>mcp_servers</code>
+  wiring, so MCP egress carries them.</li>
+</ul>
+<h2 id="4-approach-a-symmetric-enginedriver">4. Approach A — symmetric <code>EngineDriver</code></h2>
+<p>Introduce an <code>EngineDriver</code> protocol; move today's opencode code behind an <code>engine/opencode/</code>
+driver (behavior-preserving, guarded by the existing tests); add <code>engine/pi/</code>. <code>EnginePool</code>
+becomes generic over the driver (its keyed-lock / TTL / <code>ManagedServer</code> logic — the part that
+matters — is unchanged and shared).</p>
+<h3 id="41-package-layout">4.1 Package layout</h3>
+<div class="highlight"><pre><span></span><code>engine/
+  base/
+    driver.py     # EngineDriver protocol, TurnResult, EngineConfig (shared fields + engine_type)
+    pool.py       # EnginePool — generic over a driver (keyed lock/TTL logic unchanged)
+    server.py     # ManagedServer (generalized: process + opaque transport handle + session map)
+    terminal.py   # NEW: harness-owned terminal-contract extract + Pydantic + &lt;=1 repair
+    context.py    # skills/prompts/artifacts hydration — extract-dir comes from the driver
+    hydrate.py, sanitized_env.py, validator.py, stats mapping   # shared
+  opencode/
+    driver.py     # OpencodeDriver(EngineDriver): launch = write_opencode_config + build_opencode_env + serve
+    client.py     # OpenCodeClient (HTTP/SSE) — moved
+    events.py     # SSE -&gt; tool/text/terminal events — moved
+  pi/
+    driver.py     # PiDriver(EngineDriver): launch = write models.json/settings.json/mcp.json + `pi --mode rpc`
+    rpc.py        # NEW: JSONL stdin/stdout client (send command, iter events)
+    events.py     # NEW: Pi event -&gt; the same tool/text/terminal event shape
+    mcp_json.py   # NEW: build mcp.json from the harness mcp_servers inputs (mirrors mcp_passthrough)
+</code></pre></div>
+<p><code>a2a_egress.py</code>, <code>mcp_proxy.py</code>, <code>mcp_passthrough.py</code>, <code>repo_facade.py</code>, <code>repo_archive.py</code>,
+<code>metrics.py</code> stay put.</p>
+<h3 id="42-the-protocol">4.2 The protocol</h3>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">EngineDriver</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">skills_dir</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">home</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">session_key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span> <span class="o">...</span>   <span class="c1"># where context.py extracts skills</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">launch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">cfg</span><span class="p">:</span> <span class="n">EngineConfig</span><span class="p">,</span> <span class="n">session_key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ManagedServer</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">health</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">server</span><span class="p">:</span> <span class="n">ManagedServer</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">run_turn</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">server</span><span class="p">:</span> <span class="n">ManagedServer</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">conv_key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">reuse</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+                       <span class="n">on_text</span><span class="p">,</span> <span class="n">on_tool</span><span class="p">,</span> <span class="n">max_tool_calls</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">stats</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">stop</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">server</span><span class="p">:</span> <span class="n">ManagedServer</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<ul>
+<li><code>EnginePool.__init__(driver, sessions_map)</code>; <code>acquire</code>/<code>release</code>/TTL/<code>_stop</code> call
+  <code>driver.launch</code>/<code>driver.health</code>/<code>driver.stop</code>. <code>pool.oc_sessions</code> → <code>pool.sessions</code> (rename).</li>
+<li><code>_make_engine_runner</code> selects <code>OpencodeDriver()</code> vs <code>PiDriver()</code> by <code>cfg.engine.type</code>.
+  <strong>Everything else in that closure is unchanged</strong> (memory wiring, prompt build, terminal-action
+  selection, <code>session</code>/<code>reuse</code> decision, stats).</li>
+</ul>
+<h3 id="43-terminal-contract-fine-boundary">4.3 Terminal contract — <strong>Fine boundary</strong></h3>
+<p><code>run_turn</code> returns the raw final assistant text for <strong>one</strong> prompt. The harness-owned
+<code>base/terminal.py</code> does text-extract + Pydantic + ≤1 repair by calling <code>run_turn</code> again with the
+repair prompt. The structured-output contract lives <strong>once</strong>, engine-agnostic (matches the
+"structured output is harness-validated" constraint). The opencode move carves this loop out of
+<code>run_invocation</code>; the existing opencode tests catch regressions. <code>free_form</code> channels (<code>--tui</code>)
+skip extraction, same as today.</p>
+<h2 id="5-pi-driver-internals">5. Pi driver internals</h2>
+<h3 id="51-launch-pidriverlaunch">5.1 Launch (<code>PiDriver.launch</code>)</h3>
+<p>No serve/port — the transport is the subprocess's stdin/stdout. Per <code>session_key</code>:</p>
+<div class="highlight"><pre><span></span><code>env:    PI_CODING_AGENT_DIR=&lt;home&gt;/pi/&lt;key-suffix&gt;          # isolation primitive
+        + build_pi_env()   # clean-slate allowlist, same ek-hygiene as build_opencode_env
+write:  $PI_CODING_AGENT_DIR/models.json    # localhost ek-proxy provider (dummy apiKey)
+        $PI_CODING_AGENT_DIR/settings.json  # skills:[&lt;dir&gt;], defaultProjectTrust:&quot;trust&quot;,
+                                            # non-interactive (sampling:false, elicitation:false),
+                                            # packages/extensions -&gt; vendored pi-mcp-adapter
+        $PI_CODING_AGENT_DIR/mcp.json       # section 6
+spawn:  pi --mode rpc --provider &lt;p&gt; --model &lt;id&gt; --session-dir $PI_CODING_AGENT_DIR/sessions
+</code></pre></div>
+<p><code>models.json</code> provider mapping reuses the <code>model_type</code> switch:
+<code>openai→openai-completions /v1</code>, <code>gemini→google-generative-ai /gemini</code>,
+<code>anthropic→anthropic-messages /anthropic</code>; each <code>baseUrl</code> = the localhost model proxy.
+<code>defaultProjectTrust:"trust"</code> so Pi never blocks on the project-trust prompt headless.</p>
+<p>Skills: <code>context.py</code> extracts hydrated tarballs to <code>driver.skills_dir(...)</code> and <code>settings.json</code>
+references it — same reconcile-wipe + <code>capability.filter.exclude.skills</code> behavior as today.</p>
+<h3 id="52-rpc-client-pirpcpy">5.2 RPC client (<code>pi/rpc.py</code>)</h3>
+<p>Small JSONL client: strict LF framing (strip trailing <code>\r</code>, never <code>readline</code>), <code>send(cmd_dict)</code>
+to stdin, <code>async for event in events()</code> from stdout, request/response correlation via <code>id</code>.</p>
+<h3 id="53-the-turn-pidriverrun_turn">5.3 The turn (<code>PiDriver.run_turn</code>)</h3>
+<ol>
+<li><strong>Session select</strong> (mirrors opencode's <code>_sessions</code> map exactly): <code>reuse &amp;&amp; conv_key known</code> →
+   <code>switch_session</code> to its file iff the process was recreated (else already loaded);
+   <code>reuse &amp;&amp; new key</code> → record the fresh session file; <code>not reuse</code> → <code>new_session</code> first.</li>
+<li>Send <code>{"type":"prompt","message":full_prompt}</code>.</li>
+<li>Consume events: <code>text_delta</code> ⇒ <code>on_text</code>; <code>tool_execution_start/end</code> ⇒ <code>on_tool</code>; accumulate
+   assistant text; stop at <code>agent_settled</code>.</li>
+<li>Return raw final assistant text (Fine boundary; <code>terminal.py</code> validates/repairs).</li>
+</ol>
+<h3 id="54-session-model-durable">5.4 Session model — <strong>Durable</strong></h3>
+<p>Run Pi <strong>with</strong> <code>--session-dir</code>; keep <code>_sessions[conv_key] → session_file</code> on <code>ManagedServer</code>;
+<code>switch_session</code> on relaunch. Matches opencode's disk-backed <code>channel.session: auto</code> continuity
+across pool restarts (TTL expiry / crash). <code>auto|none|custom</code> behave identically on both engines.</p>
+<h3 id="55-bounds-abort-invariants-preserved">5.5 Bounds &amp; abort (invariants preserved)</h3>
+<ul>
+<li><strong><code>maxInvocationSeconds</code></strong> stays lane-owned: lane cancels the <code>run_turn</code> coroutine → driver
+  sends <code>{"type":"abort"}</code> → pool force-releases (ttl=0 → <code>PiDriver.stop</code> = SIGTERM→SIGKILL the
+  process group). Same shape as opencode's watchdog.</li>
+<li><strong><code>max_tool_calls</code></strong>: Pi has no native bound → <code>rpc.py</code> counts <code>tool_execution_start</code> and sends
+  <code>{"type":"abort"}</code> on exceed, then returns the terminal object. Enforced at the transport.</li>
+<li><strong><code>on_kill</code></strong> → send <code>abort</code>.</li>
+</ul>
+<h2 id="6-mcp-egress-the-a2amcp-is-a-must-requirement">6. MCP egress (the "a2a/MCP is a must" requirement)</h2>
+<p>a2a-egress, memory, repo-checkout, external proxied MCP, passthrough local/remote, and codemem
+are <strong>all localhost MCP servers</strong>. MCP egress via pi-mcp-adapter carries them in one <code>mcp.json</code>.</p>
+<p><code>PiDriver.launch</code> writes <code>mcp.json</code> (via <code>pi/mcp_json.py</code>) from the same inputs opencode gets:</p>
+<ul>
+<li><code>cfg.mcp_servers</code> (memory / repo / a2a facades) → <strong>remote</strong> entries whose <code>url</code> points at the
+  <strong>localhost proxy/facade</strong> (the proxy/facade injects <code>ek_</code>; <strong>no <code>${ACH_TOKEN}</code> in mcp.json</strong> —
+  identical hygiene to opencode.json today).</li>
+<li><code>cfg.mcp_local_urls</code> (proxied external MCP via <code>McpProxy</code>) → <strong>remote</strong> entries at the localhost
+  proxy.</li>
+<li><code>cfg.extra_mcp_servers</code> (passthrough local/remote) → direct entries (reuse <code>mcp_passthrough</code>
+  normalization).</li>
+<li>codemem → <strong>local</strong> stdio entry (<code>command: codemem mcp --db-path …</code>), mirroring opencode.</li>
+</ul>
+<p><strong>Adapter provisioning:</strong> pi-mcp-adapter is <strong>vendored + pinned</strong> into the image and referenced via
+<code>settings.json</code> (<code>packages</code>/<code>extensions</code>) — <strong>never</strong> a runtime <code>pi install</code>. Supply-chain surface
+is reviewed once at vendor time; <code>ek_</code> never reaches it (proxy-side injection).</p>
+<p><strong>Tool semantics — <code>directTools: true</code> (decided).</strong> Register named MCP tools in the system prompt
+(parity with opencode's native tool names), with <code>excludeTools</code> from <code>capability.filter.exclude</code>.
+Operator may drop specific large servers back to proxy mode. Headless settings: <code>sampling:false</code>
+(or <code>samplingAutoApprove</code>), <code>elicitation:false</code>, no OAuth (localhost only).</p>
+<p><strong>a2a facade hosting (shared prerequisite).</strong> <code>build_a2a_mcp_server</code> is built-but-not-hosted today
+(<code>main.py:1341</code>, VERIFICATION DEBT / Plan 3/4) — incomplete for opencode too. SP1 hosts the a2a
+facade on a localhost port and adds it to the mcp block; <strong>both engines</strong> gain working a2a egress.</p>
+<h2 id="7-config-seam">7. Config seam</h2>
+<p><code>EngineBlock</code> gains <code>type: Literal["opencode","pi"] = "opencode"</code> (+ optional Pi sub-fields:
+<code>binaryPath</code>, non-interactive overrides). <code>_make_engine_runner</code> picks the driver by
+<code>cfg.engine.type</code>. CONTRACT + frozen schema (<code>docs/schemas/agent-config-v1.schema.json</code>)
+regenerated. The <code>ach-runtime</code> operator side (<code>spec.engine.type</code>) lands in <strong>SP2</strong> (separate repo).</p>
+<h2 id="8-security-ek_-hygiene-unchanged-invariants">8. Security / <code>ek_</code> hygiene (unchanged invariants)</h2>
+<ul>
+<li><code>ek_</code> (ACH_TOKEN/ACH_API_KEY) NEVER logged, NEVER written to <code>models.json</code> / <code>settings.json</code> /
+  <code>mcp.json</code>, NEVER forwarded into the Pi subprocess env. <code>build_pi_env()</code> is clean-slate allowlist
+  (mirror of <code>build_opencode_env</code>), and <code>forward_env</code> never lists the ek.</li>
+<li>Model + MCP both reach ACH only through the localhost proxy/facades, which inject the ek
+  harness-side. Pi and pi-mcp-adapter see only loopback URLs + dummy credentials.</li>
+<li>Pi has no permission gate and runs with the launching user's perms — fine, because the harness
+  already sandboxes the engine (clean-slate env + <code>dumpable=0</code>), same as opencode.</li>
+</ul>
+<h2 id="9-observability-stats">9. Observability / stats</h2>
+<p>Pi emits richer JSONL events (<code>tool_execution_*</code>, per-message usage/cost). <code>pi/events.py</code> maps
+them to the <strong>same</strong> stat contract (<code>ach:sessions</code>, <code>ach:tools</code>, <code>v="1"</code>) the SSE path feeds today
+— different event shape, identical sink. Observability never breaks a turn (swallow-and-continue).</p>
+<h2 id="10-test-strategy">10. Test strategy</h2>
+<ul>
+<li><strong>Opencode move is behavior-preserving</strong> — existing <code>tests/engine/</code> + <code>make conformance</code> are the
+  safety net; must stay green.</li>
+<li><strong>Pi driver units</strong> against a fake <code>pi</code> subprocess replaying JSONL fixtures: happy turn, tool
+  loop, <code>max_tool_calls</code> abort, session switch/reuse, timeout/abort, terminal extract+repair.</li>
+<li><strong><code>mcp.json</code> generation</strong> tests mirroring <code>test_mcp_passthrough.py</code> (facade/proxy → remote at
+  loopback; codemem → local; passthrough; excludeTools).</li>
+<li><strong><code>models.json</code> generation</strong> tests (provider mapping per <code>model_type</code>; dummy apiKey; no ek).</li>
+<li><strong>One e2e</strong> with a real <code>pi</code> + a stub MCP server behind the localhost proxy; assert <code>ek_</code> never
+  appears in <code>models.json</code> / <code>settings.json</code> / <code>mcp.json</code> / the Pi subprocess env.</li>
+</ul>
+<h2 id="11-scope-fence">11. Scope fence</h2>
+<p><strong>In SP1:</strong> EngineDriver seam (A) + opencode move; Pi driver (launch, RPC, run_turn, durable
+sessions, bounds/abort); skills; model via models.json; MCP egress via vendored pi-mcp-adapter
+(memory / repo / external / passthrough / codemem / a2a); a2a facade hosting; <code>engine.type</code> schema
++ CONTRACT; tests above.</p>
+<p><strong>Deferred to SP2:</strong> Dockerfile (pin Pi + adapter), <code>ach-runtime</code> operator <code>engine.type</code>,
+stats-mapping polish beyond parity, broad e2e matrix.</p>
+<h2 id="12-risks-open-items">12. Risks / open items</h2>
+<ul>
+<li>pi-mcp-adapter is single-maintainer npm — mitigate by vendoring + pinning + one-time review; ek
+  never reaches it.</li>
+<li><code>directTools</code> first-run falls back to proxy until the metadata cache populates — acceptable;
+  document; <code>/mcp reconnect</code> forces it (n/a headless — cache warms in background).</li>
+<li>a2a facade hosting is net-new shared work (was VERIFICATION DEBT) — verify it against opencode
+  first so Pi inherits a proven facade.</li>
+<li>Carving the terminal-repair loop out of <code>run_invocation</code> touches IP-adjacent code — rely on the
+  opencode test suite as the regression gate.</li>
+</ul>
+<h2 id="13-references">13. References</h2>
+<ul>
+<li>Pi docs: <code>packages/coding-agent/docs/{rpc,json,skills,models,custom-provider,extensions,settings}.md</code></li>
+<li>pi-mcp-adapter: <code>github.com/nicobailon/pi-mcp-adapter</code> (README: mcp.json, directTools, remote/headers)</li>
+<li>ach-agent: <code>main.py:685</code> (engine_runner), <code>engine/lifecycle.py</code> (EngineConfig, run_invocation,
+  write_opencode_config, build_opencode_env), <code>engine/pool.py</code> (EnginePool), <code>engine/context.py</code>
+  (skills), <code>engine/a2a_egress.py</code>, <code>docs/superpowers/plans/2026-07-07-mcpservers-block.md</code></li>
+<li>Runtime spec engine types: <code>docs/spec/ach-agent-runtime-spec-v1_4_2.md</code> §7.4</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../../..", "features": [], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

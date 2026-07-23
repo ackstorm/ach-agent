@@ -336,10 +336,30 @@
           "title": "Maxtoolcalls",
           "type": "integer"
         },
+        "pi": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PiEngineBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "startupTimeoutSeconds": {
           "default": 30,
           "title": "Startuptimeoutseconds",
           "type": "integer"
+        },
+        "type": {
+          "default": "opencode",
+          "enum": [
+            "opencode",
+            "pi"
+          ],
+          "title": "Type",
+          "type": "string"
         },
         "workDir": {
           "default": "",
@@ -585,6 +605,24 @@
         }
       },
       "title": "PersistenceBlock",
+      "type": "object"
+    },
+    "PiEngineBlock": {
+      "additionalProperties": false,
+      "description": "Pi-engine sub-block (consulted only when engine.type == 'pi').\n\n`binaryPath` pins the `pi` executable; `mcpAdapterPath` is the vendored pi-mcp-adapter\npackage path referenced from Pi's settings.json `packages` (never a runtime `pi install`).\nEmpty `mcpAdapterPath` → the driver falls back to the image's vendored default (SP2 pins it).",
+      "properties": {
+        "binaryPath": {
+          "default": "pi",
+          "title": "Binarypath",
+          "type": "string"
+        },
+        "mcpAdapterPath": {
+          "default": "",
+          "title": "Mcpadapterpath",
+          "type": "string"
+        }
+      },
+      "title": "PiEngineBlock",
       "type": "object"
     },
     "PromptBlock": {

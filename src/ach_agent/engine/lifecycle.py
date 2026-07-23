@@ -519,6 +519,7 @@ async def compact_oc_session(server: ManagedServer, oc_session_id: str) -> None:
 
 def _terminal_object_hint(action: str) -> str:
     from ach_agent.engine.base.terminal import _terminal_object_hint as _hint
+
     return _hint(action)
 
 
@@ -543,6 +544,7 @@ async def run_invocation(
     from ach_agent.engine.opencode.driver import OpencodeDriver
 
     sessions = oc_sessions if oc_sessions is not None else server._sessions
+    stats = stats if stats is not None else {}
     return await run_contract_turn(
         OpencodeDriver(),
         server,

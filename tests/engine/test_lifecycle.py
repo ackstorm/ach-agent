@@ -185,6 +185,7 @@ async def test_run_invocation_returns_terminal_object() -> None:
 
     fake_server = ManagedServer(port=19882)
     fake_client = MagicMock(spec=OpenCodeClient)
+    fake_client.create_session = AsyncMock(return_value={"id": "ses_test"})
     fake_server._client = fake_client
     fake_process = MagicMock()
     fake_process.returncode = None

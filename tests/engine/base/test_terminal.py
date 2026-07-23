@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from ach_agent.engine.base.driver import TurnResult
@@ -24,8 +25,19 @@ class _ScriptedDriver:
 async def test_happy_path_extracts_terminal_no_repair() -> None:
     drv = _ScriptedDriver([TurnResult(text='ok {"action":"none","text":"done"}', session_ref="ses_1")])
     obj = await run_contract_turn(
-        drv, object(), conv_key="k", prompt="p", reuse=True, sessions={},
-        free_form=False, terminal_action="none", terminal_retries=1, max_tool_calls=0, stats={},
+        drv,
+        object(),
+        conv_key="k",
+        prompt="p",
+        reuse=True,
+        sessions={},
+        free_form=False,
+        terminal_action="none",
+        terminal_retries=1,
+        on_text=None,
+        on_tool=None,
+        max_tool_calls=0,
+        stats={},
     )
     assert obj == {"action": "none", "text": "done"}
     assert len(drv.calls) == 1  # no repair
@@ -34,8 +46,19 @@ async def test_happy_path_extracts_terminal_no_repair() -> None:
 async def test_free_form_returns_raw_text_no_extraction() -> None:
     drv = _ScriptedDriver([TurnResult(text="plain reply", session_ref="ses_1")])
     obj = await run_contract_turn(
-        drv, object(), conv_key="k", prompt="p", reuse=True, sessions={},
-        free_form=True, terminal_action="none", terminal_retries=1, max_tool_calls=0, stats={},
+        drv,
+        object(),
+        conv_key="k",
+        prompt="p",
+        reuse=True,
+        sessions={},
+        free_form=True,
+        terminal_action="none",
+        terminal_retries=1,
+        on_text=None,
+        on_tool=None,
+        max_tool_calls=0,
+        stats={},
     )
     assert obj == {"action": "none", "text": "plain reply"}
 
@@ -46,8 +69,19 @@ async def test_aborted_runs_wrapup_on_same_session_ref() -> None:
         TurnResult(text='{"action":"none","text":"wrapped"}', session_ref="ses_9"),
     ])
     obj = await run_contract_turn(
-        drv, object(), conv_key="k", prompt="p", reuse=True, sessions={},
-        free_form=False, terminal_action="none", terminal_retries=1, max_tool_calls=80, stats={},
+        drv,
+        object(),
+        conv_key="k",
+        prompt="p",
+        reuse=True,
+        sessions={},
+        free_form=False,
+        terminal_action="none",
+        terminal_retries=1,
+        on_text=None,
+        on_tool=None,
+        max_tool_calls=80,
+        stats={},
     )
     assert obj == {"action": "none", "text": "wrapped"}
     assert drv.calls[1]["session_ref"] == "ses_9"      # wrap-up continued the SAME session
@@ -60,8 +94,41 @@ async def test_missing_terminal_triggers_one_repair() -> None:
         TurnResult(text='{"action":"a2a_reply","text":"fixed"}', session_ref="ses_2"),
     ])
     obj = await run_contract_turn(
-        drv, object(), conv_key="k", prompt="p", reuse=True, sessions={},
-        free_form=False, terminal_action="a2a_reply", terminal_retries=1, max_tool_calls=0, stats={},
+        drv,
+        object(),
+        conv_key="k",
+        prompt="p",
+        reuse=True,
+        sessions={},
+        free_form=False,
+        terminal_action="a2a_reply",
+        terminal_retries=1,
+        on_text=None,
+        on_tool=None,
+        max_tool_calls=0,
+        stats={},
     )
     assert obj == {"action": "a2a_reply", "text": "fixed"}
     assert drv.calls[1]["session_ref"] == "ses_2" and drv.calls[1]["on_text"] is None
+
+
+def test_signature_canonical_matches_spec() -> None:
+    sig = inspect.signature(run_contract_turn)
+    kw_only_names = [p.name for p in sig.parameters.values() if p.kind == inspect.Parameter.KEYWORD_ONLY]
+    expected_kw_only = [
+        "conv_key",
+        "prompt",
+        "reuse",
+        "sessions",
+        "free_form",
+        "terminal_action",
+        "terminal_retries",
+        "on_text",
+        "on_tool",
+        "max_tool_calls",
+        "stats",
+    ]
+    assert kw_only_names == expected_kw_only
+    for name in ["on_text", "on_tool", "max_tool_calls", "stats"]:
+        param = sig.parameters[name]
+        assert param.default is inspect.Parameter.empty, f"Parameter {name} must have no default"

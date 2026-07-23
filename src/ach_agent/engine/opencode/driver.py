@@ -5,13 +5,15 @@ launch/health/discard/compact/stop delegate to the existing lifecycle helpers; r
 the session-select + SSE-consume half of the old run_invocation, returning a TurnResult. The
 terminal contract (extract/repair/wrap-up) lives once in engine/base/terminal.py.
 """
+
 from __future__ import annotations
 
+from collections.abc import Callable, MutableMapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from collections.abc import Callable, MutableMapping
 
 import aiohttp
+import structlog
 
 from ach_agent.engine.base.driver import EngineConfig, TurnResult
 from ach_agent.engine.opencode.client import OpenCodeClient
@@ -57,23 +59,27 @@ class OpencodeDriver:
         reuse: bool,
         sessions: MutableMapping[str, str],
         session_ref: str | None = None,
-        on_text: Callable[[str], None] | None = None,
-        on_tool: Callable[[OpenCodeToolUpdate], None] | None = None,
-        max_tool_calls: int = 0,
-        stats: dict[str, Any] | None = None,
+        on_text: Callable[[str], None] | None,
+        on_tool: Callable[[OpenCodeToolUpdate], None] | None,
+        max_tool_calls: int,
+        stats: dict[str, Any],
     ) -> TurnResult:
         import ach_agent.engine.lifecycle as oc  # namespace call keeps test patch targets valid
 
         client = server._client
         if not isinstance(client, OpenCodeClient):
             raise RuntimeError("ManagedServer has no client")
-        stats = stats if stats is not None else {}
 
         async def _consume(oc_session_id: str) -> str:
             return await oc.consume_sse_after_send(
-                client, oc_session_id, prompt,
-                on_text=on_text, on_tool=on_tool, is_alive=server.is_alive,
-                max_tool_calls=max_tool_calls, stats=stats,
+                client,
+                oc_session_id,
+                prompt,
+                on_text=on_text,
+                on_tool=on_tool,
+                is_alive=server.is_alive,
+                max_tool_calls=max_tool_calls,
+                stats=stats,
             )
 
         # Repair/wrap-up: continue EXACTLY the given session; bypass the map + reuse (§4.3).
@@ -81,7 +87,8 @@ class OpencodeDriver:
             stats["session_ref"] = session_ref
             stats["oc_session_id"] = session_ref
             text = await _consume(session_ref)
-            return TurnResult(text=text, session_ref=session_ref, aborted=bool(stats.get("aborted")))
+            aborted = bool(stats.get("aborted"))
+            return TurnResult(text=text, session_ref=session_ref, aborted=aborted)
 
         # First send: resolve conv_key → oc session id (create/reuse), 404-recreate retry.
         reused = False
@@ -94,7 +101,6 @@ class OpencodeDriver:
                 oc_session_id, reused = cached, True
         else:
             oc_session_id = await oc._create_oc_session(client)
-        import structlog
         structlog.get_logger(__name__).info(
             "engine: opencode session",
             session_key=conv_key,
@@ -113,7 +119,8 @@ class OpencodeDriver:
             stats["session_ref"] = oc_session_id
             stats["oc_session_id"] = oc_session_id
             text = await _consume(oc_session_id)
-        return TurnResult(text=text, session_ref=oc_session_id, aborted=bool(stats.get("aborted")))
+        aborted = bool(stats.get("aborted"))
+        return TurnResult(text=text, session_ref=oc_session_id, aborted=aborted)
 
     async def discard_session(self, server: ManagedServer, session_ref: str) -> None:
         import ach_agent.engine.lifecycle as oc

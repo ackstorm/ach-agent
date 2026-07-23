@@ -339,3 +339,48 @@ def build_a2a_mcp_server(tools: list[ToolSpec]) -> Any:
     for spec in tools:
         server.add_tool(spec.handler, name=spec.name, description=spec.description)
     return server
+
+
+class A2AEgressFacade:
+    """Hosts the a2a-egress FastMCP server on an ephemeral loopback port (SP1 §6).
+
+    Mirrors RepoCheckoutFacade: opencode / pi-mcp-adapter point at this loopback URL; the
+    ek_ stays in the tool handlers (build_a2a_tools(ek=...)) and never reaches any engine
+    config. Retires the "built but not hosted" VERIFICATION DEBT (main.py Plan 3/4)."""
+
+    def __init__(self, tools: list[ToolSpec]) -> None:
+        self._mcp = build_a2a_mcp_server(tools)
+        self._server: Any = None
+        self._task: asyncio.Task[None] | None = None
+
+    async def start(self) -> str:
+        """Bind on an ephemeral localhost port; return the MCP URL."""
+        import uvicorn
+
+        config = uvicorn.Config(
+            self._mcp.streamable_http_app(), host="127.0.0.1", port=0, log_level="warning"
+        )
+        self._server = uvicorn.Server(config)
+        self._task = asyncio.create_task(self._server.serve())
+        for _ in range(250):
+            if self._server.started:
+                break
+            if self._task.done():
+                self._task.result()
+                break
+            await asyncio.sleep(0.02)
+        if not self._server.started:
+            raise RuntimeError("a2a egress facade failed to start within 5s")
+        port = self._server.servers[0].sockets[0].getsockname()[1]
+        log.info("a2a egress facade started", port=port)
+        return f"http://127.0.0.1:{port}/mcp"
+
+    async def stop(self) -> None:
+        """Signal uvicorn to exit and await the task (shutdown sweep)."""
+        if self._server is not None:
+            self._server.should_exit = True
+        if self._task is not None:
+            await self._task
+        self._server = None
+        self._task = None
+

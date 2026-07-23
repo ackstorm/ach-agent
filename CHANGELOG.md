@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.8.0] - 2026-07-23
+
+### Added
+- **Pi as a second execution engine.** Set `engine.type: pi` to run through Pi's headless
+  JSONL RPC interface; the runtime image ships pinned Pi and `pi-mcp-adapter` binaries. Pi
+  supports the existing model/tool configuration, durable sessions, invocation bounds and
+  cancellation, shared terminal handling, and session usage/cost observability. Sessions are
+  namespaced by engine so switching between Pi and opencode cannot reuse the wrong session.
+- **Harness-hosted A2A egress MCP facade.** Configured peer agents are now exposed to both
+  engines through a loopback MCP server with blocking, asynchronous, and status tools. ACH
+  credentials remain in the harness and are injected only when the harness calls a peer.
+
+### Changed
+- **`--tui` opencode attach** no longer hardcodes `--mini`; it launches with `--pure` so the
+  opencode invocation can control its own additional flags.
+
+### Fixed
+- **`--tui` Ctrl+C handling** now exits quietly after the attached opencode process stops,
+  avoiding a traceback during shutdown.
+
 ## [0.7.5] - 2026-07-22
 
 ### Changed

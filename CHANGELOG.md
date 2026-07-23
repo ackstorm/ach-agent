@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.8.1] - 2026-07-24
+
+### Fixed
+- **Pi reasoning/thinking parity.** `engine.pi` no longer hardcodes every model as
+  non-reasoning, text-only, with a 128K-context/16K-output ceiling. A typed
+  `engine.pi.model` capability block (`reasoning`, `input`, `contextWindow`,
+  `maxTokens`) and `engine.pi.thinkingLevel` join `engine.pi.binaryPath`/
+  `mcpAdapterPath`, generated into `docs/schemas/agent-config-v1.schema.json` so the
+  Kubernetes operator author can see exactly what Pi accepts. `model.params` is
+  unchanged (still opaque per-call passthrough; Pi never read it and still doesn't).
+  Defaults are unchanged when `engine.pi.model`/`thinkingLevel` are absent, so existing
+  `engine.type: pi` configurations are unaffected.
+
 ## [0.8.0] - 2026-07-23
 
 ### Added

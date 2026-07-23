@@ -383,4 +383,3 @@ class A2AEgressFacade:
             await self._task
         self._server = None
         self._task = None
-

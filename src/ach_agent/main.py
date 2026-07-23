@@ -644,6 +644,7 @@ def _make_engine_runner(
     tool_sink: Any = None,
     memory_facade_url: str | None = None,
     repo_facade_url: str | None = None,
+    a2a_facade_url: str | None = None,
 ) -> Callable[..., Any]:
     """Build the engine_runner callable injected into the Router.
 
@@ -710,6 +711,10 @@ def _make_engine_runner(
         # archive resource ONLY through it (ek injected harness-side).
         if repo_facade_url:
             mcp_servers = [*mcp_servers, repo_facade_url]
+        # a2a egress facade (SP1 §6): a static localhost MCP server carried on every invocation,
+        # so the agent can call peer agents. Same wiring as the memory/repo facades.
+        if a2a_facade_url:
+            mcp_servers = [*mcp_servers, a2a_facade_url]
 
         # Build per-invocation engine config with the (dynamic) hindsight MCP server iff
         # reachable (D-02). codemem fields are static per-agent and already on engine_cfg from
@@ -1226,6 +1231,8 @@ async def main(
     # can stop it even though it is constructed inside the `if ek:` block below.
     repo_facade: Any = None
     repo_facade_url: str | None = None
+    a2a_facade: Any = None
+    a2a_facade_url: str | None = None
     if ek:
         manifest = await hydrate(cfg.capability.ach.base_url, ek)
         # hard-fail (sys.exit 1) if the configured model is absent from the hydrated set.
@@ -1336,27 +1343,21 @@ async def main(
             prompts=[p.name for p in _ctx.prompts],
             artifacts=[a.name for a in _ctx.artifacts],
         )
-        # A2A egress (Plan 3): expose peer agents as harness-hosted MCP tools so
-        # opencode can call them. The ek_ stays in the harness (injected as the
-        # peer auth header by A2AAgentClient). RTR-06: a2a_egress imports a2a-sdk
-        # only inside its functions, and we import the builder lazily here so the
-        # no-a2a-agents path (all current tests) imports nothing new and is a no-op.
+        # A2A egress (Plan 3, completed in SP1): expose peer agents as harness-hosted MCP
+        # tools on a loopback FastMCP so BOTH engines discover them. The ek_ stays in the
+        # harness (peer auth header via A2AAgentClient); only the loopback URL is written into
+        # engine config. RTR-06: a2a-sdk imports stay function-scoped; import the builder lazily.
         if manifest.a2a_agents:
-            from ach_agent.engine.a2a_egress import (
-                build_a2a_mcp_server,
-                build_a2a_tools,
-            )
+            from ach_agent.engine.a2a_egress import A2AEgressFacade, build_a2a_tools
 
             a2a_tools = build_a2a_tools(manifest.a2a_agents, ek=ek)
-            # Plan 3/4 follow-up: host build_a2a_mcp_server(a2a_tools) on a
-            # localhost port and add it to the opencode.json mcp block so opencode
-            # discovers these tools. The server is built here (validates wiring)
-            # but NOT started — no listener is opened (VERIFICATION DEBT).
-            _a2a_egress_server = build_a2a_mcp_server(a2a_tools)
+            a2a_facade = A2AEgressFacade(a2a_tools)
+            a2a_facade_url = await a2a_facade.start()
             log.info(
-                "a2a egress tools built (server not yet hosted — Plan 3/4)",
+                "a2a egress facade started",
                 agent_count=len(manifest.a2a_agents),
                 tool_count=len(a2a_tools),
+                url=a2a_facade_url,
             )
 
     # ACH_TOKEN (ek_) is REQUIRED: opencode always reaches the model through the localhost
@@ -1479,6 +1480,7 @@ async def main(
         tool_sink=tool_sink,
         memory_facade_url=memory_facade_url,
         repo_facade_url=repo_facade_url,
+        a2a_facade_url=a2a_facade_url,
     )
 
     # Step 6 (cont.): construct Router with all limits from config (RTR-03/04)
@@ -1525,6 +1527,8 @@ async def main(
                 # opencode.json so the console session sees checkout_repo from the first prompt.
                 if repo_facade_url:
                     warm_mcp_servers = [*warm_mcp_servers, repo_facade_url]
+                if a2a_facade_url:
+                    warm_mcp_servers = [*warm_mcp_servers, a2a_facade_url]
                 from ach_agent.channels.tui import _CONSOLE_SESSION_KEY
 
                 warm_codemem_project = engine_cfg.codemem_project
@@ -1577,6 +1581,8 @@ async def main(
                 await memory_facade.stop()
             if repo_facade is not None:
                 await repo_facade.stop()
+            if a2a_facade is not None:
+                await a2a_facade.stop()
             if hasattr(dedup_store, "close"):
                 dedup_store.close()
             await stats_sink.stop()
@@ -1741,6 +1747,8 @@ async def main(
             await memory_facade.stop()
         if repo_facade is not None:
             await repo_facade.stop()
+        if a2a_facade is not None:
+            await a2a_facade.stop()
         await stats_sink.stop()
         await tool_sink.stop()
         # uvicorn's serve() task returns on its own once should_exit=True; await it

@@ -121,10 +121,23 @@ mismatch.
     "type": "opencode",                       // opencode | pi. Selects the EngineDriver. Rendered
     //                                           by ../ach (AgentProfile.engine.type, free string);
     //                                           the harness is the enforcer (unknown → hard-fail).
-    "pi": null                                // PiEngineBlock; consulted only when type == "pi":
-    //                                           { "binaryPath": "pi",           // pi on PATH in the image
-    //                                             "mcpAdapterPath": "" }        // "" → image default
-    //                                           /opt/pi-mcp-adapter/node_modules/pi-mcp-adapter
+    "pi": {                                   // PiEngineBlock; consulted only when type == "pi"
+      "binaryPath": "pi",                     // pi on PATH in the image
+      "mcpAdapterPath": "",                    // "" → image default:
+      //                                          /opt/pi-mcp-adapter/node_modules/pi-mcp-adapter
+      "model": {                              // Pi-only model capability descriptor (models.json
+        "reasoning": false,                    // fields). NOT sent to the model API call — that
+        "input": ["text"],                     // stays model.params above (open, unvalidated,
+        "contextWindow": 128000,               // per-call passthrough). Absent fields → these
+        "maxTokens": 16384                      // same values (Pi's own builtin defaults).
+      },
+      "thinkingLevel": null                    // off|minimal|low|medium|high|xhigh|max; requires
+      //                                           model.reasoning=true (hard-fail otherwise);
+      //                                           passed to `pi` as --thinking at launch — never
+      //                                           via settings.json defaults, never forced by the
+      //                                           harness. Generated into
+      //                                           docs/schemas/agent-config-v1.schema.json.
+    }
   },
   // ── engine.type=pi is a CROSS-REPO contract ──────────────────────────────────
   // The ach-agent IMAGE must ship the `pi` binary + pinned pi-mcp-adapter BEFORE any

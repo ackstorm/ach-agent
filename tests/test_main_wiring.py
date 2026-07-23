@@ -23,7 +23,6 @@ from ach_agent.config.schema import ChannelConfig, SessionBlock
 from ach_agent.http.app import create_app
 from ach_agent.router.router import RouterAdmitResult
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -196,9 +195,7 @@ def test_build_engine_prompt_mr_webhook_is_non_empty() -> None:
     prompt = build_engine_prompt(event)
 
     assert prompt, "WR-07: prompt must be non-empty for MR webhook events"
-    assert "Add feature X" in prompt, (
-        f"WR-07: prompt must contain MR title, got: {prompt!r}"
-    )
+    assert "Add feature X" in prompt, f"WR-07: prompt must contain MR title, got: {prompt!r}"
     assert "ek_" not in prompt, "WR-07: prompt must not embed ek_ tokens"
 
 
@@ -222,9 +219,7 @@ def test_build_engine_prompt_cron_uses_scheduled_tick() -> None:
 
     prompt = build_engine_prompt(event)
 
-    assert prompt == tick, (
-        f"WR-07: cron prompt must be the scheduled_tick value, got: {prompt!r}"
-    )
+    assert prompt == tick, f"WR-07: cron prompt must be the scheduled_tick value, got: {prompt!r}"
 
 
 def test_build_engine_prompt_issue_uses_issue_reference() -> None:
@@ -239,7 +234,12 @@ def test_build_engine_prompt_issue_uses_issue_reference() -> None:
             "project": {"id": 42},
             "object_attributes": {"iid": 5, "title": "Bug report", "description": "boom"},
         },
-        delivery_context={"project_id": 42, "kind": "issue", "target_type": "issue", "issue_iid": 5},
+        delivery_context={
+            "project_id": 42,
+            "kind": "issue",
+            "target_type": "issue",
+            "issue_iid": 5,
+        },
         source_trait="sync",
     )
 
@@ -317,6 +317,7 @@ async def test_cr03_slack_only_config_waits_for_shutdown_event() -> None:
     This test replicates the exact wait logic from main() in isolation, verifying the
     correct branch is taken when no background tasks are registered.
     """
+
     # Replicate the exact branching logic from main.py lines 633-639
     async def _simulate_main_wait_block(
         tasks: list,
@@ -368,7 +369,6 @@ async def test_cr03_slack_only_config_waits_for_shutdown_event() -> None:
             return "waited_via_shutdown_event"
 
     # Start the fixed wait block with no tasks; signal shutdown after a tick
-    result_holder: list[str] = []
 
     async def _run_with_signal() -> None:
         # Set shutdown_event after yielding control
@@ -418,9 +418,7 @@ def test_uvicorn_boots_for_any_config(channel_types: list[str]) -> None:
     # Unconditional boot (mirrors the fixed source):
     tasks.append("uvicorn")
 
-    assert "uvicorn" in tasks, (
-        f"uvicorn (healthz server) must boot for config {channel_types!r}"
-    )
+    assert "uvicorn" in tasks, f"uvicorn (healthz server) must boot for config {channel_types!r}"
 
 
 def test_resolve_engine_paths_defaults_and_overrides() -> None:
@@ -471,7 +469,6 @@ def test_channel_idle_ttl_from_config() -> None:
 
 async def test_engine_runner_passes_pool_oc_sessions_to_run_invocation() -> None:
     """engine_runner threads the pool-owned session map into run_contract_turn."""
-    from typing import Any
 
     import ach_agent.engine.base.terminal as terminal
     from ach_agent.channels.message_event import MessageEvent
@@ -690,3 +687,42 @@ async def test_max_tokens_not_exceeded_no_action() -> None:
     )
     compact.assert_not_awaited()
     discard.assert_not_awaited()
+
+
+def test_pi_engine_fields_defaults_for_opencode() -> None:
+    from types import SimpleNamespace
+
+    from ach_agent.main import _pi_engine_fields
+
+    cfg = SimpleNamespace(engine=SimpleNamespace(type="opencode", pi=None))
+    fields = _pi_engine_fields(cfg)
+    assert fields["binary_path"] == "opencode"
+    assert fields["pi_mcp_adapter_path"] == ""
+    assert fields["pi_model_capability"].reasoning is False
+    assert fields["pi_thinking_level"] is None
+
+
+def test_pi_engine_fields_from_pi_config() -> None:
+    from types import SimpleNamespace
+
+    from ach_agent.config.schema import PiEngineBlock, PiModelCapabilities
+    from ach_agent.main import _pi_engine_fields
+
+    pi_block = PiEngineBlock(
+        binaryPath="pi",
+        mcpAdapterPath="/opt/pi-mcp-adapter/node_modules/pi-mcp-adapter",
+        model=PiModelCapabilities(
+            reasoning=True, input=["text", "image"], contextWindow=200000, maxTokens=32000
+        ),
+        thinkingLevel="high",
+    )
+    cfg = SimpleNamespace(engine=SimpleNamespace(type="pi", pi=pi_block))
+    fields = _pi_engine_fields(cfg)
+    assert fields["binary_path"] == "pi"
+    assert fields["pi_mcp_adapter_path"] == "/opt/pi-mcp-adapter/node_modules/pi-mcp-adapter"
+    cap = fields["pi_model_capability"]
+    assert cap.reasoning is True
+    assert cap.input == ["text", "image"]
+    assert cap.context_window == 200000
+    assert cap.max_tokens == 32000
+    assert fields["pi_thinking_level"] == "high"

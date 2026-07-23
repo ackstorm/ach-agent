@@ -1156,6 +1156,35 @@ async def _run_opencode_attach(
             sys.stderr = real_stderr
 
 
+def _pi_engine_fields(cfg: Any) -> dict[str, Any]:
+    """engine.pi.* -> the EngineConfig kwargs Pi's driver consumes.
+
+    Opencode-default shape when engine.type != "pi" or engine.pi is absent — opencode
+    configs never carry these.
+    """
+    from ach_agent.engine.base.driver import PiModelCapability
+
+    pi = cfg.engine.pi if cfg.engine.type == "pi" else None
+    if pi is None:
+        return {
+            "binary_path": "opencode",
+            "pi_mcp_adapter_path": "",
+            "pi_model_capability": PiModelCapability(),
+            "pi_thinking_level": None,
+        }
+    return {
+        "binary_path": pi.binary_path,
+        "pi_mcp_adapter_path": pi.mcp_adapter_path,
+        "pi_model_capability": PiModelCapability(
+            reasoning=pi.model.reasoning,
+            input=list(pi.model.input),
+            context_window=pi.model.context_window,
+            max_tokens=pi.model.max_tokens,
+        ),
+        "pi_thinking_level": pi.thinking_level,
+    }
+
+
 async def main(
     tui_mode: bool = False, one_shot_prompt: str | None = None, debug_mode: bool = False
 ) -> None:
@@ -1417,16 +1446,7 @@ async def main(
         exclude_tools=cfg.capability.filter.exclude.tools,
         extra_mcp_servers=passthrough_mcp,
         engine_type=cfg.engine.type,
-        binary_path=(
-            cfg.engine.pi.binary_path
-            if cfg.engine.type == "pi" and cfg.engine.pi is not None
-            else "opencode"
-        ),
-        pi_mcp_adapter_path=(
-            cfg.engine.pi.mcp_adapter_path
-            if cfg.engine.type == "pi" and cfg.engine.pi is not None
-            else ""
-        ),
+        **_pi_engine_fields(cfg),
     )
     # D-03/D-04: dedup store first — it opens/repairs state.db (fail-closed on a bad
     # mount). Then the session map shares that now-valid file (fail-open). The pool

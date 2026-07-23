@@ -36,6 +36,7 @@ import structlog
 import uvicorn
 
 if TYPE_CHECKING:
+    from ach_agent.engine.base.driver import EngineDriver
     from ach_agent.engine.events import OpenCodeToolUpdate
     from ach_agent.engine.hydrate import McpServer
 
@@ -629,6 +630,7 @@ async def select_memory_wiring_async(
 
 def _make_engine_runner(
     pool: Any,
+    driver: EngineDriver,
     engine_cfg: Any,
     max_invocation_seconds: int,
     terminal_output_retries: int = 1,
@@ -1369,8 +1371,9 @@ async def main(
 
     # Step 5: build the engine pool. Egress is the agent's via external MCP tools —
     # the harness has no delivery adapter (it never posts on the model's behalf).
-    from ach_agent.engine.lifecycle import EngineConfig
-    from ach_agent.engine.pool import EnginePool
+    from ach_agent.engine.base.driver import EngineConfig, EngineDriver
+    from ach_agent.engine.base.pool import EnginePool
+    from ach_agent.engine.opencode.driver import OpencodeDriver
 
     # opencode `serve` always binds loopback (127.0.0.1) on a free ephemeral port the pool
     # picks — only reachable inside the container/host. `--tui` drives it via `opencode attach`
@@ -1411,13 +1414,25 @@ async def main(
         # capability.filter.exclude.tools — disabled in opencode.json (withheld from model).
         exclude_tools=cfg.capability.filter.exclude.tools,
         extra_mcp_servers=passthrough_mcp,
+        engine_type=cfg.engine.type,
+        binary_path=(
+            cfg.engine.pi.binary_path
+            if cfg.engine.type == "pi" and cfg.engine.pi is not None
+            else "opencode"
+        ),
     )
     # D-03/D-04: dedup store first — it opens/repairs state.db (fail-closed on a bad
     # mount). Then the session map shares that now-valid file (fail-open). The pool
     # owns the session map so run_invocation reuses opencode sessions across restarts.
     dedup_store = _open_dedup_store(cfg)
     session_store = _open_session_store(cfg)
-    pool = EnginePool(oc_sessions=session_store)
+    if cfg.engine.type == "pi":
+        from ach_agent.engine.pi.driver import PiDriver
+
+        driver: EngineDriver = PiDriver()
+    else:
+        driver = OpencodeDriver()
+    pool = EnginePool(driver=driver, sessions_map=session_store)
 
     # Best-effort stats sink (harness-local, ACH_STATS_* — never part of CONTRACT_v3).
     # Unset ACH_STATS_REDIS_URL → Prometheus-only, no queue/writer.
@@ -1449,6 +1464,7 @@ async def main(
     memory_bank = cfg.memory.hindsight.bank if isinstance(cfg.memory, HindsightMemory) else ""
     engine_runner = _make_engine_runner(
         pool=pool,
+        driver=driver,
         engine_cfg=engine_cfg,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
         terminal_output_retries=cfg.limits.terminal_output_retries,

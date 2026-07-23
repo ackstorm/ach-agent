@@ -92,6 +92,8 @@ class PiDriver:
             args.extend([prompt_flag, cfg.system_prompt])
         if cfg.exclude_tools:
             args.extend(["--exclude-tools", ",".join(cfg.exclude_tools)])
+        if cfg.pi_thinking_level is not None:
+            args.extend(["--thinking", cfg.pi_thinking_level])
         proc = await asyncio.create_subprocess_exec(
             *args,
             cwd=str(work_dir),

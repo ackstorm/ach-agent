@@ -17,13 +17,14 @@ _PI_PROVIDER_BY_TYPE: dict[str, tuple[str, str]] = {
 def build_models_json(cfg: EngineConfig) -> tuple[dict[str, Any], str]:
     """Return the models document and provider name passed to Pi."""
     provider, api = _PI_PROVIDER_BY_TYPE.get(cfg.model_type, _PI_PROVIDER_BY_TYPE["openai"])
+    cap = cfg.pi_model_capability
     model = {
         "id": cfg.model,
         "name": cfg.model,
-        "reasoning": False,
-        "input": ["text"],
-        "contextWindow": 128000,
-        "maxTokens": 16384,
+        "reasoning": cap.reasoning,
+        "input": list(cap.input),
+        "contextWindow": cap.context_window,
+        "maxTokens": cap.max_tokens,
         "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
     }
     doc: dict[str, Any] = {

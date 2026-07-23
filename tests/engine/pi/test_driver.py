@@ -376,3 +376,49 @@ async def test_launch_persona_and_exclude_tools_argv(
         other_flag = "--append-system-prompt" if flag == "--system-prompt" else "--system-prompt"
         assert other_flag not in args
     assert args[args.index("--exclude-tools") + 1] == "bash,read"
+
+
+async def test_launch_adds_thinking_flag_when_resolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import ach_agent.engine.pi.driver as pi_module
+
+    captured: dict[str, Any] = {}
+
+    async def fake_exec(*args: Any, **kwargs: Any) -> Any:
+        captured["args"] = args
+        return _LaunchProcess()
+
+    monkeypatch.setattr(pi_module.shutil, "which", lambda _binary: "/usr/bin/pi")
+    monkeypatch.setattr(pi_module.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(pi_module, "PiRpcClient", lambda _proc: object())
+    cfg = EngineConfig(
+        binary_path="pi",
+        home=str(tmp_path / "home"),
+        work_dir=str(tmp_path / "work"),
+        pi_thinking_level="high",
+    )
+    await PiDriver().launch(cfg, "argv")
+    args = list(captured["args"])
+    assert args[args.index("--thinking") + 1] == "high"
+
+
+async def test_launch_omits_thinking_flag_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import ach_agent.engine.pi.driver as pi_module
+
+    captured: dict[str, Any] = {}
+
+    async def fake_exec(*args: Any, **kwargs: Any) -> Any:
+        captured["args"] = args
+        return _LaunchProcess()
+
+    monkeypatch.setattr(pi_module.shutil, "which", lambda _binary: "/usr/bin/pi")
+    monkeypatch.setattr(pi_module.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(pi_module, "PiRpcClient", lambda _proc: object())
+    cfg = EngineConfig(
+        binary_path="pi", home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")
+    )
+    await PiDriver().launch(cfg, "argv")
+    assert "--thinking" not in list(captured["args"])

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from ach_agent.engine.base.driver import EngineConfig
+from ach_agent.engine.base.driver import EngineConfig, PiModelCapability
 from ach_agent.engine.pi.models_json import build_models_json
 
 
@@ -33,3 +33,35 @@ def test_openai_and_anthropic_api_kinds() -> None:
     )
     assert doc_o["providers"][provider_o]["api"] == "openai-completions"
     assert doc_a["providers"][provider_a]["api"] == "anthropic-messages"
+
+
+def test_default_capability_matches_pi_builtin_defaults() -> None:
+    doc, provider = build_models_json(
+        EngineConfig(model_type="openai", model_base_url="http://x/v1")
+    )
+    model = doc["providers"][provider]["models"][0]
+    assert model == {
+        "id": "gpt-4o-mini",
+        "name": "gpt-4o-mini",
+        "reasoning": False,
+        "input": ["text"],
+        "contextWindow": 128000,
+        "maxTokens": 16384,
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+    }
+
+
+def test_capability_overrides_from_engine_config() -> None:
+    cfg = EngineConfig(
+        model_type="openai",
+        model_base_url="http://x/v1",
+        pi_model_capability=PiModelCapability(
+            reasoning=True, input=["text", "image"], context_window=200000, max_tokens=32000
+        ),
+    )
+    doc, provider = build_models_json(cfg)
+    model = doc["providers"][provider]["models"][0]
+    assert model["reasoning"] is True
+    assert model["input"] == ["text", "image"]
+    assert model["contextWindow"] == 200000
+    assert model["maxTokens"] == 32000

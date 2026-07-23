@@ -3,9 +3,27 @@
 
 from __future__ import annotations
 
+import os
+import re
 from typing import Any
 
 from ach_agent.engine.base.driver import EngineConfig
+
+_EK_VALUE_MARKER = re.compile(r"(?<![A-Za-z0-9])ek_[A-Za-z0-9_.:/=-]+")
+
+
+def _materialized_ek_values() -> tuple[str, ...]:
+    return tuple(value for name in ("ACH_TOKEN", "ACH_API_KEY") if (value := os.environ.get(name)))
+
+
+def _contains_materialized_ek(value: Any, secrets: tuple[str, ...]) -> bool:
+    if isinstance(value, str):
+        return bool(_EK_VALUE_MARKER.search(value)) or any(secret in value for secret in secrets)
+    if isinstance(value, dict):
+        return any(_contains_materialized_ek(item, secrets) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_materialized_ek(item, secrets) for item in value)
+    return False
 
 
 def _passthrough_to_pi(entry: dict[str, Any]) -> dict[str, Any]:
@@ -43,6 +61,8 @@ def build_mcp_json(cfg: EngineConfig) -> dict[str, Any]:
                 "CODEMEM_PROJECT": cfg.codemem_project,
             },
         }
+    if _contains_materialized_ek(servers, _materialized_ek_values()):
+        raise ValueError("refusing to write materialized ek_ credential to Pi mcp.json")
     return {
         "mcpServers": servers,
         "settings": {

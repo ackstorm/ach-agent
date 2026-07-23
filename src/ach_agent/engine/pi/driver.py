@@ -42,6 +42,13 @@ _DEFAULT_PI_MCP_ADAPTER = "/opt/pi-mcp-adapter"
 class PiDriver:
     engine_type = "pi"
 
+    def __init__(self) -> None:
+        self._rpc_sequence = 0
+
+    def _next_rpc_id(self) -> str:
+        self._rpc_sequence += 1
+        return f"ach-pi-{self._rpc_sequence}"
+
     def skills_dir(self, home: Path) -> Path:
         return home / "pi" / "skills"
 
@@ -67,7 +74,7 @@ class PiDriver:
             raise RuntimeError(f"pi binary not found: {cfg.binary_path!r}")
         work_dir = Path(cfg.work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
-        proc = await asyncio.create_subprocess_exec(
+        args = [
             binary,
             "--mode",
             "rpc",
@@ -77,6 +84,16 @@ class PiDriver:
             cfg.model,
             "--session-dir",
             str(agent_dir / "sessions"),
+        ]
+        if cfg.system_prompt:
+            prompt_flag = (
+                "--system-prompt" if cfg.compose == "replace" else "--append-system-prompt"
+            )
+            args.extend([prompt_flag, cfg.system_prompt])
+        if cfg.exclude_tools:
+            args.extend(["--exclude-tools", ",".join(cfg.exclude_tools)])
+        proc = await asyncio.create_subprocess_exec(
+            *args,
             cwd=str(work_dir),
             env=build_pi_env(agent_dir, cfg),
             stdin=asyncio.subprocess.PIPE,
@@ -108,22 +125,64 @@ class PiDriver:
     async def health(self, server: ManagedServer) -> bool:
         return server.is_alive()
 
+    @staticmethod
+    def _validate_response(event: dict[str, Any], command: str, request_id: str) -> dict[str, Any]:
+        if event.get("id") != request_id:
+            raise PiRpcError(f"stale {command} response")
+        if event.get("command") != command:
+            raise PiRpcError(f"unexpected response command for {command}")
+        if event.get("success") is not True:
+            raise PiRpcError(f"pi {command} request failed")
+        data = event.get("data")
+        if isinstance(data, dict) and data.get("cancelled") is True:
+            raise PiRpcError(f"pi {command} request was cancelled")
+        if event.get("cancelled") is True:
+            raise PiRpcError(f"pi {command} request was cancelled")
+        return data if isinstance(data, dict) else {}
+
+    async def _await_response(self, client: Any, command: str, request_id: str) -> dict[str, Any]:
+        while True:
+            event = await client.recv()
+            if event.get("type") == EV_EOF:
+                raise PiRpcError(f"pi ended before {command} response")
+            if event.get("type") != "response":
+                continue
+            if event.get("id") != request_id:
+                continue
+            return self._validate_response(event, command, request_id)
+
     async def _new_session(self, client: Any) -> str:
-        await client.send({"type": CMD_NEW_SESSION})
+        request_id = self._next_rpc_id()
+        await client.send({"type": CMD_NEW_SESSION, "id": request_id})
         while True:
             event = await client.recv()
             if event.get("type") == EV_EOF:
                 raise PiRpcError("pi ended before session_created")
             if event.get("type") == EV_SESSION_CREATED:
-                return str(event.get(F_SESSION_PATH, "") or "")
-            if event.get("type") == "response" and event.get("command") == CMD_NEW_SESSION:
-                await client.send({"type": CMD_GET_STATE})
-                continue
-            if event.get("type") == "response" and event.get("command") == CMD_GET_STATE:
-                data = event.get("data") or {}
-                session_path = data.get("sessionFile") if isinstance(data, dict) else None
+                session_path = str(event.get(F_SESSION_PATH, "") or "")
                 if session_path:
-                    return str(session_path)
+                    return session_path
+            if event.get("type") == "response":
+                if event.get("id") != request_id:
+                    continue
+                data = self._validate_response(event, CMD_NEW_SESSION, request_id)
+                response_session_path = data.get(F_SESSION_PATH) or data.get("sessionFile")
+                if response_session_path:
+                    return str(response_session_path)
+                state_id = self._next_rpc_id()
+                await client.send({"type": CMD_GET_STATE, "id": state_id})
+                state = await self._await_response(client, CMD_GET_STATE, state_id)
+                state_session_path = state.get("sessionFile")
+                if state_session_path:
+                    return str(state_session_path)
+                raise PiRpcError("pi new_session response omitted session path")
+
+    async def _switch_session(self, client: Any, session_ref: str) -> None:
+        request_id = self._next_rpc_id()
+        await client.send(
+            {"type": CMD_SWITCH_SESSION, "sessionPath": session_ref, "id": request_id}
+        )
+        await self._await_response(client, CMD_SWITCH_SESSION, request_id)
 
     async def run_turn(
         self,
@@ -144,7 +203,7 @@ class PiDriver:
         try:
             if session_ref is not None:
                 ref = session_ref
-                await client.send({"type": CMD_SWITCH_SESSION, F_SESSION_PATH: ref})
+                await self._switch_session(client, ref)
             elif reuse:
                 cached = sessions.get(conv_key)
                 if cached is None:
@@ -152,7 +211,7 @@ class PiDriver:
                     sessions[conv_key] = ref
                 else:
                     ref = cached
-                    await client.send({"type": CMD_SWITCH_SESSION, F_SESSION_PATH: ref})
+                    await self._switch_session(client, ref)
             else:
                 ref = await self._new_session(client)
             await client.send({"type": CMD_PROMPT, "message": prompt})

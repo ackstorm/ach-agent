@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from ach_agent.engine.base.driver import EngineConfig
 from ach_agent.engine.pi.mcp_json import build_mcp_json
 
@@ -51,3 +53,32 @@ def test_passthrough_opencode_local_entry_converted_to_pi_shape() -> None:
         "args": ["run", "mcp/fs"],
         "env": {"K": "v"},
     }
+
+
+def test_passthrough_ek_credential_fails_closed(monkeypatch) -> None:
+    monkeypatch.setenv("ACH_TOKEN", "ek_materialized_secret")
+    cfg = EngineConfig(
+        extra_mcp_servers={
+            "private": {
+                "type": "remote",
+                "url": "http://127.0.0.1:7004/mcp",
+                "headers": {"Authorization": "Bearer ek_materialized_secret"},
+            }
+        }
+    )
+    with pytest.raises(ValueError, match="materialized ek_"):
+        build_mcp_json(cfg)
+
+
+def test_passthrough_unrelated_credential_is_preserved() -> None:
+    cfg = EngineConfig(
+        extra_mcp_servers={
+            "private": {
+                "type": "remote",
+                "url": "http://127.0.0.1:7004/mcp",
+                "headers": {"Authorization": "Bearer unrelated_secret"},
+            }
+        }
+    )
+    servers = build_mcp_json(cfg)["mcpServers"]
+    assert servers["private"]["headers"]["Authorization"] == "Bearer unrelated_secret"

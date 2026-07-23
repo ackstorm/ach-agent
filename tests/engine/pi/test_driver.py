@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from ach_agent.engine.base.driver import TurnResult
+from ach_agent.engine.base.driver import EngineConfig, TurnResult
 from ach_agent.engine.pi.driver import PiDriver
 from ach_agent.engine.pi.protocol import (
     EV_AGENT_END,
@@ -18,6 +19,7 @@ from ach_agent.engine.pi.protocol import (
     EV_TOOL_START,
     F_SESSION_PATH,
 )
+from ach_agent.engine.pi.rpc import PiRpcError
 
 
 class _ScriptedClient:
@@ -52,6 +54,31 @@ def _text(value: str) -> dict[str, Any]:
     }
 
 
+def _response(
+    request_id: str,
+    command: str,
+    *,
+    success: bool = True,
+    data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    response: dict[str, Any] = {
+        "type": "response",
+        "id": request_id,
+        "command": command,
+        "success": success,
+    }
+    if data is not None:
+        response["data"] = data
+    return response
+
+
+class _LaunchProcess:
+    returncode = None
+    stdin = None
+    stdout = None
+    stderr = None
+
+
 async def test_new_session_then_prompt_accumulates_text() -> None:
     client = _ScriptedClient(
         [
@@ -81,7 +108,13 @@ async def test_new_session_then_prompt_accumulates_text() -> None:
 
 
 async def test_session_ref_switches_and_bypasses_map() -> None:
-    client = _ScriptedClient([_text("wrapped"), {"type": EV_AGENT_SETTLED}])
+    client = _ScriptedClient(
+        [
+            _response("ach-pi-1", "switch_session"),
+            _text("wrapped"),
+            {"type": EV_AGENT_SETTLED},
+        ]
+    )
     sessions: dict[str, str] = {}
     result = await PiDriver().run_turn(
         _Server(client),
@@ -97,7 +130,11 @@ async def test_session_ref_switches_and_bypasses_map() -> None:
     )
     assert result.session_ref == "/s/fixed.json" and result.text == "wrapped"
     assert sessions == {}
-    assert client.sent[0] == {"type": "switch_session", "sessionPath": "/s/fixed.json"}
+    assert client.sent[0] == {
+        "type": "switch_session",
+        "sessionPath": "/s/fixed.json",
+        "id": "ach-pi-1",
+    }
 
 
 async def test_max_tool_calls_aborts_and_flags() -> None:
@@ -214,3 +251,128 @@ async def test_agent_end_will_retry_is_not_terminal() -> None:
         stats={},
     )
     assert result.text == "beforeafter"
+
+
+async def test_new_session_response_is_correlated_before_prompt() -> None:
+    client = _ScriptedClient(
+        [
+            _response("stale-id", "new_session", data={"sessionPath": "/s/stale.json"}),
+            _response("ach-pi-1", "new_session", data={"sessionPath": "/s/good.json"}),
+            _text("good"),
+            {"type": EV_AGENT_SETTLED},
+        ]
+    )
+    sessions: dict[str, str] = {}
+    result = await PiDriver().run_turn(
+        _Server(client),
+        conv_key="correlated",
+        prompt="p",
+        reuse=True,
+        sessions=sessions,
+        on_text=None,
+        on_tool=None,
+        max_tool_calls=0,
+        stats={},
+    )
+    assert result.session_ref == "/s/good.json"
+    assert sessions == {"correlated": "/s/good.json"}
+    assert client.sent[1] == {"type": "prompt", "message": "p"}
+
+
+@pytest.mark.parametrize(
+    ("command", "response"),
+    [
+        ("new_session", _response("ach-pi-1", "new_session", success=False)),
+        ("new_session", _response("ach-pi-1", "new_session", data={"cancelled": True})),
+        ("switch_session", _response("ach-pi-1", "switch_session", success=False)),
+        ("switch_session", _response("ach-pi-1", "switch_session", data={"cancelled": True})),
+    ],
+)
+async def test_failed_or_cancelled_session_response_never_prompts(
+    command: str, response: dict[str, Any]
+) -> None:
+    sessions = {"k": "/s/existing.json"} if command == "switch_session" else {}
+    client = _ScriptedClient([response])
+    with pytest.raises(PiRpcError):
+        await PiDriver().run_turn(
+            _Server(client),
+            conv_key="k",
+            prompt="must not run",
+            reuse=command == "switch_session",
+            sessions=sessions,
+            session_ref="/s/existing.json" if command == "switch_session" else None,
+            on_text=None,
+            on_tool=None,
+            max_tool_calls=0,
+            stats={},
+        )
+    assert not any(item.get("type") == "prompt" for item in client.sent)
+
+
+async def test_stale_switch_response_never_authorizes_prompt() -> None:
+    client = _ScriptedClient(
+        [
+            _response("stale-id", "switch_session"),
+            _response("ach-pi-1", "switch_session", success=False),
+        ]
+    )
+    with pytest.raises(PiRpcError):
+        await PiDriver().run_turn(
+            _Server(client),
+            conv_key="stale-switch",
+            prompt="must not run",
+            reuse=True,
+            sessions={"stale-switch": "/s/existing.json"},
+            on_text=None,
+            on_tool=None,
+            max_tool_calls=0,
+            stats={},
+        )
+    assert not any(item.get("type") == "prompt" for item in client.sent)
+
+
+@pytest.mark.parametrize(
+    ("compose", "prompt", "flag"),
+    [
+        ("replace", "persona", "--system-prompt"),
+        ("append", "persona", "--append-system-prompt"),
+        ("replace", "", None),
+        ("append", "", None),
+    ],
+)
+async def test_launch_persona_and_exclude_tools_argv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    compose: str,
+    prompt: str,
+    flag: str | None,
+) -> None:
+    import ach_agent.engine.pi.driver as pi_module
+
+    captured: dict[str, Any] = {}
+
+    async def fake_exec(*args: Any, **kwargs: Any) -> _LaunchProcess:
+        captured["args"] = args
+        return _LaunchProcess()
+
+    monkeypatch.setattr(pi_module.shutil, "which", lambda _binary: "/usr/bin/pi")
+    monkeypatch.setattr(pi_module.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(pi_module, "PiRpcClient", lambda _proc: object())
+    cfg = EngineConfig(
+        binary_path="pi",
+        home=str(tmp_path / "home"),
+        work_dir=str(tmp_path / "work"),
+        compose=compose,
+        system_prompt=prompt,
+        exclude_tools=["bash", "read"],
+    )
+    await PiDriver().launch(cfg, "argv")
+    args = list(captured["args"])
+    if flag is None:
+        assert "--system-prompt" not in args
+        assert "--append-system-prompt" not in args
+    else:
+        assert args[args.index(flag) + 1] == prompt
+        other_flag = "--append-system-prompt" if flag == "--system-prompt" else "--system-prompt"
+        assert other_flag not in args
+    assert args[args.index("--exclude-tools") + 1] == "bash,read"

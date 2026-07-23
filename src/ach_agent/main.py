@@ -1136,6 +1136,13 @@ async def _run_opencode_attach(
         sys.stderr = log_fh
         try:
             proc = await asyncio.create_subprocess_exec(binary, "attach", url, "--pure", env=env)
+            # opencode owns the terminal and quits on Ctrl+C itself. Both processes share the
+            # foreground process group, so terminal SIGINT hits us too — ignore it here (AFTER
+            # spawn, so the child inherited the default disposition) or it cancels main() mid
+            # proc.wait(), tears through the shutdown cleanup below, and leaves aiohttp sessions
+            # unclosed. Not restored on purpose: mashing Ctrl+C during the post-attach cleanup
+            # would re-cancel it. The process is exiting right after — nothing else needs SIGINT.
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
             await proc.wait()
         finally:
             sys.stderr = real_stderr
@@ -1748,4 +1755,8 @@ def _parse_cli(argv: list[str]) -> tuple[bool, str | None, bool]:
 if __name__ == "__main__":
     # `--tui` / `--debug` / `--prompt` launch modifiers: drive the engine directly.
     _tui_mode, _one_shot, _debug_mode = _parse_cli(sys.argv[1:])
-    asyncio.run(main(tui_mode=_tui_mode, one_shot_prompt=_one_shot, debug_mode=_debug_mode))
+    try:
+        asyncio.run(main(tui_mode=_tui_mode, one_shot_prompt=_one_shot, debug_mode=_debug_mode))
+    except KeyboardInterrupt:
+        # ponytail: Ctrl+C in the console/REPL modes — exit quietly, no traceback.
+        pass

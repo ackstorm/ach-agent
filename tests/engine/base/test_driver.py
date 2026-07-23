@@ -50,8 +50,8 @@ def test_stub_satisfies_engine_driver_protocol() -> None:
             reuse: bool,
             sessions: MutableMapping[str, str],
             session_ref: str | None = None,
-            on_text: Callable[[str], None] | None = None,
-            on_tool: Callable[[Any], None] | None = None,
+            on_text: Callable[[str], None] | None,
+            on_tool: Callable[[Any], None] | None,
             max_tool_calls: int,
             stats: dict[str, Any],
         ) -> TurnResult:
@@ -65,10 +65,13 @@ def test_stub_satisfies_engine_driver_protocol() -> None:
 
 
 def test_run_turn_max_tool_calls_and_stats_are_required_kwonly() -> None:
-    # Canonical contract (index.md Shared interface contract): max_tool_calls and stats
-    # have NO default and stats is not Optional — callers must always supply both.
+    # Canonical contract (index.md Shared interface contract): on_text, on_tool,
+    # max_tool_calls, and stats all have NO default (stats is also not Optional) —
+    # callers must always supply all four.
     import inspect
 
     sig = inspect.signature(EngineDriver.run_turn)
+    assert sig.parameters["on_text"].default is inspect.Parameter.empty
+    assert sig.parameters["on_tool"].default is inspect.Parameter.empty
     assert sig.parameters["max_tool_calls"].default is inspect.Parameter.empty
     assert sig.parameters["stats"].default is inspect.Parameter.empty

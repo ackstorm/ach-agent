@@ -121,8 +121,8 @@ class EngineDriver(Protocol):
         reuse: bool,
         sessions: MutableMapping[str, str],
         session_ref: str | None = None,
-        on_text: Callable[[str], None] | None = None,
-        on_tool: Callable[[OpenCodeToolUpdate], None] | None = None,
+        on_text: Callable[[str], None] | None,
+        on_tool: Callable[[OpenCodeToolUpdate], None] | None,
         max_tool_calls: int,
         stats: dict[str, Any],
     ) -> TurnResult:

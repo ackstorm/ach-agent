@@ -12,25 +12,25 @@ from __future__ import annotations
 
 import prometheus_client
 
-# engine_watchdog_kills_total: incremented by lifecycle.py run_invocation on
+# ach_agent_engine_watchdog_kills_total: incremented by lifecycle.py run_invocation on
 # asyncio.TimeoutError from the maxInvocationSeconds watchdog (ENG-07, D-03).
 ENGINE_WATCHDOG_KILLS: prometheus_client.Counter = prometheus_client.Counter(
-    "engine_watchdog_kills_total",
+    "ach_agent_engine_watchdog_kills_total",
     "opencode subprocesses killed by the maxInvocationSeconds watchdog",
 )
 
-# engine_drain_completed_total: incremented by main.py _drain() on graceful
+# ach_agent_engine_drain_completed_total: incremented by main.py _drain() on graceful
 # SIGTERM → sys.exit(0) completion (DUR-03, spec §2176).
 DRAIN_COMPLETED: prometheus_client.Counter = prometheus_client.Counter(
-    "engine_drain_completed_total",
+    "ach_agent_engine_drain_completed_total",
     "Graceful drain completed successfully (SIGTERM → sys.exit(0)) (DUR-03)",
 )
 
-# engine_launch_failures_total: incremented by main.py engine_runner when
+# ach_agent_engine_launch_failures_total: incremented by main.py engine_runner when
 # pool.acquire() raises — the opencode agente could not be launched for this
 # session_key. Explicit observability (no silent drop) now that acceptance is
 # decoupled from engine readiness.
 ENGINE_LAUNCH_FAILURES: prometheus_client.Counter = prometheus_client.Counter(
-    "engine_launch_failures_total",
+    "ach_agent_engine_launch_failures_total",
     "opencode agente launches that failed in engine_runner (pool.acquire raised)",
 )

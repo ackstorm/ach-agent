@@ -1,5 +1,11 @@
 # Handoff prompt — `../ach`: render `engine.pi.model` / `engine.pi.thinkingLevel`
 
+> **SUPERSEDED (2026-07-24):** the `engine.pi.model`/`engine.pi.thinkingLevel` surface this
+> document introduced was removed in v0.9.0. See
+> `docs/superpowers/plans/2026-07-24-model-thinking-supersedes-engine-pi-model.md` and
+> `docs/references/2026-07-24-model-owned-thinking.md`. Do not execute or hand off from
+> this document.
+
 > **This is a self-contained prompt for the ACH operator agent working in the `../ach`
 > repo (`github.com/ackstorm/ach`). Do NOT execute it in `ach-agent`.**
 >

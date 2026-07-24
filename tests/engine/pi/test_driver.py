@@ -399,7 +399,7 @@ async def test_launch_adds_thinking_flag_when_resolved(
         binary_path="pi",
         home=str(tmp_path / "home"),
         work_dir=str(tmp_path / "work"),
-        pi_thinking_level="high",
+        thinking_effort="high",
     )
     await PiDriver().launch(cfg, "argv")
     args = list(captured["args"])
@@ -446,7 +446,7 @@ async def test_run_tui_uses_native_mode_not_rpc(
         home=str(tmp_path / "home"),
         work_dir=str(tmp_path / "work"),
         model="ackstorm.smart",
-        pi_thinking_level="low",
+        thinking_effort="low",
     )
 
     await PiDriver().run_tui(cfg, "tui-console")

@@ -18,17 +18,6 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class PiModelCapability:
-    """Pi-only model capability descriptor (CONTRACT engine.pi.model — schema.py's
-    PiModelCapabilities, mirrored here as the harness-internal runtime shape)."""
-
-    reasoning: bool = False
-    input: list[str] = field(default_factory=lambda: ["text"])
-    context_window: int = 128000
-    max_tokens: int = 16384
-
-
-@dataclass
 class EngineConfig:
     """Rendered runtime config — engine section (CONTRACT.md §2).
 
@@ -87,14 +76,13 @@ class EngineConfig:
     exclude_tools: list[str] = field(default_factory=list)
     # Optional path to the vendored pi-mcp-adapter package. Empty selects the image default.
     pi_mcp_adapter_path: str = ""
-    # CONTRACT engine.pi.model — Pi-only capability descriptor for models.json. Default
-    # matches Pi's own builtin defaults, so an absent engine.pi.model behaves exactly
-    # like today's hardcoded output.
-    pi_model_capability: PiModelCapability = field(default_factory=PiModelCapability)
-    # CONTRACT engine.pi.thinkingLevel — the --thinking level passed to pi at launch.
-    # None → no --thinking flag (Pi's own default behavior). Already validated at config
-    # load time (schema.py's PiEngineBlock requires reasoning=true when this is set).
-    pi_thinking_level: str | None = None
+    # CONTRACT model.thinking — normalized, engine-neutral reasoning intent. Each driver
+    # translates it: pi → models.json descriptor `reasoning` + `--thinking <effort>`;
+    # opencode → per-call providerOptions merged into the generated model options
+    # (lifecycle._thinking_options; explicit model.params keys win on collision).
+    # Already validated at config load (schema.ThinkingBlock: effort requires enabled).
+    thinking_enabled: bool = False
+    thinking_effort: str | None = None
 
     # SP1: which driver runs this config. "opencode" | "pi". Selects the EngineDriver in
     # _make_engine_runner (main.py) and namespaces the pool sessions map (base/pool.py) so an

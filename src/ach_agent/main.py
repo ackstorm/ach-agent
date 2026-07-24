@@ -1156,39 +1156,27 @@ async def _run_opencode_attach(
             sys.stderr = real_stderr
 
 
-def _pi_engine_fields(cfg: Any) -> dict[str, Any]:
-    """engine.pi.* -> the EngineConfig kwargs Pi's driver consumes.
+def _engine_runtime_fields(cfg: Any) -> dict[str, Any]:
+    """engine.type/engine.pi -> executable-selection EngineConfig kwargs, plus the
+    normalized model.thinking intent every engine translates for itself.
 
-    `engine.type` selects the executable independently from the optional `engine.pi`
-    overrides. A Pi config with no sub-block still launches the image's `pi` binary.
+    engine.pi carries ONLY executable knobs (binaryPath/mcpAdapterPath); model identity
+    and thinking/reasoning intent live in the model block (CONTRACT §2 model.thinking).
+    A Pi config with no engine.pi sub-block still launches the image's `pi` binary.
     """
-    from ach_agent.engine.base.driver import PiModelCapability
-
+    thinking = {
+        "thinking_enabled": cfg.model.thinking.enabled,
+        "thinking_effort": cfg.model.thinking.effort,
+    }
     if cfg.engine.type != "pi":
-        return {
-            "binary_path": "opencode",
-            "pi_mcp_adapter_path": "",
-            "pi_model_capability": PiModelCapability(),
-            "pi_thinking_level": None,
-        }
+        return {"binary_path": "opencode", "pi_mcp_adapter_path": "", **thinking}
     pi = cfg.engine.pi
     if pi is None:
-        return {
-            "binary_path": "pi",
-            "pi_mcp_adapter_path": "",
-            "pi_model_capability": PiModelCapability(),
-            "pi_thinking_level": None,
-        }
+        return {"binary_path": "pi", "pi_mcp_adapter_path": "", **thinking}
     return {
         "binary_path": pi.binary_path,
         "pi_mcp_adapter_path": pi.mcp_adapter_path,
-        "pi_model_capability": PiModelCapability(
-            reasoning=pi.model.reasoning,
-            input=list(pi.model.input),
-            context_window=pi.model.context_window,
-            max_tokens=pi.model.max_tokens,
-        ),
-        "pi_thinking_level": pi.thinking_level,
+        **thinking,
     }
 
 
@@ -1452,7 +1440,7 @@ async def main(
         exclude_tools=cfg.capability.filter.exclude.tools,
         extra_mcp_servers=passthrough_mcp,
         engine_type=cfg.engine.type,
-        **_pi_engine_fields(cfg),
+        **_engine_runtime_fields(cfg),
     )
     # D-03/D-04: dedup store first — it opens/repairs state.db (fail-closed on a bad
     # mount). Then the session map shares that now-valid file (fail-open). The pool

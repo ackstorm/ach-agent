@@ -25,3 +25,4 @@ def test_env_is_clean_slate_and_never_carries_ek(monkeypatch) -> None:
     assert env["MY_CA"] == "/etc/ca.pem"
     assert env["PI_CODING_AGENT_DIR"] == "/home/agent/pi/k1"
     assert env["HOME"] == "/home/agent/pi/k1" and env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["PI_LOCAL_PROXY_API_KEY"] == "local-proxy"

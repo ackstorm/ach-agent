@@ -36,4 +36,6 @@ def build_pi_env(agent_dir: Path, cfg: EngineConfig) -> dict[str, str]:
     env["TMPDIR"] = "/tmp"
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["PI_CODING_AGENT_DIR"] = str(agent_dir)
+    # models.json references this env var; the localhost ModelProxy injects the real ek_.
+    env["PI_LOCAL_PROXY_API_KEY"] = "local-proxy"
     return env

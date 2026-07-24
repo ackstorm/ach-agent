@@ -13,19 +13,19 @@
       
       
       
-      <link rel="icon" href="../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>Decision records & design notes - ach-agent</title>
+        <title>Thinking is model-owned: normalized model.thinking, engines translate - ach-agent</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,7 +44,7 @@
       
     
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -70,7 +70,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#decision-records-design-notes" class="md-skip">
+        <a href="#thinking-is-model-owned-normalized-modelthinking-engines-translate" class="md-skip">
           Skip to content
         </a>
       
@@ -86,7 +86,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -106,7 +106,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Decision records &amp; design notes
+              Thinking is model-owned: normalized model.thinking, engines translate
             
           </span>
         </div>
@@ -205,7 +205,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -235,7 +235,7 @@
   
   
     <li class="md-nav__item">
-      <a href=".." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -255,7 +255,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting-started/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -275,7 +275,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/" class="md-nav__link">
+      <a href="../../configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -308,6 +308,41 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#symptom" class="md-nav__link">
+    <span class="md-ellipsis">
+      Symptom
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      Decision
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Changes
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -324,75 +359,61 @@
   
 
 
-<h1 id="decision-records-design-notes">Decision records &amp; design notes</h1>
-<p>Design/decision write-ups for significant changes (the <em>why</em>, not just the diff). One file per
-decision, prefixed <code>YYYY-MM-DD-</code> so <code>ls</code> sorts chronologically. Add a row below when you add a doc.</p>
-<table>
-<thead>
-<tr>
-<th>Date</th>
-<th>Doc</th>
-<th>Status</th>
-<th>What it decides</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>2026-07-01</td>
-<td><a href="2026-07-01-keyed-engine-pool/">keyed-engine-pool</a></td>
-<td>Shipped (<code>c57c92a</code>)</td>
-<td>EnginePool keyed by <code>session_key</code>: one opencode server per key, per-key HOME isolation, <code>channel.session</code> reuse.</td>
-</tr>
-<tr>
-<td>2026-07-01</td>
-<td><a href="2026-07-01-router-pool-vs-legacy/">router-pool-vs-legacy</a></td>
-<td>Decisions</td>
-<td>Router / pool / session lifecycle vs legacy <code>ackbot-process</code>: what to keep vs port; splits into follow-up plans.</td>
-</tr>
-<tr>
-<td>2026-07-02</td>
-<td><a href="2026-07-02-session-identity-and-bounds/">session-identity-and-bounds</a></td>
-<td>Accepted</td>
-<td><code>channel.session</code> becomes a block: separates <code>session_key</code> (lane/pool) from the oc-session reuse key; <code>maxTokens</code> + overflow bounds.</td>
-</tr>
-<tr>
-<td>2026-07-03</td>
-<td><a href="2026-07-03-stats-observability/">stats-observability</a></td>
-<td>Shipped</td>
-<td>Two-tier stats sink (Prometheus + redis stream), <code>v="1"</code> stream contract (<code>ach:sessions</code> + <code>ach:tools</code>), Tier-1 tool trace, OTel <code>gen_ai.*</code> alignment.</td>
-</tr>
-<tr>
-<td>2026-07-03</td>
-<td><a href="2026-07-03-provider-by-model-type/">provider-by-model-type</a></td>
-<td>Shipped</td>
-<td><code>model.type</code> selects the opencode provider + native wire: gemini→built-in <code>google</code> on <code>/gemini/v1beta</code>, anthropic→built-in <code>anthropic</code>, openai→custom <code>ach</code>. Fixes <code>type: gemini</code> hitting <code>/v1/chat/completions</code>.</td>
-</tr>
-<tr>
-<td>2026-07-05</td>
-<td><a href="2026-07-05-hindsight-memory-facade/">hindsight-memory-facade</a></td>
-<td>Shipped</td>
-<td>Harness-hosted 4-tool MCP facade fronts Hindsight (bank_id + admin Bearer injected); boot-once provisioning of bank + mental models; <code>mentalModels</code> becomes rich specs; optional <code>auth</code>; per-repo via tags, not bank templating.</td>
-</tr>
-<tr>
-<td>2026-07-23</td>
-<td><a href="2026-07-23-pi-engine-driver/">pi-engine-driver</a></td>
-<td>Shipped</td>
-<td>Pi runs behind the symmetric EngineDriver seam over JSONL RPC; the harness owns terminal validation, engine-namespaced sessions, bounds, and loopback MCP egress via the vendored adapter.</td>
-</tr>
-<tr>
-<td>2026-07-23</td>
-<td><a href="2026-07-23-pi-model-capability-and-thinking/">pi-model-capability-and-thinking</a></td>
-<td>Superseded</td>
-<td>Pi's <code>reasoning</code>/<code>input</code>/<code>contextWindow</code>/<code>maxTokens</code>/<code>--thinking</code> get a typed, generated <code>engine.pi.model</code>/<code>engine.pi.thinkingLevel</code> surface (not <code>model.params</code>, which stays opaque per-call passthrough); <code>model.type</code> wire selection untouched.</td>
-</tr>
-<tr>
-<td>2026-07-24</td>
-<td><a href="2026-07-24-model-owned-thinking/">model-owned-thinking</a></td>
-<td>Shipped</td>
-<td>Thinking intent moves to a normalized <code>model.thinking</code>; <code>engine.pi</code> back to executable knobs only; each engine translates.</td>
-</tr>
-</tbody>
-</table>
+<h1 id="thinking-is-model-owned-normalized-modelthinking-engines-translate">Thinking is model-owned: normalized <code>model.thinking</code>, engines translate</h1>
+<p><strong>Date:</strong> 2026-07-24 · <strong>Status:</strong> Shipped · <strong>Supersedes:</strong>
+<a href="../2026-07-23-pi-model-capability-and-thinking/">2026-07-23-pi-model-capability-and-thinking</a></p>
+<h2 id="symptom">Symptom</h2>
+<p>v0.8.1 gave Pi's reasoning/thinking a home under <code>engine.pi.model</code>/<code>engine.pi.thinkingLevel</code>.
+That bound a model-level concern to one engine's sub-block: flipping <code>engine.type</code> silently
+dropped the operator's thinking intent, <code>../ach</code> had to render a Pi-shaped model descriptor
+(<code>PiModelSpec</code>) that duplicated model semantics outside the model block, and the same intent
+would have needed re-encoding per engine forever.</p>
+<h2 id="decision">Decision</h2>
+<ul>
+<li><strong><code>engine.type</code> only selects the runtime.</strong> <code>engine.pi</code> carries only executable knobs
+  (<code>binaryPath</code>, <code>mcpAdapterPath</code>). The v0.8.1 <code>engine.pi.model</code>/<code>thinkingLevel</code> fields are
+  removed outright in v0.9.0 (breaking; released for one day, never rendered by any pushed
+  control plane).</li>
+<li><strong><code>model</code> is the single configuration surface for model identity and thinking intent</strong>:
+  <code>model.thinking.enabled</code> (strict bool) + <code>model.thinking.effort</code>
+  (<code>minimal|low|medium|high|xhigh</code>; requires <code>enabled</code>; <code>off</code> ≡ <code>enabled:false</code>; <code>max</code>
+  and provider-specific levels such as <code>ultracode</code> stay outside the portable enum —
+  reachable via <code>model.params</code> passthrough; widen the Literal + per-engine tables if a
+  level ever becomes portable). NOT <code>model.params</code>: params stays open provider-specific
+  per-call passthrough, and explicit params keys win over the generated translation.</li>
+<li><strong>Each engine translates the normalized block itself</strong>:</li>
+<li><strong>pi</strong> — <code>models.json</code> descriptor <code>reasoning: &lt;enabled&gt;</code>; <code>--thinking &lt;effort&gt;</code> on the
+    launch argv, identity-mapped including <code>xhigh</code> (both RPC and native-TUI paths via the
+    shared <code>_common_args</code>). The rest of the descriptor (<code>input</code>, <code>contextWindow</code>,
+    <code>maxTokens</code>, <code>cost</code>) stays hardcoded at Pi's builtin defaults — deliberately not
+    operator-configurable; no capability/pricing surface exists.</li>
+<li><strong>opencode</strong> — <code>lifecycle._thinking_options</code> merges per-wire providerOptions under the
+    generated model options: openai → <code>reasoningEffort</code> (passthrough incl. <code>xhigh</code>),
+    gemini → <code>thinkingConfig.thinkingLevel</code> (<code>xhigh</code> clamps to <code>high</code> — gemini has no
+    xhigh level), anthropic → <code>thinking.budgetTokens</code>
+    (1024/4096/10000/24576/32000 for minimal/low/medium/high/xhigh; chosen constants,
+    provider minimum 1024).</li>
+<li><strong>No <code>/hydrate</code> involvement.</strong> <code>runtime.models[{id,endpoint}]</code> and <code>resolve_model</code>'s
+  fail-closed membership check are untouched; richer hydrate model metadata is a possible
+  future enhancement, not a prerequisite.</li>
+</ul>
+<h2 id="changes">Changes</h2>
+<ul>
+<li><code>src/ach_agent/config/schema.py</code>: <code>ThinkingBlock</code>, <code>ModelBlock.thinking</code>;
+  <code>PiEngineBlock</code> stripped to <code>binaryPath</code>/<code>mcpAdapterPath</code>; <code>PiModelCapabilities</code> deleted.</li>
+<li><code>docs/schemas/agent-config-v1.schema.json</code>: regenerated.</li>
+<li><code>src/ach_agent/engine/base/driver.py</code>: <code>EngineConfig.thinking_enabled</code>/<code>thinking_effort</code>
+  replace <code>PiModelCapability</code>/<code>pi_model_capability</code>/<code>pi_thinking_level</code>.</li>
+<li><code>src/ach_agent/engine/pi/models_json.py</code> + <code>driver.py</code>: derive <code>reasoning</code>, emit
+  <code>--thinking</code> from the normalized fields.</li>
+<li><code>src/ach_agent/engine/lifecycle.py</code>: <code>_thinking_options</code> + merge into
+  <code>write_opencode_config</code>'s model options.</li>
+<li><code>src/ach_agent/main.py</code>: <code>_engine_runtime_fields</code> (replaces <code>_pi_engine_fields</code>).</li>
+<li><code>docs/plan/CONTRACT_v3.md</code> §2 rewritten; <code>../ach</code> correction handoff:
+  <code>docs/superpowers/plans/2026-07-24-model-thinking-handoff-ach.md</code>.</li>
+</ul>
+<p>Absent <code>model.thinking</code>, every generated artifact (models.json, argv, opencode.json) is
+byte-identical to v0.8.0 defaults.</p>
 
 
 
@@ -439,10 +460,10 @@ decision, prefixed <code>YYYY-MM-DD-</code> so <code>ls</code> sorts chronologic
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "..", "features": [], "search": "../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
     
   </body>

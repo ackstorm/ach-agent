@@ -148,6 +148,35 @@ def _key_suffix(session_key: str) -> str:
     return f"_{safe}-{digest}"
 
 
+# model.thinking → opencode per-call providerOptions, keyed by the model wire
+# (model.type — same switch as _PROVIDER_BY_TYPE). Merged UNDER model.params in the
+# generated model options: the operator's explicit params keys win on collision, so
+# params keeps its provider-specific-passthrough supremacy. `enabled` without `effort`
+# injects nothing — the provider's own default thinking behavior applies.
+# ponytail: anthropic budgets are chosen constants (provider minimum is 1024); make them
+# configurable only if a real deployment needs different budgets.
+_ANTHROPIC_THINKING_BUDGET: dict[str, int] = {
+    "minimal": 1024,
+    "low": 4096,
+    "medium": 10000,
+    "high": 24576,
+    "xhigh": 32000,
+}
+
+
+def _thinking_options(model_type: str, enabled: bool, effort: str | None) -> dict[str, object]:
+    """Translate the normalized model.thinking block into provider options."""
+    if not enabled or effort is None:
+        return {}
+    if model_type == "gemini":
+        # gemini's thinkingLevel vocabulary has no xhigh — clamp to its strongest level.
+        level = "high" if effort == "xhigh" else effort
+        return {"thinkingConfig": {"thinkingLevel": level}}
+    if model_type == "anthropic":
+        return {"thinking": {"type": "enabled", "budgetTokens": _ANTHROPIC_THINKING_BUDGET[effort]}}
+    return {"reasoningEffort": effort}
+
+
 def write_opencode_config(ephemeral_home: Path, config: EngineConfig, session_key: str) -> Path:
     """Write per-session opencode config file to ephemeral home before subprocess launch.
 
@@ -201,7 +230,16 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig, session_ke
         # `thinkingConfig.thinkingLevel|thinkingBudget`, openai `reasoningEffort`, temperature).
         # ponytail: whole params dict → model options; add a separate field if a provider-level
         # option (e.g. `timeout`) is ever needed there.
-        "models": {config.model: {"options": dict(config.params)}},
+        "models": {
+            config.model: {
+                "options": {
+                    **_thinking_options(
+                        config.model_type, config.thinking_enabled, config.thinking_effort
+                    ),
+                    **dict(config.params),
+                }
+            }
+        },
     }
     if npm:  # only a CUSTOM provider id needs npm + a display name; built-ins are known
         provider_block["npm"] = npm

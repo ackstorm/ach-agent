@@ -117,42 +117,36 @@ def _pi_engine_base(**pi_overrides: object) -> dict:
     }
 
 
-def test_pi_engine_model_capability_defaults_when_absent(tmp_path: Path) -> None:
-    config = _load_raw(tmp_path, _pi_engine_base())
-    assert config.engine.pi is not None
-    assert config.engine.pi.model.reasoning is False
-    assert config.engine.pi.model.input == ["text"]
-    assert config.engine.pi.model.context_window == 128000
-    assert config.engine.pi.model.max_tokens == 16384
-    assert config.engine.pi.thinking_level is None
+def _model_thinking_base(thinking: object) -> dict:
+    """_VALID_WEBHOOK_BASE with model.thinking set."""
+    return {
+        **_VALID_WEBHOOK_BASE,
+        "model": {**_VALID_WEBHOOK_BASE["model"], "thinking": thinking},
+    }
 
 
-def test_pi_engine_model_capability_explicit_reasoning_and_thinking(tmp_path: Path) -> None:
-    config = _load_raw(
-        tmp_path,
-        _pi_engine_base(
-            model={
-                "reasoning": True,
-                "input": ["text", "image"],
-                "contextWindow": 200000,
-                "maxTokens": 32000,
-            },
-            thinkingLevel="high",
-        ),
-    )
-    pi = config.engine.pi
-    assert pi is not None
-    assert pi.model.reasoning is True
-    assert pi.model.input == ["text", "image"]
-    assert pi.model.context_window == 200000
-    assert pi.model.max_tokens == 32000
-    assert pi.thinking_level == "high"
+def test_model_thinking_defaults_when_absent(tmp_path: Path) -> None:
+    config = _load_raw(tmp_path, dict(_VALID_WEBHOOK_BASE))
+    assert config.model.thinking.enabled is False
+    assert config.model.thinking.effort is None
 
 
-def test_pi_thinking_level_without_reasoning_hard_fails(tmp_path: Path) -> None:
+def test_model_thinking_enabled_with_effort(tmp_path: Path) -> None:
+    config = _load_raw(tmp_path, _model_thinking_base({"enabled": True, "effort": "high"}))
+    assert config.model.thinking.enabled is True
+    assert config.model.thinking.effort == "high"
+
+
+def test_model_thinking_enabled_without_effort_is_valid(tmp_path: Path) -> None:
+    config = _load_raw(tmp_path, _model_thinking_base({"enabled": True}))
+    assert config.model.thinking.enabled is True
+    assert config.model.thinking.effort is None
+
+
+def test_model_thinking_effort_without_enabled_hard_fails(tmp_path: Path) -> None:
     from ach_agent.config import load_config
 
-    raw = _pi_engine_base(thinkingLevel="high")  # model.reasoning defaults to False
+    raw = _model_thinking_base({"effort": "high"})
     config_file = tmp_path / "config.json"
     config_file.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(SystemExit) as exc_info:
@@ -160,10 +154,11 @@ def test_pi_thinking_level_without_reasoning_hard_fails(tmp_path: Path) -> None:
     assert exc_info.value.code != 0
 
 
-def test_pi_thinking_level_invalid_value_hard_fails(tmp_path: Path) -> None:
+@pytest.mark.parametrize("invalid_effort", ["off", "max", "ultracode", "HIGH", ""])
+def test_model_thinking_invalid_effort_hard_fails(tmp_path: Path, invalid_effort: str) -> None:
     from ach_agent.config import load_config
 
-    raw = _pi_engine_base(model={"reasoning": True}, thinkingLevel="ultra")
+    raw = _model_thinking_base({"enabled": True, "effort": invalid_effort})
     config_file = tmp_path / "config.json"
     config_file.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(SystemExit) as exc_info:
@@ -171,23 +166,11 @@ def test_pi_thinking_level_invalid_value_hard_fails(tmp_path: Path) -> None:
     assert exc_info.value.code != 0
 
 
-@pytest.mark.parametrize(
-    "invalid_input",
-    [
-        [],
-        ["image"],
-        ["text", "text"],
-        ["image", "text"],
-        ["text", "image", "image"],
-        ["audio"],
-    ],
-)
-def test_pi_model_input_rejects_every_shape_except_supported_ordered_shapes(
-    tmp_path: Path, invalid_input: list[str]
-) -> None:
+@pytest.mark.parametrize("invalid_enabled", ["true", 1, 0, "false"])
+def test_model_thinking_enabled_rejects_coercion(tmp_path: Path, invalid_enabled: object) -> None:
     from ach_agent.config import load_config
 
-    raw = _pi_engine_base(model={"input": invalid_input})
+    raw = _model_thinking_base({"enabled": invalid_enabled})
     config_file = tmp_path / "config.json"
     config_file.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(SystemExit) as exc_info:
@@ -196,88 +179,38 @@ def test_pi_model_input_rejects_every_shape_except_supported_ordered_shapes(
 
 
 @pytest.mark.parametrize(
-    ("field", "invalid_value"),
-    [
-        ("reasoning", "true"),
-        ("reasoning", 1),
-        ("contextWindow", "128000"),
-        ("contextWindow", 128000.0),
-        ("contextWindow", True),
-        ("maxTokens", "16384"),
-        ("maxTokens", 16384.0),
-        ("maxTokens", False),
-        ("maxTokens", 0),
-    ],
+    "payload",
+    [{"enabled": True, "effort": "ultracode"}, {"enabled": "true"}, {"effort": "high"}],
 )
-def test_pi_model_strict_scalars_reject_coercion_and_non_positive_values(
-    tmp_path: Path, field: str, invalid_value: object
-) -> None:
-    from ach_agent.config import load_config
-
-    raw = _pi_engine_base(model={field: invalid_value})
-    config_file = tmp_path / "config.json"
-    config_file.write_text(json.dumps(raw), encoding="utf-8")
-    with pytest.raises(SystemExit) as exc_info:
-        load_config(str(config_file))
-    assert exc_info.value.code != 0
-
-
-@pytest.mark.parametrize(
-    "invalid_input",
-    [
-        [],
-        ["image"],
-        ["text", "text"],
-        ["image", "text"],
-        ["text", "image", "image"],
-        ["audio"],
-    ],
-)
-def test_pi_model_input_error_is_value_validation_not_extra_field(
-    invalid_input: list[str],
-) -> None:
-    """Keep the red phase honest: today's PiEngineBlock rejects the whole `model`
-    field as extra, which must not masquerade as proof that these shapes are checked."""
+def test_model_thinking_error_is_field_validation_not_extra_field(payload: dict) -> None:
+    """Keep the red phase honest: today ModelBlock rejects the whole `thinking` key as
+    extra, which must not masquerade as proof these values are checked."""
     from pydantic import ValidationError
 
-    from ach_agent.config.schema import PiModelCapabilities
+    from ach_agent.config.schema import ThinkingBlock
 
     with pytest.raises(ValidationError) as exc_info:
-        PiModelCapabilities.model_validate({"input": invalid_input})
+        ThinkingBlock.model_validate(payload)
     errors = exc_info.value.errors()
-    assert any(error["loc"][0] == "input" for error in errors)
     assert all(error["type"] != "extra_forbidden" for error in errors)
 
 
 @pytest.mark.parametrize(
-    ("field", "invalid_value"),
-    [
-        ("reasoning", "true"),
-        ("reasoning", 1),
-        ("contextWindow", "128000"),
-        ("contextWindow", 128000.0),
-        ("maxTokens", "16384"),
-        ("maxTokens", 16384.0),
-    ],
+    "removed_surface",
+    [{"model": {"reasoning": True}}, {"thinkingLevel": "high"}],
 )
-def test_pi_model_scalar_error_is_strict_validation_not_extra_field(
-    field: str, invalid_value: object
+def test_engine_pi_model_and_thinking_level_are_rejected(
+    tmp_path: Path, removed_surface: dict
 ) -> None:
-    """Prove the field itself rejects coercion after it becomes a recognized key."""
-    from pydantic import ValidationError
+    """The v0.8.1 engine.pi.model/thinkingLevel surface is gone: extra=forbid rejects it."""
+    from ach_agent.config import load_config
 
-    from ach_agent.config.schema import PiModelCapabilities
-
-    with pytest.raises(ValidationError) as exc_info:
-        PiModelCapabilities.model_validate({field: invalid_value})
-    errors = exc_info.value.errors()
-    expected_loc = {
-        "reasoning": ("reasoning",),
-        "contextWindow": ("contextWindow",),
-        "maxTokens": ("maxTokens",),
-    }[field]
-    assert any(error["loc"] == expected_loc for error in errors)
-    assert all(error["type"] != "extra_forbidden" for error in errors)
+    raw = _pi_engine_base(**removed_surface)
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(SystemExit) as exc_info:
+        load_config(str(config_file))
+    assert exc_info.value.code != 0
 
 
 # ---------------------------------------------------------------------------

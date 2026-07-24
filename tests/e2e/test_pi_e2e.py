@@ -56,13 +56,13 @@ PI_MCP_ADAPTER_PATH = _require_pi_mcp_adapter()
 
 @pytest.fixture(autouse=True)
 def _pinned_pi_version() -> None:
-    """Every test in this module runs the pinned 0.81.1 — a version drift silently
+    """Every test in this module runs the pinned 0.82.0 — a version drift silently
     changing RPC/CLI behavior must fail loudly here, not pass on a different Pi."""
     import subprocess
 
     result = subprocess.run([PI, "--version"], capture_output=True, text=True, check=True)
     version = result.stdout.strip()
-    assert version == "0.81.1", f"pi --version = {version!r}, expected the pinned 0.81.1"
+    assert version == "0.82.0", f"pi --version = {version!r}, expected the pinned 0.82.0"
 
 
 async def _rpc_roundtrip(client: Any, command: str, **payload: Any) -> dict[str, Any]:

@@ -28,7 +28,7 @@ RUN apt-get update -qq \
 # are npm (Node/TS); reuse the same Node 26 the runtime already carries for codemem.
 # --ignore-scripts: skip package postinstall (supply-chain hygiene; the ek never reaches Pi).
 FROM node:26-bookworm-slim AS pi-bin
-ARG PI_VERSION=0.81.1
+ARG PI_VERSION=0.82.0
 ARG PI_MCP_ADAPTER_VERSION=2.11.0
 RUN npm install -g --ignore-scripts --prefix /opt/pi \
       "@earendil-works/pi-coding-agent@${PI_VERSION}" \

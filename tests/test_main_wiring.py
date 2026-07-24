@@ -689,53 +689,59 @@ async def test_max_tokens_not_exceeded_no_action() -> None:
     discard.assert_not_awaited()
 
 
-def test_pi_engine_fields_defaults_for_opencode() -> None:
+def _wiring_cfg(engine_type: str, pi: object, enabled: bool, effort: str | None) -> object:
     from types import SimpleNamespace
 
-    from ach_agent.main import _pi_engine_fields
-
-    cfg = SimpleNamespace(engine=SimpleNamespace(type="opencode", pi=None))
-    fields = _pi_engine_fields(cfg)
-    assert fields["binary_path"] == "opencode"
-    assert fields["pi_mcp_adapter_path"] == ""
-    assert fields["pi_model_capability"].reasoning is False
-    assert fields["pi_thinking_level"] is None
+    return SimpleNamespace(
+        engine=SimpleNamespace(type=engine_type, pi=pi),
+        model=SimpleNamespace(thinking=SimpleNamespace(enabled=enabled, effort=effort)),
+    )
 
 
-def test_pi_engine_fields_defaults_to_pi_binary_without_pi_overrides() -> None:
-    from types import SimpleNamespace
+def test_engine_runtime_fields_defaults_for_opencode() -> None:
+    from ach_agent.main import _engine_runtime_fields
 
-    from ach_agent.main import _pi_engine_fields
+    fields = _engine_runtime_fields(_wiring_cfg("opencode", None, False, None))
+    assert fields == {
+        "binary_path": "opencode",
+        "pi_mcp_adapter_path": "",
+        "thinking_enabled": False,
+        "thinking_effort": None,
+    }
 
-    cfg = SimpleNamespace(engine=SimpleNamespace(type="pi", pi=None))
-    fields = _pi_engine_fields(cfg)
-    assert fields["binary_path"] == "pi"
-    assert fields["pi_mcp_adapter_path"] == ""
-    assert fields["pi_model_capability"].reasoning is False
-    assert fields["pi_thinking_level"] is None
+
+def test_engine_runtime_fields_pi_binary_without_pi_overrides() -> None:
+    from ach_agent.main import _engine_runtime_fields
+
+    fields = _engine_runtime_fields(_wiring_cfg("pi", None, True, "high"))
+    assert fields == {
+        "binary_path": "pi",
+        "pi_mcp_adapter_path": "",
+        "thinking_enabled": True,
+        "thinking_effort": "high",
+    }
 
 
-def test_pi_engine_fields_from_pi_config() -> None:
-    from types import SimpleNamespace
-
-    from ach_agent.config.schema import PiEngineBlock, PiModelCapabilities
-    from ach_agent.main import _pi_engine_fields
+def test_engine_runtime_fields_from_pi_block_and_model_thinking() -> None:
+    from ach_agent.config.schema import PiEngineBlock
+    from ach_agent.main import _engine_runtime_fields
 
     pi_block = PiEngineBlock(
         binaryPath="pi",
         mcpAdapterPath="/opt/pi-mcp-adapter/node_modules/pi-mcp-adapter",
-        model=PiModelCapabilities(
-            reasoning=True, input=["text", "image"], contextWindow=200000, maxTokens=32000
-        ),
-        thinkingLevel="high",
     )
-    cfg = SimpleNamespace(engine=SimpleNamespace(type="pi", pi=pi_block))
-    fields = _pi_engine_fields(cfg)
-    assert fields["binary_path"] == "pi"
-    assert fields["pi_mcp_adapter_path"] == "/opt/pi-mcp-adapter/node_modules/pi-mcp-adapter"
-    cap = fields["pi_model_capability"]
-    assert cap.reasoning is True
-    assert cap.input == ["text", "image"]
-    assert cap.context_window == 200000
-    assert cap.max_tokens == 32000
-    assert fields["pi_thinking_level"] == "high"
+    fields = _engine_runtime_fields(_wiring_cfg("pi", pi_block, True, "medium"))
+    assert fields == {
+        "binary_path": "pi",
+        "pi_mcp_adapter_path": "/opt/pi-mcp-adapter/node_modules/pi-mcp-adapter",
+        "thinking_enabled": True,
+        "thinking_effort": "medium",
+    }
+
+
+def test_engine_runtime_fields_thinking_flows_to_opencode_too() -> None:
+    from ach_agent.main import _engine_runtime_fields
+
+    fields = _engine_runtime_fields(_wiring_cfg("opencode", None, True, "low"))
+    assert fields["thinking_enabled"] is True
+    assert fields["thinking_effort"] == "low"

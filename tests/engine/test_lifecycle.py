@@ -12,14 +12,11 @@ Per-Task Verification Map (00-VALIDATION.md):
 from __future__ import annotations
 
 import asyncio
-import sys
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # ENG-01: opencode serve launches on allocated port; subprocess alive
@@ -75,8 +72,8 @@ async def test_launch_subprocess(tmp_path: Path) -> None:
 
 async def test_poll_ready() -> None:
     """ENG-02: poll_ready() returns without error when opencode /app is healthy."""
-    from ach_agent.engine.lifecycle import EngineConfig, ManagedServer, poll_ready
     from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.lifecycle import ManagedServer, poll_ready
 
     server = ManagedServer(port=19877)
     mock_client = AsyncMock(spec=OpenCodeClient)
@@ -98,8 +95,8 @@ async def test_startup_deadline_exits() -> None:
 
     Points at a closed port (health always False) with sub-second timeout.
     """
-    from ach_agent.engine.lifecycle import ManagedServer, poll_ready
     from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.lifecycle import ManagedServer, poll_ready
 
     server = ManagedServer(port=19878)
     mock_client = AsyncMock(spec=OpenCodeClient)
@@ -158,7 +155,6 @@ async def test_drain_tasks_started(tmp_path: Path) -> None:
         # Should have created exactly two drain tasks (stdout + stderr)
         # There may be additional tasks if asyncio creates background tasks,
         # but drain tasks for _drain_logs must be among them.
-        drain_task_count = sum(1 for t in created_tasks if not t.done() or not t.cancelled())
         assert len(created_tasks) >= 2, (
             f"Expected at least 2 drain tasks (stdout + stderr), got {len(created_tasks)}"
         )
@@ -691,6 +687,120 @@ def test_write_opencode_config_provider_by_model_type(tmp_path: Path) -> None:
     assert oc["provider"]["ach"]["npm"] == "@ai-sdk/openai-compatible"
 
 
+def test_thinking_translates_to_openai_reasoning_effort(tmp_path: Path) -> None:
+    import json
+
+    from ach_agent.engine.lifecycle import EngineConfig, write_opencode_config
+
+    cfg = EngineConfig(
+        model="m1",
+        model_type="openai",
+        model_base_url="http://127.0.0.1:1/v1",
+        thinking_enabled=True,
+        thinking_effort="high",
+    )
+    path = write_opencode_config(tmp_path, cfg, "k-think-openai")
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    options = doc["provider"]["ach"]["models"]["m1"]["options"]
+    assert options["reasoningEffort"] == "high"
+
+
+def test_thinking_translates_per_wire_for_gemini_and_anthropic(tmp_path: Path) -> None:
+    import json
+
+    from ach_agent.engine.lifecycle import EngineConfig, write_opencode_config
+
+    gemini_cfg = EngineConfig(
+        model="g1",
+        model_type="gemini",
+        model_base_url="http://127.0.0.1:1/gemini",
+        thinking_enabled=True,
+        thinking_effort="medium",
+    )
+    path = write_opencode_config(tmp_path, gemini_cfg, "k-think-gemini")
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    gemini_options = doc["provider"]["google"]["models"]["g1"]["options"]
+    assert gemini_options["thinkingConfig"] == {"thinkingLevel": "medium"}
+
+    anthropic_cfg = EngineConfig(
+        model="a1",
+        model_type="anthropic",
+        model_base_url="http://127.0.0.1:1/anthropic",
+        thinking_enabled=True,
+        thinking_effort="high",
+    )
+    path = write_opencode_config(tmp_path, anthropic_cfg, "k-think-anthropic")
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    anthropic_options = doc["provider"]["anthropic"]["models"]["a1"]["options"]
+    assert anthropic_options["thinking"] == {"type": "enabled", "budgetTokens": 24576}
+
+
+def test_thinking_xhigh_maps_per_wire(tmp_path: Path) -> None:
+    import json
+
+    from ach_agent.engine.lifecycle import EngineConfig, write_opencode_config
+
+    for model_type, base_path, provider_id, expected in (
+        ("openai", "/v1", "ach", {"reasoningEffort": "xhigh"}),
+        ("gemini", "/gemini", "google", {"thinkingConfig": {"thinkingLevel": "high"}}),
+        (
+            "anthropic",
+            "/anthropic",
+            "anthropic",
+            {"thinking": {"type": "enabled", "budgetTokens": 32000}},
+        ),
+    ):
+        cfg = EngineConfig(
+            model="m1",
+            model_type=model_type,
+            model_base_url=f"http://127.0.0.1:1{base_path}",
+            thinking_enabled=True,
+            thinking_effort="xhigh",
+        )
+        path = write_opencode_config(tmp_path, cfg, f"k-xhigh-{model_type}")
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        options = doc["provider"][provider_id]["models"]["m1"]["options"]
+        for key, value in expected.items():
+            assert options[key] == value
+
+
+def test_thinking_disabled_or_effortless_injects_nothing(tmp_path: Path) -> None:
+    import json
+
+    from ach_agent.engine.lifecycle import EngineConfig, write_opencode_config
+
+    for kwargs in ({}, {"thinking_enabled": True}):
+        cfg = EngineConfig(
+            model="m1", model_type="openai", model_base_url="http://127.0.0.1:1/v1", **kwargs
+        )
+        path = write_opencode_config(tmp_path, cfg, f"k-none-{len(kwargs)}")
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        options = doc["provider"]["ach"]["models"]["m1"]["options"]
+        assert "reasoningEffort" not in options
+        assert "thinking" not in options
+        assert "thinkingConfig" not in options
+
+
+def test_explicit_model_params_win_over_thinking_translation(tmp_path: Path) -> None:
+    import json
+
+    from ach_agent.engine.lifecycle import EngineConfig, write_opencode_config
+
+    cfg = EngineConfig(
+        model="m1",
+        model_type="openai",
+        model_base_url="http://127.0.0.1:1/v1",
+        params={"reasoningEffort": "low", "temperature": 1},
+        thinking_enabled=True,
+        thinking_effort="high",
+    )
+    path = write_opencode_config(tmp_path, cfg, "k-params-win")
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    options = doc["provider"]["ach"]["models"]["m1"]["options"]
+    assert options["reasoningEffort"] == "low"  # params passthrough stays supreme
+    assert options["temperature"] == 1
+
+
 def test_write_opencode_config_prompt_compose(tmp_path: Path) -> None:
     """prompt.compose: append → top-level `instructions`; replace → `agent.build.prompt`.
 
@@ -1038,7 +1148,7 @@ async def test_launch_populates_config_path(tmp_path: Path) -> None:
     needed by the --tui attach client to set OPENCODE_CONFIG.  Drives launch() with a
     real fake binary so the full code path executes (same pattern as test_launch_subprocess).
     """
-    from ach_agent.engine.lifecycle import EngineConfig, ManagedServer, launch
+    from ach_agent.engine.lifecycle import EngineConfig, launch
 
     config = EngineConfig()
     fake_binary = tmp_path / "opencode"

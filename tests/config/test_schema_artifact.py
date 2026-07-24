@@ -52,19 +52,20 @@ def test_rendered_fixtures_validate_against_schema(fixture: Path) -> None:
     Draft202012Validator(schema).validate(instance)
 
 
-def test_pi_input_schema_exposes_only_supported_ordered_shapes() -> None:
+def test_model_thinking_schema_replaces_pi_capability_surface() -> None:
     schema = json.loads(_ARTIFACT.read_text(encoding="utf-8"))
-    input_schema = schema["$defs"]["PiModelCapabilities"]["properties"]["input"]
-    validator = Draft202012Validator(input_schema)
-
-    assert validator.is_valid(["text"])
-    assert validator.is_valid(["text", "image"])
-    for invalid in (
-        [],
-        ["image"],
-        ["text", "text"],
-        ["image", "text"],
-        ["text", "image", "image"],
-        ["audio"],
-    ):
-        assert not validator.is_valid(invalid)
+    assert "PiModelCapabilities" not in schema["$defs"]
+    assert set(schema["$defs"]["PiEngineBlock"]["properties"]) == {
+        "binaryPath",
+        "mcpAdapterPath",
+    }
+    thinking = schema["$defs"]["ThinkingBlock"]["properties"]
+    assert thinking["enabled"]["type"] == "boolean"
+    effort = thinking["effort"]
+    assert {
+        "enum": ["minimal", "low", "medium", "high", "xhigh"],
+        "type": "string",
+    } in effort["anyOf"]
+    assert {"type": "null"} in effort["anyOf"]
+    model_props = schema["$defs"]["ModelBlock"]["properties"]
+    assert model_props["thinking"]["$ref"].endswith("ThinkingBlock")

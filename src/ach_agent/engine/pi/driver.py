@@ -94,8 +94,10 @@ class PiDriver:
             args.extend([prompt_flag, cfg.system_prompt])
         if cfg.exclude_tools:
             args.extend(["--exclude-tools", ",".join(cfg.exclude_tools)])
-        if cfg.pi_thinking_level is not None:
-            args.extend(["--thinking", cfg.pi_thinking_level])
+        if cfg.thinking_effort is not None:
+            # Effort values are a strict subset of Pi's --thinking levels (identity map);
+            # schema validation guarantees effort ⇒ enabled ⇒ models.json reasoning:true.
+            args.extend(["--thinking", cfg.thinking_effort])
         return args
 
     async def run_tui(self, cfg: EngineConfig, session_key: str) -> None:

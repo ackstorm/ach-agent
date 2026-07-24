@@ -56,13 +56,13 @@ PI_MCP_ADAPTER_PATH = _require_pi_mcp_adapter()
 
 @pytest.fixture(autouse=True)
 def _pinned_pi_version() -> None:
-    """Every test in this module runs the pinned 0.81.1 — a version drift silently
+    """Every test in this module runs the pinned 0.82.0 — a version drift silently
     changing RPC/CLI behavior must fail loudly here, not pass on a different Pi."""
     import subprocess
 
     result = subprocess.run([PI, "--version"], capture_output=True, text=True, check=True)
     version = result.stdout.strip()
-    assert version == "0.81.1", f"pi --version = {version!r}, expected the pinned 0.81.1"
+    assert version == "0.82.0", f"pi --version = {version!r}, expected the pinned 0.82.0"
 
 
 async def _rpc_roundtrip(client: Any, command: str, **payload: Any) -> dict[str, Any]:
@@ -205,8 +205,6 @@ async def test_pi_reasoning_model_reports_resolved_thinking_level(
     runner, base_url = await _start_stub_server()
     server: Any = None
     try:
-        from ach_agent.engine.base.driver import PiModelCapability
-
         cfg = EngineConfig(
             engine_type="pi",
             binary_path=PI,
@@ -216,8 +214,8 @@ async def test_pi_reasoning_model_reports_resolved_thinking_level(
             model_type="openai",
             model_base_url=f"{base_url}/v1",
             pi_mcp_adapter_path=adapter_path,
-            pi_model_capability=PiModelCapability(reasoning=True),
-            pi_thinking_level="high",
+            thinking_enabled=True,
+            thinking_effort="high",
         )
         driver = PiDriver()
         server = await driver.launch(cfg, "e2e-reasoning-key")
@@ -227,7 +225,7 @@ async def test_pi_reasoning_model_reports_resolved_thinking_level(
         # key + localhost-only baseUrl (never the ek_ or a real ACH endpoint).
         models_doc = json.loads((server.ephemeral_home / "models.json").read_text(encoding="utf-8"))
         provider_doc = next(iter(models_doc["providers"].values()))
-        assert provider_doc["apiKey"] == "local-proxy"
+        assert provider_doc["apiKey"] == "$PI_LOCAL_PROXY_API_KEY"
         assert provider_doc["baseUrl"].startswith("http://127.0.0.1:")
         assert provider_doc["models"][0]["reasoning"] is True
 

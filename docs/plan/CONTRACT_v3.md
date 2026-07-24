@@ -98,7 +98,23 @@ mismatch.
   "model": {
     "name": "openai.gpt-5",                 // model id, passed verbatim; MUST be in hydrated models
     "type": "openai",                       // openai | gemini | anthropic — picks the ACH compat endpoint
-    "params": { "temperature": 1 }          // OPEN, UNVALIDATED dict, splatted to the model client
+    "params": { "temperature": 1 },         // OPEN, UNVALIDATED dict, splatted to the model client
+    "thinking": {                           // normalized, engine-neutral reasoning intent — the
+      "enabled": false,                     //   CANONICAL thinking surface (never params). Strict bool.
+      "effort": null                        // minimal|low|medium|high|xhigh; requires
+      //                                       enabled=true (hard-fail otherwise). `max` and
+      //                                       provider-specific levels (e.g. ultracode) are NOT
+      //                                       portable — reach them via params passthrough.
+      //                                       Each engine translates it: pi → models.json
+      //                                       `reasoning:<enabled>` + `--thinking <effort>` at
+      //                                       launch (identity, incl. xhigh); opencode →
+      //                                       per-call providerOptions in the generated model
+      //                                       options (openai reasoningEffort incl. xhigh;
+      //                                       gemini thinkingConfig.thinkingLevel, xhigh clamps
+      //                                       to high; anthropic thinking budgetTokens
+      //                                       1024/4096/10000/24576/32000), merged UNDER
+      //                                       params — explicit params keys win on collision.
+    }
   },
   "engine": {                               // harness-local; operator-optional
     "home": "/var/lib/ach-agent/home",      // ONE shared home for all agentes: skills + .ach-state +
@@ -121,22 +137,13 @@ mismatch.
     "type": "opencode",                       // opencode | pi. Selects the EngineDriver. Rendered
     //                                           by ../ach (AgentProfile.engine.type, free string);
     //                                           the harness is the enforcer (unknown → hard-fail).
-    "pi": {                                   // PiEngineBlock; consulted only when type == "pi"
-      "binaryPath": "pi",                     // pi on PATH in the image
-      "mcpAdapterPath": "",                    // "" → image default:
-      //                                          /opt/pi-mcp-adapter/node_modules/pi-mcp-adapter
-      "model": {                              // Pi-only model capability descriptor (models.json
-        "reasoning": false,                    // fields). NOT sent to the model API call — that
-        "input": ["text"],                     // stays model.params above (open, unvalidated,
-        "contextWindow": 128000,               // per-call passthrough). Absent fields → these
-        "maxTokens": 16384                      // same values (Pi's own builtin defaults).
-      },
-      "thinkingLevel": null                    // off|minimal|low|medium|high|xhigh|max; requires
-      //                                           model.reasoning=true (hard-fail otherwise);
-      //                                           passed to `pi` as --thinking at launch — never
-      //                                           via settings.json defaults, never forced by the
-      //                                           harness. Generated into
-      //                                           docs/schemas/agent-config-v1.schema.json.
+    "pi": {                                   // PiEngineBlock; consulted only when type == "pi".
+      "binaryPath": "pi",                     //   ONLY executable knobs — model identity and
+      "mcpAdapterPath": ""                     //   thinking live in the model block above. "" →
+      //                                          image default:
+      //                                          /opt/pi-mcp-adapter/node_modules/pi-mcp-adapter.
+      //                                          (engine.pi.model/thinkingLevel existed only in
+      //                                          v0.8.1 and were removed in v0.9.0.)
     }
   },
   // ── engine.type=pi is a CROSS-REPO contract ──────────────────────────────────

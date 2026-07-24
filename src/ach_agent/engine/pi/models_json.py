@@ -17,14 +17,17 @@ _PI_PROVIDER_BY_TYPE: dict[str, tuple[str, str]] = {
 def build_models_json(cfg: EngineConfig) -> tuple[dict[str, Any], str]:
     """Return the models document and provider name passed to Pi."""
     provider, api = _PI_PROVIDER_BY_TYPE.get(cfg.model_type, _PI_PROVIDER_BY_TYPE["openai"])
-    cap = cfg.pi_model_capability
     model = {
         "id": cfg.model,
         "name": cfg.model,
-        "reasoning": cap.reasoning,
-        "input": list(cap.input),
-        "contextWindow": cap.context_window,
-        "maxTokens": cap.max_tokens,
+        # model.thinking is the only operator-facing model surface beyond identity/params:
+        # `reasoning` is derived from thinking.enabled. The remaining descriptor fields are
+        # Pi's own builtin defaults, byte-identical to v0.8.0 — deliberately NOT
+        # configurable (the v0.8.1 engine.pi.model surface was removed in v0.9.0).
+        "reasoning": cfg.thinking_enabled,
+        "input": ["text"],
+        "contextWindow": 128000,
+        "maxTokens": 16384,
         "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
     }
     doc: dict[str, Any] = {

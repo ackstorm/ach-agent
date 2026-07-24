@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from ach_agent.engine.base.driver import EngineConfig, PiModelCapability
+from ach_agent.engine.base.driver import EngineConfig
 from ach_agent.engine.pi.models_json import build_models_json
 
 
@@ -35,7 +35,7 @@ def test_openai_and_anthropic_api_kinds() -> None:
     assert doc_a["providers"][provider_a]["api"] == "anthropic-messages"
 
 
-def test_default_capability_matches_pi_builtin_defaults() -> None:
+def test_default_descriptor_matches_pi_builtin_defaults() -> None:
     doc, provider = build_models_json(
         EngineConfig(model_type="openai", model_base_url="http://x/v1")
     )
@@ -51,17 +51,16 @@ def test_default_capability_matches_pi_builtin_defaults() -> None:
     }
 
 
-def test_capability_overrides_from_engine_config() -> None:
+def test_thinking_enabled_derives_descriptor_reasoning() -> None:
     cfg = EngineConfig(
         model_type="openai",
         model_base_url="http://x/v1",
-        pi_model_capability=PiModelCapability(
-            reasoning=True, input=["text", "image"], context_window=200000, max_tokens=32000
-        ),
+        thinking_enabled=True,
     )
     doc, provider = build_models_json(cfg)
     model = doc["providers"][provider]["models"][0]
     assert model["reasoning"] is True
-    assert model["input"] == ["text", "image"]
-    assert model["contextWindow"] == 200000
-    assert model["maxTokens"] == 32000
+    # Everything else stays at Pi's builtin defaults — thinking never widens capability.
+    assert model["input"] == ["text"]
+    assert model["contextWindow"] == 128000
+    assert model["maxTokens"] == 16384

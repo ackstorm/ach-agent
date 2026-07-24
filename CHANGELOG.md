@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.9.0] - 2026-07-24
+
+### Changed
+- **BREAKING:** `engine.pi.model` and `engine.pi.thinkingLevel` (v0.8.1-only) are removed;
+  `engine.pi` carries only `binaryPath`/`mcpAdapterPath`. Thinking/reasoning intent moves
+  to the normalized `model.thinking` block (`enabled` +
+  `effort: minimal|low|medium|high|xhigh`), translated per engine: Pi → `models.json`
+  `reasoning` + `--thinking`; opencode → per-call providerOptions merged under
+  `model.params` (explicit params win).
+
 ## [0.8.1] - 2026-07-24
 
 ### Fixed

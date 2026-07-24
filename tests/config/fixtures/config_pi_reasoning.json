@@ -8,6 +8,10 @@
     "type": "openai",
     "params": {
       "temperature": 1
+    },
+    "thinking": {
+      "enabled": true,
+      "effort": "high"
     }
   },
   "engine": {
@@ -16,14 +20,7 @@
     "type": "pi",
     "pi": {
       "binaryPath": "pi",
-      "mcpAdapterPath": "/opt/pi-mcp-adapter/node_modules/pi-mcp-adapter",
-      "model": {
-        "reasoning": true,
-        "input": ["text"],
-        "contextWindow": 200000,
-        "maxTokens": 32000
-      },
-      "thinkingLevel": "high"
+      "mcpAdapterPath": "/opt/pi-mcp-adapter/node_modules/pi-mcp-adapter"
     }
   },
   "capability": {

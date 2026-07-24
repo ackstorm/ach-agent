@@ -1,6 +1,6 @@
 # Pi model capability + thinking level: a typed `engine.pi` surface, not `model.params`
 
-**Date:** 2026-07-23 · **Status:** Shipped
+**Date:** 2026-07-23 · **Status:** Superseded by [2026-07-24-model-owned-thinking](2026-07-24-model-owned-thinking.md) (surface removed in v0.9.0)
 
 ## Symptom
 

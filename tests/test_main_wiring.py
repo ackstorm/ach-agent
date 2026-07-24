@@ -702,6 +702,19 @@ def test_pi_engine_fields_defaults_for_opencode() -> None:
     assert fields["pi_thinking_level"] is None
 
 
+def test_pi_engine_fields_defaults_to_pi_binary_without_pi_overrides() -> None:
+    from types import SimpleNamespace
+
+    from ach_agent.main import _pi_engine_fields
+
+    cfg = SimpleNamespace(engine=SimpleNamespace(type="pi", pi=None))
+    fields = _pi_engine_fields(cfg)
+    assert fields["binary_path"] == "pi"
+    assert fields["pi_mcp_adapter_path"] == ""
+    assert fields["pi_model_capability"].reasoning is False
+    assert fields["pi_thinking_level"] is None
+
+
 def test_pi_engine_fields_from_pi_config() -> None:
     from types import SimpleNamespace
 

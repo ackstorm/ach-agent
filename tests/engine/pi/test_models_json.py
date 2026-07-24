@@ -20,7 +20,7 @@ def test_provider_api_mapping_and_no_ek(monkeypatch) -> None:
     provider_doc = doc["providers"][provider]
     assert provider_doc["api"] == "google-generative-ai"
     assert provider_doc["baseUrl"] == "http://127.0.0.1:9001/gemini/v1beta"
-    assert provider_doc["apiKey"] == "local-proxy"
+    assert provider_doc["apiKey"] == "$PI_LOCAL_PROXY_API_KEY"
     assert provider_doc["headers"] == {}
 
 

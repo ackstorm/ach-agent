@@ -32,7 +32,9 @@ def build_models_json(cfg: EngineConfig) -> tuple[dict[str, Any], str]:
             provider: {
                 "api": api,
                 "baseUrl": cfg.model_base_url,
-                "apiKey": "local-proxy",
+                # Pi resolves provider keys from environment-variable references. The value is
+                # a harmless localhost-proxy sentinel, never the ACH ek_.
+                "apiKey": "$PI_LOCAL_PROXY_API_KEY",
                 "headers": {},
                 "models": [model],
             }

@@ -1159,15 +1159,22 @@ async def _run_opencode_attach(
 def _pi_engine_fields(cfg: Any) -> dict[str, Any]:
     """engine.pi.* -> the EngineConfig kwargs Pi's driver consumes.
 
-    Opencode-default shape when engine.type != "pi" or engine.pi is absent — opencode
-    configs never carry these.
+    `engine.type` selects the executable independently from the optional `engine.pi`
+    overrides. A Pi config with no sub-block still launches the image's `pi` binary.
     """
     from ach_agent.engine.base.driver import PiModelCapability
 
-    pi = cfg.engine.pi if cfg.engine.type == "pi" else None
-    if pi is None:
+    if cfg.engine.type != "pi":
         return {
             "binary_path": "opencode",
+            "pi_mcp_adapter_path": "",
+            "pi_model_capability": PiModelCapability(),
+            "pi_thinking_level": None,
+        }
+    pi = cfg.engine.pi
+    if pi is None:
+        return {
+            "binary_path": "pi",
             "pi_mcp_adapter_path": "",
             "pi_model_capability": PiModelCapability(),
             "pi_thinking_level": None,
@@ -1192,8 +1199,7 @@ async def main(
 
     Three launch modifiers boot the engine/proxies/hydration but IGNORE the configured
     channels (the typed/passed line IS the prompt — no terminal contract):
-      - tui_mode (`--tui`): hands the terminal to opencode's native TUI attached to our
-        pre-warmed serve (see _run_opencode_attach).
+      - tui_mode (`--tui`): opens the selected engine's native interactive console.
       - debug_mode (`--debug`): the plain stdin/stdout REPL (see run_tui_console) — the
         minimal console, easiest to pipe/debug. Takes precedence over tui_mode.
       - one_shot_prompt (`--prompt TEXT`): run a single prompt non-interactively, print
@@ -1574,19 +1580,22 @@ async def main(
                 warm_cfg = dataclasses.replace(
                     engine_cfg, mcp_servers=warm_mcp_servers, codemem_project=warm_codemem_project
                 )
-                warm_server = await pool.acquire(_CONSOLE_SESSION_KEY, warm_cfg)
-                # No stdout banner — opencode's own --print-logs already announces the
-                # listening address. Keep one structured info line with the loopback address.
-                log.info(
-                    "ach-agent: opencode serve listening",
-                    url=f"http://127.0.0.1:{warm_server.port}",
-                )
-                # --debug → the plain stdin/stdout REPL (minimal, pipe-friendly). --tui →
-                # the full-screen Textual UI, but only on a real TTY (docker compose run
-                # tty:true); piped/non-TTY stdin falls back to the plain REPL.
+                # --debug and non-TTY use the harness REPL. Pi's real-TTY --tui is its
+                # native CLI, configured by the harness but not launched in RPC mode.
                 if debug_mode or not sys.stdout.isatty():
                     await run_tui_console(router)
+                elif cfg.engine.type == "pi":
+                    from ach_agent.engine.pi.driver import PiDriver
+
+                    await PiDriver().run_tui(warm_cfg, _CONSOLE_SESSION_KEY)
                 else:
+                    warm_server = await pool.acquire(_CONSOLE_SESSION_KEY, warm_cfg)
+                    # No stdout banner — opencode's own --print-logs already announces the
+                    # listening address. Keep one structured info line with the loopback address.
+                    log.info(
+                        "ach-agent: opencode serve listening",
+                        url=f"http://127.0.0.1:{warm_server.port}",
+                    )
                     await _run_opencode_attach(
                         router,
                         binary_path=engine_cfg.binary_path,
@@ -1790,9 +1799,9 @@ async def main(
 def _parse_cli(argv: list[str]) -> tuple[bool, str | None, bool]:
     """Parse launch modifiers from argv.
 
-    `--tui` → full-screen Textual UI. `--debug` → plain stdin/stdout REPL (minimal,
+    `--tui` → native TUI for the selected engine. `--debug` → plain stdin/stdout REPL (minimal,
     pipe-friendly). `--prompt TEXT` (or `--prompt=TEXT`) → single non-interactive prompt
-    then exit. All ignore the configured channels; precedence is `--prompt` > `--debug` > `--tui`.
+    then exit. All ignore configured channels; precedence is `--prompt` > `--debug` > `--tui`.
     """
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--tui", action="store_true")

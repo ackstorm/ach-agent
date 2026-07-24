@@ -52,8 +52,9 @@ class PiDriver:
     def skills_dir(self, home: Path) -> Path:
         return home / "pi" / "skills"
 
-    async def launch(self, cfg: EngineConfig, session_key: str) -> ManagedServer:
-        from ach_agent.engine.lifecycle import ManagedServer, _key_suffix
+    def _prepare_agent_dir(self, cfg: EngineConfig, session_key: str) -> tuple[Path, str, str]:
+        """Write Pi's generated configuration and return its launch prerequisites."""
+        from ach_agent.engine.lifecycle import _key_suffix
 
         agent_dir = Path(cfg.home) / "pi" / _key_suffix(session_key)
         agent_dir.mkdir(parents=True, exist_ok=True)
@@ -72,12 +73,13 @@ class PiDriver:
         binary = shutil.which(cfg.binary_path)
         if not binary:
             raise RuntimeError(f"pi binary not found: {cfg.binary_path!r}")
-        work_dir = Path(cfg.work_dir)
-        work_dir.mkdir(parents=True, exist_ok=True)
+        return agent_dir, binary, provider
+
+    @staticmethod
+    def _common_args(cfg: EngineConfig, binary: str, provider: str, agent_dir: Path) -> list[str]:
+        """Arguments shared by Pi's direct TUI and RPC launch modes."""
         args = [
             binary,
-            "--mode",
-            "rpc",
             "--provider",
             provider,
             "--model",
@@ -94,6 +96,29 @@ class PiDriver:
             args.extend(["--exclude-tools", ",".join(cfg.exclude_tools)])
         if cfg.pi_thinking_level is not None:
             args.extend(["--thinking", cfg.pi_thinking_level])
+        return args
+
+    async def run_tui(self, cfg: EngineConfig, session_key: str) -> None:
+        """Run Pi's native interactive TUI, inheriting the caller's terminal."""
+        agent_dir, binary, provider = self._prepare_agent_dir(cfg, session_key)
+        work_dir = Path(cfg.work_dir)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        args = self._common_args(cfg, binary, provider, agent_dir)
+        log.info("ach-agent: --tui → pi native TUI", model=cfg.model, provider=provider)
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            cwd=str(work_dir),
+            env=build_pi_env(agent_dir, cfg),
+        )
+        await proc.wait()
+
+    async def launch(self, cfg: EngineConfig, session_key: str) -> ManagedServer:
+        from ach_agent.engine.lifecycle import ManagedServer
+
+        agent_dir, binary, provider = self._prepare_agent_dir(cfg, session_key)
+        work_dir = Path(cfg.work_dir)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        args = [binary, "--mode", "rpc", *self._common_args(cfg, binary, provider, agent_dir)[1:]]
         proc = await asyncio.create_subprocess_exec(
             *args,
             cwd=str(work_dir),

@@ -78,6 +78,9 @@ class _LaunchProcess:
     stdout = None
     stderr = None
 
+    async def wait(self) -> int:
+        return 0
+
 
 async def test_new_session_then_prompt_accumulates_text() -> None:
     client = _ScriptedClient(
@@ -422,3 +425,37 @@ async def test_launch_omits_thinking_flag_by_default(
     )
     await PiDriver().launch(cfg, "argv")
     assert "--thinking" not in list(captured["args"])
+
+
+async def test_run_tui_uses_native_mode_not_rpc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import ach_agent.engine.pi.driver as pi_module
+
+    captured: dict[str, Any] = {}
+
+    async def fake_exec(*args: Any, **kwargs: Any) -> _LaunchProcess:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return _LaunchProcess()
+
+    monkeypatch.setattr(pi_module.shutil, "which", lambda _binary: "/usr/bin/pi")
+    monkeypatch.setattr(pi_module.asyncio, "create_subprocess_exec", fake_exec)
+    cfg = EngineConfig(
+        binary_path="pi",
+        home=str(tmp_path / "home"),
+        work_dir=str(tmp_path / "work"),
+        model="ackstorm.smart",
+        pi_thinking_level="low",
+    )
+
+    await PiDriver().run_tui(cfg, "tui-console")
+
+    args = list(captured["args"])
+    assert args[0] == "/usr/bin/pi"
+    assert "--mode" not in args
+    assert args[args.index("--provider") + 1] == "ach-openai"
+    assert args[args.index("--model") + 1] == "ackstorm.smart"
+    assert args[args.index("--thinking") + 1] == "low"
+    assert "stdin" not in captured["kwargs"]
+    assert "stdout" not in captured["kwargs"]

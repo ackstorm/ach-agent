@@ -1,0 +1,566 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>Pi model capability + thinking level: a typed engine.pi surface, not model.params - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#pi-model-capability-thinking-level-a-typed-enginepi-surface-not-modelparams" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Pi model capability + thinking level: a typed engine.pi surface, not model.params
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#symptom" class="md-nav__link">
+    <span class="md-ellipsis">
+      Symptom
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      Decision
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cli-flags-not-settingsjson-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      CLI flags, not settings.json defaults
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-is-deliberately-not-covered" class="md-nav__link">
+    <span class="md-ellipsis">
+      What is deliberately NOT covered
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Changes
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="pi-model-capability-thinking-level-a-typed-enginepi-surface-not-modelparams">Pi model capability + thinking level: a typed <code>engine.pi</code> surface, not <code>model.params</code></h1>
+<p><strong>Date:</strong> 2026-07-23 · <strong>Status:</strong> Shipped</p>
+<h2 id="symptom">Symptom</h2>
+<p><code>engine.pi</code>'s generated <code>models.json</code> hardcoded every model as <code>reasoning: false</code>,
+<code>input: ["text"]</code>, <code>contextWindow: 128000</code>, <code>maxTokens: 16384</code>, and never passed
+<code>--thinking</code> to the <code>pi</code> subprocess. A reasoning-capable model configured through Pi ran
+with reasoning off and the wrong capability envelope no matter what the operator set —
+the opposite of a direct <code>pi</code> setup, where a custom provider's model descriptor carries
+real <code>reasoning</code>/<code>input</code>/<code>contextWindow</code>/<code>maxTokens</code>, and <code>--thinking</code>/
+<code>defaultThinkingLevel</code> select a thinking level.</p>
+<p>The real e2e test (<code>tests/e2e/test_pi_e2e.py</code>) only ever exercised a plain
+<code>openai-completions</code>, non-reasoning model, so this gap shipped in v0.8.0 unnoticed.</p>
+<h2 id="decision">Decision</h2>
+<p>Give Pi's capability/thinking a <strong>typed, generated</strong> home: <code>engine.pi.model</code>
+(<code>reasoning</code>/<code>input</code>/<code>contextWindow</code>/<code>maxTokens</code>) and <code>engine.pi.thinkingLevel</code>, added to
+<code>PiEngineBlock</code> (<code>src/ach_agent/config/schema.py</code>) alongside the existing
+<code>binaryPath</code>/<code>mcpAdapterPath</code> fields, and regenerated into
+<code>docs/schemas/agent-config-v1.schema.json</code> via the existing <code>scripts/gen_schema.py</code> +
+<code>tests/config/test_schema_artifact.py</code> drift guard.</p>
+<p>This is deliberately <strong>not</strong> <code>model.params</code>. <code>model.params</code> is CONTRACT_v3 §2's existing
+"OPEN, UNVALIDATED dict, splatted to the model client" — genuinely opaque, per-call
+passthrough (temperature, top_p, …), and its JSON Schema entry is intentionally
+<code>{"type": "object"}</code>. Reusing it for Pi's well-known, typed capability fields would have
+made <code>docs/schemas/agent-config-v1.schema.json</code> — the artifact a Kubernetes operator
+author actually reads to know what <code>engine.pi</code> accepts — lie about what's configurable.
+An earlier draft of this decision proposed exactly that reuse; it was corrected before
+implementation.</p>
+<table>
+<thead>
+<tr>
+<th><code>engine.pi</code> field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>model.reasoning</code></td>
+<td>strict bool (no string/numeric coercion)</td>
+<td><code>false</code></td>
+<td><code>models.json</code> model descriptor's <code>reasoning</code> field</td>
+</tr>
+<tr>
+<td><code>model.input</code></td>
+<td>exactly <code>["text"]</code> or <code>["text", "image"]</code></td>
+<td><code>["text"]</code></td>
+<td><code>models.json</code> model descriptor's <code>input</code></td>
+</tr>
+<tr>
+<td><code>model.contextWindow</code></td>
+<td>positive strict int (no bool/string/float coercion)</td>
+<td><code>128000</code></td>
+<td><code>models.json</code> model descriptor's <code>contextWindow</code></td>
+</tr>
+<tr>
+<td><code>model.maxTokens</code></td>
+<td>positive strict int (no bool/string/float coercion)</td>
+<td><code>16384</code></td>
+<td><code>models.json</code> model descriptor's <code>maxTokens</code></td>
+</tr>
+<tr>
+<td><code>thinkingLevel</code></td>
+<td>one of <code>off</code>/<code>minimal</code>/<code>low</code>/<code>medium</code>/<code>high</code>/<code>xhigh</code>/<code>max</code></td>
+<td>unset</td>
+<td>Passed to <code>pi</code> as <code>--thinking &lt;level&gt;</code>; <strong>requires</strong> <code>model.reasoning: true</code> (hard-fail otherwise — never an implied auto-enable)</td>
+</tr>
+</tbody>
+</table>
+<p>Every invalid value (including strings/numerics offered for strict scalar fields; an
+empty, image-only, duplicated, reversed, overlong, or unrecognized <code>input</code>; a
+<code>thinkingLevel</code> without <code>model.reasoning: true</code>; or an unrecognized <code>thinkingLevel</code>
+string) hard-fails at config-load time (<code>src/ach_agent/config/schema.py</code>'s
+<code>PiModelCapabilities</code>/<code>PiEngineBlock</code> validators) — the same fail-loud posture as every
+other CONTRACT §2 block (<code>extra="forbid"</code>, <code>sys.exit(1)</code> in <code>load_config</code>). Direct
+Pydantic tests assert these are field-local validation errors, not the
+pre-implementation <code>extra_forbidden</code> error caused by the entire <code>model</code> key being
+unknown.</p>
+<p>No <code>model.type</code> → provider/wire change: <code>_PI_PROVIDER_BY_TYPE</code> (openai/gemini/anthropic)
+is untouched; this only affects the model <em>descriptor</em> inside whichever provider block
+that mapping already selects.</p>
+<h3 id="cli-flags-not-settingsjson-defaults">CLI flags, not <code>settings.json</code> defaults</h3>
+<p>Provider and model were already selected via explicit <code>--provider &lt;name&gt; --model &lt;id&gt;</code>
+CLI flags at Pi subprocess launch (<code>src/ach_agent/engine/pi/driver.py</code>'s <code>launch()</code>),
+never via Pi's <code>settings.json</code> <code>defaultProvider</code>/<code>defaultModel</code>. <code>--thinking &lt;level&gt;</code>
+follows the same convention. <code>settings.json</code>'s <code>defaultThinkingLevel</code> (and
+<code>defaultProvider</code>/<code>defaultModel</code>) are interactive-session fallbacks — meaningful when a
+human opens <code>pi</code> without flags and expects a remembered default. The harness always
+launches a fresh <code>pi --mode rpc</code> subprocess with deterministic, per-invocation CLI flags;
+there is no interactive session for a settings-file default to serve, so the CLI flag is
+both simpler and the only one actually exercised.</p>
+<h2 id="what-is-deliberately-not-covered">What is deliberately NOT covered</h2>
+<ul>
+<li><strong><code>thinkingLevelMap</code></strong> (Pi's per-model mapping of pi thinking levels to
+  provider-specific values) is not exposed. Pi's own default mapping per <code>api</code> kind is
+  used. Add a typed <code>engine.pi.model.thinkingLevelMap</code> if a specific provider/model needs
+  a non-default mapping — not needed by any currently configured model.</li>
+<li><strong><code>model.params</code>'s per-call passthrough for Pi</strong> — Pi's <code>ProviderModelConfig</code> has no
+  generic per-call options field the way opencode's <code>providerOptions</code> does
+  (<code>docs/references/2026-07-03-provider-by-model-type.md</code>'s <code>model.params</code> → per-model
+  <code>options</code> follow-up is opencode-only). <code>model.params</code> continues to have zero effect on
+  Pi. This is a real platform difference, not a bug to paper over.</li>
+</ul>
+<h2 id="changes">Changes</h2>
+<ul>
+<li><code>src/ach_agent/config/schema.py</code>: <code>PiModelCapabilities</code>, <code>PiEngineBlock.model</code>/
+  <code>.thinking_level</code> + the cross-field <code>model_validator</code>.</li>
+<li><code>docs/schemas/agent-config-v1.schema.json</code>: regenerated (drift-guarded by
+  <code>tests/config/test_schema_artifact.py</code>).</li>
+<li><code>docs/plan/CONTRACT_v3.md</code>: <code>engine.pi</code> example updated.</li>
+<li><code>src/ach_agent/engine/base/driver.py</code>: <code>PiModelCapability</code> dataclass,
+  <code>EngineConfig.pi_model_capability</code>/<code>.pi_thinking_level</code>.</li>
+<li><code>src/ach_agent/engine/pi/models_json.py</code>: reads <code>cfg.pi_model_capability</code>.</li>
+<li><code>src/ach_agent/engine/pi/driver.py</code>: <code>launch()</code> appends <code>--thinking &lt;level&gt;</code> when
+  <code>cfg.pi_thinking_level</code> is set.</li>
+<li><code>src/ach_agent/main.py</code>: <code>_pi_engine_fields()</code> wires <code>cfg.engine.pi.*</code> into
+  <code>EngineConfig</code>.</li>
+<li><code>../ach</code>: CRD/render handoff for <code>EngineSpec.Pi.Model</code>/<code>.ThinkingLevel</code> — see
+  <code>docs/superpowers/plans/2026-07-23-pi-model-runtime-parity-handoff-ach.md</code>.</li>
+<li>Tests: <code>tests/config/test_schema.py</code> + <code>tests/config/fixtures/config_pi_reasoning.json</code>
+  (schema), <code>tests/engine/pi/test_models_json.py</code> + <code>test_driver.py</code> (unit),
+  <code>tests/test_main_wiring.py</code> (wiring), <code>tests/e2e/test_pi_e2e.py</code> (real <code>pi</code> 0.81.1
+  subprocess, version-pinned, asserts on <code>get_state</code>'s <code>thinkingLevel</code>/<code>model.reasoning</code>
+  with id+command validated on every RPC response).</li>
+</ul>
+<p>Defaults are unchanged from v0.8.0 when <code>engine.pi.model</code>/<code>thinkingLevel</code> are absent, so
+no existing configuration's behavior changes on upgrade.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

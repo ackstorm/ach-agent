@@ -1,5 +1,11 @@
 # Pi Model Runtime Parity — Corrective Implementation Plan
 
+> **SUPERSEDED (2026-07-24):** the `engine.pi.model`/`engine.pi.thinkingLevel` surface this
+> document introduced was removed in v0.9.0. See
+> `docs/superpowers/plans/2026-07-24-model-thinking-supersedes-engine-pi-model.md` and
+> `docs/references/2026-07-24-model-owned-thinking.md`. Do not execute or hand off from
+> this document.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close the gap between `engine.pi` (shipped in v0.8.0) and a known-good direct

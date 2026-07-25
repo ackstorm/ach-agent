@@ -28,6 +28,13 @@ YAML. Both validate against the same schema, and **unknown keys are rejected** (
 | `health` | | `host` / `port` for the HTTP surface (healthz/readyz/metrics + webhooks). |
 | `channels` | | List of channel adapters (below). |
 
+### `cost.source` turn accounting
+
+The cost metric name and labels are unchanged for every source. When `source` is not
+`engine`, the source-selected value is also written to the stats row and emitted in the
+turn summary log; this is intentional. `none` suppresses the cost value and counter
+increment while preserving the invocation, duration, status, error, and token metrics.
+
 ### `engine.forwardEnv` — clean-slate env
 
 opencode's subprocess env is built **clean-slate**: only a small base allowlist (`PATH`,

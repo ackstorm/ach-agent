@@ -651,6 +651,8 @@ def _make_engine_runner(
     memory_facade_url: str | None = None,
     repo_facade_url: str | None = None,
     a2a_facade_url: str | None = None,
+    accountant: CostAccountant | None = None,
+    cost_source: str = "engine",
 ) -> Callable[..., Any]:
     """Build the engine_runner callable injected into the Router.
 
@@ -762,6 +764,8 @@ def _make_engine_runner(
         try:
             server = await pool.acquire(event.session_key, invocation_engine_cfg)
             acquired = True
+            if accountant is not None:
+                accountant.begin_turn(server.cost_token)
             # MEM-01: append ## Memory section (summaries or unavailable note) to prompt.
             base_prompt = build_engine_prompt(
                 event,
@@ -851,6 +855,11 @@ def _make_engine_runner(
                 text=text,
             )
             _usage = turn_stats.get("usage")
+            if accountant is not None:
+                _usage = accountant.end_turn(server.cost_token, _usage)
+            elif cost_source == "none" and _usage is not None:
+                _usage = dataclasses.replace(_usage, cost=0.0)
+            turn_stats["usage"] = _usage
             log.info(
                 "engine: summary",
                 channel=event.channel_name,
@@ -969,11 +978,42 @@ def _make_engine_runner(
             if server is not None:
                 ttl = 0.0 if timed_out else ttl_by_channel.get(event.channel_name, 0.0)
                 try:
+                    if accountant is not None:
+                        accountant.discard_turn(server.cost_token)
                     await pool.release(event.session_key, ttl_seconds=ttl)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("pool release error", task_id=event.task_id, error=str(exc))
 
     return engine_runner
+
+
+async def _build_cost_accounting(
+    *,
+    source: str,
+    wire: str,
+    model_name: str,
+    model_up_base: str,
+    model_up_token: str,
+) -> tuple[PriceTable | None, CostAccountant | None]:
+    """Build optional accounting after model-proxy auth is resolved."""
+    if source == "litellm_usage":
+        price_table = PriceTable(model_up_base, model_up_token)
+        price_result = await price_table.load(model_name)
+        report_price_load_result(price_result, model_name)
+        return price_table, CostAccountant(
+            source=source,
+            wire=wire,
+            prices=price_table,
+            model_name=model_name,
+        )
+    if source == "litellm_headers":
+        return None, CostAccountant(
+            source=source,
+            wire=wire,
+            prices=None,
+            model_name=model_name,
+        )
+    return None, None
 
 
 async def _drain(
@@ -1366,23 +1406,13 @@ async def main(
                     "passed in.' Export the key in the env that launches the container.",
                     auth_header=model_up_header,
                 )
-        if cfg.cost.source == "litellm_usage":
-            price_table = PriceTable(model_up_base, model_up_token)
-            price_result = await price_table.load(cfg.model.name)
-            report_price_load_result(price_result, cfg.model.name)
-            accountant = CostAccountant(
-                source=cfg.cost.source,
-                wire=cfg.model.type,
-                prices=price_table,
-                model_name=cfg.model.name,
-            )
-        elif cfg.cost.source == "litellm_headers":
-            accountant = CostAccountant(
-                source=cfg.cost.source,
-                wire=cfg.model.type,
-                prices=None,
-                model_name=cfg.model.name,
-            )
+        price_table, accountant = await _build_cost_accounting(
+            source=cfg.cost.source,
+            wire=cfg.model.type,
+            model_name=cfg.model.name,
+            model_up_base=model_up_base,
+            model_up_token=model_up_token,
+        )
         model_proxy_base = await start_model_proxy(
             model_up_base,
             model_up_token,
@@ -1541,6 +1571,8 @@ async def main(
         memory_facade_url=memory_facade_url,
         repo_facade_url=repo_facade_url,
         a2a_facade_url=a2a_facade_url,
+        accountant=accountant,
+        cost_source=cfg.cost.source,
     )
 
     # Step 6 (cont.): construct Router with all limits from config (RTR-03/04)

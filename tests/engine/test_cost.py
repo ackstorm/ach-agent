@@ -221,6 +221,20 @@ async def test_fetch_failed_on_server_error() -> None:
         await runner.cleanup()
 
 
+async def test_successful_invalid_json_is_a_malformed_price_load_failure() -> None:
+    async def handler(request: web.Request) -> web.Response:
+        return web.Response(status=200, body=b"{not-json", content_type="application/json")
+
+    runner, url = await _start_fake_model_info(handler)
+    try:
+        table = PriceTable(url, "ek")
+        result = await table.load("gpt-4")
+        assert result == PriceLoadResult(failure="malformed")
+        assert table.get("gpt-4") is None
+    finally:
+        await runner.cleanup()
+
+
 async def test_fetch_failed_on_connection_error() -> None:
     import socket
 
@@ -336,6 +350,25 @@ async def test_unpriced_when_base_price_absent_null_or_zero(fields: dict) -> Non
         result = await table.load("gpt-4")
         assert result.failure == "unpriced"
         assert table.get("gpt-4") is None
+    finally:
+        await runner.cleanup()
+
+
+async def test_boot_reports_an_unpriced_model_once_after_price_load() -> None:
+    async def handler(request: web.Request) -> web.Response:
+        return web.json_response({"data": [_entry("gpt-4", input_cost_per_token=1e-6)]})
+
+    runner, url = await _start_fake_model_info(handler)
+    try:
+        table = PriceTable(url, "ek")
+        with capture_logs() as cap:
+            result = await table.load("gpt-4")
+            report_price_load_result(result, "gpt-4")
+        assert result == PriceLoadResult(failure="unpriced")
+        assert len(cap) == 1
+        assert cap[0]["event"] == "cost: model is unpriced"
+        assert cap[0]["model"] == "gpt-4"
+        assert cap[0]["failure"] == "unpriced"
     finally:
         await runner.cleanup()
 

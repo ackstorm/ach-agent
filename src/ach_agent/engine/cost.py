@@ -244,7 +244,6 @@ def _parse_price_entry(entry: dict[str, Any], model_name: str) -> ModelPrices | 
     # Absent/null/zero base input or output — including a partial input-only or
     # output-only pair — is unpriced. Never synthesize the missing base price (A.5).
     if raw_input in (None, 0) or raw_output in (None, 0):
-        log.warning("cost: model has no priced base input/output rate", model=model_name)
         return PriceLoadResult(failure="unpriced")
 
     cache_read = raw_cache_read if raw_cache_read is not None else raw_input
@@ -299,7 +298,10 @@ class PriceTable:
             ):
                 if resp.status >= 400:
                     return PriceLoadResult(failure="fetch_failed")
-                body = await resp.json(content_type=None)
+                try:
+                    body = await resp.json(content_type=None)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    return PriceLoadResult(failure="malformed")
         except (aiohttp.ClientError, TimeoutError):
             return PriceLoadResult(failure="fetch_failed")
 

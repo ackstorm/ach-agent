@@ -25,6 +25,7 @@ Constraint: No router or Hermes imports (D-08, RTR-06).
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import sqlite3
 import time
 from collections import OrderedDict
@@ -34,8 +35,11 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from ach_agent.engine.cost import tokenize_model_base_url
+
 if TYPE_CHECKING:
     from ach_agent.engine.base.driver import EngineConfig, EngineDriver
+    from ach_agent.engine.cost import CostAccountant
     from ach_agent.engine.lifecycle import ManagedServer
 
 log = structlog.get_logger(__name__)
@@ -248,6 +252,7 @@ class EnginePool:
         sessions_map: MutableMapping[str, str] | None = None,
         *,
         oc_sessions: MutableMapping[str, str] | None = None,
+        accountant: CostAccountant | None = None,
     ) -> None:
         from ach_agent.engine.opencode.driver import OpencodeDriver
 
@@ -256,6 +261,7 @@ class EnginePool:
         self._ttl_tasks: dict[str, asyncio.Task[None]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._driver: EngineDriver = driver if driver is not None else OpencodeDriver()
+        self._accountant = accountant
 
         # Pool-owned session store, wrapped in a per-engine-type namespaced view (SP1 §5.4).
         # `sessions_map` (or the legacy `oc_sessions` kwarg) is the raw backing store (SQLite
@@ -327,11 +333,26 @@ class EnginePool:
                     await self._driver.stop(existing)
                 except Exception:  # noqa: BLE001
                     log.debug("EnginePool.acquire: dead-server stop failed", exc_info=True)
+                if self._accountant is not None and existing.cost_token:
+                    self._accountant.drop_token(existing.cost_token)
                 self._servers.pop(session_key, None)
                 self._ref_counts.pop(session_key, None)
 
             log.info("EnginePool.acquire: starting new server", session_key=session_key)
-            server = await self._start_server(config, session_key)
+            token = ""
+            accountant = self._accountant
+            if accountant is not None:
+                token = accountant.mint_token()
+                config = dataclasses.replace(
+                    config, model_base_url=tokenize_model_base_url(config.model_base_url, token)
+                )
+            try:
+                server = await self._start_server(config, session_key)
+            except Exception:
+                if accountant is not None and token:
+                    accountant.drop_token(token)
+                raise
+            server.cost_token = token
             self._servers[session_key] = server
             self._ref_counts[session_key] = 1
             return server
@@ -412,6 +433,8 @@ class EnginePool:
             self._ref_counts.pop(session_key, None)
         if server is None:
             return
+        if self._accountant is not None and server.cost_token:
+            self._accountant.drop_token(server.cost_token)
         log.info("EnginePool._expire: TTL elapsed — stopping", session_key=session_key, ttl=ttl)
         try:
             await self._driver.stop(server)
@@ -426,6 +449,8 @@ class EnginePool:
             self._ref_counts.pop(session_key, None)
         if server is None:
             return
+        if self._accountant is not None and server.cost_token:
+            self._accountant.drop_token(server.cost_token)
         try:
             await self._driver.stop(server)
             log.info("EnginePool._stop: server stopped", session_key=session_key)

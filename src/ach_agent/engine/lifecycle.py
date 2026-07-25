@@ -80,6 +80,9 @@ class ManagedServer:
     port: int = 0
     ephemeral_home: Path = field(default_factory=lambda: Path("/tmp/oc-unset"))
     config_path: Path | None = None
+    # Opaque per-server attribution token (A.3, Plan 1). "" when no CostAccountant is
+    # wired (source in {engine, none}) — the model proxy's plain routes stay unaffected.
+    cost_token: str = ""
     # process and client are None until launch() populates them
     _process: object | None = field(default=None, repr=False)
     _client: object | None = field(default=None, repr=False)

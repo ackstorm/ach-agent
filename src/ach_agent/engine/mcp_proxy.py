@@ -14,7 +14,7 @@ stored on an instance attribute and never logged.
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import aiohttp
@@ -64,6 +64,7 @@ class ProxyObserver(Protocol):
 
     def mutate_request(self, body: bytes, content_type: str) -> bytes: ...
     def begin(self, status: int, content_type: str) -> None: ...
+    def response_headers(self, headers: Mapping[str, str]) -> None: ...
     def feed(self, chunk: bytes) -> None: ...
     def finish(self) -> None: ...
 
@@ -143,6 +144,7 @@ async def _forward(
         resp_content_type = upstream.headers.get("Content-Type", "")
         if observer is not None:
             _observe(label, "begin", lambda: observer.begin(upstream.status, resp_content_type))
+            _observe(label, "response_headers", lambda: observer.response_headers(upstream.headers))
         resp = web.StreamResponse(status=upstream.status)
         for k, v in upstream.headers.items():
             if k.lower() not in _DROP_RESPONSE_HEADERS:

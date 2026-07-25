@@ -430,3 +430,65 @@ async def test_unknown_token_still_forwards_and_is_unattributed() -> None:
     finally:
         await stop_model_proxies()
         await runner.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# Task 1.8: litellm_headers mode wired end-to-end through the proxy.
+# ---------------------------------------------------------------------------
+
+
+async def test_litellm_headers_non_streaming_cost_summed_and_stream_flag_untouched() -> None:
+    seen_bodies: list[dict] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        seen_bodies.append(await request.json())
+        return web.json_response({"ok": True}, headers={"x-litellm-response-cost": "0.0123"})
+
+    runner, ach_url = await _start_fake_ach_router(handler)
+    try:
+        acc = CostAccountant(source="litellm_headers", wire="openai", prices=None, model_name="m")
+        base = await start_model_proxy(ach_url, "ek", accountant=acc)
+        token = acc.mint_token()
+        acc.begin_turn(token)
+        sent = {"stream": False}
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{base}/t/{token}/v1/chat/completions", json=sent) as resp:
+                await resp.read()
+        assert seen_bodies[0] == sent  # request body / stream flag never mutated (A.4)
+        result = acc.end_turn(token, _usage_record())
+        assert result.cost == pytest.approx(0.0123)
+    finally:
+        await stop_model_proxies()
+        await runner.cleanup()
+
+
+async def test_litellm_headers_streaming_response_preserved_and_zero_cost() -> None:
+    async def handler(request: web.Request) -> web.StreamResponse:
+        resp = web.StreamResponse(
+            status=200,
+            headers={"Content-Type": "text/event-stream", "x-litellm-response-cost": "0.5"},
+        )
+        await resp.prepare(request)
+        await resp.write(b"data: hello\n\n")
+        await resp.write_eof()
+        return resp
+
+    runner, ach_url = await _start_fake_ach_router(handler)
+    try:
+        acc = CostAccountant(source="litellm_headers", wire="openai", prices=None, model_name="m")
+        base = await start_model_proxy(ach_url, "ek", accountant=acc)
+        token = acc.mint_token()
+        acc.begin_turn(token)
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{base}/t/{token}/v1/chat/completions", json={"stream": True}
+            ) as resp:
+                assert resp.status == 200
+                assert resp.headers.get("x-litellm-response-cost") == "0.5"
+                body = await resp.read()
+        assert body == b"data: hello\n\n"  # response body preserved unchanged
+        result = acc.end_turn(token, _usage_record())
+        assert result.cost == 0.0  # streaming litellm_headers response always contributes 0.0
+    finally:
+        await stop_model_proxies()
+        await runner.cleanup()

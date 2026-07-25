@@ -14,6 +14,7 @@ import dataclasses
 import json
 import math
 import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
@@ -435,8 +436,9 @@ def _inject_include_usage(body: bytes) -> bytes:
 
 
 class CostObserver:
-    """ProxyObserver (structurally, per mcp_proxy.ProxyObserver) that injects OpenAI's
-    include_usage on streaming requests and reports parsed usage to a CostAccountant.
+    """ProxyObserver (structurally, per mcp_proxy.ProxyObserver) for litellm_usage (parses
+    wire usage, injects OpenAI's include_usage) and litellm_headers (reads the response
+    x-litellm-response-cost header) — the two sources that ever get an observer wired in.
 
     Bound to exactly one attribution token per request. Every method is defensive: a
     parse failure here must never alter the relayed bytes (A.12) — callers additionally
@@ -447,17 +449,29 @@ class CostObserver:
         self._accountant = accountant
         self._token = token
         self._usage_observer = (
-            UsageObserver(accountant.wire) if accountant.wire in _USAGE_PARSERS else None
+            UsageObserver(accountant.wire)
+            if accountant._source == "litellm_usage" and accountant.wire in _USAGE_PARSERS
+            else None
         )
 
     def mutate_request(self, body: bytes, content_type: str) -> bytes:
-        if self._accountant.wire != "openai":
+        # A.4: litellm_headers NEVER mutates "stream" or any other request field.
+        if self._accountant._source != "litellm_usage" or self._accountant.wire != "openai":
             return body
         return _inject_include_usage(body)
 
     def begin(self, status: int, content_type: str) -> None:
         if self._usage_observer is not None:
             self._usage_observer.begin(status, content_type)
+
+    def response_headers(self, headers: Mapping[str, str]) -> None:
+        """litellm_headers mode (A.4): read x-litellm-response-cost once headers arrive."""
+        if self._accountant._source != "litellm_headers":
+            return
+        streaming = headers.get("Content-Type", "").startswith("text/event-stream")
+        self._accountant.record_header_cost(
+            self._token, headers.get("x-litellm-response-cost"), streaming
+        )
 
     def feed(self, chunk: bytes) -> None:
         if self._usage_observer is not None:

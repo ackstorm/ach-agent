@@ -480,3 +480,55 @@ def test_engine_source_end_turn_returns_usage_unmodified() -> None:
     original = _usage_record(cost=1.23)
     result = acc.end_turn(t1, original)
     assert result is original  # byte-for-byte unmodified — no parse-driven override
+
+
+# ---------------------------------------------------------------------------
+# litellm_headers mode (A.4, AC-6): record_header_cost.
+# ---------------------------------------------------------------------------
+
+
+def test_record_header_cost_non_streaming_parses_and_sums() -> None:
+    acc = CostAccountant(source="litellm_headers", wire="openai", prices=None, model_name="m")
+    t1 = acc.mint_token()
+    acc.begin_turn(t1)
+    acc.record_header_cost(t1, "0.0042", streaming=False)
+    acc.record_header_cost(t1, "0.0008", streaming=False)
+    result = acc.end_turn(t1, _usage_record())
+    assert result.cost == pytest.approx(0.005)
+
+
+def test_record_header_cost_streaming_contributes_zero_with_one_warning() -> None:
+    acc = CostAccountant(source="litellm_headers", wire="openai", prices=None, model_name="m")
+    t1 = acc.mint_token()
+    acc.begin_turn(t1)
+    with capture_logs() as cap:
+        acc.record_header_cost(t1, "0.01", streaming=True)
+        acc.record_header_cost(t1, "0.01", streaming=True)
+    assert len(cap) == 1
+    assert cap[0]["cost_source"] == "litellm_headers"
+    result = acc.end_turn(t1, _usage_record())
+    assert result.cost == 0.0
+
+
+def test_record_header_cost_missing_or_unparseable_folds_into_same_warn_bucket() -> None:
+    """Streaming-zero and missing/unparseable-header share ONE warning bucket (not two)."""
+    acc = CostAccountant(source="litellm_headers", wire="openai", prices=None, model_name="m")
+    t1 = acc.mint_token()
+    acc.begin_turn(t1)
+    with capture_logs() as cap:
+        acc.record_header_cost(t1, None, streaming=False)  # absent
+        acc.record_header_cost(t1, "not-a-number", streaming=False)  # unparseable
+        acc.record_header_cost(t1, "0.01", streaming=True)  # streaming — same bucket
+    assert len(cap) == 1
+    result = acc.end_turn(t1, _usage_record())
+    assert result.cost == 0.0
+
+
+def test_record_header_cost_never_substitutes_engine_figure() -> None:
+    acc = CostAccountant(source="litellm_headers", wire="openai", prices=None, model_name="m")
+    t1 = acc.mint_token()
+    acc.begin_turn(t1)
+    acc.record_header_cost(t1, "0.02", streaming=False)
+    engine_reported = _usage_record(cost=999.0)  # whatever the engine itself reported
+    result = acc.end_turn(t1, engine_reported)
+    assert result.cost == pytest.approx(0.02)  # harness total wins, engine figure discarded

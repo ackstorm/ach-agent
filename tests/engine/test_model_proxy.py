@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for the localhost MODEL reverse-proxy (ek injection + SSE streaming)."""
+"""Tests for the localhost MODEL reverse-proxy (ek injection + SSE streaming, cost
+observer hook + /t/{token} route + include_usage injection — Plan 1 Task 1.6)."""
 
 from __future__ import annotations
 
 import aiohttp
+import pytest
 from aiohttp import web
 
-from ach_agent.engine.mcp_proxy import start_model_proxy, stop_model_proxies
+from ach_agent.engine.cost import CostAccountant, ModelPrices, PriceTable, TokenUsage, compute_cost
+from ach_agent.engine.mcp_proxy import _forward, start_model_proxy, stop_model_proxies
 
 
 async def _start_fake_ach(seen_auth: list[str | None]) -> tuple[web.AppRunner, str]:
@@ -14,9 +17,7 @@ async def _start_fake_ach(seen_auth: list[str | None]) -> tuple[web.AppRunner, s
 
     async def handler(request: web.Request) -> web.StreamResponse:
         seen_auth.append(request.headers.get("x-ach-key"))
-        resp = web.StreamResponse(
-            status=200, headers={"Content-Type": "text/event-stream"}
-        )
+        resp = web.StreamResponse(status=200, headers={"Content-Type": "text/event-stream"})
         await resp.prepare(request)
         for chunk in (b"data: a\n\n", b"data: b\n\n", b"data: c\n\n"):
             await resp.write(chunk)
@@ -55,3 +56,377 @@ async def test_model_proxy_injects_ek_and_streams_sse() -> None:
     finally:
         await stop_model_proxies()
         await ach_runner.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# Task 1.6: observer hook, /t/{token} route, include_usage injection.
+# ---------------------------------------------------------------------------
+
+
+def _usage_record(**overrides: object) -> object:
+    from ach_agent.engine.base.events import OpenCodeUsage
+
+    base: dict[str, object] = {
+        "session_id": "ses_1",
+        "message_id": "msg_1",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "cost": 0.0,
+        "duration_ms": 0,
+    }
+    base.update(overrides)
+    return OpenCodeUsage(**base)  # type: ignore[arg-type]
+
+
+def _make_accountant(source: str = "litellm_usage", wire: str = "openai") -> CostAccountant:
+    prices = ModelPrices(1e-6, 2e-6, 1e-6, 1e-6)
+    table = PriceTable("http://unused", "ek")
+    table._prices["m"] = prices  # test-only poke; PriceTable exposes no setter
+    return CostAccountant(source=source, wire=wire, prices=table, model_name="m")
+
+
+async def _start_fake_ach_router(handler) -> tuple[web.AppRunner, str]:
+    """Real aiohttp ACH upstream on 127.0.0.1:0 whose single route captures everything."""
+    app = web.Application()
+    app.router.add_route("*", "/{tail:.*}", handler)
+    runner = web.AppRunner(app, shutdown_timeout=1.0)
+    await runner.setup()
+    site = web.TCPSite(runner, host="127.0.0.1", port=0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+    return runner, f"http://127.0.0.1:{port}"
+
+
+class _BrokenObserver:
+    """Every method raises — proves `_forward` isolates observer failures (A.12)."""
+
+    def mutate_request(self, body: bytes, content_type: str) -> bytes:
+        raise RuntimeError("boom-mutate")
+
+    def begin(self, status: int, content_type: str) -> None:
+        raise RuntimeError("boom-begin")
+
+    def feed(self, chunk: bytes) -> None:
+        raise RuntimeError("boom-feed")
+
+    def finish(self) -> None:
+        raise RuntimeError("boom-finish")
+
+
+async def _run_forward_with_observer(
+    fake_ach_url: str, observer: object, request_json: dict | None = None
+) -> tuple[int, bytes]:
+    """Stand up a tiny app whose single route calls `_forward` directly with `observer`."""
+
+    async def proxy_handler(request: web.Request) -> web.StreamResponse:
+        async with aiohttp.ClientSession() as session:
+            return await _forward(
+                session,
+                f"{fake_ach_url}/v1/chat/completions",
+                request,
+                "ek",
+                label="model",
+                observer=observer,  # type: ignore[arg-type]
+            )
+
+    app = web.Application()
+    app.router.add_route("*", "/proxy", proxy_handler)
+    runner = web.AppRunner(app, shutdown_timeout=1.0)
+    await runner.setup()
+    site = web.TCPSite(runner, host="127.0.0.1", port=0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+    try:
+        async with aiohttp.ClientSession() as client:
+            async with client.post(
+                f"http://127.0.0.1:{port}/proxy", json=request_json or {}
+            ) as resp:
+                status = resp.status
+                body = await resp.read()
+    finally:
+        await runner.cleanup()
+    return status, body
+
+
+async def test_include_usage_injected_on_streaming_openai_request_missing_it() -> None:
+    seen_bodies: list[dict] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        seen_bodies.append(await request.json())
+        return web.json_response({"ok": True})
+
+    runner, ach_url = await _start_fake_ach_router(handler)
+    try:
+        acc = _make_accountant()
+        base = await start_model_proxy(ach_url, "ek", accountant=acc)
+        token = acc.mint_token()
+        acc.begin_turn(token)
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{base}/t/{token}/v1/chat/completions", json={"model": "m", "stream": True}
+            ) as resp:
+                await resp.read()
+        assert seen_bodies[0]["stream_options"]["include_usage"] is True
+    finally:
+        await stop_model_proxies()
+        await runner.cleanup()
+
+
+async def test_include_usage_not_injected_when_already_true() -> None:
+    seen_bodies: list[dict] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        seen_bodies.append(await request.json())
+        return web.json_response({"ok": True})
+
+    runner, ach_url = await _start_fake_ach_router(handler)
+    try:
+        acc = _make_accountant()
+        base = await start_model_proxy(ach_url, "ek", accountant=acc)
+        token = acc.mint_token()
+        acc.begin_turn(token)
+        sent = {"stream": True, "stream_options": {"include_usage": True}}
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{base}/t/{token}/v1/chat/completions", json=sent) as resp:
+                await resp.read()
+        assert seen_bodies[0]["stream_options"] == {"include_usage": True}
+    finally:
+        await stop_model_proxies()
+        await runner.cleanup()
+
+
+async def test_include_usage_false_changed_to_true() -> None:
+    seen_bodies: list[dict] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        seen_bodies.append(await request.json())
+        return web.json_response({"ok": True})
+
+    runner, ach_url = await _start_fake_ach_router(handler)
+    try:
+        acc = _make_accountant()
+        base = await start_model_proxy(ach_url, "ek", accountant=acc)
+        token = acc.mint_token()
+        acc.begin_turn(token)
+        sent = {"stream": True, "stream_options": {"include_usage": False}}
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{base}/t/{token}/v1/chat/completions", json=sent) as resp:
+                await resp.read()
+        assert seen_bodies[0]["stream_options"]["include_usage"] is True
+    finally:
+        await stop_model_proxies()
+        await runner.cleanup()
+
+
+@pytest.mark.parametrize("body", [{"stream": False}, {}], ids=["stream-false", "stream-absent"])
+async def test_include_usage_not_injected_on_non_streaming_request(body: dict) -> None:
+    seen_bodies: list[dict] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        seen_bodies.append(await request.json())
+        return web.json_response({"ok": True})
+
+    runner, ach_url = await _start_fake_ach_router(handler)
+    try:
+        acc = _make_accountant()
+        base = await start_model_proxy(ach_url, "ek", accountant=acc)
+        token = acc.mint_token()
+        acc.begin_turn(token)
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{base}/t/{token}/v1/chat/completions", json=body) as resp:
+                await resp.read()
+        assert "stream_options" not in seen_bodies[0]
+    finally:
+        await stop_model_proxies()
+        await runner.cleanup()
+
+
+async def test_include_usage_never_injected_on_gemini_wire() -> None:
+    seen_bodies: list[dict] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        seen_bodies.append(await request.json())
+        return web.json_response({"candidates": []})
+
+    runner, ach_url = await _start_fake_ach_router(handler)
+    try:
+        acc = _make_accountant(wire="gemini")
+        base = await start_model_proxy(ach_url, "ek", accountant=acc)
+        token = acc.mint_token()
+        acc.begin_turn(token)
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{base}/t/{token}/gemini/v1beta/models/foo:generateContent",
+                json={"stream": True},
+            ) as resp:
+                await resp.read()
+        assert "stream_options" not in seen_bodies[0]
+    finally:
+        await stop_model_proxies()
+        await runner.cleanup()
+
+
+async def test_token_route_strips_prefix_and_streams_sse_with_ek() -> None:
+    seen_auth: list[str | None] = []
+    seen_paths: list[str] = []
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        seen_auth.append(request.headers.get("x-ach-key"))
+        seen_paths.append(request.path)
+        resp = web.StreamResponse(status=200, headers={"Content-Type": "text/event-stream"})
+        await resp.prepare(request)
+        for chunk in (b"data: a\n\n", b"data: b\n\n", b"data: c\n\n"):
+            await resp.write(chunk)
+        await resp.write_eof()
+        return resp
+
+    runner, ach_url = await _start_fake_ach_router(handler)
+    try:
+        base = await start_model_proxy(ach_url, "ek-token-route")  # no accountant
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{base}/t/sometoken/v1/chat/completions", json={"x": 1}
+            ) as resp:
+                assert resp.status == 200
+                body = await resp.read()
+        assert seen_paths == ["/v1/chat/completions"]
+        assert seen_auth == ["ek-token-route"]
+        assert b"data: a\n\n" in body
+        assert b"data: b\n\n" in body
+        assert b"data: c\n\n" in body
+        assert body.index(b"data: a") < body.index(b"data: b") < body.index(b"data: c")
+    finally:
+        await stop_model_proxies()
+        await runner.cleanup()
+
+
+async def test_broken_observer_never_breaks_a_normal_streaming_response() -> None:
+    async def handler(request: web.Request) -> web.StreamResponse:
+        resp = web.StreamResponse(status=200, headers={"Content-Type": "text/event-stream"})
+        await resp.prepare(request)
+        await resp.write(b"data: hello\n\n")
+        await resp.write_eof()
+        return resp
+
+    runner, ach_url = await _start_fake_ach_router(handler)
+    try:
+        status, body = await _run_forward_with_observer(
+            ach_url, _BrokenObserver(), request_json={"stream": True}
+        )
+        assert status == 200
+        assert body == b"data: hello\n\n"
+    finally:
+        await runner.cleanup()
+
+
+async def test_mutate_request_failure_forwards_original_body_unchanged() -> None:
+    seen_bodies: list[bytes] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        seen_bodies.append(await request.read())
+        return web.json_response({"ok": True})
+
+    runner, ach_url = await _start_fake_ach_router(handler)
+    try:
+        status, _body = await _run_forward_with_observer(
+            ach_url, _BrokenObserver(), request_json={"stream": True, "a": 1}
+        )
+        assert status == 200
+        import json as _json
+
+        assert _json.loads(seen_bodies[0]) == {"stream": True, "a": 1}
+    finally:
+        await runner.cleanup()
+
+
+async def test_multiple_sse_events_in_one_chunk_usage_flows_to_accountant() -> None:
+    async def handler(request: web.Request) -> web.StreamResponse:
+        resp = web.StreamResponse(status=200, headers={"Content-Type": "text/event-stream"})
+        await resp.prepare(request)
+        # Two SSE events delivered in a SINGLE write/chunk.
+        await resp.write(
+            b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n'
+            b'data: {"usage":{"prompt_tokens":100,"completion_tokens":10}}\n\n'
+        )
+        await resp.write_eof()
+        return resp
+
+    runner, ach_url = await _start_fake_ach_router(handler)
+    try:
+        acc = _make_accountant()
+        base = await start_model_proxy(ach_url, "ek", accountant=acc)
+        token = acc.mint_token()
+        acc.begin_turn(token)
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{base}/t/{token}/v1/chat/completions", json={"stream": True}
+            ) as resp:
+                await resp.read()
+        result = acc.end_turn(token, _usage_record())
+        prices = ModelPrices(1e-6, 2e-6, 1e-6, 1e-6)
+        expected = compute_cost(TokenUsage(100, 10, 0, 0), prices)[0]
+        assert result.cost == pytest.approx(expected)
+    finally:
+        await stop_model_proxies()
+        await runner.cleanup()
+
+
+async def test_unterminated_final_sse_event_still_parsed() -> None:
+    async def handler(request: web.Request) -> web.StreamResponse:
+        resp = web.StreamResponse(status=200, headers={"Content-Type": "text/event-stream"})
+        await resp.prepare(request)
+        # No trailing \n\n before write_eof — the final event is unterminated.
+        await resp.write(b'data: {"usage":{"prompt_tokens":5,"completion_tokens":1}}')
+        await resp.write_eof()
+        return resp
+
+    runner, ach_url = await _start_fake_ach_router(handler)
+    try:
+        acc = _make_accountant()
+        base = await start_model_proxy(ach_url, "ek", accountant=acc)
+        token = acc.mint_token()
+        acc.begin_turn(token)
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{base}/t/{token}/v1/chat/completions", json={"stream": True}
+            ) as resp:
+                await resp.read()
+        result = acc.end_turn(token, _usage_record())
+        prices = ModelPrices(1e-6, 2e-6, 1e-6, 1e-6)
+        expected = compute_cost(TokenUsage(5, 1, 0, 0), prices)[0]
+        assert result.cost == pytest.approx(expected)
+    finally:
+        await stop_model_proxies()
+        await runner.cleanup()
+
+
+async def test_unknown_token_still_forwards_and_is_unattributed() -> None:
+    async def handler(request: web.Request) -> web.StreamResponse:
+        resp = web.StreamResponse(status=200, headers={"Content-Type": "text/event-stream"})
+        await resp.prepare(request)
+        await resp.write(b'data: {"usage":{"prompt_tokens":100,"completion_tokens":10}}\n\n')
+        await resp.write_eof()
+        return resp
+
+    runner, ach_url = await _start_fake_ach_router(handler)
+    try:
+        acc = _make_accountant()
+        base = await start_model_proxy(ach_url, "ek", accountant=acc)
+        real_token = acc.mint_token()
+        acc.begin_turn(real_token)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{base}/t/never-minted-garbage/v1/chat/completions", json={"stream": True}
+            ) as resp:
+                assert resp.status == 200
+                body = await resp.read()
+        assert b"usage" in body  # traffic reached the client — never dropped
+
+        result = acc.end_turn(real_token, _usage_record())
+        assert result.cost == 0.0  # the garbage-token usage never landed on the real token
+    finally:
+        await stop_model_proxies()
+        await runner.cleanup()

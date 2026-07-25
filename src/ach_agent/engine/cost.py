@@ -312,7 +312,7 @@ class CostAccountant:
 
     def __init__(self, source: str, wire: str, prices: PriceTable | None, model_name: str) -> None:
         self._source = source
-        self._wire = wire
+        self.wire = wire  # public: CostObserver reads this to pick the usage parser
         self._prices = prices
         self._model_name = model_name
         self._buckets: dict[str, _TokenBucket] = {}
@@ -409,3 +409,62 @@ class CostAccountant:
             bucket.cost = 0.0
             bucket.warned = set()
             bucket.in_flight = False
+
+
+def _inject_include_usage(body: bytes) -> bytes:
+    """OpenAI wire only (A.1): on a streaming request whose stream_options.include_usage
+    is absent or false, set it true. Never otherwise; any parse failure returns body as-is."""
+    if not body:
+        return body
+    try:
+        obj = json.loads(body)
+    except (ValueError, TypeError):
+        return body
+    if not isinstance(obj, dict) or obj.get("stream") is not True:
+        return body
+    stream_options = obj.get("stream_options")
+    if isinstance(stream_options, dict) and stream_options.get("include_usage") is True:
+        return body
+    new_options = dict(stream_options) if isinstance(stream_options, dict) else {}
+    new_options["include_usage"] = True
+    obj = {**obj, "stream_options": new_options}
+    try:
+        return json.dumps(obj).encode("utf-8")
+    except (TypeError, ValueError):
+        return body
+
+
+class CostObserver:
+    """ProxyObserver (structurally, per mcp_proxy.ProxyObserver) that injects OpenAI's
+    include_usage on streaming requests and reports parsed usage to a CostAccountant.
+
+    Bound to exactly one attribution token per request. Every method is defensive: a
+    parse failure here must never alter the relayed bytes (A.12) — callers additionally
+    isolate each call, but this class never lets an internal error escape either.
+    """
+
+    def __init__(self, accountant: CostAccountant, token: str | None) -> None:
+        self._accountant = accountant
+        self._token = token
+        self._usage_observer = (
+            UsageObserver(accountant.wire) if accountant.wire in _USAGE_PARSERS else None
+        )
+
+    def mutate_request(self, body: bytes, content_type: str) -> bytes:
+        if self._accountant.wire != "openai":
+            return body
+        return _inject_include_usage(body)
+
+    def begin(self, status: int, content_type: str) -> None:
+        if self._usage_observer is not None:
+            self._usage_observer.begin(status, content_type)
+
+    def feed(self, chunk: bytes) -> None:
+        if self._usage_observer is not None:
+            self._usage_observer.feed(chunk)
+
+    def finish(self) -> None:
+        if self._usage_observer is None:
+            return
+        usage = self._usage_observer.finish()
+        self._accountant.record_usage(self._token, usage)

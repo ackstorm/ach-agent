@@ -24,16 +24,68 @@ YAML. Both validate against the same schema, and **unknown keys are rejected** (
 | `memory` | | Fail-open. `endpoint`, `bank` (static memory bank_id), `mentalModels`. `mission` is contract-reserved (accepted; not yet consumed). Backend down → run without it. |
 | `limits` | | `maxConcurrentInvocations`, `maxInvocationSeconds`, `maxQueuedTotal`, `idempotencyWindowSeconds`, `maxSteps`, `terminalOutputRetries`. |
 | `engine` | | Harness-local. `home`, `workDir`, `startupTimeoutSeconds`, `forwardEnv` (default-deny env allowlist — see below). |
+| `cost` | | `source`: `engine` (default), `litellm_usage`, `litellm_headers`, or `none`. Controls the source of the per-invocation cost figure. |
 | `persistence` | | `enabled` (false → in-memory dedup, no volume), `mountPath`. |
 | `health` | | `host` / `port` for the HTTP surface (healthz/readyz/metrics + webhooks). |
 | `channels` | | List of channel adapters (below). |
 
 ### `cost.source` turn accounting
 
-The cost metric name and labels are unchanged for every source. When `source` is not
-`engine`, the source-selected value is also written to the stats row and emitted in the
-turn summary log; this is intentional. `none` suppresses the cost value and counter
-increment while preserving the invocation, duration, status, error, and token metrics.
+`cost` is optional. If it is omitted, or if `source` is omitted inside the block, the
+source defaults to `engine`, preserving the existing engine-reported cost behavior.
+Unknown source values are rejected at config load. The cost metric name and labels are
+unchanged for every source. When `source` is not `engine`, the source-selected value is
+also written to the stats row and emitted in the turn summary log; this is intentional.
+
+| `cost.source` | Semantics |
+|---|---|
+| `engine` | Default and wire-independent. Preserve the engine-reported usage/cost record; the cost layer is inert and does not inspect or mutate model traffic. |
+| `litellm_usage` | Parse per-response usage and price it with the ACH model-info cache. OpenAI and Gemini wires are supported. OpenAI streaming requests receive `stream_options.include_usage: true`; Gemini's repeated cumulative usage uses the final payload, with thinking tokens billed at the output rate. |
+| `litellm_headers` | Read `x-litellm-response-cost` on non-streaming responses and sum it for the invocation. Streaming responses contribute `0.0` and one bounded warning per invocation. This mode never changes `stream` or any other request field. |
+| `none` | Suppress the cost value and cost-counter increment while preserving invocation, duration, status, error, and token metrics. |
+
+`litellm_usage` is the only wire-restricted source: it supports `model.type: openai`
+and `model.type: gemini`. `model.type: anthropic` hard-fails at boot with this source.
+The `engine`, `litellm_headers`, and `none` sources are wire-independent.
+
+The source override is applied exactly once per invocation, at the turn boundary, on the
+usage record that feeds `SessionStat`. That same record feeds the Prometheus counter, the
+`ach-stats` row, and the `engine: summary` log. The engine-reported figure is never mixed
+into a harness-computed total, and the override is not applied separately at each of
+those sinks.
+
+### Cost-source failure handling (A.5)
+
+Cost failures are fail-soft: the invocation continues and the affected contribution is
+`0.0`. Price-load failures are reported once at boot; response-level warnings are bounded
+to at most one per condition per invocation.
+
+| Condition | Cost result | Log behavior |
+|---|---|---|
+| `fetch_failed` while loading prices | Empty price cache; affected invocations contribute `0.0` | One boot error; never a boot hard-fail. |
+| `no_entry` for the requested model | Model is unpriced; contribution `0.0` | One typed load result and boot warning naming the model. |
+| `unpriced` base input/output price absent, null, or zero | Contribution `0.0`; no base price is synthesized | One typed load result and boot warning naming the model. |
+| Cache-read or cache-creation price absent/null while both base prices are valid | That cache price falls back to `input_cost_per_token` | No failure; this is a successful partial-price fallback. |
+| `malformed` price response or price value | Contribution `0.0` | One typed load result and boot warning naming the model. |
+| Successful model response with no parseable usage | Contribution `0.0` | One `usage_missing` warning per invocation; non-success responses do not create a duplicate usage warning. |
+| `litellm_headers` header absent or unparseable, or response is streaming | Contribution `0.0` | One `litellm_headers_unpriced` warning per invocation. |
+| Usage cannot be attributed to an in-flight invocation | Never billed to a turn | One unattributed-usage warning per turn boundary. |
+
+### Price endpoint (B.10)
+
+For `litellm_usage`, the harness requests the model's prices from:
+
+```text
+GET /v2/model/info?model=<name>
+x-ach-key: <ek_>
+```
+
+The full URL is `{capability.ach.baseUrl}/v2/model/info?model=<name>`, with
+`model.name` URL-encoded and sent verbatim as the model identifier. The response is the
+paginated model-info envelope (`current_page`, `data`, `size`, `total_count`,
+`total_pages`); pricing is read from the matching entry in `data`. The `ek_` authenticates
+this price request and is never persisted or logged. See the [cost-source evidence note](references/2026-07-25-cost-source.md)
+for the reserved P0-v2 price-path output and B.7 streaming payload record.
 
 ### `engine.forwardEnv` — clean-slate env
 
@@ -84,6 +136,10 @@ model:
   params:
     temperature: 1
     top_p: 0.95
+
+cost:
+  source: engine                        # engine (default) | litellm_usage | litellm_headers | none
+                                        # omit cost, or source, to keep the engine default
 
 capability:
   type: ach

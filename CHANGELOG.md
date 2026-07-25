@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.10.0] - 2026-07-25
+
+### Added
+
+- **Configurable cost sources.** `cost.source` now documents the default engine-reported
+  cost, usage-priced OpenAI/Gemini accounting, LiteLLM response-header accounting, and
+  the `none` mode that suppresses cost while preserving other metrics. The documented
+  price path is the paginated `/v2/model/info?model=<name>` endpoint authenticated with
+  `x-ach-key`; Anthropic is rejected for `litellm_usage`.
+
 ## [0.9.0] - 2026-07-24
 
 ### Changed

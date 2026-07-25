@@ -15,6 +15,9 @@ model:
     temperature: 1
     top_p: 0.95
 
+cost:                                   # optional; omit the block to default to engine
+  source: engine                         # engine | litellm_usage | litellm_headers | none
+
 capability:
   type: ach                             # ach only in v1
   ach:

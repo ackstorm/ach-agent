@@ -342,6 +342,33 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#costsource-turn-accounting" class="md-nav__link">
+    <span class="md-ellipsis">
+      cost.source turn accounting
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cost-source-failure-handling-a5" class="md-nav__link">
+    <span class="md-ellipsis">
+      Cost-source failure handling (A.5)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#price-endpoint-b10" class="md-nav__link">
+    <span class="md-ellipsis">
+      Price endpoint (B.10)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#engineforwardenv-clean-slate-env" class="md-nav__link">
     <span class="md-ellipsis">
       engine.forwardEnv — clean-slate env
@@ -440,6 +467,33 @@
   
     <nav class="md-nav" aria-label="Blocks">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#costsource-turn-accounting" class="md-nav__link">
+    <span class="md-ellipsis">
+      cost.source turn accounting
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cost-source-failure-handling-a5" class="md-nav__link">
+    <span class="md-ellipsis">
+      Cost-source failure handling (A.5)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#price-endpoint-b10" class="md-nav__link">
+    <span class="md-ellipsis">
+      Price endpoint (B.10)
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#engineforwardenv-clean-slate-env" class="md-nav__link">
@@ -584,6 +638,11 @@ YAML. Both validate against the same schema, and <strong>unknown keys are reject
 <td>Harness-local. <code>home</code>, <code>workDir</code>, <code>startupTimeoutSeconds</code>, <code>forwardEnv</code> (default-deny env allowlist — see below).</td>
 </tr>
 <tr>
+<td><code>cost</code></td>
+<td></td>
+<td><code>source</code>: <code>engine</code> (default), <code>litellm_usage</code>, <code>litellm_headers</code>, or <code>none</code>. Controls the source of the per-invocation cost figure.</td>
+</tr>
+<tr>
 <td><code>persistence</code></td>
 <td></td>
 <td><code>enabled</code> (false → in-memory dedup, no volume), <code>mountPath</code>.</td>
@@ -600,6 +659,112 @@ YAML. Both validate against the same schema, and <strong>unknown keys are reject
 </tr>
 </tbody>
 </table>
+<h3 id="costsource-turn-accounting"><code>cost.source</code> turn accounting</h3>
+<p><code>cost</code> is optional. If it is omitted, or if <code>source</code> is omitted inside the block, the
+source defaults to <code>engine</code>, preserving the existing engine-reported cost behavior.
+Unknown source values are rejected at config load. The cost metric name and labels are
+unchanged for every source. When <code>source</code> is not <code>engine</code>, the source-selected value is
+also written to the stats row and emitted in the turn summary log; this is intentional.</p>
+<table>
+<thead>
+<tr>
+<th><code>cost.source</code></th>
+<th>Semantics</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>engine</code></td>
+<td>Default and wire-independent. Preserve the engine-reported usage/cost record; the cost layer is inert and does not inspect or mutate model traffic.</td>
+</tr>
+<tr>
+<td><code>litellm_usage</code></td>
+<td>Parse per-response usage and price it with the ACH model-info cache. OpenAI and Gemini wires are supported. OpenAI streaming requests receive <code>stream_options.include_usage: true</code>; Gemini's repeated cumulative usage uses the final payload, with thinking tokens billed at the output rate.</td>
+</tr>
+<tr>
+<td><code>litellm_headers</code></td>
+<td>Read <code>x-litellm-response-cost</code> on non-streaming responses and sum it for the invocation. Streaming responses contribute <code>0.0</code> and one bounded warning per invocation. This mode never changes <code>stream</code> or any other request field.</td>
+</tr>
+<tr>
+<td><code>none</code></td>
+<td>Suppress the cost value and cost-counter increment while preserving invocation, duration, status, error, and token metrics.</td>
+</tr>
+</tbody>
+</table>
+<p><code>litellm_usage</code> is the only wire-restricted source: it supports <code>model.type: openai</code>
+and <code>model.type: gemini</code>. <code>model.type: anthropic</code> hard-fails at boot with this source.
+The <code>engine</code>, <code>litellm_headers</code>, and <code>none</code> sources are wire-independent.</p>
+<p>The source override is applied exactly once per invocation, at the turn boundary, on the
+usage record that feeds <code>SessionStat</code>. That same record feeds the Prometheus counter, the
+<code>ach-stats</code> row, and the <code>engine: summary</code> log. The engine-reported figure is never mixed
+into a harness-computed total, and the override is not applied separately at each of
+those sinks.</p>
+<h3 id="cost-source-failure-handling-a5">Cost-source failure handling (A.5)</h3>
+<p>Cost failures are fail-soft: the invocation continues and the affected contribution is
+<code>0.0</code>. Price-load failures are reported once at boot; response-level warnings are bounded
+to at most one per condition per invocation.</p>
+<table>
+<thead>
+<tr>
+<th>Condition</th>
+<th>Cost result</th>
+<th>Log behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fetch_failed</code> while loading prices</td>
+<td>Empty price cache; affected invocations contribute <code>0.0</code></td>
+<td>One boot error; never a boot hard-fail.</td>
+</tr>
+<tr>
+<td><code>no_entry</code> for the requested model</td>
+<td>Model is unpriced; contribution <code>0.0</code></td>
+<td>One typed load result and boot warning naming the model.</td>
+</tr>
+<tr>
+<td><code>unpriced</code> base input/output price absent, null, or zero</td>
+<td>Contribution <code>0.0</code>; no base price is synthesized</td>
+<td>One typed load result and boot warning naming the model.</td>
+</tr>
+<tr>
+<td>Cache-read or cache-creation price absent/null while both base prices are valid</td>
+<td>That cache price falls back to <code>input_cost_per_token</code></td>
+<td>No failure; this is a successful partial-price fallback.</td>
+</tr>
+<tr>
+<td><code>malformed</code> price response or price value</td>
+<td>Contribution <code>0.0</code></td>
+<td>One typed load result and boot warning naming the model.</td>
+</tr>
+<tr>
+<td>Successful model response with no parseable usage</td>
+<td>Contribution <code>0.0</code></td>
+<td>One <code>usage_missing</code> warning per invocation; non-success responses do not create a duplicate usage warning.</td>
+</tr>
+<tr>
+<td><code>litellm_headers</code> header absent or unparseable, or response is streaming</td>
+<td>Contribution <code>0.0</code></td>
+<td>One <code>litellm_headers_unpriced</code> warning per invocation.</td>
+</tr>
+<tr>
+<td>Usage cannot be attributed to an in-flight invocation</td>
+<td>Never billed to a turn</td>
+<td>One unattributed-usage warning per turn boundary.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="price-endpoint-b10">Price endpoint (B.10)</h3>
+<p>For <code>litellm_usage</code>, the harness requests the model's prices from:</p>
+<div class="highlight"><pre><span></span><code>GET /v2/model/info?model=&lt;name&gt;
+x-ach-key: &lt;ek_&gt;
+</code></pre></div>
+<p>The full URL is <code>{capability.ach.baseUrl}/v2/model/info?model=&lt;name&gt;</code>, with
+<code>model.name</code> URL-encoded and sent verbatim as the model identifier. The response is the
+paginated model-info envelope (<code>current_page</code>, <code>data</code>, <code>size</code>, <code>total_count</code>,
+<code>total_pages</code>); pricing is read from the matching entry in <code>data</code>. The <code>ek_</code> authenticates
+this price request and is never persisted or logged. See the <a href="../references/2026-07-25-cost-source/">cost-source evidence note</a>
+for the reserved P0-v2 price-path output and B.7 streaming payload record.</p>
 <h3 id="engineforwardenv-clean-slate-env"><code>engine.forwardEnv</code> — clean-slate env</h3>
 <p>opencode's subprocess env is built <strong>clean-slate</strong>: only a small base allowlist (<code>PATH</code>,
 <code>SHELL</code>, <code>LANG</code>, …) plus the names you list in <code>forwardEnv</code> are forwarded from the harness
@@ -663,6 +828,10 @@ channel adapts per event:</p>
 <span class="w">  </span><span class="nt">params</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">temperature</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
 <span class="w">    </span><span class="nt">top_p</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.95</span>
+
+<span class="nt">cost</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">engine</span><span class="w">                        </span><span class="c1"># engine (default) | litellm_usage | litellm_headers | none</span>
+<span class="w">                                        </span><span class="c1"># omit cost, or source, to keep the engine default</span>
 
 <span class="nt">capability</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ach</span>

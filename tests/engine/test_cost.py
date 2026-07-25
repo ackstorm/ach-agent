@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Cache-aware pricing math (A.2), per-wire usage parse (AC-7), price cache (B.5)."""
+"""Cache-aware pricing math (A.2), per-wire usage parse (AC-7), price cache (B.5),
+attribution + warn budget (AC-9, AC-10)."""
 
 from __future__ import annotations
 
@@ -7,8 +8,18 @@ import asyncio
 
 import pytest
 from aiohttp import web
+from structlog.testing import capture_logs
 
-from ach_agent.engine.cost import ModelPrices, PriceTable, TokenUsage, UsageObserver, compute_cost
+from ach_agent.engine.base.events import OpenCodeUsage
+from ach_agent.engine.cost import (
+    CostAccountant,
+    ModelPrices,
+    PriceTable,
+    TokenUsage,
+    UsageObserver,
+    compute_cost,
+    tokenize_model_base_url,
+)
 
 
 def test_cost_is_cache_aware_and_subtractive() -> None:
@@ -323,3 +334,149 @@ async def test_unpriced_when_base_price_absent_null_or_zero(fields: dict) -> Non
         assert table.get("gpt-4") is None
     finally:
         await runner.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# CostAccountant (A.3, A.9): per-server-token attribution, warn budget.
+# ---------------------------------------------------------------------------
+
+
+def _usage_record(**overrides: object) -> OpenCodeUsage:
+    base: dict[str, object] = {
+        "session_id": "ses_1",
+        "message_id": "msg_1",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "cost": 0.0,
+        "duration_ms": 0,
+    }
+    base.update(overrides)
+    return OpenCodeUsage(**base)  # type: ignore[arg-type]
+
+
+def _priced_table(model_name: str, prices: ModelPrices) -> PriceTable:
+    table = PriceTable("http://unused", "ek")
+    table._prices[model_name] = prices  # test-only poke; PriceTable exposes no setter
+    return table
+
+
+def test_tokenize_model_base_url() -> None:
+    assert tokenize_model_base_url("http://127.0.0.1:9/v1", "T") == "http://127.0.0.1:9/t/T/v1"
+
+
+def test_interleaved_tokens_attributed_independently() -> None:
+    prices = ModelPrices(1e-6, 2e-6, 1e-6, 1e-6)
+    table = _priced_table("m", prices)
+    acc = CostAccountant(source="litellm_usage", wire="openai", prices=table, model_name="m")
+    t1 = acc.mint_token()
+    t2 = acc.mint_token()
+    acc.begin_turn(t1)
+    acc.begin_turn(t2)
+
+    u1 = TokenUsage(
+        prompt_tokens=100, completion_tokens=10, cached_read_tokens=0, cache_creation_tokens=0
+    )
+    u2 = TokenUsage(
+        prompt_tokens=1000, completion_tokens=100, cached_read_tokens=0, cache_creation_tokens=0
+    )
+    acc.record_usage(t1, u1)
+    acc.record_usage(t2, u2)
+    acc.record_usage(t1, u1)  # interleaved second call on t1, before t2's turn ends
+
+    result1 = acc.end_turn(t1, _usage_record())
+    assert result1.cost == pytest.approx(2 * compute_cost(u1, prices)[0])
+
+    # t2's bucket must be untouched by t1's end_turn (read-and-reset is per-token).
+    result2 = acc.end_turn(t2, _usage_record())
+    assert result2.cost == pytest.approx(compute_cost(u2, prices)[0])
+
+
+def test_none_and_unknown_token_are_unattributed_never_billed() -> None:
+    prices = ModelPrices(1e-6, 2e-6, 1e-6, 1e-6)
+    table = _priced_table("m", prices)
+    acc = CostAccountant(source="litellm_usage", wire="openai", prices=table, model_name="m")
+    t1 = acc.mint_token()
+    acc.begin_turn(t1)
+
+    u = TokenUsage(
+        prompt_tokens=100, completion_tokens=10, cached_read_tokens=0, cache_creation_tokens=0
+    )
+    acc.record_usage(None, u)
+    acc.record_usage("unknown-token-not-minted", u)
+
+    result = acc.end_turn(t1, _usage_record())
+    assert result.cost == 0.0
+
+
+def test_token_with_no_in_flight_turn_is_unattributed() -> None:
+    """A warm-window background call on a still-minted (idle_ttl) token is unattributed."""
+    prices = ModelPrices(1e-6, 2e-6, 1e-6, 1e-6)
+    table = _priced_table("m", prices)
+    acc = CostAccountant(source="litellm_usage", wire="openai", prices=table, model_name="m")
+    t1 = acc.mint_token()  # minted, never begin_turn'd — no invocation currently in flight
+
+    u = TokenUsage(
+        prompt_tokens=100, completion_tokens=10, cached_read_tokens=0, cache_creation_tokens=0
+    )
+    acc.record_usage(t1, u)
+
+    acc.begin_turn(t1)
+    result = acc.end_turn(t1, _usage_record())
+    assert result.cost == 0.0
+
+
+def test_warn_once_per_condition_per_invocation_resets_on_end_turn() -> None:
+    acc = CostAccountant(source="litellm_headers", wire="openai", prices=None, model_name="m")
+    t1 = acc.mint_token()
+    acc.begin_turn(t1)
+
+    with capture_logs() as cap:
+        acc.warn_once(t1, "same_condition")
+        acc.warn_once(t1, "same_condition")
+        acc.warn_once(t1, "same_condition")
+        acc.warn_once(t1, "other_condition")
+    assert len(cap) == 2  # one line per DISTINCT condition, repeats suppressed
+
+    acc.end_turn(t1, _usage_record())  # turn boundary resets the per-token warn budget
+    acc.begin_turn(t1)
+    with capture_logs() as cap2:
+        acc.warn_once(t1, "same_condition")
+    assert len(cap2) == 1
+
+
+def test_unattributed_usage_logs_once_per_turn_boundary() -> None:
+    prices = ModelPrices(1e-6, 2e-6, 1e-6, 1e-6)
+    table = _priced_table("m", prices)
+    acc = CostAccountant(source="litellm_usage", wire="openai", prices=table, model_name="m")
+    t1 = acc.mint_token()
+    acc.begin_turn(t1)
+    u = TokenUsage(
+        prompt_tokens=100, completion_tokens=10, cached_read_tokens=0, cache_creation_tokens=0
+    )
+
+    with capture_logs() as cap:
+        acc.record_usage(None, u)
+        acc.record_usage("never-minted", u)
+        acc.record_usage(None, u)
+    assert len(cap) == 1
+
+    acc.end_turn(t1, _usage_record())  # turn boundary resets the unattributed warn budget
+    with capture_logs() as cap2:
+        acc.record_usage(None, u)
+    assert len(cap2) == 1
+
+
+def test_engine_source_end_turn_returns_usage_unmodified() -> None:
+    acc = CostAccountant(source="engine", wire="openai", prices=None, model_name="m")
+    t1 = acc.mint_token()
+    acc.begin_turn(t1)
+    u = TokenUsage(
+        prompt_tokens=100, completion_tokens=10, cached_read_tokens=0, cache_creation_tokens=0
+    )
+    acc.record_usage(t1, u)  # even if recorded, source=engine must ignore it entirely
+
+    original = _usage_record(cost=1.23)
+    result = acc.end_turn(t1, original)
+    assert result is original  # byte-for-byte unmodified — no parse-driven override

@@ -10,10 +10,13 @@ it is NOT an additive-vs-subtractive detector (spec-revalidation.md §4.3).
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
+import secrets
 from dataclasses import dataclass
 from typing import Any, Literal
+from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 import structlog
@@ -277,3 +280,132 @@ class PriceTable:
 
     def get(self, model_name: str) -> ModelPrices | None:
         return self._prices.get(model_name)
+
+
+def tokenize_model_base_url(url: str, token: str) -> str:
+    """Insert /t/<token> after the authority: http://h:p/v1 -> http://h:p/t/<tok>/v1."""
+    parts = urlsplit(url)
+    return urlunsplit(
+        (parts.scheme, parts.netloc, f"/t/{token}{parts.path}", parts.query, parts.fragment)
+    )
+
+
+class _TokenBucket:
+    """Per-server-token turn state: accumulated cost + the warn_once condition set."""
+
+    __slots__ = ("cost", "in_flight", "warned")
+
+    def __init__(self) -> None:
+        self.cost = 0.0
+        self.warned: set[str] = set()
+        self.in_flight = False
+
+
+class CostAccountant:
+    """Per-server-token cost attribution + the source override at the turn boundary (A.3, A.9).
+
+    EnginePool keys one ManagedServer per session_key and the router serializes strictly
+    per session_key (one Lane, FIFO), so at most one invocation per session_key — and
+    hence per token — is ever in flight. Attribution below is therefore EXACT, not
+    best-effort: a token's bucket cannot be touched by a concurrent turn.
+    """
+
+    def __init__(self, source: str, wire: str, prices: PriceTable | None, model_name: str) -> None:
+        self._source = source
+        self._wire = wire
+        self._prices = prices
+        self._model_name = model_name
+        self._buckets: dict[str, _TokenBucket] = {}
+        self._unattributed_warned = False
+
+    def mint_token(self) -> str:
+        token = secrets.token_urlsafe(16)
+        self._buckets[token] = _TokenBucket()
+        return token
+
+    def drop_token(self, token: str) -> None:
+        self._buckets.pop(token, None)
+
+    def begin_turn(self, token: str) -> None:
+        bucket = self._buckets.setdefault(token, _TokenBucket())
+        bucket.cost = 0.0
+        bucket.warned = set()
+        bucket.in_flight = True
+
+    def _price(self, usage: TokenUsage) -> float:
+        prices = self._prices.get(self._model_name) if self._prices is not None else None
+        if prices is None:
+            return 0.0
+        cost, _clamped = compute_cost(usage, prices)
+        return cost
+
+    def record_usage(self, token: str | None, usage: TokenUsage | None) -> None:
+        """Attribute usage to token's in-flight turn, or the unattributed tally (A.3)."""
+        if usage is None:
+            return
+        bucket = self._buckets.get(token) if token is not None else None
+        if bucket is None or not bucket.in_flight:
+            # Unknown token, no token, or a warm-window call outside any in-flight turn —
+            # never billed to a turn. One log line per turn boundary (reset in end_turn).
+            if not self._unattributed_warned:
+                log.warning(
+                    "cost: usage could not be attributed to an in-flight invocation",
+                    token_known=bucket is not None,
+                    model=self._model_name,
+                )
+                self._unattributed_warned = True
+            return
+        bucket.cost += self._price(usage)
+
+    def record_header_cost(self, token: str | None, header: str | None, streaming: bool) -> None:
+        """litellm_headers mode (A.4): sum x-litellm-response-cost; streaming is 0.0."""
+        bucket = self._buckets.get(token) if token is not None else None
+        if streaming:
+            self.warn_once(
+                token, "litellm_headers_unpriced", cost_source=self._source, streaming=True
+            )
+            return
+        cost: float | None = None
+        if header is not None:
+            try:
+                cost = float(header)
+            except (TypeError, ValueError):
+                cost = None
+        if cost is None:
+            self.warn_once(
+                token, "litellm_headers_unpriced", cost_source=self._source, streaming=False
+            )
+            return
+        if bucket is None or not bucket.in_flight:
+            return
+        bucket.cost += cost
+
+    def warn_once(self, token: str | None, condition: str, **fields: Any) -> None:
+        """Emit at most one log line per condition per invocation; reset on end_turn."""
+        bucket = self._buckets.get(token) if token is not None else None
+        if bucket is not None:
+            if condition in bucket.warned:
+                return
+            bucket.warned.add(condition)
+        log.warning(f"cost: {condition}", **fields)
+
+    def end_turn(self, token: str, usage: Any) -> Any:
+        """Read-and-reset the token's bucket; apply the source override exactly once (A.9)."""
+        bucket = self._buckets.get(token)
+        total = bucket.cost if bucket is not None else 0.0
+        if bucket is not None:
+            bucket.cost = 0.0
+            bucket.warned = set()
+            bucket.in_flight = False
+        self._unattributed_warned = False  # a turn boundary — allow one more unattributed warn
+        if self._source == "engine" or usage is None:
+            return usage
+        return dataclasses.replace(usage, cost=total)
+
+    def discard_turn(self, token: str) -> None:
+        """Idempotent reset for the finally path — never disturbs a bucket end_turn already took."""
+        bucket = self._buckets.get(token)
+        if bucket is not None:
+            bucket.cost = 0.0
+            bucket.warned = set()
+            bucket.in_flight = False

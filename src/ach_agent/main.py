@@ -57,6 +57,12 @@ from ach_agent.config.schema import (
     RepoCheckoutServer,
 )
 from ach_agent.engine.context import fetch_context
+from ach_agent.engine.cost import (
+    CostAccountant,
+    PriceTable,
+    report_price_load_result,
+    validate_cost_source,
+)
 from ach_agent.engine.hydrate import hydrate, resolve_model
 from ach_agent.engine.mcp_passthrough import to_opencode_entry
 from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
@@ -1203,6 +1209,17 @@ async def main(
 
     # Step 2: load config (hard-fail on schema mismatch — CFG-02)
     cfg = load_config(config_path)
+    try:
+        validate_cost_source(cfg.cost.source, cfg.model.type)
+    except ValueError as exc:
+        log.error(
+            "cost source rejected at boot",
+            cost_source=cfg.cost.source,
+            model_type=cfg.model.type,
+            reason=str(exc),
+        )
+        raise SystemExit(1) from exc
+    log.info("cost: active source", cost_source=cfg.cost.source)
     # SEC: secret.env values must never reach opencode's env or the logs. Strip any
     # secret.env name a misconfig also listed in engine.forwardEnv (fail-safe, WARN not
     # hard-fail — see strip_forwarded_secrets), and register the secret names' CURRENT
@@ -1256,6 +1273,8 @@ async def main(
     repo_facade_url: str | None = None
     a2a_facade: Any = None
     a2a_facade_url: str | None = None
+    price_table: PriceTable | None = None
+    accountant: CostAccountant | None = None
     if ek:
         manifest = await hydrate(cfg.capability.ach.base_url, ek)
         # hard-fail (sys.exit 1) if the configured model is absent from the hydrated set.
@@ -1347,7 +1366,29 @@ async def main(
                     "passed in.' Export the key in the env that launches the container.",
                     auth_header=model_up_header,
                 )
-        model_proxy_base = await start_model_proxy(model_up_base, model_up_token, model_up_header)
+        if cfg.cost.source == "litellm_usage":
+            price_table = PriceTable(model_up_base, model_up_token)
+            price_result = await price_table.load(cfg.model.name)
+            report_price_load_result(price_result, cfg.model.name)
+            accountant = CostAccountant(
+                source=cfg.cost.source,
+                wire=cfg.model.type,
+                prices=price_table,
+                model_name=cfg.model.name,
+            )
+        elif cfg.cost.source == "litellm_headers":
+            accountant = CostAccountant(
+                source=cfg.cost.source,
+                wire=cfg.model.type,
+                prices=None,
+                model_name=cfg.model.name,
+            )
+        model_proxy_base = await start_model_proxy(
+            model_up_base,
+            model_up_token,
+            model_up_header,
+            accountant=accountant,
+        )
         # model.type is authoritative for the wire. The hydration manifest reports every model
         # at /v1 (openai-compat) even for gemini, so we DON'T read the manifest endpoint here —
         # doing so forced a type:gemini model onto /v1/chat/completions. resolve_model above
@@ -1453,7 +1494,7 @@ async def main(
         driver: EngineDriver = PiDriver()
     else:
         driver = OpencodeDriver()
-    pool = EnginePool(driver=driver, sessions_map=session_store)
+    pool = EnginePool(driver=driver, sessions_map=session_store, accountant=accountant)
 
     # Best-effort stats sink (harness-local, ACH_STATS_* — never part of CONTRACT_v3).
     # Unset ACH_STATS_REDIS_URL → Prometheus-only, no queue/writer.

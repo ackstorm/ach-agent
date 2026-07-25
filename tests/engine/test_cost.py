@@ -13,12 +13,16 @@ from structlog.testing import capture_logs
 from ach_agent.engine.base.events import OpenCodeUsage
 from ach_agent.engine.cost import (
     CostAccountant,
+    CostObserver,
     ModelPrices,
+    PriceLoadResult,
     PriceTable,
     TokenUsage,
     UsageObserver,
     compute_cost,
+    report_price_load_result,
     tokenize_model_base_url,
+    validate_cost_source,
 )
 
 
@@ -480,6 +484,79 @@ def test_engine_source_end_turn_returns_usage_unmodified() -> None:
     original = _usage_record(cost=1.23)
     result = acc.end_turn(t1, original)
     assert result is original  # byte-for-byte unmodified — no parse-driven override
+
+
+# ---------------------------------------------------------------------------
+# Boot validation and A.5 failure table (AC-8, AC-10).
+# ---------------------------------------------------------------------------
+
+
+def test_litellm_usage_anthropic_is_a_boot_hard_fail() -> None:
+    with pytest.raises(ValueError) as exc_info:
+        validate_cost_source("litellm_usage", "anthropic")
+    message = str(exc_info.value)
+    assert "cost.source" in message
+    assert "model.type" in message
+    assert "anthropic" in message
+
+
+@pytest.mark.parametrize("source", ["engine", "none", "litellm_headers"])
+def test_anthropic_is_accepted_for_wire_independent_sources(source: str) -> None:
+    validate_cost_source(source, "anthropic")
+
+
+def _observer_accountant() -> tuple[CostAccountant, str]:
+    acc = CostAccountant(source="litellm_usage", wire="openai", prices=None, model_name="m")
+    token = acc.mint_token()
+    acc.begin_turn(token)
+    return acc, token
+
+
+def test_missing_final_usage_is_zero_and_warns_once_per_invocation() -> None:
+    acc, token = _observer_accountant()
+    observer = CostObserver(acc, token)
+    observer.begin(200, "application/json")
+    with capture_logs() as cap:
+        observer.finish()
+        observer.finish()
+    assert len(cap) == 1
+    assert cap[0]["event"] == "cost: usage_missing"
+    assert acc.end_turn(token, _usage_record()).cost == 0.0
+
+
+def test_non_2xx_without_usage_is_zero_without_an_extra_warning() -> None:
+    acc, token = _observer_accountant()
+    observer = CostObserver(acc, token)
+    observer.begin(500, "application/json")
+    observer.feed(b'{"usage":{"prompt_tokens":100,"completion_tokens":10}}')
+    with capture_logs() as cap:
+        observer.finish()
+    assert len(cap) == 0
+    assert acc.end_turn(token, _usage_record()).cost == 0.0
+
+
+def test_non_2xx_usage_payload_is_ignored() -> None:
+    observer = UsageObserver("openai")
+    observer.begin(500, "application/json")
+    observer.feed(b'{"usage":{"prompt_tokens":100,"completion_tokens":10}}')
+    assert observer.finish() is None
+
+
+@pytest.mark.parametrize("failure", ["no_entry", "unpriced", "malformed"])
+def test_unpriced_a5_rows_warn_with_model_name(failure: str) -> None:
+    with capture_logs() as cap:
+        report_price_load_result(PriceLoadResult(failure=failure), "gpt-4")  # type: ignore[arg-type]
+    assert len(cap) == 1
+    assert cap[0]["model"] == "gpt-4"
+    assert cap[0]["failure"] == failure
+
+
+def test_price_fetch_failure_is_one_boot_error_and_not_a_hard_fail() -> None:
+    with capture_logs() as cap:
+        report_price_load_result(PriceLoadResult(failure="fetch_failed"), "gpt-4")
+    assert len(cap) == 1
+    assert cap[0]["log_level"] == "error"
+    assert cap[0]["model"] == "gpt-4"
 
 
 # ---------------------------------------------------------------------------

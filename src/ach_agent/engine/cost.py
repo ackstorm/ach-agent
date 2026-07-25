@@ -104,13 +104,24 @@ class UsageObserver:
 
     def __init__(self, wire: str) -> None:
         self._parse = _USAGE_PARSERS[wire]
+        self._status = 0
         self._streaming = False
         self._buf = bytearray()
         self._usage: TokenUsage | None = None
         self._over_cap = False
 
     def begin(self, status: int, content_type: str) -> None:
+        self._status = status
         self._streaming = content_type.startswith("text/event-stream")
+
+    @property
+    def response_is_success(self) -> bool:
+        """Whether a missing usage payload is an A.5 usage-missing condition.
+
+        Non-2xx responses and their error bodies are already logged by the proxy; they
+        must not create a second cost warning.
+        """
+        return 200 <= self._status < 300
 
     def feed(self, chunk: bytes) -> None:
         if self._over_cap:
@@ -147,6 +158,8 @@ class UsageObserver:
 
     def finish(self) -> TokenUsage | None:
         """Return the final parsed usage, or None if the body exceeded the cap."""
+        if not self.response_is_success:
+            return None
         if self._over_cap:
             return None
         if self._streaming:
@@ -171,6 +184,32 @@ PriceFailure = Literal["fetch_failed", "no_entry", "unpriced", "malformed"]
 @dataclass(frozen=True, slots=True)
 class PriceLoadResult:
     failure: PriceFailure | None
+
+
+def validate_cost_source(source: str, model_type: str) -> None:
+    """Apply the one cost-source/wire boot restriction (AC-8).
+
+    The engine and header sources are wire-independent. Usage parsing is currently
+    implemented for the OpenAI and Gemini wires only; the forwarder serves no
+    ``/anthropic`` route for this source, so an Anthropic usage configuration is a
+    deliberate boot hard-fail.
+    """
+    if source == "litellm_usage" and model_type == "anthropic":
+        raise ValueError(
+            "cost.source=litellm_usage is unsupported with model.type=anthropic: "
+            "the forwarder serves no /anthropic route for this usage wire; use "
+            "engine, none, or litellm_headers instead"
+        )
+
+
+def report_price_load_result(result: PriceLoadResult, model_name: str) -> None:
+    """Emit the A.5 boot outcome without turning a price failure into a hard-fail."""
+    if result.failure is None:
+        return
+    if result.failure == "fetch_failed":
+        log.error("cost: price fetch failed at boot", model=model_name, failure=result.failure)
+        return
+    log.warning("cost: model is unpriced", model=model_name, failure=result.failure)
 
 
 def _price_field(entry: dict[str, Any], key: str) -> Any:
@@ -481,4 +520,12 @@ class CostObserver:
         if self._usage_observer is None:
             return
         usage = self._usage_observer.finish()
+        if usage is None and self._usage_observer.response_is_success:
+            self._accountant.warn_once(
+                self._token,
+                "usage_missing",
+                cost_source=self._accountant._source,
+                model=self._accountant._model_name,
+                wire=self._accountant.wire,
+            )
         self._accountant.record_usage(self._token, usage)

@@ -18,9 +18,7 @@ from ach_agent.engine.cost import (
     CostAccountant,
     ModelPrices,
     PriceTable,
-    TokenUsage,
     _match_entry,
-    compute_cost,
 )
 from ach_agent.engine.mcp_proxy import ModelProxy
 
@@ -82,6 +80,8 @@ async def _start_fake_ach(
 
     async def handler(request: web.Request) -> web.StreamResponse:
         if request.path == "/v2/model/info":
+            assert request.method == "GET"
+            assert request.headers.get("x-ach-key") == "ek-integration"
             seen_model_info.append(
                 {
                     "model": request.query.get("model"),
@@ -180,16 +180,9 @@ async def test_streaming_cache_aware_cost_is_engine_independent_at_model_proxy(
         ]
 
         result = accountant.end_turn(token, _usage_record())
-        expected, clamped = compute_cost(
-            TokenUsage(
-                prompt_tokens=1000,
-                completion_tokens=100,
-                cached_read_tokens=400,
-                cache_creation_tokens=0,
-            ),
-            ModelPrices(**FULLY_PRICED),
-        )
-        assert clamped is False
+        # 600 uncached input * 1e-6 + 400 cache-read * 1e-7
+        # + 100 output * 2e-6 = 0.00084 USD.
+        expected = 0.00084
         assert result.cost == pytest.approx(expected)
         assert result.cost > 0.0
     finally:

@@ -722,7 +722,7 @@ memory (fail-open), tool egress is not fail-open — surface it as a per-invocat
    `src/ach_agent/engine/` and is reused. `engine` block removed; `model{name,type,params}` stays.
    Structured output is harness-validated (text extract + Pydantic + ≤1 retry). Router IP + tests kept. (2026-06-25)
 7. **Secret hygiene** — the harness fronts model + MCP on localhost; the `ek_` never reaches
-   opencode. ACH auth is the `x-ach-key` header (+ `x-ach-environment`), NOT `Authorization: Bearer`
+   opencode. ACH auth is the `x-ach-key` header (+ `x-ach-agent` and `x-ach-environment`), NOT `Authorization: Bearer`
    (§3/§6.10/§9). (2026-06-25)
 8. **Context** — skills / prompts / artifacts only (tar→dir at hydration); no plugins. Prompts and
    artifacts live under `<home>/.ach-state/{prompts,artifacts}`; skills under

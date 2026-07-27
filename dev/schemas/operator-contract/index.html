@@ -18,7 +18,7 @@
     
     
       
-        <title>ACH Agent Runtime — Shared Contract v3 (the seam) - ach-agent</title>
+        <title>ACH Agent Runtime — Operator Contract (the seam) - ach-agent</title>
       
     
     
@@ -70,7 +70,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#ach-agent-runtime-shared-contract-v3-the-seam" class="md-skip">
+        <a href="#ach-agent-runtime-operator-contract-the-seam" class="md-skip">
           Skip to content
         </a>
       
@@ -106,7 +106,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ACH Agent Runtime — Shared Contract v3 (the seam)
+              ACH Agent Runtime — Operator Contract (the seam)
             
           </span>
         </div>
@@ -470,8 +470,12 @@
   
 
 
-<h1 id="ach-agent-runtime-shared-contract-v3-the-seam">ACH Agent Runtime — Shared Contract v3 (the seam)</h1>
+<h1 id="ach-agent-runtime-operator-contract-the-seam">ACH Agent Runtime — Operator Contract (the seam)</h1>
 <blockquote>
+<p><strong>Pinned contract revision: v3.</strong> This file was named <code>CONTRACT_v3.md</code> until 2026-07-27;
+the revision it pins now lives here in the header instead of in the filename, so the
+document keeps its name across revisions. When <code>ach-runtime</code> cuts v4, bump this line —
+do not rename the file.</p>
 <p><strong>Consolidated 2026-07-01:</strong> this document folds in <code>CONTRACT_v3-ADDENDUM-hydration.md</code>
 and <code>CONTRACT_v3-ADDENDUM-prompt-source.md</code> and <strong>supersedes them</strong> — their corrected
 deltas (hydration writes, MCP auth headers, <code>x-ach-key</code> injection, the local egress
@@ -487,7 +491,7 @@ unilaterally. Source of truth lives in <code>ach-runtime</code>; <code>ach-agent
 <p>Spec reference: <code>ach-agent-runtime-spec-v1_4_7.md</code> (API group <code>runtime.ackstorm.ai/v1alpha1</code>).</p>
 <blockquote>
 <p><strong>Frozen v1 — 2026-07-02.</strong> The machine-readable half of §2 is the generated JSON Schema
-<a href="../../schemas/agent-config-v1.schema.json"><code>docs/schemas/agent-config-v1.schema.json</code></a> —
+<a href="../agent-config-v1.schema.json"><code>docs/schemas/agent-config-v1.schema.json</code></a> —
 committed, published to the docs site at
 <code>https://ackstorm.github.io/ach-agent/stable/schemas/agent-config-v1.schema.json</code>, produced
 from the harness <code>AgentConfig</code> by <code>scripts/gen_schema.py</code>

@@ -574,7 +574,7 @@
 <li>Prometheus implementation and tests must match <code>prometheus-client==0.25.0</code>: <code>Counter("thing_total", "doc")</code> exposes <code>thing_total</code>, <code>collect()</code> yields <code>Iterable[Metric]</code>, and the library's restricted registry is <code>RestrictedRegistry</code>, not <code>CollectorRegistry</code>.</li>
 <li>Never mutate <code>Metric</code> objects or sample-label mappings owned by a collector. Return fresh <code>Metric</code> snapshots, preserve all metric fields including <code>unit</code>, preserve all sample fields via <code>_replace</code>, and make process identity win collisions.</li>
 <li>Invalid hydration must not change the already-committed process identity or create an identity metric side effect.</li>
-<li>Update the frozen prose contract <code>docs/design/CONTRACT_v3.md</code>; no JSON-schema field changes are required.</li>
+<li>Update the frozen prose contract <code>docs/schemas/operator-contract.md</code>; no JSON-schema field changes are required.</li>
 <li>Release exactly <code>v0.10.1</code>. <code>v0.10.0</code> already exists and resolves to <code>aec85d1761cc9cb66e946ea6da4b5f8006e705c1</code>.</li>
 <li>CI creates the <code>v0.10.1</code> tag, GitHub release, and GHCR images from the empty <code>chore(release): v0.10.1</code> marker commit. Never create or push a local release tag.</li>
 <li>Out of scope: all changes in <code>../ach</code>, including its PodMonitor; cost CRD work; converting these identity headers into LiteLLM tags.</li>
@@ -654,7 +654,7 @@
 <td>Hermetic verification of headers passed to the real A2A client construction seam.</td>
 </tr>
 <tr>
-<td><code>docs/design/CONTRACT_v3.md</code></td>
+<td><code>docs/schemas/operator-contract.md</code></td>
 <td>Frozen contract for identity sources, all four outbound paths, stripping, and metric labels.</td>
 </tr>
 <tr>
@@ -1555,7 +1555,7 @@ git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </sp
 <h3 id="task-7-update-contract-and-configuration-documentation">Task 7: Update contract and configuration documentation</h3>
 <p><strong>Files:</strong></p>
 <ul>
-<li>Modify: <code>docs/design/CONTRACT_v3.md:395-425,499-504,620-634,699-709</code></li>
+<li>Modify: <code>docs/schemas/operator-contract.md:395-425,499-504,620-634,699-709</code></li>
 <li>Modify: <code>docs/configuration.md:7-22</code></li>
 </ul>
 <p><strong>Interfaces:</strong></p>
@@ -1568,7 +1568,7 @@ git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </sp
 <p>[ ] <strong>Step 1: Update the frozen hydration and egress contract</strong></p>
 </li>
 </ul>
-<p>Make these precise changes in <code>docs/design/CONTRACT_v3.md</code>:</p>
+<p>Make these precise changes in <code>docs/schemas/operator-contract.md</code>:</p>
 <ol>
 <li>In the governed environment table and the paragraph below it, define process identity as <code>agent.name</code> plus the requested <code>capability.ach.environment</code>; state that the validated hydrate response's required <code>environment</code> becomes the committed process environment for subsequent metrics and egress.</li>
 <li>In Hydration step 1, state that <code>POST /platform/hydrate</code> carries <code>x-ach-key</code>, <code>x-ach-agent</code>, and <code>x-ach-environment</code>; the latter two come from trusted rendered config for this bootstrap request.</li>
@@ -1599,7 +1599,7 @@ git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </sp
 </li>
 </ul>
 <div class="highlight"><pre><span></span><code>rg<span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;x-ach-agent|x-ach-environment|every exposed sample|name\[\]|case-insensitive|v0.10.1&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>docs/design/CONTRACT_v3.md<span class="w"> </span>docs/configuration.md
+<span class="w">  </span>docs/schemas/operator-contract.md<span class="w"> </span>docs/configuration.md
 git<span class="w"> </span>diff<span class="w"> </span>--exit-code<span class="w"> </span>--<span class="w"> </span>docs/schemas/agent-config-v1.schema.json
 </code></pre></div>
 <p>Expected: the first command shows every required topic; the schema command prints nothing and exits 0.</p>
@@ -1612,7 +1612,7 @@ git<span class="w"> </span>diff<span class="w"> </span>--exit-code<span class="w
 <ul>
 <li>[ ] <strong>Step 5: Commit contract and docs</strong></li>
 </ul>
-<div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span>docs/design/CONTRACT_v3.md<span class="w"> </span>docs/configuration.md
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span>docs/schemas/operator-contract.md<span class="w"> </span>docs/configuration.md
 git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;docs(identity): freeze metrics and egress identity contract&quot;</span>
 </code></pre></div>
 <hr />

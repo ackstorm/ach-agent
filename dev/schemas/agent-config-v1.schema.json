@@ -26,7 +26,7 @@
     },
     "A2ABlock": {
       "additionalProperties": false,
-      "description": "CONTRACT_v3 §2 a2a channel sub-block (CHN-05; async-only in v1).",
+      "description": "Operator contract §2 a2a channel sub-block (CHN-05; async-only in v1).",
       "properties": {
         "auth": {
           "$ref": "#/$defs/A2AAuthBlock"
@@ -58,7 +58,7 @@
     },
     "CapabilityAchBlock": {
       "additionalProperties": false,
-      "description": "CONTRACT_v3 §2 capability.ach sub-block.",
+      "description": "Operator contract §2 capability.ach sub-block.",
       "properties": {
         "baseUrl": {
           "default": "",
@@ -76,7 +76,7 @@
     },
     "CapabilityBlock": {
       "additionalProperties": false,
-      "description": "CONTRACT_v3 §2 capability block (D-05: ach-only; direct → hard-fail).",
+      "description": "Operator contract §2 capability block (D-05: ach-only; direct → hard-fail).",
       "properties": {
         "ach": {
           "$ref": "#/$defs/CapabilityAchBlock"
@@ -99,7 +99,7 @@
     },
     "CapabilityFilterBlock": {
       "additionalProperties": false,
-      "description": "CONTRACT_v3 §2 capability.filter sub-block.",
+      "description": "Operator contract §2 capability.filter sub-block.",
       "properties": {
         "exclude": {
           "$ref": "#/$defs/CapabilityFilterExcludeBlock"
@@ -110,7 +110,7 @@
     },
     "CapabilityFilterExcludeBlock": {
       "additionalProperties": false,
-      "description": "CONTRACT_v3 §2 capability.filter.exclude sub-block — gate ABOVE the model.",
+      "description": "Operator contract §2 capability.filter.exclude sub-block — gate ABOVE the model.",
       "properties": {
         "mcpServers": {
           "items": {
@@ -139,7 +139,7 @@
     },
     "ChannelConfig": {
       "additionalProperties": false,
-      "description": "CONTRACT_v3 §2 channel entry. extra=forbid catches unknown channel-level keys.",
+      "description": "Operator contract §2 channel entry. extra=forbid catches unknown channel-level keys.",
       "properties": {
         "a2a": {
           "anyOf": [
@@ -309,7 +309,7 @@
     },
     "CronBlock": {
       "additionalProperties": false,
-      "description": "CONTRACT_v3 §2 cron channel sub-block (CHN-02).",
+      "description": "Operator contract §2 cron channel sub-block (CHN-02).",
       "properties": {
         "schedule": {
           "title": "Schedule",
@@ -580,7 +580,7 @@
     },
     "ModelBlock": {
       "additionalProperties": false,
-      "description": "CONTRACT_v3 §2 model block: provider-selecting name + open params.",
+      "description": "Operator contract §2 model block: provider-selecting name + open params.",
       "properties": {
         "name": {
           "title": "Name",
@@ -696,7 +696,7 @@
     },
     "QueueBlock": {
       "additionalProperties": false,
-      "description": "CONTRACT_v3 §2 queue channel sub-block (redis-only in v1, §7).",
+      "description": "Operator contract §2 queue channel sub-block (redis-only in v1, §7).",
       "properties": {
         "ackMode": {
           "const": "onComplete",
@@ -797,7 +797,7 @@
     },
     "SecretSource": {
       "additionalProperties": false,
-      "description": "CONTRACT_v3 §2 secret source — env-only (no disk secrets).\n\nenv → the harness reads the value from os.environ[NAME] at use time (hardened default:\n      dumpable=0 hides it from the co-resident agent; the NAME must NOT be in\n      engine.forwardEnv — the harness strips it from the forwarded set + WARNs).",
+      "description": "Operator contract §2 secret source — env-only (no disk secrets).\n\nenv → the harness reads the value from os.environ[NAME] at use time (hardened default:\n      dumpable=0 hides it from the co-resident agent; the NAME must NOT be in\n      engine.forwardEnv — the harness strips it from the forwarded set + WARNs).",
       "properties": {
         "env": {
           "default": "",
@@ -962,7 +962,7 @@
     },
     "WebhookAuthBlock": {
       "additionalProperties": false,
-      "description": "CONTRACT_v3 §2 webhook.auth sub-block.",
+      "description": "Operator contract §2 webhook.auth sub-block.",
       "properties": {
         "header": {
           "default": "",
@@ -997,7 +997,7 @@
     },
     "WebhookBlock": {
       "additionalProperties": false,
-      "description": "CONTRACT_v3 §2 webhook channel sub-block (deliver/deliverOnly removed).",
+      "description": "Operator contract §2 webhook channel sub-block (deliver/deliverOnly removed).",
       "properties": {
         "auth": {
           "$ref": "#/$defs/WebhookAuthBlock"
@@ -1057,7 +1057,7 @@
   "$id": "https://ackstorm.github.io/ach-agent/stable/schemas/agent-config-v1.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Full CONTRACT_v3 §2 rendered runtime config (D-01: modeled in one pass).\n\nConfigDict(extra='forbid', strict=True) ensures unknown top-level keys\ncause a ValidationError that hard-fails the process (CFG-02).",
+  "description": "Full operator contract §2 rendered runtime config (D-01: modeled in one pass).\n\nConfigDict(extra='forbid', strict=True) ensures unknown top-level keys\ncause a ValidationError that hard-fails the process (CFG-02).",
   "properties": {
     "agent": {
       "$ref": "#/$defs/AgentBlock"

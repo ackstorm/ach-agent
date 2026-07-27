@@ -1,0 +1,525 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>Stats & observability — sink design, stream contract, tool trace (2026-07-03) - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#stats-observability-sink-design-stream-contract-tool-trace-2026-07-03" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Stats &amp; observability — sink design, stream contract, tool trace (2026-07-03)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      Problem
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Decisions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stream-field-contracts-v1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Stream field contracts (v="1")
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prometheus-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      Prometheus surface
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deferred-accepted-ceilings" class="md-nav__link">
+    <span class="md-ellipsis">
+      Deferred / accepted ceilings
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related" class="md-nav__link">
+    <span class="md-ellipsis">
+      Related
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="stats-observability-sink-design-stream-contract-tool-trace-2026-07-03">Stats &amp; observability — sink design, stream contract, tool trace (2026-07-03)</h1>
+<p><strong>Date:</strong> 2026-07-03
+<strong>Status:</strong> Shipped (on <code>main</code>, v0.6.x). Harness-local, env-gated, NOT part of <code>CONTRACT_v3</code>.</p>
+<p>Records the <em>why</em> of the per-invocation + per-tool observability path: the harness-side sink
+(<code>src/ach_agent/stats/</code>), the redis-stream contract the separate <code>ach-stats</code> reader consumes,
+the Prometheus surface, and the Tier-1 tool trace. Plans:
+<code>docs/superpowers/plans/2026-07-02-stats-sink-harness-a1.md</code> (sink),
+<code>docs/superpowers/plans/2026-07-02-stats-container-a2.md</code> (reader/UI).</p>
+<h2 id="problem">Problem</h2>
+<p>The harness runs managed agents but emitted nothing durable about <em>what they did</em> — tokens,
+cost, duration, tool use, per session. Two consumers want different shapes: operators want
+live aggregates (<code>/metrics</code>), and a dashboard (<code>ach-stats</code>, <code>src/ach_stats/</code> + React UI) wants
+queryable per-invocation history. Neither may slow or break a turn — the router hot path and
+<code>maxInvocationSeconds</code> bound are load-bearing; observability is not.</p>
+<h2 id="decisions">Decisions</h2>
+<ol>
+<li><strong>Two-tier sink, never in the hot path.</strong> <code>StatsSink.record()</code> does ONLY an inline
+   Prometheus <code>observe()</code> + a <code>queue.put_nowait()</code> — it never awaits and never raises
+   (<code>sink.py</code>). A single supervised writer task owns the redis client and drains a bounded
+   queue via <code>XADD</code>. A full queue increments <code>ach_agent_stats_degraded_total</code> and drops the
+   record — degrade, never block.</li>
+<li><strong>Redis stream = cross-component contract.</strong> The harness <em>writes</em> streams; <code>ach-stats</code>
+   <em>reads</em> them; the two deploy independently. So every entry carries <code>v="1"</code> — a breaking
+   field change bumps <code>v</code>. Stream (not direct DB write) gives decoupling, replay, and retention
+   via <code>XADD ... MINID</code> (default 35 days, <code>ACH_STATS_RETENTION</code>).</li>
+<li><strong>Two streams, one writer class.</strong> <code>ach:sessions</code> (one entry per invocation, <code>SessionStat</code>)
+   and <code>ach:tools</code> (one entry per tool call, <code>ToolStat</code>). <code>StatsSink</code> is parametrized by
+   <code>stream</code> + an <code>on_record</code> metrics hook so the queue/backoff/reconnect/retention writer is
+   shared, not duplicated.</li>
+<li><strong>Prometheus labels stay low-cardinality</strong> — <code>model</code>, <code>channel</code>, <code>tool</code>, <code>tool_type</code>,
+   <code>status</code> only. NEVER <code>session_key</code> or task text (cardinality explosion). Per-session detail
+   lives in the stream, not in metric labels.</li>
+<li><strong>Env-gated, harness-local.</strong> <code>ACH_STATS_REDIS_URL</code> unset → Prometheus-only (no queue, no
+   writer). These <code>ACH_STATS_*</code> vars are harness-local and deliberately NOT in <code>CONTRACT_v3</code>
+   (the operator does not render them).</li>
+<li><strong><code>provider</code> resolved downstream.</strong> Both stats set <code>provider="unknown"</code>; the <code>ach-stats</code>
+   service maps model→provider (its "A2" model-map). The harness stays dumb about provider
+   naming.</li>
+<li><strong>Tier-1 tool trace reuses SSE, no new infra.</strong> opencode's SSE already emits per-tool
+   lifecycle events (<code>OpenCodeToolUpdate</code>: tool name, call_id, input, output/error, status),
+   already parsed for rendering + count, then discarded. Tier 1 records them: a per-invocation
+   <code>on_tool</code> wrapper (<code>main.py:_make_tool_recorder</code>) stamps a monotonic start on <code>running</code>,
+   computes duration on <code>completed</code>/<code>error</code>, dedups per <code>call_id</code>, and writes a <code>ToolStat</code>.
+   Metrics always on; <code>ach:tools</code> stream only when redis is configured.</li>
+<li><strong>OTel alignment, not adoption.</strong> <code>ToolStat</code> fields are OTel <code>gen_ai.*</code>-named
+   (<code>tool</code>→<code>gen_ai.tool.name</code>, <code>session_key</code>→<code>gen_ai.conversation.id</code>, <code>status=error</code>→
+   <code>error.type</code>) so a future OTLP export maps 1:1 — but no OTel SDK, no spans/traces. That
+   (Tier 2) is deferred until a collector consumes them. Cost has no OTel metric by design;
+   we keep <code>ach_agent_turn_cost_usd_total</code> regardless.</li>
+</ol>
+<h2 id="stream-field-contracts-v1">Stream field contracts (<code>v="1"</code>)</h2>
+<ul>
+<li><strong><code>ach:sessions</code></strong> (<code>SessionStat.to_entry</code>): <code>ts</code>, <code>session_key</code>, <code>channel</code>, <code>source</code>,
+  <code>model</code>, <code>provider</code>, <code>task</code> (redacted+truncated), <code>input_tokens</code>, <code>output_tokens</code>,
+  <code>cache_read</code>, <code>cache_write</code>, <code>cost</code>, <code>turns</code>, <code>duration_ms</code>, <code>tokens_per_s</code>, <code>status</code>,
+  <code>retry</code>.</li>
+<li><strong><code>ach:tools</code></strong> (<code>ToolStat.to_entry</code>): <code>ts</code>, <code>session_key</code>, <code>channel</code>, <code>source</code>, <code>model</code>,
+  <code>provider</code>, <code>tool</code>, <code>tool_type</code> (mcp|builtin), <code>status</code> (completed|error), <code>duration_ms</code>
+  (<code>""</code> when the <code>running</code> event was missed), <code>input_size</code>, <code>output_size</code>, <code>error</code>
+  (truncated). Stores SIZES, never raw args/result (secrets/bloat).</li>
+</ul>
+<h2 id="prometheus-surface">Prometheus surface</h2>
+<p><code>ach_agent_sessions_total</code>, <code>ach_agent_turn_tokens_total{direction}</code>,
+<code>ach_agent_turn_cost_usd_total</code>, <code>ach_agent_turns_total</code>, <code>ach_agent_turn_duration_seconds</code>,
+<code>ach_agent_stats_degraded_total</code>; and per-tool <code>ach_agent_tool_calls_total{tool,tool_type,
+status}</code> + <code>ach_agent_tool_duration_seconds{tool,tool_type}</code>.</p>
+<h2 id="deferred-accepted-ceilings">Deferred / accepted ceilings</h2>
+<ul>
+<li><strong>Tool duration = SSE arrival delta</strong> (<code>running</code>→terminal), not opencode's own tool clock.
+  Miss the <code>running</code> event → <code>duration_ms</code> None, count still recorded. Good enough; upgrade
+  path is parsing opencode's <code>state.time</code> if precision ever matters.</li>
+<li><strong>No raw tool args/result captured</strong> — sizes only. Add behind a flag if a consumer needs them.</li>
+<li><strong>Tier 2 (OTLP spans/traces)</strong> not built — add when a collector exists.</li>
+<li><strong><code>ach:tools</code> has no UI drill-down yet</strong> — the stream mirrors <code>ach:sessions</code> for a future
+  per-tool view, same as <code>ach:sessions</code> predated the leaderboard.</li>
+<li><strong>Eval/quality score</strong> (per-invocation grading) is a separate future sub-project (B).</li>
+</ul>
+<h2 id="related">Related</h2>
+<ul>
+<li><code>docs/references/2026-07-01-keyed-engine-pool.md</code> (session_key identity feeding the streams)</li>
+<li><code>docs/superpowers/plans/2026-07-02-stats-sink-harness-a1.md</code> / <code>-stats-container-a2.md</code></li>
+<li>OTel GenAI semconv: <code>github.com/open-telemetry/semantic-conventions-genai</code> (field-name source)</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

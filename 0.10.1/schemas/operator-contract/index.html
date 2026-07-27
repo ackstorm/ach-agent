@@ -1,0 +1,1270 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>ACH Agent Runtime — Operator Contract (the seam) - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#ach-agent-runtime-operator-contract-the-seam" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ACH Agent Runtime — Operator Contract (the seam)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-direction-of-dependency-non-negotiable" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Direction of dependency (non-negotiable)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Direction of dependency (non-negotiable)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#11-terminology-harness-vs-agente" class="md-nav__link">
+    <span class="md-ellipsis">
+      1.1 Terminology (harness vs agente)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-the-rendered-runtime-config-operator-writes-harness-reads" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. The rendered runtime config (operator writes → harness reads)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-the-ach_-env-contract-hydration" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. The ACH_* env contract + hydration
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. The ACH_* env contract + hydration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-the-ach-state-hydration-root" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.1 The .ach-state hydration root
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-promptsystem-resolution-security-harness" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.2 prompt.system resolution + security (harness)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-http-endpoints-the-harness-must-expose" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. HTTP endpoints the harness MUST expose
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-status-conditions-operator-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Status conditions — operator-only
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-behavioral-invariants-the-harness-must-honor-conformance-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Behavioral invariants the harness MUST honor (conformance tests)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-what-is-not-in-v1-declared-do-not-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. What is NOT in v1 (declared, do not build)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-structured-output-the-terminal-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Structured output — the terminal contract
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-tools-egress-external-mcp-via-the-localhost-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Tools / egress — external MCP via the localhost proxy
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resolved" class="md-nav__link">
+    <span class="md-ellipsis">
+      Resolved
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#addendum-cost-source-2026-07-25" class="md-nav__link">
+    <span class="md-ellipsis">
+      Addendum — cost source (2026-07-25)
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="ach-agent-runtime-operator-contract-the-seam">ACH Agent Runtime — Operator Contract (the seam)</h1>
+<blockquote>
+<p><strong>Pinned contract revision: v3.</strong> This file was named <code>CONTRACT_v3.md</code> until 2026-07-27;
+the revision it pins now lives here in the header instead of in the filename, so the
+document keeps its name across revisions. When <code>ach-runtime</code> cuts v4, bump this line —
+do not rename the file.</p>
+<p><strong>Consolidated 2026-07-01:</strong> this document folds in <code>CONTRACT_v3-ADDENDUM-hydration.md</code>
+and <code>CONTRACT_v3-ADDENDUM-prompt-source.md</code> and <strong>supersedes them</strong> — their corrected
+deltas (hydration writes, MCP auth headers, <code>x-ach-key</code> injection, the local egress
+forwarder decision, <code>prompt.system</code> typed source, the <code>.ach-state</code> root, the <code>memory</code>
+discriminated union) are now inline here. The two addendum files remain only as historical
+record. Codex-era specifics in the hydration addendum (<code>ach-cli</code>, <code>.codex/config.toml</code>,
+on-disk <code>ek_</code>, ephemeral tmpfs workDir) were superseded by the 2026-06-25 opencode pivot +
+localhost-proxy design and are intentionally NOT carried forward.</p>
+</blockquote>
+<p>This document is the <strong>single frozen interface</strong> between <code>ach-runtime</code> (operator, Go)
+and <code>ach-agent</code> (harness, Python). Both repos depend on this; neither may change it
+unilaterally. Source of truth lives in <code>ach-runtime</code>; <code>ach-agent</code> pins a version.</p>
+<p>Spec reference: <code>ach-agent-runtime-spec-v1_4_7.md</code> (API group <code>runtime.ackstorm.ai/v1alpha1</code>).</p>
+<blockquote>
+<p><strong>Frozen v1 — 2026-07-02.</strong> The machine-readable half of §2 is the generated JSON Schema
+<a href="../agent-config-v1.schema.json"><code>docs/schemas/agent-config-v1.schema.json</code></a> —
+committed, published to the docs site at
+<code>https://ackstorm.github.io/ach-agent/stable/schemas/agent-config-v1.schema.json</code>, produced
+from the harness <code>AgentConfig</code> by <code>scripts/gen_schema.py</code>
+and drift-guarded by <code>tests/config/test_schema_artifact.py</code>. <strong>That artifact — not this
+prose — is authoritative for field names, types, and defaults.</strong> The
+<code>CONTRACT_v3-FOLLOWUP-memory-type.md</code> deltas are folded here (Resolved #10); its one
+remaining item is operator-side (<code>ach-runtime</code> renders <code>memory.type</code> from the CRD),
+tracked cross-repo. This freezes the <strong>harness's accepted surface</strong>; a full cross-repo
+freeze still needs <code>ach-runtime</code>'s rendered output diffed against this schema.</p>
+<p>v3 is a deliberate simplification of v2. Structural points:
+1. <strong>Egress is external MCP tools, not channel delivery.</strong> <code>responseActions</code>, <code>inputSchema</code>,
+   <code>consentTier</code>, <code>webhook.deliver</code>, and <code>response</code> are <strong>removed</strong>. The agent acts by calling
+   <strong>external MCP tool servers</strong> (e.g. <code>gitlab-mcp</code>); the harness no longer dispatches actions.
+2. <strong>Channel set redrawn.</strong> v1 = <code>webhook</code> (<code>source</code>-selected), <code>cron</code>, <code>queue</code>, <code>tui</code>, <code>a2a</code>.
+   No <code>slack</code>/<code>telegram</code>/<code>openai-compatible</code>. <code>gitlab</code> = <code>webhook</code> + <code>source: gitlab</code>.
+3. <strong>Engine is opencode (<code>opencode serve</code> + SSE), hardcoded; the <code>engine</code> block is removed;
+   <code>model</code> stays.</strong> opencode is a complete, provider-agnostic agent with a config-driven MCP
+   client and structured output. The harness owns the <code>opencode serve</code> lifecycle and writes
+   <code>opencode.json</code> at hydration. The opencode bridge already exists in the harness
+   (<code>src/ach_agent/engine/</code>) and is reused, not rebuilt.
+4. <strong>Structured output is a fixed terminal contract</strong> validated by the harness (Pydantic + ≤1
+   backstop retry). opencode returns best-effort structured JSON; the harness is the enforcer (§8).
+5. <strong>The harness fronts the model + MCP via a localhost proxy.</strong> opencode points only at
+   <code>http://localhost/...</code>; the proxy injects the <code>ek_</code> (as <code>x-ach-key</code>) toward ACH. The <code>ek_</code>
+   never appears in opencode's config or environment (§3/§9).
+6. <strong>ACH context is skills / prompts / artifacts only (no plugins).</strong> Each is a <code>tar.gz</code>
+   decompressed into a directory at hydration (§3).</p>
+<p>The router (§6) — dedup → backpressure → lane, the three finite bounds — is <strong>unchanged</strong>. It is
+the repo's IP. Harness language stays <strong>Python</strong>.</p>
+</blockquote>
+<hr />
+<h2 id="1-direction-of-dependency-non-negotiable">1. Direction of dependency (non-negotiable)</h2>
+<div class="highlight"><pre><span></span><code>ach-runtime  ──renders──▶  rendered runtime config  ──read──▶  ach-agent
+                          + ACH_* env (governed)
+ach-agent    ── NEVER reads CRDs, NEVER talks to the API server, NEVER writes Agent.status
+</code></pre></div>
+<p>The harness has <strong>no Kubernetes RBAC</strong>. Status is the operator's job, derived from <code>pod.status</code>
+only. The harness is tested against a hand-written rendered config.</p>
+<h3 id="11-terminology-harness-vs-agente">1.1 Terminology (harness vs agente)</h3>
+<ul>
+<li><strong>harness</strong> — our Python process (<code>ach-agent</code>): channels, router, engine pool. It writes
+  <code>opencode.json</code>, launches and supervises opencode, and owns all lifecycle/ordering.</li>
+<li><strong>agente</strong> — an <strong>opencode</strong> process (<code>opencode serve</code>). The engine pool is <strong>keyed by
+  <code>session_key</code></strong>, so <strong>one agente ⇄ one <code>session_key</code></strong> (1:1): each session identity (cron name,
+  gitlab server+repo, tui-console) gets its own agente. All agentes share <strong>one</strong> <code>engine.home</code>
+  (skills, <code>.ach-state</code>, session store, <code>node_modules</code> live once); per-<code>session_key</code> isolation is
+  the opencode config file <code>&lt;home&gt;/.config/opencode/opencode_&lt;session_key&gt;.json</code> selected via
+  <code>OPENCODE_CONFIG</code>. Distinct keys → distinct agentes (parallel, up to <code>maxConcurrentInvocations</code>);
+  same key → same agente (serialized by the router lane, RTR-02).</li>
+<li><strong><code>session_key</code></strong> — the stable, non-null identity a channel derives from its own facts (cron→name,
+  gitlab→server+repo, tui→<code>tui-console</code>, future telegram→user). It is the <strong>router lane key</strong>, the
+  <strong>pool key</strong>, and the reuse key for the opencode session (§2, <code>channel.session</code>). It is NEVER null
+  (a null key would collapse all lanes/agentes into one).</li>
+</ul>
+<hr />
+<h2 id="2-the-rendered-runtime-config-operator-writes-harness-reads">2. The rendered runtime config (operator writes → harness reads)</h2>
+<p>One flat <strong>JSON</strong> file mounted at <code>/etc/ach-agent/config.json</code>. Machine→machine seam; the harness
+validates with Pydantic v2 (<code>extra='forbid'</code>, <code>strict=True</code>) and hard-fails (<code>sys.exit(1)</code>) on any
+mismatch.</p>
+<div class="highlight"><pre><span></span><code>{
+  &quot;schemaVersion&quot;: &quot;1&quot;,                     // harness validates &quot;1&quot;; ach-runtime renders &quot;1&quot;
+  &quot;agent&quot;: { &quot;name&quot;: &quot;gitlab-ackstorm&quot; },   // name only — namespace/generation removed
+
+  // The engine is opencode, hardcoded. &quot;engine&quot; is a HARNESS-LOCAL block (how we run opencode:
+  // home, workDir, startup deadline, env-forwarding allowlist) — the operator may render or omit it.
+  // The harness writes opencode.json at hydration, pointing at the localhost proxy (§3/§9).
+  // No &quot;model.provider&quot; (retired in v2).
+  &quot;model&quot;: {
+    &quot;name&quot;: &quot;openai.gpt-5&quot;,                 // model id, passed verbatim; MUST be in hydrated models
+    &quot;type&quot;: &quot;openai&quot;,                       // openai | gemini | anthropic — picks the ACH compat endpoint
+    &quot;params&quot;: { &quot;temperature&quot;: 1 },         // OPEN, UNVALIDATED dict, splatted to the model client
+    &quot;thinking&quot;: {                           // normalized, engine-neutral reasoning intent — the
+      &quot;enabled&quot;: false,                     //   CANONICAL thinking surface (never params). Strict bool.
+      &quot;effort&quot;: null                        // minimal|low|medium|high|xhigh; requires
+      //                                       enabled=true (hard-fail otherwise). `max` and
+      //                                       provider-specific levels (e.g. ultracode) are NOT
+      //                                       portable — reach them via params passthrough.
+      //                                       Each engine translates it: pi → models.json
+      //                                       `reasoning:&lt;enabled&gt;` + `--thinking &lt;effort&gt;` at
+      //                                       launch (identity, incl. xhigh); opencode →
+      //                                       per-call providerOptions in the generated model
+      //                                       options (openai reasoningEffort incl. xhigh;
+      //                                       gemini thinkingConfig.thinkingLevel, xhigh clamps
+      //                                       to high; anthropic thinking budgetTokens
+      //                                       1024/4096/10000/24576/32000), merged UNDER
+      //                                       params — explicit params keys win on collision.
+    }
+  },
+  &quot;cost&quot;: {
+    &quot;source&quot;: &quot;engine&quot;                    // engine (default) | litellm_usage | litellm_headers | none
+                                             // omit this block, or source, to use engine
+  },
+  &quot;engine&quot;: {                               // harness-local; operator-optional
+    &quot;home&quot;: &quot;/var/lib/ach-agent/home&quot;,      // ONE shared home for all agentes: skills + .ach-state +
+    //                                         session store + node_modules live here. Per-session_key
+    //                                         isolation = opencode config file selected via OPENCODE_CONFIG
+    //                                         (&lt;home&gt;/.config/opencode/opencode_&lt;session_key&gt;.json).
+    &quot;workDir&quot;: &quot;/var/lib/ach-agent/home/workspace&quot;,  // shared cwd (same for all agentes)
+    &quot;startupTimeoutSeconds&quot;: 30,
+    &quot;idleTtlSeconds&quot;: 30,                     // seconds an idle keyed agente lingers after its last
+    //                                           release before being stopped. &gt;0 keeps it warm so
+    //                                           channel.session=auto persists the opencode session
+    //                                           across events for the same session_key; 0 =
+    //                                           spawn-per-invocation. Default 30.
+    &quot;forwardEnv&quot;: [],                        // extra env-var NAMES to forward into opencode; never the ek_
+    &quot;maxToolCalls&quot;: 0,                        // runaway control (Plan 4): abort a turn after N DISTINCT
+    //                                           tool calls, then run one wrap-up turn so the model still
+    //                                           returns a valid terminal object. 0 = OFF (default);
+    //                                           recommend ~80 when opting in. maxInvocationSeconds
+    //                                           (limits) stays the always-on time backstop.
+    &quot;type&quot;: &quot;opencode&quot;,                       // opencode | pi. Selects the EngineDriver. Rendered
+    //                                           by ../ach (AgentProfile.engine.type, free string);
+    //                                           the harness is the enforcer (unknown → hard-fail).
+    &quot;pi&quot;: {                                   // PiEngineBlock; consulted only when type == &quot;pi&quot;.
+      &quot;binaryPath&quot;: &quot;pi&quot;,                     //   ONLY executable knobs — model identity and
+      &quot;mcpAdapterPath&quot;: &quot;&quot;                     //   thinking live in the model block above. &quot;&quot; →
+      //                                          image default:
+      //                                          /opt/pi-mcp-adapter/node_modules/pi-mcp-adapter.
+      //                                          (engine.pi.model/thinkingLevel existed only in
+      //                                          v0.8.1 and were removed in v0.9.0.)
+    }
+  },
+  // ── engine.type=pi is a CROSS-REPO contract ──────────────────────────────────
+  // The ach-agent IMAGE must ship the `pi` binary + pinned pi-mcp-adapter BEFORE any
+  // control plane renders engine.type=pi — otherwise the rendered config names a binary
+  // the image lacks. Ship order: ach-agent image (Pi SP2) → then ../ach advertises pi.
+  &quot;capability&quot;: {
+    &quot;type&quot;: &quot;ach&quot;,                          // ach only in v1 (direct is out — §7)
+    &quot;ach&quot;: { &quot;baseUrl&quot;: &quot;https://ach.ackstorm.ai&quot;, &quot;environment&quot;: &quot;engineering-prod&quot; },
+    &quot;filter&quot;: {                             // gate ABOVE the model (withhold before offering)
+      &quot;exclude&quot;: {
+        &quot;tools&quot;: [&quot;gitlab_merge_merge_request&quot;],  // ids MUST match opencode&#39;s MCP tool names (boot probe logs them)
+        &quot;mcpServers&quot;: [&quot;dangerous-admin&quot;],
+        &quot;skills&quot;: [&quot;send-email&quot;]
+      }
+    }
+  },
+  &quot;prompt&quot;: {                               // typed source; the bare-string shorthand is REJECTED
+    &quot;system&quot;: { &quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;…agent persona (markdown ok)…&quot; },
+    //   or { &quot;type&quot;: &quot;file&quot;, &quot;file&quot;: &quot;prompts/&lt;name&gt;/&lt;file&gt;.md&quot; }  (relative to &lt;home&gt;/.ach-state; no &quot;..&quot;)
+    //   or { &quot;type&quot;: &quot;ach&quot;,  &quot;ach&quot;: &quot;&lt;prompt-name&gt;&quot;, &quot;file&quot;: &quot;&lt;subpath&gt;.md&quot;? }  (harness resolves the file)
+    &quot;compose&quot;: &quot;append&quot;                     // contract-reserved (accepted, NOT yet executed)
+  },
+  &quot;memory&quot;: {                               // null if not configured; fail-open (§6.5).
+    // STRICT discriminated union on &quot;type&quot; — &quot;type&quot; REQUIRED, no legacy/no-type default.
+    // Params live NESTED under memory.&lt;type&gt;.*.
+    &quot;type&quot;: &quot;hindsight&quot;,                    // hindsight | codemem  (future: mem0, …)
+    &quot;hindsight&quot;: {
+      &quot;endpoint&quot;: &quot;http://hindsight.engineering.svc:8080/mcp&quot;,
+      &quot;bank&quot;: &quot;gitlab-pr-review&quot;,           // static bank_id, harness-owned; the agent NEVER
+                                            //   sees or sets it. Per-repo split = tags, NOT
+                                            //   templating (T-04-03).
+      &quot;auth&quot;: { &quot;env&quot;: &quot;ACH_SECRET_MEMORY_HINDSIGHT&quot; }, // OPTIONAL (omit for internal/no-auth
+                                            //   URL). Bearer admin secret, NOT the ek_. env-only.
+                                            //   The OPERATOR generates the ACH_SECRET_* name
+                                            //   (like ACH_SECRET_GITLAB_WEBHOOK); the author only
+                                            //   picks the Secret + key. Unset-at-runtime → degrade.
+      &quot;mission&quot;: &quot;AI code reviewer&quot;,        // optional; passed to create_bank at boot.
+      &quot;mentalModels&quot;: [                     // rich specs the harness PROVISIONS + reads at boot
+        { &quot;id&quot;: &quot;architecture&quot;, &quot;name&quot;: &quot;Architecture&quot;,
+          &quot;sourceQuery&quot;: &quot;What is the architecture?&quot;, &quot;autoRefresh&quot;: true, &quot;maxTokens&quot;: 2048 }
+      ]
+    }
+    // FACADE: the agent reaches Hindsight ONLY through a harness-hosted localhost MCP server
+    // exposing exactly four tools — memory_recall(query,tags?), memory_reflect(query,tags?),
+    // memory_get_mental_model(id), memory_retain(content,tags?). No bank_id parameter, no
+    // admin/destructive tools. The harness injects bank_id + the admin Bearer per call; the
+    // raw Hindsight endpoint and the admin secret never reach opencode. Provisioning
+    // (create_bank + create/refresh mental_model) runs boot-once, fail-open.
+    // codemem variant: { &quot;type&quot;: &quot;codemem&quot;, &quot;codemem&quot;: { &quot;dbPath&quot;: &quot;…&quot;, &quot;project&quot;: &quot;…&quot; } }
+    //   dbPath: absolute, no &quot;..&quot; (a local stdio MCP, model-managed); omit → derived from
+    //           persistence (&lt;mountPath&gt;/codemem/codemem.db, else /tmp/ach-home/…).
+    //   project: CODEMEM_PROJECT for the agente&#39;s codemem child; default fixed &quot;ach-agent&quot;
+    //           (no magic). TEMPLATABLE (see below).
+    //
+    // TEMPLATING of memory.codemem.project: same {{ }} engine and namespaces as channel.prompt
+    // (payload.*, internal.*). Rendered by the HARNESS in engine_runner with the FULL triggering
+    // event context, then baked into opencode.json when the agente launches.
+    // (memory.hindsight.bank is STATIC — the facade captures it once at boot; use tags for
+    //  per-repo partitioning, never a templated bank.)
+    // Because the agente is 1:1 with session_key and is REUSED across that key&#39;s events, the value is
+    // captured from the FIRST event that launched the agente and fixed for its lifetime — so a
+    // templated bank/project MUST be invariant per session_key (e.g. &quot;{{ internal.session.key }}&quot;,
+    // or a payload field that IS the session identity like the telegram user&#39;s email). A per-event
+    // field that varies within a session_key would go stale.
+  },
+  &quot;mcpServers&quot;: {                           // harness-managed MCP servers (map keyed by name),
+    // STRICT discriminated union on &quot;type&quot;. Distinct namespace from runtime.mcpServers (hydrate&#39;s
+    // ACH-fronted {id,endpoint} externals) — no collision. Empty/omitted → no extra MCP wiring.
+    &quot;repo-checkout&quot;: {                      // INTERNAL: the harness HOSTS it (FastMCP facade + ek_)
+      &quot;type&quot;: &quot;repoCheckout&quot;,               //   exposes checkout_repo(project,ref,subpath?); see §9.
+      &quot;repoCheckout&quot;: {                     //   params nested (built-in &quot;special&quot; wiring)
+        &quot;sourceMcpServerId&quot;: &quot;mcp-gitlab-ro&quot;,  // which hydrated runtime.mcpServers[].id serves the
+        //                                        gitlab://{project}/archive/{ref} resource the
+        //                                        harness reads (with the ek_, harness-side).
+        &quot;tmpBase&quot;: &quot;/tmp/gitlab&quot;,           //   parent dir for per-checkout mkdtemp dirs (default)
+        &quot;ttlSeconds&quot;: 3600                  //   stale-checkout sweep TTL, &gt;= 0 (repoCheckout-only)
+      }
+    },
+    &quot;filesystem&quot;: {                         // PASSTHROUGH local: opencode LAUNCHES it (stdio subprocess).
+      &quot;type&quot;: &quot;local&quot;,                      //   opencode is the MCP client — connects DIRECTLY (no proxy).
+      &quot;command&quot;: &quot;docker&quot;,
+      &quot;args&quot;: [&quot;run&quot;,&quot;-i&quot;,&quot;--rm&quot;,
+               &quot;--mount&quot;,&quot;type=bind,src=/data/desktop,dst=/projects/desktop&quot;,
+               &quot;mcp/filesystem&quot;,&quot;/projects&quot;],
+      &quot;env&quot;: []                             //   env NAMES to forward (never the ek_); optional
+    },
+    &quot;other&quot;: {                              // PASSTHROUGH remote: opencode CONNECTS directly
+      &quot;type&quot;: &quot;remote&quot;,
+      &quot;url&quot;: &quot;https://mcp.example.com/mcp&quot;,
+      &quot;headers&quot;: { &quot;Authorization&quot;: &quot;Bearer ${env:OTHER_MCP_TOKEN}&quot; }  // ${env:NAME} refs, not values
+    }
+  },
+  &quot;limits&quot;: {
+    &quot;maxConcurrentInvocations&quot;: 8,
+    &quot;maxInvocationSeconds&quot;: 1800,
+    &quot;maxQueuedTotal&quot;: 100,
+    &quot;idempotencyWindowSeconds&quot;: 3600,
+    &quot;maxSteps&quot;: 50,
+    &quot;terminalOutputRetries&quot;: 1              // §8 — harness validates + ≤1 backstop retry
+  },
+  &quot;persistence&quot;: { &quot;enabled&quot;: true, &quot;mountPath&quot;: &quot;/var/lib/ach-agent&quot; },
+  &quot;health&quot;: { &quot;host&quot;: &quot;0.0.0.0&quot;, &quot;port&quot;: 8000 },
+  &quot;channels&quot;: [
+    { &quot;name&quot;: &quot;gitlab-mr-review&quot;, &quot;type&quot;: &quot;webhook&quot;, &quot;source&quot;: &quot;gitlab&quot;,
+      &quot;concurrency&quot;: 4,                       // per-channel sub-cap under maxConcurrentInvocations
+      &quot;session&quot;: { &quot;type&quot;: &quot;none&quot; },          // SessionBlock | string shorthand. BREAKING (v3→v3.1):
+      //   default changed auto → none. type (&quot;auto&quot;|&quot;none&quot;|&quot;custom&quot;, default &quot;none&quot;) is the
+      //   discriminator for which opencode session a turn reuses:
+      //     &quot;none&quot;   = fresh session per event, deleted post-turn (no residue).
+      //     &quot;auto&quot;   = the channel-derived session_key (per-MR for gitlab/github, channel name for
+      //                cron/queue, context_id for a2a) — conversational continuity, same ses_ reused.
+      //     &quot;custom&quot; = reuse the session under `key`, a {{ }} template rendered per event
+      //                (payload.*, internal.*; header.* reserved, empty). Empty render → none
+      //                behavior + WARN (never a shared &quot;&quot; key).
+      //   key (string): REQUIRED iff type==&quot;custom&quot;, FORBIDDEN otherwise (the {{ }} template).
+      //   maxTokens (int&gt;0, optional): once the previous turn&#39;s input_tokens exceed it, apply
+      //   overflow (auto/custom only; ignored for none). overflow (&quot;compact&quot;|&quot;rotate&quot;, default
+      //   &quot;compact&quot;): compact summarizes the session in place (POST /session/{id}/compact);
+      //   rotate starts a fresh session and deletes the old one.
+      //   Shorthand: &quot;session&quot;: &quot;auto&quot; ≡ {&quot;type&quot;:&quot;auto&quot;}; &quot;none&quot; ≡ {&quot;type&quot;:&quot;none&quot;}; any other
+      //   string (a template) ≡ {&quot;type&quot;:&quot;custom&quot;,&quot;key&quot;:&quot;&lt;str&gt;&quot;}.
+      //   This toggles ONLY which opencode session is reused — it does NOT change session_key:
+      //   the router lane + pool key stays stable (&quot;none&quot; ≠ null key). Recommended: auto for
+      //   gitlab/github and a2a channels; none (default) elsewhere unless conversational memory
+      //   is wanted.
+      // channel.prompt is rendered with {{ }} substitution. Namespaces: payload.* (the
+      // inbound JSON body), internal.* (channel.name|type|source, agent.name, memory.bank,
+      // event.id, session.key). One filter: | default(&quot;x&quot;). No env namespace (ek-hygiene).
+      // The SAME engine + namespaces render memory.hindsight.bank / memory.codemem.project (§2 memory).
+      &quot;prompt&quot;: &quot;Review this merge request: {{ payload.object_attributes.url }}&quot;,
+      &quot;webhook&quot;: { &quot;auth&quot;: { &quot;type&quot;: &quot;gitlab_token&quot;,
+                             // secret: {env: NAME} — env-only (no disk secrets). The harness reads
+                             // os.environ[NAME] at use time; dumpable=0 + opencode&#39;s clean-slate env
+                             // keep it from the agent. NAME MUST NOT be in engine.forwardEnv. A {file}
+                             // source is NOT supported and is rejected at config load (extra_forbidden).
+                             &quot;secret&quot;: { &quot;env&quot;: &quot;ACH_SECRET_GITLAB_REVIEW_WEBHOOK&quot; } },
+                   // gitlabEvents: which GitLab event kinds THIS channel ROUTES to the agent.
+                   //   Omit / null → all routable kinds [&quot;merge_request&quot;,&quot;issue&quot;,&quot;note&quot;].
+                   //   Routable kinds yield a per-conversation session_key:
+                   //     merge_request hook &amp; MR-comment → &quot;{project}:{mr_iid}&quot;    (shared lane)
+                   //     issue hook &amp; issue-comment       → &quot;{project}:issue:{iid}&quot; (namespaced)
+                   //   A note (comment) routes only when &quot;note&quot; AND its noteable base kind
+                   //   (merge_request/issue) are both listed. Kinds not listed — and non-routable
+                   //   kinds (push, tag_push, pipeline, emoji, …) — are accepted-and-IGNORED
+                   //   (HTTP 200 {&quot;status&quot;:&quot;ignored&quot;}), NEVER 422, so GitLab does not auto-disable
+                   //   the hook. 422 is reserved for a routable-but-malformed payload only.
+                   &quot;gitlabEvents&quot;: [&quot;merge_request&quot;, &quot;note&quot;],
+                   // botUsername: the GitLab username the agent posts AS (the egress PAT&#39;s user —
+                   //   a DISTINCT fact from agent.name). When set, inbound events authored by this
+                   //   user, plus gitlab-generated system notes, are dropped pre-enqueue (HTTP 200
+                   //   {&quot;status&quot;:&quot;ignored&quot;}) — the harness loop-guard, so the agent never
+                   //   re-triggers on its own comments/MRs. Omit/null → guard off (agent must
+                   //   self-guard via prompt). gitlab source only.
+                   &quot;botUsername&quot;: &quot;ackbot&quot;,
+                   // triggerUsers: actor allowlist — only these GitLab usernames may trigger the
+                   //   agent (applies to EVERY routed kind: mr/issue/note). Omit/null → any author
+                   //   triggers. Non-listed authors are dropped pre-enqueue (HTTP 200 ignored).
+                   //   gitlab source only.
+                   &quot;triggerUsers&quot;: [&quot;juancarlos.moreno&quot;, &quot;ivan.hernanz&quot;] } },
+
+    { &quot;name&quot;: &quot;generic-hook&quot;, &quot;type&quot;: &quot;webhook&quot;, &quot;source&quot;: &quot;generic&quot;,
+      &quot;webhook&quot;: { &quot;auth&quot;: { &quot;type&quot;: &quot;header_token&quot;,   // static shared secret in a configurable header
+                             &quot;header&quot;: &quot;X-Api-Key&quot;,
+                             &quot;secret&quot;: { &quot;env&quot;: &quot;ACH_SECRET_GENERIC_HOOK&quot; } } } },
+
+    { &quot;name&quot;: &quot;daily-security&quot;, &quot;type&quot;: &quot;cron&quot;, &quot;concurrency&quot;: 1,
+      &quot;cron&quot;: { &quot;schedule&quot;: &quot;0 8 * * 1-5&quot;, &quot;timezone&quot;: &quot;Europe/Madrid&quot; },
+      &quot;prompt&quot;: &quot;Scan main for new CVEs; open an issue via your tools if any are critical.&quot; },
+
+    { &quot;name&quot;: &quot;ticket-triage&quot;, &quot;type&quot;: &quot;queue&quot;, &quot;concurrency&quot;: 2,
+      &quot;queue&quot;: { &quot;type&quot;: &quot;redis&quot;, &quot;key&quot;: &quot;ach:triage&quot;, &quot;ackMode&quot;: &quot;onComplete&quot; },
+      &quot;prompt&quot;: &quot;Triage this ticket and act via your tools.&quot; },
+
+    { &quot;name&quot;: &quot;peer-intake&quot;, &quot;type&quot;: &quot;a2a&quot;, &quot;concurrency&quot;: 2,
+      &quot;a2a&quot;: { &quot;mode&quot;: &quot;async&quot;,
+               &quot;auth&quot;: { &quot;header&quot;: &quot;x-a2a-custom-api-key&quot;,
+                         &quot;secret&quot;: { &quot;env&quot;: &quot;ACH_SECRET_PEER_INTAKE_A2A&quot; } } } }
+  ]
+}
+</code></pre></div>
+<p><strong><code>tui</code> is NOT a channel</strong> — it is the <code>--tui</code> launch modifier (console mode that ignores the
+configured channels and attaches to opencode's native TUI). It has no terminal contract (§8) and
+is absent from the <code>channels[]</code> list and from the channel-type union.</p>
+<p><strong>The <code>engine</code> block</strong> is harness-local (<code>home</code>, <code>workDir</code>, <code>startupTimeoutSeconds</code>, <code>idleTtlSeconds</code>,
+<code>forwardEnv</code>) — the
+operator may render or omit it; opencode itself is hardcoded and configured via <code>opencode.json</code> at
+hydration. <code>home</code> and <code>workDir</code> default from <code>persistence.mountPath</code> (enabled → <code>&lt;mountPath&gt;/home</code>,
+<code>&lt;home&gt;/workspace</code>) or <code>/tmp/ach-home</code> (disabled). opencode's subprocess env is built clean-slate
+from a small base allowlist; <code>forwardEnv</code> names extra vars to forward — <strong>never the <code>ek_</code></strong>
+(<code>ACH_TOKEN</code>/<code>ACH_API_KEY</code> are never forwarded).</p>
+<p><strong>On-disk hydration layout</strong> (pinned; see §3):
+- Skills hydrate into <code>&lt;home&gt;/.config/opencode/skills/&lt;name&gt;/SKILL.md</code> — the only path opencode
+  scans (skill discovery is not configurable via <code>opencode.json</code>). This dir is <strong>reconciled</strong>
+  (wiped, then re-extracted) on every boot, so the on-disk skill set always equals the current
+  post-exclusion manifest.
+- Prompts and artifacts hydrate under the single state root <code>&lt;home&gt;/.ach-state/</code>:
+  <code>&lt;home&gt;/.ach-state/prompts/&lt;name&gt;/</code> and <code>&lt;home&gt;/.ach-state/artifacts/&lt;name&gt;/</code>.</p>
+<p><strong><code>prompt.system</code> is a typed, discriminated source</strong> — <code>type</code> is required; the plain-string
+shorthand is <strong>REJECTED</strong> (<code>extra=forbid</code> + discriminator → <code>ValidationError</code>):
+- <code>{ "type": "text", "text": "…" }</code> — inline persona.
+- <code>{ "type": "file", "file": "prompts/&lt;name&gt;/&lt;f&gt;.md" }</code> — path relative to <code>&lt;home&gt;/.ach-state</code>;
+  absolute or <code>..</code> is rejected.
+- <code>{ "type": "ach", "ach": "&lt;prompt-name&gt;", "file"?: "&lt;subpath&gt;.md" }</code> — persona from a hydrated
+  prompt addressed by NAME; the harness resolves the file (the prompt dir's sole file, or the
+  optional <code>file</code> subpath). Preferred form — the operator names the prompt, not its on-disk path.</p>
+<p><code>compose</code> is contract-reserved (<code>"append"</code> accepted, not yet executed). Resolution + security are
+in §3.</p>
+<p><strong>Webhook auth types:</strong> <code>gitlab_token</code> (plain X-Gitlab-Token compare), <code>hmac</code> (GitHub-style
+X-Hub-Signature-256), <code>header_token</code> (static shared secret in a configurable <code>header</code>), <code>none</code>.
+<strong><code>filter.exclude.tools</code></strong> ids must match opencode's MCP tool names — the boot tool-probe logs each
+server's tool names (<code>log.info("mcp tools", …)</code>); copy those ids verbatim.</p>
+<p><strong>Removed vs v2 (do not render):</strong> <code>agent.namespace</code>/<code>agent.generation</code>, top-level <code>governed</code>,
+<code>workDir</code>/<code>startupTimeoutSeconds</code> at the root (moved under <code>engine</code>),
+<code>channels[].session</code>, <code>channels[].expire</code>, <code>channels[].responseActions</code>, <code>channels[].response</code>,
+<code>channels[].webhook.deliver</code>/<code>deliverOnly</code>, any <code>inputSchema</code>/<code>consentTier</code>, <code>model.provider</code>, and
+<strong><code>agentEnv</code></strong> — opencode runs behind the localhost proxy; there is no subprocess credential env to
+inject (the proxy holds the <code>ek_</code>). The bare-string <code>prompt.system</code> form is also removed.</p>
+<p><strong>Secrets (inbound channel auth):</strong> each <code>auth.secret</code> is <code>{env: NAME}</code> — <strong>env-only, no disk
+secrets</strong> (<code>extra='forbid'</code>; a <code>{file: PATH}</code> source is rejected at config load). The config carries
+a <strong>name, never a value</strong>. The operator injects the Secret as a container env var
+(<code>env[].valueFrom.secretKeyRef</code>) and renders <code>{env: NAME}</code>. The harness reads <code>os.environ[NAME]</code> at
+use time; it is protected from the co-resident agent because the harness sets <code>PR_SET_DUMPABLE=0</code>
+(so <code>/proc/&lt;harness&gt;/environ</code> is unreadable by opencode) and builds opencode's env clean-slate, so
+the value never reaches the engine. <strong>The <code>env</code> NAME MUST NOT appear in <code>engine.forwardEnv</code></strong> — if it
+does, the harness <strong>strips it from the forwarded set and logs a WARN</strong> at boot (fail-safe: the secret
+never reaches the engine even on a misconfig). The <code>env</code> name must be a valid environment variable
+identifier (<code>[A-Za-z_][A-Za-z0-9_]*</code>); the operator sanitizes it and the harness validates.
+Rationale for env-only: a file-mounted Secret is <strong>same-uid readable by opencode</strong> (<code>dumpable=0</code> does
+not cover disk); env injection is the only source that keeps inbound-auth secrets off the agent.
+The GitLab <strong>egress</strong> token still lives in the <code>gitlab-mcp</code> server's config (egress is the MCP's
+job, §9), not in ach-agent — this section is inbound auth only.</p>
+<hr />
+<h2 id="3-the-ach_-env-contract-hydration">3. The ACH_* env contract + hydration</h2>
+<p>When <code>governed: true</code>, the operator materializes these into the main container env:</p>
+<table>
+<thead>
+<tr>
+<th>env var</th>
+<th>value</th>
+<th>notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ACH_BASE_URL</code></td>
+<td><code>CapabilityProfile.ach.endpoint</code></td>
+<td>fronts ALL egress — model, MCP, outbound A2A</td>
+</tr>
+<tr>
+<td><code>ACH_TOKEN</code></td>
+<td>the <code>ek_</code> (from <code>Agent.capability.identity.secretRef</code>)</td>
+<td>ACH credential; held ONLY by the harness proxy; injected as the <code>x-ach-key</code> header; never logged; never reaches opencode</td>
+</tr>
+<tr>
+<td><code>ACH_ENVIRONMENT</code></td>
+<td><code>CapabilityProfile.ach.name</code></td>
+<td>which ACH Hub Environment; sent as <code>x-ach-environment</code> alongside <code>x-ach-agent</code> on egress and used at boot self-hydration</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>ek_</code> is <strong>only</strong> ever in <code>ACH_TOKEN</code>, held by the harness. <strong>ACH's auth scheme is the
+<code>x-ach-key</code> header, NOT <code>Authorization: Bearer</code></strong> (a bearer 400s/401s against the ACH endpoint).
+The proxy pairs it with canonical <code>x-ach-agent</code> and <code>x-ach-environment</code> headers on all egress.
+Process identity consists of <code>agent.name</code> from rendered config and the process environment.
+On initial boot, the requested environment comes from rendered <code>capability.ach.environment</code>;
+once the hydrate response validates, its required <code>environment</code> field becomes the committed
+process environment for subsequent metrics exposition and egress. If hydration fails validation
+or encounters a network error, no new process identity is committed. Rotation by secret-hash restart.</p>
+<p><strong>Hydration (no init container, no CLI).</strong> At boot the harness self-hydrates from the single config,
+calling ACH's HTTP hydrate endpoint directly (it does <strong>not</strong> shell out to a CLI):</p>
+<ol>
+<li><strong>Hydrate</strong> — the harness calls <code>POST {ACH_BASE_URL}/platform/hydrate</code> carrying <code>x-ach-key: ek_</code>,
+   <code>x-ach-agent: &lt;agent.name&gt;</code>, and <code>x-ach-environment: &lt;capability.ach.environment&gt;</code> (trusted values
+   from rendered config for this bootstrap request). If the response fails validation, no new
+   process identity is committed.
+   Manifest: <code>runtime.models[{id,endpoint}]</code>, <code>runtime.mcpServers[{id,endpoint}]</code>,
+   <code>runtime.a2aAgents[{id,endpoint}]</code>, <code>context.{skills,prompts,artifacts}[{name,downloadUrl}]</code>.
+   The Environment's <strong>direct runtime</strong> (models / mcpServers / a2aAgents) — the governed-ACH egress
+   the whole v3 design rests on — is the source for all three runtime axes; the harness does not
+   hand-write a model/provider block.</li>
+<li><strong>Resolve the model (fail-closed)</strong> — <code>model.name</code> MUST be in <code>runtime.models[]</code> → else hard-fail
+   at startup. The Environment returns the menu (litellm-discovered); the operator-rendered
+   <code>model.name</code> picks one of it. The operator chooses the model; the Environment bounds the choice.</li>
+<li><strong>Start the localhost proxy</strong> (§9): a local reverse-proxy exposing <code>http://localhost/v1</code>
+   (and <code>/gemini</code>, <code>/anthropic</code>) for the model, and local MCP routes (<code>/mcp/&lt;id&gt;</code>) for the
+   provisioned servers. The proxy injects <code>x-ach-key: ek_</code> along with canonical <code>x-ach-agent</code>
+   and <code>x-ach-environment</code> headers toward <code>ACH_BASE_URL</code>, streaming SSE transparently. Client-supplied
+   identity header names are stripped case-insensitively so that process-authoritative harness identity
+   always wins. Direct development model overrides (<code>ACH_MODEL_BASE_URL</code> / <code>ACH_MODEL_HEADER</code>) change
+   upstream auth parameters only and never disable identity header injection. The model wire may
+   override the auth header where a provider requires it, but the <code>ek_</code> still lives only inside the proxy.</li>
+<li><strong>Fetch context</strong> — download each <code>skills/prompts/artifacts</code> <code>tar.gz</code> (with <code>x-ach-key: ek_</code>)
+   and safe-extract (traversal-checked) into its directory: skills → reconciled into
+   <code>&lt;home&gt;/.config/opencode/skills/&lt;name&gt;/</code>; prompts → <code>&lt;home&gt;/.ach-state/prompts/&lt;name&gt;/</code>;
+   artifacts → <code>&lt;home&gt;/.ach-state/artifacts/&lt;name&gt;/</code> (see the <code>.ach-state</code> root below).</li>
+<li><strong>Resolve <code>prompt.system</code></strong> (below) and materialize the persona to
+   <code>&lt;home&gt;/.config/opencode/personality/system_prompt.txt</code>, referenced from <code>opencode.json</code>
+   <code>instructions: [...]</code> (append).</li>
+<li><strong>Write <code>opencode.json</code></strong> pointing the model <code>baseURL</code> and the <code>mcp</code> servers at <strong>localhost</strong>
+   (no <code>ek_</code>, no real ACH URLs), apply <code>capability.filter.exclude</code>, then start <code>opencode serve</code>.</li>
+</ol>
+<p>A hydration failure is an ordinary startup failure (exit within <code>startupTimeoutSeconds</code> → pod
+not-ready), not a dedicated condition. Hydration runs <strong>before</strong> the router path, at boot.</p>
+<blockquote>
+<p><strong>Non-normative:</strong> <code>ACH_STATS_*</code> environment variables (<code>ACH_STATS_REDIS_URL</code>,
+<code>ACH_STATS_RETENTION</code>, <code>ACH_STATS_TZ</code>) are <strong>harness-local</strong> and explicitly <strong>outside this
+contract</strong>. They configure the optional stats sink / stats service and are not rendered by the
+operator. Promote to a real config block only if eval infrastructure (Sub-project B) requires
+operator awareness.</p>
+</blockquote>
+<h3 id="31-the-ach-state-hydration-root">3.1 The <code>.ach-state</code> hydration root</h3>
+<p>Hydration writes three kinds with different consumers, consolidated under one root in the engine HOME:</p>
+<div class="highlight"><pre><span></span><code>&lt;home&gt;/.ach-state/prompts/&lt;name&gt;/…       # harness-consumed (persona layering); the agent does not need it
+&lt;home&gt;/.ach-state/artifacts/&lt;name&gt;/…     # agent working material (e.g. ach-cr-samples)
+&lt;home&gt;/.config/opencode/skills/&lt;name&gt;/   # UNCHANGED — opencode scans this exact path; not movable
+</code></pre></div>
+<ul>
+<li><strong><code>ACH_STATE = &lt;home&gt;/.ach-state</code>.</strong> <code>home</code> resolves as in §2 (<code>engine.home</code>, else
+  <code>&lt;mountPath&gt;/home</code> when persistence is enabled, else <code>/tmp/ach-home</code>).</li>
+<li><strong>Why HOME, not workDir:</strong> <code>workDir</code> is the agent's mutable cwd (it clones repos, writes scratch);
+  hydrated state is read-only, kept out of that churn. HOME already holds skills. The <code>.</code>-prefix
+  keeps it out of the agent's workspace <code>ls</code>.</li>
+<li><strong>Agent shell access to artifacts:</strong> if <code>workDir != home</code>, the harness symlinks
+  <code>&lt;workDir&gt;/.ach-state</code> → <code>&lt;home&gt;/.ach-state</code> so the agent reaches artifacts at one stable path.</li>
+</ul>
+<h3 id="32-promptsystem-resolution-security-harness">3.2 <code>prompt.system</code> resolution + security (harness)</h3>
+<p>One materialization path for all forms: the resolved bytes are written to
+<code>&lt;home&gt;/.config/opencode/personality/system_prompt.txt</code> and referenced via <code>opencode.json</code>
+<code>instructions</code> (append). <code>{ "type": "text" }</code> and the removed string form are byte-identical in effect.</p>
+<p><strong>Memory tools spec (harness-appended).</strong> When <code>memory</code> is configured, the harness appends a
+per-backend <code>## Memory Tools</code> section to the resolved system prompt — a short, static description of
+how to use that backend's tools (hindsight's <code>memory_recall/reflect/retain/get_mental_model</code>;
+codemem's <code>memory_search/timeline/pack/remember/forget/get_observations</code>). It is <strong>boot-static</strong>
+(the backend is known at boot; keeps the system-prompt prefix stable → prompt-cache friendly) and
+lives with the backend (each <code>memory.type</code> owns its own <code>TOOLS_SPEC</code>). This is distinct from the
+per-invocation <code>## Memory</code> content block hindsight appends to the event prompt (mental-model
+summaries + their ids). The hindsight tools take <strong>no <code>bank_id</code></strong> — the harness facade injects it.</p>
+<p>For <code>{ "type": "file", "file": F }</code>:
+1. Resolve <code>F</code> relative to <code>ACH_STATE</code>.
+2. <strong>Reject</strong> (hard validation error) if <code>F</code> is absolute or the resolved real path escapes
+   <code>ACH_STATE</code> (any <code>..</code> traversal) — enforced structurally in a <code>field_validator</code> at load AND
+   re-checked against the resolved <code>ACH_STATE</code> at read time. A <code>file:</code> is operator/agent-spoofable
+   and MUST NOT read arbitrary disk (e.g. secret files) into the system prompt.
+3. <strong>Error</strong> (startup failure within <code>startupTimeoutSeconds</code>) if the file is missing — a declared
+   persona that hydration did not deliver is a misconfiguration, NOT a fail-open case.</p>
+<p>For <code>{ "type": "ach", "ach": A, "file"?: F }</code>:
+1. Resolve the prompt dir <code>&lt;ACH_STATE&gt;/prompts/A</code> (<code>A</code> rejected as absolute/<code>..</code> at load; a <code>/</code>
+   inside <code>A</code> is allowed as a nested registry-qualified name, it just cannot escape upward).
+2. <strong>Error</strong> (startup failure) if that dir is not hydrated.
+3. Pick the file: if <code>F</code> is given, <code>&lt;prompt-dir&gt;/F</code>; else the dir's <strong>sole</strong> file, searched
+   recursively — <strong>error</strong> if the dir has 0 or &gt;1 files (the log lists them so the operator can add
+   an explicit <code>file:</code>).
+4. Then the same read-time containment + missing-file behaviour as <code>file</code> above.</p>
+<hr />
+<h2 id="4-http-endpoints-the-harness-must-expose">4. HTTP endpoints the harness MUST expose</h2>
+<div class="highlight"><pre><span></span><code>POST /channels/{channelName}/events    # inbound for HTTP-delivered channels (webhook, a2a)
+GET  /healthz                          # liveness
+GET  /readyz                           # readiness = all enabled channel adapters listening
+GET  /metrics                          # Prometheus
+</code></pre></div>
+<p>Every sample exposed by <code>GET /metrics</code>, including default Python/process metrics and <code>name[]</code>-restricted
+scrapes, carries the committed process <code>agent</code> and <code>environment</code> labels. Label stamping is performed
+at exposition via a non-mutating registry wrapper, ensuring process identity is attached to every exposed sample.</p>
+<p><code>readyz</code>: Ready when adapters listen. Engine warmup is NOT a readiness gate, but if the engine
+does not reach ready within <code>startupTimeoutSeconds</code> the process exits.</p>
+<p><strong>Webhook acceptance is decoupled from engine state (2026-07-02).</strong> Inbound-channel acceptance
+(webhook, a2a) depends ONLY on harness readiness (routes up) and <code>draining</code> (SIGTERM straggler
+503) — NEVER on engine/pool state. The pool is keyed by <code>session_key</code>, which is unknown until
+the message is parsed, so a global "engine ready" precondition is a category error (see
+<code>docs/references/2026-07-01-router-pool-vs-legacy.md</code>, finding B8): the engine only starts
+lazily, per key, inside the lane on first acquire. A successful webhook returns <code>202</code> with
+<code>{"status":"accepted"}</code>, plus an optional correlation header <code>X-ACH-Task-Id</code> (and matching
+<code>task_id</code> in the body) — a logged handle only, NOT persisted, NOT queryable. Outcome surfaces
+via the agent's own MCP actions plus harness logs/metrics (<code>ENGINE_LAUNCH_FAILURES</code> on a failed
+lazy start), not a synchronous HTTP status and not (yet) a task-status API.</p>
+<hr />
+<h2 id="5-status-conditions-operator-only">5. Status conditions — operator-only</h2>
+<p>The harness populates <strong>none</strong>. Post-start / per-invocation failures are <strong>telemetry</strong>, never status.</p>
+<hr />
+<h2 id="6-behavioral-invariants-the-harness-must-honor-conformance-tests">6. Behavioral invariants the harness MUST honor (conformance tests)</h2>
+<ol>
+<li><strong>Idempotency-key derivation:</strong> per channel type — webhook header chain → ms-timestamp
+   fallback; queue message id; a2a task id; cron <code>{channel}:{scheduled_tick_time}</code>. NEVER a
+   shared/empty key.</li>
+<li><strong>GitLab secondary dedup key (2026-07-02):</strong> for <code>source == "gitlab"</code> the webhook channel
+     ALSO derives a <strong>logical content composite</strong> <code>gl:{kind}:{project}:{target}:{user}:{content_hash}</code>
+     (action-excluded, content-sensitive) as <code>MessageEvent.secondary_idempotency_key</code>. The router
+     checks &amp; marks it ALONGSIDE the primary UUID key inside the dedup step (before backpressure —
+     it must not consume a queue slot). It uses a <strong>SHORT window</strong> (<code>_SECONDARY_DEDUP_WINDOW_S = 2s</code>),
+     NOT <code>idempotencyWindowSeconds</code>: it collapses GitLab's near-simultaneous logical double-fires
+     (<code>open</code>+<code>update</code>, fresh-UUID re-delivery) the UUID key misses, without deduping intentional
+     identical comments minutes apart. <code>None</code> for every non-gitlab channel (unchanged behaviour).</li>
+<li><strong>Pre-lane order: dedup → backpressure (maxQueuedTotal) → lane.</strong></li>
+<li><strong>Three finite bounds always enforced:</strong> maxConcurrentInvocations, maxInvocationSeconds, maxQueuedTotal.</li>
+<li><strong><code>expire</code> exhaustion / full queue is never silent:</strong> 503 sync / NACK-redelivery / drop-log.</li>
+<li><strong>Memory is fail-open:</strong> backend down → run without memory context, log it, never fail.</li>
+<li><strong>Startup deadline:</strong> engine/hydration not ready within startupTimeoutSeconds → exit.</li>
+<li><strong>~~Proven-start gate A′~~ RETIRED (2026-07-02):</strong> acceptance is decoupled from engine
+   readiness. Inbound-channel acceptance depends ONLY on harness readiness + <code>draining</code>, NEVER
+   on engine/pool state — a global "engine ready" latch is a category error against a pool keyed
+   by <code>session_key</code> (unknown until parse time). The engine starts lazily, per key, on first
+   acquire inside the lane; a failed lazy start is surfaced as an explicit
+   <code>ENGINE_LAUNCH_FAILURES</code> metric + WARN, never a silent drop (RTR-05 preserved). See
+   <code>docs/references/2026-07-01-router-pool-vs-legacy.md</code>, finding B8.</li>
+<li><strong>Self-hydration at boot:</strong> resolve Environment + provision MCP set + start localhost proxy +
+   write opencode.json before opencode serves; failure = startup exit, never a silent half-start.</li>
+<li><strong>Egress is the agent's via MCP, not the channel's:</strong> the channel never posts on the model's
+   behalf; it only ingests events and (for call channels) returns the terminal result.</li>
+<li><strong>Secret hygiene:</strong> the <code>ek_</code> is held only by the harness/proxy. It MUST NOT appear in
+    <code>opencode.json</code>, opencode's env, logs, or any model/MCP request opencode can observe. opencode
+    points only at <code>http://localhost/...</code>; the proxy adds <code>x-ach-key</code> toward ACH.</li>
+</ol>
+<hr />
+<h2 id="7-what-is-not-in-v1-declared-do-not-build">7. What is NOT in v1 (declared, do not build)</h2>
+<ul>
+<li>Channels: <code>slack</code>, <code>telegram</code>, <code>openai-compatible</code>, sync <code>a2a</code>, board, hooks.</li>
+<li><strong>Hermes dependency dropped</strong> from <code>pyproject.toml</code> (was only for slack/telegram).</li>
+<li><strong>Plugins.</strong> ACH context in v1 is <strong>skills / prompts / artifacts only</strong>. Plugin bundles
+  (skills + subagents + mcps + hooks) are <strong>not supported</strong> — no plugin explosion, and no
+  plugin-contributed MCP auth classes (e.g. <code>x-litellm-api-key</code> passthrough) in v1.</li>
+<li>O2/O4/O7/O8, <code>/v1/responses</code> facade, per-channel <code>rateLimit</code>.</li>
+<li><strong>Consent / tool-limiting (O9, v1.1):</strong> the <code>consent</code> terminal action (§8) is reserved but
+  non-executable in v1. Real enforcement is tool provisioning (<code>capability.filter</code>, §9).</li>
+<li><strong><code>queue</code>: redis only in v1.</strong></li>
+</ul>
+<p>Keep the channel→router boundary a <strong>named in-process seam</strong>.</p>
+<hr />
+<h2 id="8-structured-output-the-terminal-contract">8. Structured output — the terminal contract</h2>
+<p><strong>v1 = text-based extraction.</strong> The prompt asks the model to end with a terminal JSON object;
+opencode streams its answer as <strong>text</strong> over SSE (the model may also emit free prose — see the
+<code>text</code> field). <strong>The harness is the enforcer:</strong> it extracts the JSON from the accumulated text,
+validates it against the channel-class Pydantic model, and on a miss does at most one backstop
+retry (<code>terminalOutputRetries</code>), then follows the table. This is the existing <code>validator.py</code> path.
+opencode's native <code>format: json_schema</code> is a future optimization, not used in v1, and would still
+require the same harness validate-+-retry backstop.</p>
+<p><strong>Tools vs terminal output are different.</strong> During the run the agent calls <strong>MCP tools</strong> (egress,
+§9). The terminal JSON is only the <strong>end-of-turn signal</strong>, not how the agent "talks".</p>
+<p><strong>SSE resilience (harness-internal, no config).</strong> The live consumer sends the prompt exactly
+once, then consumes the SSE stream to <code>session.idle</code>. A transient reader drop mid-turn is
+recovered by a bounded (3), health-gated reconnect (re-subscribe only — never re-send;
+opencode resends cumulative snapshots and the harness prefix-dedups them). A mid-turn engine
+death is detected within ~5s (a liveness poll) and fails the invocation fast (<code>engine_died</code>)
+instead of waiting the 300s stall bound. All bounded from above by the lane's
+<code>maxInvocationSeconds</code>. Constants are harness-internal (<code>_LIVENESS_POLL_S</code>, 300s stall); no
+config field.</p>
+<table>
+<thead>
+<tr>
+<th>Channel class</th>
+<th>Channels</th>
+<th>Terminal contract</th>
+<th>If invalid after retries</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>async (no result expected)</strong></td>
+<td>webhook, cron, queue</td>
+<td><code>{"action":"none","text":"…","thoughts":"…"}</code></td>
+<td>log + <strong>ignore</strong> (work already done via tools)</td>
+</tr>
+<tr>
+<td><strong>call — async result</strong></td>
+<td>a2a (async-only)</td>
+<td><code>{"action":"a2a_reply","text":"…"}</code></td>
+<td><strong>callback FAILED</strong> to the caller (<code>TaskStatusUpdateEvent(state=failed)</code>)</td>
+</tr>
+<tr>
+<td><strong>call — free</strong></td>
+<td>tui (<code>--tui</code> modifier)</td>
+<td><strong>none</strong> — stream text to the terminal</td>
+<td>n/a</td>
+</tr>
+</tbody>
+</table>
+<p>Terminal action models (Pydantic discriminated union — <strong>single object, NOT a list</strong>). Every action
+carries a free-text <code>text</code> field so the model always has a place to "finish" with natural language:</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">NoneAction</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>      <span class="n">action</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;none&quot;</span><span class="p">];</span>      <span class="n">text</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">;</span> <span class="n">thoughts</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">A2AReply</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>        <span class="n">action</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;a2a_reply&quot;</span><span class="p">];</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">;</span>      <span class="n">thoughts</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ConsentRequest</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>  <span class="n">action</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;consent&quot;</span><span class="p">]</span>    <span class="c1"># RESERVED, v1.1</span>
+    <span class="n">tool</span><span class="p">:</span> <span class="nb">str</span><span class="p">;</span> <span class="n">args</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="p">{};</span> <span class="n">reason</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+<span class="c1"># TerminalAction = NoneAction | A2AReply | ConsentRequest | …</span>
+</code></pre></div>
+<hr />
+<h2 id="9-tools-egress-external-mcp-via-the-localhost-proxy">9. Tools / egress — external MCP via the localhost proxy</h2>
+<p>The agent acts by calling <strong>external MCP tool servers</strong> (e.g. <code>gitlab-mcp</code>). opencode is a
+config-driven MCP client — <strong>but it points only at the harness's localhost proxy.</strong> The proxy
+fronts the ACH-fronted MCP servers, stripping any client-supplied <code>x-ach-agent</code> and <code>x-ach-environment</code>
+headers case-insensitively and injecting the <code>ek_</code> (as <code>x-ach-key</code>) alongside canonical <code>x-ach-agent</code>
+and <code>x-ach-environment</code> headers. opencode never sees the <code>ek_</code> or the real ACH URLs.</p>
+<p><strong>Where the tool set comes from (governed <code>type: ach</code>, the only v1 path):</strong>
+- Hydration returns <code>runtime.mcpServers[{id, endpoint}]</code>. The harness creates a <strong>localhost route</strong>
+  (<code>/mcp/&lt;id&gt;</code>) per server and writes it into <code>opencode.json</code> (<code>mcp.&lt;id&gt; = {type: remote,
+  url: http://localhost/mcp/&lt;id&gt;}</code>).
+- The ACH Forwarder fronts all egress (model, MCP, outbound a2a). The localhost proxy strips any
+  client-supplied auth and identity headers case-insensitively and adds the ACH <code>x-ach-key</code> + <code>x-ach-agent</code>
+  + <code>x-ach-environment</code> — <strong>no per-MCP credentials, no real ACH URLs, and no <code>ek_</code> in <code>opencode.json</code>.</strong></p>
+<p><strong>The local proxy is a credential-injection shim, not an egress re-implementation.</strong> It is a dumb
+header-injecting passthrough in front of the <em>remote</em> ACH Forwarder (two forwarders in series; the
+local one exists <strong>only</strong> to keep the <code>ek_</code> out of the agent). It does <strong>not</strong> re-implement egress
+semantics (no Hermes <code>send_*</code>, no in-process MCP business logic, no posting on the model's behalf).
+It is also the natural <strong>enforcement + observability choke point</strong>: it can reject a withheld MCP
+tool call at the proxy (complementing provisioning) and emit per-invocation egress telemetry.</p>
+<blockquote>
+<p><strong>Isolation caveat (residual, honest).</strong> In v1 the harness runs <strong>same-process at the same uid</strong>
+as opencode. Two theft surfaces, and their current status:
+- <strong>process env + memory (<code>/proc/&lt;harness&gt;/{environ,mem}</code>, ptrace):</strong> CLOSED. A boot preflight
+  sets <code>PR_SET_DUMPABLE=0</code> (reowns those to root, blocks same-uid ptrace) + <code>PR_SET_NO_NEW_PRIVS=1</code>
+  (inherited by opencode), and fails closed on an unsafe host (not-root / no <code>CAP_SYS_PTRACE</code> /
+  no <code>CAP_SYS_ADMIN</code>; override <code>ACH_INSECURE_ALLOW_DEGRADED=1</code> for dev). The <code>ek_</code> (env <code>ACH_TOKEN</code>)
+  and every <code>auth.secret</code> (env-only) are therefore unreadable by the agent.
+- <strong>disk secret files:</strong> NOT a surface for inbound-auth secrets — <code>auth.secret</code> is <strong>env-only</strong>
+  (a <code>{file:…}</code> source is rejected at config load), so no inbound-auth secret is ever written to a
+  path opencode can read. This deliberately closes the same-uid disk-read gap that a file source
+  would have left open (<code>dumpable=0</code> does not cover disk). Any secret that a future feature <em>must</em>
+  place on disk would need a <strong>distinct uid</strong> for opencode (Tier 2, <code>CAP_SETGID</code>/<code>CAP_SETUID</code>) or a
+  <strong>sidecar/second container</strong> (Tier 4) — a v1.1 item. The cleanest upstream fix for the <code>ek_</code> —
+  ACH minting a short-lived, pod-scoped, audience-bound <code>ek_</code> per hydrate — is an open question for
+  the ACH team, not a harness requirement.</p>
+</blockquote>
+<p><strong>a2a egress = harness-hosted MCP tools.</strong> Peer agents (<code>runtime.a2aAgents</code>) are surfaced to the
+model as MCP tools <code>a2a_{name}</code> / <code>a2a_{name}_async</code> / <code>a2a_{name}_status</code> (ported from ackbot
+<code>handlers/a2a/{tools,client,notification_store}.py</code>, a2a-sdk client). Outbound requests from the
+harness-owned A2A <code>httpx.AsyncClient</code> carry <code>x-ach-key</code>, <code>x-ach-agent</code>, and <code>x-ach-environment</code> headers.
+It is one of the harness's <strong>hosted</strong> MCP servers (the others: the memory facade §6.5, and the <code>checkout_repo</code>
+tool below); everything else is a proxied remote server. (Distinct from the inbound <code>a2a</code> <strong>channel</strong>,
+which receives calls — <code>channels/a2a.py</code>.)</p>
+<p><strong>Repo checkout = harness-hosted MCP tool (opt-in, <code>mcpServers[].type=repoCheckout</code>).</strong> When
+declared, the harness hosts a localhost MCP server exposing one tool, <code>checkout_repo(project, ref, subpath?)</code>,
+so the agent can get an <strong>on-disk</strong> repo tree (full-tree <code>rg</code>, run tests, build) — things a
+per-file MCP call can't give. The harness reads gitlab-mcp's <code>gitlab://{project}/archive/{ref}
+[/{subpath}]</code> <strong>resource</strong> itself (opencode is an MCP client but discards resource blobs),
+authenticating with the <code>ek_</code> as <code>x-ach-key</code> alongside canonical <code>x-ach-agent</code> and <code>x-ach-environment</code>
+headers harness-side, base64-decodes the gzip tar, and
+extracts it under <code>repoCheckout.tmpBase</code> (path-traversal-safe via <code>tarfile</code> <code>filter="data"</code>),
+returning the on-disk path. <code>sourceMcpServerId</code> names which hydrated <code>runtime.mcpServers[].id</code> serves the
+archive resource — so this rides the existing gitlab MCP provisioning, no new egress surface. It is
+<strong>fail-soft</strong>: a failed checkout (over-cap / GitLab 403/404) returns an error string, never raises.
+Cleanup is TTL-swept on the NEXT call (<code>ttlSeconds</code>), not session-close (Option A — <code>/tmp</code> is
+ephemeral). The gitlab MR/note channel stamps <code>head_sha</code> into the delivery context, and the engine
+prompt gets a one-line <code>checkout_repo(project=…, ref=…)</code> hint only when the facade is wired AND a
+head SHA is present. Requires gitlab-mcp to actually serve the archive resource (behind
+<code>GITLAB_REPO_ARCHIVE=1</code>); until then, leave the <code>repoCheckout</code> entry out of <code>mcpServers</code>.</p>
+<p><strong>The tool-limiting / consent gate is provisioning, not validation.</strong>
+<code>capability.filter.exclude.{tools,mcpServers,skills}</code> <strong>withholds</strong> capabilities <strong>before</strong> they
+are offered to opencode — the model literally cannot call/see them. The reserved <code>consent</code> terminal
+action is the agent <strong>requesting</strong> an unlock (v1.1). A compromised agent's blast radius is bounded
+by <code>capability.filter</code> (the provisioning gate), not by hiding the key.</p>
+<p><strong>Failure mode (honest):</strong> a down MCP server means the agent cannot perform that action. Unlike
+memory (fail-open), tool egress is not fail-open — surface it as a per-invocation telemetry failure.</p>
+<hr />
+<h2 id="resolved">Resolved</h2>
+<ol>
+<li><strong>queue</strong> — redis only in v1; idempotency key = redis message id. (2026-06-25)</li>
+<li><strong>MCP servers</strong> — provisioned from hydration, fronted by the localhost proxy; no explicit
+   server list and no real URLs in the config. (2026-06-25)</li>
+<li><strong>a2a async callback</strong> — caller-supplied (rides in the inbound request). Our config only
+   validates the inbound caller (<code>a2a.auth</code>). a2a <strong>egress</strong> peers come from <code>runtime.a2aAgents</code>. (2026-06-25)</li>
+<li><strong>cron timezone</strong> — IANA <code>timezone</code> field. (2026-06-25)</li>
+<li><strong>Forwarder</strong> — fronts MCP, A2A-client, and models uniformly, via the harness localhost proxy;
+   it is a credential-injection shim (§9), a conscious, bounded reversal of "the harness never
+   wraps egress" (it wraps transport only, to keep the <code>ek_</code> out of opencode). (2026-06-24)</li>
+<li><strong>Engine = opencode (<code>opencode serve</code> + SSE), hardcoded.</strong> The bridge already exists in
+   <code>src/ach_agent/engine/</code> and is reused. <code>engine</code> block removed; <code>model{name,type,params}</code> stays.
+   Structured output is harness-validated (text extract + Pydantic + ≤1 retry). Router IP + tests kept. (2026-06-25)</li>
+<li><strong>Secret hygiene</strong> — the harness fronts model + MCP on localhost; the <code>ek_</code> never reaches
+   opencode. ACH auth is the <code>x-ach-key</code> header (+ <code>x-ach-agent</code> and <code>x-ach-environment</code>), NOT <code>Authorization: Bearer</code>
+   (§3/§6.10/§9). (2026-06-25)</li>
+<li><strong>Context</strong> — skills / prompts / artifacts only (tar→dir at hydration); no plugins. Prompts and
+   artifacts live under <code>&lt;home&gt;/.ach-state/{prompts,artifacts}</code>; skills under
+   <code>&lt;home&gt;/.config/opencode/skills</code>. (2026-06-30)</li>
+<li><strong><code>prompt.system</code> typed source</strong> — <code>{type:text|file|ach}</code>; the bare string is rejected; file/ach
+   resolve under <code>.ach-state</code> with load-time + read-time traversal rejection and missing-file
+   hard-fail. (2026-06-30)</li>
+<li><strong><code>memory</code> discriminated union</strong> — <code>type: hindsight</code> (default) | <code>codemem</code>; a legacy no-<code>type</code>
+    block defaults to hindsight. (2026-07-01)</li>
+<li><strong>schemaVersion = "1"</strong> — both repos. (2026-06-25)</li>
+<li><strong>Webhook acceptance decoupled from engine readiness</strong> — the A′ cold-start gate (§6.7) is
+    retired; acceptance depends only on harness readiness + <code>draining</code>. <code>202</code> accept (+ optional
+    <code>X-ACH-Task-Id</code> correlation header/body); the engine starts lazily per <code>session_key</code>. A
+    queryable task-status API and push callback are explicitly deferred. (2026-07-02)</li>
+<li><strong>JSON Schema v1 frozen</strong> — §2 is rendered to <code>docs/schemas/agent-config-v1.schema.json</code>
+    (generated from <code>AgentConfig</code>, drift-guarded, published to gh-pages); authoritative for fields/types/defaults.
+    Defaults aligned this cut: <code>idleTtlSeconds</code> 30, <code>maxInvocationSeconds</code> 600, <code>health.port</code> 8080,
+    <code>OPENCODE_ENABLE_EXA</code> pinned on by the harness. Freezes the harness-accepted surface. (2026-07-02)</li>
+<li><strong><code>channel.session</code> becomes a block</strong> — <code>key</code> (default <code>"none"</code>, BREAKING: was <code>"auto"</code>) /
+    <code>maxTokens</code> / <code>overflow</code> (<code>compact</code> default | <code>rotate</code>); string shorthand <code>session: auto|none|"{{ … }}"</code>
+    still accepted. Separates the router lane/pool key (<code>session_key</code>, untouched) from opencode
+    conversation identity. See <code>docs/references/2026-07-02-session-identity-and-bounds.md</code>. (2026-07-02)</li>
+</ol>
+<h2 id="addendum-cost-source-2026-07-25">Addendum — cost source (2026-07-25)</h2>
+<p>The rendered top-level config blocks now include the optional <code>cost</code> block shown in §2.
+It has one field, <code>source</code>, with the values <code>engine</code> (default), <code>litellm_usage</code>,
+<code>litellm_headers</code>, and <code>none</code>. The harness rejects unknown values at config load. The
+<code>litellm_usage</code> source is limited to the OpenAI and Gemini wires; Anthropic is a boot
+hard-fail for that source. Price lookup uses the paginated
+<code>/v2/model/info?model=&lt;name&gt;</code> endpoint with the <code>x-ach-key</code> header. The operational
+semantics, A.5 failure table, and the reserved P0-v2/B.7 evidence record are documented
+in <a href="../../configuration/"><code>docs/configuration.md</code></a> and
+<a href="../../references/2026-07-25-cost-source/"><code>docs/references/2026-07-25-cost-source.md</code></a>.</p>
+<p>Implementation-level gates live in the GSD/superpowers plans (<code>docs/superpowers/plans/</code>), not here.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

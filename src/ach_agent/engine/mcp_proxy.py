@@ -21,6 +21,7 @@ import aiohttp
 import structlog
 from aiohttp import web
 
+from ach_agent import identity
 from ach_agent.engine.hydrate import McpServer
 
 if TYPE_CHECKING:
@@ -33,7 +34,15 @@ log = structlog.get_logger(__name__)
 # opencode sends a dummy `Authorization` bearer; we strip it and any client-supplied
 # `x-ach-key`, then add the real ek_ as `x-ach-key` (ACH's auth scheme — Bearer 401s).
 _DROP_REQUEST_HEADERS = frozenset(
-    {"host", "content-length", "authorization", "x-ach-key", "x-goog-api-key"}
+    {
+        "host",
+        "content-length",
+        "authorization",
+        "x-ach-key",
+        "x-goog-api-key",
+        "x-ach-agent",
+        "x-ach-environment",
+    }
 )
 _DROP_RESPONSE_HEADERS = frozenset({"content-length", "transfer-encoding", "content-encoding"})
 
@@ -110,8 +119,13 @@ async def _forward(
     a litellm-direct bypass). ``observer`` (cost accounting, Plan 1) parses a COPY of the
     bytes — it never gates a write and a failure in it never touches the relay.
     """
-    headers = {k: v for k, v in request.headers.items() if k.lower() not in _DROP_REQUEST_HEADERS}
+    headers = {
+        key: value
+        for key, value in request.headers.items()
+        if key.lower() not in _DROP_REQUEST_HEADERS
+    }
     headers[auth_header] = auth_value
+    headers = identity.with_identity_headers(headers)
 
     body = await request.read()
     if observer is not None:

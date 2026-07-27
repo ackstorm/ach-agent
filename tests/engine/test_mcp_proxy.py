@@ -8,6 +8,7 @@ import asyncio
 import aiohttp
 from aiohttp import web
 
+from ach_agent import identity
 from ach_agent.engine.hydrate import McpServer
 from ach_agent.engine.mcp_proxy import McpProxy
 
@@ -116,3 +117,48 @@ async def test_stop_is_prompt_even_with_a_hanging_upstream_stream() -> None:
         if not client.closed:
             await client.close()
         await up_runner.cleanup()
+
+
+async def test_mcp_proxy_replaces_case_variant_client_identity() -> None:
+    seen_identity: list[list[tuple[str, str]]] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        decoded = [(key.decode().lower(), value.decode()) for key, value in request.raw_headers]
+        seen_identity.append(
+            [(key, value) for key, value in decoded if key in {"x-ach-agent", "x-ach-environment"}]
+        )
+        return web.json_response({"ok": True})
+
+    app = web.Application()
+    app.router.add_route("*", "/{tail:.*}", handler)
+    upstream_runner = web.AppRunner(app)
+    await upstream_runner.setup()
+    site = web.TCPSite(upstream_runner, host="127.0.0.1", port=0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+    proxy = McpProxy()
+    identity.configure("classifier", "platform")
+    try:
+        urls = await proxy.start(
+            [McpServer(id="m1", endpoint=f"http://127.0.0.1:{port}")],
+            ek="ek-mcp",
+            exclude=set(),
+        )
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                urls["m1"],
+                headers={
+                    "X-Ach-Agent": "spoofed-agent",
+                    "x-ACH-environment": "spoofed-environment",
+                },
+            ) as response:
+                assert response.status == 200
+                await response.read()
+    finally:
+        await proxy.stop()
+        await upstream_runner.cleanup()
+        identity.reset_for_testing()
+
+    assert seen_identity == [
+        [("x-ach-agent", "classifier"), ("x-ach-environment", "platform")]
+    ]

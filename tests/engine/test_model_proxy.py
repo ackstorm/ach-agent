@@ -9,6 +9,7 @@ import pytest
 from aiohttp import web
 
 from ach_agent import identity
+from ach_agent.engine import trace
 from ach_agent.engine.cost import CostAccountant, ModelPrices, PriceTable, TokenUsage, compute_cost
 from ach_agent.engine.mcp_proxy import _forward, start_model_proxy, stop_model_proxies
 
@@ -532,3 +533,66 @@ async def test_direct_model_override_auth_still_replaces_identity_headers() -> N
     assert lowered["x-ach-environment"] == "platform"
     assert sum(key.lower() == "x-ach-agent" for key in captured[0]) == 1
     assert sum(key.lower() == "x-ach-environment" for key in captured[0]) == 1
+
+
+async def test_token_route_injects_trace_and_session_headers() -> None:
+    """The /t/{token} route carries the invocation's correlation headers upstream.
+
+    test_trace.py covers the registry in isolation; this asserts the wiring —
+    that what trace.begin() records actually reaches ACH on a real request, and
+    that a client-sent header of the same name (any case) does not survive
+    alongside it.
+    """
+    captured: list[dict[str, str]] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        captured.append(dict(request.headers))
+        return web.json_response({"ok": True})
+
+    runner, upstream_url = await _start_fake_ach_router(handler)
+    trace.reset_for_testing()
+    token = trace.mint_token("gitlab:group/repo")
+    trace.begin(token, "classifier", "gitlab", "delivery-abc")
+    expected = trace.headers(token)
+    try:
+        base = await start_model_proxy(upstream_url, "ek-1")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{base}/t/{token}/v1/chat/completions",
+                headers={"Traceparent": "00-" + "f" * 32 + "-" + "f" * 16 + "-01"},
+                json={"model": "test-model"},
+            ) as response:
+                assert response.status == 200
+                await response.read()
+    finally:
+        await stop_model_proxies()
+        await runner.cleanup()
+        trace.reset_for_testing()
+
+    lowered = {key.lower(): value for key, value in captured[0].items()}
+    assert lowered["traceparent"] == expected["traceparent"]
+    assert lowered["x-agent-session-id"] == expected["x-agent-session-id"]
+    assert sum(key.lower() == "traceparent" for key in captured[0]) == 1
+
+
+async def test_plain_route_carries_no_correlation_headers() -> None:
+    """Only the token routes correlate — the plain prefixes have no token to key on."""
+    captured: list[dict[str, str]] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        captured.append(dict(request.headers))
+        return web.json_response({"ok": True})
+
+    runner, upstream_url = await _start_fake_ach_router(handler)
+    try:
+        base = await start_model_proxy(upstream_url, "ek-1")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{base}/v1/chat/completions", json={}) as response:
+                await response.read()
+    finally:
+        await stop_model_proxies()
+        await runner.cleanup()
+
+    lowered = {key.lower() for key in captured[0]}
+    assert "traceparent" not in lowered
+    assert "x-agent-session-id" not in lowered

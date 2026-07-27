@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Added
+
+- Model calls now carry trace/session correlation headers so one agent invocation is one
+  Langfuse trace, and the invocations sharing a pooled engine server are one Langfuse
+  session. The harness sends `traceparent` (derived from agent + channel + idempotency key)
+  and `x-agent-session-id` (derived from the session key) on every call it proxies. This is
+  independent of `cost.source` — correlation works with cost accounting off.
+
+### Changed
+
+- The model proxy's `/t/{token}/` path token is now minted for every engine server, not only
+  when cost accounting is wired, because it is what the correlation registry keys on.
+
+### Note
+
+- The session key reaches LiteLLM and Langfuse in cleartext, so workload identifiers appear
+  in the observability backend: `owner/repo:PR` for GitHub, `project_id:mr_iid` for GitLab.
+  No credentials are involved.
+
 ## [0.10.2] - 2026-07-27
 
 ### Fixed

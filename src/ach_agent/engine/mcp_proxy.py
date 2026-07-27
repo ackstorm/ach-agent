@@ -111,10 +111,16 @@ async def _forward(
     ``extra_headers`` (trace/session correlation) is applied LAST so it wins over
     anything the engine happened to send under the same name.
     """
+    # Case-insensitive drop of the names we are about to set, like
+    # _DROP_REQUEST_HEADERS and identity.with_identity_headers above: this dict
+    # keeps the wire case, so a client-sent `Traceparent` would survive a plain
+    # update() as a SECOND key and leave which one wins to aiohttp's CIMultiDict
+    # coercion.
+    shadowed = {name.lower() for name in (extra_headers or {})}
     headers = {
         key: value
         for key, value in request.headers.items()
-        if key.lower() not in _DROP_REQUEST_HEADERS
+        if key.lower() not in _DROP_REQUEST_HEADERS and key.lower() not in shadowed
     }
     headers[auth_header] = auth_value
     headers = identity.with_identity_headers(headers)

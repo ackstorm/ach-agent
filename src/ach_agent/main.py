@@ -769,7 +769,7 @@ def _make_engine_runner(
             # from here on carries the same traceparent (one Langfuse trace) and
             # the server's session id (Langfuse sessionId). Unconditional —
             # unlike cost accounting, this does not depend on cost.source.
-            trace.begin(server.proxy_token, event.idempotency_key)
+            trace.begin(server.proxy_token, agent_name, event.channel_name, event.idempotency_key)
             if accountant is not None:
                 accountant.begin_turn(server.proxy_token)
             # MEM-01: append ## Memory section (summaries or unavailable note) to prompt.
@@ -984,6 +984,10 @@ def _make_engine_runner(
             if server is not None:
                 ttl = 0.0 if timed_out else ttl_by_channel.get(event.channel_name, 0.0)
                 try:
+                    # Close the correlation window with the cost turn: a warm
+                    # pooled server must not stamp this invocation's traceparent
+                    # on whatever the engine does between turns.
+                    trace.end(server.proxy_token)
                     if accountant is not None:
                         accountant.discard_turn(server.proxy_token)
                     await pool.release(event.session_key, ttl_seconds=ttl)

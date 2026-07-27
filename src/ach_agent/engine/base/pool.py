@@ -359,14 +359,21 @@ class EnginePool:
             config = dataclasses.replace(
                 config, model_base_url=tokenize_model_base_url(config.model_base_url, token)
             )
+            # try/finally, NOT `except Exception`: a cold start can be CANCELLED
+            # (the lane's asyncio.timeout(maxInvocationSeconds) wraps this call),
+            # and CancelledError is a BaseException. An except-clause would miss
+            # it and leak the token into both registries with no server left
+            # holding it, so no _stop/_expire/stop_all could ever reclaim it.
+            attached = False
             try:
                 server = await self._start_server(config, session_key)
-            except Exception:
-                trace.drop(token)
-                if accountant is not None:
-                    accountant.drop_token(token)
-                raise
-            server.proxy_token = token
+                server.proxy_token = token
+                attached = True
+            finally:
+                if not attached:
+                    trace.drop(token)
+                    if accountant is not None:
+                        accountant.drop_token(token)
             self._servers[session_key] = server
             self._ref_counts[session_key] = 1
             return server

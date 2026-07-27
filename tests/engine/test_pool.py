@@ -31,13 +31,6 @@ def _make_fake_server(alive: bool = True):
     return srv
 
 
-def _config() -> EngineConfig:
-    # A real dataclass, not a MagicMock: acquire() now rewrites model_base_url on
-    # every fresh key (it tokenizes the path for cost + trace correlation), and
-    # urlsplit needs a real str.
-    return _real_config()
-
-
 async def test_pool_reuse_same_key() -> None:
     """Second acquire with the same key reuses the alive server (no new start)."""
     pool = EnginePool()
@@ -50,8 +43,8 @@ async def test_pool_reuse_same_key() -> None:
 
     pool._start_server = fake_start
 
-    s1 = await pool.acquire("k1", _config())
-    s2 = await pool.acquire("k1", _config())
+    s1 = await pool.acquire("k1", _real_config())
+    s2 = await pool.acquire("k1", _real_config())
     assert calls["n"] == 1, "Same key must reuse the server"
     assert s1 is fake and s2 is fake
     assert pool._ref_counts["k1"] == 2
@@ -68,8 +61,8 @@ async def test_pool_distinct_keys_get_distinct_servers() -> None:
 
     pool._start_server = fake_start
 
-    a = await pool.acquire("k1", _config())
-    b = await pool.acquire("k2", _config())
+    a = await pool.acquire("k1", _real_config())
+    b = await pool.acquire("k2", _real_config())
 
     assert a is servers["k1"]
     assert b is servers["k2"]
@@ -87,8 +80,8 @@ async def test_release_one_key_does_not_stop_another() -> None:
 
     pool._start_server = fake_start
 
-    await pool.acquire("k1", _config())
-    await pool.acquire("k2", _config())
+    await pool.acquire("k1", _real_config())
+    await pool.acquire("k2", _real_config())
 
     await pool.release("k1", ttl_seconds=0)
 
@@ -108,7 +101,7 @@ async def test_ttl0_stops_immediately() -> None:
 
     pool._start_server = fake_start
 
-    await pool.acquire("k1", _config())
+    await pool.acquire("k1", _real_config())
     await pool.release("k1", ttl_seconds=0)
     fake.stop.assert_awaited_once()
     assert "k1" not in pool._servers
@@ -124,7 +117,7 @@ async def test_ttl_expires_after_delay() -> None:
 
     pool._start_server = fake_start
 
-    await pool.acquire("k1", _config())
+    await pool.acquire("k1", _real_config())
     await pool.release("k1", ttl_seconds=0.05)
     assert fake.stop.call_count == 0
     assert "k1" in pool._servers
@@ -144,9 +137,9 @@ async def test_reacquire_cancels_pending_ttl() -> None:
 
     pool._start_server = fake_start
 
-    await pool.acquire("k1", _config())
+    await pool.acquire("k1", _real_config())
     await pool.release("k1", ttl_seconds=0.05)
-    await pool.acquire("k1", _config())  # cancels expiry
+    await pool.acquire("k1", _real_config())  # cancels expiry
     await asyncio.sleep(0.12)
     fake.stop.assert_not_awaited()
     assert "k1" in pool._servers
@@ -164,9 +157,9 @@ async def test_warm_reuse_within_ttl() -> None:
 
     pool._start_server = fake_start
 
-    s1 = await pool.acquire("k1", _config())
+    s1 = await pool.acquire("k1", _real_config())
     await pool.release("k1", ttl_seconds=0.2)  # warm — expiry armed
-    s2 = await pool.acquire("k1", _config())  # within TTL — reuse, cancel expiry
+    s2 = await pool.acquire("k1", _real_config())  # within TTL — reuse, cancel expiry
     assert s1 is fake and s2 is fake
     assert calls["n"] == 1, "warm reuse must not start a second server"
     fake.stop.assert_not_awaited()
@@ -187,9 +180,9 @@ async def test_expire_rechecks_before_stop() -> None:
 
     pool._start_server = fake_start
 
-    await pool.acquire("k1", _config())
+    await pool.acquire("k1", _real_config())
     await pool.release("k1", ttl_seconds=0.01)  # arm expiry (fires very soon)
-    await pool.acquire("k1", _config())  # re-acquire: ref→1, expiry cancelled
+    await pool.acquire("k1", _real_config())  # re-acquire: ref→1, expiry cancelled
     await asyncio.sleep(0.05)  # let any stale _expire run past its sleep
 
     fake.stop.assert_not_awaited()
@@ -207,8 +200,8 @@ async def test_ref_count_keeps_server_until_last_release() -> None:
 
     pool._start_server = fake_start
 
-    await pool.acquire("k1", _config())
-    await pool.acquire("k1", _config())
+    await pool.acquire("k1", _real_config())
+    await pool.acquire("k1", _real_config())
     await pool.release("k1", ttl_seconds=0)
     fake.stop.assert_not_awaited()
     assert "k1" in pool._servers
@@ -229,9 +222,9 @@ async def test_dead_server_replaced_on_acquire() -> None:
 
     pool._start_server = fake_start
 
-    s1 = await pool.acquire("k1", _config())
+    s1 = await pool.acquire("k1", _real_config())
     assert s1 is dead
-    s2 = await pool.acquire("k1", _config())  # dead → replace
+    s2 = await pool.acquire("k1", _real_config())  # dead → replace
     assert s2 is live
     dead.stop.assert_awaited_once()
 
@@ -247,8 +240,8 @@ async def test_stop_all_stops_every_server() -> None:
 
     pool._start_server = fake_start
 
-    await pool.acquire("k1", _config())
-    await pool.acquire("k2", _config())
+    await pool.acquire("k1", _real_config())
+    await pool.acquire("k2", _real_config())
 
     await pool.stop_all()
     servers["k1"].stop.assert_awaited_once()
@@ -447,8 +440,8 @@ async def test_distinct_keys_get_distinct_servers_and_refcounts() -> None:
 
     pool._start_server = fake_start
 
-    await pool.acquire("gitlab.example.com/group/repo-a", _config())
-    await pool.acquire("gitlab.example.com/group/repo-b", _config())
+    await pool.acquire("gitlab.example.com/group/repo-a", _real_config())
+    await pool.acquire("gitlab.example.com/group/repo-b", _real_config())
 
     assert pool._servers["gitlab.example.com/group/repo-a"] is srv_a
     assert pool._servers["gitlab.example.com/group/repo-b"] is srv_b
@@ -643,3 +636,32 @@ def test_pool_default_session_map_is_lru_still():
     assert isinstance(pool.oc_sessions, _NamespacedSessionMap)
     assert isinstance(pool.oc_sessions._inner, _LRUSessionMap)
     assert len(pool.oc_sessions) == 0
+
+
+async def test_cancelled_cold_start_does_not_leak_the_token() -> None:
+    """A cancel mid-_start_server must release the token from BOTH registries.
+
+    Reachable in production: the lane wraps engine_runner in
+    asyncio.timeout(maxInvocationSeconds), so a slow cold start is cancelled.
+    CancelledError is a BaseException, so an `except Exception` here would miss
+    it and strand the token — no server holds it, so no stop/expire/stop_all
+    path can ever reclaim it.
+    """
+    trace.reset_for_testing()
+    acc = _make_accountant()
+    pool = EnginePool(accountant=acc)
+
+    async def never_starts(cfg: EngineConfig, session_key: str) -> ManagedServer:
+        await asyncio.sleep(3600)
+        raise AssertionError("unreachable")
+
+    pool._start_server = never_starts
+
+    task = asyncio.create_task(pool.acquire("k1", _real_config()))
+    await asyncio.sleep(0)  # let acquire reach the await inside _start_server
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert trace._registry == {}, "cancelled cold start leaked a trace token"
+    assert acc._buckets == {}, "cancelled cold start leaked a cost token"

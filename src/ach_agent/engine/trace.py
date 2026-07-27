@@ -72,15 +72,23 @@ def session_id_for(session_key: str) -> str:
     return f"{safe}-{_digest(session_key)[:8]}"
 
 
-def traceparent_for(idempotency_key: str) -> str:
-    """Build a W3C traceparent that is deterministic in ``idempotency_key``.
+def traceparent_for(agent: str, channel: str, idempotency_key: str) -> str:
+    """Build a W3C traceparent, deterministic in the invocation's identity.
 
     Deterministic rather than random so a trace id can be recomputed offline
     from the inbound delivery id (``X-GitHub-Delivery``, the cron tick, …) and
     pasted straight into Langfuse. sha256 never yields the all-zero trace id
     the spec forbids.
+
+    Keyed on agent + channel + key, NOT the key alone: an idempotency key is
+    only unique WITHIN a channel (the router's own dedup key is
+    ``{channel_name}:{idempotency_key}``) and not at all across agents, so two
+    agents — or two channels on one agent — handed the same X-GitHub-Delivery
+    would otherwise merge into one Langfuse trace. Redeliveries beyond the
+    dedup window still collide by construction; that is the same identity, so
+    one trace is the right answer.
     """
-    d = _digest(idempotency_key)
+    d = _digest(f"{agent}:{channel}:{idempotency_key}")
     return f"00-{d[:32]}-{d[32:48]}-01"
 
 
@@ -91,15 +99,32 @@ def mint_token(session_key: str) -> str:
     return token
 
 
-def begin(token: str, idempotency_key: str) -> None:
-    """Open a new invocation on ``token``'s server (no-op for an unknown token).
+def begin(token: str, agent: str, channel: str, idempotency_key: str) -> None:
+    """Open an invocation on ``token``'s server (no-op for an unknown token).
 
-    Safe without a lock: the router serializes invocations per session_key
-    (RTR-02, one in flight at a time) and a token belongs to exactly one key.
+    Safe without a lock because this is single-threaded asyncio and neither
+    ``begin`` nor ``headers`` awaits between reading and writing the entry.
+    (RTR-02 — one invocation in flight per session_key — is what keeps the
+    VALUE meaningful, but it does not cover the reader: ``headers`` runs in the
+    proxy's aiohttp handler, a different task from the lane. Do not move either
+    off the event loop on RTR-02's authority.)
     """
     entry = _registry.get(token)
     if entry is not None:
-        entry.traceparent = traceparent_for(idempotency_key)
+        entry.traceparent = traceparent_for(agent, channel, idempotency_key)
+
+
+def end(token: str) -> None:
+    """Close the invocation: later calls carry the session but no trace.
+
+    Without this a warm pooled server keeps stamping the finished invocation's
+    traceparent on anything the engine does between turns (opencode's own
+    title/summary/compaction calls, a straggler from the previous turn), which
+    lands them in a closed trace. Mirrors the accountant's in_flight window.
+    """
+    entry = _registry.get(token)
+    if entry is not None:
+        entry.traceparent = ""
 
 
 def drop(token: str) -> None:

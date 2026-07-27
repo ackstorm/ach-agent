@@ -54,7 +54,7 @@ def test_session_id_is_stable_and_distinct() -> None:
 
 def test_headers_survive_the_forwarder_strip() -> None:
     token = trace.mint_token("tui-console")
-    trace.begin(token, "delivery-1")
+    trace.begin(token, "a1", "webhook", "delivery-1")
     for name in trace.headers(token):
         assert not name.lower().startswith(FORWARDER_STRIPPED_PREFIXES), (
             f"{name} would be deleted by internal/forwarder/headers/strip.go"
@@ -67,20 +67,37 @@ def test_session_header_name_matches_litellms_sniffer() -> None:
     assert "x-agent-session-id" in trace.headers(token)
 
 
-def test_traceparent_is_w3c_and_deterministic_in_the_idempotency_key() -> None:
-    assert W3C_TRACEPARENT_RE.match(trace.traceparent_for("8f3a-delivery"))
-    assert trace.traceparent_for("8f3a") == trace.traceparent_for("8f3a")
-    assert trace.traceparent_for("8f3a") != trace.traceparent_for("8f3b")
+def test_traceparent_is_w3c_and_deterministic_in_the_invocation() -> None:
+    assert W3C_TRACEPARENT_RE.match(trace.traceparent_for("a1", "webhook", "8f3a-delivery"))
+    assert trace.traceparent_for("a1", "webhook", "8f3a") == trace.traceparent_for(
+        "a1", "webhook", "8f3a"
+    )
+    assert trace.traceparent_for("a1", "webhook", "8f3a") != trace.traceparent_for(
+        "a1", "webhook", "8f3b"
+    )
+
+
+def test_same_delivery_id_on_two_agents_or_channels_is_two_traces() -> None:
+    # An idempotency key is unique only within a channel (the router's own dedup
+    # key is "{channel}:{key}") and not at all across agents, so keying the trace
+    # on it alone would merge unrelated invocations into one Langfuse trace.
+    same = "X-GitHub-Delivery-1"
+    assert trace.traceparent_for("a1", "webhook", same) != trace.traceparent_for(
+        "a2", "webhook", same
+    )
+    assert trace.traceparent_for("a1", "webhook", same) != trace.traceparent_for(
+        "a1", "gitlab", same
+    )
 
 
 def test_one_invocation_is_one_trace_across_many_calls() -> None:
     token = trace.mint_token("gitlab:a/b")
-    trace.begin(token, "delivery-1")
+    trace.begin(token, "a1", "gitlab", "delivery-1")
     first = trace.headers(token)
     # Every model call of the same invocation reads the same registry entry.
     assert trace.headers(token) == first
 
-    trace.begin(token, "delivery-2")
+    trace.begin(token, "a1", "gitlab", "delivery-2")
     second = trace.headers(token)
     assert second["traceparent"] != first["traceparent"], "a new invocation is a new trace"
     assert second["x-agent-session-id"] == first["x-agent-session-id"], "session outlives it"
@@ -99,3 +116,21 @@ def test_unknown_token_yields_no_headers() -> None:
     assert trace.headers(token) == {}
     assert trace.headers("never-minted") == {}
     trace.drop(token)  # idempotent
+
+
+def test_end_closes_the_trace_but_keeps_the_session() -> None:
+    # A warm pooled server keeps serving between invocations (opencode's own
+    # title/summary calls); those must not land in the finished trace.
+    token = trace.mint_token("gitlab:a/b")
+    trace.begin(token, "a1", "gitlab", "delivery-1")
+    assert "traceparent" in trace.headers(token)
+
+    trace.end(token)
+    assert trace.headers(token) == {"x-agent-session-id": trace.session_id_for("gitlab:a/b")}
+
+    trace.begin(token, "a1", "gitlab", "delivery-2")
+    assert "traceparent" in trace.headers(token), "the next invocation reopens it"
+
+
+def test_end_on_an_unknown_token_is_a_no_op() -> None:
+    trace.end("never-minted")

@@ -3,17 +3,18 @@
 [![ci](https://github.com/ackstorm/ach-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/ackstorm/ach-agent/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-`ach-agent` is the **execution plane** of the ACH ecosystem: a single-process **Python**
+`ach-agent` is a generic **execution plane** for managed AI agents: a single-process **Python**
 runtime ("the harness") that boots from a rendered runtime config, runs channel adapters
 (`webhook`, `cron`, `queue`, `a2a`), serializes inbound events through a governed
 FIFO **router**, drives the [opencode](https://github.com/sst/opencode) engine over HTTP/SSE,
 and lets the agent act through external MCP servers (fronted by ACH); egress is model-initiated
 and the harness does not deliver results itself.
 
-It consumes the frozen seam produced by `ach-runtime` (the Go operator) and never reads CRDs,
-talks to the Kubernetes API server, or writes `Agent.status` — status is the operator's job.
-It is designed for platform / AI-engineering teams running managed AI agents (e.g. a GitLab MR
-reviewer) on top of the `runtime.ackstorm.ai/v1alpha1` API.
+It consumes a frozen, rendered config seam and is control-plane-agnostic: it never reads CRDs,
+talks to the Kubernetes API server, or reports status upward — whatever renders the config
+(in ACH deployments, the `ach-runtime` Go operator) owns that. It is designed for platform /
+AI-engineering teams running managed AI agents (e.g. a GitLab MR reviewer); ACH is the
+reference consumer, not a dependency.
 
 ## Core value — the router
 

@@ -5,6 +5,7 @@
 CLAUDE.md
 docs/plan/
 docs/spec/
+docs/superpowers/plans/
 .env
 .venv/
 __pycache__/

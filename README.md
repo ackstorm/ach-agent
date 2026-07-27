@@ -122,16 +122,16 @@ in two halves, kept side by side in [`docs/schemas/`](docs/schemas/):
 | Prose | [`operator-contract.md`](docs/schemas/operator-contract.md) | The frozen interface — hydration, egress, auth headers, channel semantics. Pins contract revision **v3**. |
 | Machine-readable | [`agent-config-v1.schema.json`](docs/schemas/agent-config-v1.schema.json) | §2 rendered as JSON Schema. **Authoritative for field names, types and defaults.** |
 
-The schema is generated from `AgentConfig` by `scripts/gen_schema.py` (`make schema`),
-drift-guarded by `tests/config/test_schema_artifact.py`, and published at its `$id`:
+The schema is generated from `AgentConfig` by `scripts/gen_schema.py` (`make schema`) and
+drift-guarded by `tests/config/test_schema_artifact.py`. Its canonical `$id` is:
 
 ```
 https://ackstorm.github.io/ach-agent/stable/schemas/agent-config-v1.schema.json
 ```
 
-That URL is what the operator consumes, and `ach-runtime` vendors a copy guarded by its own
-`TestSchema_NoDrift`. **Neither repo may change the contract unilaterally** — regenerate here,
-re-vendor there, in the same change.
+`ach-runtime` also vendors a copy, guarded by its own `TestSchema_NoDrift` against this path.
+**Neither repo may change the contract unilaterally** — regenerate here, re-vendor there, in
+the same change.
 
 ## Contributing
 

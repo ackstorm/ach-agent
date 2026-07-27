@@ -1,0 +1,1953 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>Process-Authoritative Agent Identity and Metrics Implementation Plan - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#process-authoritative-agent-identity-and-metrics-implementation-plan" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Process-Authoritative Agent Identity and Metrics Implementation Plan
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#global-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      Global Constraints
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#file-and-responsibility-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      File and Responsibility Map
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-1-process-identity-foundation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 1: Process Identity Foundation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 1: Process Identity Foundation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#task-1-add-the-process-authoritative-identity-module" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task 1: Add the process-authoritative identity module
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-2-non-mutating-metrics-stamping" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 2: Non-Mutating Metrics Stamping
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 2: Non-Mutating Metrics Stamping">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#task-2-add-the-copying-registry-wrapper" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task 2: Add the copying registry wrapper
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-3-mount-the-wrapper-and-test-raw-plus-restricted-http-scrapes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task 3: Mount the wrapper and test raw plus restricted HTTP scrapes
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-3-hydrate-model-mcp-and-a2a-identity-headers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 3: Hydrate, Model, MCP, and A2A Identity Headers
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 3: Hydrate, Model, MCP, and A2A Identity Headers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#task-4-bootstrap-and-commit-identity-through-validated-hydration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task 4: Bootstrap and commit identity through validated hydration
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-5-enforce-identity-on-model-and-mcp-proxy-traffic" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task 5: Enforce identity on model and MCP proxy traffic
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-6-add-identity-to-the-real-a2a-client-seam" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task 6: Add identity to the real A2A client seam
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-4-frozen-contract-and-operator-documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 4: Frozen Contract and Operator Documentation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 4: Frozen Contract and Operator Documentation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#task-7-update-contract-and-configuration-documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task 7: Update contract and configuration documentation
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-5-patch-release-preparation-and-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 5: Patch Release Preparation and Gates
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 5: Patch Release Preparation and Gates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#task-8-prepare-v0101" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task 8: Prepare v0.10.1
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-9-run-all-local-quality-and-hermetic-route-evidence-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task 9: Run all local quality and hermetic route-evidence gates
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-6-ci-owned-release-and-production-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 6: CI-Owned Release and Production Verification
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 6: CI-Owned Release and Production Verification">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#task-10-create-the-empty-marker-push-and-verify-release-automation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task 10: Create the empty marker, push, and verify release automation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-11-roll-out-and-verify-production-identity-metrics-and-digest" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task 11: Roll out and verify production identity, metrics, and digest
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dependency-graph-and-execution-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      Dependency Graph and Execution Order
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#completion-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      Completion Evidence
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="process-authoritative-agent-identity-and-metrics-implementation-plan">Process-Authoritative Agent Identity and Metrics Implementation Plan</h1>
+<blockquote>
+<p><strong>For agentic workers:</strong> REQUIRED SUB-SKILL: Use <code>superpowers:executing-plans</code> to implement this plan task-by-task. Steps use checkbox (<code>- [ ]</code>) syntax for tracking.</p>
+</blockquote>
+<p><strong>Goal:</strong> Make the harness the process-authoritative source of agent identity, attach that identity to every exposed Prometheus sample and every governed model/MCP/A2A/hydrate request, then release the change as <code>v0.10.1</code> through the repository-owned CI release flow.</p>
+<p><strong>Architecture:</strong> A small process-global identity module owns the validated <code>agent</code> and <code>environment</code> values and the one case-insensitive header replacement function. Hydration bootstraps its request from trusted config values and commits process identity only after the response validates; metrics use one registry wrapper at the ASGI exposition boundary, while the shared proxy and A2A client consume the same process identity without changing model, MCP, or tool call sites. The metrics wrapper copies collector-owned <code>Metric</code> objects and samples, with process identity winning label collisions.</p>
+<p><strong>Tech Stack:</strong> Python 3.12, <code>prometheus-client==0.25.0</code>, FastAPI/Starlette <code>TestClient</code>, aiohttp, httpx, a2a-sdk 1.x, pytest with <code>asyncio_mode=auto</code>, uv, GitHub Actions, GHCR.</p>
+<h2 id="global-constraints">Global Constraints</h2>
+<ul>
+<li>Start from clean <code>main</code> at <code>b5a5cf331c2cbc64137b0fa80890e442672197bb</code>.</li>
+<li>The harness process is authoritative. Client-supplied <code>x-ach-agent</code> and <code>x-ach-environment</code> headers never win, regardless of casing.</li>
+<li>Every governed outbound model, MCP, A2A, and hydrate request carries exactly one <code>x-ach-agent</code> and exactly one <code>x-ach-environment</code> identity header.</li>
+<li>The <code>ACH_MODEL_BASE_URL</code> / <code>ACH_MODEL_HEADER</code> direct model override follows the same always-identify policy.</li>
+<li>Every sample exposed by <code>/metrics/</code>, including <code>name[]</code>-restricted scrapes and non-<code>ach_agent_*</code> default-process samples, carries <code>agent</code> and <code>environment</code>.</li>
+<li>Prometheus implementation and tests must match <code>prometheus-client==0.25.0</code>: <code>Counter("thing_total", "doc")</code> exposes <code>thing_total</code>, <code>collect()</code> yields <code>Iterable[Metric]</code>, and the library's restricted registry is <code>RestrictedRegistry</code>, not <code>CollectorRegistry</code>.</li>
+<li>Never mutate <code>Metric</code> objects or sample-label mappings owned by a collector. Return fresh <code>Metric</code> snapshots, preserve all metric fields including <code>unit</code>, preserve all sample fields via <code>_replace</code>, and make process identity win collisions.</li>
+<li>Invalid hydration must not change the already-committed process identity or create an identity metric side effect.</li>
+<li>Update the frozen prose contract <code>docs/design/CONTRACT_v3.md</code>; no JSON-schema field changes are required.</li>
+<li>Release exactly <code>v0.10.1</code>. <code>v0.10.0</code> already exists and resolves to <code>aec85d1761cc9cb66e946ea6da4b5f8006e705c1</code>.</li>
+<li>CI creates the <code>v0.10.1</code> tag, GitHub release, and GHCR images from the empty <code>chore(release): v0.10.1</code> marker commit. Never create or push a local release tag.</li>
+<li>Out of scope: all changes in <code>../ach</code>, including its PodMonitor; cost CRD work; converting these identity headers into LiteLLM tags.</li>
+</ul>
+<hr />
+<h2 id="file-and-responsibility-map">File and Responsibility Map</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Responsibility in this change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/ach_agent/identity.py</code></td>
+<td>Own immutable process identity snapshots and case-insensitive identity-header replacement.</td>
+</tr>
+<tr>
+<td><code>src/ach_agent/http/metrics.py</code></td>
+<td>Copy and stamp collected Prometheus metrics; implement restricted sample-name filtering without mutating the source registry.</td>
+</tr>
+<tr>
+<td><code>src/ach_agent/http/app.py</code></td>
+<td>Mount <code>make_asgi_app</code> with the identity-stamping registry wrapper.</td>
+</tr>
+<tr>
+<td><code>src/ach_agent/engine/hydrate.py</code></td>
+<td>Send bootstrap identity on hydrate and commit process identity only after manifest validation.</td>
+</tr>
+<tr>
+<td><code>src/ach_agent/engine/metrics.py</code></td>
+<td>Remove the superseded <code>AGENT_INFO</code> gauge.</td>
+</tr>
+<tr>
+<td><code>src/ach_agent/engine/mcp_proxy.py</code></td>
+<td>Replace client identity and inject process identity at the common model/MCP forwarding choke point.</td>
+</tr>
+<tr>
+<td><code>src/ach_agent/engine/a2a_egress.py</code></td>
+<td>Add process identity to the real A2A httpx client.</td>
+</tr>
+<tr>
+<td><code>src/ach_agent/main.py</code></td>
+<td>Pass trusted config agent/environment into hydrate; no per-model/MCP/A2A call-site threading.</td>
+</tr>
+<tr>
+<td><code>tests/test_identity.py</code></td>
+<td>Identity state and case-insensitive header-replacement tests.</td>
+</tr>
+<tr>
+<td><code>tests/http/test_metrics.py</code></td>
+<td>Non-mutating <code>Metric</code> copy, collision, repeated-scrape, unit, counter-name, and restricted-registry tests.</td>
+</tr>
+<tr>
+<td><code>tests/http/test_app.py</code></td>
+<td>Real <code>create_app([cfg], handler)</code> raw and <code>name[]</code> <code>/metrics/</code> integration tests.</td>
+</tr>
+<tr>
+<td><code>tests/engine/test_hydrate.py</code></td>
+<td>Exact hydrate headers, successful commit, and invalid-response no-side-effect tests.</td>
+</tr>
+<tr>
+<td><code>tests/e2e/test_opencode_mcp_structured_e2e.py</code></td>
+<td>Update the hydrate signature in the existing hermetic guard.</td>
+</tr>
+<tr>
+<td><code>tests/engine/test_mcp_proxy.py</code></td>
+<td>MCP spoof stripping and authoritative identity injection.</td>
+</tr>
+<tr>
+<td><code>tests/engine/test_model_proxy.py</code></td>
+<td>Model spoof stripping plus direct-model-override identity coverage.</td>
+</tr>
+<tr>
+<td><code>tests/engine/test_a2a_egress.py</code></td>
+<td>Hermetic verification of headers passed to the real A2A client construction seam.</td>
+</tr>
+<tr>
+<td><code>docs/design/CONTRACT_v3.md</code></td>
+<td>Frozen contract for identity sources, all four outbound paths, stripping, and metric labels.</td>
+</tr>
+<tr>
+<td><code>docs/configuration.md</code></td>
+<td>Operator-facing identity, metrics, header, override, and series-discontinuity behavior.</td>
+</tr>
+<tr>
+<td><code>CHANGELOG.md</code></td>
+<td><code>v0.10.1</code> user-visible changes and Prometheus series-identity warning.</td>
+</tr>
+<tr>
+<td><code>pyproject.toml</code>, <code>uv.lock</code></td>
+<td>Patch version <code>0.10.1</code> and synchronized project lock entry.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="phase-1-process-identity-foundation">Phase 1: Process Identity Foundation</h2>
+<h3 id="task-1-add-the-process-authoritative-identity-module">Task 1: Add the process-authoritative identity module</h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>src/ach_agent/identity.py</code></li>
+<li>Create: <code>tests/test_identity.py</code></li>
+</ul>
+<p><strong>Interfaces:</strong></p>
+<ul>
+<li>Produces: <code>ProcessIdentity(agent: str, environment: str)</code>.</li>
+<li>Produces: <code>configure(agent: str, environment: str) -&gt; None</code>.</li>
+<li>Produces: <code>current() -&gt; ProcessIdentity</code>.</li>
+<li>Produces: <code>with_identity_headers(headers: Mapping[str, str], identity: ProcessIdentity | None = None) -&gt; dict[str, str]</code>.</li>
+<li>Produces: <code>reset_for_testing() -&gt; None</code>, used only by test fixtures.</li>
+<li>
+<p>Identity replacement removes every case variant of <code>x-ach-agent</code> and <code>x-ach-environment</code>, retains unrelated headers, then inserts the two canonical lower-case keys. The supplied/process identity wins.</p>
+</li>
+<li>
+<p>[ ] <strong>Step 1: Write the exact failing identity tests</strong></p>
+</li>
+</ul>
+<p>Create <code>tests/test_identity.py</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">identity</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent.identity</span><span class="w"> </span><span class="kn">import</span> <span class="n">ProcessIdentity</span>
+
+
+<span class="nd">@pytest</span><span class="o">.</span><span class="n">fixture</span><span class="p">(</span><span class="n">autouse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_reset_identity</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">reset_for_testing</span><span class="p">()</span>
+    <span class="k">yield</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">reset_for_testing</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_configure_and_current_return_immutable_snapshot</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">,</span> <span class="s2">&quot;platform&quot;</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">identity</span><span class="o">.</span><span class="n">current</span><span class="p">()</span> <span class="o">==</span> <span class="n">ProcessIdentity</span><span class="p">(</span><span class="n">agent</span><span class="o">=</span><span class="s2">&quot;classifier&quot;</span><span class="p">,</span> <span class="n">environment</span><span class="o">=</span><span class="s2">&quot;platform&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_identity_headers_strip_case_insensitively_and_process_wins</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">,</span> <span class="s2">&quot;platform&quot;</span><span class="p">)</span>
+    <span class="n">headers</span> <span class="o">=</span> <span class="n">identity</span><span class="o">.</span><span class="n">with_identity_headers</span><span class="p">(</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;Accept&quot;</span><span class="p">:</span> <span class="s2">&quot;application/json&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;X-Ach-Agent&quot;</span><span class="p">:</span> <span class="s2">&quot;spoofed-agent&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;x-ACH-environment&quot;</span><span class="p">:</span> <span class="s2">&quot;spoofed-environment&quot;</span><span class="p">,</span>
+        <span class="p">}</span>
+    <span class="p">)</span>
+    <span class="k">assert</span> <span class="n">headers</span> <span class="o">==</span> <span class="p">{</span>
+        <span class="s2">&quot;Accept&quot;</span><span class="p">:</span> <span class="s2">&quot;application/json&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;x-ach-agent&quot;</span><span class="p">:</span> <span class="s2">&quot;classifier&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;x-ach-environment&quot;</span><span class="p">:</span> <span class="s2">&quot;platform&quot;</span><span class="p">,</span>
+    <span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_explicit_bootstrap_identity_does_not_mutate_process_state</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="s2">&quot;committed&quot;</span><span class="p">,</span> <span class="s2">&quot;stable&quot;</span><span class="p">)</span>
+    <span class="n">headers</span> <span class="o">=</span> <span class="n">identity</span><span class="o">.</span><span class="n">with_identity_headers</span><span class="p">(</span>
+        <span class="p">{</span><span class="s2">&quot;x-ach-key&quot;</span><span class="p">:</span> <span class="s2">&quot;ek-test&quot;</span><span class="p">},</span>
+        <span class="n">ProcessIdentity</span><span class="p">(</span><span class="n">agent</span><span class="o">=</span><span class="s2">&quot;hydrate-agent&quot;</span><span class="p">,</span> <span class="n">environment</span><span class="o">=</span><span class="s2">&quot;requested-environment&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+    <span class="k">assert</span> <span class="n">headers</span> <span class="o">==</span> <span class="p">{</span>
+        <span class="s2">&quot;x-ach-key&quot;</span><span class="p">:</span> <span class="s2">&quot;ek-test&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;x-ach-agent&quot;</span><span class="p">:</span> <span class="s2">&quot;hydrate-agent&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;x-ach-environment&quot;</span><span class="p">:</span> <span class="s2">&quot;requested-environment&quot;</span><span class="p">,</span>
+    <span class="p">}</span>
+    <span class="k">assert</span> <span class="n">identity</span><span class="o">.</span><span class="n">current</span><span class="p">()</span> <span class="o">==</span> <span class="n">ProcessIdentity</span><span class="p">(</span><span class="n">agent</span><span class="o">=</span><span class="s2">&quot;committed&quot;</span><span class="p">,</span> <span class="n">environment</span><span class="o">=</span><span class="s2">&quot;stable&quot;</span><span class="p">)</span>
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 2: Run the focused test and verify RED</strong></li>
+</ul>
+<p>Run:</p>
+<div class="highlight"><pre><span></span><code>./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>tests/test_identity.py<span class="w"> </span>-v
+</code></pre></div>
+<p>Expected: collection fails because <code>ach_agent.identity</code> does not exist.</p>
+<ul>
+<li>[ ] <strong>Step 3: Implement the minimal process identity API</strong></li>
+</ul>
+<p>Create <code>src/ach_agent/identity.py</code> with this behavior:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="sd">&quot;&quot;&quot;Process-authoritative agent identity for metrics and governed egress.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Mapping</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+
+<span class="n">_IDENTITY_HEADER_NAMES</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;x-ach-agent&quot;</span><span class="p">,</span> <span class="s2">&quot;x-ach-environment&quot;</span><span class="p">})</span>
+
+
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ProcessIdentity</span><span class="p">:</span>
+    <span class="n">agent</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">environment</span><span class="p">:</span> <span class="nb">str</span>
+
+
+<span class="n">_current</span> <span class="o">=</span> <span class="n">ProcessIdentity</span><span class="p">(</span><span class="n">agent</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">environment</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">configure</span><span class="p">(</span><span class="n">agent</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">environment</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Commit validated identity for this harness process.&quot;&quot;&quot;</span>
+    <span class="k">global</span> <span class="n">_current</span>
+    <span class="n">_current</span> <span class="o">=</span> <span class="n">ProcessIdentity</span><span class="p">(</span><span class="n">agent</span><span class="o">=</span><span class="n">agent</span><span class="p">,</span> <span class="n">environment</span><span class="o">=</span><span class="n">environment</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">current</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">ProcessIdentity</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the current immutable identity snapshot.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">_current</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">with_identity_headers</span><span class="p">(</span>
+    <span class="n">headers</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="n">identity</span><span class="p">:</span> <span class="n">ProcessIdentity</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Replace any caller identity with exactly one authoritative header pair.&quot;&quot;&quot;</span>
+    <span class="n">source</span> <span class="o">=</span> <span class="n">current</span><span class="p">()</span> <span class="k">if</span> <span class="n">identity</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">identity</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="p">{</span><span class="n">key</span><span class="p">:</span> <span class="n">value</span> <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">headers</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">key</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_IDENTITY_HEADER_NAMES</span><span class="p">}</span>
+    <span class="n">result</span><span class="p">[</span><span class="s2">&quot;x-ach-agent&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">source</span><span class="o">.</span><span class="n">agent</span>
+    <span class="n">result</span><span class="p">[</span><span class="s2">&quot;x-ach-environment&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">source</span><span class="o">.</span><span class="n">environment</span>
+    <span class="k">return</span> <span class="n">result</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">reset_for_testing</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Clear module state between tests; production never calls this.&quot;&quot;&quot;</span>
+    <span class="n">configure</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 4: Run the focused test and verify GREEN</strong></li>
+</ul>
+<p>Run:</p>
+<div class="highlight"><pre><span></span><code>./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>tests/test_identity.py<span class="w"> </span>-v
+</code></pre></div>
+<p>Expected: <code>3 passed</code>.</p>
+<ul>
+<li>[ ] <strong>Step 5: Commit the identity foundation</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span>src/ach_agent/identity.py<span class="w"> </span>tests/test_identity.py
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;feat(identity): add process-authoritative identity&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="phase-2-non-mutating-metrics-stamping">Phase 2: Non-Mutating Metrics Stamping</h2>
+<h3 id="task-2-add-the-copying-registry-wrapper">Task 2: Add the copying registry wrapper</h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>src/ach_agent/http/metrics.py</code></li>
+<li>Create: <code>tests/http/test_metrics.py</code></li>
+</ul>
+<p><strong>Interfaces:</strong></p>
+<ul>
+<li>Consumes: <code>ach_agent.identity.current()</code> from Task 1.</li>
+<li>Produces: <code>IdentityRegistry(registry: Collector = REGISTRY, names: frozenset[str] | None = None)</code>.</li>
+<li>Produces: <code>collect() -&gt; Iterable[Metric]</code>.</li>
+<li>Produces: <code>restricted_registry(names: Iterable[str]) -&gt; IdentityRegistry</code> for Prometheus <code>name[]</code> handling.</li>
+<li>
+<p>The wrapper performs its own sample-name filtering. It must not delegate to <code>CollectorRegistry.restricted_registry()</code>: in <code>prometheus-client==0.25.0</code> that returns <code>RestrictedRegistry</code>, whose <code>_restricted_metric()</code> rebuild omits <code>unit</code>.</p>
+</li>
+<li>
+<p>[ ] <strong>Step 1: Write exact failing tests for names, copying, collisions, and restricted collection</strong></p>
+</li>
+</ul>
+<p>Create <code>tests/http/test_metrics.py</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Iterable</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">prometheus_client</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">prometheus_client.core</span><span class="w"> </span><span class="kn">import</span> <span class="n">Metric</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">prometheus_client.registry</span><span class="w"> </span><span class="kn">import</span> <span class="n">CollectorRegistry</span><span class="p">,</span> <span class="n">RestrictedRegistry</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">identity</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent.http.metrics</span><span class="w"> </span><span class="kn">import</span> <span class="n">IdentityRegistry</span>
+
+
+<span class="nd">@pytest</span><span class="o">.</span><span class="n">fixture</span><span class="p">(</span><span class="n">autouse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_reset_identity</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">reset_for_testing</span><span class="p">()</span>
+    <span class="k">yield</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">reset_for_testing</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_samples</span><span class="p">(</span><span class="n">registry</span><span class="p">:</span> <span class="n">IdentityRegistry</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">object</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="n">sample</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">sample</span>
+        <span class="k">for</span> <span class="n">metric</span> <span class="ow">in</span> <span class="n">registry</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">sample</span> <span class="ow">in</span> <span class="n">metric</span><span class="o">.</span><span class="n">samples</span>
+    <span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_counter_total_name_matches_prometheus_client_025</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">registry</span> <span class="o">=</span> <span class="n">CollectorRegistry</span><span class="p">()</span>
+    <span class="n">prometheus_client</span><span class="o">.</span><span class="n">Counter</span><span class="p">(</span><span class="s2">&quot;thing_total&quot;</span><span class="p">,</span> <span class="s2">&quot;doc&quot;</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">)</span><span class="o">.</span><span class="n">inc</span><span class="p">()</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">,</span> <span class="s2">&quot;platform&quot;</span><span class="p">)</span>
+    <span class="n">samples</span> <span class="o">=</span> <span class="n">_samples</span><span class="p">(</span><span class="n">IdentityRegistry</span><span class="p">(</span><span class="n">registry</span><span class="p">))</span>
+    <span class="k">assert</span> <span class="s2">&quot;thing_total&quot;</span> <span class="ow">in</span> <span class="n">samples</span>
+    <span class="k">assert</span> <span class="s2">&quot;thing_total_total&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">samples</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_prometheus_025_registry_types_are_not_conflated</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">registry</span> <span class="o">=</span> <span class="n">CollectorRegistry</span><span class="p">()</span>
+    <span class="n">prometheus_client</span><span class="o">.</span><span class="n">Counter</span><span class="p">(</span><span class="s2">&quot;typed_total&quot;</span><span class="p">,</span> <span class="s2">&quot;doc&quot;</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">)</span><span class="o">.</span><span class="n">inc</span><span class="p">()</span>
+    <span class="n">library_restricted</span> <span class="o">=</span> <span class="n">registry</span><span class="o">.</span><span class="n">restricted_registry</span><span class="p">([</span><span class="s2">&quot;typed_total&quot;</span><span class="p">])</span>
+    <span class="n">wrapped_metrics</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">IdentityRegistry</span><span class="p">(</span><span class="n">registry</span><span class="p">)</span><span class="o">.</span><span class="n">collect</span><span class="p">())</span>
+
+    <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">library_restricted</span><span class="p">,</span> <span class="n">RestrictedRegistry</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="nb">all</span><span class="p">(</span><span class="nb">isinstance</span><span class="p">(</span><span class="n">metric</span><span class="p">,</span> <span class="n">Metric</span><span class="p">)</span> <span class="k">for</span> <span class="n">metric</span> <span class="ow">in</span> <span class="n">wrapped_metrics</span><span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">SharedMetricCollector</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">metric</span> <span class="o">=</span> <span class="n">Metric</span><span class="p">(</span><span class="s2">&quot;shared&quot;</span><span class="p">,</span> <span class="s2">&quot;shared documentation&quot;</span><span class="p">,</span> <span class="s2">&quot;gauge&quot;</span><span class="p">,</span> <span class="n">unit</span><span class="o">=</span><span class="s2">&quot;seconds&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">metric</span><span class="o">.</span><span class="n">add_sample</span><span class="p">(</span>
+            <span class="s2">&quot;shared_seconds&quot;</span><span class="p">,</span>
+            <span class="p">{</span><span class="s2">&quot;agent&quot;</span><span class="p">:</span> <span class="s2">&quot;collector-agent&quot;</span><span class="p">,</span> <span class="s2">&quot;source&quot;</span><span class="p">:</span> <span class="s2">&quot;collector&quot;</span><span class="p">},</span>
+            <span class="mf">3.0</span><span class="p">,</span>
+            <span class="n">timestamp</span><span class="o">=</span><span class="mf">123.0</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">collect</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">Metric</span><span class="p">]:</span>
+        <span class="k">yield</span> <span class="bp">self</span><span class="o">.</span><span class="n">metric</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_process_identity_wins_collision_and_preserves_every_metric_field</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">collector</span> <span class="o">=</span> <span class="n">SharedMetricCollector</span><span class="p">()</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="s2">&quot;process-agent&quot;</span><span class="p">,</span> <span class="s2">&quot;platform&quot;</span><span class="p">)</span>
+    <span class="n">copied</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="nb">iter</span><span class="p">(</span><span class="n">IdentityRegistry</span><span class="p">(</span><span class="n">collector</span><span class="p">)</span><span class="o">.</span><span class="n">collect</span><span class="p">()))</span>
+
+    <span class="k">assert</span> <span class="n">copied</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">collector</span><span class="o">.</span><span class="n">metric</span>
+    <span class="k">assert</span> <span class="n">copied</span><span class="o">.</span><span class="n">name</span> <span class="o">==</span> <span class="n">collector</span><span class="o">.</span><span class="n">metric</span><span class="o">.</span><span class="n">name</span>
+    <span class="k">assert</span> <span class="n">copied</span><span class="o">.</span><span class="n">documentation</span> <span class="o">==</span> <span class="n">collector</span><span class="o">.</span><span class="n">metric</span><span class="o">.</span><span class="n">documentation</span>
+    <span class="k">assert</span> <span class="n">copied</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="n">collector</span><span class="o">.</span><span class="n">metric</span><span class="o">.</span><span class="n">type</span>
+    <span class="k">assert</span> <span class="n">copied</span><span class="o">.</span><span class="n">unit</span> <span class="o">==</span> <span class="s2">&quot;seconds&quot;</span>
+    <span class="k">assert</span> <span class="n">copied</span><span class="o">.</span><span class="n">samples</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="n">collector</span><span class="o">.</span><span class="n">metric</span><span class="o">.</span><span class="n">samples</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">_replace</span><span class="p">(</span>
+        <span class="n">labels</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;agent&quot;</span><span class="p">:</span> <span class="s2">&quot;process-agent&quot;</span><span class="p">,</span> <span class="s2">&quot;source&quot;</span><span class="p">:</span> <span class="s2">&quot;collector&quot;</span><span class="p">,</span> <span class="s2">&quot;environment&quot;</span><span class="p">:</span> <span class="s2">&quot;platform&quot;</span><span class="p">}</span>
+    <span class="p">)</span>
+    <span class="k">assert</span> <span class="n">collector</span><span class="o">.</span><span class="n">metric</span><span class="o">.</span><span class="n">samples</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">labels</span> <span class="o">==</span> <span class="p">{</span>
+        <span class="s2">&quot;agent&quot;</span><span class="p">:</span> <span class="s2">&quot;collector-agent&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;source&quot;</span><span class="p">:</span> <span class="s2">&quot;collector&quot;</span><span class="p">,</span>
+    <span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_repeated_scrapes_do_not_mutate_or_share_returned_metrics</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">collector</span> <span class="o">=</span> <span class="n">SharedMetricCollector</span><span class="p">()</span>
+    <span class="n">wrapper</span> <span class="o">=</span> <span class="n">IdentityRegistry</span><span class="p">(</span><span class="n">collector</span><span class="p">)</span>
+
+    <span class="n">identity</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="s2">&quot;first-agent&quot;</span><span class="p">,</span> <span class="s2">&quot;first-environment&quot;</span><span class="p">)</span>
+    <span class="n">first</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="nb">iter</span><span class="p">(</span><span class="n">wrapper</span><span class="o">.</span><span class="n">collect</span><span class="p">()))</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="s2">&quot;second-agent&quot;</span><span class="p">,</span> <span class="s2">&quot;second-environment&quot;</span><span class="p">)</span>
+    <span class="n">second</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="nb">iter</span><span class="p">(</span><span class="n">wrapper</span><span class="o">.</span><span class="n">collect</span><span class="p">()))</span>
+
+    <span class="k">assert</span> <span class="n">first</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">second</span>
+    <span class="k">assert</span> <span class="n">first</span><span class="o">.</span><span class="n">samples</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">second</span><span class="o">.</span><span class="n">samples</span>
+    <span class="k">assert</span> <span class="n">first</span><span class="o">.</span><span class="n">samples</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">labels</span><span class="p">[</span><span class="s2">&quot;agent&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;first-agent&quot;</span>
+    <span class="k">assert</span> <span class="n">second</span><span class="o">.</span><span class="n">samples</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">labels</span><span class="p">[</span><span class="s2">&quot;agent&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;second-agent&quot;</span>
+    <span class="k">assert</span> <span class="n">collector</span><span class="o">.</span><span class="n">metric</span><span class="o">.</span><span class="n">samples</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">labels</span><span class="p">[</span><span class="s2">&quot;agent&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;collector-agent&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_restricted_registry_filters_sample_names_and_preserves_unit</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">collector</span> <span class="o">=</span> <span class="n">SharedMetricCollector</span><span class="p">()</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">,</span> <span class="s2">&quot;platform&quot;</span><span class="p">)</span>
+    <span class="n">restricted</span> <span class="o">=</span> <span class="n">IdentityRegistry</span><span class="p">(</span><span class="n">collector</span><span class="p">)</span><span class="o">.</span><span class="n">restricted_registry</span><span class="p">([</span><span class="s2">&quot;shared_seconds&quot;</span><span class="p">])</span>
+    <span class="n">metrics</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">restricted</span><span class="o">.</span><span class="n">collect</span><span class="p">())</span>
+
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">metrics</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span>
+    <span class="k">assert</span> <span class="n">metrics</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">unit</span> <span class="o">==</span> <span class="s2">&quot;seconds&quot;</span>
+    <span class="k">assert</span> <span class="p">[</span><span class="n">sample</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">sample</span> <span class="ow">in</span> <span class="n">metrics</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">samples</span><span class="p">]</span> <span class="o">==</span> <span class="p">[</span><span class="s2">&quot;shared_seconds&quot;</span><span class="p">]</span>
+    <span class="k">assert</span> <span class="n">metrics</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">samples</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">labels</span><span class="p">[</span><span class="s2">&quot;agent&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;classifier&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_restricted_registry_drops_unrequested_metrics</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">registry</span> <span class="o">=</span> <span class="n">CollectorRegistry</span><span class="p">()</span>
+    <span class="n">prometheus_client</span><span class="o">.</span><span class="n">Counter</span><span class="p">(</span><span class="s2">&quot;kept_total&quot;</span><span class="p">,</span> <span class="s2">&quot;doc&quot;</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">)</span><span class="o">.</span><span class="n">inc</span><span class="p">()</span>
+    <span class="n">prometheus_client</span><span class="o">.</span><span class="n">Counter</span><span class="p">(</span><span class="s2">&quot;dropped_total&quot;</span><span class="p">,</span> <span class="s2">&quot;doc&quot;</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">)</span><span class="o">.</span><span class="n">inc</span><span class="p">()</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">,</span> <span class="s2">&quot;platform&quot;</span><span class="p">)</span>
+
+    <span class="n">samples</span> <span class="o">=</span> <span class="n">_samples</span><span class="p">(</span><span class="n">IdentityRegistry</span><span class="p">(</span><span class="n">registry</span><span class="p">)</span><span class="o">.</span><span class="n">restricted_registry</span><span class="p">([</span><span class="s2">&quot;kept_total&quot;</span><span class="p">]))</span>
+    <span class="k">assert</span> <span class="nb">set</span><span class="p">(</span><span class="n">samples</span><span class="p">)</span> <span class="o">==</span> <span class="p">{</span><span class="s2">&quot;kept_total&quot;</span><span class="p">}</span>
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 2: Run the focused test and verify RED</strong></li>
+</ul>
+<p>Run:</p>
+<div class="highlight"><pre><span></span><code>./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>tests/http/test_metrics.py<span class="w"> </span>-v
+</code></pre></div>
+<p>Expected: collection fails because <code>ach_agent.http.metrics</code> does not exist.</p>
+<ul>
+<li>[ ] <strong>Step 3: Implement copied metric snapshots and local name filtering</strong></li>
+</ul>
+<p>Create <code>src/ach_agent/http/metrics.py</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="sd">&quot;&quot;&quot;Prometheus exposition wrapper that stamps immutable process identity.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Iterable</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">copy</span><span class="w"> </span><span class="kn">import</span> <span class="n">copy</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">prometheus_client</span><span class="w"> </span><span class="kn">import</span> <span class="n">REGISTRY</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">prometheus_client.core</span><span class="w"> </span><span class="kn">import</span> <span class="n">Metric</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">prometheus_client.registry</span><span class="w"> </span><span class="kn">import</span> <span class="n">Collector</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">identity</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">IdentityRegistry</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Expose copied, identity-stamped snapshots from an underlying collector.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">registry</span><span class="p">:</span> <span class="n">Collector</span> <span class="o">=</span> <span class="n">REGISTRY</span><span class="p">,</span>
+        <span class="n">names</span><span class="p">:</span> <span class="nb">frozenset</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_registry</span> <span class="o">=</span> <span class="n">registry</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_names</span> <span class="o">=</span> <span class="n">names</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">collect</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">Metric</span><span class="p">]:</span>
+        <span class="n">stamp</span> <span class="o">=</span> <span class="n">identity</span><span class="o">.</span><span class="n">current</span><span class="p">()</span>
+        <span class="n">process_labels</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;agent&quot;</span><span class="p">:</span> <span class="n">stamp</span><span class="o">.</span><span class="n">agent</span><span class="p">,</span> <span class="s2">&quot;environment&quot;</span><span class="p">:</span> <span class="n">stamp</span><span class="o">.</span><span class="n">environment</span><span class="p">}</span>
+        <span class="k">for</span> <span class="n">metric</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_registry</span><span class="o">.</span><span class="n">collect</span><span class="p">():</span>
+            <span class="n">samples</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="n">sample</span><span class="o">.</span><span class="n">_replace</span><span class="p">(</span><span class="n">labels</span><span class="o">=</span><span class="p">{</span><span class="o">**</span><span class="n">sample</span><span class="o">.</span><span class="n">labels</span><span class="p">,</span> <span class="o">**</span><span class="n">process_labels</span><span class="p">})</span>
+                <span class="k">for</span> <span class="n">sample</span> <span class="ow">in</span> <span class="n">metric</span><span class="o">.</span><span class="n">samples</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_names</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">sample</span><span class="o">.</span><span class="n">name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_names</span>
+            <span class="p">]</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">samples</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">copied</span> <span class="o">=</span> <span class="n">copy</span><span class="p">(</span><span class="n">metric</span><span class="p">)</span>
+            <span class="n">copied</span><span class="o">.</span><span class="n">samples</span> <span class="o">=</span> <span class="n">samples</span>
+            <span class="k">yield</span> <span class="n">copied</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">restricted_registry</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">names</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">IdentityRegistry</span><span class="p">:</span>
+        <span class="n">requested</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">(</span><span class="n">names</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_names</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">requested</span> <span class="o">&amp;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_names</span>
+        <span class="k">return</span> <span class="n">IdentityRegistry</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_registry</span><span class="p">,</span> <span class="n">requested</span><span class="p">)</span>
+</code></pre></div>
+<p>The shallow <code>copy(metric)</code> is intentional: it preserves every current and future <code>Metric</code> field, while replacing <code>samples</code> with a new list. Rebuilding each sample through its <code>_replace</code> method preserves <code>value</code>, <code>timestamp</code>, <code>exemplar</code>, and <code>native_histogram</code> from the six-field 0.25.0 <code>Sample</code> tuple.</p>
+<ul>
+<li>[ ] <strong>Step 4: Run the focused test and verify GREEN</strong></li>
+</ul>
+<p>Run:</p>
+<div class="highlight"><pre><span></span><code>./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>tests/http/test_metrics.py<span class="w"> </span>-v
+</code></pre></div>
+<p>Expected: <code>6 passed</code>.</p>
+<ul>
+<li>[ ] <strong>Step 5: Run strict typing on the new modules</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>mypy<span class="w"> </span>--strict<span class="w"> </span>src/ach_agent/identity.py<span class="w"> </span>src/ach_agent/http/metrics.py
+</code></pre></div>
+<p>Expected: success with no issues.</p>
+<ul>
+<li>[ ] <strong>Step 6: Commit the wrapper</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span>src/ach_agent/http/metrics.py<span class="w"> </span>tests/http/test_metrics.py
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;feat(metrics): copy and stamp collected metrics&quot;</span>
+</code></pre></div>
+<h3 id="task-3-mount-the-wrapper-and-test-raw-plus-restricted-http-scrapes">Task 3: Mount the wrapper and test raw plus restricted HTTP scrapes</h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Modify: <code>src/ach_agent/http/app.py:26,197-201</code></li>
+<li>Modify: <code>tests/http/test_app.py:17-24,128-146</code></li>
+</ul>
+<p><strong>Interfaces:</strong></p>
+<ul>
+<li>Consumes: <code>IdentityRegistry</code> from Task 2.</li>
+<li>
+<p>Existing construction remains exactly <code>create_app([cfg], handler)</code>; do not introduce <code>app_factory</code>.</p>
+</li>
+<li>
+<p>[ ] <strong>Step 1: Add an autouse identity reset fixture and exact HTTP tests</strong></p>
+</li>
+</ul>
+<p>In <code>tests/http/test_app.py</code>, import <code>identity</code>, add this fixture beside the helpers, and replace the existing <code>test_metrics</code> with the two tests below:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">identity</span>
+
+
+<span class="nd">@pytest</span><span class="o">.</span><span class="n">fixture</span><span class="p">(</span><span class="n">autouse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_reset_process_identity</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">reset_for_testing</span><span class="p">()</span>
+    <span class="k">yield</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">reset_for_testing</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_metric_sample_lines</span><span class="p">(</span><span class="n">body</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">line</span> <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">body</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span> <span class="k">if</span> <span class="n">line</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">line</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;#&quot;</span><span class="p">)]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_metrics_stamps_every_exposed_sample</span><span class="p">(</span><span class="n">monkeypatch</span><span class="p">:</span> <span class="n">pytest</span><span class="o">.</span><span class="n">MonkeyPatch</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setenv</span><span class="p">(</span><span class="n">SECRET_ENV</span><span class="p">,</span> <span class="s2">&quot;s3cr3t&quot;</span><span class="p">)</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">,</span> <span class="s2">&quot;platform&quot;</span><span class="p">)</span>
+    <span class="n">app</span> <span class="o">=</span> <span class="n">create_app</span><span class="p">([</span><span class="n">_make_channel_cfg</span><span class="p">()],</span> <span class="n">FakeHandler</span><span class="p">())</span>
+
+    <span class="k">with</span> <span class="n">TestClient</span><span class="p">(</span><span class="n">app</span><span class="p">)</span> <span class="k">as</span> <span class="n">client</span><span class="p">:</span>
+        <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;/metrics/&quot;</span><span class="p">)</span>
+
+    <span class="k">assert</span> <span class="n">response</span><span class="o">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">200</span>
+    <span class="n">samples</span> <span class="o">=</span> <span class="n">_metric_sample_lines</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">samples</span>
+    <span class="k">assert</span> <span class="nb">all</span><span class="p">(</span><span class="s1">&#39;agent=&quot;classifier&quot;&#39;</span> <span class="ow">in</span> <span class="n">line</span> <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">samples</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="nb">all</span><span class="p">(</span><span class="s1">&#39;environment=&quot;platform&quot;&#39;</span> <span class="ow">in</span> <span class="n">line</span> <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">samples</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_metrics_name_restriction_remains_stamped</span><span class="p">(</span><span class="n">monkeypatch</span><span class="p">:</span> <span class="n">pytest</span><span class="o">.</span><span class="n">MonkeyPatch</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setenv</span><span class="p">(</span><span class="n">SECRET_ENV</span><span class="p">,</span> <span class="s2">&quot;s3cr3t&quot;</span><span class="p">)</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">,</span> <span class="s2">&quot;platform&quot;</span><span class="p">)</span>
+    <span class="n">app</span> <span class="o">=</span> <span class="n">create_app</span><span class="p">([</span><span class="n">_make_channel_cfg</span><span class="p">()],</span> <span class="n">FakeHandler</span><span class="p">())</span>
+
+    <span class="k">with</span> <span class="n">TestClient</span><span class="p">(</span><span class="n">app</span><span class="p">)</span> <span class="k">as</span> <span class="n">client</span><span class="p">:</span>
+        <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+            <span class="s2">&quot;/metrics/&quot;</span><span class="p">,</span>
+            <span class="n">params</span><span class="o">=</span><span class="p">[(</span><span class="s2">&quot;name[]&quot;</span><span class="p">,</span> <span class="s2">&quot;ach_agent_engine_watchdog_kills_total&quot;</span><span class="p">)],</span>
+        <span class="p">)</span>
+
+    <span class="k">assert</span> <span class="n">response</span><span class="o">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">200</span>
+    <span class="n">samples</span> <span class="o">=</span> <span class="n">_metric_sample_lines</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">samples</span>
+    <span class="k">assert</span> <span class="p">{</span><span class="n">line</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;{&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">samples</span><span class="p">}</span> <span class="o">==</span> <span class="p">{</span>
+        <span class="s2">&quot;ach_agent_engine_watchdog_kills_total&quot;</span>
+    <span class="p">}</span>
+    <span class="k">assert</span> <span class="nb">all</span><span class="p">(</span><span class="s1">&#39;agent=&quot;classifier&quot;&#39;</span> <span class="ow">in</span> <span class="n">line</span> <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">samples</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="nb">all</span><span class="p">(</span><span class="s1">&#39;environment=&quot;platform&quot;&#39;</span> <span class="ow">in</span> <span class="n">line</span> <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">samples</span><span class="p">)</span>
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 2: Run the two HTTP tests and verify RED</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/http/test_app.py::test_metrics_stamps_every_exposed_sample<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/http/test_app.py::test_metrics_name_restriction_remains_stamped<span class="w"> </span>-v
+</code></pre></div>
+<p>Expected: assertions fail because <code>make_asgi_app()</code> still uses the unwrapped default registry.</p>
+<ul>
+<li>[ ] <strong>Step 3: Mount the identity registry once at the exposition boundary</strong></li>
+</ul>
+<p>Add this import to <code>src/ach_agent/http/app.py</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent.http.metrics</span><span class="w"> </span><span class="kn">import</span> <span class="n">IdentityRegistry</span>
+</code></pre></div>
+<p>Replace the metrics app construction with:</p>
+<div class="highlight"><pre><span></span><code>    <span class="n">metrics_app</span> <span class="o">=</span> <span class="n">make_asgi_app</span><span class="p">(</span><span class="n">registry</span><span class="o">=</span><span class="n">IdentityRegistry</span><span class="p">())</span>
+</code></pre></div>
+<p>Do not change individual metric definitions or observation call sites.</p>
+<ul>
+<li>[ ] <strong>Step 4: Run the HTTP suite and verify GREEN</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>tests/http/test_app.py<span class="w"> </span>tests/http/test_metrics.py<span class="w"> </span>-v
+</code></pre></div>
+<p>Expected: all tests pass, including both raw and <code>name[]</code> scrapes.</p>
+<ul>
+<li>[ ] <strong>Step 5: Commit the exposition change</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span>src/ach_agent/http/app.py<span class="w"> </span>tests/http/test_app.py
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;feat(metrics): stamp every exposed sample with identity&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="phase-3-hydrate-model-mcp-and-a2a-identity-headers">Phase 3: Hydrate, Model, MCP, and A2A Identity Headers</h2>
+<h3 id="task-4-bootstrap-and-commit-identity-through-validated-hydration">Task 4: Bootstrap and commit identity through validated hydration</h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Modify: <code>src/ach_agent/engine/hydrate.py:11,81-91</code></li>
+<li>Modify: <code>src/ach_agent/engine/metrics.py:38-42</code></li>
+<li>Modify: <code>src/ach_agent/main.py:66,1319</code></li>
+<li>Modify: <code>tests/engine/test_hydrate.py</code></li>
+<li>Modify: <code>tests/e2e/test_opencode_mcp_structured_e2e.py:78-94</code></li>
+</ul>
+<p><strong>Interfaces:</strong></p>
+<ul>
+<li>Changes: <code>fetch_hydration_manifest(base_url: str, ek: str, request_identity: ProcessIdentity) -&gt; HydrationManifest</code>.</li>
+<li>Changes: <code>hydrate(base_url: str, ek: str, agent_name: str, requested_environment: str) -&gt; HydrationManifest</code>.</li>
+<li>Hydrate sends config-derived bootstrap identity, validates the manifest, then calls <code>identity.configure(agent_name, manifest.environment)</code>.</li>
+<li>
+<p>Invalid network responses, HTTP errors, and Pydantic validation errors leave prior process identity unchanged.</p>
+</li>
+<li>
+<p>[ ] <strong>Step 1: Replace gauge assertions with exact header and state tests</strong></p>
+</li>
+</ul>
+<p>In <code>tests/engine/test_hydrate.py</code>, remove the <code>REGISTRY</code> import, import <code>identity</code> and <code>ProcessIdentity</code>, add an autouse reset fixture, and replace <code>test_hydrate_sets_agent_info_only_after_required_manifest_validation</code> with:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">identity</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent.identity</span><span class="w"> </span><span class="kn">import</span> <span class="n">ProcessIdentity</span>
+
+
+<span class="nd">@pytest</span><span class="o">.</span><span class="n">fixture</span><span class="p">(</span><span class="n">autouse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_reset_process_identity</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">reset_for_testing</span><span class="p">()</span>
+    <span class="k">yield</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">reset_for_testing</span><span class="p">()</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_hydrate_sends_bootstrap_headers_then_commits_validated_identity</span><span class="p">(</span>
+    <span class="n">monkeypatch</span><span class="p">:</span> <span class="n">pytest</span><span class="o">.</span><span class="n">MonkeyPatch</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">valid_post</span><span class="p">(</span><span class="n">url</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">headers</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">object</span><span class="p">]:</span>
+        <span class="k">assert</span> <span class="n">url</span> <span class="o">==</span> <span class="s2">&quot;https://ach.example.com/platform/hydrate&quot;</span>
+        <span class="k">assert</span> <span class="n">headers</span> <span class="o">==</span> <span class="p">{</span>
+            <span class="s2">&quot;x-ach-key&quot;</span><span class="p">:</span> <span class="s2">&quot;ek-abc&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;x-ach-agent&quot;</span><span class="p">:</span> <span class="s2">&quot;classifier&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;x-ach-environment&quot;</span><span class="p">:</span> <span class="s2">&quot;requested-platform&quot;</span><span class="p">,</span>
+        <span class="p">}</span>
+        <span class="k">return</span> <span class="n">SAMPLE</span>
+
+    <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setattr</span><span class="p">(</span><span class="s2">&quot;ach_agent.engine.hydrate._post_hydrate&quot;</span><span class="p">,</span> <span class="n">valid_post</span><span class="p">)</span>
+    <span class="n">manifest</span> <span class="o">=</span> <span class="k">await</span> <span class="n">hydrate</span><span class="p">(</span>
+        <span class="s2">&quot;https://ach.example.com&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;ek-abc&quot;</span><span class="p">,</span>
+        <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;classifier&quot;</span><span class="p">,</span>
+        <span class="n">requested_environment</span><span class="o">=</span><span class="s2">&quot;requested-platform&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">assert</span> <span class="n">manifest</span><span class="o">.</span><span class="n">environment</span> <span class="o">==</span> <span class="s2">&quot;platform&quot;</span>
+    <span class="k">assert</span> <span class="n">identity</span><span class="o">.</span><span class="n">current</span><span class="p">()</span> <span class="o">==</span> <span class="n">ProcessIdentity</span><span class="p">(</span><span class="n">agent</span><span class="o">=</span><span class="s2">&quot;classifier&quot;</span><span class="p">,</span> <span class="n">environment</span><span class="o">=</span><span class="s2">&quot;platform&quot;</span><span class="p">)</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_invalid_hydration_has_no_identity_side_effect</span><span class="p">(</span>
+    <span class="n">monkeypatch</span><span class="p">:</span> <span class="n">pytest</span><span class="o">.</span><span class="n">MonkeyPatch</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="s2">&quot;already-committed&quot;</span><span class="p">,</span> <span class="s2">&quot;stable&quot;</span><span class="p">)</span>
+    <span class="n">before</span> <span class="o">=</span> <span class="n">identity</span><span class="o">.</span><span class="n">current</span><span class="p">()</span>
+    <span class="n">missing_environment</span> <span class="o">=</span> <span class="p">{</span><span class="n">key</span><span class="p">:</span> <span class="n">value</span> <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">SAMPLE</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">key</span> <span class="o">!=</span> <span class="s2">&quot;environment&quot;</span><span class="p">}</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">invalid_post</span><span class="p">(</span><span class="n">url</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">headers</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">object</span><span class="p">]:</span>
+        <span class="k">assert</span> <span class="n">headers</span><span class="p">[</span><span class="s2">&quot;x-ach-agent&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;new-agent&quot;</span>
+        <span class="k">assert</span> <span class="n">headers</span><span class="p">[</span><span class="s2">&quot;x-ach-environment&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;requested-platform&quot;</span>
+        <span class="k">return</span> <span class="n">missing_environment</span>
+
+    <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setattr</span><span class="p">(</span><span class="s2">&quot;ach_agent.engine.hydrate._post_hydrate&quot;</span><span class="p">,</span> <span class="n">invalid_post</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">pytest</span><span class="o">.</span><span class="n">raises</span><span class="p">(</span><span class="n">ValidationError</span><span class="p">,</span> <span class="n">match</span><span class="o">=</span><span class="s2">&quot;environment&quot;</span><span class="p">):</span>
+        <span class="k">await</span> <span class="n">hydrate</span><span class="p">(</span>
+            <span class="s2">&quot;https://ach.example.com&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;ek-abc&quot;</span><span class="p">,</span>
+            <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;new-agent&quot;</span><span class="p">,</span>
+            <span class="n">requested_environment</span><span class="o">=</span><span class="s2">&quot;requested-platform&quot;</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">assert</span> <span class="n">identity</span><span class="o">.</span><span class="n">current</span><span class="p">()</span> <span class="o">==</span> <span class="n">before</span>
+</code></pre></div>
+<p>Change the call in <code>test_hydrate_parses_manifest</code> to exactly:</p>
+<div class="highlight"><pre><span></span><code>    <span class="n">m</span> <span class="o">=</span> <span class="k">await</span> <span class="n">hydrate</span><span class="p">(</span>
+        <span class="s2">&quot;https://ach.example.com&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;ek-abc&quot;</span><span class="p">,</span>
+        <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;hydrate-unit-agent&quot;</span><span class="p">,</span>
+        <span class="n">requested_environment</span><span class="o">=</span><span class="s2">&quot;platform&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+</code></pre></div>
+<p>Change the invalid fetch call to exactly:</p>
+<div class="highlight"><pre><span></span><code>        <span class="k">await</span> <span class="n">fetch_hydration_manifest</span><span class="p">(</span>
+            <span class="s2">&quot;https://ach.example.com&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;ek-abc&quot;</span><span class="p">,</span>
+            <span class="n">ProcessIdentity</span><span class="p">(</span><span class="n">agent</span><span class="o">=</span><span class="s2">&quot;hydrate-unit-agent&quot;</span><span class="p">,</span> <span class="n">environment</span><span class="o">=</span><span class="s2">&quot;platform&quot;</span><span class="p">),</span>
+        <span class="p">)</span>
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 2: Run hydrate tests and verify RED</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>tests/engine/test_hydrate.py<span class="w"> </span>-v
+</code></pre></div>
+<p>Expected: failures show the old signature and absence of both identity headers.</p>
+<ul>
+<li>[ ] <strong>Step 3: Implement bootstrap headers and post-validation commit</strong></li>
+</ul>
+<p>In <code>src/ach_agent/engine/hydrate.py</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">identity</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent.identity</span><span class="w"> </span><span class="kn">import</span> <span class="n">ProcessIdentity</span>
+</code></pre></div>
+<p>Replace the fetch/hydrate functions with:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fetch_hydration_manifest</span><span class="p">(</span>
+    <span class="n">base_url</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">ek</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">request_identity</span><span class="p">:</span> <span class="n">ProcessIdentity</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">HydrationManifest</span><span class="p">:</span>
+    <span class="n">headers</span> <span class="o">=</span> <span class="n">identity</span><span class="o">.</span><span class="n">with_identity_headers</span><span class="p">({</span><span class="s2">&quot;x-ach-key&quot;</span><span class="p">:</span> <span class="n">ek</span><span class="p">},</span> <span class="n">request_identity</span><span class="p">)</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="k">await</span> <span class="n">_post_hydrate</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">base_url</span><span class="o">.</span><span class="n">rstrip</span><span class="p">(</span><span class="s1">&#39;/&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">/platform/hydrate&quot;</span><span class="p">,</span> <span class="n">headers</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">HydrationManifest</span><span class="o">.</span><span class="n">model_validate</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">hydrate</span><span class="p">(</span>
+    <span class="n">base_url</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">ek</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">requested_environment</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">HydrationManifest</span><span class="p">:</span>
+    <span class="n">request_identity</span> <span class="o">=</span> <span class="n">ProcessIdentity</span><span class="p">(</span><span class="n">agent</span><span class="o">=</span><span class="n">agent_name</span><span class="p">,</span> <span class="n">environment</span><span class="o">=</span><span class="n">requested_environment</span><span class="p">)</span>
+    <span class="n">manifest</span> <span class="o">=</span> <span class="k">await</span> <span class="n">fetch_hydration_manifest</span><span class="p">(</span><span class="n">base_url</span><span class="p">,</span> <span class="n">ek</span><span class="p">,</span> <span class="n">request_identity</span><span class="p">)</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="n">agent_name</span><span class="p">,</span> <span class="n">manifest</span><span class="o">.</span><span class="n">environment</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">manifest</span>
+</code></pre></div>
+<p>Delete <code>AGENT_INFO</code> from <code>src/ach_agent/engine/metrics.py</code> and its import from hydrate. Keep all three existing counters unchanged.</p>
+<p>Change the main boot call to:</p>
+<div class="highlight"><pre><span></span><code>        <span class="n">manifest</span> <span class="o">=</span> <span class="k">await</span> <span class="n">hydrate</span><span class="p">(</span>
+            <span class="n">cfg</span><span class="o">.</span><span class="n">capability</span><span class="o">.</span><span class="n">ach</span><span class="o">.</span><span class="n">base_url</span><span class="p">,</span>
+            <span class="n">ek</span><span class="p">,</span>
+            <span class="n">cfg</span><span class="o">.</span><span class="n">agent</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+            <span class="n">cfg</span><span class="o">.</span><span class="n">capability</span><span class="o">.</span><span class="n">ach</span><span class="o">.</span><span class="n">environment</span><span class="p">,</span>
+        <span class="p">)</span>
+</code></pre></div>
+<p>Replace the e2e hydrate call with exactly:</p>
+<div class="highlight"><pre><span></span><code>        <span class="n">manifest</span> <span class="o">=</span> <span class="k">await</span> <span class="n">hydrate</span><span class="p">(</span>
+            <span class="s2">&quot;https://ach.example&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;ek_guard_secret&quot;</span><span class="p">,</span>
+            <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;e2e-guard-agent&quot;</span><span class="p">,</span>
+            <span class="n">requested_environment</span><span class="o">=</span><span class="s2">&quot;guard&quot;</span><span class="p">,</span>
+        <span class="p">)</span>
+</code></pre></div>
+<p>Configure no identity outside hydrate.</p>
+<ul>
+<li>[ ] <strong>Step 4: Run hydrate and existing e2e guard tests</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/engine/test_hydrate.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/e2e/test_opencode_mcp_structured_e2e.py::test_hydration_returns_model_and_mcp_server<span class="w"> </span>-v
+</code></pre></div>
+<p>Expected: all selected tests pass.</p>
+<ul>
+<li>[ ] <strong>Step 5: Prove the superseded gauge is gone</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>!<span class="w"> </span>rg<span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;AGENT_INFO|ach_agent_info&quot;</span><span class="w"> </span>src<span class="w"> </span>tests
+</code></pre></div>
+<p>Expected: exit status 0 from <code>!</code>; no matches are printed.</p>
+<ul>
+<li>[ ] <strong>Step 6: Commit hydration identity</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>src/ach_agent/engine/hydrate.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>src/ach_agent/engine/metrics.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>src/ach_agent/main.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/engine/test_hydrate.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/e2e/test_opencode_mcp_structured_e2e.py
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;feat(identity): establish identity through hydration&quot;</span>
+</code></pre></div>
+<h3 id="task-5-enforce-identity-on-model-and-mcp-proxy-traffic">Task 5: Enforce identity on model and MCP proxy traffic</h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Modify: <code>src/ach_agent/engine/mcp_proxy.py:29-36,97-119</code></li>
+<li>Modify: <code>tests/engine/test_mcp_proxy.py</code></li>
+<li>Modify: <code>tests/engine/test_model_proxy.py</code></li>
+</ul>
+<p><strong>Interfaces:</strong></p>
+<ul>
+<li>Consumes: <code>identity.with_identity_headers()</code> at <code>_forward</code>, the common model/MCP choke point.</li>
+<li><code>_DROP_REQUEST_HEADERS</code> includes both identity names so spoofed casing is stripped before authoritative insertion.</li>
+<li>Both plain model routes and token-attributed <code>/t/{token}</code> routes already use <code>_forward</code>; no observation call sites change.</li>
+<li>
+<p>The direct model override still uses <code>ModelProxy</code> with a different <code>auth_header</code>/<code>auth_value</code>; identity policy remains identical.</p>
+</li>
+<li>
+<p>[ ] <strong>Step 1: Add an exact MCP spoofing test</strong></p>
+</li>
+</ul>
+<p>Add this test to <code>tests/engine/test_mcp_proxy.py</code>; the fake upstream captures only the two identity headers from <code>request.raw_headers</code>, preserving duplicate counts:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">identity</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_mcp_proxy_replaces_case_variant_client_identity</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">seen_identity</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">handler</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="n">web</span><span class="o">.</span><span class="n">Request</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">web</span><span class="o">.</span><span class="n">Response</span><span class="p">:</span>
+        <span class="n">decoded</span> <span class="o">=</span> <span class="p">[(</span><span class="n">key</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">(),</span> <span class="n">value</span><span class="o">.</span><span class="n">decode</span><span class="p">())</span> <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">request</span><span class="o">.</span><span class="n">raw_headers</span><span class="p">]</span>
+        <span class="n">seen_identity</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+            <span class="p">[(</span><span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span> <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">decoded</span> <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="p">{</span><span class="s2">&quot;x-ach-agent&quot;</span><span class="p">,</span> <span class="s2">&quot;x-ach-environment&quot;</span><span class="p">}]</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">web</span><span class="o">.</span><span class="n">json_response</span><span class="p">({</span><span class="s2">&quot;ok&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">})</span>
+
+    <span class="n">app</span> <span class="o">=</span> <span class="n">web</span><span class="o">.</span><span class="n">Application</span><span class="p">()</span>
+    <span class="n">app</span><span class="o">.</span><span class="n">router</span><span class="o">.</span><span class="n">add_route</span><span class="p">(</span><span class="s2">&quot;*&quot;</span><span class="p">,</span> <span class="s2">&quot;/{tail:.*}&quot;</span><span class="p">,</span> <span class="n">handler</span><span class="p">)</span>
+    <span class="n">upstream_runner</span> <span class="o">=</span> <span class="n">web</span><span class="o">.</span><span class="n">AppRunner</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">upstream_runner</span><span class="o">.</span><span class="n">setup</span><span class="p">()</span>
+    <span class="n">site</span> <span class="o">=</span> <span class="n">web</span><span class="o">.</span><span class="n">TCPSite</span><span class="p">(</span><span class="n">upstream_runner</span><span class="p">,</span> <span class="n">host</span><span class="o">=</span><span class="s2">&quot;127.0.0.1&quot;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">site</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+    <span class="n">port</span> <span class="o">=</span> <span class="n">site</span><span class="o">.</span><span class="n">_server</span><span class="o">.</span><span class="n">sockets</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">getsockname</span><span class="p">()[</span><span class="mi">1</span><span class="p">]</span>  <span class="c1"># type: ignore[union-attr]</span>
+    <span class="n">proxy</span> <span class="o">=</span> <span class="n">McpProxy</span><span class="p">()</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">,</span> <span class="s2">&quot;platform&quot;</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">urls</span> <span class="o">=</span> <span class="k">await</span> <span class="n">proxy</span><span class="o">.</span><span class="n">start</span><span class="p">(</span>
+            <span class="p">[</span><span class="n">McpServer</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="s2">&quot;m1&quot;</span><span class="p">,</span> <span class="n">endpoint</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;http://127.0.0.1:</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)],</span>
+            <span class="n">ek</span><span class="o">=</span><span class="s2">&quot;ek-mcp&quot;</span><span class="p">,</span>
+            <span class="n">exclude</span><span class="o">=</span><span class="nb">set</span><span class="p">(),</span>
+        <span class="p">)</span>
+        <span class="k">async</span> <span class="k">with</span> <span class="n">aiohttp</span><span class="o">.</span><span class="n">ClientSession</span><span class="p">()</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
+            <span class="k">async</span> <span class="k">with</span> <span class="n">session</span><span class="o">.</span><span class="n">post</span><span class="p">(</span>
+                <span class="n">urls</span><span class="p">[</span><span class="s2">&quot;m1&quot;</span><span class="p">],</span>
+                <span class="n">headers</span><span class="o">=</span><span class="p">{</span>
+                    <span class="s2">&quot;X-Ach-Agent&quot;</span><span class="p">:</span> <span class="s2">&quot;spoofed-agent&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;x-ACH-environment&quot;</span><span class="p">:</span> <span class="s2">&quot;spoofed-environment&quot;</span><span class="p">,</span>
+                <span class="p">},</span>
+            <span class="p">)</span> <span class="k">as</span> <span class="n">response</span><span class="p">:</span>
+                <span class="k">assert</span> <span class="n">response</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="mi">200</span>
+                <span class="k">await</span> <span class="n">response</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">proxy</span><span class="o">.</span><span class="n">stop</span><span class="p">()</span>
+        <span class="k">await</span> <span class="n">upstream_runner</span><span class="o">.</span><span class="n">cleanup</span><span class="p">()</span>
+        <span class="n">identity</span><span class="o">.</span><span class="n">reset_for_testing</span><span class="p">()</span>
+
+    <span class="k">assert</span> <span class="n">seen_identity</span> <span class="o">==</span> <span class="p">[</span>
+        <span class="p">[(</span><span class="s2">&quot;x-ach-agent&quot;</span><span class="p">,</span> <span class="s2">&quot;classifier&quot;</span><span class="p">),</span> <span class="p">(</span><span class="s2">&quot;x-ach-environment&quot;</span><span class="p">,</span> <span class="s2">&quot;platform&quot;</span><span class="p">)]</span>
+    <span class="p">]</span>
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 2: Add the direct-model-override test</strong></li>
+</ul>
+<p>Add to <code>tests/engine/test_model_proxy.py</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">identity</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_direct_model_override_auth_still_replaces_identity_headers</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">captured</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">handler</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="n">web</span><span class="o">.</span><span class="n">Request</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">web</span><span class="o">.</span><span class="n">Response</span><span class="p">:</span>
+        <span class="n">captured</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">dict</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">web</span><span class="o">.</span><span class="n">json_response</span><span class="p">({</span><span class="s2">&quot;ok&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">})</span>
+
+    <span class="n">runner</span><span class="p">,</span> <span class="n">upstream_url</span> <span class="o">=</span> <span class="k">await</span> <span class="n">_start_fake_ach_router</span><span class="p">(</span><span class="n">handler</span><span class="p">)</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">,</span> <span class="s2">&quot;platform&quot;</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">base</span> <span class="o">=</span> <span class="k">await</span> <span class="n">start_model_proxy</span><span class="p">(</span>
+            <span class="n">upstream_url</span><span class="p">,</span>
+            <span class="s2">&quot;Bearer provider-key&quot;</span><span class="p">,</span>
+            <span class="n">auth_header</span><span class="o">=</span><span class="s2">&quot;Authorization&quot;</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">async</span> <span class="k">with</span> <span class="n">aiohttp</span><span class="o">.</span><span class="n">ClientSession</span><span class="p">()</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
+            <span class="k">async</span> <span class="k">with</span> <span class="n">session</span><span class="o">.</span><span class="n">post</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">base</span><span class="si">}</span><span class="s2">/v1/chat/completions&quot;</span><span class="p">,</span>
+                <span class="n">headers</span><span class="o">=</span><span class="p">{</span>
+                    <span class="s2">&quot;X-ACH-AGENT&quot;</span><span class="p">:</span> <span class="s2">&quot;spoofed-agent&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;X-Ach-Environment&quot;</span><span class="p">:</span> <span class="s2">&quot;spoofed-environment&quot;</span><span class="p">,</span>
+                <span class="p">},</span>
+                <span class="n">json</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;test-model&quot;</span><span class="p">},</span>
+            <span class="p">)</span> <span class="k">as</span> <span class="n">response</span><span class="p">:</span>
+                <span class="k">assert</span> <span class="n">response</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="mi">200</span>
+                <span class="k">await</span> <span class="n">response</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">stop_model_proxies</span><span class="p">()</span>
+        <span class="k">await</span> <span class="n">runner</span><span class="o">.</span><span class="n">cleanup</span><span class="p">()</span>
+        <span class="n">identity</span><span class="o">.</span><span class="n">reset_for_testing</span><span class="p">()</span>
+
+    <span class="n">lowered</span> <span class="o">=</span> <span class="p">{</span><span class="n">key</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span> <span class="n">value</span> <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">captured</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+    <span class="k">assert</span> <span class="n">lowered</span><span class="p">[</span><span class="s2">&quot;authorization&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;Bearer provider-key&quot;</span>
+    <span class="k">assert</span> <span class="n">lowered</span><span class="p">[</span><span class="s2">&quot;x-ach-agent&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;classifier&quot;</span>
+    <span class="k">assert</span> <span class="n">lowered</span><span class="p">[</span><span class="s2">&quot;x-ach-environment&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;platform&quot;</span>
+    <span class="k">assert</span> <span class="nb">sum</span><span class="p">(</span><span class="n">key</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="o">==</span> <span class="s2">&quot;x-ach-agent&quot;</span> <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">captured</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="o">==</span> <span class="mi">1</span>
+    <span class="k">assert</span> <span class="nb">sum</span><span class="p">(</span><span class="n">key</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="o">==</span> <span class="s2">&quot;x-ach-environment&quot;</span> <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">captured</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="o">==</span> <span class="mi">1</span>
+</code></pre></div>
+<p>This is the hermetic equivalent of the <code>ACH_MODEL_BASE_URL</code> plus <code>ACH_MODEL_HEADER=Authorization</code> boot branch in <code>main.py:1380-1419</code>.</p>
+<ul>
+<li>[ ] <strong>Step 3: Run both tests and verify RED</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/engine/test_mcp_proxy.py::test_mcp_proxy_replaces_case_variant_client_identity<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/engine/test_model_proxy.py::test_direct_model_override_auth_still_replaces_identity_headers<span class="w"> </span>-v
+</code></pre></div>
+<p>Expected: upstream sees spoofed identity or no identity.</p>
+<ul>
+<li>[ ] <strong>Step 4: Inject authoritative identity in <code>_forward</code></strong></li>
+</ul>
+<p>Import <code>identity</code>, add <code>x-ach-agent</code> and <code>x-ach-environment</code> to <code>_DROP_REQUEST_HEADERS</code>, and replace header construction with:</p>
+<div class="highlight"><pre><span></span><code>    <span class="n">headers</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="n">key</span><span class="p">:</span> <span class="n">value</span>
+        <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">key</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_DROP_REQUEST_HEADERS</span>
+    <span class="p">}</span>
+    <span class="n">headers</span><span class="p">[</span><span class="n">auth_header</span><span class="p">]</span> <span class="o">=</span> <span class="n">auth_value</span>
+    <span class="n">headers</span> <span class="o">=</span> <span class="n">identity</span><span class="o">.</span><span class="n">with_identity_headers</span><span class="p">(</span><span class="n">headers</span><span class="p">)</span>
+</code></pre></div>
+<p>Do not gate this on <code>label</code>; both <code>label="model"</code> and <code>label="mcp"</code> require the identity pair. Because filtering uses <code>key.lower()</code>, all client casing variants are removed before the canonical lower-case pair is inserted.</p>
+<ul>
+<li>[ ] <strong>Step 5: Run complete proxy suites</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/engine/test_mcp_proxy.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/engine/test_model_proxy.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/engine/test_cost_integration.py<span class="w"> </span>-v
+</code></pre></div>
+<p>Expected: all tests pass; streaming, cost observers, normal ACH auth, and direct override auth remain intact.</p>
+<ul>
+<li>[ ] <strong>Step 6: Commit proxy enforcement</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>src/ach_agent/engine/mcp_proxy.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/engine/test_mcp_proxy.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/engine/test_model_proxy.py
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;feat(identity): enforce identity on model and MCP egress&quot;</span>
+</code></pre></div>
+<h3 id="task-6-add-identity-to-the-real-a2a-client-seam">Task 6: Add identity to the real A2A client seam</h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Modify: <code>src/ach_agent/engine/a2a_egress.py:68-84</code></li>
+<li>Modify: <code>tests/engine/test_a2a_egress.py</code></li>
+</ul>
+<p><strong>Interfaces:</strong></p>
+<ul>
+<li>Consumes: <code>identity.with_identity_headers()</code> when <code>A2AAgentClient._ensure_client()</code> constructs its real <code>httpx.AsyncClient</code>.</li>
+<li>
+<p>Tool handlers and <code>build_a2a_tools()</code> signatures remain unchanged.</p>
+</li>
+<li>
+<p>[ ] <strong>Step 1: Add a hermetic real-client-construction test</strong></p>
+</li>
+</ul>
+<p>Add to <code>tests/engine/test_a2a_egress.py</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">a2a.client</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">httpx</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">identity</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent.engine.a2a_egress</span><span class="w"> </span><span class="kn">import</span> <span class="n">A2AAgentClient</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_real_a2a_client_receives_process_identity_headers</span><span class="p">(</span>
+    <span class="n">monkeypatch</span><span class="p">:</span> <span class="n">pytest</span><span class="o">.</span><span class="n">MonkeyPatch</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">captured</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">object</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">class</span><span class="w"> </span><span class="nc">FakeAsyncClient</span><span class="p">:</span>
+        <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">headers</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="n">timeout</span><span class="p">:</span> <span class="n">httpx</span><span class="o">.</span><span class="n">Timeout</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">captured</span><span class="p">[</span><span class="s2">&quot;headers&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">headers</span><span class="p">)</span>
+            <span class="n">captured</span><span class="p">[</span><span class="s2">&quot;timeout&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">timeout</span>
+
+        <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">aclose</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">captured</span><span class="p">[</span><span class="s2">&quot;closed&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+
+    <span class="k">class</span><span class="w"> </span><span class="nc">FakeClientConfig</span><span class="p">:</span>
+        <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">httpx_client</span><span class="p">:</span> <span class="nb">object</span><span class="p">,</span> <span class="n">streaming</span><span class="p">:</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">captured</span><span class="p">[</span><span class="s2">&quot;httpx_client&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">httpx_client</span>
+            <span class="n">captured</span><span class="p">[</span><span class="s2">&quot;streaming&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">streaming</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fake_create_client</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">agent</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">client_config</span><span class="p">:</span> <span class="nb">object</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">object</span><span class="p">:</span>
+        <span class="n">captured</span><span class="p">[</span><span class="s2">&quot;agent&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">agent</span>
+        <span class="n">captured</span><span class="p">[</span><span class="s2">&quot;client_config&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">client_config</span>
+        <span class="k">return</span> <span class="nb">object</span><span class="p">()</span>
+
+    <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setattr</span><span class="p">(</span><span class="n">httpx</span><span class="p">,</span> <span class="s2">&quot;AsyncClient&quot;</span><span class="p">,</span> <span class="n">FakeAsyncClient</span><span class="p">)</span>
+    <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setattr</span><span class="p">(</span><span class="n">a2a</span><span class="o">.</span><span class="n">client</span><span class="p">,</span> <span class="s2">&quot;ClientConfig&quot;</span><span class="p">,</span> <span class="n">FakeClientConfig</span><span class="p">)</span>
+    <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setattr</span><span class="p">(</span><span class="n">a2a</span><span class="o">.</span><span class="n">client</span><span class="p">,</span> <span class="s2">&quot;create_client&quot;</span><span class="p">,</span> <span class="n">fake_create_client</span><span class="p">)</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">,</span> <span class="s2">&quot;platform&quot;</span><span class="p">)</span>
+    <span class="n">client</span> <span class="o">=</span> <span class="n">A2AAgentClient</span><span class="p">(</span><span class="s2">&quot;https://peer.example/a2a&quot;</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="s2">&quot;ek-a2a&quot;</span><span class="p">)</span>
+
+    <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">_ensure_client</span><span class="p">()</span>
+    <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+    <span class="k">assert</span> <span class="n">captured</span><span class="p">[</span><span class="s2">&quot;headers&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="p">{</span>
+        <span class="s2">&quot;x-ach-key&quot;</span><span class="p">:</span> <span class="s2">&quot;ek-a2a&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;x-ach-agent&quot;</span><span class="p">:</span> <span class="s2">&quot;classifier&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;x-ach-environment&quot;</span><span class="p">:</span> <span class="s2">&quot;platform&quot;</span><span class="p">,</span>
+    <span class="p">}</span>
+    <span class="k">assert</span> <span class="n">captured</span><span class="p">[</span><span class="s2">&quot;agent&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;https://peer.example/a2a&quot;</span>
+    <span class="k">assert</span> <span class="n">captured</span><span class="p">[</span><span class="s2">&quot;streaming&quot;</span><span class="p">]</span> <span class="ow">is</span> <span class="kc">False</span>
+    <span class="k">assert</span> <span class="n">captured</span><span class="p">[</span><span class="s2">&quot;closed&quot;</span><span class="p">]</span> <span class="ow">is</span> <span class="kc">True</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">reset_for_testing</span><span class="p">()</span>
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 2: Run the A2A test and verify RED</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/engine/test_a2a_egress.py::test_real_a2a_client_receives_process_identity_headers<span class="w"> </span>-v
+</code></pre></div>
+<p>Expected: captured headers contain only <code>x-ach-key</code>.</p>
+<ul>
+<li>[ ] <strong>Step 3: Apply process identity at <code>_ensure_client</code></strong></li>
+</ul>
+<p>Import <code>identity</code> and replace the local header creation with:</p>
+<div class="highlight"><pre><span></span><code>            <span class="n">headers</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_api_key</span><span class="p">:</span>
+                <span class="n">headers</span><span class="p">[</span><span class="s2">&quot;x-ach-key&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_api_key</span>
+            <span class="n">headers</span> <span class="o">=</span> <span class="n">identity</span><span class="o">.</span><span class="n">with_identity_headers</span><span class="p">(</span><span class="n">headers</span><span class="p">)</span>
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 4: Run the full A2A suite</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>tests/engine/test_a2a_egress.py<span class="w"> </span>tests/engine/test_a2a_facade.py<span class="w"> </span>-v
+</code></pre></div>
+<p>Expected: all tests pass.</p>
+<ul>
+<li>[ ] <strong>Step 5: Commit A2A identity</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span>src/ach_agent/engine/a2a_egress.py<span class="w"> </span>tests/engine/test_a2a_egress.py
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;feat(identity): attach identity to A2A egress&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="phase-4-frozen-contract-and-operator-documentation">Phase 4: Frozen Contract and Operator Documentation</h2>
+<h3 id="task-7-update-contract-and-configuration-documentation">Task 7: Update contract and configuration documentation</h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Modify: <code>docs/design/CONTRACT_v3.md:395-425,499-504,620-634,699-709</code></li>
+<li>Modify: <code>docs/configuration.md:7-22</code></li>
+</ul>
+<p><strong>Interfaces:</strong></p>
+<ul>
+<li>Documentation must describe the implemented behavior, not the removed <code>ach_agent_info</code> gauge.</li>
+<li>
+<p>No edits to <code>docs/schemas/agent-config-v1.schema.json</code>; no field/type/default changes occur.</p>
+</li>
+<li>
+<p>[ ] <strong>Step 1: Update the frozen hydration and egress contract</strong></p>
+</li>
+</ul>
+<p>Make these precise changes in <code>docs/design/CONTRACT_v3.md</code>:</p>
+<ol>
+<li>In the governed environment table and the paragraph below it, define process identity as <code>agent.name</code> plus the requested <code>capability.ach.environment</code>; state that the validated hydrate response's required <code>environment</code> becomes the committed process environment for subsequent metrics and egress.</li>
+<li>In Hydration step 1, state that <code>POST /platform/hydrate</code> carries <code>x-ach-key</code>, <code>x-ach-agent</code>, and <code>x-ach-environment</code>; the latter two come from trusted rendered config for this bootstrap request.</li>
+<li>State that validation failure commits no new process identity.</li>
+<li>In proxy startup and §9, state that model and MCP forwarding strips client-supplied identity header names case-insensitively and injects exactly one canonical <code>x-ach-agent</code> and <code>x-ach-environment</code>, with harness values winning.</li>
+<li>State that outbound A2A uses the same pair in its harness-owned httpx client.</li>
+<li>State explicitly that the <code>ACH_MODEL_BASE_URL</code> / <code>ACH_MODEL_HEADER</code> development override changes upstream/auth only and never disables identity injection.</li>
+<li>
+<p>In §4, expand the <code>/metrics</code> endpoint requirement: every exposed sample, including Python/process defaults and <code>name[]</code>-restricted scrapes, carries the committed process <code>agent</code> and <code>environment</code> labels.</p>
+</li>
+<li>
+<p>[ ] <strong>Step 2: Replace the stale gauge documentation</strong></p>
+</li>
+</ol>
+<p>Replace <code>docs/configuration.md</code>'s <code>ach_agent_info</code> section with operator-facing text that says:</p>
+<ul>
+<li>Every sample exposed by <code>GET /metrics/</code> carries <code>agent</code> and <code>environment</code>; this is applied at exposition, so current and future metric families require no call-site labels.</li>
+<li><code>agent</code> comes from rendered <code>agent.name</code>; <code>environment</code> comes from the successfully validated hydrate manifest, while the hydrate request itself uses <code>capability.ach.environment</code> as its requested environment.</li>
+<li>Model, MCP, A2A, and hydrate outbound requests receive both identity headers from the harness.</li>
+<li>Client-supplied model/MCP identity headers are removed case-insensitively; process identity wins.</li>
+<li>The direct model override retains both identity headers.</li>
+<li>Adding these labels changes Prometheus series identity, so range queries spanning rollout show a discontinuity between pre-<code>v0.10.1</code> and post-<code>v0.10.1</code> series.</li>
+<li>
+<p>No PodMonitor relabeling or <code>group_left</code> join is required by this repository.</p>
+</li>
+<li>
+<p>[ ] <strong>Step 3: Check contract wording and schema non-change</strong></p>
+</li>
+</ul>
+<div class="highlight"><pre><span></span><code>rg<span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;x-ach-agent|x-ach-environment|every exposed sample|name\[\]|case-insensitive|v0.10.1&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>docs/design/CONTRACT_v3.md<span class="w"> </span>docs/configuration.md
+git<span class="w"> </span>diff<span class="w"> </span>--exit-code<span class="w"> </span>--<span class="w"> </span>docs/schemas/agent-config-v1.schema.json
+</code></pre></div>
+<p>Expected: the first command shows every required topic; the schema command prints nothing and exits 0.</p>
+<ul>
+<li>[ ] <strong>Step 4: Build docs strictly</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>make<span class="w"> </span>docs-build
+</code></pre></div>
+<p>Expected: strict MkDocs build passes.</p>
+<ul>
+<li>[ ] <strong>Step 5: Commit contract and docs</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span>docs/design/CONTRACT_v3.md<span class="w"> </span>docs/configuration.md
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;docs(identity): freeze metrics and egress identity contract&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="phase-5-patch-release-preparation-and-gates">Phase 5: Patch Release Preparation and Gates</h2>
+<h3 id="task-8-prepare-v0101">Task 8: Prepare <code>v0.10.1</code></h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Modify: <code>CHANGELOG.md</code></li>
+<li>Modify: <code>pyproject.toml</code></li>
+<li>
+<p>Modify: <code>uv.lock</code></p>
+</li>
+<li>
+<p>[ ] <strong>Step 1: Confirm the existing release baseline</strong></p>
+</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="nb">test</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>git<span class="w"> </span>rev-list<span class="w"> </span>-n1<span class="w"> </span>v0.10.0<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;aec85d1761cc9cb66e946ea6da4b5f8006e705c1&quot;</span>
+<span class="nb">test</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>git<span class="w"> </span>show<span class="w"> </span>-s<span class="w"> </span>--format<span class="o">=</span>%s<span class="w"> </span>v0.10.0^<span class="o">{}</span><span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;chore(release): v0.10.0&quot;</span>
+</code></pre></div>
+<p>Expected: both commands exit 0. Do not create, move, or push <code>v0.10.0</code>.</p>
+<ul>
+<li>[ ] <strong>Step 2: Add exact release notes under <code>[unreleased]</code></strong></li>
+</ul>
+<p>Under <code>## [unreleased]</code> in <code>CHANGELOG.md</code>, add:</p>
+<div class="highlight"><pre><span></span><code><span class="gu">### Added</span>
+
+<span class="k">-</span><span class="w"> </span>Every Prometheus sample exposed by the harness now carries process-authoritative <span class="sb">`agent`</span> and
+  <span class="sb">`environment`</span> labels, including restricted <span class="sb">`name[]`</span> scrapes. Model, MCP, outbound A2A, and
+  hydrate requests now carry the matching <span class="sb">`x-ach-agent`</span> and <span class="sb">`x-ach-environment`</span> headers.
+
+<span class="gu">### Changed</span>
+
+<span class="k">-</span><span class="w"> </span>Client-provided identity headers are stripped case-insensitively before harness identity is
+  injected. The direct model-upstream override follows the same policy.
+<span class="k">-</span><span class="w"> </span>Prometheus series identity changes at this release because every exposed sample gains two
+  labels; range queries spanning the rollout show the old and new series separately.
+
+<span class="gu">### Removed</span>
+
+<span class="k">-</span><span class="w"> </span>The unreleased <span class="sb">`ach_agent_info`</span> join metric is removed in favor of labels on every sample.
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 3: Run the repository release bump and synchronize the lock</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>make<span class="w"> </span>release-bump<span class="w"> </span><span class="nv">VERSION</span><span class="o">=</span><span class="m">0</span>.10.1
+uv<span class="w"> </span>lock
+</code></pre></div>
+<p>Expected: <code>pyproject.toml</code> and the <code>ach-agent</code> package entry in <code>uv.lock</code> both say <code>0.10.1</code>; the changelog content is now under <code>## [0.10.1] - 2026-07-27</code>.</p>
+<ul>
+<li>[ ] <strong>Step 4: Verify the version diff is limited and exact</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>rg<span class="w"> </span>-n<span class="w"> </span><span class="s1">&#39;^version = &quot;0\.10\.1&quot;$|^## \[0\.10\.1\] - 2026-07-27$&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>pyproject.toml<span class="w"> </span>uv.lock<span class="w"> </span>CHANGELOG.md
+git<span class="w"> </span>diff<span class="w"> </span>--check
+</code></pre></div>
+<p>Expected: the project metadata, lock self-entry, and changelog section all match; diff check passes.</p>
+<ul>
+<li>[ ] <strong>Step 5: Commit release preparation</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span>CHANGELOG.md<span class="w"> </span>pyproject.toml<span class="w"> </span>uv.lock
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;chore(release): prepare v0.10.1&quot;</span>
+</code></pre></div>
+<h3 id="task-9-run-all-local-quality-and-hermetic-route-evidence-gates">Task 9: Run all local quality and hermetic route-evidence gates</h3>
+<p><strong>Files:</strong> none.</p>
+<ul>
+<li>[ ] <strong>Step 1: Run formatting, typing, unit, conformance, and secret gates</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>make<span class="w"> </span>verify
+</code></pre></div>
+<p>Expected: lint/format/mypy, non-e2e pytest, conformance, gitleaks, and trufflehog all pass.</p>
+<ul>
+<li>[ ] <strong>Step 2: Run the full e2e suite</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>tests/e2e<span class="w"> </span>-v
+</code></pre></div>
+<p>Expected: all e2e tests pass.</p>
+<ul>
+<li>[ ] <strong>Step 3: Re-run the exact hermetic header evidence as a release record</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/engine/test_hydrate.py::test_hydrate_sends_bootstrap_headers_then_commits_validated_identity<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/engine/test_mcp_proxy.py::test_mcp_proxy_replaces_case_variant_client_identity<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/engine/test_model_proxy.py::test_direct_model_override_auth_still_replaces_identity_headers<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/engine/test_a2a_egress.py::test_real_a2a_client_receives_process_identity_headers<span class="w"> </span>-vv
+</code></pre></div>
+<p>Expected: four passes provide hermetic evidence for hydrate, MCP, model/direct override, and A2A real construction seams.</p>
+<ul>
+<li>[ ] <strong>Step 4: Verify the final implementation tree before the release marker</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>status<span class="w"> </span>--short
+git<span class="w"> </span>log<span class="w"> </span>--oneline<span class="w"> </span>b5a5cf331c2cbc64137b0fa80890e442672197bb..HEAD
+git<span class="w"> </span>diff<span class="w"> </span>--check<span class="w"> </span>b5a5cf331c2cbc64137b0fa80890e442672197bb..HEAD
+!<span class="w"> </span>git<span class="w"> </span>tag<span class="w"> </span>--points-at<span class="w"> </span>HEAD<span class="w"> </span><span class="p">|</span><span class="w"> </span>rg<span class="w"> </span><span class="s1">&#39;^v0\.10\.1$&#39;</span>
+</code></pre></div>
+<p>Expected: clean status, the ordered implementation commits are present, diff check passes, and no local <code>v0.10.1</code> tag exists.</p>
+<hr />
+<h2 id="phase-6-ci-owned-release-and-production-verification">Phase 6: CI-Owned Release and Production Verification</h2>
+<h3 id="task-10-create-the-empty-marker-push-and-verify-release-automation">Task 10: Create the empty marker, push, and verify release automation</h3>
+<p><strong>Files:</strong> none; the marker commit is intentionally empty.</p>
+<ul>
+<li>[ ] <strong>Step 1: Create the exact empty release marker</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>commit<span class="w"> </span>--allow-empty<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;chore(release): v0.10.1&quot;</span>
+<span class="nb">test</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>git<span class="w"> </span>show<span class="w"> </span>-s<span class="w"> </span>--format<span class="o">=</span>%s<span class="w"> </span>HEAD<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;chore(release): v0.10.1&quot;</span>
+</code></pre></div>
+<p>Expected: the marker is <code>HEAD</code> and contains no file changes.</p>
+<ul>
+<li>[ ] <strong>Step 2: Push the marker as the head commit on <code>main</code></strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="nb">test</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>git<span class="w"> </span>branch<span class="w"> </span>--show-current<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;main&quot;</span>
+git<span class="w"> </span>push<span class="w"> </span>origin<span class="w"> </span>main
+</code></pre></div>
+<p>Expected: push succeeds. Do not run <code>git tag</code> or push a tag.</p>
+<ul>
+<li>[ ] <strong>Step 3: Wait for the release workflow and verify its outputs</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="nv">ACH_RELEASE_RUN</span><span class="o">=</span><span class="k">$(</span>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--workflow<span class="w"> </span>release.yml<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--branch<span class="w"> </span>main<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--event<span class="w"> </span>push<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--limit<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--json<span class="w"> </span>databaseId<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--jq<span class="w"> </span><span class="s1">&#39;.[0].databaseId&#39;</span><span class="k">)</span>
+gh<span class="w"> </span>run<span class="w"> </span>watch<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ACH_RELEASE_RUN</span><span class="s2">&quot;</span><span class="w"> </span>--exit-status
+gh<span class="w"> </span>run<span class="w"> </span>view<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ACH_RELEASE_RUN</span><span class="s2">&quot;</span><span class="w"> </span>--log
+</code></pre></div>
+<p>Expected: the <code>release</code> job succeeds, including multi-architecture image push, CI-created tag, and GitHub release.</p>
+<ul>
+<li>[ ] <strong>Step 4: Verify tag, release, and image digest</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>fetch<span class="w"> </span>origin<span class="w"> </span>--tags
+<span class="nb">test</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>git<span class="w"> </span>rev-list<span class="w"> </span>-n1<span class="w"> </span>v0.10.1<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>git<span class="w"> </span>rev-parse<span class="w"> </span>HEAD<span class="k">)</span><span class="s2">&quot;</span>
+gh<span class="w"> </span>release<span class="w"> </span>view<span class="w"> </span>v0.10.1<span class="w"> </span>--json<span class="w"> </span>tagName,name,url<span class="w"> </span>--jq<span class="w"> </span><span class="s1">&#39;{tagName,name,url}&#39;</span>
+docker<span class="w"> </span>buildx<span class="w"> </span>imagetools<span class="w"> </span>inspect<span class="w"> </span>ghcr.io/ackstorm/ach-agent:v0.10.1
+<span class="nv">ACH_AGENT_DIGEST</span><span class="o">=</span><span class="k">$(</span>docker<span class="w"> </span>buildx<span class="w"> </span>imagetools<span class="w"> </span>inspect<span class="w"> </span>ghcr.io/ackstorm/ach-agent:v0.10.1<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="p">|</span><span class="w"> </span>sed<span class="w"> </span>-n<span class="w"> </span><span class="s1">&#39;s/^Digest:[[:space:]]*//p&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-1<span class="k">)</span>
+<span class="nb">test</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ACH_AGENT_DIGEST</span><span class="s2">&quot;</span>
+<span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s\n&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ACH_AGENT_DIGEST</span><span class="s2">&quot;</span>
+</code></pre></div>
+<p>Expected: <code>v0.10.1</code> resolves to the empty marker commit, the GitHub release exists, the image is multi-arch, and a non-empty <code>sha256:</code> digest is printed.</p>
+<h3 id="task-11-roll-out-and-verify-production-identity-metrics-and-digest">Task 11: Roll out and verify production identity, metrics, and digest</h3>
+<p><strong>Files:</strong> none.</p>
+<p>This task operates only on already-authorized production resources. It does not edit <code>../ach</code>, PodMonitor resources, CRDs, or LiteLLM configuration.</p>
+<ul>
+<li>[ ] <strong>Step 1: Restart the operator-owned agent Deployments and wait for rollout</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>kubectl<span class="w"> </span>-n<span class="w"> </span>ach<span class="w"> </span>rollout<span class="w"> </span>restart<span class="w"> </span>deployment<span class="w"> </span>-l<span class="w"> </span>app.kubernetes.io/name<span class="o">=</span>ach-agent
+kubectl<span class="w"> </span>-n<span class="w"> </span>ach<span class="w"> </span>rollout<span class="w"> </span>status<span class="w"> </span>deployment<span class="w"> </span>-l<span class="w"> </span>app.kubernetes.io/name<span class="o">=</span>ach-agent<span class="w"> </span>--timeout<span class="o">=</span>10m
+kubectl<span class="w"> </span>-n<span class="w"> </span>ach<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-l<span class="w"> </span>app.kubernetes.io/name<span class="o">=</span>ach-agent<span class="w"> </span>-o<span class="w"> </span>wide
+</code></pre></div>
+<p>Expected: every selected Deployment completes rollout and every replacement pod is Ready.</p>
+<ul>
+<li>[ ] <strong>Step 2: Prove running containers use the released digest</strong></li>
+</ul>
+<p>Use the <code>ACH_AGENT_DIGEST</code> captured in Task 10:</p>
+<div class="highlight"><pre><span></span><code>kubectl<span class="w"> </span>-n<span class="w"> </span>ach<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-l<span class="w"> </span>app.kubernetes.io/name<span class="o">=</span>ach-agent<span class="w"> </span>-o<span class="w"> </span>json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-e<span class="w"> </span>--arg<span class="w"> </span>digest<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ACH_AGENT_DIGEST</span><span class="s2">&quot;</span><span class="w"> </span><span class="s1">&#39;</span>
+<span class="s1">      [</span>
+<span class="s1">        .items[].status.containerStatuses[]</span>
+<span class="s1">        | select(.image | startswith(&quot;ghcr.io/ackstorm/ach-agent:&quot;))</span>
+<span class="s1">        | .imageID</span>
+<span class="s1">        | contains($digest)</span>
+<span class="s1">      ]</span>
+<span class="s1">      | length &gt; 0 and all</span>
+<span class="s1">    &#39;</span>
+</code></pre></div>
+<p>Expected: jq prints <code>true</code> and exits 0.</p>
+<ul>
+<li>[ ] <strong>Step 3: Port-forward one released pod and verify every raw sample is stamped</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="nv">ACH_AGENT_POD</span><span class="o">=</span><span class="k">$(</span>kubectl<span class="w"> </span>-n<span class="w"> </span>ach<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-l<span class="w"> </span>app.kubernetes.io/name<span class="o">=</span>ach-agent<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-o<span class="w"> </span><span class="nv">jsonpath</span><span class="o">=</span><span class="s1">&#39;{.items[0].metadata.name}&#39;</span><span class="k">)</span>
+<span class="nv">ACH_EXPECTED_AGENT</span><span class="o">=</span><span class="k">$(</span>kubectl<span class="w"> </span>-n<span class="w"> </span>ach<span class="w"> </span><span class="nb">exec</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ACH_AGENT_POD</span><span class="s2">&quot;</span><span class="w"> </span>--<span class="w"> </span>python<span class="w"> </span>-c<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s1">&#39;import json, os; p=os.environ.get(&quot;ACH_CONFIG_PATH&quot;, &quot;/etc/ach-agent/config.json&quot;); print(json.load(open(p, encoding=&quot;utf-8&quot;))[&quot;agent&quot;][&quot;name&quot;])&#39;</span><span class="k">)</span>
+<span class="nv">ACH_EXPECTED_ENVIRONMENT</span><span class="o">=</span><span class="k">$(</span>kubectl<span class="w"> </span>-n<span class="w"> </span>ach<span class="w"> </span><span class="nb">exec</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ACH_AGENT_POD</span><span class="s2">&quot;</span><span class="w"> </span>--<span class="w"> </span>python<span class="w"> </span>-c<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s1">&#39;import json, os; p=os.environ.get(&quot;ACH_CONFIG_PATH&quot;, &quot;/etc/ach-agent/config.json&quot;); print(json.load(open(p, encoding=&quot;utf-8&quot;))[&quot;capability&quot;][&quot;ach&quot;][&quot;environment&quot;])&#39;</span><span class="k">)</span>
+<span class="nb">test</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ACH_EXPECTED_AGENT</span><span class="s2">&quot;</span>
+<span class="nb">test</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ACH_EXPECTED_ENVIRONMENT</span><span class="s2">&quot;</span>
+<span class="nv">ACH_METRICS_FILE</span><span class="o">=</span><span class="k">$(</span>mktemp<span class="k">)</span>
+kubectl<span class="w"> </span>-n<span class="w"> </span>ach<span class="w"> </span>port-forward<span class="w"> </span><span class="s2">&quot;pod/</span><span class="nv">$ACH_AGENT_POD</span><span class="s2">&quot;</span><span class="w"> </span><span class="m">18080</span>:8080<span class="w"> </span>&gt;<span class="s2">&quot;</span><span class="nv">$ACH_METRICS_FILE</span><span class="s2">.port-forward&quot;</span><span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="nv">ACH_PORT_FORWARD_PID</span><span class="o">=</span><span class="nv">$!</span>
+<span class="nb">trap</span><span class="w"> </span><span class="s1">&#39;kill &quot;$ACH_PORT_FORWARD_PID&quot; 2&gt;/dev/null || true&#39;</span><span class="w"> </span>EXIT
+sleep<span class="w"> </span><span class="m">2</span>
+curl<span class="w"> </span>-fsS<span class="w"> </span>http://127.0.0.1:18080/metrics/<span class="w"> </span>&gt;<span class="s2">&quot;</span><span class="nv">$ACH_METRICS_FILE</span><span class="s2">&quot;</span>
+awk<span class="w"> </span>-v<span class="w"> </span><span class="nv">expected_agent</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$ACH_EXPECTED_AGENT</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>-v<span class="w"> </span><span class="nv">expected_environment</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$ACH_EXPECTED_ENVIRONMENT</span><span class="s2">&quot;</span><span class="w"> </span><span class="s1">&#39;</span>
+<span class="s1">  /^#/ || /^[[:space:]]*$/ { next }</span>
+<span class="s1">  index($0, &quot;agent=\&quot;&quot; expected_agent &quot;\&quot;&quot;) == 0 ||</span>
+<span class="s1">  index($0, &quot;environment=\&quot;&quot; expected_environment &quot;\&quot;&quot;) == 0 {</span>
+<span class="s1">    print &quot;incorrectly stamped sample: &quot; $0 &gt; &quot;/dev/stderr&quot;</span>
+<span class="s1">    failed = 1</span>
+<span class="s1">  }</span>
+<span class="s1">  END { exit failed }</span>
+<span class="s1">&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ACH_METRICS_FILE</span><span class="s2">&quot;</span>
+</code></pre></div>
+<p>Expected: both expected values are non-empty, curl succeeds, and awk proves every sample carries the exact rendered agent/environment pair. Keep the port-forward running through Step 4.</p>
+<ul>
+<li>[ ] <strong>Step 4: Verify a restricted <code>name[]</code> scrape</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-fsSG<span class="w"> </span>http://127.0.0.1:18080/metrics/<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--data-urlencode<span class="w"> </span><span class="s1">&#39;name[]=ach_agent_engine_watchdog_kills_total&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>&gt;<span class="s2">&quot;</span><span class="nv">$ACH_METRICS_FILE</span><span class="s2">.restricted&quot;</span>
+awk<span class="w"> </span>-v<span class="w"> </span><span class="nv">expected_agent</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$ACH_EXPECTED_AGENT</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>-v<span class="w"> </span><span class="nv">expected_environment</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$ACH_EXPECTED_ENVIRONMENT</span><span class="s2">&quot;</span><span class="w"> </span><span class="s1">&#39;</span>
+<span class="s1">  /^#/ || /^[[:space:]]*$/ { next }</span>
+<span class="s1">  $0 !~ /^ach_agent_engine_watchdog_kills_total[{ ]/ {</span>
+<span class="s1">    print &quot;unexpected restricted sample: &quot; $0 &gt; &quot;/dev/stderr&quot;</span>
+<span class="s1">    failed = 1</span>
+<span class="s1">  }</span>
+<span class="s1">  index($0, &quot;agent=\&quot;&quot; expected_agent &quot;\&quot;&quot;) == 0 ||</span>
+<span class="s1">  index($0, &quot;environment=\&quot;&quot; expected_environment &quot;\&quot;&quot;) == 0 {</span>
+<span class="s1">    print &quot;incorrectly stamped restricted sample: &quot; $0 &gt; &quot;/dev/stderr&quot;</span>
+<span class="s1">    failed = 1</span>
+<span class="s1">  }</span>
+<span class="s1">  END { exit failed }</span>
+<span class="s1">&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ACH_METRICS_FILE</span><span class="s2">.restricted&quot;</span>
+<span class="nb">kill</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ACH_PORT_FORWARD_PID</span><span class="s2">&quot;</span>
+<span class="nb">wait</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ACH_PORT_FORWARD_PID</span><span class="s2">&quot;</span><span class="w"> </span><span class="m">2</span>&gt;/dev/null<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">true</span>
+<span class="nb">trap</span><span class="w"> </span>-<span class="w"> </span>EXIT
+</code></pre></div>
+<p>Expected: only the requested counter sample is present and it has both labels.</p>
+<ul>
+<li>[ ] <strong>Step 5: Verify all harness-exported series through PromQL</strong></li>
+</ul>
+<p>Run these exact queries in the production Prometheus expression browser or HTTP API:</p>
+<div class="highlight"><pre><span></span><code><span class="k">count</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="o">(</span><span class="nv">__name__</span><span class="p">,</span><span class="w"> </span><span class="nv">agent</span><span class="p">,</span><span class="w"> </span><span class="nv">environment</span><span class="o">)</span><span class="w"> </span><span class="o">(</span>
+<span class="w">  </span><span class="p">{</span><span class="nl">namespace</span><span class="o">=</span><span class="p">&quot;</span><span class="s">ach</span><span class="p">&quot;,</span><span class="w"> </span><span class="nl">container</span><span class="o">=</span><span class="p">&quot;</span><span class="s">ach-agent</span><span class="p">&quot;,</span><span class="w"> </span><span class="nl">__name__</span><span class="o">=~</span><span class="p">&quot;</span><span class="s">ach_agent_.*|process_.*|python_.*</span><span class="p">&quot;}</span>
+<span class="o">)</span>
+</code></pre></div>
+<p>Expected: every returned group has non-empty <code>agent</code> and <code>environment</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="k">count</span><span class="o">(</span>
+<span class="w">  </span><span class="p">{</span><span class="nl">namespace</span><span class="o">=</span><span class="p">&quot;</span><span class="s">ach</span><span class="p">&quot;,</span><span class="w"> </span><span class="nl">container</span><span class="o">=</span><span class="p">&quot;</span><span class="s">ach-agent</span><span class="p">&quot;,</span><span class="w"> </span><span class="nl">__name__</span><span class="o">=~</span><span class="p">&quot;</span><span class="s">ach_agent_.*|process_.*|python_.*</span><span class="p">&quot;}</span>
+<span class="w">  </span><span class="ow">unless</span>
+<span class="w">  </span><span class="p">{</span><span class="nl">namespace</span><span class="o">=</span><span class="p">&quot;</span><span class="s">ach</span><span class="p">&quot;,</span><span class="w"> </span><span class="nl">container</span><span class="o">=</span><span class="p">&quot;</span><span class="s">ach-agent</span><span class="p">&quot;,</span><span class="w"> </span><span class="nl">__name__</span><span class="o">=~</span><span class="p">&quot;</span><span class="s">ach_agent_.*|process_.*|python_.*</span><span class="p">&quot;,</span><span class="w"> </span><span class="nl">agent</span><span class="o">=~</span><span class="p">&quot;</span><span class="s">.+</span><span class="p">&quot;,</span><span class="w"> </span><span class="nl">environment</span><span class="o">=~</span><span class="p">&quot;</span><span class="s">.+</span><span class="p">&quot;}</span>
+<span class="o">)</span>
+</code></pre></div>
+<p>Expected: <code>0</code>. This checks all harness-exported application, Python, and process series, rather than one selected turn counter.</p>
+<ul>
+<li>[ ] <strong>Step 6: Record route-header evidence for the released commit</strong></li>
+</ul>
+<p>If production Forwarder/A2A receiver request logs expose header names and non-secret values, record one real hydrate, model, MCP, and A2A request showing the same agent/environment pair and exactly one of each identity header. If those logs intentionally redact or omit headers, attach the Task 9 <code>-vv</code> hermetic test output and its released commit SHA instead:</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>rev-parse<span class="w"> </span>v0.10.1^<span class="o">{}</span>
+./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/engine/test_hydrate.py::test_hydrate_sends_bootstrap_headers_then_commits_validated_identity<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/engine/test_mcp_proxy.py::test_mcp_proxy_replaces_case_variant_client_identity<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/engine/test_model_proxy.py::test_direct_model_override_auth_still_replaces_identity_headers<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/engine/test_a2a_egress.py::test_real_a2a_client_receives_process_identity_headers<span class="w"> </span>-vv
+</code></pre></div>
+<p>Expected: the SHA is the CI-tagged <code>v0.10.1</code> marker and all four route-evidence tests pass from that released tree.</p>
+<hr />
+<h2 id="dependency-graph-and-execution-order">Dependency Graph and Execution Order</h2>
+<div class="highlight"><pre><span></span><code>Task 1  process identity + header replacement
+  ├──&gt; Task 2  copied Metric wrapper
+  │      └──&gt; Task 3  raw + name[] HTTP exposition
+  └──&gt; Task 4  hydrate bootstrap + validated identity commit
+           ├──&gt; Task 5  shared model/MCP enforcement
+           └──&gt; Task 6  A2A client enforcement
+
+Tasks 3 + 5 + 6
+  └──&gt; Task 7  frozen contract + configuration docs
+           └──&gt; Task 8  v0.10.1 changelog/version/lock
+                    └──&gt; Task 9  full gates + hermetic evidence
+                             └──&gt; Task 10 empty marker + push + CI release
+                                      └──&gt; Task 11 rollout + digest + production verification
+</code></pre></div>
+<p>Tasks 5 and 6 are implementation-independent after Task 4, but execute them sequentially under <code>superpowers:executing-plans</code> so every commit is reviewed and green before the next task. All release and production tasks are strictly serial.</p>
+<h2 id="completion-evidence">Completion Evidence</h2>
+<p>The implementation is complete only when all of the following are recorded:</p>
+<ul>
+<li>Unit tests prove accurate Prometheus 0.25.0 sample names and <code>Metric</code> return types.</li>
+<li>Collector-owned metrics remain unchanged across collisions, repeated scrapes, and a collector that reuses the same <code>Metric</code> instance; copied metrics retain <code>unit</code> and sample metadata.</li>
+<li><code>create_app([cfg], handler)</code> passes raw and <code>name[]</code> endpoint tests with every sample stamped.</li>
+<li>Hydrate, model, MCP, direct model override, and A2A route tests show exactly one authoritative identity pair and case-insensitive spoof removal where client headers exist.</li>
+<li>Invalid hydration leaves process identity unchanged and <code>ach_agent_info</code> is absent.</li>
+<li>Frozen contract and configuration docs state that every exposed sample is stamped and all four outbound paths receive both headers.</li>
+<li><code>make verify</code>, all e2e tests, strict docs build, and diff checks pass.</li>
+<li><code>CHANGELOG.md</code>, <code>pyproject.toml</code>, and <code>uv.lock</code> agree on <code>0.10.1</code>.</li>
+<li>The empty marker is the released/tagged commit; no local tag was created.</li>
+<li>GitHub release and multi-arch GHCR image exist; production pods run that exact digest.</li>
+<li>Raw scrape, restricted scrape, and all-series PromQL verification pass after rollout.</li>
+<li>Real receiver evidence or the four released-tree hermetic route tests are attached to the release verification record.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

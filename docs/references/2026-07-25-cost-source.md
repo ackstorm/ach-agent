@@ -26,4 +26,4 @@ evidence supporting the billable-input/cache and thinking-token treatment.
 ## Related
 
 - [`docs/configuration.md`](../configuration.md) — operator-facing source semantics and A.5 failure table.
-- [`docs/plan/CONTRACT_v3.md`](../plan/CONTRACT_v3.md) — rendered contract addendum.
+- [`docs/design/CONTRACT_v3.md`](../design/CONTRACT_v3.md) — rendered contract addendum.

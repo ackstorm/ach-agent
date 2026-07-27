@@ -11,9 +11,7 @@ nav:
   - Getting started: getting-started.md
   - Configuration: configuration.md
 exclude_docs: |
-  plan/
   plans/
-  spec/
   requirements.txt
 markdown_extensions:
   - admonition

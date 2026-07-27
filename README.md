@@ -106,7 +106,7 @@ e.g. `gitlab-pr-review`).
 In production the harness is **not** deployed by hand — the **`ach-runtime` operator** builds
 the `Deployment` from your `Agent` CRD (it owns the deployment profile — cpu/mem, replicas,
 scaling — and renders the runtime config into the pod). The harness has no Kubernetes RBAC and
-never talks to the API server; see [`docs/plan/CONTRACT_v3.md`](docs/plan/CONTRACT_v3.md) §1.
+never talks to the API server; see [`docs/design/CONTRACT_v3.md`](docs/design/CONTRACT_v3.md) §1.
 
 For local/standalone runs use the container directly — see [Getting started](docs/getting-started.md).
 

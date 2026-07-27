@@ -85,7 +85,7 @@ both simpler and the only one actually exercised.
   `.thinking_level` + the cross-field `model_validator`.
 - `docs/schemas/agent-config-v1.schema.json`: regenerated (drift-guarded by
   `tests/config/test_schema_artifact.py`).
-- `docs/plan/CONTRACT_v3.md`: `engine.pi` example updated.
+- `docs/design/CONTRACT_v3.md`: `engine.pi` example updated.
 - `src/ach_agent/engine/base/driver.py`: `PiModelCapability` dataclass,
   `EngineConfig.pi_model_capability`/`.pi_thinking_level`.
 - `src/ach_agent/engine/pi/models_json.py`: reads `cfg.pi_model_capability`.

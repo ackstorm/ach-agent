@@ -3,9 +3,7 @@
 .uv-cache/
 .claude/
 CLAUDE.md
-docs/plan/
-docs/spec/
-docs/superpowers/plans/
+docs/plans/
 .env
 .venv/
 __pycache__/

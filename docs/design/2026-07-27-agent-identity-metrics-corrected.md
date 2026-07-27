@@ -18,7 +18,7 @@
 - Prometheus implementation and tests must match `prometheus-client==0.25.0`: `Counter("thing_total", "doc")` exposes `thing_total`, `collect()` yields `Iterable[Metric]`, and the library's restricted registry is `RestrictedRegistry`, not `CollectorRegistry`.
 - Never mutate `Metric` objects or sample-label mappings owned by a collector. Return fresh `Metric` snapshots, preserve all metric fields including `unit`, preserve all sample fields via `_replace`, and make process identity win collisions.
 - Invalid hydration must not change the already-committed process identity or create an identity metric side effect.
-- Update the frozen prose contract `docs/design/CONTRACT_v3.md`; no JSON-schema field changes are required.
+- Update the frozen prose contract `docs/schemas/operator-contract.md`; no JSON-schema field changes are required.
 - Release exactly `v0.10.1`. `v0.10.0` already exists and resolves to `aec85d1761cc9cb66e946ea6da4b5f8006e705c1`.
 - CI creates the `v0.10.1` tag, GitHub release, and GHCR images from the empty `chore(release): v0.10.1` marker commit. Never create or push a local release tag.
 - Out of scope: all changes in `../ach`, including its PodMonitor; cost CRD work; converting these identity headers into LiteLLM tags.
@@ -45,7 +45,7 @@
 | `tests/engine/test_mcp_proxy.py` | MCP spoof stripping and authoritative identity injection. |
 | `tests/engine/test_model_proxy.py` | Model spoof stripping plus direct-model-override identity coverage. |
 | `tests/engine/test_a2a_egress.py` | Hermetic verification of headers passed to the real A2A client construction seam. |
-| `docs/design/CONTRACT_v3.md` | Frozen contract for identity sources, all four outbound paths, stripping, and metric labels. |
+| `docs/schemas/operator-contract.md` | Frozen contract for identity sources, all four outbound paths, stripping, and metric labels. |
 | `docs/configuration.md` | Operator-facing identity, metrics, header, override, and series-discontinuity behavior. |
 | `CHANGELOG.md` | `v0.10.1` user-visible changes and Prometheus series-identity warning. |
 | `pyproject.toml`, `uv.lock` | Patch version `0.10.1` and synchronized project lock entry. |
@@ -1025,7 +1025,7 @@ git commit -m "feat(identity): attach identity to A2A egress"
 
 **Files:**
 
-- Modify: `docs/design/CONTRACT_v3.md:395-425,499-504,620-634,699-709`
+- Modify: `docs/schemas/operator-contract.md:395-425,499-504,620-634,699-709`
 - Modify: `docs/configuration.md:7-22`
 
 **Interfaces:**
@@ -1035,7 +1035,7 @@ git commit -m "feat(identity): attach identity to A2A egress"
 
 - [ ] **Step 1: Update the frozen hydration and egress contract**
 
-Make these precise changes in `docs/design/CONTRACT_v3.md`:
+Make these precise changes in `docs/schemas/operator-contract.md`:
 
 1. In the governed environment table and the paragraph below it, define process identity as `agent.name` plus the requested `capability.ach.environment`; state that the validated hydrate response's required `environment` becomes the committed process environment for subsequent metrics and egress.
 2. In Hydration step 1, state that `POST /platform/hydrate` carries `x-ach-key`, `x-ach-agent`, and `x-ach-environment`; the latter two come from trusted rendered config for this bootstrap request.
@@ -1061,7 +1061,7 @@ Replace `docs/configuration.md`'s `ach_agent_info` section with operator-facing 
 
 ```bash
 rg -n "x-ach-agent|x-ach-environment|every exposed sample|name\[\]|case-insensitive|v0.10.1" \
-  docs/design/CONTRACT_v3.md docs/configuration.md
+  docs/schemas/operator-contract.md docs/configuration.md
 git diff --exit-code -- docs/schemas/agent-config-v1.schema.json
 ```
 
@@ -1078,7 +1078,7 @@ Expected: strict MkDocs build passes.
 - [ ] **Step 5: Commit contract and docs**
 
 ```bash
-git add docs/design/CONTRACT_v3.md docs/configuration.md
+git add docs/schemas/operator-contract.md docs/configuration.md
 git commit -m "docs(identity): freeze metrics and egress identity contract"
 ```
 

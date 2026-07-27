@@ -22,8 +22,8 @@ from ach_agent.config.schema import AgentConfig
 
 # Committed artifact path (repo-relative). Lives UNDER docs/ (mkdocs docs_dir) so it is both the
 # machine-readable half of the frozen §2 contract AND published to the docs site (gh-pages) at the
-# $id URL below — the ach-runtime operator and config authors consume it there. CONTRACT_v3.md
-# itself is the prose half of that contract, under docs/design/.
+# $id URL below — the ach-runtime operator and config authors consume it there. Its prose half,
+# operator-contract.md, sits alongside it in the same directory.
 ARTIFACT = (
     Path(__file__).resolve().parent.parent / "docs" / "schemas" / "agent-config-v1.schema.json"
 )

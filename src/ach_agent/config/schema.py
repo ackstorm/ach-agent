@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Full CONTRACT_v3 §2 Pydantic v2 config schema + hard-fail loader (CFG-01/02/03, D-01).
+"""Full operator contract §2 Pydantic v2 config schema + hard-fail loader (CFG-01/02/03, D-01).
 
 Models every block from the rendered runtime config. All blocks carry
 ConfigDict(extra='forbid') so unknown keys cause a hard-fail at load time.
@@ -66,7 +66,7 @@ class ThinkingBlock(BaseModel):
 
 
 class ModelBlock(BaseModel):
-    """CONTRACT_v3 §2 model block: provider-selecting name + open params."""
+    """Operator contract §2 model block: provider-selecting name + open params."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -219,7 +219,7 @@ class SystemAch(BaseModel):
         return v
 
 
-# Discriminated on `type`: the string shorthand is intentionally NOT accepted (CONTRACT_v3
+# Discriminated on `type`: the string shorthand is intentionally NOT accepted (operator contract
 # ADDENDUM-prompt-source §1 — the operator renders the object form).
 SystemPrompt = Annotated[SystemText | SystemFile | SystemAch, Field(discriminator="type")]
 
@@ -344,7 +344,7 @@ Memory = Annotated[HindsightMemory | CodememMemory, Field(discriminator="type")]
 
 
 # ---------------------------------------------------------------------------
-# mcpServers — harness-managed MCP servers (CONTRACT_v3 §2a, ADDENDUM-mcpservers)
+# mcpServers — harness-managed MCP servers (operator contract §2a, ADDENDUM-mcpservers)
 # ---------------------------------------------------------------------------
 
 
@@ -398,12 +398,12 @@ McpServerConfig = Annotated[
 
 
 # ---------------------------------------------------------------------------
-# Capability blocks (CONTRACT_v3 §2, D-05: ach-only)
+# Capability blocks (operator contract §2, D-05: ach-only)
 # ---------------------------------------------------------------------------
 
 
 class CapabilityAchBlock(BaseModel):
-    """CONTRACT_v3 §2 capability.ach sub-block."""
+    """Operator contract §2 capability.ach sub-block."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -419,7 +419,7 @@ class CapabilityAchBlock(BaseModel):
 
 
 class CapabilityFilterExcludeBlock(BaseModel):
-    """CONTRACT_v3 §2 capability.filter.exclude sub-block — gate ABOVE the model."""
+    """Operator contract §2 capability.filter.exclude sub-block — gate ABOVE the model."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -429,7 +429,7 @@ class CapabilityFilterExcludeBlock(BaseModel):
 
 
 class CapabilityFilterBlock(BaseModel):
-    """CONTRACT_v3 §2 capability.filter sub-block."""
+    """Operator contract §2 capability.filter sub-block."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -437,7 +437,7 @@ class CapabilityFilterBlock(BaseModel):
 
 
 class CapabilityBlock(BaseModel):
-    """CONTRACT_v3 §2 capability block (D-05: ach-only; direct → hard-fail)."""
+    """Operator contract §2 capability block (D-05: ach-only; direct → hard-fail)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -452,7 +452,7 @@ class CapabilityBlock(BaseModel):
 
 
 class SecretSource(BaseModel):
-    """CONTRACT_v3 §2 secret source — env-only (no disk secrets).
+    """Operator contract §2 secret source — env-only (no disk secrets).
 
     env → the harness reads the value from os.environ[NAME] at use time (hardened default:
           dumpable=0 hides it from the co-resident agent; the NAME must NOT be in
@@ -482,7 +482,7 @@ def resolve_secret(src: SecretSource) -> str | None:
 
 
 class WebhookAuthBlock(BaseModel):
-    """CONTRACT_v3 §2 webhook.auth sub-block."""
+    """Operator contract §2 webhook.auth sub-block."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -501,7 +501,7 @@ class WebhookAuthBlock(BaseModel):
 
 
 class WebhookBlock(BaseModel):
-    """CONTRACT_v3 §2 webhook channel sub-block (deliver/deliverOnly removed)."""
+    """Operator contract §2 webhook channel sub-block (deliver/deliverOnly removed)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -545,7 +545,7 @@ class A2AAuthBlock(BaseModel):
 
 
 class A2ABlock(BaseModel):
-    """CONTRACT_v3 §2 a2a channel sub-block (CHN-05; async-only in v1)."""
+    """Operator contract §2 a2a channel sub-block (CHN-05; async-only in v1)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -554,7 +554,7 @@ class A2ABlock(BaseModel):
 
 
 class CronBlock(BaseModel):
-    """CONTRACT_v3 §2 cron channel sub-block (CHN-02)."""
+    """Operator contract §2 cron channel sub-block (CHN-02)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -579,7 +579,7 @@ class CronBlock(BaseModel):
 
 
 class QueueBlock(BaseModel):
-    """CONTRACT_v3 §2 queue channel sub-block (redis-only in v1, §7)."""
+    """Operator contract §2 queue channel sub-block (redis-only in v1, §7)."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -593,7 +593,7 @@ class QueueBlock(BaseModel):
 # ---------------------------------------------------------------------------
 
 # D-02/D-06: unrecognized channel type → ValidationError → hard-fail
-# slack/telegram removed; queue added per CONTRACT_v3 §2.
+# slack/telegram removed; queue added per operator contract §2.
 # NOTE: `tui` is NOT a channel — it is the `--tui` launch modifier (console mode that
 # ignores configured channels). See main.py. So it is intentionally absent here.
 ChannelType = Literal["webhook", "cron", "queue", "a2a"]
@@ -635,7 +635,7 @@ class SessionBlock(BaseModel):
 
 
 class ChannelConfig(BaseModel):
-    """CONTRACT_v3 §2 channel entry. extra=forbid catches unknown channel-level keys."""
+    """Operator contract §2 channel entry. extra=forbid catches unknown channel-level keys."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -703,7 +703,7 @@ class CostBlock(BaseModel):
 
 
 class AgentConfig(BaseModel):
-    """Full CONTRACT_v3 §2 rendered runtime config (D-01: modeled in one pass).
+    """Full operator contract §2 rendered runtime config (D-01: modeled in one pass).
 
     ConfigDict(extra='forbid', strict=True) ensures unknown top-level keys
     cause a ValidationError that hard-fails the process (CFG-02).

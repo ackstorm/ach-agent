@@ -1,6 +1,6 @@
 """Validator tests: single-object terminal contract extraction.
 
-CONTRACT_v3: the terminal output is a single {"action",...,"text",...,"thoughts"}
+Operator contract: the terminal output is a single {"action",...,"text",...,"thoughts"}
 object (NOT a list). extract_terminal finds the last such object in accumulated text.
 """
 from __future__ import annotations

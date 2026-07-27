@@ -106,11 +106,32 @@ e.g. `gitlab-pr-review`).
 In production the harness is **not** deployed by hand — the **`ach-runtime` operator** builds
 the `Deployment` from your `Agent` CRD (it owns the deployment profile — cpu/mem, replicas,
 scaling — and renders the runtime config into the pod). The harness has no Kubernetes RBAC and
-never talks to the API server; see [`docs/design/CONTRACT_v3.md`](docs/design/CONTRACT_v3.md) §1.
+never talks to the API server; see [`docs/schemas/operator-contract.md`](docs/schemas/operator-contract.md) §1.
 
 For local/standalone runs use the container directly — see [Getting started](docs/getting-started.md).
 
 Released container images are published to `ghcr.io/ackstorm/ach-agent`.
+
+### Operator contract
+
+The seam between the **`ach-runtime` operator** (Go) and this harness (Python) is one contract
+in two halves, kept side by side in [`docs/schemas/`](docs/schemas/):
+
+| Half | File | Role |
+|---|---|---|
+| Prose | [`operator-contract.md`](docs/schemas/operator-contract.md) | The frozen interface — hydration, egress, auth headers, channel semantics. Pins contract revision **v3**. |
+| Machine-readable | [`agent-config-v1.schema.json`](docs/schemas/agent-config-v1.schema.json) | §2 rendered as JSON Schema. **Authoritative for field names, types and defaults.** |
+
+The schema is generated from `AgentConfig` by `scripts/gen_schema.py` (`make schema`),
+drift-guarded by `tests/config/test_schema_artifact.py`, and published at its `$id`:
+
+```
+https://ackstorm.github.io/ach-agent/stable/schemas/agent-config-v1.schema.json
+```
+
+That URL is what the operator consumes, and `ach-runtime` vendors a copy guarded by its own
+`TestSchema_NoDrift`. **Neither repo may change the contract unilaterally** — regenerate here,
+re-vendor there, in the same change.
 
 ## Contributing
 

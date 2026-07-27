@@ -177,7 +177,7 @@ lane / bounds change.
   `docs/superpowers/plans/2026-07-23-pi-engine-driver-sp1/`
 - ach-agent: `Dockerfile` (codemem-bin template `:17-24,69-76`), `config/schema.py:61`,
   `engine/pi/{driver,config}.py`, `tests/e2e/test_pi_e2e.py`, `stats/models.py`,
-  `docs/design/CONTRACT_v3.md:121-123`
+  `docs/schemas/operator-contract.md:121-123`
 - `../ach`: `api/ach/v1alpha1/agentprofile_types.go:41-58` (+ render path under
   `internal/platformapi/render`)
 - Pi docs / pi-mcp-adapter: see SP1 §13

@@ -1,4 +1,9 @@
-# ACH Agent Runtime — Shared Contract v3 (the seam)
+# ACH Agent Runtime — Operator Contract (the seam)
+
+> **Pinned contract revision: v3.** This file was named `CONTRACT_v3.md` until 2026-07-27;
+> the revision it pins now lives here in the header instead of in the filename, so the
+> document keeps its name across revisions. When `ach-runtime` cuts v4, bump this line —
+> do not rename the file.
 
 > **Consolidated 2026-07-01:** this document folds in `CONTRACT_v3-ADDENDUM-hydration.md`
 > and `CONTRACT_v3-ADDENDUM-prompt-source.md` and **supersedes them** — their corrected
@@ -16,7 +21,7 @@ unilaterally. Source of truth lives in `ach-runtime`; `ach-agent` pins a version
 Spec reference: `ach-agent-runtime-spec-v1_4_7.md` (API group `runtime.ackstorm.ai/v1alpha1`).
 
 > **Frozen v1 — 2026-07-02.** The machine-readable half of §2 is the generated JSON Schema
-> [`docs/schemas/agent-config-v1.schema.json`](../schemas/agent-config-v1.schema.json) —
+> [`docs/schemas/agent-config-v1.schema.json`](agent-config-v1.schema.json) —
 > committed, published to the docs site at
 > `https://ackstorm.github.io/ach-agent/stable/schemas/agent-config-v1.schema.json`, produced
 > from the harness `AgentConfig` by `scripts/gen_schema.py`

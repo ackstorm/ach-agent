@@ -12,7 +12,7 @@ Locked decisions:
     trait) we ack+drop, mirroring cron's drop-on-full semantics (RTR-05) — the
     message is consumed, never redelivered, and the drop is logged loudly.
 
-REDIS URL DEVIATION (as-built): CONTRACT_v3 §2 `queue` block carries only
+REDIS URL DEVIATION (as-built): operator contract §2 `queue` block carries only
 `key`/`ackMode` — it does NOT carry a connection URL. The redis connection is
 therefore read from the env var `REDIS_URL` (default "redis://localhost:6379").
 This is a deliberate as-built deviation from the contract: the contract is the

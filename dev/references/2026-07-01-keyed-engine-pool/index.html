@@ -543,7 +543,7 @@
 <p><strong>Status:</strong> Shipped. Merged to <code>main</code> (<code>c57c92a</code>, <code>--no-ff</code>) and pushed. Validated live in <code>--tui</code>.
 <strong>Branch:</strong> <code>feat/keyed-engine-pool</code> (7 commits).
 <strong>Built with:</strong> superpowers <code>writing-plans</code> + <code>subagent-driven-development</code> (fresh implementer per task,
-per-task review, whole-branch review). Plan: <code>docs/superpowers/plans/2026-07-01-keyed-engine-pool.md</code>.</p>
+per-task review, whole-branch review).</p>
 <blockquote>
 <p><strong>Stale note (2026-07-03):</strong> two §3 claims drifted. The <code>engine_has_been_ready_once</code> gate
 (and <code>COLD_START_REJECTS</code>/<code>COLD_START_DROPS</code>) is described as surviving as dead state — it has
@@ -715,8 +715,7 @@ b0ce381 docs(engine): document per-key home disk tradeoff (M-3)
 <p>Gate at merge: full suite <strong>309 passed, 1 skipped</strong>; <code>make _lint</code> (ruff + mypy --strict) clean.</p>
 <hr />
 <h2 id="7-correction-2026-07-01-per-key-home-shared-home-per-session-config-file">7. Correction (2026-07-01): per-key HOME → shared HOME + per-session config file</h2>
-<p><strong>Branch:</strong> <code>feat/shared-home-per-session-config</code>. <strong>Plan:</strong>
-<code>docs/superpowers/plans/2026-07-01-shared-home-per-session-config.md</code>.</p>
+<p><strong>Branch:</strong> <code>feat/shared-home-per-session-config</code>.</p>
 <h3 id="the-split-brain-regression">The split-brain regression</h3>
 <p>The per-key HOME design described in §3 (<code>_config_for_key</code> → <code>&lt;home&gt;/servers/oc-&lt;key&gt;</code>) introduced
 a split-brain regression: the harness hydrates skills and <code>.ach-state</code> once into the <strong>shared</strong>

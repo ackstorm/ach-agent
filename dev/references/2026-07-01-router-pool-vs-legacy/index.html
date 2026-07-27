@@ -460,8 +460,7 @@
 
 <h1 id="router-engine-pool-session-lifecycle-vs-legacy-ackbot-process-comparison-decision-record-2026-07-01">Router / Engine-Pool / Session lifecycle vs legacy <code>ackbot-process</code> — comparison &amp; decision record (2026-07-01)</h1>
 <p><strong>Status:</strong> Analysis + decisions. No code shipped by this document. Implementation is split into
-follow-up plans (see §8); the first is
-<code>docs/superpowers/plans/2026-07-01-engine-timeout-warm-reuse.md</code>.</p>
+follow-up plans (see §8).</p>
 <blockquote>
 <p><strong>Stale note (2026-07-03):</strong> all four §8 follow-up plans + B8 have <strong>shipped</strong> (the doc
 self-tracks this in §9–13). Residual drift: §4 B1 says <code>channel.session: auto</code> is the default —
@@ -515,9 +514,9 @@ of every load-bearing claim against source (<code>lane.py</code>, <code>main.py<
 <li>Consequence: <strong>two events for the same GitLab MR run concurrently</strong> (default <code>concurrency=3</code>) against
   the <strong>same opencode filesystem</strong> — the legacy config literally warns "sessions share filesystem —
   concurrent writes may collide" (<code>config.py:38-40</code>).</li>
-<li>The sophisticated per-user machinery in legacy's <code>docs/plans/</code> (<code>pool.get_or_create</code>, <code>UserManager</code>,
+<li>The sophisticated per-user machinery in legacy's own plan docs (<code>pool.get_or_create</code>, <code>UserManager</code>,
   <code>state.json</code>, dual-concurrency) belongs to a <strong>deleted Slack/Telegram architecture</strong>; it is NOT in the
-  current opencode code. <code>docs/plans/2025-12-03-dual-concurrency-limits.md</code> describes a per-project cap
+  current opencode code. Legacy's dual-concurrency-limits plan describes a per-project cap
   that <code>grep</code> confirms <strong>is not in the shipped code</strong> — a mature mechanism legacy itself dropped.</li>
 </ul>
 <p><code>ach-agent</code>'s per-session FIFO lane + pinned <code>dedup → backpressure → lane</code> + three finite bounds is
@@ -678,7 +677,7 @@ channel name, document the limitation, defer per-message keying.</strong></p>
    agent leaks prose. We have neither.</li>
 <li><strong>SSE reconnect + mid-query liveness</strong> (<code>opencode.py:214-271</code>): bounded, health-gated reconnect and
    per-iteration <code>is_alive()</code>. Port onto our live path (B4/B5).</li>
-<li><strong>contextvars lesson</strong> (<code>docs/plans/2026-02-22-user-push-race-condition-fix.md</code>): any per-request routing
+<li><strong>contextvars lesson</strong> (legacy's user-push race-condition fix): any per-request routing
    state shared across concurrently-dispatched tasks must be lane/context-local. Our lane structurally
    prevents the classic failure — keep it that way (never stash per-request state on a shared object).</li>
 </ol>
@@ -706,8 +705,7 @@ channel name, document the limitation, defer per-message keying.</strong></p>
 - <strong>B6:</strong> default to keeping channel-name keying for queue in v1; document the no-intra-channel-parallelism
   limitation; per-message keying is a tracked follow-up.</p>
 <p><strong>Priority order (highest ROI first):</strong>
-1. <strong>Plan 1 — engine timeout + reply + warm reuse</strong> (B2, B3, B1, B7 <code>_expire</code>/<code>release_port</code>). Fully
-   task-decomposed at <code>docs/superpowers/plans/2026-07-01-engine-timeout-warm-reuse.md</code>. These four are
+1. <strong>Plan 1 — engine timeout + reply + warm reuse</strong> (B2, B3, B1, B7 <code>_expire</code>/<code>release_port</code>). These four are
    coupled (warm TTL is unsafe until the timeout path force-kills and the future always resolves) and are
    the only cluster I can spec end-to-end from verified reading. Start here.
 2. <strong>Plan 2 — SSE reconnect + mid-query liveness on the live path</strong> (B4, B5). Port from legacy
@@ -720,8 +718,7 @@ channel name, document the limitation, defer per-message keying.</strong></p>
 (unread seams). This record is the shared <em>why</em>; the plans are the <em>how</em>.</p>
 <hr />
 <h2 id="9-update-2026-07-01-plan-1-shipped">9. Update (2026-07-01): Plan 1 shipped</h2>
-<p><code>docs/superpowers/plans/2026-07-01-engine-timeout-warm-reuse.md</code> is implemented and merged.
-Closed: <strong>B2, B3, B1, and the B7 <code>_expire</code>/<code>release_port</code> items</strong> (B7's queue dual-key dedup
+<p>Plan 1 is implemented and merged. Closed: <strong>B2, B3, B1, and the B7 <code>_expire</code>/<code>release_port</code> items</strong> (B7's queue dual-key dedup
 stays a Plan 3 follow-up). Behavior now:</p>
 <ul>
 <li><strong>Single <code>maxInvocationSeconds</code> owner (B2).</strong> <code>run_invocation</code> no longer self-times-out or
@@ -747,8 +744,7 @@ stays a Plan 3 follow-up). Behavior now:</p>
 </ul>
 <hr />
 <h2 id="10-update-2026-07-02-plan-2-shipped-b4b5">10. Update (2026-07-02): Plan 2 shipped (B4/B5)</h2>
-<p><code>docs/superpowers/plans/2026-07-02-engine-sse-reconnect-liveness.md</code> is implemented. Closed
-<strong>B4 and B5</strong>. Behavior now on the LIVE invocation path (<code>lifecycle.consume_sse_after_send</code>):</p>
+<p>Plan 2 is implemented. Closed <strong>B4 and B5</strong>. Behavior now on the LIVE invocation path (<code>lifecycle.consume_sse_after_send</code>):</p>
 <ul>
 <li><strong>Bounded, health-gated reconnect (B4).</strong> A transient SSE-reader drop
   (<code>aiohttp.ClientError</code>) mid-turn is recovered by re-subscribing (default <code>max_reconnects=3</code>),
@@ -773,7 +769,7 @@ stays a Plan 3 follow-up). Behavior now:</p>
 step-budget abort.</p>
 <hr />
 <h2 id="11-update-2026-07-02-plan-3-shipped-b6-adjacent-gitlab-dedup">11. Update (2026-07-02): Plan 3 shipped (B6-adjacent gitlab dedup)</h2>
-<p><code>docs/superpowers/plans/2026-07-02-gitlab-dual-key-dedup.md</code> is implemented. Ported the
+<p>Plan 3 is implemented. Ported the
 valuable half of legacy <code>ackbot-process/src/handlers/gitlab/handler.py:55-89</code> — the <strong>logical
 content composite</strong> — as an <strong>additive SECONDARY dedup key</strong> beside the unchanged primary UUID
 key. The router structure (<code>dedup → backpressure → lane</code>, the three bounds, lanes, eviction) is
@@ -804,7 +800,7 @@ RTR-01 preserved) and mark (step 3).</p>
 </ul>
 <hr />
 <h2 id="12-update-2026-07-02-plan-4-shipped-runaway-control">12. Update (2026-07-02): Plan 4 shipped (runaway control)</h2>
-<p><code>docs/superpowers/plans/2026-07-02-runaway-step-budget-abort.md</code> is implemented. Ported legacy
+<p>Plan 4 is implemented. Ported legacy
 <code>ackbot-process</code>'s runaway-turn control — a <strong>tool-call count</strong> bound complementing the existing
 <strong>time</strong> bound (<code>maxInvocationSeconds</code>).</p>
 <ul>

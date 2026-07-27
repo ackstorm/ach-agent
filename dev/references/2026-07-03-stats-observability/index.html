@@ -391,9 +391,7 @@
 <strong>Status:</strong> Shipped (on <code>main</code>, v0.6.x). Harness-local, env-gated, NOT part of <code>CONTRACT_v3</code>.</p>
 <p>Records the <em>why</em> of the per-invocation + per-tool observability path: the harness-side sink
 (<code>src/ach_agent/stats/</code>), the redis-stream contract the separate <code>ach-stats</code> reader consumes,
-the Prometheus surface, and the Tier-1 tool trace. Plans:
-<code>docs/superpowers/plans/2026-07-02-stats-sink-harness-a1.md</code> (sink),
-<code>docs/superpowers/plans/2026-07-02-stats-container-a2.md</code> (reader/UI).</p>
+the Prometheus surface, and the Tier-1 tool trace.</p>
 <h2 id="problem">Problem</h2>
 <p>The harness runs managed agents but emitted nothing durable about <em>what they did</em> — tokens,
 cost, duration, tool use, per session. Two consumers want different shapes: operators want
@@ -466,7 +464,6 @@ status}</code> + <code>ach_agent_tool_duration_seconds{tool,tool_type}</code>.</
 <h2 id="related">Related</h2>
 <ul>
 <li><code>docs/references/2026-07-01-keyed-engine-pool.md</code> (session_key identity feeding the streams)</li>
-<li><code>docs/superpowers/plans/2026-07-02-stats-sink-harness-a1.md</code> / <code>-stats-container-a2.md</code></li>
 <li>OTel GenAI semconv: <code>github.com/open-telemetry/semantic-conventions-genai</code> (field-name source)</li>
 </ul>
 

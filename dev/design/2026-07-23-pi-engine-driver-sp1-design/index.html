@@ -542,7 +542,7 @@
 <h2 id="1-goal-context">1. Goal &amp; context</h2>
 <p>Add <strong>Pi</strong> (<code>pi.dev</code> / <code>github.com/earendil-works/pi</code>, npm <code>@earendil-works/pi-coding-agent</code>,
 Node/TS) as a second engine alongside the currently-hardcoded <strong>opencode</strong>. Pi fills the
-<code>pymono</code> slot reserved in <code>docs/spec/ach-agent-runtime-spec-v1_4_2.md</code> §7.4. (The user's "py
+<code>pymono</code> slot reserved in the <code>ach-runtime</code> spec §7.4. (The user's "py
 agent" is Pi; the "pymono" label is the spec's engine-type name.)</p>
 <p><strong>The router is not touched.</strong> <code>router/lane.py</code> already calls the engine as an opaque injected
 callable <code>engine_runner(event, on_kill)</code> and never imports <code>engine/</code> logic (D-08 / RTR-06 — sole
@@ -801,8 +801,8 @@ stats-mapping polish beyond parity, broad e2e matrix.</p>
 <li>pi-mcp-adapter: <code>github.com/nicobailon/pi-mcp-adapter</code> (README: mcp.json, directTools, remote/headers)</li>
 <li>ach-agent: <code>main.py:685</code> (engine_runner), <code>engine/lifecycle.py</code> (EngineConfig, run_invocation,
   write_opencode_config, build_opencode_env), <code>engine/pool.py</code> (EnginePool), <code>engine/context.py</code>
-  (skills), <code>engine/a2a_egress.py</code>, <code>docs/superpowers/plans/2026-07-07-mcpservers-block.md</code></li>
-<li>Runtime spec engine types: <code>docs/spec/ach-agent-runtime-spec-v1_4_2.md</code> §7.4</li>
+  (skills), <code>engine/a2a_egress.py</code></li>
+<li>Runtime spec engine types: the <code>ach-runtime</code> spec §7.4</li>
 </ul>
 
 

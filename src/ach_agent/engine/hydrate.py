@@ -8,6 +8,8 @@ import httpx
 import structlog
 from pydantic import BaseModel, Field
 
+from ach_agent.engine.metrics import AGENT_INFO
+
 log = structlog.get_logger(__name__)
 
 
@@ -51,7 +53,7 @@ class _Runtime(BaseModel):
 
 
 class HydrationManifest(BaseModel):
-    environment: str = ""
+    environment: str
     runtime: _Runtime = Field(default_factory=_Runtime)
     context: Context = Field(default_factory=Context)
 
@@ -77,9 +79,15 @@ async def _post_hydrate(url: str, headers: dict[str, str]) -> dict[str, Any]:
         return data
 
 
-async def hydrate(base_url: str, ek: str) -> HydrationManifest:
+async def fetch_hydration_manifest(base_url: str, ek: str) -> HydrationManifest:
     data = await _post_hydrate(f"{base_url.rstrip('/')}/platform/hydrate", {"x-ach-key": ek})
     return HydrationManifest.model_validate(data)
+
+
+async def hydrate(base_url: str, ek: str, agent_name: str) -> HydrationManifest:
+    manifest = await fetch_hydration_manifest(base_url, ek)
+    AGENT_INFO.labels(agent=agent_name, environment=manifest.environment).set(1)
+    return manifest
 
 
 def resolve_model(manifest: HydrationManifest, name: str) -> ModelEntry | None:

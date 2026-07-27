@@ -87,7 +87,9 @@ async def test_hydration_returns_model_and_mcp_server(monkeypatch: Any) -> None:
 
         monkeypatch.setattr(hydrate_mod, "_post_hydrate", fake_post_hydrate)
 
-        manifest = await hydrate("https://ach.example", "ek_guard_secret")
+        manifest = await hydrate(
+            "https://ach.example", "ek_guard_secret", agent_name="e2e-guard-agent"
+        )
 
         assert manifest.models == ["openai.gpt-5"]
         assert manifest.mcp_servers[0].id == "mcp-gofetch"

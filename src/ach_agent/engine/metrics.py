@@ -34,3 +34,9 @@ ENGINE_LAUNCH_FAILURES: prometheus_client.Counter = prometheus_client.Counter(
     "ach_agent_engine_launch_failures_total",
     "opencode agente launches that failed in engine_runner (pool.acquire raised)",
 )
+
+AGENT_INFO: prometheus_client.Gauge = prometheus_client.Gauge(
+    "ach_agent_info",
+    "ACH agent identity from a successful platform hydrate",
+    ["agent", "environment"],
+)

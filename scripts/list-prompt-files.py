@@ -17,7 +17,7 @@ import sys
 import tarfile
 
 from ach_agent.engine.context import _get_bytes
-from ach_agent.engine.hydrate import hydrate
+from ach_agent.engine.hydrate import fetch_hydration_manifest
 
 BASE = os.environ.get("ACH_BASE_URL", "https://ach.ackstorm.ai")
 
@@ -27,7 +27,7 @@ async def main() -> None:
     if not ek:
         sys.exit("ACH_TOKEN (ek-...) not set in env")
     want = sys.argv[1] if len(sys.argv) > 1 else None
-    manifest = await hydrate(BASE, ek)
+    manifest = await fetch_hydration_manifest(BASE, ek)
     prompts = manifest.context.prompts
     if not prompts:
         sys.exit("hydration returned no prompts")

@@ -12,6 +12,14 @@ YAML. Both validate against the same schema, and **unknown keys are rejected** (
 | `ACH_BASE_URL` | ACH endpoint. Overrides `capability.ach.baseUrl` when set; required if the config omits `baseUrl`. |
 | `ACH_CONFIG_PATH` | Path to the config file (default `/etc/ach-agent/config.json`). |
 
+## Metrics
+
+The existing `GET /metrics` endpoint exposes Prometheus metrics. After a successful platform
+hydrate it includes `ach_agent_info{agent,environment} 1`: `agent` is `agent.name` from the
+rendered config and `environment` is the required `environment` returned by the hydration
+manifest. No agent-identity sample is emitted before hydration succeeds or when the response
+omits its environment.
+
 ## Blocks
 
 | Block | Required | What |

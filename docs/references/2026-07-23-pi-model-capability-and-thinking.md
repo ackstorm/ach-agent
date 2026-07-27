@@ -93,8 +93,7 @@ both simpler and the only one actually exercised.
   `cfg.pi_thinking_level` is set.
 - `src/ach_agent/main.py`: `_pi_engine_fields()` wires `cfg.engine.pi.*` into
   `EngineConfig`.
-- `../ach`: CRD/render handoff for `EngineSpec.Pi.Model`/`.ThinkingLevel` — see
-  `docs/superpowers/plans/2026-07-23-pi-model-runtime-parity-handoff-ach.md`.
+- `../ach`: CRD/render handoff for `EngineSpec.Pi.Model`/`.ThinkingLevel`.
 - Tests: `tests/config/test_schema.py` + `tests/config/fixtures/config_pi_reasoning.json`
   (schema), `tests/engine/pi/test_models_json.py` + `test_driver.py` (unit),
   `tests/test_main_wiring.py` (wiring), `tests/e2e/test_pi_e2e.py` (real `pi` 0.81.1

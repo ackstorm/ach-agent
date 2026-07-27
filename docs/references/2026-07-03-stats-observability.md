@@ -5,9 +5,7 @@
 
 Records the *why* of the per-invocation + per-tool observability path: the harness-side sink
 (`src/ach_agent/stats/`), the redis-stream contract the separate `ach-stats` reader consumes,
-the Prometheus surface, and the Tier-1 tool trace. Plans:
-`docs/superpowers/plans/2026-07-02-stats-sink-harness-a1.md` (sink),
-`docs/superpowers/plans/2026-07-02-stats-container-a2.md` (reader/UI).
+the Prometheus surface, and the Tier-1 tool trace.
 
 ## Problem
 
@@ -85,5 +83,4 @@ status}` + `ach_agent_tool_duration_seconds{tool,tool_type}`.
 ## Related
 
 - `docs/references/2026-07-01-keyed-engine-pool.md` (session_key identity feeding the streams)
-- `docs/superpowers/plans/2026-07-02-stats-sink-harness-a1.md` / `-stats-container-a2.md`
 - OTel GenAI semconv: `github.com/open-telemetry/semantic-conventions-genai` (field-name source)

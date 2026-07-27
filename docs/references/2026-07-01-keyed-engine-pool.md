@@ -3,7 +3,7 @@
 **Status:** Shipped. Merged to `main` (`c57c92a`, `--no-ff`) and pushed. Validated live in `--tui`.
 **Branch:** `feat/keyed-engine-pool` (7 commits).
 **Built with:** superpowers `writing-plans` + `subagent-driven-development` (fresh implementer per task,
-per-task review, whole-branch review). Plan: `docs/superpowers/plans/2026-07-01-keyed-engine-pool.md`.
+per-task review, whole-branch review).
 
 > **Stale note (2026-07-03):** two §3 claims drifted. The `engine_has_been_ready_once` gate
 > (and `COLD_START_REJECTS`/`COLD_START_DROPS`) is described as surviving as dead state — it has
@@ -181,8 +181,7 @@ Gate at merge: full suite **309 passed, 1 skipped**; `make _lint` (ruff + mypy -
 
 ## 7. Correction (2026-07-01): per-key HOME → shared HOME + per-session config file
 
-**Branch:** `feat/shared-home-per-session-config`. **Plan:**
-`docs/superpowers/plans/2026-07-01-shared-home-per-session-config.md`.
+**Branch:** `feat/shared-home-per-session-config`.
 
 ### The split-brain regression
 

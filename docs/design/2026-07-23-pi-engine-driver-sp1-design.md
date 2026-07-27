@@ -11,7 +11,7 @@
 
 Add **Pi** (`pi.dev` / `github.com/earendil-works/pi`, npm `@earendil-works/pi-coding-agent`,
 Node/TS) as a second engine alongside the currently-hardcoded **opencode**. Pi fills the
-`pymono` slot reserved in `docs/spec/ach-agent-runtime-spec-v1_4_2.md` §7.4. (The user's "py
+`pymono` slot reserved in the `ach-runtime` spec §7.4. (The user's "py
 agent" is Pi; the "pymono" label is the spec's engine-type name.)
 
 **The router is not touched.** `router/lane.py` already calls the engine as an opaque injected
@@ -309,5 +309,5 @@ stats-mapping polish beyond parity, broad e2e matrix.
 - pi-mcp-adapter: `github.com/nicobailon/pi-mcp-adapter` (README: mcp.json, directTools, remote/headers)
 - ach-agent: `main.py:685` (engine_runner), `engine/lifecycle.py` (EngineConfig, run_invocation,
   write_opencode_config, build_opencode_env), `engine/pool.py` (EnginePool), `engine/context.py`
-  (skills), `engine/a2a_egress.py`, `docs/superpowers/plans/2026-07-07-mcpservers-block.md`
-- Runtime spec engine types: `docs/spec/ach-agent-runtime-spec-v1_4_2.md` §7.4
+  (skills), `engine/a2a_egress.py`
+- Runtime spec engine types: the `ach-runtime` spec §7.4

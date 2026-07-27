@@ -52,8 +52,7 @@ would have needed re-encoding per engine forever.
 - `src/ach_agent/engine/lifecycle.py`: `_thinking_options` + merge into
   `write_opencode_config`'s model options.
 - `src/ach_agent/main.py`: `_engine_runtime_fields` (replaces `_pi_engine_fields`).
-- `docs/schemas/operator-contract.md` §2 rewritten; `../ach` correction handoff:
-  `docs/superpowers/plans/2026-07-24-model-thinking-handoff-ach.md`.
+- `docs/schemas/operator-contract.md` §2 rewritten; correction handed off to `../ach`.
 
 Absent `model.thinking`, every generated artifact (models.json, argv, opencode.json) is
 byte-identical to v0.8.0 defaults.

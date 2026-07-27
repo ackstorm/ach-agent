@@ -763,4 +763,4 @@ semantics, A.5 failure table, and the reserved P0-v2/B.7 evidence record are doc
 in [`docs/configuration.md`](../configuration.md) and
 [`docs/references/2026-07-25-cost-source.md`](../references/2026-07-25-cost-source.md).
 
-Implementation-level gates live in the GSD/superpowers plans (`docs/superpowers/plans/`), not here.
+Implementation-level gates live in the implementation plans, not here.

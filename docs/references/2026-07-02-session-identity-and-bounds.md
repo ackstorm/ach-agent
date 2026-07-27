@@ -67,6 +67,3 @@ were never deleted).
 ## Related
 
 - `docs/references/2026-07-01-keyed-engine-pool.md` (lane/pool identity)
-- `docs/superpowers/plans/2026-07-02-persistent-oc-session-map.md` (substrate:
-  pool-owned LRU + 404 guard)
-- `docs/superpowers/plans/2026-07-02-session-identity-and-bounds.md` (this plan)

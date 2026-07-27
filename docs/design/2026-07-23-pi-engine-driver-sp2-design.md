@@ -173,8 +173,7 @@ lane / bounds change.
 
 ## 13. References
 
-- SP1: `docs/design/2026-07-23-pi-engine-driver-sp1-design.md`, plan folder
-  `docs/superpowers/plans/2026-07-23-pi-engine-driver-sp1/`
+- SP1: `docs/design/2026-07-23-pi-engine-driver-sp1-design.md`
 - ach-agent: `Dockerfile` (codemem-bin template `:17-24,69-76`), `config/schema.py:61`,
   `engine/pi/{driver,config}.py`, `tests/e2e/test_pi_e2e.py`, `stats/models.py`,
   `docs/schemas/operator-contract.md:121-123`

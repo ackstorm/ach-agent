@@ -1,0 +1,736 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>CONTRACT_v3 ADDENDUM — mcpServers (harness-managed MCP servers) - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#contract_v3-addendum-mcpservers-harness-managed-mcp-servers" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              CONTRACT_v3 ADDENDUM — mcpServers (harness-managed MCP servers)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-why" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Why
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Why">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#two-classes-of-mcp-two-origins-unchanged-distinction-now-explicit" class="md-nav__link">
+    <span class="md-ellipsis">
+      Two classes of MCP, two origins (unchanged distinction, now explicit)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-rendered-config-delta-etcach-agentconfigjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Rendered config delta (/etc/ach-agent/config.json)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-wiring-semantics-what-the-harness-does-per-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Wiring semantics — what the harness does per type
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Wiring semantics — what the harness does per type">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#security-honest" class="md-nav__link">
+    <span class="md-ellipsis">
+      Security (honest)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-harness-schema-pydantic-v2-drop-in-for-configschemapy" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Harness schema (Pydantic v2) — drop-in for config/schema.py
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-operator-seam-ach-runtime-crd-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Operator seam (ach-runtime CRD Agent)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-migration-breaking-no-live-agents-render-enginerepocheckout-yet" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Migration (breaking; no live agents render engine.repoCheckout yet)
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="contract_v3-addendum-mcpservers-harness-managed-mcp-servers">CONTRACT_v3 ADDENDUM — <code>mcpServers</code> (harness-managed MCP servers)</h1>
+<blockquote>
+<p><strong>Status:</strong> proposed (2026-07-07). Supersedes the <code>engine.repoCheckout</code> block shipped in the
+gitlab-repo-checkout branch. Moves repo-checkout out of <code>engine</code> into a new <strong>top-level
+<code>mcpServers</code></strong> map that also carries operator-declared <strong>local</strong> and <strong>remote</strong> MCP servers
+passed through to opencode. Consolidate into <code>CONTRACT_v3.md</code> §2 when landed.</p>
+</blockquote>
+<hr />
+<h2 id="1-why">1. Why</h2>
+<p>Two facts forced the move:</p>
+<ol>
+<li><strong>repo-checkout is not an engine knob.</strong> It is a <em>server the harness hosts</em>. Nesting it under
+   <code>engine</code> (how-we-run-opencode) conflated two concerns.</li>
+<li><strong>Agents need to bring their own MCP servers.</strong> Beyond ACH-fronted egress (hydrate), operators
+   want to wire extra MCP tools — a local stdio server (<code>mcp/filesystem</code> in a container) or a
+   plain remote MCP — that opencode connects to directly. <code>ackbot-process</code> already did this
+   (<code>src/config.py:MCPServer</code> → <code>opencode_extensions._normalize_mcp_server</code>).</li>
+</ol>
+<p>So: one top-level <code>mcpServers</code> map, discriminated by <code>type</code>, covering both <strong>internal/harness-hosted</strong>
+(<code>repoCheckout</code>) and <strong>passthrough</strong> (<code>local</code>, <code>remote</code>) servers.</p>
+<h3 id="two-classes-of-mcp-two-origins-unchanged-distinction-now-explicit">Two classes of MCP, two origins (unchanged distinction, now explicit)</h3>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Origin</th>
+<th>Who serves it</th>
+<th>In config</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>ACH-fronted external</strong> (gitlab, slack…)</td>
+<td><code>hydrate</code> → <code>runtime.mcpServers[{id,endpoint}]</code></td>
+<td>ACH Forwarder, proxied via localhost</td>
+<td><strong>no</strong> (comes from hydrate)</td>
+</tr>
+<tr>
+<td><strong>Harness-managed</strong> (repoCheckout, local, remote)</td>
+<td><strong><code>mcpServers</code></strong> (operator)</td>
+<td>harness hosts / opencode connects</td>
+<td><strong>yes</strong> (this block)</td>
+</tr>
+</tbody>
+</table>
+<p><code>mcpServers</code> (config) and <code>runtime.mcpServers</code> (hydrate) are different namespaces — no collision.</p>
+<hr />
+<h2 id="2-rendered-config-delta-etcach-agentconfigjson">2. Rendered config delta (<code>/etc/ach-agent/config.json</code>)</h2>
+<p><strong>Remove</strong> <code>engine.repoCheckout</code>. <strong>Add</strong> a top-level <code>mcpServers</code> object (map keyed by server
+name — the MCP-ecosystem convention: opencode.json / <code>.mcp.json</code> / Claude Desktop all key by name):</p>
+<div class="highlight"><pre><span></span><code>{
+  &quot;engine&quot;: { /* … repoCheckout REMOVED … */ },
+
+  &quot;mcpServers&quot;: {
+
+    &quot;repo-checkout&quot;: {                    // INTERNAL: the harness HOSTS it (FastMCP facade + ek_)
+      &quot;type&quot;: &quot;repoCheckout&quot;,
+      &quot;repoCheckout&quot;: {                   //   params nested (it is a built-in &quot;special&quot; wiring)
+        &quot;sourceMcpServerId&quot;: &quot;mcp-gitlab-ro&quot;,  // which hydrated runtime.mcpServers[].id serves the
+        //                                        gitlab://{project}/archive/{ref} resource the
+        //                                        harness reads (with the ek_, harness-side).
+        &quot;tmpBase&quot;: &quot;/tmp/gitlab&quot;,         //   parent dir for per-checkout mkdtemp dirs (default)
+        &quot;ttlSeconds&quot;: 3600                //   stale-checkout sweep TTL (repoCheckout-only)
+      }
+    },
+
+    &quot;filesystem&quot;: {                       // PASSTHROUGH local: opencode LAUNCHES it (stdio subprocess)
+      &quot;type&quot;: &quot;local&quot;,
+      &quot;command&quot;: &quot;docker&quot;,
+      &quot;args&quot;: [&quot;run&quot;,&quot;-i&quot;,&quot;--rm&quot;,
+               &quot;--mount&quot;,&quot;type=bind,src=/data/desktop,dst=/projects/desktop&quot;,
+               &quot;mcp/filesystem&quot;,&quot;/projects&quot;],
+      &quot;env&quot;: []                           //   env NAMES to forward (never the ek_); optional
+    },
+
+    &quot;other&quot;: {                            // PASSTHROUGH remote: opencode CONNECTS directly
+      &quot;type&quot;: &quot;remote&quot;,
+      &quot;url&quot;: &quot;https://mcp.example.com/mcp&quot;,
+      &quot;headers&quot;: { &quot;Authorization&quot;: &quot;Bearer ${env:OTHER_MCP_TOKEN}&quot; }  // ${env:NAME} refs, not values
+    }
+
+  }
+}
+</code></pre></div>
+<p>Presence in the map = enabled. Omit an entry → not wired. No <code>enabled</code> flag.</p>
+<hr />
+<h2 id="3-wiring-semantics-what-the-harness-does-per-type">3. Wiring semantics — what the harness does per <code>type</code></h2>
+<table>
+<thead>
+<tr>
+<th><code>type</code></th>
+<th>Who runs it</th>
+<th><code>opencode.json</code> <code>mcp.&lt;name&gt;</code> entry</th>
+<th>Auth</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>repoCheckout</code></strong></td>
+<td><strong>harness</strong> (FastMCP facade)</td>
+<td><code>{type:"remote", url:"http://localhost/mcp/repo-checkout"}</code></td>
+<td>harness injects <code>ek_</code> as <code>x-ach-key</code> (opencode never sees it)</td>
+</tr>
+<tr>
+<td><strong><code>local</code></strong></td>
+<td><strong>opencode</strong> (stdio subprocess)</td>
+<td><code>{type:"local", command:[command, ...args], environment:{NAME:val}}</code></td>
+<td>env (NAMES resolved at launch)</td>
+</tr>
+<tr>
+<td><strong><code>remote</code></strong></td>
+<td><strong>opencode</strong> (direct MCP client)</td>
+<td><code>{type:"remote", url, headers}</code></td>
+<td>operator <code>headers</code> (<code>${env:NAME}</code> resolved at write)</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><code>repoCheckout</code> is the only <strong>harness-hosted</strong> entry: the harness reads the archive resource
+  itself (opencode discards MCP resource blobs) and exposes <code>checkout_repo(project, ref, subpath?)</code>.
+  Fail-soft; TTL-swept; <code>head_sha</code> from the gitlab channel; prompt hint gated (see §9 of CONTRACT_v3).</li>
+<li><code>local</code> / <code>remote</code> are <strong>passthrough</strong>: opencode connects directly, NOT through the ACH localhost
+  proxy — they are "bring-your-own-MCP". Mirrors <code>ackbot-process._normalize_mcp_server</code>
+  (stdio→<code>local</code>, http/streamable→<code>remote</code>; unknown fields stripped — opencode validates strictly).</li>
+</ul>
+<h3 id="security-honest">Security (honest)</h3>
+<ul>
+<li><strong><code>remote</code></strong>: opencode connects directly, so its auth <strong>header lands in <code>opencode.json</code></strong> (opencode
+  needs it) — no <code>ek_</code>-style hiding. Header/env values are <code>${env:NAME}</code> refs; the harness resolves
+  at write time; the operator wires those env vars into the pod from a <code>Secret</code>. The co-resident
+  agent CAN read that credential. If that is unacceptable, front the server via ACH (hydrate) instead.</li>
+<li><strong><code>local</code></strong>: same-uid subprocess; <code>--mount …,ro</code> and <code>capability.filter.exclude.mcpServers</code> still
+  apply. The <code>ek_</code>/<code>ACH_SECRET_*</code> are stripped from the forwarded env (same rule as <code>engine.forwardEnv</code>).</li>
+</ul>
+<hr />
+<h2 id="4-harness-schema-pydantic-v2-drop-in-for-configschemapy">4. Harness schema (Pydantic v2) — drop-in for <code>config/schema.py</code></h2>
+<p>Validated (union + negatives). Add these classes; wire <code>mcp_servers</code> into <code>AgentConfig</code>; delete
+<code>RepoCheckoutBlock</code> and the <code>EngineBlock.repo_checkout</code> field.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># mcpServers — harness-managed MCP servers (CONTRACT_v3 §2a)</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RepoCheckoutParams</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Params for the harness-hosted repoCheckout facade (the `checkout_repo` tool).&quot;&quot;&quot;</span>
+
+    <span class="n">model_config</span> <span class="o">=</span> <span class="n">ConfigDict</span><span class="p">(</span><span class="n">extra</span><span class="o">=</span><span class="s2">&quot;forbid&quot;</span><span class="p">,</span> <span class="n">populate_by_name</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="c1"># The hydrated runtime.mcpServers[].id whose endpoint serves the</span>
+    <span class="c1"># gitlab://{project}/archive/{ref} resource the harness reads (harness-side, with the ek_).</span>
+    <span class="n">source_mcp_server_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;sourceMcpServerId&quot;</span><span class="p">)</span>
+    <span class="n">tmp_base</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="s2">&quot;/tmp/gitlab&quot;</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">&quot;tmpBase&quot;</span><span class="p">)</span>
+    <span class="n">ttl_seconds</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="mf">3600.0</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">&quot;ttlSeconds&quot;</span><span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RepoCheckoutServer</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;INTERNAL: the harness HOSTS this MCP (FastMCP facade), injecting the ek_.&quot;&quot;&quot;</span>
+
+    <span class="n">model_config</span> <span class="o">=</span> <span class="n">ConfigDict</span><span class="p">(</span><span class="n">extra</span><span class="o">=</span><span class="s2">&quot;forbid&quot;</span><span class="p">,</span> <span class="n">populate_by_name</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="nb">type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;repoCheckout&quot;</span><span class="p">]</span>
+    <span class="n">repo_checkout</span><span class="p">:</span> <span class="n">RepoCheckoutParams</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;repoCheckout&quot;</span><span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">LocalMcpServer</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;PASSTHROUGH: opencode LAUNCHES this as a stdio subprocess.&quot;&quot;&quot;</span>
+
+    <span class="n">model_config</span> <span class="o">=</span> <span class="n">ConfigDict</span><span class="p">(</span><span class="n">extra</span><span class="o">=</span><span class="s2">&quot;forbid&quot;</span><span class="p">,</span> <span class="n">populate_by_name</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="nb">type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;local&quot;</span><span class="p">]</span>
+    <span class="n">command</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">args</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">env</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>  <span class="c1"># env NAMES only; never the ek_</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RemoteMcpServer</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;PASSTHROUGH: opencode CONNECTS directly to a remote MCP endpoint.&quot;&quot;&quot;</span>
+
+    <span class="n">model_config</span> <span class="o">=</span> <span class="n">ConfigDict</span><span class="p">(</span><span class="n">extra</span><span class="o">=</span><span class="s2">&quot;forbid&quot;</span><span class="p">,</span> <span class="n">populate_by_name</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="nb">type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;remote&quot;</span><span class="p">]</span>
+    <span class="n">url</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">headers</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>  <span class="c1"># values are ${env:NAME} refs</span>
+
+
+<span class="c1"># Strict discriminated union on `type` (mirror of the Memory union). Named *Config to avoid</span>
+<span class="c1"># clashing with engine.hydrate.McpServer (the hydrated {id,endpoint} external server).</span>
+<span class="n">McpServerConfig</span> <span class="o">=</span> <span class="n">Annotated</span><span class="p">[</span>
+    <span class="n">RepoCheckoutServer</span> <span class="o">|</span> <span class="n">LocalMcpServer</span> <span class="o">|</span> <span class="n">RemoteMcpServer</span><span class="p">,</span> <span class="n">Field</span><span class="p">(</span><span class="n">discriminator</span><span class="o">=</span><span class="s2">&quot;type&quot;</span><span class="p">)</span>
+<span class="p">]</span>
+</code></pre></div>
+<p>In <code>AgentConfig</code> (and delete <code>engine.repoCheckout</code>):</p>
+<div class="highlight"><pre><span></span><code>    <span class="n">mcp_servers</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">McpServerConfig</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">&quot;mcpServers&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Regenerate the frozen artifact: <code>uv run python scripts/gen_schema.py</code>
+(<code>docs/schemas/agent-config-v1.schema.json</code>; drift-guarded by <code>tests/config/test_schema_artifact.py</code>).</p>
+<hr />
+<h2 id="5-operator-seam-ach-runtime-crd-agent">5. Operator seam (ach-runtime CRD <code>Agent</code>)</h2>
+<p>CRD authoring uses a <strong>list with <code>name</code></strong> (k8s idiom, like <code>channels</code>); the operator renders
+list → the config <strong>map</strong>. Tagged union = <code>type</code> enum + optional per-type sub-blocks + CEL
+(mirror of <code>PromptSourceSpec</code>).</p>
+<div class="highlight"><pre><span></span><code><span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">mcpServers</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">repo-checkout</span>
+<span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">repoCheckout</span>
+<span class="w">      </span><span class="nt">repoCheckout</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">sourceMcpServerId</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">mcp-gitlab-ro</span><span class="w">   </span><span class="c1"># must exist in capabilityProfileRef&#39;s MCP set</span>
+<span class="w">        </span><span class="nt">tmpBase</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/tmp/gitlab</span><span class="w">               </span><span class="c1"># optional</span>
+<span class="w">        </span><span class="nt">ttlSeconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3600</span><span class="w">                   </span><span class="c1"># optional</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">filesystem</span>
+<span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">local</span>
+<span class="w">      </span><span class="nt">local</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">docker</span>
+<span class="w">        </span><span class="nt">args</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">run</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">-i</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">--rm</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">--mount</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;type=bind,src=/data,dst=/projects/data&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">mcp/filesystem</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">/projects</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="c1"># env: [SOME_VAR]</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">other</span>
+<span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">remote</span>
+<span class="w">      </span><span class="nt">remote</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://mcp.example.com/mcp</span>
+<span class="w">        </span><span class="nt">headers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> Authorization</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Bearer</span><span class="nv"> </span><span class="s">${env:OTHER_MCP_TOKEN}&quot;</span><span class="w"> </span><span class="p p-Indicator">}</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;(self.type==&#39;repoCheckout&#39; &amp;&amp; has(self.repoCheckout)) || (self.type==&#39;local&#39; &amp;&amp; has(self.local)) || (self.type==&#39;remote&#39; &amp;&amp; has(self.remote))&quot;,message=&quot;mcpServers[]: type-specific block required (VAL-03)&quot;</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">McpServerSpec</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w">         </span><span class="kt">string</span><span class="w">            </span><span class="s">`json:&quot;name&quot;`</span><span class="w">                    </span><span class="c1">// +required</span>
+<span class="w">    </span><span class="nx">Type</span><span class="w">         </span><span class="kt">string</span><span class="w">            </span><span class="s">`json:&quot;type&quot;`</span><span class="w">                    </span><span class="c1">// +enum=repoCheckout;local;remote</span>
+<span class="w">    </span><span class="nx">RepoCheckout</span><span class="w"> </span><span class="o">*</span><span class="nx">RepoCheckoutSpec</span><span class="w"> </span><span class="s">`json:&quot;repoCheckout,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Local</span><span class="w">        </span><span class="o">*</span><span class="nx">LocalMcpSpec</span><span class="w">     </span><span class="s">`json:&quot;local,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Remote</span><span class="w">       </span><span class="o">*</span><span class="nx">RemoteMcpSpec</span><span class="w">    </span><span class="s">`json:&quot;remote,omitempty&quot;`</span>
+<span class="p">}</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">RepoCheckoutSpec</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">SourceMcpServerID</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;sourceMcpServerId&quot;`</span>
+<span class="w">    </span><span class="nx">TmpBase</span><span class="w">           </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;tmpBase,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">TTLSeconds</span><span class="w">        </span><span class="o">*</span><span class="kt">int64</span><span class="w"> </span><span class="s">`json:&quot;ttlSeconds,omitempty&quot;`</span>
+<span class="p">}</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">LocalMcpSpec</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Command</span><span class="w"> </span><span class="kt">string</span><span class="w">   </span><span class="s">`json:&quot;command&quot;`</span>
+<span class="w">    </span><span class="nx">Args</span><span class="w">    </span><span class="p">[]</span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;args,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Env</span><span class="w">     </span><span class="p">[]</span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;env,omitempty&quot;`</span>
+<span class="p">}</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">RemoteMcpSpec</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">URL</span><span class="w">     </span><span class="kt">string</span><span class="w">            </span><span class="s">`json:&quot;url&quot;`</span>
+<span class="w">    </span><span class="nx">Headers</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;headers,omitempty&quot;`</span>
+<span class="p">}</span>
+<span class="c1">// AgentSpec: MCPServers []McpServerSpec `json:&quot;mcpServers,omitempty&quot;`</span>
+</code></pre></div>
+<p><strong>Render rules:</strong>
+- list → map keyed by <code>name</code>.
+- <strong>cross-validate</strong> <code>repoCheckout.sourceMcpServerId</code> against the MCP set the <code>capabilityProfileRef</code>
+  exposes (the hydrate set). CEL can't (cross-object) → reconciler/webhook check, clear error if absent.
+- <code>remote.headers</code> / <code>local.env</code> values render as <code>${env:NAME}</code> refs — NAMES, never values; the
+  operator wires the env from a <code>Secret</code> (same pattern as <code>webhook.auth.secretRef</code>).</p>
+<hr />
+<h2 id="6-migration-breaking-no-live-agents-render-enginerepocheckout-yet">6. Migration (breaking; no live agents render <code>engine.repoCheckout</code> yet)</h2>
+<ol>
+<li>Delete <code>EngineBlock.repo_checkout</code> + <code>RepoCheckoutBlock</code>.</li>
+<li>Add the <code>mcpServers</code> union + <code>AgentConfig.mcp_servers</code>.</li>
+<li><code>main.py</code>: replace the <code>engine.repoCheckout</code> resolve with an iteration over <code>cfg.mcp_servers</code> —
+   <code>repoCheckout</code> → start <code>RepoCheckoutFacade</code> (params from <code>repoCheckout</code>, resolve
+   <code>sourceMcpServerId</code> against the hydrated set); <code>local</code>/<code>remote</code> → normalize into <code>opencode.json</code>
+   (ackbot <code>_normalize_mcp_server</code> port).</li>
+<li>CONTRACT_v3 §2: replace the <code>engine.repoCheckout</code> doc with a <code>mcpServers</code> section; §9 already
+   names the three harness-hosted MCPs.</li>
+<li>Regenerate the frozen schema.</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -722,7 +722,7 @@ also written to the stats row and emitted in the turn summary log; this is inten
 </tr>
 <tr>
 <td><code>litellm_headers</code></td>
-<td>Read <code>x-litellm-response-cost</code> on non-streaming responses and sum it for the invocation. Streaming responses contribute <code>0.0</code> and one bounded warning per invocation. This mode never changes <code>stream</code> or any other request field.</td>
+<td>Read <code>x-litellm-response-cost</code> on non-streaming responses and sum it for the invocation. Requires <code>model.type: openai</code> (see below). Streaming responses contribute <code>0.0</code> and one bounded warning per invocation. This mode never changes <code>stream</code> or any other request field.</td>
 </tr>
 <tr>
 <td><code>none</code></td>
@@ -730,9 +730,22 @@ also written to the stats row and emitted in the turn summary log; this is inten
 </tr>
 </tbody>
 </table>
-<p><code>litellm_usage</code> is the only wire-restricted source: it supports <code>model.type: openai</code>
-and <code>model.type: gemini</code>. <code>model.type: anthropic</code> hard-fails at boot with this source.
-The <code>engine</code>, <code>litellm_headers</code>, and <code>none</code> sources are wire-independent.</p>
+<p>Two source/wire combinations hard-fail at boot. <code>litellm_usage</code> supports
+<code>model.type: openai</code> and <code>model.type: gemini</code>; <code>model.type: anthropic</code> is rejected.
+<code>litellm_headers</code> supports <code>model.type: openai</code> only: LiteLLM injects
+<code>x-litellm-response-cost</code> from its <code>/v1</code> router, while <code>/gemini</code> and <code>/anthropic</code> are
+passthrough routes whose responses carry no cost header at all, so the source would
+report <code>0.0</code> for every invocation. The <code>engine</code> and <code>none</code> sources are wire-independent.</p>
+<p>Under <code>litellm_usage</code> the override replaces the record's token counts along with its
+cost, so both describe the same basis: the sum over every upstream call the invocation
+made. (The engine's own counts cover roughly the last message, so pairing them with a
+whole-invocation cost made any $/token ratio wrong by the call count.) <code>input_tokens</code> is
+then billable input, net of <code>cache_read</code>/<code>cache_write</code>. <code>litellm_headers</code> carries no token
+data and overrides the cost only.</p>
+<p>Every point where cost accounting gives up increments
+<code>ach_agent_cost_unpriced_total{reason}</code> — <code>fetch_failed</code>/<code>no_entry</code>/<code>malformed</code>/<code>unpriced</code>
+once at boot (alert on <code>&gt; 0</code>), and <code>unpriced</code>/<code>usage_missing</code> per response, so an agent
+that silently reports <code>$0</code> is visible in <code>rate()</code>.</p>
 <p>The source override is applied exactly once per invocation, at the turn boundary, on the
 usage record that feeds <code>SessionStat</code>. That same record feeds the Prometheus counter, the
 <code>ach-stats</code> row, and the <code>engine: summary</code> log. The engine-reported figure is never mixed

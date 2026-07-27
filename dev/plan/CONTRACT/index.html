@@ -1,0 +1,727 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>ACH Agent Runtime — Shared Contract (the seam) - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#ach-agent-runtime-shared-contract-the-seam" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ACH Agent Runtime — Shared Contract (the seam)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-direction-of-dependency-non-negotiable" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Direction of dependency (non-negotiable)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-the-rendered-runtime-config-operator-writes-harness-reads" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. The rendered runtime config (operator writes → harness reads)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. The rendered runtime config (operator writes → harness reads)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#deviation-d-12-gitlab_token-via-environment-variable-phase-2-gitlab_comment-channel" class="md-nav__link">
+    <span class="md-ellipsis">
+      ⚠ Deviation D-12: GITLAB_TOKEN via environment variable (Phase 2 — gitlab_comment channel)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-additive-revision-consenttier-on-responseactions-entries" class="md-nav__link">
+    <span class="md-ellipsis">
+      ⚠ Phase 5 Additive Revision: consentTier on responseActions entries
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-the-ach_-env-contract-governed-only-spec-131-frozen" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. The ACH_* env contract (governed only) — spec §13.1, FROZEN
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-http-endpoints-the-harness-must-expose-spec-161-frozen" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. HTTP endpoints the harness MUST expose — spec §16.1, FROZEN
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-status-conditions-operator-only-derived-from-podstatus-36-frozen" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Status conditions — operator-only, derived from pod.status (§36) — FROZEN
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-behavioral-invariants-the-harness-must-honor-these-become-conformance-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Behavioral invariants the harness MUST honor (these become conformance tests)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-what-is-not-in-v1-declared-do-not-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. What is NOT in v1 (declared, do not build)
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="ach-agent-runtime-shared-contract-the-seam">ACH Agent Runtime — Shared Contract (the seam)</h1>
+<p>This document is the <strong>single frozen interface</strong> between <code>ach-runtime</code> (operator, Go)
+and <code>ach-agent</code> (harness, Python). Both repos depend on this; neither may change it
+unilaterally. Source of truth lives in <code>ach-runtime</code>; <code>ach-agent</code> pins a version.</p>
+<p>Spec reference: <code>ach-agent-runtime-spec-v1_4_2.md</code> (API group <code>runtime.ackstorm.ai/v1alpha1</code>).</p>
+<hr />
+<h2 id="1-direction-of-dependency-non-negotiable">1. Direction of dependency (non-negotiable)</h2>
+<div class="highlight"><pre><span></span><code>ach-runtime  ──renders──▶  rendered runtime config  ──read──▶  ach-agent
+                          + ACH_* env (governed)
+ach-agent    ── NEVER reads CRDs, NEVER talks to the API server, NEVER writes Agent.status
+</code></pre></div>
+<p>The harness has <strong>no Kubernetes RBAC</strong>. Status is the operator's job, derived from
+<code>pod.status</code> only (spec §36, §39). This is what makes the two repos independently testable:
+the harness is tested against a hand-written rendered config; the operator is tested by
+"does it render the correct config?".</p>
+<hr />
+<h2 id="2-the-rendered-runtime-config-operator-writes-harness-reads">2. The rendered runtime config (operator writes → harness reads)</h2>
+<p>The operator collapses the four CRDs into <strong>one flat config</strong> mounted into the pod
+(file at <code>/etc/ach-agent/config.json</code>, or equivalent). The harness reads only this.
+This schema is the contract; freeze it before parallel work starts.</p>
+<blockquote>
+<p>NOTE: this shape is <strong>derived by us</strong>, not copied from the spec — the spec defines the
+CRDs and the env contract; this is the projection the harness consumes. Keep it minimal:
+only what the harness needs to run. Resolved, not referenced (no CRD refs leak through).</p>
+</blockquote>
+<div class="highlight"><pre><span></span><code>{
+  &quot;schemaVersion&quot;: &quot;1&quot;,
+  &quot;agent&quot;: {
+    &quot;name&quot;: &quot;gitlab-ackstorm&quot;,
+    &quot;namespace&quot;: &quot;engineering&quot;,
+    &quot;generation&quot;: 4                       // for trace correlation
+  },
+  &quot;engine&quot;: {
+    &quot;type&quot;: &quot;opencode&quot;,
+    &quot;binaryPath&quot;: &quot;opencode&quot;,
+    &quot;workDir&quot;: &quot;/workspace&quot;,
+    &quot;sessionDir&quot;: &quot;/var/lib/ach-agent/opencode/sessions&quot;,
+    &quot;thinkingLevel&quot;: &quot;medium&quot;,
+    &quot;steps&quot;: 50,
+    &quot;startupTimeoutSeconds&quot;: 30,          // §8.5 deadline: exceed → process exits
+    &quot;shared&quot;: { &quot;enabled&quot;: true, &quot;ttlSeconds&quot;: 120 }
+  },
+  &quot;model&quot;: {
+    &quot;default&quot;: &quot;gemini-3-flash&quot;,
+    &quot;provider&quot;: &quot;gemini&quot;                  // → ACH_PROVIDER_TYPE / PROVIDER_TYPE
+  },
+  &quot;governed&quot;: true,                       // derived from presence of ach (§4); informs harness routing
+  &quot;prompt&quot;: {
+    &quot;base&quot;: &quot;…resolved agent persona text…&quot;,   // already composed from source+compose
+    &quot;compose&quot;: &quot;append&quot;
+  },
+  &quot;memory&quot;: {                             // null if not configured; fail-open (§31)
+    &quot;endpoint&quot;: &quot;http://hindsight.engineering.svc:8080&quot;,
+    &quot;mission&quot;: &quot;AI code reviewer…&quot;,
+    &quot;scope&quot;: &quot;{project_id}&quot;,
+    &quot;mentalModels&quot;: [&quot;architecture&quot;, &quot;conventions&quot;, &quot;recurring-issues&quot;]
+  },
+  &quot;limits&quot;: {                             // §18.6 — all finite, always enforced
+    &quot;maxConcurrentInvocations&quot;: 8,
+    &quot;maxInvocationSeconds&quot;: 1800,
+    &quot;maxQueuedTotal&quot;: 100,
+    &quot;idempotencyWindowSeconds&quot;: 3600
+  },
+  &quot;persistence&quot;: { &quot;enabled&quot;: true, &quot;mountPath&quot;: &quot;/var/lib/ach-agent&quot; },  // → durable lane/dedup
+  &quot;health&quot;: { &quot;host&quot;: &quot;0.0.0.0&quot;, &quot;port&quot;: 8000 },
+  &quot;channels&quot;: [
+    {
+      &quot;name&quot;: &quot;gitlab-mr-review&quot;,
+      &quot;type&quot;: &quot;webhook&quot;,                  // webhook | slack | telegram | a2a | cron
+      &quot;concurrency&quot;: 4,
+      &quot;expire&quot;: 120,
+      &quot;session&quot;: { &quot;mode&quot;: &quot;auto&quot;, &quot;continuity&quot;: &quot;durable&quot;, &quot;ttlSeconds&quot;: 604800 },
+      &quot;response&quot;: { &quot;mode&quot;: &quot;actionRequired&quot;, &quot;fallback&quot;: &quot;fail&quot; },
+      &quot;prompt&quot;: &quot;Review this merge request: {{ .object_attributes.url }}&quot;,  // layer 5b (§12.3)
+      &quot;webhook&quot;: {
+        &quot;auth&quot;: { &quot;type&quot;: &quot;hmac&quot;, &quot;secretPath&quot;: &quot;/etc/ach-agent/secrets/gitlab-webhook/secret&quot; },
+        &quot;deliver&quot;: { &quot;type&quot;: &quot;gitlab_comment&quot;,
+                     &quot;config&quot;: { &quot;tokenPath&quot;: &quot;/etc/ach-agent/secrets/gitlab-token/token&quot; } },
+        &quot;deliverOnly&quot;: false
+      },
+      &quot;responseActions&quot;: [
+        { &quot;name&quot;: &quot;channel_message&quot;, &quot;kind&quot;: &quot;reply&quot;,
+          &quot;inputSchema&quot;: { &quot;type&quot;: &quot;object&quot;, &quot;required&quot;: [&quot;text&quot;],
+                           &quot;properties&quot;: { &quot;text&quot;: { &quot;type&quot;: &quot;string&quot; } } } },
+        { &quot;name&quot;: &quot;create_issue&quot;, &quot;kind&quot;: &quot;sideEffect&quot;,
+          &quot;consentTier&quot;: &quot;consent&quot;,    // NEW (optional, default &quot;consent&quot;)
+                                       // &quot;auto&quot; | &quot;consent&quot;
+                                       // Absent → treated as &quot;consent&quot; (safe default)
+          &quot;inputSchema&quot;: { &quot;type&quot;: &quot;object&quot;, &quot;required&quot;: [&quot;title&quot;],
+                           &quot;properties&quot;: {
+                             &quot;title&quot;: { &quot;type&quot;: &quot;string&quot; },
+                             &quot;body&quot;: { &quot;type&quot;: &quot;string&quot; }
+                           } } }
+      ]
+    }
+  ]
+}
+</code></pre></div>
+<p><strong>Secrets:</strong> the operator mounts referenced Secrets as files; the rendered config carries
+<strong>paths</strong>, never secret values. The harness reads the file at use time.</p>
+<p><strong>Open contract question to settle before freeze:</strong> config delivery mechanism —
+mounted file (recommended: survives restart, no size limit, simple) vs env var
+(size-limited) vs the operator hitting a harness admin endpoint (adds RBAC surface, avoid).
+Recommendation: <strong>mounted file</strong>, hash in a pod annotation so a config change rolls the pod.</p>
+<hr />
+<h3 id="deviation-d-12-gitlab_token-via-environment-variable-phase-2-gitlab_comment-channel">⚠ Deviation D-12: GITLAB_TOKEN via environment variable (Phase 2 — gitlab_comment channel)</h3>
+<blockquote>
+<p><strong>Scope:</strong> <code>gitlab_comment</code> delivery adapter only. All other secrets keep the mounted-path model.</p>
+</blockquote>
+<p><strong>Decision (user-approved, 2026-06-20):</strong> The GitLab API token used by <code>GitlabCommentAdapter</code>
+to post MR notes is provided via a <code>GITLAB_TOKEN</code> environment variable, <strong>not</strong> via a mounted
+file path (<code>deliver.config.tokenPath</code>). This is an intentional local exception to the
+"secrets are mounted paths, never values" rule described above.</p>
+<p><strong>What this means:</strong>
+- (a) <strong>Deliberate exception, gitlab_comment only:</strong> <code>GITLAB_TOKEN</code> is read from <code>os.environ</code>
+  at each <code>deliver()</code> call — never stored as an instance attribute and never logged
+  (redact_gitlab_token_processor scrubs any occurrence from structlog output). This is a local,
+  ackbot-style exception; other secrets (ek_, webhook HMAC secret) keep their mounted-path model.
+- (b) <strong>HMAC webhook secret unchanged (D-03):</strong> The <code>auth.secretPath</code> mounted file for HMAC
+  verification of inbound webhooks is NOT affected. That secret still follows the standard
+  "read from mounted file per request" pattern (SEC-02).
+- (c) <strong>Token read at call time, never logged:</strong> <code>GITLAB_TOKEN</code> is read inside <code>deliver()</code>
+  on every call and discarded immediately; it never crosses a log boundary (SEC-03 e2e test
+  asserts this with a sentinel value).
+- (d) <strong>Contract-conformant fallback:</strong> If this deviation is reversed in a future revision,
+  the fallback is <code>deliver.config.tokenPath</code> — read per-use from the mounted file path carried
+  in the rendered config's <code>webhook.deliver.config.tokenPath</code> field (already modeled in the
+  <code>WebhookDeliverBlock</code> schema). No schema change is needed to adopt this fallback.
+- (e) <strong>ach-runtime coordination required:</strong> <code>ach-runtime</code> (the Go operator) must render the
+  <code>GITLAB_TOKEN</code> env var into the pod environment (from a <code>SecretKeyRef</code> or equivalent)
+  in addition to the standard <code>ACH_*</code> env. This is a deliberate deviation from the
+  "operator-rendered env is <code>ACH_*</code> only" invariant in §3 above.</p>
+<p><strong>Why <code>GITLAB_TOKEN</code> env var and not <code>tokenPath</code>:</strong>
+Operational simplicity in the first deployment (ackbot-style); avoids requiring an additional
+secret mount. Reversed if the operator team prefers strict path-only secrets.</p>
+<hr />
+<h3 id="phase-5-additive-revision-consenttier-on-responseactions-entries">⚠ Phase 5 Additive Revision: consentTier on responseActions entries</h3>
+<blockquote>
+<p><strong>Scope:</strong> responseActions[] entries of kind: sideEffect only. reply entries do not
+carry consentTier (consentTier gates side effects, not replies — spec §23).</p>
+</blockquote>
+<p><strong>Decision (user-approved, 2026-06-21):</strong> An OPTIONAL <code>consentTier</code> field ("auto" | "consent",
+default "consent") is added to each responseActions[] entry. It is additive and backward-compatible:
+existing configs that omit it resolve to "consent" (the safe default). The harness treats absent
+the same as "consent".</p>
+<p><strong>What this means:</strong>
+- (a) Additive, backward-compatible: existing Phase 1–4 configs still validate.
+- (b) ach-runtime coordination: the operator MAY render consentTier into the responseActions
+  array from the Agent CRD (Agent.spec.channels[].responseActions[].consentTier). Until the
+  operator renders it, the harness default ("consent") governs — no breaking change.
+- (c) The field is the only Phase 5 CONTRACT change. Consent semantics (how consent is actually
+  decided) are deferred to a dedicated V1.1 CR and are NOT part of this revision.
+- (d) schema.py: ResponseActionBlock gains consent_tier: Literal["auto","consent"] = "consent"
+  (alias "consentTier"). extra="forbid" still holds.</p>
+<hr />
+<h2 id="3-the-ach_-env-contract-governed-only-spec-131-frozen">3. The ACH_* env contract (governed only) — spec §13.1, FROZEN</h2>
+<p>When <code>governed: true</code>, the operator materializes these into the pod env
+(both the init/hydrator container and the main container), <strong>after</strong> any <code>envFrom</code>,
+so the contract always wins on collision (§11.4):</p>
+<table>
+<thead>
+<tr>
+<th>env var</th>
+<th>value</th>
+<th>notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ACH_BASE_URL</code></td>
+<td><code>CapabilityProfile.ach.endpoint</code></td>
+<td>the Forwarder/Hub coordinate</td>
+</tr>
+<tr>
+<td><code>ACH_API_KEY</code></td>
+<td>the <code>ek_</code> (from <code>ach.secretRef</code>)</td>
+<td>presented as <strong>bearer</strong>; never logged</td>
+</tr>
+<tr>
+<td><code>ACH_PROVIDER_TYPE</code></td>
+<td><code>Agent.model.provider</code> (default <code>openai</code>)</td>
+<td>dialect the harness builds</td>
+</tr>
+<tr>
+<td><code>ACH_ENVIRONMENT</code></td>
+<td><code>CapabilityProfile.ach.name</code></td>
+<td>which ACH Hub Environment (used by hydrator)</td>
+</tr>
+</tbody>
+</table>
+<p>Security invariants (normative, §13.1): <code>ek_</code> as bearer; rotation by secret-hash restart
+(§11.6); no leak to logs or downstream tool backends. The harness owns <em>translation</em>
+(building the engine client, routing model vs MCP vs A2A) — the spec does not specify "how".</p>
+<p>Non-governed agents: no <code>ACH_*</code> set; access comes from <code>CapabilityProfile.envFrom</code>
+(rendered as ordinary pod env), and <code>model.provider</code> still emits <code>PROVIDER_TYPE</code>.</p>
+<hr />
+<h2 id="4-http-endpoints-the-harness-must-expose-spec-161-frozen">4. HTTP endpoints the harness MUST expose — spec §16.1, FROZEN</h2>
+<div class="highlight"><pre><span></span><code>POST /channels/{channelName}/events    # inbound for HTTP-delivered channels (webhook, a2a, sync http)
+GET  /healthz                          # liveness
+GET  /readyz                           # readiness = all enabled channel adapters listening (§8.5)
+GET  /metrics                          # Prometheus
+</code></pre></div>
+<p><code>readyz</code> semantics (§8.5): Ready when adapters listen. Engine warmup is NOT a readiness gate,
+<strong>but</strong> if the engine does not reach ready within <code>startupTimeoutSeconds</code> the process exits
+(→ substrate marks pod not-ready). The operator derives <code>WorkloadReady</code> from the pod passing
+<code>readyz</code>; it never asks the harness for status.</p>
+<hr />
+<h2 id="5-status-conditions-operator-only-derived-from-podstatus-36-frozen">5. Status conditions — operator-only, derived from pod.status (§36) — FROZEN</h2>
+<p>The harness populates <strong>none</strong> of these. Listed here so the harness team knows what is and
+isn't its job (it is NOT).</p>
+<p><code>RuntimeResolved</code>, <code>CapabilityResolved</code>, <code>MemoryResolved</code>, <code>Hydrated</code>
+(from <code>pod.status.initContainerStatuses</code>), <code>WorkloadRendered</code>, <code>WorkloadReady</code>
+(pod passed <code>readyz</code>), <code>ServiceReady</code>, <code>Ready</code>, <code>SessionContinuityWarning</code>.</p>
+<p>Post-start / per-invocation failures are <strong>telemetry</strong> (metrics/audit/trace), never status
+(§O12 closed: "status is the pod's, not the agent's").</p>
+<hr />
+<h2 id="6-behavioral-invariants-the-harness-must-honor-these-become-conformance-tests">6. Behavioral invariants the harness MUST honor (these become conformance tests)</h2>
+<ol>
+<li><strong>Idempotency-key derivation (§18.4.0):</strong> per channel type — webhook/http header chain
+   (<code>X-GitHub-Delivery</code> / <code>X-Gitlab-Event-UUID</code> / <code>svix-id</code> / <code>X-Request-ID</code>) → ms-timestamp
+   fallback; slack <code>ts</code>; telegram <code>update_id</code>; cron <code>{channel}:{scheduled_tick_time}</code>.
+   <strong>Invariant: unique-per-distinct-event; degrade to unique-per-arrival (process),
+   NEVER to a shared/empty key (drop).</strong></li>
+<li><strong>Pre-lane order (§18.8/§29): dedup → backpressure (maxQueuedTotal) → lane.</strong>
+   Duplicates discarded before they consume a queue slot.</li>
+<li><strong>Three finite bounds always enforced (§18.6):</strong> maxConcurrentInvocations,
+   maxInvocationSeconds (1800), maxQueuedTotal (100).</li>
+<li><strong><code>expire</code> exhaustion / full queue is never silent (§18.4.1):</strong> 503 sync /
+   NACK-redelivery async-retriable / drop-log async-no-retry.</li>
+<li><strong>Memory is fail-open (§31):</strong> backend down → run without memory context, log it,
+   never fail the invocation (read and write).</li>
+<li><strong>Startup deadline (§8.5):</strong> engine not ready within startupTimeoutSeconds → exit process.</li>
+<li><strong>Proven-start gate A′ (§8.5):</strong> during the pod's first warmup, NACK/503 instead of
+   buffering; accept-and-buffer only after the engine has been ready once.</li>
+<li><strong>Model never talks to channels (§15):</strong> adapters execute only accepted, validated actions.</li>
+<li><strong>Dual delivery (§20.1):</strong> synchronous reply + out-of-band delivery, both supported.</li>
+</ol>
+<blockquote>
+<p><strong>Conformance suite note (Phase 5, 2026-06-21):</strong>
+The <code>tests/conformance/</code> suite tests all nine invariants above (§6.1–§6.9) <strong>plus</strong>
+two additional invariants from the implementation roadmap: FIFO per session key (SC#2)
+and secret-never-logged (SC#2). These two extras are not enumerated in §6 because they
+are routing and security invariants modeled elsewhere in this contract (§18.8 and §3
+respectively), not behavioral invariants in the harness action contract. The conformance
+suite covers the union (11 tests). No contract behavior changes with this note.</p>
+</blockquote>
+<hr />
+<h2 id="7-what-is-not-in-v1-declared-do-not-build">7. What is NOT in v1 (declared, do not build)</h2>
+<p>O2 managed runtimes, O4 shared Channel CRD, O7 external durable substrate (multi-replica,
+NATS/queue, the channel↔harness network seam), O8 jobPerInvocation, <code>/v1/responses</code> facade
+(O14), per-channel <code>rateLimit</code>. Keep the channel→router boundary a <strong>named in-process seam</strong>
+so O7 is a later swap, not a rewrite — that is the only forward-prep that earns its keep.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,972 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>Agent Identity in Metrics and Outbound Headers — Implementation Plan - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#agent-identity-in-metrics-and-outbound-headers-implementation-plan" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Agent Identity in Metrics and Outbound Headers — Implementation Plan
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#why-this-approach" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why this approach
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-state-verified-at-1b24371" class="md-nav__link">
+    <span class="md-ellipsis">
+      Current state (verified at 1b24371)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-consequence" class="md-nav__link">
+    <span class="md-ellipsis">
+      Known consequence
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#task-1-identity-holder" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task 1: Identity holder
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#task-2-registry-wrapper-that-stamps-identity-on-every-sample" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task 2: Registry wrapper that stamps identity on every sample
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#task-3-mount-the-wrapper-on-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task 3: Mount the wrapper on /metrics
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#task-4-wire-identity-at-boot-and-hydrate-delete-agent_info" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task 4: Wire identity at boot and hydrate; delete AGENT_INFO
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#task-5-outbound-identity-headers-on-model-traffic" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task 5: Outbound identity headers on model traffic
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#task-6-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task 6: Docs
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#task-7-lint-full-suite-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task 7: Lint, full suite, release
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#companion-change-in-repo-ach" class="md-nav__link">
+    <span class="md-ellipsis">
+      Companion change in repo ach
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#out-of-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      Out of scope
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="agent-identity-in-metrics-and-outbound-headers-implementation-plan">Agent Identity in Metrics and Outbound Headers — Implementation Plan</h1>
+<blockquote>
+<p><strong>For Claude:</strong> REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.</p>
+</blockquote>
+<p><strong>Goal:</strong> Make the harness itself the single source of agent identity — stamp <code>agent</code> and <code>environment</code> on every Prometheus sample it exposes, and send the same identity as outbound headers on model traffic.</p>
+<p><strong>Architecture:</strong> A process-wide identity holder (<code>agent</code> from config at boot, <code>environment</code> from a successful platform hydrate) feeds two consumers. Metrics get it through a <code>Collector</code> wrapper around the default registry that rewrites every sample's label set at scrape time — no per-metric or per-call-site changes, and future metrics are covered automatically. The model proxy reads the same holder and adds <code>x-ach-agent</code> / <code>x-ach-environment</code> to requests it forwards to ACH. The <code>ach_agent_info</code> gauge and the ACH chart's PodMonitor relabeling are both deleted: they are two competing partial answers to the problem this plan solves once.</p>
+<p><strong>Tech Stack:</strong> Python 3.12, <code>prometheus_client</code> 0.25.0, <code>aiohttp</code> (proxy), <code>pytest</code> (asyncio_mode=auto), <code>uv</code>, Docker-routed <code>make</code>.</p>
+<hr />
+<h2 id="why-this-approach">Why this approach</h2>
+<p>Three mechanisms were on the table. This is the reasoning, recorded so it is not relitigated:</p>
+<table>
+<thead>
+<tr>
+<th>Mechanism</th>
+<th>Verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PodMonitor relabeling (repo <code>ach</code>, <code>deploy/helm/ach/templates/podmonitor.yaml</code>)</td>
+<td><strong>Rejected.</strong> Kubernetes-only, needs Prometheus Operator CRDs, and <strong>structurally cannot supply <code>environment</code></strong> — the environment is not a pod label; it is only known after hydrate resolves the <code>ek_</code>.</td>
+</tr>
+<tr>
+<td><code>ach_agent_info{agent,environment}</code> gauge (<code>73f3ce5</code>)</td>
+<td><strong>Rejected.</strong> Forces a <code>group_left</code> join into every dashboard query. When the join is missing it does not error — it silently returns a wrongly-aggregated number.</td>
+</tr>
+<tr>
+<td>Harness stamps labels on its own samples</td>
+<td><strong>Chosen.</strong> The harness is the only component that knows both facts. Works identically in Kubernetes, Docker, CI, and on a laptop. Dashboard queries stay direct.</td>
+</tr>
+</tbody>
+</table>
+<p>The relabeling's one genuine advantage — new metrics are covered without anyone remembering to label them — is preserved here by wrapping the registry instead of editing each metric.</p>
+<h2 id="current-state-verified-at-1b24371">Current state (verified at <code>1b24371</code>)</h2>
+<p>14 <code>ach_agent_*</code> metric families across three modules:</p>
+<ul>
+<li><code>src/ach_agent/engine/metrics.py</code> — 3 unlabelled counters + <code>AGENT_INFO</code> gauge (to be deleted)</li>
+<li><code>src/ach_agent/router/metrics.py</code> — 4 unlabelled counters, <code>CHANNEL_INBOUND</code> (<code>channel</code>, <code>type</code>), <code>MEMORY_DEGRADED</code></li>
+<li><code>src/ach_agent/stats/metrics.py</code> — 8 families, incremented through positional <code>.labels(...)</code> in <code>observe()</code> / <code>observe_tool()</code> (lines 44-60)</li>
+</ul>
+<p>None of them carries <code>agent</code> or <code>environment</code> today, so there are no label collisions to resolve.</p>
+<p>Exposition: <code>make_asgi_app()</code> mounted at <code>/metrics</code> in <code>src/ach_agent/http/app.py:200-201</code>.</p>
+<p>Identity sources: <code>cfg.agent.name</code> (<code>config/schema.py:38,715</code>); <code>manifest.environment</code> from <code>hydrate()</code> (<code>engine/hydrate.py:87-90</code>), called once at <code>main.py:1319</code>.</p>
+<p>Exposition internals confirmed by inspecting the running image: <code>make_asgi_app(registry: Collector = REGISTRY)</code> and <code>exposition._bake_output</code> calls <code>registry.restricted_registry(params['name[]'])</code> <strong>only</strong> when the scrape URL carries a <code>name[]</code> query parameter. The wrapper must therefore implement <code>restricted_registry</code> as well as <code>collect</code>. <code>Sample</code> is a namedtuple with six fields (<code>name, labels, value, timestamp, exemplar, native_histogram</code>), so samples must be rebuilt with <code>_replace</code> rather than a positional constructor, or a future field addition silently drops data.</p>
+<h2 id="known-consequence">Known consequence</h2>
+<p>Adding labels changes series identity. Range queries spanning the upgrade will show a break between the old and new series. This is unavoidable under any of the three mechanisms and is accepted.</p>
+<hr />
+<h2 id="task-1-identity-holder">Task 1: Identity holder</h2>
+<p><strong>Files:</strong>
+- Create: <code>src/ach_agent/engine/identity.py</code>
+- Test: <code>tests/engine/test_identity.py</code></p>
+<p><strong>Step 1: Write the failing test</strong></p>
+<div class="highlight"><pre><span></span><code><span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="sd">&quot;&quot;&quot;Process-wide agent identity (agent name at boot, environment after hydrate).&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent.engine</span><span class="w"> </span><span class="kn">import</span> <span class="n">identity</span>
+
+
+<span class="nd">@pytest</span><span class="o">.</span><span class="n">fixture</span><span class="p">(</span><span class="n">autouse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_reset</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_identity_defaults_to_empty_strings</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">assert</span> <span class="n">identity</span><span class="o">.</span><span class="n">current</span><span class="p">()</span> <span class="o">==</span> <span class="p">{</span><span class="s2">&quot;agent&quot;</span><span class="p">:</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="s2">&quot;environment&quot;</span><span class="p">:</span> <span class="s2">&quot;&quot;</span><span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_set_agent_and_environment</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">set_agent</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">)</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">set_environment</span><span class="p">(</span><span class="s2">&quot;platform&quot;</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">identity</span><span class="o">.</span><span class="n">current</span><span class="p">()</span> <span class="o">==</span> <span class="p">{</span><span class="s2">&quot;agent&quot;</span><span class="p">:</span> <span class="s2">&quot;classifier&quot;</span><span class="p">,</span> <span class="s2">&quot;environment&quot;</span><span class="p">:</span> <span class="s2">&quot;platform&quot;</span><span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_current_returns_a_copy</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">set_agent</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">)</span>
+    <span class="n">snapshot</span> <span class="o">=</span> <span class="n">identity</span><span class="o">.</span><span class="n">current</span><span class="p">()</span>
+    <span class="n">snapshot</span><span class="p">[</span><span class="s2">&quot;agent&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;mutated&quot;</span>
+    <span class="k">assert</span> <span class="n">identity</span><span class="o">.</span><span class="n">current</span><span class="p">()[</span><span class="s2">&quot;agent&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;classifier&quot;</span>
+</code></pre></div>
+<p><strong>Step 2: Run test to verify it fails</strong></p>
+<p>Run: <code>./scripts/dev.sh uv run pytest tests/engine/test_identity.py -v</code>
+Expected: FAIL — <code>ModuleNotFoundError: No module named 'ach_agent.engine.identity'</code></p>
+<p><strong>Step 3: Write minimal implementation</strong></p>
+<div class="highlight"><pre><span></span><code><span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="sd">&quot;&quot;&quot;Process-wide agent identity, stamped onto every Prometheus sample.</span>
+
+<span class="sd">The harness is the only component that knows both facts: ``agent`` comes from</span>
+<span class="sd">config at boot, ``environment`` only from a successful platform hydrate. A</span>
+<span class="sd">scrape-side relabeling can never supply ``environment`` — it is not a pod label —</span>
+<span class="sd">which is why identity is emitted from inside the process.</span>
+
+<span class="sd">Both keys always exist. They start as empty strings rather than being absent so</span>
+<span class="sd">that the label set of a series never changes mid-process: Prometheus would</span>
+<span class="sd">otherwise see two distinct series for the same metric across the hydrate</span>
+<span class="sd">boundary. The agent hard-fails when hydrate fails, so the window in which</span>
+<span class="sd">``environment`` is empty is the few seconds of boot.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="n">_IDENTITY</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;agent&quot;</span><span class="p">:</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="s2">&quot;environment&quot;</span><span class="p">:</span> <span class="s2">&quot;&quot;</span><span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">set_agent</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Record the configured agent name (called once at boot).&quot;&quot;&quot;</span>
+    <span class="n">_IDENTITY</span><span class="p">[</span><span class="s2">&quot;agent&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">name</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">set_environment</span><span class="p">(</span><span class="n">environment</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Record the hydrated environment (called once after a successful hydrate).&quot;&quot;&quot;</span>
+    <span class="n">_IDENTITY</span><span class="p">[</span><span class="s2">&quot;environment&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">environment</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">current</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Snapshot of the identity labels. Returns a copy — callers may not mutate state.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span><span class="n">_IDENTITY</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">reset</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Clear the identity. Test-support only; never called by the harness.&quot;&quot;&quot;</span>
+    <span class="n">_IDENTITY</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">agent</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">environment</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>Step 4: Run test to verify it passes</strong></p>
+<p>Run: <code>./scripts/dev.sh uv run pytest tests/engine/test_identity.py -v</code>
+Expected: PASS (3 passed)</p>
+<p><strong>Step 5: Commit</strong></p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span>src/ach_agent/engine/identity.py<span class="w"> </span>tests/engine/test_identity.py
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;feat(metrics): add process-wide agent identity holder&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="task-2-registry-wrapper-that-stamps-identity-on-every-sample">Task 2: Registry wrapper that stamps identity on every sample</h2>
+<p><strong>Files:</strong>
+- Modify: <code>src/ach_agent/engine/identity.py</code>
+- Test: <code>tests/engine/test_identity.py</code></p>
+<p><strong>Step 1: Write the failing test</strong></p>
+<p>Append to <code>tests/engine/test_identity.py</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">prometheus_client</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">prometheus_client</span><span class="w"> </span><span class="kn">import</span> <span class="n">CollectorRegistry</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_samples</span><span class="p">(</span><span class="n">registry</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Map sample name -&gt; labels, across every metric the registry yields.&quot;&quot;&quot;</span>
+    <span class="n">out</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">metric</span> <span class="ow">in</span> <span class="n">registry</span><span class="o">.</span><span class="n">collect</span><span class="p">():</span>
+        <span class="k">for</span> <span class="n">sample</span> <span class="ow">in</span> <span class="n">metric</span><span class="o">.</span><span class="n">samples</span><span class="p">:</span>
+            <span class="n">out</span><span class="p">[</span><span class="n">sample</span><span class="o">.</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">sample</span><span class="o">.</span><span class="n">labels</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">out</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_stamps_identity_on_unlabelled_metric</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">inner</span> <span class="o">=</span> <span class="n">CollectorRegistry</span><span class="p">()</span>
+    <span class="n">prometheus_client</span><span class="o">.</span><span class="n">Counter</span><span class="p">(</span><span class="s2">&quot;thing_total&quot;</span><span class="p">,</span> <span class="s2">&quot;doc&quot;</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">inner</span><span class="p">)</span><span class="o">.</span><span class="n">inc</span><span class="p">()</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">set_agent</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">)</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">set_environment</span><span class="p">(</span><span class="s2">&quot;platform&quot;</span><span class="p">)</span>
+
+    <span class="n">labels</span> <span class="o">=</span> <span class="n">_samples</span><span class="p">(</span><span class="n">identity</span><span class="o">.</span><span class="n">IdentityRegistry</span><span class="p">(</span><span class="n">inner</span><span class="p">))[</span><span class="s2">&quot;thing_total_total&quot;</span><span class="p">]</span>
+    <span class="k">assert</span> <span class="n">labels</span> <span class="o">==</span> <span class="p">{</span><span class="s2">&quot;agent&quot;</span><span class="p">:</span> <span class="s2">&quot;classifier&quot;</span><span class="p">,</span> <span class="s2">&quot;environment&quot;</span><span class="p">:</span> <span class="s2">&quot;platform&quot;</span><span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_preserves_existing_labels</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">inner</span> <span class="o">=</span> <span class="n">CollectorRegistry</span><span class="p">()</span>
+    <span class="n">prometheus_client</span><span class="o">.</span><span class="n">Counter</span><span class="p">(</span><span class="s2">&quot;thing_total&quot;</span><span class="p">,</span> <span class="s2">&quot;doc&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">],</span> <span class="n">registry</span><span class="o">=</span><span class="n">inner</span><span class="p">)</span><span class="o">.</span><span class="n">labels</span><span class="p">(</span><span class="s2">&quot;gpt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">inc</span><span class="p">()</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">set_agent</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">)</span>
+
+    <span class="n">labels</span> <span class="o">=</span> <span class="n">_samples</span><span class="p">(</span><span class="n">identity</span><span class="o">.</span><span class="n">IdentityRegistry</span><span class="p">(</span><span class="n">inner</span><span class="p">))[</span><span class="s2">&quot;thing_total_total&quot;</span><span class="p">]</span>
+    <span class="k">assert</span> <span class="n">labels</span> <span class="o">==</span> <span class="p">{</span><span class="s2">&quot;agent&quot;</span><span class="p">:</span> <span class="s2">&quot;classifier&quot;</span><span class="p">,</span> <span class="s2">&quot;environment&quot;</span><span class="p">:</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;gpt&quot;</span><span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_stamps_histogram_buckets_and_created_series</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">inner</span> <span class="o">=</span> <span class="n">CollectorRegistry</span><span class="p">()</span>
+    <span class="n">prometheus_client</span><span class="o">.</span><span class="n">Histogram</span><span class="p">(</span><span class="s2">&quot;dur_seconds&quot;</span><span class="p">,</span> <span class="s2">&quot;doc&quot;</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">inner</span><span class="p">)</span><span class="o">.</span><span class="n">observe</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">set_agent</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">)</span>
+
+    <span class="n">stamped</span> <span class="o">=</span> <span class="n">_samples</span><span class="p">(</span><span class="n">identity</span><span class="o">.</span><span class="n">IdentityRegistry</span><span class="p">(</span><span class="n">inner</span><span class="p">))</span>
+    <span class="k">assert</span> <span class="n">stamped</span><span class="p">,</span> <span class="s2">&quot;histogram produced no samples&quot;</span>
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">labels</span> <span class="ow">in</span> <span class="n">stamped</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="k">assert</span> <span class="n">labels</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;agent&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;classifier&quot;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> not stamped&quot;</span>
+        <span class="k">assert</span> <span class="s2">&quot;environment&quot;</span> <span class="ow">in</span> <span class="n">labels</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> missing environment&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_label_set_is_stable_before_and_after_environment_is_known</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">inner</span> <span class="o">=</span> <span class="n">CollectorRegistry</span><span class="p">()</span>
+    <span class="n">prometheus_client</span><span class="o">.</span><span class="n">Counter</span><span class="p">(</span><span class="s2">&quot;thing_total&quot;</span><span class="p">,</span> <span class="s2">&quot;doc&quot;</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">inner</span><span class="p">)</span><span class="o">.</span><span class="n">inc</span><span class="p">()</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">set_agent</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">)</span>
+    <span class="n">wrapper</span> <span class="o">=</span> <span class="n">identity</span><span class="o">.</span><span class="n">IdentityRegistry</span><span class="p">(</span><span class="n">inner</span><span class="p">)</span>
+
+    <span class="n">before</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">_samples</span><span class="p">(</span><span class="n">wrapper</span><span class="p">)[</span><span class="s2">&quot;thing_total_total&quot;</span><span class="p">])</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">set_environment</span><span class="p">(</span><span class="s2">&quot;platform&quot;</span><span class="p">)</span>
+    <span class="n">after</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">_samples</span><span class="p">(</span><span class="n">wrapper</span><span class="p">)[</span><span class="s2">&quot;thing_total_total&quot;</span><span class="p">])</span>
+
+    <span class="k">assert</span> <span class="n">before</span> <span class="o">==</span> <span class="n">after</span> <span class="o">==</span> <span class="p">{</span><span class="s2">&quot;agent&quot;</span><span class="p">,</span> <span class="s2">&quot;environment&quot;</span><span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_restricted_registry_is_still_stamped</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">inner</span> <span class="o">=</span> <span class="n">CollectorRegistry</span><span class="p">()</span>
+    <span class="n">prometheus_client</span><span class="o">.</span><span class="n">Counter</span><span class="p">(</span><span class="s2">&quot;kept_total&quot;</span><span class="p">,</span> <span class="s2">&quot;doc&quot;</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">inner</span><span class="p">)</span><span class="o">.</span><span class="n">inc</span><span class="p">()</span>
+    <span class="n">prometheus_client</span><span class="o">.</span><span class="n">Counter</span><span class="p">(</span><span class="s2">&quot;dropped_total&quot;</span><span class="p">,</span> <span class="s2">&quot;doc&quot;</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">inner</span><span class="p">)</span><span class="o">.</span><span class="n">inc</span><span class="p">()</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">set_agent</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">)</span>
+
+    <span class="n">restricted</span> <span class="o">=</span> <span class="n">identity</span><span class="o">.</span><span class="n">IdentityRegistry</span><span class="p">(</span><span class="n">inner</span><span class="p">)</span><span class="o">.</span><span class="n">restricted_registry</span><span class="p">([</span><span class="s2">&quot;kept_total_total&quot;</span><span class="p">])</span>
+    <span class="n">stamped</span> <span class="o">=</span> <span class="n">_samples</span><span class="p">(</span><span class="n">restricted</span><span class="p">)</span>
+
+    <span class="k">assert</span> <span class="s2">&quot;dropped_total_total&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">stamped</span>
+    <span class="k">assert</span> <span class="n">stamped</span><span class="p">[</span><span class="s2">&quot;kept_total_total&quot;</span><span class="p">][</span><span class="s2">&quot;agent&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;classifier&quot;</span>
+</code></pre></div>
+<p><strong>Step 2: Run test to verify it fails</strong></p>
+<p>Run: <code>./scripts/dev.sh uv run pytest tests/engine/test_identity.py -v</code>
+Expected: FAIL — <code>AttributeError: module 'ach_agent.engine.identity' has no attribute 'IdentityRegistry'</code></p>
+<p><strong>Step 3: Write minimal implementation</strong></p>
+<p>Append to <code>src/ach_agent/engine/identity.py</code> (and add <code>from collections.abc import Iterable</code> plus
+<code>from prometheus_client.registry import Collector, CollectorRegistry</code> to the imports):</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">IdentityRegistry</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Wraps a registry and stamps the process identity onto every sample.</span>
+
+<span class="sd">    Operating at sample level rather than metric level means counters,</span>
+<span class="sd">    histogram buckets, ``_sum``/``_count`` and ``_created`` series are all</span>
+<span class="sd">    covered uniformly — and so is every metric added in the future, without</span>
+<span class="sd">    anyone having to remember to label it. That was the scrape-side</span>
+<span class="sd">    relabeling&#39;s one real advantage; this is how it is kept.</span>
+
+<span class="sd">    Samples are rebuilt with ``_replace`` rather than a positional</span>
+<span class="sd">    ``Sample(...)`` constructor: ``Sample`` gained ``native_histogram`` as a</span>
+<span class="sd">    sixth field, and a positional rebuild silently drops any field added later.</span>
+
+<span class="sd">    Existing metric labels win on collision. No ``ach_agent_*`` family declares</span>
+<span class="sd">    ``agent`` or ``environment`` today, so this branch is defensive only.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">inner</span><span class="p">:</span> <span class="n">CollectorRegistry</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_inner</span> <span class="o">=</span> <span class="n">inner</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">collect</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">Collector</span><span class="p">]:</span>
+        <span class="n">stamp</span> <span class="o">=</span> <span class="n">current</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">metric</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inner</span><span class="o">.</span><span class="n">collect</span><span class="p">():</span>
+            <span class="n">metric</span><span class="o">.</span><span class="n">samples</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="n">sample</span><span class="o">.</span><span class="n">_replace</span><span class="p">(</span><span class="n">labels</span><span class="o">=</span><span class="p">{</span><span class="o">**</span><span class="n">stamp</span><span class="p">,</span> <span class="o">**</span><span class="n">sample</span><span class="o">.</span><span class="n">labels</span><span class="p">})</span> <span class="k">for</span> <span class="n">sample</span> <span class="ow">in</span> <span class="n">metric</span><span class="o">.</span><span class="n">samples</span>
+            <span class="p">]</span>
+            <span class="k">yield</span> <span class="n">metric</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">restricted_registry</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">names</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">IdentityRegistry</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Mirror ``CollectorRegistry.restricted_registry``.</span>
+
+<span class="sd">        ``prometheus_client.exposition._bake_output`` calls this whenever the</span>
+<span class="sd">        scrape URL carries ``name[]``. Without it that request raises instead of</span>
+<span class="sd">        serving metrics.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">IdentityRegistry</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_inner</span><span class="o">.</span><span class="n">restricted_registry</span><span class="p">(</span><span class="n">names</span><span class="p">))</span>
+</code></pre></div>
+<p><strong>Step 4: Run test to verify it passes</strong></p>
+<p>Run: <code>./scripts/dev.sh uv run pytest tests/engine/test_identity.py -v</code>
+Expected: PASS (8 passed)</p>
+<p><strong>Step 5: Commit</strong></p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span>src/ach_agent/engine/identity.py<span class="w"> </span>tests/engine/test_identity.py
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;feat(metrics): stamp agent identity on every exposed sample&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="task-3-mount-the-wrapper-on-metrics">Task 3: Mount the wrapper on /metrics</h2>
+<p><strong>Files:</strong>
+- Modify: <code>src/ach_agent/http/app.py:200-201</code>
+- Test: <code>tests/http/test_metrics_identity.py</code></p>
+<p><strong>Step 1: Write the failing test</strong></p>
+<div class="highlight"><pre><span></span><code><span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="sd">&quot;&quot;&quot;The mounted /metrics endpoint must expose identity-stamped samples.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">fastapi.testclient</span><span class="w"> </span><span class="kn">import</span> <span class="n">TestClient</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent.engine</span><span class="w"> </span><span class="kn">import</span> <span class="n">identity</span>
+
+
+<span class="nd">@pytest</span><span class="o">.</span><span class="n">fixture</span><span class="p">(</span><span class="n">autouse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_reset</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_metrics_endpoint_carries_identity</span><span class="p">(</span><span class="n">app_factory</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">set_agent</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">)</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">set_environment</span><span class="p">(</span><span class="s2">&quot;platform&quot;</span><span class="p">)</span>
+
+    <span class="k">with</span> <span class="n">TestClient</span><span class="p">(</span><span class="n">app_factory</span><span class="p">())</span> <span class="k">as</span> <span class="n">client</span><span class="p">:</span>
+        <span class="n">body</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;/metrics/&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">text</span>
+
+    <span class="k">assert</span> <span class="s1">&#39;agent=&quot;classifier&quot;&#39;</span> <span class="ow">in</span> <span class="n">body</span>
+    <span class="k">assert</span> <span class="s1">&#39;environment=&quot;platform&quot;&#39;</span> <span class="ow">in</span> <span class="n">body</span>
+</code></pre></div>
+<blockquote>
+<p><code>app_factory</code> is whatever fixture the existing <code>tests/http/</code> suite already uses to
+build the FastAPI app. Reuse it — do not construct a second app factory. Inspect
+<code>tests/http/</code> and <code>tests/conftest.py</code> first and adapt the call to match.</p>
+</blockquote>
+<p><strong>Step 2: Run test to verify it fails</strong></p>
+<p>Run: <code>./scripts/dev.sh uv run pytest tests/http/test_metrics_identity.py -v</code>
+Expected: FAIL — assertion error, the body has no <code>agent=</code> label.</p>
+<p><strong>Step 3: Write minimal implementation</strong></p>
+<p>In <code>src/ach_agent/http/app.py</code>, add to the imports:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">prometheus_client</span><span class="w"> </span><span class="kn">import</span> <span class="n">REGISTRY</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent.engine.identity</span><span class="w"> </span><span class="kn">import</span> <span class="n">IdentityRegistry</span>
+</code></pre></div>
+<p>and replace line 200:</p>
+<div class="highlight"><pre><span></span><code>    <span class="n">metrics_app</span> <span class="o">=</span> <span class="n">make_asgi_app</span><span class="p">(</span><span class="n">registry</span><span class="o">=</span><span class="n">IdentityRegistry</span><span class="p">(</span><span class="n">REGISTRY</span><span class="p">))</span>
+</code></pre></div>
+<p><strong>Step 4: Run test to verify it passes</strong></p>
+<p>Run: <code>./scripts/dev.sh uv run pytest tests/http/test_metrics_identity.py -v</code>
+Expected: PASS</p>
+<p><strong>Step 5: Commit</strong></p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span>src/ach_agent/http/app.py<span class="w"> </span>tests/http/test_metrics_identity.py
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;feat(metrics): serve /metrics through the identity registry&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="task-4-wire-identity-at-boot-and-hydrate-delete-agent_info">Task 4: Wire identity at boot and hydrate; delete <code>AGENT_INFO</code></h2>
+<p><strong>Files:</strong>
+- Modify: <code>src/ach_agent/engine/hydrate.py:11,87-90</code>
+- Modify: <code>src/ach_agent/engine/metrics.py:38-42</code> (delete)
+- Modify: <code>src/ach_agent/main.py:1319</code> (call site — verify only, signature is unchanged)
+- Test: <code>tests/engine/test_hydrate.py</code></p>
+<p><code>AGENT_INFO</code> was added in <code>73f3ce5</code>, which is <strong>after</strong> the <code>v0.10.0</code> release commit and has
+never been published — confirmed absent from the production Prometheus. There is no
+compatibility surface to preserve; delete it outright rather than deprecating it.</p>
+<p><strong>Step 1: Write the failing test</strong></p>
+<p>Add to <code>tests/engine/test_hydrate.py</code> (match the existing mocking style in that file):</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_hydrate_records_identity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;hydrate() sets both identity labels from config + manifest.&quot;&quot;&quot;</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">set_agent</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">)</span>
+
+    <span class="k">await</span> <span class="n">hydrate</span><span class="p">(</span><span class="n">base_url</span><span class="p">,</span> <span class="n">ek</span><span class="p">,</span> <span class="s2">&quot;classifier&quot;</span><span class="p">)</span>
+
+    <span class="k">assert</span> <span class="n">identity</span><span class="o">.</span><span class="n">current</span><span class="p">()</span> <span class="o">==</span> <span class="p">{</span><span class="s2">&quot;agent&quot;</span><span class="p">:</span> <span class="s2">&quot;classifier&quot;</span><span class="p">,</span> <span class="s2">&quot;environment&quot;</span><span class="p">:</span> <span class="s2">&quot;platform&quot;</span><span class="p">}</span>
+</code></pre></div>
+<p>Fill the ellipses from the fixtures the surrounding tests already use to stub the
+<code>/platform/hydrate</code> response; make the stubbed manifest return <code>environment="platform"</code>.</p>
+<p><strong>Step 2: Run test to verify it fails</strong></p>
+<p>Run: <code>./scripts/dev.sh uv run pytest tests/engine/test_hydrate.py -v</code>
+Expected: FAIL — <code>environment</code> is still <code>""</code> (hydrate sets the gauge, not the identity).</p>
+<p><strong>Step 3: Write minimal implementation</strong></p>
+<p>In <code>src/ach_agent/engine/hydrate.py</code>, replace the <code>AGENT_INFO</code> import on line 11 with:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">ach_agent.engine</span><span class="w"> </span><span class="kn">import</span> <span class="n">identity</span>
+</code></pre></div>
+<p>and rewrite <code>hydrate()</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">hydrate</span><span class="p">(</span><span class="n">base_url</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">ek</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">agent_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">HydrationManifest</span><span class="p">:</span>
+    <span class="n">manifest</span> <span class="o">=</span> <span class="k">await</span> <span class="n">fetch_hydration_manifest</span><span class="p">(</span><span class="n">base_url</span><span class="p">,</span> <span class="n">ek</span><span class="p">)</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">set_agent</span><span class="p">(</span><span class="n">agent_name</span><span class="p">)</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">set_environment</span><span class="p">(</span><span class="n">manifest</span><span class="o">.</span><span class="n">environment</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">manifest</span>
+</code></pre></div>
+<p>Delete the <code>AGENT_INFO</code> block from <code>src/ach_agent/engine/metrics.py</code> (lines 38-42) and drop the
+now-unused <code>Gauge</code> reference. Leave the three counters untouched.</p>
+<p><code>main.py:1319</code> already passes <code>cfg.agent.name</code>; the signature does not change. Also call
+<code>identity.set_agent(cfg.agent.name)</code> early in <code>main()</code> — before hydrate — so a scrape landing
+during boot already carries the agent name.</p>
+<p><strong>Step 4: Run the full suite</strong></p>
+<p>Run: <code>make test</code>
+Expected: PASS. Any test still importing <code>AGENT_INFO</code> fails here — delete those assertions,
+they cover a metric that no longer exists.</p>
+<p><strong>Step 5: Commit</strong></p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span>src/ach_agent/engine/hydrate.py<span class="w"> </span>src/ach_agent/engine/metrics.py<span class="w"> </span>src/ach_agent/main.py<span class="w"> </span>tests/
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;refactor(metrics): replace ach_agent_info gauge with stamped identity labels&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="task-5-outbound-identity-headers-on-model-traffic">Task 5: Outbound identity headers on model traffic</h2>
+<p><strong>Files:</strong>
+- Modify: <code>src/ach_agent/engine/mcp_proxy.py:83-102</code>
+- Test: <code>tests/engine/test_mcp_proxy.py</code> (or the existing proxy test module — check first)</p>
+<p><code>_forward()</code> is the single choke point for both the MCP proxy and the model proxy; it builds
+the outbound header dict at lines 101-102. Gate the injection on <code>label == "model"</code> so identity
+is not attached to MCP traffic, whose upstreams have not been audited for this. Reading the
+identity holder directly avoids threading a new parameter through <code>start()</code> and both handler
+factories.</p>
+<p><strong>Step 1: Write the failing test</strong></p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_model_forward_sends_identity_headers</span><span class="p">(</span><span class="o">...</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">set_agent</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">)</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">set_environment</span><span class="p">(</span><span class="s2">&quot;platform&quot;</span><span class="p">)</span>
+
+    <span class="c1"># forward a request through the model proxy against a stub upstream that</span>
+    <span class="c1"># captures the headers it received</span>
+    <span class="k">assert</span> <span class="n">captured</span><span class="p">[</span><span class="s2">&quot;x-ach-agent&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;classifier&quot;</span>
+    <span class="k">assert</span> <span class="n">captured</span><span class="p">[</span><span class="s2">&quot;x-ach-environment&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;platform&quot;</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_mcp_forward_does_not_send_identity_headers</span><span class="p">(</span><span class="o">...</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+    <span class="n">identity</span><span class="o">.</span><span class="n">set_agent</span><span class="p">(</span><span class="s2">&quot;classifier&quot;</span><span class="p">)</span>
+
+    <span class="c1"># same stub, label=&quot;mcp&quot;</span>
+    <span class="k">assert</span> <span class="s2">&quot;x-ach-agent&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">captured</span>
+</code></pre></div>
+<p>Build both on whatever stub-upstream helper the existing proxy tests use.</p>
+<p><strong>Step 2: Run test to verify it fails</strong></p>
+<p>Run: <code>./scripts/dev.sh uv run pytest tests/engine/test_mcp_proxy.py -v</code>
+Expected: FAIL — <code>KeyError: 'x-ach-agent'</code></p>
+<p><strong>Step 3: Write minimal implementation</strong></p>
+<p>In <code>src/ach_agent/engine/mcp_proxy.py</code>, after line 102 (<code>headers[auth_header] = auth_value</code>):</p>
+<div class="highlight"><pre><span></span><code>    <span class="c1"># Identity toward ACH on model traffic only (FinOps attribution). MCP upstreams are</span>
+    <span class="c1"># excluded deliberately: they have not been audited as recipients of this metadata.</span>
+    <span class="k">if</span> <span class="n">label</span> <span class="o">==</span> <span class="s2">&quot;model&quot;</span><span class="p">:</span>
+        <span class="n">stamp</span> <span class="o">=</span> <span class="n">identity</span><span class="o">.</span><span class="n">current</span><span class="p">()</span>
+        <span class="n">headers</span><span class="p">[</span><span class="s2">&quot;x-ach-agent&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">stamp</span><span class="p">[</span><span class="s2">&quot;agent&quot;</span><span class="p">]</span>
+        <span class="n">headers</span><span class="p">[</span><span class="s2">&quot;x-ach-environment&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">stamp</span><span class="p">[</span><span class="s2">&quot;environment&quot;</span><span class="p">]</span>
+</code></pre></div>
+<p>Add <code>from ach_agent.engine import identity</code> to the imports.</p>
+<p><strong>Step 4: Run test to verify it passes</strong></p>
+<p>Run: <code>./scripts/dev.sh uv run pytest tests/engine/test_mcp_proxy.py -v</code>
+Expected: PASS</p>
+<p><strong>Step 5: Commit</strong></p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span>src/ach_agent/engine/mcp_proxy.py<span class="w"> </span>tests/engine/test_mcp_proxy.py
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;feat(proxy): send x-ach-agent and x-ach-environment on model traffic&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="task-6-docs">Task 6: Docs</h2>
+<p><strong>Files:</strong>
+- Modify: <code>docs/configuration.md</code>
+- Modify: <code>CHANGELOG.md</code></p>
+<p><strong>Step 1: Document the metric labels</strong></p>
+<p>Add a short section stating that every <code>ach_agent_*</code> series carries <code>agent</code> and <code>environment</code>,
+that both come from the harness (config + hydrate) and not from the scraper, and that
+<code>environment</code> is empty for the few seconds between process start and a successful hydrate.</p>
+<p><strong>Step 2: Document the outbound headers</strong></p>
+<p>State that model-proxy traffic toward ACH carries <code>x-ach-agent</code> and <code>x-ach-environment</code>, and
+that MCP traffic does not.</p>
+<p><strong>Step 3: Changelog</strong></p>
+<p>Record the label addition as a breaking observability change: series identity changes, so range
+queries spanning the upgrade show a break. Record the removal of <code>ach_agent_info</code> (never
+released).</p>
+<p><strong>Step 4: Commit</strong></p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span>docs/configuration.md<span class="w"> </span>CHANGELOG.md
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;docs(metrics): document agent identity labels and outbound headers&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="task-7-lint-full-suite-release">Task 7: Lint, full suite, release</h2>
+<p><strong>Step 1: Lint</strong></p>
+<p>Run: <code>make lint</code>
+Expected: PASS (ruff check + format --check + mypy --strict)</p>
+<p><strong>Step 2: Full suite</strong></p>
+<p>Run: <code>make test</code>
+Expected: PASS</p>
+<p><strong>Step 3: Tag the missing v0.10.0</strong></p>
+<p><code>aec85d1 chore(release): v0.10.0</code> was merged but never tagged, so there is no immutable
+version to pin — production tracks the mutable <code>:latest</code>. Tag it before cutting the next one:</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>tag<span class="w"> </span>-a<span class="w"> </span>v0.10.0<span class="w"> </span>aec85d1<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;v0.10.0&quot;</span>
+git<span class="w"> </span>push<span class="w"> </span>origin<span class="w"> </span>v0.10.0
+</code></pre></div>
+<p><strong>Step 4: Release this work</strong></p>
+<p>Bump to <code>v0.11.0</code> following the repo's existing release commit convention, tag, and push.</p>
+<p><strong>Step 5: Verify in production</strong></p>
+<p>After the agent Deployments roll (<code>imagePullPolicy: Always</code> on <code>:latest</code>):</p>
+<div class="highlight"><pre><span></span><code>kubectl<span class="w"> </span>-n<span class="w"> </span>ach<span class="w"> </span>rollout<span class="w"> </span>restart<span class="w"> </span>deploy<span class="w"> </span>-l<span class="w"> </span>app.kubernetes.io/name<span class="o">=</span>ach-agent
+</code></pre></div>
+<p>Then query Prometheus and confirm the label is present and correct:</p>
+<div class="highlight"><pre><span></span><code>sum by (agent, environment) (ach_agent_turns_total)
+</code></pre></div>
+<p>Expected: one series per active agent, <code>environment="platform"</code> (or <code>zohodesk</code> for
+<code>zohodesk-joan</code>). Before this change the query returns a single unlabelled series.</p>
+<hr />
+<h2 id="companion-change-in-repo-ach">Companion change in repo <code>ach</code></h2>
+<p>Not part of this plan's execution — track it separately, it ships in ACH <code>v0.6.23</code>.</p>
+<p><strong>File:</strong> <code>deploy/helm/ach/templates/podmonitor.yaml</code></p>
+<p>Delete the <code>relabelings:</code> block (the <code>__meta_kubernetes_pod_label_ach_ackstorm_ai_agent</code> →
+<code>agent</code> mapping). <strong>Keep</strong> <code>path: /metrics/</code> — the trailing slash avoids a 307 redirect and is
+unrelated to identity. The PodMonitor reverts to pure scrape configuration.</p>
+<p>Sequencing was decided explicitly: no bridge. If ACH <code>v0.6.23</code> ships before ach-agent
+<code>v0.11.0</code>, there is a window with no <code>agent</code> label anywhere. The agent dashboards have been
+unpopulated since 2026-07-24 regardless, so this is not a regression — only a delayed
+improvement.</p>
+<h2 id="out-of-scope">Out of scope</h2>
+<ul>
+<li><code>spec.cost</code> on the ACH CRD (<code>AgentProfile.spec.achagent.cost</code> / <code>ACHAgent.spec.cost</code>) — owned separately.</li>
+<li>Turning the new headers into LiteLLM tags so <code>litellm_spend_metric_total</code> gains a per-agent dimension — a later phase. Note that per-<strong>environment</strong> attribution already exists for free via <code>team="ach-env-&lt;env&gt;"</code>, because <code>ek_</code> keys are minted into that shell team.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

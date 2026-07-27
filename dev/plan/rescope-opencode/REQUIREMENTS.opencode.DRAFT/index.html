@@ -1,0 +1,622 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>Requirements — Milestone v1.1 (v3 redesign) — opencode re-scope DRAFT - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#requirements-milestone-v11-v3-redesign-opencode-re-scope-draft" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Requirements — Milestone v1.1 (v3 redesign) — opencode re-scope DRAFT
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#config-schema-cfg" class="md-nav__link">
+    <span class="md-ellipsis">
+      Config schema (CFG)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#engine-opencode-eng-contract-38" class="md-nav__link">
+    <span class="md-ellipsis">
+      Engine — opencode (ENG) — CONTRACT §3/§8
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#egress-secret-hygiene-localhost-proxy-mcp-mcp-contract-9" class="md-nav__link">
+    <span class="md-ellipsis">
+      Egress + secret hygiene — localhost proxy &amp; MCP (MCP) — CONTRACT §9
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context-skills-prompts-artifacts-ctx-contract-3-new-group-plugins-dropped" class="md-nav__link">
+    <span class="md-ellipsis">
+      Context — skills / prompts / artifacts (CTX) — CONTRACT §3 — ▲NEW group (plugins dropped)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#channels-chn-contract-2-mostly-unchanged" class="md-nav__link">
+    <span class="md-ellipsis">
+      Channels (CHN) — CONTRACT §2 — mostly unchanged
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conformance-test-contract-6" class="md-nav__link">
+    <span class="md-ellipsis">
+      Conformance (TEST) — CONTRACT §6
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#de-risk-spikes-spk" class="md-nav__link">
+    <span class="md-ellipsis">
+      De-risk spikes (SPK)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#out-of-scope-additions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Out of Scope (additions)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#traceability-re-scoped-phase" class="md-nav__link">
+    <span class="md-ellipsis">
+      Traceability (re-scoped → phase)
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="requirements-milestone-v11-v3-redesign-opencode-re-scope-draft">Requirements — Milestone v1.1 (v3 redesign) — opencode re-scope DRAFT</h1>
+<blockquote>
+<p><strong>PROPOSAL.</strong> Revised v1.1 requirements for review. Diff against <code>.planning/REQUIREMENTS.md</code>.
+Engine reverts from OpenAI Codex to <strong>opencode</strong> (the bridge already exists in
+<code>src/ach_agent/engine/</code>). <code>▲CHANGED</code> / <code>▲NEW</code> / <code>▲DROP</code> mark deltas. REQ-IDs preserved where the
+intent survives; renumbered additions use the next free id in each group.</p>
+<p>Scope: re-platform the harness onto <strong>opencode</strong> + <strong>external-MCP egress fronted by a harness
+localhost proxy</strong> per <code>CONTRACT_v3.opencode.DRAFT.md</code>, keeping the <strong>router IP</strong> and the
+CONTRACT §6 conformance suite green.</p>
+</blockquote>
+<h2 id="config-schema-cfg">Config schema (CFG)</h2>
+<ul>
+<li><strong>CFG-04</strong> (unchanged): Operator renders a v3 config validated by the Pydantic hard-fail loader;
+  removed v2 blocks (<code>engine</code>, <code>responseActions</code>, <code>response</code>, <code>webhook.deliver</code>, <code>inputSchema</code>,
+  <code>consentTier</code>) are rejected by <code>extra='forbid'</code>.</li>
+<li><strong>CFG-05 ▲CHANGED</strong>: <code>model</code> is <code>{ name, type, params }</code> — <code>type ∈ {openai, gemini, anthropic}</code>
+  selecting the ACH compat endpoint; <code>name</code> resolved against the hydrated models list (else
+  hard-fail); <code>params</code> an <strong>open, unvalidated</strong> dict splatted to the model client. Other v3 fields
+  enforced: <code>workDir</code>, <code>startupTimeoutSeconds</code>, <code>limits.maxSteps</code>, <code>limits.terminalOutputRetries</code>,
+  <code>capability.filter.exclude.{tools,mcpServers,skills}</code>, <code>governed</code>.</li>
+<li><strong>CFG-06</strong> (unchanged): Channel shapes — <code>webhook.source</code> (gitlab|github|generic); <code>queue</code>
+  redis-only <code>{type:"redis",key,ackMode}</code>; <code>cron.timezone</code> (IANA); <code>a2a</code> async block with inbound
+  <code>auth</code> (header + secretPath).</li>
+</ul>
+<h2 id="engine-opencode-eng-contract-38">Engine — opencode (ENG) — CONTRACT §3/§8</h2>
+<blockquote>
+<p>The opencode bridge (<code>engine/{client,lifecycle,events,pool,validator,sanitized_env}.py</code>) <strong>already
+exists and is hardened</strong>. These requirements are <strong>reconnect/reuse</strong>, not rebuild.</p>
+</blockquote>
+<ul>
+<li><strong>ENG-09 ▲CHANGED</strong>: The harness owns the <code>opencode serve</code> lifecycle (reuse <code>lifecycle.launch</code> /
+  <code>pool.EnginePool</code>) and writes <code>opencode.json</code> at hydration: model <code>baseURL</code> and <code>mcp.*</code> point at
+  the <strong>localhost proxy</strong> (§MCP), <code>capability.filter.exclude</code> applied. No <code>ek_</code> in <code>opencode.json</code>.</li>
+<li><strong>ENG-10</strong> (unchanged intent): One agent turn runs to completion and returns the final message;
+  engine not ready within <code>startupTimeoutSeconds</code> exits the process (<code>sys.exit(1)</code>). <code>/readyz</code> gates
+  on adapters listening (engine warmup is not a readiness gate).</li>
+<li><strong>ENG-11 ▲CHANGED</strong>: Terminal output is enforced by the <strong>harness</strong> (Option A, text-based): the
+  model's text output is parsed (<code>validator.py</code> <code>extract_actions</code>), validated against the
+  channel-class Pydantic model — a <strong>single object</strong> with <code>action</code> + free-text <code>text</code> + optional
+  <code>thoughts</code> (NOT a list) — with ≤1 backstop retry (<code>terminalOutputRetries</code>/<code>repair_turn</code>), then the
+  §8 table: async→<code>none</code> (ignore), a2a→callback FAILED, tui→free text. opencode's native
+  <code>format: json_schema</code> is a future optimization, not v1. Adapt <code>validator.py</code> <code>actions[]</code> →
+  single-object shape.</li>
+<li><strong>ENG-12 ▲CHANGED</strong>: Per-invocation bounds — <code>maxInvocationSeconds</code> wall-clock watchdog
+  (<code>run_invocation</code>'s <code>asyncio.timeout</code> + kill — already built) plus a <code>maxSteps</code> step cap (the
+  bridge's step-budget abort). Subagent/tool work counts within the same invocation budget.</li>
+<li><strong>ENG-13 ▲INVERTED</strong>: <strong>Keep</strong> the opencode bridge. <strong>Drop</strong> the Codex direction (never
+  implemented — docs only) and <strong>retire</strong> harness-side egress: delete <code>dispatch_actions</code> and
+  <code>GitlabCommentAdapter</code> posting (the agent posts via gitlab-mcp). Remove the Phase-2 mypy override
+  and the <code>ResponseActionBlock</code> alias (re-greens http/main_wiring tests).</li>
+</ul>
+<h2 id="egress-secret-hygiene-localhost-proxy-mcp-mcp-contract-9">Egress + secret hygiene — localhost proxy &amp; MCP (MCP) — CONTRACT §9</h2>
+<ul>
+<li><strong>MCP-01 ▲CHANGED</strong>: The harness runs a <strong>localhost reverse-proxy</strong> for the model
+  (<code>/v1</code>,<code>/gemini</code>,<code>/anthropic</code>) and for each provisioned MCP server; opencode points only at
+  localhost; the proxy injects <code>Authorization: Bearer ek_</code> toward <code>ACH_BASE_URL</code>. MCP servers come
+  from hydration (<code>runtime.mcpServers</code>); no real ACH URLs or credentials in <code>opencode.json</code>.</li>
+<li><strong>MCP-02</strong> (unchanged intent): <code>capability.filter.exclude.{tools,mcpServers,skills}</code> <strong>withholds</strong>
+  capabilities before they are offered to opencode (a gate above the model); an excluded tool/server
+  is not callable.</li>
+<li><strong>MCP-03</strong> (unchanged): A down/erroring MCP server is surfaced as a per-invocation telemetry
+  failure (NOT fail-open, unlike memory); the channel never posts on the model's behalf.</li>
+<li><strong>MCP-04 ▲NEW (secret hygiene)</strong>: The <code>ek_</code> MUST NOT appear in <code>opencode.json</code>, opencode's env,
+  logs, or any request opencode can observe. Conformance asserts this (CONTRACT §6.10).</li>
+<li><strong>MCP-05 ▲NEW (a2a egress as MCP)</strong>: Peer agents (<code>runtime.a2aAgents</code>) are surfaced as
+  harness-hosted MCP tools <code>a2a_{name}</code>/<code>_async</code>/<code>_status</code> (port ackbot
+  <code>handlers/a2a/{tools,client,notification_store}.py</code>), routed through the proxy. The only
+  harness-hosted MCP.</li>
+</ul>
+<h2 id="context-skills-prompts-artifacts-ctx-contract-3-new-group-plugins-dropped">Context — skills / prompts / artifacts (CTX) — CONTRACT §3 — ▲NEW group (plugins dropped)</h2>
+<ul>
+<li><strong>CTX-01 ▲NEW</strong>: The harness self-hydrates by calling <code>POST {ACH_BASE_URL}/platform/hydrate</code>
+  (<code>x-ach-key: ek_</code>, <strong>no CLI</strong>) and downloads each <code>context.{skills,prompts,artifacts}[]</code> <code>tar.gz</code>,
+  decompressing it into its designated directory under <code>workDir</code>/<code>mountPath</code>.</li>
+<li><strong>CTX-02 ▲NEW</strong>: <strong>No plugin support</strong> in v1 (no skills+subagents+mcps+hooks bundles). Context is
+  skills/prompts/artifacts only.</li>
+</ul>
+<h2 id="channels-chn-contract-2-mostly-unchanged">Channels (CHN) — CONTRACT §2 — mostly unchanged</h2>
+<ul>
+<li><strong>CHN-06</strong> webhook ingress = generic HTTP + <code>source</code>-selected parser/auth (gitlab today;
+  github/generic), replacing the gitlab-specific adapter.</li>
+<li><strong>CHN-07</strong> queue channel consumes redis with idempotency key = redis message id, <code>ackMode:onComplete</code>.</li>
+<li><strong>CHN-08</strong> tui channel reads stdin, streams free-form text to stdout (no terminal contract).</li>
+<li><strong>CHN-09</strong> a2a channel async-only (a2a-sdk): returns <code>Task(SUBMITTED)</code>, POSTs <code>COMPLETED|FAILED</code>
+  to the caller-supplied callback; inbound caller validated by the header secret. <strong>Reuse the
+  existing <code>channels/a2a.py</code></strong>; add the FAILED-on-invalid-terminal path.</li>
+<li><strong>CHN-10</strong> slack/telegram adapters deleted and <code>hermes-agent</code> removed from <code>pyproject.toml</code>.</li>
+</ul>
+<h2 id="conformance-test-contract-6">Conformance (TEST) — CONTRACT §6</h2>
+<ul>
+<li><strong>TEST-02</strong> (unchanged): The 11 CONTRACT §6 invariants stay green against the v3 harness; router
+  IP untouched; idempotency-key derivation extended for queue (message id) and a2a (task id); egress
+  invariant (§6.9) asserted. <strong>▲ Add §6.10 (secret hygiene): assert the <code>ek_</code> never reaches opencode.</strong></li>
+<li><strong>TEST-03 ▲CHANGED</strong>: Integration guard exercises <strong>opencode + an external MCP tool via the
+  localhost proxy + structured output</strong> together on pinned versions (replaces the Codex #15451 guard).</li>
+</ul>
+<h2 id="de-risk-spikes-spk">De-risk spikes (SPK)</h2>
+<ul>
+<li><strong>SPK-01 ▲DROP/REPLACE</strong>: The Codex SDK↔binary version-skew + #15451 spike is <strong>obsolete</strong> (no
+  Codex). Replaced by <strong>SPK-01′ ▲NEW</strong>: confirm opencode <code>format: json_schema</code> structured output +
+  localhost-proxy model/MCP routing + <code>ek</code>-hygiene end-to-end before the egress work (MCP-*) lands.
+  Much of this is already proven by the existing bridge + memory MCP path.</li>
+<li><strong>SPK-02</strong> (unchanged): a2a spike confirms <code>a2a-sdk</code> binds the caller-supplied push-notification
+  callback (inbound), before CHN-09 lands.</li>
+</ul>
+<h2 id="out-of-scope-additions">Out of Scope (additions)</h2>
+<ul>
+<li>Plugins (skills+subagents+mcps+hooks bundles) — context is skills/prompts/artifacts only.</li>
+<li><code>direct</code> (non-governed) capability mode.</li>
+<li>Giving opencode the <code>ek_</code> directly / pointing opencode at real ACH URLs (always via the localhost proxy).</li>
+</ul>
+<h2 id="traceability-re-scoped-phase">Traceability (re-scoped → phase)</h2>
+<table>
+<thead>
+<tr>
+<th>Requirement</th>
+<th>Phase</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CFG-04/05/06</td>
+<td>1</td>
+<td>CFG-05 model block + filter.exclude needs a small Phase-1 schema follow-up</td>
+</tr>
+<tr>
+<td>ENG-09..13</td>
+<td>2</td>
+<td>reconnect opencode to v3 config; re-green tree</td>
+</tr>
+<tr>
+<td>SPK-01′</td>
+<td>2</td>
+<td>largely already proven</td>
+</tr>
+<tr>
+<td>CHN-06..10, SPK-02</td>
+<td>3</td>
+<td>drop slack/telegram+Hermes; webhook source-select; queue+tui; a2a</td>
+</tr>
+<tr>
+<td>MCP-01..05, CTX-01/02</td>
+<td>4</td>
+<td>localhost proxy + hydration + context fetch + a2a egress MCP</td>
+</tr>
+<tr>
+<td>TEST-02/03</td>
+<td>5</td>
+<td>conformance re-green + integration guard</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../../..", "features": [], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

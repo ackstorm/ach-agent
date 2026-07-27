@@ -1,0 +1,108 @@
+# ach-agent — Plan (Harness: agent + channels, Python)
+
+**Repo role:** the execution plane. A single-process runtime that reads the **rendered
+runtime config** (from `ach-runtime`), runs channel adapters, serializes invocations through
+a router, drives the **opencode** engine, and delivers results. Consumes the contract; never
+reads CRDs, never talks to the API server, never writes status.
+
+**Spec:** `ach-agent-runtime-spec-v1_4_2.md`. **Contract:** `CONTRACT.md` (pinned from
+`ach-runtime`). Read both before starting; the spec is the source of truth, CONTRACT.md is
+the frozen seam.
+
+---
+
+## Tech decisions
+
+- **Python.** The proven channel adapters (NousResearch Hermes, `gateway/platforms/`, MIT)
+  are Python; reuse them rather than reimplement. opencode is invoked as a **subprocess**
+  (`binaryPath` from config), not linked.
+- **Adopt Hermes for channels, build the router ourselves.** Hermes gives the adapter
+  contract (`connect`/`handle_message`/`send`/`edit_message`), the generic webhook with
+  delivery-id idempotency (TTL 3600 — matches our default), `channel_prompt`, cron per-job
+  prompt. Hermes does NOT give the router (lanes, the three finite bounds, the pinned
+  dedup→backpressure→lane order). **The router is our IP and our main work.**
+- **Single process, in-process seam.** v1 is topology A (spec §15): channels and harness in
+  one process, joined by an in-process handler (`set_message_handler`). Keep that boundary a
+  **named interface** so O7 (network/queue transport) is a later swap, not a rewrite. Do not
+  split into processes in v1.
+- **Config-driven, zero k8s coupling.** The harness boots from a config file
+  (`/etc/ach-agent/config.json`, CONTRACT.md §2). It is fully runnable and testable locally
+  with a hand-written config — no operator, no cluster needed for the inner loop.
+
+---
+
+## Components (modules)
+
+1. **`config/`** — load + validate the rendered config (CONTRACT.md §2 schema). Hard-fail on
+   schema mismatch. This is the only thing the harness knows about the outside world.
+2. **`channels/`** — Hermes adapters, one per type: `webhook`, `slack`, `telegram`, `a2a`,
+   `cron`. Normalize platform payloads to the canonical `MessageEvent` (§14.2). Extract the
+   idempotency key per type (§18.4.0). Own write-back / dual delivery (§20.1).
+3. **`router/`** — **the core, ours.** Per-session-key FIFO lanes (§18.3); router-level dedup
+   (§18.4, key per §18.4.0); backpressure admission (§18.8); slot acquisition (the three
+   finite bounds, §18.6). Enforces the pinned order **dedup → backpressure → lane**.
+   The `set_message_handler` seam lands here.
+4. **`engine/`** — the opencode bridge: subprocess lifecycle, the `ACH_*` env contract
+   consumption (§13.1), prompt-stack assembly (§12.3 incl. layer 5b `channel.prompt`),
+   final-JSON action validation + repair turn. Owns the **startup deadline** (exit if engine
+   not ready within `startupTimeoutSeconds`, §8.5) and the **proven-start gate A′**.
+5. **`memory/`** — fail-open adapter (§31): read context + write update; backend down → run
+   degraded, log, never fail the invocation.
+6. **`actions/`** — `reply` (executable in v1) and `sideEffect` (API-modeled, may reject in
+   first bake, §22.1); dual delivery paths.
+7. **`server/`** — the HTTP surface (CONTRACT.md §4): `/channels/{name}/events`, `/healthz`,
+   `/readyz` (adapters-listening), `/metrics`.
+
+---
+
+## Invariants this repo owns (→ conformance tests; from CONTRACT.md §6)
+
+1. **Idempotency-key derivation (§18.4.0)** — per channel type; the invariant
+   "unique-per-distinct-event, degrade to unique-per-arrival, never shared/empty". Highest
+   priority test: two distinct header-less webhook payloads both process (no collapse) —
+   this is the regression test for the broad-key dedup bug.
+2. **Pre-lane order: dedup → backpressure → lane (§18.8/§29)** — flood of duplicates does
+   not fill the queue / NACK legit traffic.
+3. **Three finite bounds always enforced (§18.6).**
+4. **`expire`/full-queue never silent (§18.4.1)** — correct outcome per source trait.
+5. **Memory fail-open (§31).**
+6. **Startup deadline → process exit (§8.5).**
+7. **Proven-start gate A′ (§8.5)** — first warmup NACKs; later warmups buffer.
+8. **Model never talks to channels (§15)** — only validated accepted actions execute.
+
+---
+
+## Slice order (risk-first; SDD will expand each into tasks)
+
+- **Slice 0 — opencode bridge spike (throwaway, no k8s, no channels).** The biggest unknown:
+  the spec leaves "how the harness drives the engine" unspecified (§13.1). Prove you can run
+  `opencode` headless with `ACH_*` set and reliably extract `{"actions":[...]}`. Days. If this
+  is shaky, nothing else matters. *Do this first, in parallel with ach-runtime Slice A.*
+- **Slice 1 — walking skeleton (cron → log).** Boot from a hand-written config; one cron
+  channel; router with in-memory dedup + one slot; engine runs opencode; result to log.
+  Proves config→router→engine→output with the simplest channel (no Service, no auth, no
+  write-back). (Pairs with ach-runtime Slice B.)
+- **Slice 2 — webhook GitLab MR review → gitlab_comment.** First useful agent. HMAC auth,
+  real dedup (§18.4.0 with `X-Gitlab-Event-UUID`), governed `ACH_*` consumption, the
+  reply/delivery path. (Pairs with ach-runtime Slice C.)
+- **Slice 3 — durability + drain + A′.** Durable lane/dedup under the persistence mount,
+  graceful drain on SIGTERM, proven-start gate.
+- **Slice 4 — fan-out.** slack, telegram, a2a adapters; memory adapter (fail-open);
+  more delivery types; multi-channel agents.
+- **Slice 5 — sideEffect execution policy + hardening.**
+
+---
+
+## First moves (this week)
+
+1. Pin `CONTRACT.md` + the spec from `ach-runtime` (submodule or version tag).
+2. **Slice 0 spike** — opencode headless + `ACH_*` + structured action extraction. De-risk
+   the engine before building anything around it.
+3. Stand up `config/` loader against the CONTRACT.md §2 schema with a sample config, so the
+   inner loop is testable with zero operator dependency.
+
+## Do NOT build (v1)
+
+Process split / queue / NATS, multi-replica, the network channel↔harness transport (all O7 —
+but keep the `set_message_handler` seam named so it's swappable). No `/v1/responses`, no
+`rateLimit`, no managed runtimes. Reject unknown channel types.

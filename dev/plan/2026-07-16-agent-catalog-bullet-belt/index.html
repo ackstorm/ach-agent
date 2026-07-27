@@ -1,0 +1,885 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>ACKstorm Agent Catalog — the "Bullet Belt" (v0.1) - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#ackstorm-agent-catalog-the-bullet-belt-v01" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ACKstorm Agent Catalog — the "Bullet Belt" (v0.1)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#0-the-mold-blueprint-standard" class="md-nav__link">
+    <span class="md-ellipsis">
+      0. The mold — blueprint standard
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#01-mcp-dependency-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      0.1 MCP dependency matrix
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-platform-bootstrapper-flagship-w" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Platform Bootstrapper 🥇 flagship [W]
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-handover-verifier-first-bullet-to-build-r" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Handover Verifier 🥈 first bullet to build [R]
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-gitops-service-adder-w" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. GitOps Service Adder [W]
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-alert-first-responder-highest-recurring-roi-c" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Alert First-Responder ⭐ highest recurring ROI [C]
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-flux-doctor-rw" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Flux Doctor [R→W]
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-finops-reviewer-c" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. FinOps Reviewer [C]
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-upgrade-planner-w" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Upgrade Planner [W]
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-cert-domain-steward-c" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Cert &amp; Domain Steward [C]
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-customer-docs-gardener-w" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Customer Docs Gardener [W]
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-nodata-billing-sentinel-cw" class="md-nav__link">
+    <span class="md-ellipsis">
+      10. NODATA / Billing Sentinel [C→W]
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#build-order-dogfood-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      Build order &amp; dogfood plan
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#roi-summary-sales-one-liner-per-bullet" class="md-nav__link">
+    <span class="md-ellipsis">
+      ROI summary (sales one-liner per bullet)
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="ackstorm-agent-catalog-the-bullet-belt-v01">ACKstorm Agent Catalog — the "Bullet Belt" (v0.1)</h1>
+<p>Date: 2026-07-16 · Status: DRAFT for internal review · Owner: Juan Carlos
+Scope: 10 agent definitions grounded in <code>documentacion-general</code> internal docs, runnable on
+ACH (<code>ACHAgent</code> operator) + <code>ach-agent</code> harness as they exist today.</p>
+<blockquote>
+<p>INTERNAL — references ackstorm internal systems and doc paths. Do NOT commit to the
+public ach-agent repo (this file lives under gitignored <code>docs/plan/</code>). Candidate homes:
+<code>documentacion-general</code> or a private <code>ach-blueprints</code> repo.</p>
+</blockquote>
+<hr />
+<h2 id="0-the-mold-blueprint-standard">0. The mold — blueprint standard</h2>
+<p>Every "bullet" ships as one bundle (a directory in a future <code>ach-blueprints</code> repo):</p>
+<div class="highlight"><pre><span></span><code>&lt;agent-name&gt;/
+  README.md            # this catalog one-pager (mission, ROI, risk tier, demo script)
+  environment.yaml     # Environment CR: models + MCP servers + skills (the capability)
+  agentprofile.yaml    # or reference to a shared golden profile (below)
+  achagent.yaml        # the instance: channels, prompt, memory, mcpServers, limits
+  prompt/              # system prompt + skill files, sourced from internal docs
+  evals/               # golden tasks: input event fixture + expected-output rubric
+  dashboard.json       # Grafana panel(s): turns, cost, agent-specific ROI metric
+  onepager.pdf|md      # sales-facing: problem, outcome, metric, price anchor
+</code></pre></div>
+<p><strong>Two golden AgentProfiles cover all 10 agents</strong> (profile = infra, agent = instance):</p>
+<table>
+<thead>
+<tr>
+<th>Profile</th>
+<th>For</th>
+<th>Traits</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ack-reader</code></td>
+<td>report/diagnose agents (#2 #4 #5 #6 #8 #10)</td>
+<td>read-only MCP set, no repoCheckout, small resources, memory: hindsight</td>
+</tr>
+<tr>
+<td><code>ack-mr-writer</code></td>
+<td>git-acting agents (#1 #3 #7 #9)</td>
+<td>+ repoCheckout, gitlab write scope; same pods, bigger <code>maxInvocationSeconds</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Risk tiers</strong> (drives approval policy + sales conversation):
+- <strong>R</strong> read/report — produces reports/comments only.
+- <strong>C</strong> comment/ticket — writes to ticketing (Zoho Desk) / MR comments.
+- <strong>W</strong> git-write — creates branches/MRs. NEVER applies: <strong>MR review is the human gate;
+  FluxCD is the only thing that touches clusters.</strong> Agents propose, GitOps disposes.</p>
+<hr />
+<h2 id="01-mcp-dependency-matrix">0.1 MCP dependency matrix</h2>
+<table>
+<thead>
+<tr>
+<th>MCP server</th>
+<th>Status</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>gitlab-mcp</td>
+<td>HAVE (sibling repo)</td>
+<td>1 2 3 5 7 9 10</td>
+</tr>
+<tr>
+<td>repoCheckout (harness-hosted, built-in)</td>
+<td>HAVE</td>
+<td>1 3 7 9</td>
+</tr>
+<tr>
+<td>zoho-desk</td>
+<td>HAVE</td>
+<td>3 4 6 8 10</td>
+</tr>
+<tr>
+<td>zoho-projects</td>
+<td>HAVE</td>
+<td>1 6</td>
+</tr>
+<tr>
+<td>zoho-crm</td>
+<td>HAVE</td>
+<td>8</td>
+</tr>
+<tr>
+<td>prometheus</td>
+<td>HAVE (off-the-shelf)</td>
+<td>4 5</td>
+</tr>
+<tr>
+<td>kubectl (READ-ONLY build)</td>
+<td>ASSUMED (to build)</td>
+<td>2 4 5</td>
+</tr>
+<tr>
+<td>grafana / influxdb query</td>
+<td>off-the-shelf exists</td>
+<td>4 6 8 10</td>
+</tr>
+<tr>
+<td><strong>ackmetrics (ecmanagedApi)</strong></td>
+<td><strong>BUILD — own REST, fully documented</strong> (<code>blueprints/ackmetrics/ecmanaged_api/</code>)</td>
+<td>2 4 8 10</td>
+</tr>
+<tr>
+<td>alerta</td>
+<td>intake = webhook → <code>generic</code> channel (no MCP needed); MCP later for ack/blackout actions</td>
+<td>4 10</td>
+</tr>
+</tbody>
+</table>
+<p>OTRS: legacy — no MCP. New agent output routes to Zoho Desk.</p>
+<hr />
+<h2 id="1-platform-bootstrapper-flagship-w">1. Platform Bootstrapper 🥇 flagship  [W]</h2>
+<p><strong>Mission.</strong> Automate the Terraform+GitOps blueprint bootstrap for a new customer/environment
+end to end — today a multi-hour manual dance across two repos, CloudShell, and CI settings
+(<code>docs/internal-docs/blueprints/terraform/getting_started.md</code>,
+<code>blueprints/gitops/getting_started.md</code>).</p>
+<p><strong>Trigger &amp; identity.</strong> Zoho Projects task or <code>generic</code> webhook ("bootstrap CUSTOMER/ACCOUNT
+on aws|gcp, env pre|pro"). <code>session_key = customer:env</code> — one lane per bootstrap, safe re-runs.</p>
+<p><strong>Capability.</strong> gitlab-mcp (repo create, files, CI variables, deploy keys, MR),
+repoCheckout, zoho-projects. <strong>No cloud credentials — by design</strong> (see step 2).</p>
+<p><strong>Flow</strong> (mirrors documented phases A–C):
+1. Scaffold IaC repo: clone <code>blueprints/terraform/bases-and-resources/base-{aws,gcp}</code>,
+   strip <code>.git</code> + semantic-release files (<code>.releaserc.json package.json package-lock.json
+   .gitlab-ci.yml</code>), init, push to <code>terraform/customers/&lt;CUSTOMER&gt;/&lt;ACCOUNT&gt;</code>.
+2. Generate the CloudShell bootstrap script parameterized (OIDC provider/WI pool, admin
+   role/SA, versioned+encrypted state bucket, EBS-encryption loop / GCP API enablement) and
+   post it in the task for a human to paste into CloudShell. Agent never holds cloud creds —
+   the operator runs it; agent then <strong>verifies</strong> outcomes via the echoed outputs and
+   <strong>populates GitLab CI/CD variables itself</strong> (masked/protected: <code>AWS_ROLE_ARN</code> /
+   <code>GCP_WORKLOAD_IDENTITY_PROVIDER</code>, <code>TERRAFORM_BACKEND_BUCKET</code>, …) — the error-prone paste step.
+3. Install the right pipeline file from <code>blueprints/terraform/pipelines</code>
+   (Gitleaks → Validate → Plan → Check → manual Apply, <code>check-destroy</code> guard intact);
+   skeleton <code>config.tf</code> + <code>terraform.tfvars</code> (no secrets in tfvars — enforced).
+4. Flux handoff: after first apply, instruct/verify deploy-key registration on the GitOps
+   repo (write-enabled), flip <code>enable_flux_bootstrap = true</code> via MR.
+5. Scaffold GitOps repo from <code>blueprints/gitops/bases-and-resources/base-{aws,gcp}</code> +
+   validation pipeline (same strip-and-push dance).
+6. <strong>a2a → Handover Verifier (#2)</strong> to run the checklist and produce the handover report.</p>
+<p><strong>Human gates.</strong> CloudShell script execution (operator), every MR, manual Apply stage.
+<strong>Prompt sources.</strong> <code>terraform/getting_started.md</code>, <code>terraform/customizing.md</code>,
+<code>gitops/getting_started.md</code>, <code>gitops/customizing.md</code>, pipeline repos' READMEs.
+<strong>Evals.</strong> (a) scaffold from base-gcp → repo diff matches golden repo; (b) CI vars complete
+and masked for aws-sts variant; (c) tfvars containing a secret → agent refuses + flags;
+(d) re-run after partial failure → idempotent, no duplicate repos.
+<strong>ROI.</strong> Bootstrap lead time (target: days → hours) · error rate at handover.</p>
+<p><strong>CR sketch:</strong>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ach.ackstorm.ai/v1alpha1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ACHAgent</span>
+<span class="nt">metadata</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="nv">platform-bootstrapper</span><span class="p p-Indicator">}</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">profileRef</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="nv">ack-mr-writer</span><span class="p p-Indicator">}</span>
+<span class="w">  </span><span class="nt">identity</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">secretRef</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="nv">ek-bootstrapper</span><span class="p p-Indicator">}}</span>
+<span class="w">  </span><span class="nt">capability</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">env-bootstrapper</span><span class="w">        </span><span class="c1"># gitlab-mcp + zoho-projects + model</span>
+<span class="w">  </span><span class="nt">prompt</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">system</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">ach</span><span class="p p-Indicator">,</span><span class="nt"> ach</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="nv">prompt-bootstrapper</span><span class="p p-Indicator">}}</span><span class="w">   </span><span class="c1"># built from the docs above</span>
+<span class="w">  </span><span class="nt">memory</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">hindsight</span><span class="p p-Indicator">,</span><span class="nt"> hindsight</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nv">…</span><span class="p p-Indicator">}}</span><span class="w">                 </span><span class="c1"># remembers per-customer quirks</span>
+<span class="w">  </span><span class="nt">mcpServers</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="nv">repo</span><span class="p p-Indicator">,</span><span class="nt"> type</span><span class="p">:</span><span class="w"> </span><span class="nv">repoCheckout</span><span class="p p-Indicator">}</span>
+<span class="w">  </span><span class="nt">channels</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">intake</span>
+<span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">webhook</span>
+<span class="w">      </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">generic</span>
+<span class="w">      </span><span class="nt">session</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">auto</span><span class="p p-Indicator">}</span>
+</code></pre></div></p>
+<hr />
+<h2 id="2-handover-verifier-first-bullet-to-build-r">2. Handover Verifier 🥈 first bullet to build  [R]</h2>
+<p><strong>Mission.</strong> Execute the two handover checklists as an automated audit:
+<code>blueprints/terraform/verification_checklist.md</code> + <code>blueprints/gitops/verification_checklist.md</code>.
+Output: a signed handover report (pass/fail per item + evidence) posted to the MR/task.</p>
+<p><strong>Trigger.</strong> <code>generic</code> webhook or cron ("verify CUSTOMER/env"). <code>session_key = customer:env</code>.
+<strong>Capability.</strong> gitlab-mcp (repo state, pipeline results), kubectl-ro (cluster reachable,
+<code>flux get kustomizations</code>, workloads up), prometheus/grafana (dashboards exist),
+ackmetrics MCP when built (Timeperiod/Environment configured, no active alerts).
+v0 without ackmetrics: git+cluster checks only — still valuable.</p>
+<p><strong>Checks (from the checklists).</strong> repo cloned at latest release + semantic-release removed;
+TF/provider versions; backend config; no CIDR overlap vs customer docs; secrets in Secret
+Manager, <code>sensitive=true</code> outputs; plan clean; Flux bootstrapped, all kustomizations ready;
+alerts clean; budgets configured; docs/diagram/escalation present.</p>
+<p><strong>Human gate.</strong> None needed — read-only. Report IS the deliverable; squad signs off on it.
+<strong>Evals.</strong> Golden env with 3 seeded violations (CIDR overlap, missing budget, kustomization
+not-ready) → report catches all 3, zero false positives on clean env.
+<strong>ROI.</strong> Handover review time · defects escaping to operations. Doubles as <strong>eval oracle
+for #1</strong> and the case-study generator (run on next real handover).</p>
+<hr />
+<h2 id="3-gitops-service-adder-w">3. GitOps Service Adder  [W]</h2>
+<p><strong>Mission.</strong> Turn "add service X to customer Y's cluster" (Zoho Desk ticket / webhook) into
+a correct MR: copy the service folder from <code>blueprints/gitops/bases-and-resources/resources</code>,
+edit <code>namespace.yaml</code>/<code>install.yaml</code>, <strong>and update the sibling <code>kustomization.yaml</code></strong> — the
+documented easy-to-forget step (<code>gitops/customizing.md</code> warns twice).
+<strong>Trigger.</strong> Zoho Desk / generic webhook. <code>session_key = customer:cluster</code>.
+<strong>Capability.</strong> gitlab-mcp, repoCheckout, zoho-desk (ticket update).
+<strong>Human gate.</strong> MR review; Flux applies only after merge.
+<strong>Evals.</strong> (a) add redis to <code>infra/system</code> → MR diff matches golden; (b) kustomization.yaml
+entry present (the footgun); (c) service already present → agent reports, no duplicate MR.
+<strong>ROI.</strong> Ticket-to-MR lead time · % MRs merged without review corrections.</p>
+<hr />
+<h2 id="4-alert-first-responder-highest-recurring-roi-c">4. Alert First-Responder ⭐ highest recurring ROI  [C]</h2>
+<p><strong>Mission.</strong> Enrich every fatal/critical/major alert before the on-call human answers the
+Nagios call. Knowledge base already written:
+<code>blueprints/ackmetrics/alerta/common_alerts/index.md</code> (per-alert diagnosis + escalation,
+with real ticket references) → that IS the system prompt.
+<strong>Trigger.</strong> Alerta webhook → <code>generic</code> channel (or queue). <code>session_key = customer:resource</code>
+— flapping alerts on the same resource share one lane/conversation.
+<strong>Capability.</strong> kubectl-ro, prometheus + grafana/influx (evidence queries), zoho-desk
+(enrich/create ticket), ackmetrics MCP later (ack/blackout suggestions, probe history).
+<strong>Flow.</strong> classify alert vs KB → run the documented diagnosis (CPU steal? disk grow-rate?
+k8s restarts? probe ssl?) → post to ticket: probable cause, evidence (queries+numbers),
+runbook link, suggested action, "seen before" from memory (hindsight per-customer bank).
+<strong>Human gate.</strong> Suggests only; never acks, never blackouts (until trust earned — then
+policy-gated ack for <code>minor/warning</code>).
+<strong>Evals.</strong> Replay 20 historical alerts with known root causes → cause matched ≥80%,
+runbook link correct, zero hallucinated evidence (every number must come from a tool call).
+<strong>ROI.</strong> MTTA/MTTR delta · % alerts pre-enriched before pickup · on-call satisfaction.
+<strong>Note.</strong> Dogfood in shadow mode on <code>alerta.ackstorm.com</code> (notify panel, no calls) first.</p>
+<hr />
+<h2 id="5-flux-doctor-rw">5. Flux Doctor  [R→W]</h2>
+<p><strong>Mission.</strong> When kustomizations/helmreleases fail (alert or cron sweep): diagnose via
+<code>flux get</code> / events / helm status (kubectl-ro), classify (image pull, values error, timeout,
+drift), then either propose the fix MR in the gitops repo or escalate with a precise ticket.
+<strong>Trigger.</strong> k8s alert webhook (<code>restart count</code>, <code>unavailable replicas</code>, <code>pods-failed</code> from
+common_alerts) or cron sweep. <code>session_key = customer:cluster</code>.
+<strong>Capability.</strong> kubectl-ro, gitlab-mcp, prometheus.
+<strong>Human gate.</strong> MR review for fixes; ticket for escalations.
+<strong>Evals.</strong> Seeded failures in a test cluster: bad image tag, wrong values key, missing
+namespace → correct classification + fix-MR for the first two, escalation for ambiguous.
+<strong>ROI.</strong> GitOps failure MTTR · % auto-diagnosed correctly.</p>
+<hr />
+<h2 id="6-finops-reviewer-c">6. FinOps Reviewer  [C]</h2>
+<p><strong>Mission.</strong> Automate the two documented periodic FinOps procedures:
+(a) GCP recommendations review (<code>runbooks/finops/google_recomendations.md</code>: review dashboard →
+internal ticket → N2 review → customer approval → act → communicate savings);
+(b) the <strong>six-monthly VIP cost review</strong> (<code>runbooks/finops/finops-docs.md</code>: CloudCheckr, Cost
+Explorer/Optimization Hub, FinOps Hub, Grafana rightsizing 35–45%).
+Client email drafts from the documented ES/EN templates — verbatim prompt material.
+<strong>Trigger.</strong> cron (monthly recos; six-monthly VIP calendar). <code>session_key = customer</code>.
+<strong>Capability.</strong> grafana/influx (+BigQuery for GCP billing), zoho-desk + zoho-projects
+(tickets/approval tracking), gitlab-mcp (report archive).
+<strong>Human gate.</strong> N2 technical review (existing step) + customer approval — agent drafts, never sends.
+<strong>Evals.</strong> Fixture billing dataset with 3 known recommendations → all surfaced, savings
+math correct, email draft matches template tone in ES and EN.
+<strong>ROI.</strong> € savings surfaced/executed · FinOps-tribe hours per review cycle.</p>
+<hr />
+<h2 id="7-upgrade-planner-w">7. Upgrade Planner  [W]</h2>
+<p><strong>Mission.</strong> Cron sweep of customer terraform+gitops repos against documented version
+matrices and migration paths: module versions (<code>terraform/module_upgrades.md</code> — base-aws
+v1→v2, IRSA→Pod Identity, VPC-CNI known-issue), EKS AL2→AL2023 (<code>runbooks/other/eks_linux2023.md</code>),
+GitLab chart v8→v9 (<code>runbooks/other/gitlab_helm_upgrade_path.md</code>), RDS CA
+(<code>runbooks/other/update_rds_ca_certificate.md</code>). Output: per-customer upgrade-plan issue,
+optionally the scaffolded MR for mechanical bumps.
+<strong>Trigger.</strong> cron weekly. <code>session_key = customer:repo</code>.
+<strong>Capability.</strong> gitlab-mcp, repoCheckout.
+<strong>Human gate.</strong> Issues + MR review; <code>check-destroy</code> pipeline guard stays as backstop.
+<strong>Evals.</strong> Repo pinned at base-aws v1.x → plan cites v2 migration steps + known-issue;
+up-to-date repo → "no action", no noise.
+<strong>ROI.</strong> Patch/upgrade lag (days behind matrix) · upgrade toil hours.</p>
+<hr />
+<h2 id="8-cert-domain-steward-c">8. Cert &amp; Domain Steward  [C]</h2>
+<p><strong>Mission.</strong> Close the renewal loops: SSL validity sweep (<code>runbooks/other/certificate_validity.md</code>
+— Grafana + probes, confirm renewals actually applied) and domain renewals
+(<code>runbooks/other/domains-management.md</code> — CRM inventory + Nominalia renewals, zone deactivation).
+<strong>Trigger.</strong> cron daily (certs) / weekly (domains). <code>session_key = batch date</code> (cron lane).
+<strong>Capability.</strong> prometheus/probe data + grafana, zoho-crm (domain inventory), zoho-desk
+(renewal tickets), ackmetrics MCP (SSL probe results) when built.
+<strong>Human gate.</strong> Tickets only; deactivations stay human.
+<strong>Evals.</strong> Fixture: cert expiring in 20d + one renewed-but-probe-stale → one ticket opened,
+one verified-applied and closed, no duplicate tickets on re-run (dedup via router + memory).
+<strong>ROI.</strong> Expiry incidents (target 0) · renewal toil.</p>
+<hr />
+<h2 id="9-customer-docs-gardener-w">9. Customer Docs Gardener  [W]</h2>
+<p><strong>Mission.</strong> (a) Onboarding: scaffold <code>docs/customers/&lt;name&gt;/</code> sub-site from the right
+template (<code>single/</code> vs <code>nglz/</code> — <code>docs/customers/template/</code>), fill the Projects/Accounts +
+Support/Monit tables from the IaC repo facts, register the <code>!include</code> in root <code>mkdocs.yml</code>.
+(b) Cron drift: accounts present in <code>terraform/customers/&lt;CUSTOMER&gt;</code> but missing in docs,
+stale support tiers, missing runbook stubs → MR to <code>documentation/general</code>.
+<strong>Trigger.</strong> onboarding webhook + cron monthly. <code>session_key = customer</code>.
+<strong>Capability.</strong> gitlab-mcp, repoCheckout.
+<strong>Human gate.</strong> MR review (docs repo).
+<strong>Evals.</strong> New customer fixture → sub-site builds under mkdocs monorepo without error,
+tables complete; drift fixture (1 undocumented account) → caught.
+<strong>ROI.</strong> Doc drift count · onboarding doc time. Also fixes the stated gap: "no single
+consolidated onboarding runbook" — the agent's own procedure becomes it.</p>
+<hr />
+<h2 id="10-nodata-billing-sentinel-cw">10. NODATA / Billing Sentinel  [C→W]</h2>
+<p><strong>Mission.</strong> Execute <code>runbooks/monitoring/billing_nodata.md</code> on NODATA billing alerts:
+check the InfluxDB nodata query, determine cause (account closed / export broken / new
+account), then either open the fix ticket or — replacing today's documented SSH-edit —
+propose the MR adding the account to <code>SKIP_ACCOUNTS_{GCP,AWS}</code> in <code>billing_check_nodata.py</code>
+on the <code>monitor-alert-checks</code> repo.
+<strong>Trigger.</strong> Alerta nodata webhook. <code>session_key = account</code>.
+<strong>Capability.</strong> influx/grafana query, gitlab-mcp, zoho-desk.
+<strong>Human gate.</strong> MR review for skip-list; ticket otherwise.
+<strong>Evals.</strong> Closed-account fixture → skip-list MR with justification; broken-export fixture
+→ ticket with the failing query as evidence, NOT a skip-list MR (the failure mode that matters).
+<strong>ROI.</strong> NODATA alert noise · time-to-silence legitimate gaps.</p>
+<hr />
+<h2 id="build-order-dogfood-plan">Build order &amp; dogfood plan</h2>
+<div class="highlight"><pre><span></span><code>Sprint 1  #2 Handover Verifier      — read-only, checklist exists, run on next real handover
+Sprint 2  #4 Alert First-Responder  — shadow mode on alerta.ackstorm.com (notify, no calls)
+          + build ackmetrics MCP (unblocks 2&#39;s full checks, 4, 8, 10)
+Sprint 3  #1 Platform Bootstrapper  — with #2 as its verifier via a2a (multi-agent demo)
+Sprint 4  #6 FinOps Reviewer        — one squad&#39;s customers first
+Then      MR-pattern pack: #3 #7 #10 #9 #5 #8 (same Environments/profiles, mostly prompt work)
+</code></pre></div>
+<p>Dogfooding = the GTM factory: every sprint produces eval sets, ROI numbers, and the demo.
+Case-study targets: #2 on a real handover, #4 over one on-call week, #6 one review cycle.</p>
+<h2 id="roi-summary-sales-one-liner-per-bullet">ROI summary (sales one-liner per bullet)</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Agent</th>
+<th>Headline metric</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Platform Bootstrapper</td>
+<td>env bootstrap: days → hours</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Handover Verifier</td>
+<td>zero-defect handovers, minutes not meetings</td>
+</tr>
+<tr>
+<td>3</td>
+<td>GitOps Service Adder</td>
+<td>ticket→MR in minutes, footgun eliminated</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Alert First-Responder</td>
+<td>every 3am call arrives pre-diagnosed</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Flux Doctor</td>
+<td>gitops failures self-explain</td>
+</tr>
+<tr>
+<td>6</td>
+<td>FinOps Reviewer</td>
+<td>€ savings surfaced on schedule, drafts ready</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Upgrade Planner</td>
+<td>never silently behind a version matrix</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Cert &amp; Domain Steward</td>
+<td>zero expiry incidents</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Docs Gardener</td>
+<td>customer docs never lie</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Billing Sentinel</td>
+<td>NODATA noise → one reviewed MR</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

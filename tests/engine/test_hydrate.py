@@ -52,7 +52,9 @@ SAMPLE = {
 
 
 async def test_hydrate_parses_manifest(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_post(url: str, headers: dict[str, str], manifest: dict[str, object] = SAMPLE) -> dict[str, object]:
+    async def fake_post(
+        url: str, headers: dict[str, str], manifest: dict[str, object] = SAMPLE
+    ) -> dict[str, object]:
         assert headers["x-ach-key"] == "ek-abc"
         assert headers["x-ach-agent"] == "hydrate-unit-agent"
         assert headers["x-ach-environment"] == "platform"

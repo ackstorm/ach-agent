@@ -9,12 +9,17 @@ from __future__ import annotations
 
 from typing import Any
 
+import a2a.client
+import httpx
+import pytest
+
+from ach_agent import identity
 from ach_agent.engine.a2a_egress import (
+    A2AAgentClient,
     ToolSpec,
     build_a2a_tools,
 )
 from ach_agent.engine.hydrate import A2AAgent
-
 
 # ---------------------------------------------------------------------------
 # Fake A2AAgentClient — records calls, configurable per-method behaviour
@@ -241,3 +246,46 @@ async def test_per_agent_closures_bind_correct_client() -> None:
     out_b = await _by_name(tools, "a2a_beta").handler(prompt="x")
     assert out_a == {"ok": True, "result": "from-alpha"}
     assert out_b == {"ok": True, "result": "from-beta"}
+
+
+async def test_real_a2a_client_receives_process_identity_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeAsyncClient:
+        def __init__(self, *, headers: dict[str, str], timeout: httpx.Timeout) -> None:
+            captured["headers"] = dict(headers)
+            captured["timeout"] = timeout
+
+        async def aclose(self) -> None:
+            captured["closed"] = True
+
+    class FakeClientConfig:
+        def __init__(self, *, httpx_client: object, streaming: bool) -> None:
+            captured["httpx_client"] = httpx_client
+            captured["streaming"] = streaming
+
+    async def fake_create_client(*, agent: str, client_config: object) -> object:
+        captured["agent"] = agent
+        captured["client_config"] = client_config
+        return object()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(a2a.client, "ClientConfig", FakeClientConfig)
+    monkeypatch.setattr(a2a.client, "create_client", fake_create_client)
+    identity.configure("classifier", "platform")
+    client = A2AAgentClient("https://peer.example/a2a", api_key="ek-a2a")
+
+    await client._ensure_client()
+    await client.close()
+
+    assert captured["headers"] == {
+        "x-ach-key": "ek-a2a",
+        "x-ach-agent": "classifier",
+        "x-ach-environment": "platform",
+    }
+    assert captured["agent"] == "https://peer.example/a2a"
+    assert captured["streaming"] is False
+    assert captured["closed"] is True
+    identity.reset_for_testing()

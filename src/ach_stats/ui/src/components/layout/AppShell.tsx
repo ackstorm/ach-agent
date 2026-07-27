@@ -4,7 +4,15 @@
 // Unlike the alitellm-auth donor's AppShell, there is no session/auth, no nav
 // (one page), no user menu, and no modals — ach-stats is a read-only dashboard.
 
-import type { ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
+
+import {
+  type Theme,
+  applyThemeClass,
+  nextTheme,
+  persistTheme,
+  resolveInitialTheme,
+} from '@/lib/theme';
 
 import { SiteFooter } from './SiteFooter';
 import { ThemeToggle } from './ThemeToggle';
@@ -14,6 +22,17 @@ export interface AppShellProps {
 }
 
 export function AppShell({ children }: AppShellProps) {
+  // Lazy initialiser: resolveInitialTheme only reads storage/system (no DOM
+  // mutation), and index.html already painted the matching <html> class.
+  const [theme, setTheme] = useState<Theme>(resolveInitialTheme);
+
+  const toggle = () => {
+    const next = nextTheme(theme);
+    applyThemeClass(next);
+    persistTheme(next);
+    setTheme(next);
+  };
+
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <header className="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-4 border-b border-border bg-surface px-4 md:px-6">
@@ -32,7 +51,7 @@ export function AppShell({ children }: AppShellProps) {
           ach-stats
         </span>
         <div className="ml-auto flex items-center gap-2">
-          <ThemeToggle />
+          <ThemeToggle theme={theme} onToggle={toggle} />
         </div>
       </header>
 

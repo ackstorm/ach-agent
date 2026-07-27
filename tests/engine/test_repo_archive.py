@@ -51,12 +51,12 @@ async def test_read_repo_archive_decodes_blob(monkeypatch: pytest.MonkeyPatch) -
             return _Result()
 
     @asynccontextmanager
-    async def _fake_session(endpoint: str, ek: str):  # type: ignore[no-untyped-def]
+    async def _fake_session(endpoint: str, headers: dict[str, str]):  # type: ignore[no-untyped-def]
         assert endpoint == "https://mcp.example/gitlab"
-        assert ek == "ek_test"
+        assert headers == {"x-ach-key": "ek_test"}
         yield _Session()
 
-    monkeypatch.setattr(repo_archive, "_archive_session", _fake_session)
+    monkeypatch.setattr(repo_archive, "mcp_session", _fake_session)
     out = await repo_archive.read_repo_archive(
         "https://mcp.example/gitlab", "ek_test", "1234", "abc"
     )
@@ -70,10 +70,10 @@ async def test_read_repo_archive_propagates_error(monkeypatch: pytest.MonkeyPatc
             raise RuntimeError("archive exceeds cap")
 
     @asynccontextmanager
-    async def _fake_session(endpoint: str, ek: str):  # type: ignore[no-untyped-def]
+    async def _fake_session(endpoint: str, headers: dict[str, str]):  # type: ignore[no-untyped-def]
         yield _Session()
 
-    monkeypatch.setattr(repo_archive, "_archive_session", _fake_session)
+    monkeypatch.setattr(repo_archive, "mcp_session", _fake_session)
     with pytest.raises(RuntimeError, match="exceeds cap"):
         await repo_archive.read_repo_archive("e", "k", "1234", "abc")
 

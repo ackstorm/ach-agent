@@ -27,7 +27,6 @@ from ach_agent.engine.pi.protocol import (
     EV_AGENT_END,
     EV_EOF,
     EV_SESSION_CREATED,
-    F_SESSION_PATH,
 )
 from ach_agent.engine.pi.rpc import PiRpcClient, PiRpcError
 
@@ -188,14 +187,14 @@ class PiDriver:
             if event.get("type") == EV_EOF:
                 raise PiRpcError("pi ended before session_created")
             if event.get("type") == EV_SESSION_CREATED:
-                session_path = str(event.get(F_SESSION_PATH, "") or "")
+                session_path = str(event.get("sessionPath", "") or "")
                 if session_path:
                     return session_path
             if event.get("type") == "response":
                 if event.get("id") != request_id:
                     continue
                 data = self._validate_response(event, CMD_NEW_SESSION, request_id)
-                response_session_path = data.get(F_SESSION_PATH) or data.get("sessionFile")
+                response_session_path = data.get("sessionPath") or data.get("sessionFile")
                 if response_session_path:
                     return str(response_session_path)
                 state_id = self._next_rpc_id()

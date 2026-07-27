@@ -11,14 +11,13 @@ opencode's ``memory-0`` MCP server points at this facade's URL, not at Hindsight
 
 from __future__ import annotations
 
-import asyncio
 from typing import Annotated
 
 import structlog
-import uvicorn
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
+from ach_agent.engine.mcp_host import LocalMcpHost
 from ach_agent.memory.hindsight import (
     HINDSIGHT_GET_MENTAL_MODEL,
     HINDSIGHT_RECALL,
@@ -38,8 +37,7 @@ class MemoryFacade:
         self._secret = secret  # closure-only, never logged; None → internal/no-auth URL
         self._bank_id = bank_id
         self._mcp = FastMCP("ach-memory")
-        self._server: uvicorn.Server | None = None
-        self._task: asyncio.Task[None] | None = None
+        self._host = LocalMcpHost(self._mcp, "memory facade")
         self._register_tools()
 
     async def _invoke(self, tool: str, args: dict[str, object]) -> str:
@@ -141,32 +139,8 @@ class MemoryFacade:
 
     async def start(self) -> str:
         """Bind the facade on an ephemeral localhost port; return its MCP URL."""
-        config = uvicorn.Config(
-            self._mcp.streamable_http_app(), host="127.0.0.1", port=0, log_level="warning"
-        )
-        self._server = uvicorn.Server(config)
-        self._task = asyncio.create_task(self._server.serve())
-        # Bounded wait: a port-0 loopback bind flips `started` within ms. Cap at ~5s and fail
-        # loud rather than hang (CLAUDE.md: no unbounded polling) — a local bind failing is a
-        # genuine boot error, same as the sibling localhost proxies.
-        for _ in range(250):
-            if self._server.started:
-                break
-            if self._task.done():  # serve() exited before starting → surface its error
-                self._task.result()
-                break
-            await asyncio.sleep(0.02)
-        if not self._server.started:
-            raise RuntimeError("memory facade failed to start within 5s")
-        port = self._server.servers[0].sockets[0].getsockname()[1]
-        log.info("memory facade started", port=port, bank_id=self._bank_id)
-        return f"http://127.0.0.1:{port}/mcp"
+        return await self._host.start(bank_id=self._bank_id)
 
     async def stop(self) -> None:
         """Signal uvicorn to exit and await the serve task."""
-        if self._server is not None:
-            self._server.should_exit = True
-        if self._task is not None:
-            await self._task
-        self._server = None
-        self._task = None
+        await self._host.stop()

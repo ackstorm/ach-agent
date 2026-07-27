@@ -14,8 +14,8 @@ stored on an instance attribute and never logged.
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable, Mapping
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
 import aiohttp
 import structlog
@@ -24,7 +24,7 @@ from aiohttp import web
 from ach_agent.engine.hydrate import McpServer
 
 if TYPE_CHECKING:
-    from ach_agent.engine.cost import CostAccountant
+    from ach_agent.engine.cost import CostAccountant, CostObserver
 
 log = structlog.get_logger(__name__)
 
@@ -57,18 +57,6 @@ _SHUTDOWN_TIMEOUT_S = 1.0
 _UPSTREAM_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=30)
 
 
-@runtime_checkable
-class ProxyObserver(Protocol):
-    """Optional per-request hook into `_forward` (cost accounting, Plan 1). A failure in
-    any method must never affect the relayed request/response — callers isolate it."""
-
-    def mutate_request(self, body: bytes, content_type: str) -> bytes: ...
-    def begin(self, status: int, content_type: str) -> None: ...
-    def response_headers(self, headers: Mapping[str, str]) -> None: ...
-    def feed(self, chunk: bytes) -> None: ...
-    def finish(self) -> None: ...
-
-
 def _rpc_method(body: bytes) -> str:
     """Best-effort JSON-RPC ``method`` from an MCP request body (diagnostics only).
 
@@ -99,7 +87,7 @@ async def _forward(
     auth_value: str,
     label: str = "proxy",
     auth_header: str = "x-ach-key",
-    observer: ProxyObserver | None = None,
+    observer: CostObserver | None = None,
 ) -> web.StreamResponse:
     """Forward ``request`` to ``target`` injecting auth, streaming the response.
 
@@ -154,10 +142,7 @@ async def _forward(
             async for chunk in upstream.content.iter_any():
                 await resp.write(chunk)
                 if observer is not None:
-                    try:
-                        observer.feed(chunk)
-                    except Exception:  # noqa: BLE001
-                        log.debug(f"{label} observer feed failed", exc_info=True)
+                    _observe(label, "feed", lambda: observer.feed(chunk))
             await resp.write_eof()
             if observer is not None:
                 _observe(label, "finish", observer.finish)
@@ -172,15 +157,12 @@ async def _forward(
         return resp
 
 
-class McpProxy:
-    """aiohttp reverse-proxy that fronts ACH MCP servers on 127.0.0.1.
+class _LocalProxy:
+    """Shared localhost reverse-proxy lifecycle: bind an ephemeral port, tear it down.
 
-    Lifecycle::
-
-        proxy = McpProxy()
-        urls = await proxy.start(servers, ek, exclude)   # {id: "http://127.0.0.1:<port>/mcp/<id>"}
-        ...
-        await proxy.stop()
+    Routes are supplied by the subclass as a callable rather than an overridable
+    method so any credential stays captured in the caller's closure and never
+    reaches an instance attribute (see the module docstring).
     """
 
     def __init__(self) -> None:
@@ -188,32 +170,29 @@ class McpProxy:
         self._site: web.TCPSite | None = None
         self._session: aiohttp.ClientSession | None = None
 
-    async def start(self, servers: list[McpServer], ek: str, exclude: set[str]) -> dict[str, str]:
-        """Start the localhost proxy and return ``{server_id: localhost_url}``.
+    async def _serve(
+        self,
+        label: str,
+        add_routes: Callable[[web.Application], None],
+        **log_fields: object,
+    ) -> int:
+        """Open the upstream session, serve ``add_routes`` on 127.0.0.1, return the port.
 
-        Servers whose ``id`` is in ``exclude`` are not started and get no route.
+        ``log_fields`` is route metadata only — never an auth value.
         """
         self._session = aiohttp.ClientSession(timeout=_UPSTREAM_TIMEOUT)
 
         app = web.Application()
-        routed: list[str] = []
-        for server in servers:
-            if server.id in exclude:
-                continue
-            handler = self._make_handler(server.endpoint, ek)
-            app.router.add_route("*", f"/mcp/{server.id}", handler)
-            app.router.add_route("*", f"/mcp/{server.id}/{{tail:.*}}", handler)
-            routed.append(server.id)
+        add_routes(app)
 
         self._runner = web.AppRunner(app, shutdown_timeout=_SHUTDOWN_TIMEOUT_S)
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, host="127.0.0.1", port=0)
         await self._site.start()
 
-        port = self._runner.addresses[0][1]
-        base = f"http://127.0.0.1:{port}"
-        log.info("mcp proxy started", port=port, servers=routed)
-        return {sid: f"{base}/mcp/{sid}" for sid in routed}
+        port: int = self._runner.addresses[0][1]
+        log.info(f"{label} started", port=port, **log_fields)
+        return port
 
     async def stop(self) -> None:
         """Stop the site/runner and close the shared upstream client session."""
@@ -226,6 +205,36 @@ class McpProxy:
         if self._session is not None and not self._session.closed:
             await self._session.close()
             self._session = None
+
+
+class McpProxy(_LocalProxy):
+    """aiohttp reverse-proxy that fronts ACH MCP servers on 127.0.0.1.
+
+    Lifecycle::
+
+        proxy = McpProxy()
+        urls = await proxy.start(servers, ek, exclude)   # {id: "http://127.0.0.1:<port>/mcp/<id>"}
+        ...
+        await proxy.stop()
+    """
+
+    async def start(self, servers: list[McpServer], ek: str, exclude: set[str]) -> dict[str, str]:
+        """Start the localhost proxy and return ``{server_id: localhost_url}``.
+
+        Servers whose ``id`` is in ``exclude`` are not started and get no route.
+        """
+        routed = [s for s in servers if s.id not in exclude]
+
+        def add_routes(app: web.Application) -> None:
+            for server in routed:
+                handler = self._make_handler(server.endpoint, ek)  # ek: closure only
+                app.router.add_route("*", f"/mcp/{server.id}", handler)
+                app.router.add_route("*", f"/mcp/{server.id}/{{tail:.*}}", handler)
+
+        ids = [s.id for s in routed]
+        port = await self._serve("mcp proxy", add_routes, servers=ids)
+        base = f"http://127.0.0.1:{port}"
+        return {sid: f"{base}/mcp/{sid}" for sid in ids}
 
     def _make_handler(self, endpoint: str, ek: str) -> _Handler:
         """Build a catch-all handler that forwards to ``endpoint`` injecting the ek.
@@ -243,7 +252,7 @@ class McpProxy:
         return handler
 
 
-class ModelProxy:
+class ModelProxy(_LocalProxy):
     """aiohttp reverse-proxy that fronts the ACH model wires on 127.0.0.1.
 
     Routes ``/v1``, ``/gemini`` and ``/anthropic`` (and their subpaths) to
@@ -258,11 +267,6 @@ class ModelProxy:
         await proxy.stop()
     """
 
-    def __init__(self) -> None:
-        self._runner: web.AppRunner | None = None
-        self._site: web.TCPSite | None = None
-        self._session: aiohttp.ClientSession | None = None
-
     async def start(
         self,
         base_url: str,
@@ -276,39 +280,19 @@ class ModelProxy:
         routes (Plan 1 cost accounting) — the plain ``_MODEL_PREFIXES`` routes below stay
         byte-identical to today (no observer).
         """
-        self._session = aiohttp.ClientSession(timeout=_UPSTREAM_TIMEOUT)
         ach_base = base_url.rstrip("/")
 
-        app = web.Application()
-        handler = self._make_handler(ach_base, auth_value, auth_header)
-        for prefix in _MODEL_PREFIXES:
-            app.router.add_route("*", prefix, handler)
-            app.router.add_route("*", f"{prefix}/{{tail:.*}}", handler)
+        def add_routes(app: web.Application) -> None:
+            handler = self._make_handler(ach_base, auth_value, auth_header)  # auth: closure only
+            for prefix in _MODEL_PREFIXES:
+                app.router.add_route("*", prefix, handler)
+                app.router.add_route("*", f"{prefix}/{{tail:.*}}", handler)
 
-        token_handler = self._make_token_handler(ach_base, auth_value, auth_header, accountant)
-        app.router.add_route("*", "/t/{token}/{tail:.*}", token_handler)
+            token_handler = self._make_token_handler(ach_base, auth_value, auth_header, accountant)
+            app.router.add_route("*", "/t/{token}/{tail:.*}", token_handler)
 
-        self._runner = web.AppRunner(app, shutdown_timeout=_SHUTDOWN_TIMEOUT_S)
-        await self._runner.setup()
-        self._site = web.TCPSite(self._runner, host="127.0.0.1", port=0)
-        await self._site.start()
-
-        port = self._runner.addresses[0][1]
-        base = f"http://127.0.0.1:{port}"
-        log.info("model proxy started", port=port, prefixes=list(_MODEL_PREFIXES))
-        return base
-
-    async def stop(self) -> None:
-        """Stop the site/runner and close the shared upstream client session."""
-        if self._site is not None:
-            await self._site.stop()
-            self._site = None
-        if self._runner is not None:
-            await self._runner.cleanup()
-            self._runner = None
-        if self._session is not None and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        port = await self._serve("model proxy", add_routes, prefixes=list(_MODEL_PREFIXES))
+        return f"http://127.0.0.1:{port}"
 
     def _make_handler(self, ach_base: str, auth_value: str, auth_header: str) -> _Handler:
         """Build a handler that forwards the incoming path upstream injecting auth.

@@ -3,13 +3,12 @@
 // One button that CYCLES the theme: dark → light → pastel → red → dark.
 // Following the common affordance, it shows the icon of the theme it will switch
 // TO (a sun in dark mode → "go light"; a palette in light mode → "go pastel"; a
-// flame in pastel mode → "go red"; a moon in red mode → "go dark"). The store
-// mutator applies the <html> class and persists, so this is purely presentational.
+// flame in pastel mode → "go red"; a moon in red mode → "go dark"). The owner
+// applies the <html> class and persists, so this is purely presentational.
 
 import { Flame, Moon, Palette, Sun } from 'lucide-react';
 
-import { nextTheme } from '@/lib/theme';
-import { useThemeStore } from '@/stores/theme';
+import { type Theme, nextTheme } from '@/lib/theme';
 
 // Icon + copy for the theme each click moves TO, keyed by the CURRENT theme.
 const NEXT_ICON = { dark: Sun, light: Palette, pastel: Flame, red: Moon } as const;
@@ -26,15 +25,18 @@ const NEXT_TITLE = {
   red: 'Dark mode',
 } as const;
 
-export function ThemeToggle() {
-  const theme = useThemeStore((s) => s.theme);
-  const toggle = useThemeStore((s) => s.toggle);
+export interface ThemeToggleProps {
+  theme: Theme;
+  onToggle: () => void;
+}
+
+export function ThemeToggle({ theme, onToggle }: ThemeToggleProps) {
   const Icon = NEXT_ICON[theme];
 
   return (
     <button
       type="button"
-      onClick={toggle}
+      onClick={onToggle}
       aria-label={NEXT_LABEL[theme]}
       title={`${NEXT_TITLE[theme]} (next: ${nextTheme(theme)})`}
       data-theme={theme}

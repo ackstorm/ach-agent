@@ -998,8 +998,8 @@ async def _build_cost_accounting(
     """Build optional accounting after model-proxy auth is resolved."""
     if source == "litellm_usage":
         price_table = PriceTable(model_up_base, model_up_token)
-        price_result = await price_table.load(model_name)
-        report_price_load_result(price_result, model_name)
+        price_failure = await price_table.load(model_name)
+        report_price_load_result(price_failure, model_name)
         return price_table, CostAccountant(
             source=source,
             wire=wire,

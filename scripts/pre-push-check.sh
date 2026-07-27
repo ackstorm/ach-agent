@@ -37,7 +37,7 @@ done < <(git ls-files 'src/**/*.py')
 
 # 8. lint + fast tests + conformance (in container)
 ./scripts/dev.sh make _lint || fail "ruff/mypy"
-./scripts/dev.sh make _test-fast || fail "pytest"
+./scripts/dev.sh make _test || fail "pytest"
 ./scripts/dev.sh make _conformance || fail "conformance"
 
 echo "pre-push: all gates passed."

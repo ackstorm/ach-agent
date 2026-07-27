@@ -28,6 +28,8 @@ from uuid import uuid4
 
 import structlog
 
+from ach_agent.engine.mcp_host import LocalMcpHost
+
 if TYPE_CHECKING:
     from ach_agent.engine.hydrate import A2AAgent
 
@@ -350,36 +352,12 @@ class A2AEgressFacade:
 
     def __init__(self, tools: list[ToolSpec]) -> None:
         self._mcp = build_a2a_mcp_server(tools)
-        self._server: Any = None
-        self._task: asyncio.Task[None] | None = None
+        self._host = LocalMcpHost(self._mcp, "a2a egress facade")
 
     async def start(self) -> str:
         """Bind on an ephemeral localhost port; return the MCP URL."""
-        import uvicorn
-
-        config = uvicorn.Config(
-            self._mcp.streamable_http_app(), host="127.0.0.1", port=0, log_level="warning"
-        )
-        self._server = uvicorn.Server(config)
-        self._task = asyncio.create_task(self._server.serve())
-        for _ in range(250):
-            if self._server.started:
-                break
-            if self._task.done():
-                self._task.result()
-                break
-            await asyncio.sleep(0.02)
-        if not self._server.started:
-            raise RuntimeError("a2a egress facade failed to start within 5s")
-        port = self._server.servers[0].sockets[0].getsockname()[1]
-        log.info("a2a egress facade started", port=port)
-        return f"http://127.0.0.1:{port}/mcp"
+        return await self._host.start()
 
     async def stop(self) -> None:
         """Signal uvicorn to exit and await the task (shutdown sweep)."""
-        if self._server is not None:
-            self._server.should_exit = True
-        if self._task is not None:
-            await self._task
-        self._server = None
-        self._task = None
+        await self._host.stop()

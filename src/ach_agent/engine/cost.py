@@ -181,11 +181,6 @@ class UsageObserver:
 PriceFailure = Literal["fetch_failed", "no_entry", "unpriced", "malformed"]
 
 
-@dataclass(frozen=True, slots=True)
-class PriceLoadResult:
-    failure: PriceFailure | None
-
-
 def validate_cost_source(source: str, model_type: str) -> None:
     """Apply the one cost-source/wire boot restriction (AC-8).
 
@@ -202,14 +197,14 @@ def validate_cost_source(source: str, model_type: str) -> None:
         )
 
 
-def report_price_load_result(result: PriceLoadResult, model_name: str) -> None:
+def report_price_load_result(failure: PriceFailure | None, model_name: str) -> None:
     """Emit the A.5 boot outcome without turning a price failure into a hard-fail."""
-    if result.failure is None:
+    if failure is None:
         return
-    if result.failure == "fetch_failed":
-        log.error("cost: price fetch failed at boot", model=model_name, failure=result.failure)
+    if failure == "fetch_failed":
+        log.error("cost: price fetch failed at boot", model=model_name, failure=failure)
         return
-    log.warning("cost: model is unpriced", model=model_name, failure=result.failure)
+    log.warning("cost: model is unpriced", model=model_name, failure=failure)
 
 
 def _price_field(entry: dict[str, Any], key: str) -> Any:
@@ -231,7 +226,7 @@ def _is_valid_price(raw: Any) -> bool:
     )
 
 
-def _parse_price_entry(entry: dict[str, Any], model_name: str) -> ModelPrices | PriceLoadResult:
+def _parse_price_entry(entry: dict[str, Any]) -> ModelPrices | PriceFailure:
     raw_input = _price_field(entry, "input_cost_per_token")
     raw_output = _price_field(entry, "output_cost_per_token")
     raw_cache_read = _price_field(entry, "cache_read_input_token_cost")
@@ -239,12 +234,12 @@ def _parse_price_entry(entry: dict[str, Any], model_name: str) -> ModelPrices | 
 
     for raw in (raw_input, raw_output, raw_cache_read, raw_cache_creation):
         if raw is not None and not _is_valid_price(raw):
-            return PriceLoadResult(failure="malformed")
+            return "malformed"
 
     # Absent/null/zero base input or output — including a partial input-only or
     # output-only pair — is unpriced. Never synthesize the missing base price (A.5).
     if raw_input in (None, 0) or raw_output in (None, 0):
-        return PriceLoadResult(failure="unpriced")
+        return "unpriced"
 
     cache_read = raw_cache_read if raw_cache_read is not None else raw_input
     cache_creation = raw_cache_creation if raw_cache_creation is not None else raw_input
@@ -286,7 +281,7 @@ class PriceTable:
         self._timeout = aiohttp.ClientTimeout(total=timeout_seconds)
         self._prices: dict[str, ModelPrices] = {}
 
-    async def load(self, model_name: str) -> PriceLoadResult:
+    async def load(self, model_name: str) -> PriceFailure | None:
         """GET /v2/model/info?model=<model_name> and cache the matched entry's prices."""
         url = f"{self._base_url}/v2/model/info"
         try:
@@ -297,28 +292,28 @@ class PriceTable:
                 ) as resp,
             ):
                 if resp.status >= 400:
-                    return PriceLoadResult(failure="fetch_failed")
+                    return "fetch_failed"
                 try:
                     body = await resp.json(content_type=None)
                 except (json.JSONDecodeError, UnicodeDecodeError):
-                    return PriceLoadResult(failure="malformed")
+                    return "malformed"
         except (aiohttp.ClientError, TimeoutError):
-            return PriceLoadResult(failure="fetch_failed")
+            return "fetch_failed"
 
         data = body.get("data") if isinstance(body, dict) else None
         if not isinstance(data, list):
-            return PriceLoadResult(failure="no_entry")
+            return "no_entry"
 
         entry = _match_entry(data, model_name)
         if entry is None:
-            return PriceLoadResult(failure="no_entry")
+            return "no_entry"
 
-        parsed = _parse_price_entry(entry, model_name)
-        if isinstance(parsed, PriceLoadResult):
+        parsed = _parse_price_entry(entry)
+        if not isinstance(parsed, ModelPrices):
             return parsed
 
         self._prices[model_name] = parsed
-        return PriceLoadResult(failure=None)
+        return None
 
     def get(self, model_name: str) -> ModelPrices | None:
         return self._prices.get(model_name)
@@ -353,7 +348,7 @@ class CostAccountant:
     """
 
     def __init__(self, source: str, wire: str, prices: PriceTable | None, model_name: str) -> None:
-        self._source = source
+        self.source = source  # public: CostObserver reads this
         self.wire = wire  # public: CostObserver reads this to pick the usage parser
         self._prices = prices
         self._model_name = model_name
@@ -368,11 +363,14 @@ class CostAccountant:
     def drop_token(self, token: str) -> None:
         self._buckets.pop(token, None)
 
-    def begin_turn(self, token: str) -> None:
-        bucket = self._buckets.setdefault(token, _TokenBucket())
+    @staticmethod
+    def _reset(bucket: _TokenBucket, *, in_flight: bool) -> None:
         bucket.cost = 0.0
         bucket.warned = set()
-        bucket.in_flight = True
+        bucket.in_flight = in_flight
+
+    def begin_turn(self, token: str) -> None:
+        self._reset(self._buckets.setdefault(token, _TokenBucket()), in_flight=True)
 
     def _price(self, usage: TokenUsage) -> float:
         prices = self._prices.get(self._model_name) if self._prices is not None else None
@@ -404,7 +402,7 @@ class CostAccountant:
         bucket = self._buckets.get(token) if token is not None else None
         if streaming:
             self.warn_once(
-                token, "litellm_headers_unpriced", cost_source=self._source, streaming=True
+                token, "litellm_headers_unpriced", cost_source=self.source, streaming=True
             )
             return
         cost: float | None = None
@@ -415,7 +413,7 @@ class CostAccountant:
                 cost = None
         if cost is None:
             self.warn_once(
-                token, "litellm_headers_unpriced", cost_source=self._source, streaming=False
+                token, "litellm_headers_unpriced", cost_source=self.source, streaming=False
             )
             return
         if bucket is None or not bucket.in_flight:
@@ -436,11 +434,9 @@ class CostAccountant:
         bucket = self._buckets.get(token)
         total = bucket.cost if bucket is not None else 0.0
         if bucket is not None:
-            bucket.cost = 0.0
-            bucket.warned = set()
-            bucket.in_flight = False
+            self._reset(bucket, in_flight=False)
         self._unattributed_warned = False  # a turn boundary — allow one more unattributed warn
-        if self._source == "engine" or usage is None:
+        if self.source == "engine" or usage is None:
             return usage
         return dataclasses.replace(usage, cost=total)
 
@@ -448,9 +444,7 @@ class CostAccountant:
         """Idempotent reset for the finally path — never disturbs a bucket end_turn already took."""
         bucket = self._buckets.get(token)
         if bucket is not None:
-            bucket.cost = 0.0
-            bucket.warned = set()
-            bucket.in_flight = False
+            self._reset(bucket, in_flight=False)
 
 
 def _inject_include_usage(body: bytes) -> bytes:
@@ -477,7 +471,7 @@ def _inject_include_usage(body: bytes) -> bytes:
 
 
 class CostObserver:
-    """ProxyObserver (structurally, per mcp_proxy.ProxyObserver) for litellm_usage (parses
+    """Per-request observer passed to mcp_proxy._forward, for litellm_usage (parses
     wire usage, injects OpenAI's include_usage) and litellm_headers (reads the response
     x-litellm-response-cost header) — the two sources that ever get an observer wired in.
 
@@ -491,13 +485,13 @@ class CostObserver:
         self._token = token
         self._usage_observer = (
             UsageObserver(accountant.wire)
-            if accountant._source == "litellm_usage" and accountant.wire in _USAGE_PARSERS
+            if accountant.source == "litellm_usage" and accountant.wire in _USAGE_PARSERS
             else None
         )
 
     def mutate_request(self, body: bytes, content_type: str) -> bytes:
         # A.4: litellm_headers NEVER mutates "stream" or any other request field.
-        if self._accountant._source != "litellm_usage" or self._accountant.wire != "openai":
+        if self._accountant.source != "litellm_usage" or self._accountant.wire != "openai":
             return body
         return _inject_include_usage(body)
 
@@ -507,7 +501,7 @@ class CostObserver:
 
     def response_headers(self, headers: Mapping[str, str]) -> None:
         """litellm_headers mode (A.4): read x-litellm-response-cost once headers arrive."""
-        if self._accountant._source != "litellm_headers":
+        if self._accountant.source != "litellm_headers":
             return
         streaming = headers.get("Content-Type", "").startswith("text/event-stream")
         self._accountant.record_header_cost(
@@ -526,7 +520,7 @@ class CostObserver:
             self._accountant.warn_once(
                 self._token,
                 "usage_missing",
-                cost_source=self._accountant._source,
+                cost_source=self._accountant.source,
                 model=self._accountant._model_name,
                 wire=self._accountant.wire,
             )

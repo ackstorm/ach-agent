@@ -6,7 +6,7 @@ no logic, no loops, no attribute access, no method calls. Two filters: default("
 and json (serializes ANY value — incl. dicts/lists — as compact JSON; the only way to
 emit a whole container, e.g. {{ payload | json }}).
 
-Namespaces (roots of the context dict): `payload`, `header`, `internal`. There is NO
+Namespaces (roots of the context dict): `payload`, `internal`. There is NO
 `env` namespace — process env (where the ek_ lives) is structurally unreachable from a
 template. That is the ek-hygiene guarantee at the template layer (CONTRACT §3).
 
@@ -111,12 +111,11 @@ def build_template_context(
 ) -> dict[str, Any]:
     """Assemble the substitution context.
 
-    `header` is reserved (empty) until inbound headers are threaded across the
-    channel->router seam (deferred — current seam drops them by design).
+    Inbound headers are not threaded across the channel->router seam (deferred —
+    current seam drops them by design).
     """
     return {
         "payload": payload,
-        "header": {},
         "internal": {
             "channel": {
                 "name": channel_name,

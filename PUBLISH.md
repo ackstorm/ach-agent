@@ -34,7 +34,7 @@ git push -u origin main     # first publication
 5. **LICENSE + README** present.
 6. **remote** — origin is `git@github.com:ackstorm/ach-agent.git` (warn-only).
 7. **SPDX headers** — every `src/**/*.py` starts with `# SPDX-License-Identifier: Apache-2.0`.
-8. **lint + tests + conformance** — `make _lint`, `make _test-fast`, `make _conformance`.
+8. **lint + tests + conformance** — `make _lint`, `make _test`, `make _conformance`.
 
 ## Backup (pre-flatten history)
 

@@ -15,13 +15,11 @@ RTR-06: no router.* imports used here (only MEMORY_DEGRADED metric is imported a
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import structlog
-from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
-from mcp.shared._httpx_utils import create_mcp_http_client
+
+from ach_agent.engine.mcp_session import mcp_session
 
 if TYPE_CHECKING:
     from ach_agent.config.schema import HindsightMemory, HindsightParams
@@ -90,23 +88,6 @@ def hindsight_auth_headers(secret: str | None) -> dict[str, str]:
     return {"Authorization": f"Bearer {secret}"} if secret else {}
 
 
-@asynccontextmanager
-async def _hindsight_session(endpoint: str, secret: str | None):  # type: ignore[no-untyped-def]
-    """Open an initialized Hindsight MCP session (shared by call + tool discovery).
-
-    NOTE: the installed mcp ``streamable_http_client`` takes no ``headers=`` kwarg; auth is
-    injected via a pre-built httpx client (``create_mcp_http_client(headers=...)``, which also
-    applies the SDK's recommended MCP timeouts) passed as ``http_client=``. We own that client's
-    lifecycle (the transport only closes clients it created), hence the nested ``async with``.
-    """
-    headers = hindsight_auth_headers(secret)
-    async with create_mcp_http_client(headers=headers or None) as http_client:
-        async with streamable_http_client(endpoint, http_client=http_client) as (read, write, _):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                yield session
-
-
 async def init_hindsight_tool_aliases(endpoint: str, secret: str | None) -> dict[str, str]:
     """Boot-once: list the endpoint's tools and map canonical names → published names.
 
@@ -114,7 +95,7 @@ async def init_hindsight_tool_aliases(endpoint: str, secret: str | None) -> dict
     the deployment (un)prefixes tools. Fail-open: on any error, leaves aliases empty (identity).
     """
     try:
-        async with _hindsight_session(endpoint, secret) as session:
+        async with mcp_session(endpoint, hindsight_auth_headers(secret)) as session:
             listed = await session.list_tools()
         published = [t.name for t in listed.tools]
     except Exception as exc:
@@ -144,7 +125,7 @@ async def call_hindsight(
     ``tool`` is a canonical ``hindsight_*`` name; it is translated through ``_TOOL_ALIASES``
     (populated at boot) to whatever the live deployment publishes.
     """
-    async with _hindsight_session(endpoint, secret) as session:
+    async with mcp_session(endpoint, hindsight_auth_headers(secret)) as session:
         actual = _TOOL_ALIASES.get(tool, tool)
         result = await session.call_tool(actual, args)
         text: str = getattr(result.content[0], "text", "") if result.content else ""
@@ -292,10 +273,9 @@ def _inc_memory_degraded() -> None:
     """
     try:
         # Deferred import: acceptable per RTR-06 (no top-level router.* at module level)
-        import importlib  # noqa: PLC0415
+        from ach_agent.router.metrics import MEMORY_DEGRADED
 
-        metrics = importlib.import_module("ach_agent.router.metrics")
-        metrics.MEMORY_DEGRADED.inc()
+        MEMORY_DEGRADED.inc()
     except Exception:
         pass
 

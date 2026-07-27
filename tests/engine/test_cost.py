@@ -15,7 +15,6 @@ from ach_agent.engine.cost import (
     CostAccountant,
     CostObserver,
     ModelPrices,
-    PriceLoadResult,
     PriceTable,
     TokenUsage,
     UsageObserver,
@@ -142,7 +141,7 @@ async def test_price_fields_read_from_top_level_and_unknown_keys_ignored() -> No
     try:
         table = PriceTable(url, "ek")
         result = await table.load("gpt-4")
-        assert result.failure is None
+        assert result is None
         assert table.get("gpt-4") == ModelPrices(**PRICED)
     finally:
         await runner.cleanup()
@@ -157,7 +156,7 @@ async def test_match_falls_back_to_litellm_params_model() -> None:
     try:
         table = PriceTable(url, "ek")
         result = await table.load("gpt-4")
-        assert result.failure is None
+        assert result is None
         assert table.get("gpt-4") == ModelPrices(**PRICED)
     finally:
         await runner.cleanup()
@@ -171,7 +170,7 @@ async def test_no_match_is_no_entry() -> None:
     try:
         table = PriceTable(url, "ek")
         result = await table.load("gpt-4")
-        assert result.failure == "no_entry"
+        assert result == "no_entry"
         assert table.get("gpt-4") is None
     finally:
         await runner.cleanup()
@@ -186,7 +185,7 @@ async def test_absent_cache_prices_fall_back_to_input_cost() -> None:
     try:
         table = PriceTable(url, "ek")
         result = await table.load("gpt-4")
-        assert result.failure is None
+        assert result is None
         assert table.get("gpt-4") == ModelPrices(1e-6, 2e-6, 1e-6, 1e-6)
     finally:
         await runner.cleanup()
@@ -201,7 +200,7 @@ async def test_fields_read_from_model_info_nested() -> None:
     try:
         table = PriceTable(url, "ek")
         result = await table.load("gpt-4")
-        assert result.failure is None
+        assert result is None
         assert table.get("gpt-4") == ModelPrices(**PRICED)
     finally:
         await runner.cleanup()
@@ -215,7 +214,7 @@ async def test_fetch_failed_on_server_error() -> None:
     try:
         table = PriceTable(url, "ek")
         result = await table.load("gpt-4")
-        assert result.failure == "fetch_failed"
+        assert result == "fetch_failed"
         assert table.get("gpt-4") is None
     finally:
         await runner.cleanup()
@@ -229,7 +228,7 @@ async def test_successful_invalid_json_is_a_malformed_price_load_failure() -> No
     try:
         table = PriceTable(url, "ek")
         result = await table.load("gpt-4")
-        assert result == PriceLoadResult(failure="malformed")
+        assert result == "malformed"
         assert table.get("gpt-4") is None
     finally:
         await runner.cleanup()
@@ -245,7 +244,7 @@ async def test_fetch_failed_on_connection_error() -> None:
 
     table = PriceTable(f"http://127.0.0.1:{port}", "ek")
     result = await table.load("gpt-4")
-    assert result.failure == "fetch_failed"
+    assert result == "fetch_failed"
     assert table.get("gpt-4") is None
 
 
@@ -258,7 +257,7 @@ async def test_fetch_failed_on_hanging_response_timeout() -> None:
     try:
         table = PriceTable(url, "ek", timeout_seconds=0.3)
         result = await table.load("gpt-4")
-        assert result.failure == "fetch_failed"
+        assert result == "fetch_failed"
         assert table.get("gpt-4") is None
     finally:
         await runner.cleanup()
@@ -322,7 +321,7 @@ async def test_malformed_price_values_rejected(raw_price: object) -> None:
     try:
         table = PriceTable(url, "ek")
         result = await table.load("gpt-4")
-        assert result.failure == "malformed"
+        assert result == "malformed"
         assert table.get("gpt-4") is None
     finally:
         await runner.cleanup()
@@ -348,7 +347,7 @@ async def test_unpriced_when_base_price_absent_null_or_zero(fields: dict) -> Non
     try:
         table = PriceTable(url, "ek")
         result = await table.load("gpt-4")
-        assert result.failure == "unpriced"
+        assert result == "unpriced"
         assert table.get("gpt-4") is None
     finally:
         await runner.cleanup()
@@ -364,7 +363,7 @@ async def test_boot_reports_an_unpriced_model_once_after_price_load() -> None:
         with capture_logs() as cap:
             result = await table.load("gpt-4")
             report_price_load_result(result, "gpt-4")
-        assert result == PriceLoadResult(failure="unpriced")
+        assert result == "unpriced"
         assert len(cap) == 1
         assert cap[0]["event"] == "cost: model is unpriced"
         assert cap[0]["model"] == "gpt-4"
@@ -578,7 +577,7 @@ def test_non_2xx_usage_payload_is_ignored() -> None:
 @pytest.mark.parametrize("failure", ["no_entry", "unpriced", "malformed"])
 def test_unpriced_a5_rows_warn_with_model_name(failure: str) -> None:
     with capture_logs() as cap:
-        report_price_load_result(PriceLoadResult(failure=failure), "gpt-4")  # type: ignore[arg-type]
+        report_price_load_result(failure, "gpt-4")  # type: ignore[arg-type]
     assert len(cap) == 1
     assert cap[0]["model"] == "gpt-4"
     assert cap[0]["failure"] == failure
@@ -586,7 +585,7 @@ def test_unpriced_a5_rows_warn_with_model_name(failure: str) -> None:
 
 def test_price_fetch_failure_is_one_boot_error_and_not_a_hard_fail() -> None:
     with capture_logs() as cap:
-        report_price_load_result(PriceLoadResult(failure="fetch_failed"), "gpt-4")
+        report_price_load_result("fetch_failed", "gpt-4")
     assert len(cap) == 1
     assert cap[0]["log_level"] == "error"
     assert cap[0]["model"] == "gpt-4"

@@ -5,7 +5,7 @@ object (NOT a list). extract_terminal finds the last such object in accumulated 
 """
 from __future__ import annotations
 
-from ach_agent.engine.validator import A2AReply, NoneAction, extract_terminal
+from ach_agent.engine.validator import extract_terminal
 
 
 def test_extract_none_action():
@@ -23,16 +23,3 @@ def test_extract_a2a_reply():
 
 def test_extract_returns_none_when_absent():
     assert extract_terminal("no json here") is None
-
-
-def test_none_action_model_defaults():
-    m = NoneAction(action="none")
-    assert m.text == "" and m.thoughts == ""
-
-
-def test_a2a_reply_requires_text():
-    import pytest
-    from pydantic import ValidationError
-
-    with pytest.raises(ValidationError):
-        A2AReply(action="a2a_reply")

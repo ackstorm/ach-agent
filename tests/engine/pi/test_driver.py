@@ -17,7 +17,6 @@ from ach_agent.engine.pi.protocol import (
     EV_MESSAGE_UPDATE,
     EV_SESSION_CREATED,
     EV_TOOL_START,
-    F_SESSION_PATH,
 )
 from ach_agent.engine.pi.rpc import PiRpcError
 
@@ -85,7 +84,7 @@ class _LaunchProcess:
 async def test_new_session_then_prompt_accumulates_text() -> None:
     client = _ScriptedClient(
         [
-            {"type": EV_SESSION_CREATED, F_SESSION_PATH: "/s/abc.json"},
+            {"type": EV_SESSION_CREATED, "sessionPath": "/s/abc.json"},
             _text("hel"),
             _text("lo"),
             {"type": EV_AGENT_SETTLED},
@@ -143,7 +142,7 @@ async def test_session_ref_switches_and_bypasses_map() -> None:
 async def test_max_tool_calls_aborts_and_flags() -> None:
     client = _ScriptedClient(
         [
-            {"type": EV_SESSION_CREATED, F_SESSION_PATH: "/s/a.json"},
+            {"type": EV_SESSION_CREATED, "sessionPath": "/s/a.json"},
             {"type": EV_TOOL_START, "toolName": "t", "callId": "c1"},
             {"type": EV_TOOL_START, "toolName": "t", "callId": "c2"},
             {"type": EV_AGENT_SETTLED},
@@ -170,7 +169,7 @@ async def test_cancel_sends_abort() -> None:
             await asyncio.sleep(3600)
             return {}
 
-    client = _Hanging([{"type": EV_SESSION_CREATED, F_SESSION_PATH: "/s/a.json"}])
+    client = _Hanging([{"type": EV_SESSION_CREATED, "sessionPath": "/s/a.json"}])
     task = asyncio.ensure_future(
         PiDriver().run_turn(
             _Server(client),
@@ -194,7 +193,7 @@ async def test_cancel_sends_abort() -> None:
 async def test_usage_is_stored_in_stats() -> None:
     client = _ScriptedClient(
         [
-            {"type": EV_SESSION_CREATED, F_SESSION_PATH: "/s/usage.json"},
+            {"type": EV_SESSION_CREATED, "sessionPath": "/s/usage.json"},
             {
                 "type": "message_end",
                 "message": {
@@ -235,7 +234,7 @@ async def test_usage_is_stored_in_stats() -> None:
 async def test_agent_end_will_retry_is_not_terminal() -> None:
     client = _ScriptedClient(
         [
-            {"type": EV_SESSION_CREATED, F_SESSION_PATH: "/s/retry.json"},
+            {"type": EV_SESSION_CREATED, "sessionPath": "/s/retry.json"},
             _text("before"),
             {"type": EV_AGENT_END, "willRetry": True},
             _text("after"),

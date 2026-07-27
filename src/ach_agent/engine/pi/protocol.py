@@ -24,18 +24,3 @@ EV_AGENT_SETTLED = "agent_settled"
 EV_AGENT_END = "agent_end"  # Pi 0.79 compatibility; newer builds use agent_settled.
 EV_SESSION_CREATED = "session_created"
 EV_EOF = "__eof__"
-
-# Field names
-F_SESSION_PATH = "sessionPath"
-F_TEXT = "text"
-F_DELTA = "delta"
-F_TOOL_NAME = "toolName"
-F_CALL_ID = "callId"
-F_TOOL_CALL_ID = "toolCallId"
-F_INPUT = "input"
-F_ARGS = "args"
-F_OUTPUT = "output"
-F_RESULT = "result"
-F_ERROR = "error"
-F_IS_ERROR = "isError"
-F_TITLE = "title"

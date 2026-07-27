@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 
+from ach_agent.engine import mcp_session as mcp_sess
 from ach_agent.memory import hindsight as hs
 
 
@@ -57,8 +58,8 @@ async def test_call_hindsight_passes_headers_and_returns_text(monkeypatch):
         seen["auth"] = http_client.headers.get("Authorization") if http_client is not None else None
         yield (object(), object(), object())
 
-    monkeypatch.setattr(hs, "streamable_http_client", _fake_client)
-    monkeypatch.setattr(hs, "ClientSession", lambda read, write: _Session())
+    monkeypatch.setattr(mcp_sess, "streamable_http_client", _fake_client)
+    monkeypatch.setattr(mcp_sess, "ClientSession", lambda read, write: _Session())
 
     out = await hs.call_hindsight("https://hs/mcp", "sekret", hs.HINDSIGHT_RECALL, {"query": "q"})
     assert out == "OK-BODY"
@@ -96,8 +97,8 @@ async def test_call_hindsight_raises_on_tool_error(monkeypatch):
     async def _fake_client(url, *, http_client=None, **k):
         yield (object(), object(), object())
 
-    monkeypatch.setattr(hs, "streamable_http_client", _fake_client)
-    monkeypatch.setattr(hs, "ClientSession", lambda read, write: _Session())
+    monkeypatch.setattr(mcp_sess, "streamable_http_client", _fake_client)
+    monkeypatch.setattr(mcp_sess, "ClientSession", lambda read, write: _Session())
 
     with pytest.raises(RuntimeError, match="Unknown tool"):
         await hs.call_hindsight("https://hs/mcp", None, hs.HINDSIGHT_RECALL, {"query": "q"})

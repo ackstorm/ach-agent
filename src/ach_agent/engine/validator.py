@@ -14,34 +14,14 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Literal
+from typing import Any
 
 import structlog
-from pydantic import BaseModel, ConfigDict
 
 log = structlog.get_logger(__name__)
 
 # Strip markdown ```json ... ``` fences before searching for JSON
 _FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL)
-
-
-# ---------------------------------------------------------------------------
-# Terminal contract models (single object — CONTRACT_v3)
-# ---------------------------------------------------------------------------
-
-
-class NoneAction(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    action: Literal["none"]
-    text: str = ""
-    thoughts: str = ""
-
-
-class A2AReply(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    action: Literal["a2a_reply"]
-    text: str
-    thoughts: str = ""
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-from ach_agent.stats.redact import redact_task
+from ach_agent.stats.models import redact_task
 
 
 def test_redact_truncates_to_80_chars():

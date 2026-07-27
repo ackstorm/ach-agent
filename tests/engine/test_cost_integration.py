@@ -143,8 +143,8 @@ async def test_streaming_cache_aware_cost_is_engine_independent_at_model_proxy(
     proxy = ModelProxy()
     try:
         table = PriceTable(ach_url, "ek-integration")
-        assert (await table.load("priced-model")).failure is None
-        assert (await table.load("fallback-model")).failure is None
+        assert await table.load("priced-model") is None
+        assert await table.load("fallback-model") is None
         assert table.get("fallback-model") == ModelPrices(3e-6, 4e-6, 3e-6, 3e-6)
 
         accountant = CostAccountant(

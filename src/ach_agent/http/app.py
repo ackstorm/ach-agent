@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 from prometheus_client import make_asgi_app
 
 from ach_agent.channels.webhook import handle_webhook_request
+from ach_agent.http.metrics import IdentityRegistry
 
 if TYPE_CHECKING:
     from ach_agent.channels.seam import MessageHandler
@@ -197,7 +198,7 @@ def create_app(
     # GET /metrics — Prometheus exposition (HTTP-04)
     # -----------------------------------------------------------------------
 
-    metrics_app = make_asgi_app()
+    metrics_app = make_asgi_app(registry=IdentityRegistry())
     app.mount("/metrics", metrics_app)
 
     # Mount A2A sub-apps (single-process topology A, §15 / T-04-17).

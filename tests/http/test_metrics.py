@@ -20,11 +20,7 @@ def _reset_identity() -> None:
 
 
 def _samples(registry: IdentityRegistry) -> dict[str, object]:
-    return {
-        sample.name: sample
-        for metric in registry.collect()
-        for sample in metric.samples
-    }
+    return {sample.name: sample for metric in registry.collect() for sample in metric.samples}
 
 
 def test_counter_total_name_matches_prometheus_client_025() -> None:

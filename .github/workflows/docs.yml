@@ -6,6 +6,25 @@ on:
     tags: ['v*']
   pull_request:
     branches: [main]
+  # Called by release.yml so a release ALWAYS republishes `stable`. The tags: trigger
+  # above cannot be relied on: release.yml tags with GITHUB_TOKEN, and GitHub does not
+  # start workflows from token-created events — so `stable` froze at 0.3.0 (the last
+  # hand-pushed tag) while every main push kept moving `dev`.
+  workflow_call:
+    inputs:
+      version:
+        description: 'Release version WITHOUT the leading v (e.g. 0.10.1). Publishes it as stable.'
+        required: true
+        type: string
+  # Manual backfill: `stable` sat on 0.3.0 for every release that shipped before the
+  # release.yml wiring existed. Run this once with that version to move it forward.
+  # Leave the input empty to just refresh `dev`.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version WITHOUT the leading v (e.g. 0.10.1) to publish as stable. Empty = refresh dev only.'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -22,6 +41,13 @@ jobs:
   publish:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    # A release commit fires this workflow twice: once from its own push trigger (moves
+    # `dev`) and once via release.yml's workflow_call (publishes the version + `stable`).
+    # Both `mike deploy --push` to gh-pages, so serialize them or one loses the race with
+    # a non-fast-forward. Never cancel: a dropped run means an unpublished version.
+    concurrency:
+      group: gh-pages-deploy
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,8 +60,14 @@ jobs:
           git config user.name github-actions
           git config user.email github-actions@github.com
           git fetch origin gh-pages --depth=1 || true
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+          # A version comes either from release.yml (workflow_call input) or from a
+          # hand-pushed tag; both publish it as `stable`. No version → this is a plain
+          # main push, which only moves `dev`.
+          V="${{ inputs.version }}"
+          if [[ -z "$V" && "${GITHUB_REF}" == refs/tags/v* ]]; then
             V="${GITHUB_REF#refs/tags/v}"
+          fi
+          if [[ -n "$V" ]]; then
             mike deploy --push --update-aliases "$V" stable
             mike set-default --push stable
           else

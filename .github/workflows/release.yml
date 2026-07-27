@@ -12,6 +12,8 @@ jobs:
   release:
     if: "${{ startsWith(github.event.head_commit.message, 'chore(release): v') }}"
     runs-on: ubuntu-latest
+    outputs:
+      v: ${{ steps.ver.outputs.v }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -73,3 +75,16 @@ jobs:
             echo "no CHANGELOG section for v$V — falling back to auto-generated notes"
             gh release create "v$V" --title "v$V" --generate-notes
           fi
+
+  # Publish the versioned docs + move the `stable` alias. Driven from here rather than
+  # from the tag push: the tag above is created with GITHUB_TOKEN, and GitHub does not
+  # start workflows from token-created events, so docs.yml's tags: trigger never fired.
+  # The published schema $id (…/stable/schemas/agent-config-v1.schema.json) depends on
+  # this running — it 404'd from 0.3.0 until this job existed.
+  docs:
+    needs: release
+    permissions:
+      contents: write
+    uses: ./.github/workflows/docs.yml
+    with:
+      version: ${{ needs.release.outputs.v }}

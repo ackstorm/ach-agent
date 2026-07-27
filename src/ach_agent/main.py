@@ -57,6 +57,12 @@ from ach_agent.config.schema import (
     RepoCheckoutServer,
 )
 from ach_agent.engine.context import fetch_context
+from ach_agent.engine.cost import (
+    CostAccountant,
+    PriceTable,
+    report_price_load_result,
+    validate_cost_source,
+)
 from ach_agent.engine.hydrate import hydrate, resolve_model
 from ach_agent.engine.mcp_passthrough import to_opencode_entry
 from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
@@ -645,6 +651,8 @@ def _make_engine_runner(
     memory_facade_url: str | None = None,
     repo_facade_url: str | None = None,
     a2a_facade_url: str | None = None,
+    accountant: CostAccountant | None = None,
+    cost_source: str = "engine",
 ) -> Callable[..., Any]:
     """Build the engine_runner callable injected into the Router.
 
@@ -756,6 +764,8 @@ def _make_engine_runner(
         try:
             server = await pool.acquire(event.session_key, invocation_engine_cfg)
             acquired = True
+            if accountant is not None:
+                accountant.begin_turn(server.cost_token)
             # MEM-01: append ## Memory section (summaries or unavailable note) to prompt.
             base_prompt = build_engine_prompt(
                 event,
@@ -845,6 +855,11 @@ def _make_engine_runner(
                 text=text,
             )
             _usage = turn_stats.get("usage")
+            if accountant is not None:
+                _usage = accountant.end_turn(server.cost_token, _usage)
+            elif cost_source == "none" and _usage is not None:
+                _usage = dataclasses.replace(_usage, cost=0.0)
+            turn_stats["usage"] = _usage
             log.info(
                 "engine: summary",
                 channel=event.channel_name,
@@ -963,11 +978,42 @@ def _make_engine_runner(
             if server is not None:
                 ttl = 0.0 if timed_out else ttl_by_channel.get(event.channel_name, 0.0)
                 try:
+                    if accountant is not None:
+                        accountant.discard_turn(server.cost_token)
                     await pool.release(event.session_key, ttl_seconds=ttl)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("pool release error", task_id=event.task_id, error=str(exc))
 
     return engine_runner
+
+
+async def _build_cost_accounting(
+    *,
+    source: str,
+    wire: str,
+    model_name: str,
+    model_up_base: str,
+    model_up_token: str,
+) -> tuple[PriceTable | None, CostAccountant | None]:
+    """Build optional accounting after model-proxy auth is resolved."""
+    if source == "litellm_usage":
+        price_table = PriceTable(model_up_base, model_up_token)
+        price_result = await price_table.load(model_name)
+        report_price_load_result(price_result, model_name)
+        return price_table, CostAccountant(
+            source=source,
+            wire=wire,
+            prices=price_table,
+            model_name=model_name,
+        )
+    if source == "litellm_headers":
+        return None, CostAccountant(
+            source=source,
+            wire=wire,
+            prices=None,
+            model_name=model_name,
+        )
+    return None, None
 
 
 async def _drain(
@@ -1203,6 +1249,17 @@ async def main(
 
     # Step 2: load config (hard-fail on schema mismatch — CFG-02)
     cfg = load_config(config_path)
+    try:
+        validate_cost_source(cfg.cost.source, cfg.model.type)
+    except ValueError as exc:
+        log.error(
+            "cost source rejected at boot",
+            cost_source=cfg.cost.source,
+            model_type=cfg.model.type,
+            reason=str(exc),
+        )
+        raise SystemExit(1) from exc
+    log.info("cost: active source", cost_source=cfg.cost.source)
     # SEC: secret.env values must never reach opencode's env or the logs. Strip any
     # secret.env name a misconfig also listed in engine.forwardEnv (fail-safe, WARN not
     # hard-fail — see strip_forwarded_secrets), and register the secret names' CURRENT
@@ -1256,6 +1313,8 @@ async def main(
     repo_facade_url: str | None = None
     a2a_facade: Any = None
     a2a_facade_url: str | None = None
+    price_table: PriceTable | None = None
+    accountant: CostAccountant | None = None
     if ek:
         manifest = await hydrate(cfg.capability.ach.base_url, ek, cfg.agent.name)
         # hard-fail (sys.exit 1) if the configured model is absent from the hydrated set.
@@ -1347,7 +1406,19 @@ async def main(
                     "passed in.' Export the key in the env that launches the container.",
                     auth_header=model_up_header,
                 )
-        model_proxy_base = await start_model_proxy(model_up_base, model_up_token, model_up_header)
+        price_table, accountant = await _build_cost_accounting(
+            source=cfg.cost.source,
+            wire=cfg.model.type,
+            model_name=cfg.model.name,
+            model_up_base=model_up_base,
+            model_up_token=model_up_token,
+        )
+        model_proxy_base = await start_model_proxy(
+            model_up_base,
+            model_up_token,
+            model_up_header,
+            accountant=accountant,
+        )
         # model.type is authoritative for the wire. The hydration manifest reports every model
         # at /v1 (openai-compat) even for gemini, so we DON'T read the manifest endpoint here —
         # doing so forced a type:gemini model onto /v1/chat/completions. resolve_model above
@@ -1453,7 +1524,7 @@ async def main(
         driver: EngineDriver = PiDriver()
     else:
         driver = OpencodeDriver()
-    pool = EnginePool(driver=driver, sessions_map=session_store)
+    pool = EnginePool(driver=driver, sessions_map=session_store, accountant=accountant)
 
     # Best-effort stats sink (harness-local, ACH_STATS_* — never part of CONTRACT_v3).
     # Unset ACH_STATS_REDIS_URL → Prometheus-only, no queue/writer.
@@ -1500,6 +1571,8 @@ async def main(
         memory_facade_url=memory_facade_url,
         repo_facade_url=repo_facade_url,
         a2a_facade_url=a2a_facade_url,
+        accountant=accountant,
+        cost_source=cfg.cost.source,
     )
 
     # Step 6 (cont.): construct Router with all limits from config (RTR-03/04)

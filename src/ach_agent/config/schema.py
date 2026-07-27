@@ -687,6 +687,21 @@ class ChannelConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class CostBlock(BaseModel):
+    """Where the per-invocation cost figure comes from (spec.cost.source).
+
+    Free-string on the CRD side; this Literal is the SINGLE enforcer — an unknown
+    value raises ValidationError at load and hard-fails the process, exactly as
+    engine.type does. Omitted everywhere → "engine" (today's behaviour).
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    source: Literal["engine", "litellm_usage", "litellm_headers", "none"] = Field(
+        default="engine", alias="source"
+    )
+
+
 class AgentConfig(BaseModel):
     """Full CONTRACT_v3 §2 rendered runtime config (D-01: modeled in one pass).
 
@@ -704,6 +719,7 @@ class AgentConfig(BaseModel):
     memory: Memory | None = None
     limits: LimitsBlock = Field(default_factory=LimitsBlock)
     engine: EngineBlock = Field(default_factory=EngineBlock)
+    cost: CostBlock = Field(default_factory=CostBlock)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict, alias="mcpServers")
     persistence: PersistenceBlock = Field(default_factory=PersistenceBlock)
     health: HealthBlock = Field(default_factory=HealthBlock)

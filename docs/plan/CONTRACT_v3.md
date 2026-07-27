@@ -116,6 +116,10 @@ mismatch.
       //                                       params — explicit params keys win on collision.
     }
   },
+  "cost": {
+    "source": "engine"                    // engine (default) | litellm_usage | litellm_headers | none
+                                             // omit this block, or source, to use engine
+  },
   "engine": {                               // harness-local; operator-optional
     "home": "/var/lib/ach-agent/home",      // ONE shared home for all agentes: skills + .ach-state +
     //                                         session store + node_modules live here. Per-session_key
@@ -723,5 +727,17 @@ memory (fail-open), tool egress is not fail-open — surface it as a per-invocat
     `maxTokens` / `overflow` (`compact` default | `rotate`); string shorthand `session: auto|none|"{{ … }}"`
     still accepted. Separates the router lane/pool key (`session_key`, untouched) from opencode
     conversation identity. See `docs/references/2026-07-02-session-identity-and-bounds.md`. (2026-07-02)
+
+## Addendum — cost source (2026-07-25)
+
+The rendered top-level config blocks now include the optional `cost` block shown in §2.
+It has one field, `source`, with the values `engine` (default), `litellm_usage`,
+`litellm_headers`, and `none`. The harness rejects unknown values at config load. The
+`litellm_usage` source is limited to the OpenAI and Gemini wires; Anthropic is a boot
+hard-fail for that source. Price lookup uses the paginated
+`/v2/model/info?model=<name>` endpoint with the `x-ach-key` header. The operational
+semantics, A.5 failure table, and the reserved P0-v2/B.7 evidence record are documented
+in [`docs/configuration.md`](../configuration.md) and
+[`docs/references/2026-07-25-cost-source.md`](../references/2026-07-25-cost-source.md).
 
 Implementation-level gates live in the GSD/superpowers plans (`docs/superpowers/plans/`), not here.

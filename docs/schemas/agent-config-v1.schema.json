@@ -288,6 +288,25 @@
       "title": "CodememParams",
       "type": "object"
     },
+    "CostBlock": {
+      "additionalProperties": false,
+      "description": "Where the per-invocation cost figure comes from (spec.cost.source).\n\nFree-string on the CRD side; this Literal is the SINGLE enforcer — an unknown\nvalue raises ValidationError at load and hard-fails the process, exactly as\nengine.type does. Omitted everywhere → \"engine\" (today's behaviour).",
+      "properties": {
+        "source": {
+          "default": "engine",
+          "enum": [
+            "engine",
+            "litellm_usage",
+            "litellm_headers",
+            "none"
+          ],
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "title": "CostBlock",
+      "type": "object"
+    },
     "CronBlock": {
       "additionalProperties": false,
       "description": "CONTRACT_v3 §2 cron channel sub-block (CHN-02).",
@@ -1052,6 +1071,9 @@
       },
       "title": "Channels",
       "type": "array"
+    },
+    "cost": {
+      "$ref": "#/$defs/CostBlock"
     },
     "engine": {
       "$ref": "#/$defs/EngineBlock"

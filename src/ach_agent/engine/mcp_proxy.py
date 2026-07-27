@@ -14,13 +14,17 @@ stored on an instance attribute and never logged.
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import aiohttp
 import structlog
 from aiohttp import web
 
 from ach_agent.engine.hydrate import McpServer
+
+if TYPE_CHECKING:
+    from ach_agent.engine.cost import CostAccountant
 
 log = structlog.get_logger(__name__)
 
@@ -53,6 +57,18 @@ _SHUTDOWN_TIMEOUT_S = 1.0
 _UPSTREAM_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=30)
 
 
+@runtime_checkable
+class ProxyObserver(Protocol):
+    """Optional per-request hook into `_forward` (cost accounting, Plan 1). A failure in
+    any method must never affect the relayed request/response — callers isolate it."""
+
+    def mutate_request(self, body: bytes, content_type: str) -> bytes: ...
+    def begin(self, status: int, content_type: str) -> None: ...
+    def response_headers(self, headers: Mapping[str, str]) -> None: ...
+    def feed(self, chunk: bytes) -> None: ...
+    def finish(self) -> None: ...
+
+
 def _rpc_method(body: bytes) -> str:
     """Best-effort JSON-RPC ``method`` from an MCP request body (diagnostics only).
 
@@ -68,6 +84,14 @@ def _rpc_method(body: bytes) -> str:
     return str(parsed.get("method", "")) if isinstance(parsed, dict) else ""
 
 
+def _observe(label: str, method_name: str, fn: Callable[[], None]) -> None:
+    """Run one observer method, isolating a failure from the relay (never re-raises)."""
+    try:
+        fn()
+    except Exception:  # noqa: BLE001
+        log.debug(f"{label} observer {method_name} failed", exc_info=True)
+
+
 async def _forward(
     session: aiohttp.ClientSession,
     target: str,
@@ -75,6 +99,7 @@ async def _forward(
     auth_value: str,
     label: str = "proxy",
     auth_header: str = "x-ach-key",
+    observer: ProxyObserver | None = None,
 ) -> web.StreamResponse:
     """Forward ``request`` to ``target`` injecting auth, streaming the response.
 
@@ -82,12 +107,18 @@ async def _forward(
     SSE (``text/event-stream``) is never fully buffered. ``auth_value`` is used only
     here (caller keeps it in a closure) and is never logged. ``auth_header`` defaults
     to ACH's ``x-ach-key``; the model proxy can override it (e.g. ``Authorization`` for
-    a litellm-direct bypass).
+    a litellm-direct bypass). ``observer`` (cost accounting, Plan 1) parses a COPY of the
+    bytes — it never gates a write and a failure in it never touches the relay.
     """
     headers = {k: v for k, v in request.headers.items() if k.lower() not in _DROP_REQUEST_HEADERS}
     headers[auth_header] = auth_value
 
     body = await request.read()
+    if observer is not None:
+        try:
+            body = observer.mutate_request(body, request.headers.get("Content-Type", ""))
+        except Exception:  # noqa: BLE001
+            log.debug(f"{label} observer mutate_request failed", exc_info=True)
     # Diagnostics for MCP toolCount=0 triage: the JSON-RPC method opencode sends and the
     # MCP session-id round-trip. NEVER logs the ek (injected above, never read here) nor
     # request/response bodies/params — only the method name + header presence + status.
@@ -110,6 +141,10 @@ async def _forward(
             resp_session_id=bool(upstream.headers.get("Mcp-Session-Id")),
             set_cookie=bool(upstream.headers.get("Set-Cookie")),
         )
+        resp_content_type = upstream.headers.get("Content-Type", "")
+        if observer is not None:
+            _observe(label, "begin", lambda: observer.begin(upstream.status, resp_content_type))
+            _observe(label, "response_headers", lambda: observer.response_headers(upstream.headers))
         resp = web.StreamResponse(status=upstream.status)
         for k, v in upstream.headers.items():
             if k.lower() not in _DROP_RESPONSE_HEADERS:
@@ -118,13 +153,22 @@ async def _forward(
             await resp.prepare(request)
             async for chunk in upstream.content.iter_any():
                 await resp.write(chunk)
+                if observer is not None:
+                    try:
+                        observer.feed(chunk)
+                    except Exception:  # noqa: BLE001
+                        log.debug(f"{label} observer feed failed", exc_info=True)
             await resp.write_eof()
+            if observer is not None:
+                _observe(label, "finish", observer.finish)
         except (ConnectionResetError, aiohttp.ClientError) as exc:
             # The client (opencode) went away mid-stream. Common at teardown: a long-lived
             # MCP poll (e.g. calendar auth_wait) outlives the opencode subprocess, so the
             # final upstream chunk lands after opencode's connection closed. Nothing left to
             # deliver — log quietly instead of dumping a traceback to stderr.
             log.debug(f"{label} client gone mid-stream", path=request.path, error=str(exc))
+            if observer is not None:
+                _observe(label, "finish", observer.finish)
         return resp
 
 
@@ -219,8 +263,19 @@ class ModelProxy:
         self._site: web.TCPSite | None = None
         self._session: aiohttp.ClientSession | None = None
 
-    async def start(self, base_url: str, auth_value: str, auth_header: str = "x-ach-key") -> str:
-        """Start the localhost model proxy and return its base URL."""
+    async def start(
+        self,
+        base_url: str,
+        auth_value: str,
+        auth_header: str = "x-ach-key",
+        accountant: CostAccountant | None = None,
+    ) -> str:
+        """Start the localhost model proxy and return its base URL.
+
+        ``accountant``, when given, is bound only to the token-attributed ``/t/{token}``
+        routes (Plan 1 cost accounting) — the plain ``_MODEL_PREFIXES`` routes below stay
+        byte-identical to today (no observer).
+        """
         self._session = aiohttp.ClientSession(timeout=_UPSTREAM_TIMEOUT)
         ach_base = base_url.rstrip("/")
 
@@ -229,6 +284,9 @@ class ModelProxy:
         for prefix in _MODEL_PREFIXES:
             app.router.add_route("*", prefix, handler)
             app.router.add_route("*", f"{prefix}/{{tail:.*}}", handler)
+
+        token_handler = self._make_token_handler(ach_base, auth_value, auth_header, accountant)
+        app.router.add_route("*", "/t/{token}/{tail:.*}", token_handler)
 
         self._runner = web.AppRunner(app, shutdown_timeout=_SHUTDOWN_TIMEOUT_S)
         await self._runner.setup()
@@ -267,20 +325,60 @@ class ModelProxy:
 
         return handler
 
+    def _make_token_handler(
+        self,
+        ach_base: str,
+        auth_value: str,
+        auth_header: str,
+        accountant: CostAccountant | None,
+    ) -> _Handler:
+        """Build the ``/t/{token}/{tail:.*}`` handler: strips the token prefix, forwards
+        the tail verbatim, and binds a per-request cost observer to that token.
+
+        ``auth_value`` is captured in this closure only — never stored on the instance.
+        """
+
+        async def handler(request: web.Request) -> web.StreamResponse:
+            token = request.match_info.get("token", "")
+            tail = request.match_info.get("tail", "")
+            target = f"{ach_base}/{tail}" if tail else ach_base
+            assert self._session is not None  # start() always creates it
+            observer = None
+            if accountant is not None:
+                from ach_agent.engine.cost import CostObserver
+
+                observer = CostObserver(accountant, token or None)
+            return await _forward(
+                self._session,
+                target,
+                request,
+                auth_value,
+                label="model",
+                auth_header=auth_header,
+                observer=observer,
+            )
+
+        return handler
+
 
 # Module-level registry so ``start_model_proxy`` can keep the README-mandated
 # free-function signature while remaining cleanly stoppable at shutdown.
 _MODEL_PROXIES: list[ModelProxy] = []
 
 
-async def start_model_proxy(base_url: str, auth_value: str, auth_header: str = "x-ach-key") -> str:
+async def start_model_proxy(
+    base_url: str,
+    auth_value: str,
+    auth_header: str = "x-ach-key",
+    accountant: CostAccountant | None = None,
+) -> str:
     """Start a localhost model proxy and return its base URL (no secret in it).
 
     The proxy instance is tracked in ``_MODEL_PROXIES`` and torn down by
     :func:`stop_model_proxies`.
     """
     proxy = ModelProxy()
-    base = await proxy.start(base_url, auth_value, auth_header)
+    base = await proxy.start(base_url, auth_value, auth_header, accountant=accountant)
     _MODEL_PROXIES.append(proxy)
     return base
 

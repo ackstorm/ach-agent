@@ -22,6 +22,7 @@ import structlog
 from aiohttp import web
 
 from ach_agent import identity
+from ach_agent.engine import trace
 from ach_agent.engine.hydrate import McpServer
 
 if TYPE_CHECKING:
@@ -97,6 +98,7 @@ async def _forward(
     label: str = "proxy",
     auth_header: str = "x-ach-key",
     observer: CostObserver | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> web.StreamResponse:
     """Forward ``request`` to ``target`` injecting auth, streaming the response.
 
@@ -106,6 +108,8 @@ async def _forward(
     to ACH's ``x-ach-key``; the model proxy can override it (e.g. ``Authorization`` for
     a litellm-direct bypass). ``observer`` (cost accounting, Plan 1) parses a COPY of the
     bytes — it never gates a write and a failure in it never touches the relay.
+    ``extra_headers`` (trace/session correlation) is applied LAST so it wins over
+    anything the engine happened to send under the same name.
     """
     headers = {
         key: value
@@ -114,6 +118,8 @@ async def _forward(
     }
     headers[auth_header] = auth_value
     headers = identity.with_identity_headers(headers)
+    if extra_headers:
+        headers.update(extra_headers)
 
     body = await request.read()
     if observer is not None:
@@ -331,7 +337,8 @@ class ModelProxy(_LocalProxy):
         accountant: CostAccountant | None,
     ) -> _Handler:
         """Build the ``/t/{token}/{tail:.*}`` handler: strips the token prefix, forwards
-        the tail verbatim, and binds a per-request cost observer to that token.
+        the tail verbatim, binds a per-request cost observer to that token, and injects
+        that server's trace/session correlation headers (see :mod:`ach_agent.engine.trace`).
 
         ``auth_value`` is captured in this closure only — never stored on the instance.
         """
@@ -354,6 +361,7 @@ class ModelProxy(_LocalProxy):
                 label="model",
                 auth_header=auth_header,
                 observer=observer,
+                extra_headers=trace.headers(token),
             )
 
         return handler

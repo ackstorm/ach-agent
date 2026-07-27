@@ -26,7 +26,7 @@ def test_no_harness_side_delivery_module() -> None:
 
 
 class _FakeServer:
-    pass
+    proxy_token = "tok"
 
 
 class _FakePool:

@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from ach_agent.engine import trace
 from ach_agent.engine.cost import tokenize_model_base_url
 
 if TYPE_CHECKING:
@@ -302,6 +303,14 @@ class EnginePool:
             self._locks[session_key] = lock
         return lock
 
+    def _drop_token(self, server: ManagedServer) -> None:
+        """Release a stopped server's proxy token from both token registries."""
+        if not server.proxy_token:
+            return
+        trace.drop(server.proxy_token)
+        if self._accountant is not None:
+            self._accountant.drop_token(server.proxy_token)
+
     async def acquire(self, session_key: str, config: EngineConfig) -> ManagedServer:
         """Acquire the server for session_key, reusing an alive one or starting new.
 
@@ -333,26 +342,31 @@ class EnginePool:
                     await self._driver.stop(existing)
                 except Exception:  # noqa: BLE001
                     log.debug("EnginePool.acquire: dead-server stop failed", exc_info=True)
-                if self._accountant is not None and existing.cost_token:
-                    self._accountant.drop_token(existing.cost_token)
+                self._drop_token(existing)
                 self._servers.pop(session_key, None)
                 self._ref_counts.pop(session_key, None)
 
             log.info("EnginePool.acquire: starting new server", session_key=session_key)
-            token = ""
+            # Minted unconditionally: the token is the model proxy's per-server
+            # attribution handle for BOTH cost (when an accountant is wired) and
+            # trace/session correlation (always — tracing must survive
+            # cost.source=none). The accountant creates its bucket lazily on the
+            # first begin_turn, so it needs no mint of its own.
             accountant = self._accountant
+            token = trace.mint_token(session_key)
             if accountant is not None:
-                token = accountant.mint_token()
-                config = dataclasses.replace(
-                    config, model_base_url=tokenize_model_base_url(config.model_base_url, token)
-                )
+                accountant.adopt_token(token)
+            config = dataclasses.replace(
+                config, model_base_url=tokenize_model_base_url(config.model_base_url, token)
+            )
             try:
                 server = await self._start_server(config, session_key)
             except Exception:
-                if accountant is not None and token:
+                trace.drop(token)
+                if accountant is not None:
                     accountant.drop_token(token)
                 raise
-            server.cost_token = token
+            server.proxy_token = token
             self._servers[session_key] = server
             self._ref_counts[session_key] = 1
             return server
@@ -433,8 +447,7 @@ class EnginePool:
             self._ref_counts.pop(session_key, None)
         if server is None:
             return
-        if self._accountant is not None and server.cost_token:
-            self._accountant.drop_token(server.cost_token)
+        self._drop_token(server)
         log.info("EnginePool._expire: TTL elapsed — stopping", session_key=session_key, ttl=ttl)
         try:
             await self._driver.stop(server)
@@ -449,8 +462,7 @@ class EnginePool:
             self._ref_counts.pop(session_key, None)
         if server is None:
             return
-        if self._accountant is not None and server.cost_token:
-            self._accountant.drop_token(server.cost_token)
+        self._drop_token(server)
         try:
             await self._driver.stop(server)
             log.info("EnginePool._stop: server stopped", session_key=session_key)

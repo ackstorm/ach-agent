@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ach_agent.engine import trace
 from ach_agent.engine.base.driver import EngineConfig
 from ach_agent.engine.cost import CostAccountant
 from ach_agent.engine.pool import EnginePool
@@ -30,10 +31,11 @@ def _make_fake_server(alive: bool = True):
     return srv
 
 
-def _config():
-    from unittest.mock import MagicMock
-
-    return MagicMock(name="EngineConfig")
+def _config() -> EngineConfig:
+    # A real dataclass, not a MagicMock: acquire() now rewrites model_base_url on
+    # every fresh key (it tokenizes the path for cost + trace correlation), and
+    # urlsplit needs a real str.
+    return _real_config()
 
 
 async def test_pool_reuse_same_key() -> None:
@@ -283,12 +285,14 @@ async def test_acquire_mints_and_tokenizes_base_url_on_fresh_key(engine_type: st
     pool._start_server = fake_start
 
     server = await pool.acquire("k1", _real_config(engine_type=engine_type))
-    assert server.cost_token != ""
-    assert captured["cfg"].model_base_url == f"http://127.0.0.1:9/t/{server.cost_token}/v1"
+    assert server.proxy_token != ""
+    assert captured["cfg"].model_base_url == f"http://127.0.0.1:9/t/{server.proxy_token}/v1"
 
 
-async def test_no_accountant_leaves_config_and_token_untouched() -> None:
-    pool = EnginePool()  # no accountant — AC-2: byte-identical to today
+async def test_no_accountant_still_mints_a_token_for_correlation() -> None:
+    # The token is the model proxy's per-server handle for BOTH cost and
+    # trace/session correlation, so it is minted even with cost.source=none.
+    pool = EnginePool()  # no accountant
     captured: dict[str, EngineConfig] = {}
     fake = _make_fake_server(alive=True)
 
@@ -299,8 +303,9 @@ async def test_no_accountant_leaves_config_and_token_untouched() -> None:
     pool._start_server = fake_start
 
     server = await pool.acquire("k1", _real_config())
-    assert server.cost_token == ""
-    assert captured["cfg"].model_base_url == "http://127.0.0.1:9/v1"
+    assert server.proxy_token != ""
+    assert captured["cfg"].model_base_url == f"http://127.0.0.1:9/t/{server.proxy_token}/v1"
+    assert trace.headers(server.proxy_token)["x-agent-session-id"].startswith("k1-")
 
 
 async def test_reuse_alive_server_does_not_mint_second_token() -> None:
@@ -316,10 +321,10 @@ async def test_reuse_alive_server_does_not_mint_second_token() -> None:
     pool._start_server = fake_start
 
     s1 = await pool.acquire("k1", _real_config())
-    token1 = s1.cost_token
+    token1 = s1.proxy_token
     s2 = await pool.acquire("k1", _real_config())
     assert s2 is s1
-    assert s2.cost_token == token1
+    assert s2.proxy_token == token1
     assert calls["n"] == 1, "warm reuse must not mint a second token"
 
 
@@ -336,13 +341,13 @@ async def test_dead_server_replaced_drops_old_token() -> None:
     pool._start_server = fake_start
 
     s1 = await pool.acquire("k1", _real_config())
-    old_token = s1.cost_token
+    old_token = s1.proxy_token
     assert old_token != ""
     assert old_token in acc._buckets
 
     s2 = await pool.acquire("k1", _real_config())
     assert s2 is live
-    assert s2.cost_token != old_token
+    assert s2.proxy_token != old_token
     assert old_token not in acc._buckets, "the dead server's old token must be dropped"
 
 
@@ -372,7 +377,7 @@ async def test_release_drops_token() -> None:
     pool._start_server = fake_start
 
     server = await pool.acquire("k1", _real_config())
-    token = server.cost_token
+    token = server.proxy_token
     assert token in acc._buckets
 
     await pool.release("k1", ttl_seconds=0)
@@ -390,7 +395,7 @@ async def test_expiry_drops_token() -> None:
     pool._start_server = fake_start
 
     server = await pool.acquire("k1", _real_config())
-    token = server.cost_token
+    token = server.proxy_token
     await pool.release("k1", ttl_seconds=0.05)
     assert token in acc._buckets, "still warm — token stays attached until actually stopped"
 
@@ -411,7 +416,7 @@ async def test_stop_all_drops_all_tokens() -> None:
 
     s1 = await pool.acquire("k1", _real_config())
     s2 = await pool.acquire("k2", _real_config())
-    t1, t2 = s1.cost_token, s2.cost_token
+    t1, t2 = s1.proxy_token, s2.proxy_token
 
     await pool.stop_all()
     assert t1 not in acc._buckets

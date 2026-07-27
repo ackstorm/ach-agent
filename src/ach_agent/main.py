@@ -56,6 +56,7 @@ from ach_agent.config.schema import (
     RepoCheckoutParams,
     RepoCheckoutServer,
 )
+from ach_agent.engine import trace
 from ach_agent.engine.context import fetch_context
 from ach_agent.engine.cost import (
     CostAccountant,
@@ -764,8 +765,13 @@ def _make_engine_runner(
         try:
             server = await pool.acquire(event.session_key, invocation_engine_cfg)
             acquired = True
+            # Correlation for this invocation: every model call the engine makes
+            # from here on carries the same traceparent (one Langfuse trace) and
+            # the server's session id (Langfuse sessionId). Unconditional —
+            # unlike cost accounting, this does not depend on cost.source.
+            trace.begin(server.proxy_token, event.idempotency_key)
             if accountant is not None:
-                accountant.begin_turn(server.cost_token)
+                accountant.begin_turn(server.proxy_token)
             # MEM-01: append ## Memory section (summaries or unavailable note) to prompt.
             base_prompt = build_engine_prompt(
                 event,
@@ -856,7 +862,7 @@ def _make_engine_runner(
             )
             _usage = turn_stats.get("usage")
             if accountant is not None:
-                _usage = accountant.end_turn(server.cost_token, _usage)
+                _usage = accountant.end_turn(server.proxy_token, _usage)
             elif cost_source == "none" and _usage is not None:
                 _usage = dataclasses.replace(_usage, cost=0.0)
             turn_stats["usage"] = _usage
@@ -979,7 +985,7 @@ def _make_engine_runner(
                 ttl = 0.0 if timed_out else ttl_by_channel.get(event.channel_name, 0.0)
                 try:
                     if accountant is not None:
-                        accountant.discard_turn(server.cost_token)
+                        accountant.discard_turn(server.proxy_token)
                     await pool.release(event.session_key, ttl_seconds=ttl)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("pool release error", task_id=event.task_id, error=str(exc))

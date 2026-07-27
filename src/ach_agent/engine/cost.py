@@ -405,8 +405,19 @@ class CostAccountant:
 
     def mint_token(self) -> str:
         token = secrets.token_urlsafe(16)
-        self._buckets[token] = _TokenBucket()
+        self.adopt_token(token)
         return token
+
+    def adopt_token(self, token: str) -> None:
+        """Track a token minted elsewhere.
+
+        EnginePool mints the model proxy's path token itself — one token serves both
+        cost attribution and trace/session correlation, and correlation must exist
+        even with no accountant — then hands it here. Tracking it eagerly (rather
+        than letting begin_turn create the bucket) keeps record_usage able to tell
+        "unknown token" apart from "known token, no turn in flight".
+        """
+        self._buckets.setdefault(token, _TokenBucket())
 
     def drop_token(self, token: str) -> None:
         self._buckets.pop(token, None)

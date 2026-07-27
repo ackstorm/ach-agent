@@ -332,6 +332,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Metrics
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#blocks" class="md-nav__link">
     <span class="md-ellipsis">
       Blocks
@@ -453,6 +462,15 @@
   <a href="#environment" class="md-nav__link">
     <span class="md-ellipsis">
       Environment
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Metrics
     </span>
   </a>
   
@@ -587,6 +605,12 @@ YAML. Both validate against the same schema, and <strong>unknown keys are reject
 </tr>
 </tbody>
 </table>
+<h2 id="metrics">Metrics</h2>
+<p>The existing <code>GET /metrics</code> endpoint exposes Prometheus metrics. After a successful platform
+hydrate it includes <code>ach_agent_info{agent,environment} 1</code>: <code>agent</code> is <code>agent.name</code> from the
+rendered config and <code>environment</code> is the required <code>environment</code> returned by the hydration
+manifest. No agent-identity sample is emitted before hydration succeeds or when the response
+omits its environment.</p>
 <h2 id="blocks">Blocks</h2>
 <table>
 <thead>

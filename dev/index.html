@@ -292,18 +292,51 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#engine-per-session-opencode-servers" class="md-nav__link">
+  <a href="#how-it-works" class="md-nav__link">
     <span class="md-ellipsis">
-      Engine — per-session opencode servers
+      How it works
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#getting-started" class="md-nav__link">
+  <a href="#quick-start-local-dev" class="md-nav__link">
     <span class="md-ellipsis">
-      Getting started
+      Quick start (local dev)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#channel-prompts-templating" class="md-nav__link">
+    <span class="md-ellipsis">
+      Channel prompts ({{ }} templating)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      Deployment
     </span>
   </a>
   
@@ -393,18 +426,51 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#engine-per-session-opencode-servers" class="md-nav__link">
+  <a href="#how-it-works" class="md-nav__link">
     <span class="md-ellipsis">
-      Engine — per-session opencode servers
+      How it works
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#getting-started" class="md-nav__link">
+  <a href="#quick-start-local-dev" class="md-nav__link">
     <span class="md-ellipsis">
-      Getting started
+      Quick start (local dev)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#channel-prompts-templating" class="md-nav__link">
+    <span class="md-ellipsis">
+      Channel prompts ({{ }} templating)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      Deployment
     </span>
   </a>
   
@@ -429,32 +495,81 @@
 
 
 <h1 id="ach-agent">ach-agent</h1>
-<p><code>ach-agent</code> is the <strong>execution plane</strong> of the ACH ecosystem: a single-process Python runtime
-that boots from a rendered runtime config, runs channel adapters, serializes inbound events
-through a governed FIFO router, drives the <strong>opencode</strong> engine over HTTP/SSE, and delivers
-results via a <code>reply</code> / <code>sideEffect</code> action contract. It consumes the frozen seam produced by
-<code>ach-runtime</code> (the Go operator) and is designed for platform and AI-engineering teams running
-managed AI agents — such as a GitLab MR reviewer — on top of the <code>runtime.ackstorm.ai/v1alpha1</code>
-API.</p>
+<p><code>ach-agent</code> is a generic <strong>execution plane</strong> for managed AI agents: a single-process <strong>Python</strong>
+runtime ("the harness") that boots from a rendered runtime config, runs channel adapters
+(<code>webhook</code>, <code>cron</code>, <code>queue</code>, <code>a2a</code>), serializes inbound events through a governed
+FIFO <strong>router</strong>, drives the <a href="https://github.com/sst/opencode">opencode</a> engine over HTTP/SSE,
+and lets the agent act through external MCP servers.</p>
+<p>It consumes a frozen, rendered config seam and is control-plane-agnostic: it never reads CRDs,
+talks to the Kubernetes API server, or reports status upward. It is designed for platform /
+AI-engineering teams running managed AI agents (e.g. a GitLab MR reviewer); ACH is the
+reference consumer, not a dependency.</p>
 <h2 id="core-value-the-router">Core value — the router</h2>
-<p>The router must be correct: per-session FIFO lanes with the pinned ordering
-<code>dedup → backpressure → lane</code> and three always-enforced finite bounds
-(<code>maxConcurrentInvocations</code>, <code>maxInvocationSeconds</code>, <code>maxQueuedTotal</code>). Its behavior is pinned
-by the CONTRACT §6 conformance suite (<code>make conformance</code>).</p>
-<h2 id="engine-per-session-opencode-servers">Engine — per-session opencode servers</h2>
-<p>The engine pool is keyed by <code>session_key</code>: each session identity (cron name, gitlab server+repo,
-tui-console) gets its <strong>own</strong> <code>opencode serve</code> process. All agentes share <strong>one</strong> <code>engine.home</code>
-(skills, <code>.ach-state</code>, session store, and <code>node_modules</code> live there once); per-session isolation
-is the opencode config file <code>&lt;home&gt;/.config/opencode/opencode_&lt;session_key&gt;.json</code>, selected via
-the <code>OPENCODE_CONFIG</code> env var. The working directory (<code>/workspace</code>) stays shared. See the design
-record: <a href="references/2026-07-01-keyed-engine-pool/">Keyed EnginePool</a>.</p>
-<h2 id="getting-started">Getting started</h2>
-<p>See the <a href="https://github.com/ackstorm/ach-agent#readme">README</a> for the quick-start and the
-<code>ACH_*</code> configuration contract. In production the <code>ach-runtime</code> operator deploys the harness
-(it owns the Deployment); locally, run the container directly — see <a href="getting-started/">Getting started</a>.</p>
-<p>All tooling runs inside a content-addressed devtools container — no host pip/venv:</p>
-<div class="highlight"><pre><span></span><code>make<span class="w"> </span>verify<span class="w">   </span><span class="c1"># full local gate: lint + mypy + unit + conformance + secrets</span>
+<p>The one thing that must always hold: <strong>the router is correct.</strong> It enforces per-session FIFO
+lanes with the pinned ordering <code>dedup → backpressure → lane</code> and three always-enforced finite
+bounds (<code>maxConcurrentInvocations</code>, <code>maxInvocationSeconds</code>, <code>maxQueuedTotal</code>). This is what
+prevents duplicate firing, queue starvation under redelivery floods, and unbounded resource
+use. Its behavior is pinned by an authoritative conformance suite (<code>make conformance</code>).</p>
+<h2 id="how-it-works">How it works</h2>
+<div class="highlight"><pre><span></span><code>channel adapter ──▶ router (dedup → backpressure → lane) ──▶ engine (opencode HTTP/SSE) ──▶ external MCP servers
+   webhook                  per-session FIFO                    single-object terminal          (ACH-fronted, egress
+   cron                     finite bounds                       contract (Pydantic-validated)    is model-initiated)
+   queue
+   a2a
 </code></pre></div>
+<p>Everything runs in one process (spec §15 topology A); the channel→router boundary is a named
+in-process seam. The harness is fully runnable and testable locally from a hand-written config —
+no operator or cluster required.</p>
+<h2 id="quick-start-local-dev">Quick start (local dev)</h2>
+<p>All tooling runs inside a content-addressed devtools container — <strong>no host pip/venv</strong>. The only
+prerequisites are Docker and <code>make</code>.</p>
+<div class="highlight"><pre><span></span><code>make<span class="w"> </span>hooks<span class="w">       </span><span class="c1"># install the pre-push gate</span>
+make<span class="w"> </span>deps<span class="w">        </span><span class="c1"># sync dependencies into the devtools layer</span>
+make<span class="w"> </span>lint<span class="w">        </span><span class="c1"># ruff check + format --check + mypy --strict</span>
+make<span class="w"> </span><span class="nb">test</span><span class="w">        </span><span class="c1"># pytest (unit + integration, excludes e2e)</span>
+make<span class="w"> </span>conformance<span class="w"> </span><span class="c1"># CONTRACT §6 conformance suite (the router IP)</span>
+make<span class="w"> </span>verify<span class="w">      </span><span class="c1"># full local gate: lint + test + conformance + secrets</span>
+make<span class="w"> </span>e2e<span class="w">         </span><span class="c1"># full end-to-end stack (compose up → assertions → teardown)</span>
+</code></pre></div>
+<h2 id="configuration">Configuration</h2>
+<p>The harness boots from a single rendered config file (JSON) plus a small <code>ACH_*</code> environment
+contract. In production these are rendered into the pod by <code>ach-runtime</code>; for local runs you provide them yourself.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ACH_CONFIG_PATH</code></td>
+<td>Path to the rendered runtime config (default <code>/etc/ach-agent/config.json</code>).</td>
+</tr>
+<tr>
+<td><code>ACH_BASE_URL</code></td>
+<td>ACH endpoint. Overrides <code>capability.ach.baseUrl</code> when set.</td>
+</tr>
+<tr>
+<td><code>ACH_API_KEY</code></td>
+<td><code>ek_</code> bearer for the engine — never logged; dereferenced only at runtime.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="channel-prompts-templating">Channel prompts (<code>{{ }}</code> templating)</h3>
+<p>A channel may carry a <code>prompt</code> — the per-invocation instruction handed to the engine. It is
+rendered through a small, zero-dependency <code>{{ }}</code> substitution engine against the inbound event:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">channels</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gitlab-mr-review</span>
+<span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">webhook</span>
+<span class="w">    </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gitlab</span>
+<span class="w">    </span><span class="nt">prompt</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Review</span><span class="nv"> </span><span class="s">merge</span><span class="nv"> </span><span class="s">request</span><span class="nv"> </span><span class="s">{{</span><span class="nv"> </span><span class="s">payload.object_attributes.url</span><span class="nv"> </span><span class="s">}}</span><span class="nv"> </span><span class="s">in</span><span class="nv"> </span><span class="s">{{</span><span class="nv"> </span><span class="s">payload.project.path_with_namespace</span><span class="nv"> </span><span class="s">|</span><span class="nv"> </span><span class="s">default(\&quot;this</span><span class="nv"> </span><span class="s">repo\&quot;)</span><span class="nv"> </span><span class="s">}}.&quot;</span>
+</code></pre></div>
+<p><strong>Namespaces</strong>: <code>payload.*</code> (webhook, queue, a2a) and <code>internal.*</code> (all channels). There is no <code>env</code> namespace.</p>
+<h2 id="deployment">Deployment</h2>
+<p>In production the harness is <strong>not</strong> deployed by hand — the <strong><code>ach-runtime</code> operator</strong> builds
+the <code>Deployment</code> from your <code>Agent</code> CRD. The harness has no Kubernetes RBAC and never talks to the API server.</p>
+<p>Released container images are published to <code>ghcr.io/ackstorm/ach-agent</code>.</p>
 
 
 

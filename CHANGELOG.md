@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.10.1] - 2026-07-27
+
+### Added
+
+- Every Prometheus sample exposed by the harness now carries process-authoritative `agent` and
+  `environment` labels, including restricted `name[]` scrapes. Model, MCP, outbound A2A, and
+  hydrate requests now carry the matching `x-ach-agent` and `x-ach-environment` headers.
+
+### Changed
+
+- Client-provided identity headers are stripped case-insensitively before harness identity is
+  injected. The direct model-upstream override follows the same policy.
+- Prometheus series identity changes at this release because every exposed sample gains two
+  labels; range queries spanning the rollout show the old and new series separately.
+
+### Removed
+
+- The unreleased `ach_agent_info` join metric is removed in favor of labels on every sample.
+
 ## [0.10.0] - 2026-07-25
 
 ### Added

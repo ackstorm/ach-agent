@@ -33,6 +33,7 @@ import structlog
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import SecretSource, resolve_secret
 from ach_agent.router.dedup import derive_gitlab_composite_key, derive_webhook_idempotency_key
+from ach_agent.router.metrics import CHANNEL_INBOUND
 from ach_agent.router.router import RouterAdmitResult
 
 if TYPE_CHECKING:
@@ -366,6 +367,8 @@ async def handle_webhook_request(
         secondary_idempotency_key=secondary_key,
         task_id=task_id,
     )
+
+    CHANNEL_INBOUND.labels(channel=channel_cfg.name, type="webhook").inc()
 
     log.info(
         "webhook: dispatching event",

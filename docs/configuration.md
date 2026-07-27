@@ -63,12 +63,27 @@ also written to the stats row and emitted in the turn summary log; this is inten
 |---|---|
 | `engine` | Default and wire-independent. Preserve the engine-reported usage/cost record; the cost layer is inert and does not inspect or mutate model traffic. |
 | `litellm_usage` | Parse per-response usage and price it with the ACH model-info cache. OpenAI and Gemini wires are supported. OpenAI streaming requests receive `stream_options.include_usage: true`; Gemini's repeated cumulative usage uses the final payload, with thinking tokens billed at the output rate. |
-| `litellm_headers` | Read `x-litellm-response-cost` on non-streaming responses and sum it for the invocation. Streaming responses contribute `0.0` and one bounded warning per invocation. This mode never changes `stream` or any other request field. |
+| `litellm_headers` | Read `x-litellm-response-cost` on non-streaming responses and sum it for the invocation. Requires `model.type: openai` (see below). Streaming responses contribute `0.0` and one bounded warning per invocation. This mode never changes `stream` or any other request field. |
 | `none` | Suppress the cost value and cost-counter increment while preserving invocation, duration, status, error, and token metrics. |
 
-`litellm_usage` is the only wire-restricted source: it supports `model.type: openai`
-and `model.type: gemini`. `model.type: anthropic` hard-fails at boot with this source.
-The `engine`, `litellm_headers`, and `none` sources are wire-independent.
+Two source/wire combinations hard-fail at boot. `litellm_usage` supports
+`model.type: openai` and `model.type: gemini`; `model.type: anthropic` is rejected.
+`litellm_headers` supports `model.type: openai` only: LiteLLM injects
+`x-litellm-response-cost` from its `/v1` router, while `/gemini` and `/anthropic` are
+passthrough routes whose responses carry no cost header at all, so the source would
+report `0.0` for every invocation. The `engine` and `none` sources are wire-independent.
+
+Under `litellm_usage` the override replaces the record's token counts along with its
+cost, so both describe the same basis: the sum over every upstream call the invocation
+made. (The engine's own counts cover roughly the last message, so pairing them with a
+whole-invocation cost made any $/token ratio wrong by the call count.) `input_tokens` is
+then billable input, net of `cache_read`/`cache_write`. `litellm_headers` carries no token
+data and overrides the cost only.
+
+Every point where cost accounting gives up increments
+`ach_agent_cost_unpriced_total{reason}` — `fetch_failed`/`no_entry`/`malformed`/`unpriced`
+once at boot (alert on `> 0`), and `unpriced`/`usage_missing` per response, so an agent
+that silently reports `$0` is visible in `rate()`.
 
 The source override is applied exactly once per invocation, at the turn boundary, on the
 usage record that feeds `SessionStat`. That same record feeds the Prometheus counter, the

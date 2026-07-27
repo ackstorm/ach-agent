@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from prometheus_client import REGISTRY
 
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.router.router import RouterAdmitResult
@@ -101,6 +102,16 @@ def _make_channel_cfg(name: str = "jobs", key: str = "ach:jobs") -> Any:
     return ChannelConfig.model_validate(raw)
 
 
+def _inbound(channel: str, type_: str) -> float:
+    """Current ach_agent_channel_inbound_events_total for one (channel, type) pair."""
+    return (
+        REGISTRY.get_sample_value(
+            "ach_agent_channel_inbound_events_total", {"channel": channel, "type": type_}
+        )
+        or 0.0
+    )
+
+
 @pytest.mark.asyncio
 async def test_queue_dispatches_event_with_message_id() -> None:
     """handle() receives idempotency_key == redis message id (str) + channel_name."""
@@ -113,9 +124,11 @@ async def test_queue_dispatches_event_with_message_id() -> None:
     channel_cfg = _make_channel_cfg("jobs", "ach:jobs")
 
     consumer = QueueConsumer(channel_cfg, handler=handler, redis_client=fake_redis)
+    before = _inbound("jobs", "queue")
     await consumer._consume_once()
 
     assert len(handler.events) == 1, "Expected exactly one event emitted"
+    assert _inbound("jobs", "queue") == before + 1
     event = handler.events[0]
     assert event.idempotency_key == "1700000000000-0", (
         f"idempotency_key must be the redis message id, got {event.idempotency_key!r}"

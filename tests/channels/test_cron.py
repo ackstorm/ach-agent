@@ -8,10 +8,21 @@ from __future__ import annotations
 from datetime import UTC
 
 import pytest
+from prometheus_client import REGISTRY
 
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.router.dedup import derive_cron_idempotency_key
 from ach_agent.router.router import RouterAdmitResult
+
+
+def _inbound(channel: str, type_: str) -> float:
+    """Current ach_agent_channel_inbound_events_total for one (channel, type) pair."""
+    return (
+        REGISTRY.get_sample_value(
+            "ach_agent_channel_inbound_events_total", {"channel": channel, "type": type_}
+        )
+        or 0.0
+    )
 
 
 class FakeHandler:
@@ -82,12 +93,14 @@ async def test_cron_dispatches_correct_event(monkeypatch: pytest.MonkeyPatch) ->
     handler = FakeHandler(RouterAdmitResult.ACCEPTED)
 
     scheduler = CronScheduler([channel_cfg], handler=handler)
+    before = _inbound("heartbeat", "cron")
 
     # Run the scheduler's _run loop — it will raise _StopAfterOne after the first sleep
     with pytest.raises(_StopAfterOne):
         await scheduler._run()
 
     assert len(handler.events) == 1, "Expected exactly one event emitted"
+    assert _inbound("heartbeat", "cron") == before + 1
     event = handler.events[0]
 
     # D-08: session_key == channel_name

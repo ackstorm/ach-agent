@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from prometheus_client import REGISTRY
 from aiohttp import web
 from structlog.testing import capture_logs
 
@@ -21,6 +22,7 @@ from ach_agent.engine.cost import (
     compute_cost,
     report_price_load_result,
     tokenize_model_base_url,
+    report_price_load_result,
     validate_cost_source,
 )
 
@@ -392,6 +394,11 @@ def _usage_record(**overrides: object) -> OpenCodeUsage:
     return OpenCodeUsage(**base)  # type: ignore[arg-type]
 
 
+def _unpriced(reason: str) -> float:
+    """Current ach_agent_cost_unpriced_total for one reason."""
+    return REGISTRY.get_sample_value("ach_agent_cost_unpriced_total", {"reason": reason}) or 0.0
+
+
 def _priced_table(model_name: str, prices: ModelPrices) -> PriceTable:
     table = PriceTable("http://unused", "ek")
     table._prices[model_name] = prices  # test-only poke; PriceTable exposes no setter
@@ -523,6 +530,77 @@ def test_engine_source_end_turn_returns_usage_unmodified() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_tokens_and_cost_share_one_basis_across_the_turn() -> None:
+    """end_turn overrides tokens together with cost — both summed over the turn's calls.
+
+    The engine's own usage record covers ~the last message only; leaving it beside a
+    whole-turn cost made $/token wrong by the turn's upstream-call count.
+    """
+    prices = ModelPrices(3e-7, 2.5e-6, 7.5e-8, 3e-7)
+    acc = CostAccountant(
+        source="litellm_usage", wire="gemini", prices=_priced_table("m", prices), model_name="m"
+    )
+    token = acc.mint_token()
+    acc.begin_turn(token)
+
+    call = TokenUsage(
+        prompt_tokens=1000, completion_tokens=20, cached_read_tokens=400, cache_creation_tokens=0
+    )
+    for _ in range(3):
+        acc.record_usage(token, call)
+
+    # The engine reported only its last message (9822/67) — the override must replace it.
+    result = acc.end_turn(token, _usage_record(input_tokens=9822, output_tokens=67))
+
+    assert result.input_tokens == 3 * 600  # billable = prompt - cache_read (A.2)
+    assert result.output_tokens == 3 * 20
+    assert result.cache_read == 3 * 400
+    assert result.cache_write == 0
+    # Divisible: the cost is exactly the price of the tokens now reported alongside it.
+    assert result.cost == pytest.approx(
+        result.input_tokens * 3e-7 + result.cache_read * 7.5e-8 + result.output_tokens * 2.5e-6
+    )
+
+
+def test_litellm_headers_overrides_cost_only_and_keeps_engine_tokens() -> None:
+    """No token data on the header wire — the engine's counts must survive untouched."""
+    acc = CostAccountant(source="litellm_headers", wire="openai", prices=None, model_name="m")
+    token = acc.mint_token()
+    acc.begin_turn(token)
+    acc.record_header_cost(token, "0.25", streaming=False)
+
+    result = acc.end_turn(token, _usage_record(input_tokens=111, output_tokens=22))
+
+    assert result.cost == pytest.approx(0.25)
+    assert (result.input_tokens, result.output_tokens) == (111, 22)
+
+
+def test_unpriced_model_counts_every_response_not_just_boot() -> None:
+    """The prod trap: a model /v2/model/info doesn't know bills $0 forever, silently."""
+    acc = CostAccountant(
+        source="litellm_usage", wire="gemini", prices=_priced_table("other", ModelPrices(1, 1, 1, 1)), model_name="m"
+    )
+    token = acc.mint_token()
+    acc.begin_turn(token)
+    before = _unpriced("unpriced")
+
+    acc.record_usage(
+        token,
+        TokenUsage(
+            prompt_tokens=10, completion_tokens=1, cached_read_tokens=0, cache_creation_tokens=0
+        ),
+    )
+
+    assert acc.end_turn(token, _usage_record()).cost == 0.0
+    assert _unpriced("unpriced") == before + 1, "an unpriced response must be visible to rate()"
+
+
+def test_price_load_failure_counts_by_reason() -> None:
+    before = _unpriced("no_entry")
+    report_price_load_result("no_entry", "gemini-flash-latest")
+    assert _unpriced("no_entry") == before + 1
+
+
 def test_litellm_usage_anthropic_is_a_boot_hard_fail() -> None:
     with pytest.raises(ValueError) as exc_info:
         validate_cost_source("litellm_usage", "anthropic")
@@ -532,9 +610,25 @@ def test_litellm_usage_anthropic_is_a_boot_hard_fail() -> None:
     assert "anthropic" in message
 
 
-@pytest.mark.parametrize("source", ["engine", "none", "litellm_headers"])
+@pytest.mark.parametrize("source", ["engine", "none"])
 def test_anthropic_is_accepted_for_wire_independent_sources(source: str) -> None:
     validate_cost_source(source, "anthropic")
+
+
+@pytest.mark.parametrize("model_type", ["gemini", "anthropic"])
+def test_litellm_headers_on_a_passthrough_wire_is_a_boot_hard_fail(model_type: str) -> None:
+    """LiteLLM injects x-litellm-response-cost from its /v1 router only (measured on 1.93.0):
+    /gemini responses carry no cost header at all, so the source silently reports $0."""
+    with pytest.raises(ValueError) as exc_info:
+        validate_cost_source("litellm_headers", model_type)
+    message = str(exc_info.value)
+    assert "litellm_headers" in message
+    assert model_type in message
+    assert "litellm_usage" in message
+
+
+def test_litellm_headers_stays_valid_on_the_openai_router_wire() -> None:
+    validate_cost_source("litellm_headers", "openai")
 
 
 def _observer_accountant() -> tuple[CostAccountant, str]:

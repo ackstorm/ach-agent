@@ -42,3 +42,27 @@ def test_degraded_counter_exists():
     before = _val("ach_agent_stats_degraded_total", {})
     metrics.STATS_DEGRADED.inc()
     assert _val("ach_agent_stats_degraded_total", {}) == before + 1
+
+
+def test_duration_histograms_have_buckets_past_the_invocation_ceiling():
+    """maxInvocationSeconds is 1800 in prod and tool calls routinely pass 10s.
+
+    prometheus_client's default buckets stop at 10s, which pinned every
+    histogram_quantile(0.9|0.95|0.99, ...) panel to 10s or +Inf.
+    """
+    # A labeled histogram has no children (and so no samples) until first observed.
+    metrics.TURN_DURATION_SECONDS.labels("m").observe(0.0)
+    metrics.TOOL_DURATION_SECONDS.labels("t", "mcp").observe(0.0)
+    for name, ceiling in (
+        ("ach_agent_turn_duration_seconds_bucket", 1800),
+        ("ach_agent_tool_duration_seconds_bucket", 300),
+    ):
+        les = {
+            float(s.labels["le"])
+            for m in REGISTRY.collect()
+            for s in m.samples
+            if s.name == name
+        }
+        assert les, f"{name} is not registered"
+        assert max(les - {float("inf")}) >= ceiling, f"{name} saturates below {ceiling}s"
+        assert len({le for le in les if 10 < le < float("inf")}) >= 3

@@ -26,6 +26,7 @@ from croniter import croniter
 
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.router.dedup import derive_cron_idempotency_key
+from ach_agent.router.metrics import CHANNEL_INBOUND
 from ach_agent.router.router import RouterAdmitResult
 
 if TYPE_CHECKING:
@@ -146,6 +147,7 @@ class CronScheduler:
             payload={"scheduled_tick": scheduled_next_dt.strftime("%Y-%m-%dT%H:%M:%S")},
             source_trait="async_no_retry",  # cron → drop+log on full queue (RTR-05)
         )
+        CHANNEL_INBOUND.labels(channel=channel_cfg.name, type="cron").inc()
         result = await self._handler.handle(event)
         if result == RouterAdmitResult.FULL_QUEUE:
             # RTR-05 cron path: FULL_QUEUE → drop + log warning; never silent

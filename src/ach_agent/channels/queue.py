@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any, cast
 import structlog
 
 from ach_agent.channels.message_event import MessageEvent
+from ach_agent.router.metrics import CHANNEL_INBOUND
 from ach_agent.router.router import RouterAdmitResult
 
 if TYPE_CHECKING:
@@ -183,6 +184,8 @@ class QueueConsumer:
             delivery_context={},
             source_trait="async_no_retry",
         )
+
+        CHANNEL_INBOUND.labels(channel=self._cfg.name, type="queue").inc()
 
         try:
             result = await self._handler.handle(event)

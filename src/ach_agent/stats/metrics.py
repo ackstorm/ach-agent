@@ -11,11 +11,19 @@ import prometheus_client
 
 from ach_agent.stats.models import SessionStat, ToolStat
 
+# Explicit buckets: the prometheus_client defaults top out at 10s, but an invocation is
+# bounded by limits.maxInvocationSeconds (1800 in prod) and MCP tool calls routinely run
+# past 10s — with the defaults every high quantile pinned to 10s/+Inf.
+_TURN_BUCKETS = (0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600, 1200, 1800, float("inf"))
+_TOOL_BUCKETS = (0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, float("inf"))
+
 SESSIONS_TOTAL = prometheus_client.Counter(
     "ach_agent_sessions_total", "Invocations recorded", ["model", "channel"]
 )
 TURN_TOKENS_TOTAL = prometheus_client.Counter(
-    "ach_agent_turn_tokens_total", "Tokens by direction", ["model", "direction"]
+    "ach_agent_turn_tokens_total",
+    "Tokens by direction; same basis as ach_agent_turn_cost_usd_total",
+    ["model", "direction"],
 )
 TURN_COST_USD_TOTAL = prometheus_client.Counter(
     "ach_agent_turn_cost_usd_total", "Cost in USD", ["model", "channel"]
@@ -24,7 +32,7 @@ TURNS_TOTAL = prometheus_client.Counter(
     "ach_agent_turns_total", "Within-invocation loop/tool count", ["model", "channel"]
 )
 TURN_DURATION_SECONDS = prometheus_client.Histogram(
-    "ach_agent_turn_duration_seconds", "Invocation duration", ["model"]
+    "ach_agent_turn_duration_seconds", "Invocation duration", ["model"], buckets=_TURN_BUCKETS
 )
 STATS_DEGRADED = prometheus_client.Counter(
     "ach_agent_stats_degraded_total", "Session records dropped (queue full / writer error)"
@@ -37,7 +45,10 @@ TOOL_CALLS_TOTAL = prometheus_client.Counter(
     "ach_agent_tool_calls_total", "Tool executions", ["tool", "tool_type", "status"]
 )
 TOOL_DURATION_SECONDS = prometheus_client.Histogram(
-    "ach_agent_tool_duration_seconds", "Per-tool execution duration", ["tool", "tool_type"]
+    "ach_agent_tool_duration_seconds",
+    "Per-tool execution duration",
+    ["tool", "tool_type"],
+    buckets=_TOOL_BUCKETS,
 )
 
 

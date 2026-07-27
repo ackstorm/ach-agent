@@ -34,3 +34,14 @@ ENGINE_LAUNCH_FAILURES: prometheus_client.Counter = prometheus_client.Counter(
     "ach_agent_engine_launch_failures_total",
     "opencode agente launches that failed in engine_runner (pool.acquire raised)",
 )
+
+# ach_agent_cost_unpriced_total: every point where cost accounting gives up and a turn is
+# billed 0. Boot reasons (fetch_failed/no_entry/malformed/unpriced) fire ONCE at startup —
+# alert on `> 0`, not on rate(). The per-response reasons (unpriced, usage_missing) keep
+# firing, so a silently-$0 agent is visible in rate() too. A model name that /v2/model/info
+# does not know (e.g. the un-namespaced "gemini-flash-latest") is the common trap.
+COST_UNPRICED: prometheus_client.Counter = prometheus_client.Counter(
+    "ach_agent_cost_unpriced_total",
+    "Cost accounting gave up: the turn contributes 0 USD",
+    ["reason"],
+)

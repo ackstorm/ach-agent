@@ -22,6 +22,8 @@ from urllib.parse import urlsplit, urlunsplit
 import aiohttp
 import structlog
 
+from ach_agent.engine.metrics import COST_UNPRICED
+
 log = structlog.get_logger(__name__)
 
 # Bounds the non-streaming body buffer (mirrors tags.go's maxBodyForTagInjection). A body
@@ -182,12 +184,17 @@ PriceFailure = Literal["fetch_failed", "no_entry", "unpriced", "malformed"]
 
 
 def validate_cost_source(source: str, model_type: str) -> None:
-    """Apply the one cost-source/wire boot restriction (AC-8).
+    """Apply the cost-source/wire boot restrictions (AC-8).
 
-    The engine and header sources are wire-independent. Usage parsing is currently
-    implemented for the OpenAI and Gemini wires only; the forwarder serves no
-    ``/anthropic`` route for this source, so an Anthropic usage configuration is a
-    deliberate boot hard-fail.
+    Two combinations are a deliberate hard-fail:
+
+    * ``litellm_usage`` + ``anthropic`` — usage parsing is implemented for the OpenAI
+      and Gemini wires only, and the forwarder serves no ``/anthropic`` route for it.
+    * ``litellm_headers`` + any non-OpenAI wire — LiteLLM injects
+      ``x-litellm-response-cost`` from its ``/v1`` router only. ``/gemini`` and
+      ``/anthropic`` are passthrough routes: measured against LiteLLM 1.93.0, neither
+      the plain nor the ``?alt=sse`` Gemini response carries the header in any form, so
+      the source would report $0 for every turn while looking perfectly healthy.
     """
     if source == "litellm_usage" and model_type == "anthropic":
         raise ValueError(
@@ -195,12 +202,20 @@ def validate_cost_source(source: str, model_type: str) -> None:
             "the forwarder serves no /anthropic route for this usage wire; use "
             "engine, none, or litellm_headers instead"
         )
+    if source == "litellm_headers" and model_type != "openai":
+        raise ValueError(
+            f"cost.source=litellm_headers is unsupported with model.type={model_type}: "
+            "LiteLLM injects x-litellm-response-cost from its /v1 router only, and "
+            f"/{model_type} is a passthrough route, so every turn would be billed 0; "
+            "use litellm_usage (or engine/none)"
+        )
 
 
 def report_price_load_result(failure: PriceFailure | None, model_name: str) -> None:
     """Emit the A.5 boot outcome without turning a price failure into a hard-fail."""
     if failure is None:
         return
+    COST_UNPRICED.labels(reason=failure).inc()
     if failure == "fetch_failed":
         log.error("cost: price fetch failed at boot", model=model_name, failure=failure)
         return
@@ -319,6 +334,33 @@ class PriceTable:
         return self._prices.get(model_name)
 
 
+@dataclass(frozen=True, slots=True)
+class TurnTokens:
+    """Wire-observed token totals for a turn, summed over its upstream calls.
+
+    Field names match OpenCodeUsage's so end_turn can replace them directly. ``input``
+    is the BILLABLE input (prompt net of cache read/creation), keeping the four fields
+    disjoint and exactly the terms compute_cost() priced.
+    """
+
+    input: int
+    output: int
+    cache_read: int
+    cache_write: int
+
+    @classmethod
+    def add(cls, prev: TurnTokens | None, usage: TokenUsage) -> TurnTokens:
+        cached = usage.cached_read_tokens + usage.cache_creation_tokens
+        billable = max(usage.prompt_tokens - cached, 0)
+        base = prev or cls(0, 0, 0, 0)
+        return cls(
+            input=base.input + billable,
+            output=base.output + usage.completion_tokens,
+            cache_read=base.cache_read + usage.cached_read_tokens,
+            cache_write=base.cache_write + usage.cache_creation_tokens,
+        )
+
+
 def tokenize_model_base_url(url: str, token: str) -> str:
     """Insert /t/<token> after the authority: http://h:p/v1 -> http://h:p/t/<tok>/v1."""
     parts = urlsplit(url)
@@ -328,12 +370,18 @@ def tokenize_model_base_url(url: str, token: str) -> str:
 
 
 class _TokenBucket:
-    """Per-server-token turn state: accumulated cost + the warn_once condition set."""
+    """Per-server-token turn state: accumulated cost + tokens + the warn_once condition set.
 
-    __slots__ = ("cost", "in_flight", "warned")
+    ``tokens`` accumulates the SAME basis the cost is computed from — one entry per
+    upstream call of the turn, billable input already net of cache (A.2) — so
+    cost / tokens stay divisible (see CostAccountant.end_turn).
+    """
+
+    __slots__ = ("cost", "in_flight", "tokens", "warned")
 
     def __init__(self) -> None:
         self.cost = 0.0
+        self.tokens: TurnTokens | None = None
         self.warned: set[str] = set()
         self.in_flight = False
 
@@ -366,6 +414,7 @@ class CostAccountant:
     @staticmethod
     def _reset(bucket: _TokenBucket, *, in_flight: bool) -> None:
         bucket.cost = 0.0
+        bucket.tokens = None
         bucket.warned = set()
         bucket.in_flight = in_flight
 
@@ -375,6 +424,9 @@ class CostAccountant:
     def _price(self, usage: TokenUsage) -> float:
         prices = self._prices.get(self._model_name) if self._prices is not None else None
         if prices is None:
+            # The model never matched a /v2/model/info entry: this response — and every
+            # other one — is billed 0. Per-response so rate() sees it, not just boot.
+            COST_UNPRICED.labels(reason="unpriced").inc()
             return 0.0
         cost, _clamped = compute_cost(usage, prices)
         return cost
@@ -396,6 +448,7 @@ class CostAccountant:
                 self._unattributed_warned = True
             return
         bucket.cost += self._price(usage)
+        bucket.tokens = TurnTokens.add(bucket.tokens, usage)
 
     def record_header_cost(self, token: str | None, header: str | None, streaming: bool) -> None:
         """litellm_headers mode (A.4): sum x-litellm-response-cost; streaming is 0.0."""
@@ -430,15 +483,32 @@ class CostAccountant:
         log.warning(f"cost: {condition}", **fields)
 
     def end_turn(self, token: str, usage: Any) -> Any:
-        """Read-and-reset the token's bucket; apply the source override exactly once (A.9)."""
+        """Read-and-reset the token's bucket; apply the source override exactly once (A.9).
+
+        Cost and tokens are overridden TOGETHER so they share one basis: the sum over
+        every upstream call the turn made. The engine's own numbers cover roughly the
+        last message only, so keeping them next to a whole-turn cost made $/token wrong
+        by the turn's call count (~16x on a 10-tool-call turn). ``litellm_headers`` gives
+        no token data, so it overrides cost only and the engine's tokens stand.
+        """
         bucket = self._buckets.get(token)
         total = bucket.cost if bucket is not None else 0.0
+        tokens = bucket.tokens if bucket is not None else None
         if bucket is not None:
             self._reset(bucket, in_flight=False)
         self._unattributed_warned = False  # a turn boundary — allow one more unattributed warn
         if self.source == "engine" or usage is None:
             return usage
-        return dataclasses.replace(usage, cost=total)
+        if tokens is None:
+            return dataclasses.replace(usage, cost=total)
+        return dataclasses.replace(
+            usage,
+            cost=total,
+            input_tokens=tokens.input,
+            output_tokens=tokens.output,
+            cache_read=tokens.cache_read,
+            cache_write=tokens.cache_write,
+        )
 
     def discard_turn(self, token: str) -> None:
         """Idempotent reset for the finally path — never disturbs a bucket end_turn already took."""
@@ -517,6 +587,7 @@ class CostObserver:
             return
         usage = self._usage_observer.finish()
         if usage is None and self._usage_observer.response_is_success:
+            COST_UNPRICED.labels(reason="usage_missing").inc()
             self._accountant.warn_once(
                 self._token,
                 "usage_missing",

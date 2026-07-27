@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.10.2] - 2026-07-27
+
+### Fixed
+
+- `ach_agent_turn_duration_seconds` and `ach_agent_tool_duration_seconds` now declare
+  explicit buckets (up to 1800s / 300s). They used `prometheus_client`'s defaults, which
+  stop at 10s, so every `histogram_quantile(0.9|0.95|0.99, ...)` panel was pinned to 10s
+  or `+Inf` while agents run with `limits.maxInvocationSeconds: 1800`.
+- `ach_agent_channel_inbound_events_total` is now incremented by the webhook, cron, queue
+  and tui adapters, not by a2a alone — on a webhook-driven fleet the series did not exist
+  at all.
+- Under `cost.source: litellm_usage`, the turn's token counts are now overridden together
+  with its cost, so both cover the same basis (every upstream call of the turn).
+  Previously the cost was wire-observed while the tokens were the engine's last-message
+  figures, making any $/token ratio wrong by the turn's call count. `input_tokens` is
+  billable input, net of `cache_read`/`cache_write`. `litellm_headers` carries no token
+  data and still overrides the cost only.
+
+### Added
+
+- `ach_agent_cost_unpriced_total{reason}` — counts every point where cost accounting gives
+  up: `fetch_failed`/`no_entry`/`malformed`/`unpriced` once at boot, plus `unpriced` and
+  `usage_missing` per response. A model name that `/v2/model/info` does not know (e.g. the
+  un-namespaced `gemini-flash-latest`) previously reported `$0` forever with only a log
+  line inside the pod.
+
+### Changed
+
+- **Breaking (boot)**: `cost.source: litellm_headers` now hard-fails at boot unless
+  `model.type: openai`. LiteLLM injects `x-litellm-response-cost` from its `/v1` router
+  only; `/gemini` and `/anthropic` are passthrough routes whose responses carry no cost
+  header, so those configurations silently reported `$0` for every turn. Use
+  `litellm_usage`.
+
 ## [0.10.1] - 2026-07-27
 
 ### Added

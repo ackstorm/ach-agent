@@ -17,6 +17,7 @@ import uuid
 from typing import Any
 
 import pytest
+from prometheus_client import REGISTRY
 
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.webhook import handle_webhook_request
@@ -65,6 +66,16 @@ def _make_channel_cfg(env_name: str = SECRET_ENV) -> ChannelConfig:
     )
 
 
+def _inbound(channel: str, type_: str) -> float:
+    """Current ach_agent_channel_inbound_events_total for one (channel, type) pair."""
+    return (
+        REGISTRY.get_sample_value(
+            "ach_agent_channel_inbound_events_total", {"channel": channel, "type": type_}
+        )
+        or 0.0
+    )
+
+
 def _make_headers(secret: str, event_uuid: str | None = None) -> dict[str, str]:
     h: dict[str, str] = {
         "X-Gitlab-Token": secret,
@@ -91,11 +102,13 @@ async def test_valid_token_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
     headers = _make_headers("my-webhook-secret", event_uuid=str(uuid.uuid4()))
     raw_body = json.dumps(MR_PAYLOAD).encode()
 
+    before = _inbound("gitlab-mr-review", "webhook")
     result = await handle_webhook_request(raw_body, headers, cfg, handler)
 
     assert result.status_code == 202
     assert result.body["status"] == "accepted"
     assert handler._call_count == 1, "handler.handle() must be called once"
+    assert _inbound("gitlab-mr-review", "webhook") == before + 1
 
 
 @pytest.mark.asyncio
@@ -108,10 +121,12 @@ async def test_invalid_token_401(monkeypatch: pytest.MonkeyPatch) -> None:
     headers = _make_headers("wrong-secret", event_uuid=str(uuid.uuid4()))
     raw_body = json.dumps(MR_PAYLOAD).encode()
 
+    before = _inbound("gitlab-mr-review", "webhook")
     result = await handle_webhook_request(raw_body, headers, cfg, handler)
 
     assert result.status_code == 401
     assert handler._call_count == 0, "handler.handle() must NOT be called on 401"
+    assert _inbound("gitlab-mr-review", "webhook") == before, "a rejected request is not inbound"
 
 
 @pytest.mark.asyncio

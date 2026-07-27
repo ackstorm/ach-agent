@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from ach_agent.channels.message_event import MessageEvent
+from ach_agent.router.metrics import CHANNEL_INBOUND
 
 if TYPE_CHECKING:
     from ach_agent.channels.seam import MessageHandler
@@ -176,6 +177,7 @@ async def _handle_line(
         source_trait="sync",
         reply_future=reply_future,
     )
+    CHANNEL_INBOUND.labels(channel="tui-console", type="tui").inc()
     await handler.handle(event)
     text = await reply_future
     if stream_sink is not None and streamed:

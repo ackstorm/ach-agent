@@ -12,9 +12,21 @@ Verifies:
 
 from __future__ import annotations
 
+from prometheus_client import REGISTRY
+
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.tui import run_one_shot, run_tui_console
 from ach_agent.router.router import RouterAdmitResult
+
+
+def _inbound(channel: str, type_: str) -> float:
+    """Current ach_agent_channel_inbound_events_total for one (channel, type) pair."""
+    return (
+        REGISTRY.get_sample_value(
+            "ach_agent_channel_inbound_events_total", {"channel": channel, "type": type_}
+        )
+        or 0.0
+    )
 
 
 class FakeHandler:
@@ -56,10 +68,13 @@ async def test_blank_lines_skipped_and_event_fields() -> None:
     handler = FakeHandler()
     captured: list[str] = []
 
+    before = _inbound("tui-console", "tui")
+
     # "\n" (blank → skipped), then "hi\n" (routed), then EOF.
     await run_tui_console(handler, reader=FakeReader(["\n", "hi\n"]), writer=captured.append)
 
     assert len(handler.events) == 1, "blank line must be skipped — only 'hi' routed"
+    assert _inbound("tui-console", "tui") == before + 1
     event = handler.events[0]
     assert event.source_trait == "sync"
     assert event.idempotency_key != ""

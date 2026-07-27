@@ -12,13 +12,27 @@ YAML. Both validate against the same schema, and **unknown keys are rejected** (
 | `ACH_BASE_URL` | ACH endpoint. Overrides `capability.ach.baseUrl` when set; required if the config omits `baseUrl`. |
 | `ACH_CONFIG_PATH` | Path to the config file (default `/etc/ach-agent/config.json`). |
 
-## Metrics
+## Metrics and Identity
 
-The existing `GET /metrics` endpoint exposes Prometheus metrics. After a successful platform
-hydrate it includes `ach_agent_info{agent,environment} 1`: `agent` is `agent.name` from the
-rendered config and `environment` is the required `environment` returned by the hydration
-manifest. No agent-identity sample is emitted before hydration succeeds or when the response
-omits its environment.
+Every sample exposed by `GET /metrics/` carries process-authoritative `agent` and `environment`
+labels. Stamping is applied at exposition across all metrics (including Python/process default
+series and `name[]`-restricted scrapes), so current and future metric families require no call-site
+labeling.
+
+- **Identity Sources**: `agent` comes from rendered `agent.name`. `environment` comes from the
+  successfully validated hydration manifest; the hydration request itself uses `capability.ach.environment`
+  as its requested environment.
+- **Outbound Identity Headers**: All model, MCP, outbound A2A, and hydration requests receive
+  canonical `x-ach-agent` and `x-ach-environment` headers injected by the harness.
+- **Header Sanitization**: Any client-supplied model or MCP identity headers are removed
+  case-insensitively before forwarding; harness process identity always wins.
+- **Direct Model Overrides**: Development model overrides (`ACH_MODEL_BASE_URL` / `ACH_MODEL_HEADER`)
+  retain full identity header injection.
+- **Prometheus Series Identity**: Adding these labels to every exposed sample changes Prometheus
+  series identity in `v0.10.1`. Range queries spanning rollout show a series discontinuity
+  between pre-`v0.10.1` and post-`v0.10.1` metrics.
+- **Operator Impact**: No `PodMonitor` relabeling rules or `group_left` metric joins are required
+  or used by this repository.
 
 ## Blocks
 

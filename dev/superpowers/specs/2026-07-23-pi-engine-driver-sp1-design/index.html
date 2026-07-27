@@ -534,7 +534,7 @@
 
 
 <h1 id="design-pi-as-a-second-engine-sp1-egress-capable-pi-engine">Design: Pi as a second engine (SP1 — egress-capable Pi engine)</h1>
-<p><strong>Status:</strong> approved design, pre-plan
+<p><strong>Status:</strong> approved design, pre-plan (revised 2026-07-23 after review: upstream doc fact-check + seam audit)
 <strong>Date:</strong> 2026-07-23
 <strong>Author:</strong> brainstorm w/ Juan Carlos
 <strong>Feeds:</strong> <code>Skill(superpowers:writing-plans)</code> → implementation plan</p>
@@ -545,10 +545,12 @@ Node/TS) as a second engine alongside the currently-hardcoded <strong>opencode</
 <code>pymono</code> slot reserved in <code>docs/spec/ach-agent-runtime-spec-v1_4_2.md</code> §7.4. (The user's "py
 agent" is Pi; the "pymono" label is the spec's engine-type name.)</p>
 <p><strong>The router is not touched.</strong> <code>router/lane.py</code> already calls the engine as an opaque injected
-callable <code>engine_runner(event, on_kill)</code> and never imports <code>engine/</code> (D-08 / RTR-06). All
+callable <code>engine_runner(event, on_kill)</code> and never imports <code>engine/</code> logic (D-08 / RTR-06 — sole
+exception: the <code>ENGINE_WATCHDOG_KILLS</code> counter from <code>engine/metrics.py</code>, <code>lane.py:27</code>). All
 opencode specifics live in one closure, <code>main.py:685 engine_runner</code>, over four seams:
 <code>EngineConfig</code> (opencode fields), <code>pool.acquire → ManagedServer</code>, <code>run_invocation</code>, and
-<code>pool.oc_sessions</code>. SP1 abstracts exactly those.</p>
+<code>pool.oc_sessions</code> — plus two post-turn hygiene calls (<code>discard_oc_session</code> /
+<code>compact_oc_session</code>, <code>main.py:854-881</code>). SP1 abstracts exactly those.</p>
 <p><strong>Non-goal:</strong> SP1 does not change router invariants, lane ordering, or the three finite bounds.
 The conformance suite must stay green throughout.</p>
 <h2 id="2-decomposition">2. Decomposition</h2>
@@ -565,8 +567,9 @@ The conformance suite must stay green throughout.</p>
 <li><strong>Transport:</strong> Pi has <strong>no</strong> HTTP+SSE. Drive via <code>pi --mode rpc</code> = JSONL over stdin/stdout
   (strict LF framing; <strong>not</strong> <code>readline</code> — U+2028/9 hazard). Docs ship a Python client skeleton.</li>
 <li><strong>Skills:</strong> Pi implements the <strong>same Agent Skills standard</strong> (SKILL.md + frontmatter) as
-  opencode. Loads from <code>~/.agents/skills</code>, settings <code>skills:[]</code>, or <code>--skill</code>. The harness's
-  hydrated skill tarballs drop in nearly unchanged.</li>
+  opencode. Loads from <code>&lt;agent-dir&gt;/skills</code> + <code>~/.agents/skills</code>, settings <code>skills:[]</code>, or
+  <code>--skill</code> (agent dir defaults to <code>~/.pi/agent</code>; relocated by <code>$PI_CODING_AGENT_DIR</code>). The
+  harness's hydrated skill tarballs drop in nearly unchanged.</li>
 <li><strong>Model + <code>ek_</code>:</strong> declared purely in a config file — <code>$PI_CODING_AGENT_DIR/models.json</code>
   (<code>baseUrl</code>, <code>api</code>, dummy <code>apiKey</code>, <code>headers</code> with <code>$ENV</code> interpolation). <strong>Zero TypeScript</strong>
   for the model path. Point <code>baseUrl</code> at the localhost model proxy; the proxy injects <code>ek_</code>.</li>
@@ -607,43 +610,66 @@ matters — is unchanged and shared).</p>
 <code>metrics.py</code> stay put.</p>
 <h3 id="42-the-protocol">4.2 The protocol</h3>
 <div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">EngineDriver</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">skills_dir</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">home</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">session_key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span> <span class="o">...</span>   <span class="c1"># where context.py extracts skills</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">skills_dir</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">home</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span> <span class="o">...</span>  <span class="c1"># SHARED extract dir. No session_key: hydration</span>
+                                                   <span class="c1"># runs ONCE at boot (main.py:1242) before any</span>
+                                                   <span class="c1"># key exists; per-key configs all point at it</span>
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">launch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">cfg</span><span class="p">:</span> <span class="n">EngineConfig</span><span class="p">,</span> <span class="n">session_key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ManagedServer</span><span class="p">:</span> <span class="o">...</span>
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">health</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">server</span><span class="p">:</span> <span class="n">ManagedServer</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">health</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">server</span><span class="p">:</span> <span class="n">ManagedServer</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>  <span class="c1"># opencode: HTTP ping; pi: process</span>
+                                                                <span class="c1"># alive + best-effort RPC roundtrip</span>
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">run_turn</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">server</span><span class="p">:</span> <span class="n">ManagedServer</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">conv_key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">reuse</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
-                       <span class="n">on_text</span><span class="p">,</span> <span class="n">on_tool</span><span class="p">,</span> <span class="n">max_tool_calls</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">stats</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+                       <span class="n">session_ref</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>  <span class="c1"># continue EXACTLY this engine session</span>
+                                                        <span class="c1"># (repair/wrap-up) — bypasses conv_key/reuse</span>
+                       <span class="n">on_text</span><span class="p">,</span> <span class="n">on_tool</span><span class="p">,</span> <span class="n">max_tool_calls</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">stats</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">TurnResult</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">discard_session</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">server</span><span class="p">:</span> <span class="n">ManagedServer</span><span class="p">,</span> <span class="n">session_ref</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>  <span class="c1"># &#39;none&#39;/rotate</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">compact_session</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">server</span><span class="p">:</span> <span class="n">ManagedServer</span><span class="p">,</span> <span class="n">session_ref</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>  <span class="c1"># overflow=compact</span>
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">stop</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">server</span><span class="p">:</span> <span class="n">ManagedServer</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
 </code></pre></div>
+<p><code>TurnResult</code> = raw final assistant text + the engine-native <code>session_ref</code> the turn ran in (+ an
+<code>aborted</code> flag when the step budget cut it). It is what lets <code>base/terminal.py</code> target
+repair/wrap-up turns at the same conversation (§4.3) and what the hygiene calls key on.</p>
 <ul>
 <li><code>EnginePool.__init__(driver, sessions_map)</code>; <code>acquire</code>/<code>release</code>/TTL/<code>_stop</code> call
-  <code>driver.launch</code>/<code>driver.health</code>/<code>driver.stop</code>. <code>pool.oc_sessions</code> → <code>pool.sessions</code> (rename).</li>
+  <code>driver.launch</code>/<code>driver.health</code>/<code>driver.stop</code>. <code>pool.oc_sessions</code> → <code>pool.sessions</code> (attribute
+  rename only — the on-disk SQLite table keeps its <code>oc_sessions</code> name: it is persisted state).</li>
 <li><code>_make_engine_runner</code> selects <code>OpencodeDriver()</code> vs <code>PiDriver()</code> by <code>cfg.engine.type</code>.
   <strong>Everything else in that closure is unchanged</strong> (memory wiring, prompt build, terminal-action
-  selection, <code>session</code>/<code>reuse</code> decision, stats).</li>
+  selection, <code>session</code>/<code>reuse</code> decision, stats) — except post-turn session hygiene
+  (<code>main.py:854-881</code>), which swaps its <code>lifecycle.discard_oc_session</code>/<code>compact_oc_session</code>
+  imports for <code>driver.discard_session</code>/<code>driver.compact_session</code>, keyed on
+  <code>TurnResult.session_ref</code> instead of <code>turn_stats["oc_session_id"]</code>.</li>
 </ul>
 <h3 id="43-terminal-contract-fine-boundary">4.3 Terminal contract — <strong>Fine boundary</strong></h3>
-<p><code>run_turn</code> returns the raw final assistant text for <strong>one</strong> prompt. The harness-owned
-<code>base/terminal.py</code> does text-extract + Pydantic + ≤1 repair by calling <code>run_turn</code> again with the
-repair prompt. The structured-output contract lives <strong>once</strong>, engine-agnostic (matches the
-"structured output is harness-validated" constraint). The opencode move carves this loop out of
-<code>run_invocation</code>; the existing opencode tests catch regressions. <code>free_form</code> channels (<code>--tui</code>)
-skip extraction, same as today.</p>
+<p><code>run_turn</code> returns a <code>TurnResult</code> (raw final assistant text + <code>session_ref</code>) for <strong>one</strong> prompt.
+The harness-owned <code>base/terminal.py</code> does text-extract + Pydantic + ≤1 repair by calling
+<code>run_turn</code> again with the repair prompt <strong>and the previous <code>TurnResult.session_ref</code></strong> — the
+repair must land in the SAME engine conversation even when <code>reuse=False</code> (<code>session: none</code> mints
+a fresh session that is never recorded in the map; a plain second call would mint yet another
+and repair nothing). The <strong>step-budget wrap-up turn</strong> also lives here, engine-agnostic: when
+<code>TurnResult.aborted</code> is set (max_tool_calls exceeded), run ONE wrap-up turn (<code>max_tool_calls=0</code>,
+same <code>session_ref</code>) so the model emits a clean terminal object — an aborted turn usually lacks
+one (today: <code>lifecycle.py:687-711</code>). The structured-output contract lives <strong>once</strong>,
+engine-agnostic (matches the "structured output is harness-validated" constraint). The opencode
+move carves both loops out of <code>run_invocation</code>; the existing opencode tests catch regressions.
+<code>free_form</code> channels (<code>--tui</code>) skip extraction, same as today.</p>
 <h2 id="5-pi-driver-internals">5. Pi driver internals</h2>
 <h3 id="51-launch-pidriverlaunch">5.1 Launch (<code>PiDriver.launch</code>)</h3>
 <p>No serve/port — the transport is the subprocess's stdin/stdout. Per <code>session_key</code>:</p>
 <div class="highlight"><pre><span></span><code>env:    PI_CODING_AGENT_DIR=&lt;home&gt;/pi/&lt;key-suffix&gt;          # isolation primitive
         + build_pi_env()   # clean-slate allowlist, same ek-hygiene as build_opencode_env
 write:  $PI_CODING_AGENT_DIR/models.json    # localhost ek-proxy provider (dummy apiKey)
-        $PI_CODING_AGENT_DIR/settings.json  # skills:[&lt;dir&gt;], defaultProjectTrust:&quot;trust&quot;,
-                                            # non-interactive (sampling:false, elicitation:false),
-                                            # packages/extensions -&gt; vendored pi-mcp-adapter
-        $PI_CODING_AGENT_DIR/mcp.json       # section 6
+        $PI_CODING_AGENT_DIR/settings.json  # skills:[&lt;shared dir&gt;], defaultProjectTrust:&quot;always&quot;
+                                            # (valid: ask|always|never — &quot;trust&quot; does not exist),
+                                            # packages:[&lt;vendored pi-mcp-adapter path&gt;]
+        $PI_CODING_AGENT_DIR/mcp.json       # section 6; the adapter&#39;s &quot;settings&quot; block carries
+                                            # the headless knobs (directTools, elicitation:false,
+                                            # sampling:false or samplingAutoApprove:true) — those
+                                            # are ADAPTER settings, not Pi settings.json
 spawn:  pi --mode rpc --provider &lt;p&gt; --model &lt;id&gt; --session-dir $PI_CODING_AGENT_DIR/sessions
 </code></pre></div>
 <p><code>models.json</code> provider mapping reuses the <code>model_type</code> switch:
 <code>openai→openai-completions /v1</code>, <code>gemini→google-generative-ai /gemini</code>,
 <code>anthropic→anthropic-messages /anthropic</code>; each <code>baseUrl</code> = the localhost model proxy.
-<code>defaultProjectTrust:"trust"</code> so Pi never blocks on the project-trust prompt headless.</p>
+<code>defaultProjectTrust:"always"</code> so Pi never blocks on the project-trust prompt headless.</p>
 <p>Skills: <code>context.py</code> extracts hydrated tarballs to <code>driver.skills_dir(...)</code> and <code>settings.json</code>
 references it — same reconcile-wipe + <code>capability.filter.exclude.skills</code> behavior as today.</p>
 <h3 id="52-rpc-client-pirpcpy">5.2 RPC client (<code>pi/rpc.py</code>)</h3>
@@ -651,25 +677,41 @@ references it — same reconcile-wipe + <code>capability.filter.exclude.skills</
 to stdin, <code>async for event in events()</code> from stdout, request/response correlation via <code>id</code>.</p>
 <h3 id="53-the-turn-pidriverrun_turn">5.3 The turn (<code>PiDriver.run_turn</code>)</h3>
 <ol>
-<li><strong>Session select</strong> (mirrors opencode's <code>_sessions</code> map exactly): <code>reuse &amp;&amp; conv_key known</code> →
-   <code>switch_session</code> to its file iff the process was recreated (else already loaded);
-   <code>reuse &amp;&amp; new key</code> → record the fresh session file; <code>not reuse</code> → <code>new_session</code> first.</li>
-<li>Send <code>{"type":"prompt","message":full_prompt}</code>.</li>
-<li>Consume events: <code>text_delta</code> ⇒ <code>on_text</code>; <code>tool_execution_start/end</code> ⇒ <code>on_tool</code>; accumulate
-   assistant text; stop at <code>agent_settled</code>.</li>
-<li>Return raw final assistant text (Fine boundary; <code>terminal.py</code> validates/repairs).</li>
+<li><strong>Session select</strong> (mirrors opencode's pool-map flow): <code>session_ref</code> passed →
+   <code>switch_session</code> (<code>sessionPath</code>) straight to it (repair/wrap-up turns). Else:
+   <code>reuse &amp;&amp; conv_key known</code> → <code>switch_session</code> to its file iff the process was recreated (else
+   already loaded); <code>reuse &amp;&amp; new key</code> → record the fresh session file; <code>not reuse</code> →
+   <code>new_session</code> first.</li>
+<li>Send <code>{"type":"prompt","message":full_prompt}</code> — only ever after settle (a prompt sent while
+   streaming errors unless <code>streamingBehavior</code> is set; the lane serializes turns and the
+   repair/wrap-up sends wait for <code>agent_settled</code>, so this never fires).</li>
+<li>Consume events: <code>message_update</code> → unwrap the nested <code>assistantMessageEvent</code>; its <code>text_delta</code>
+   ⇒ <code>on_text</code> + accumulate assistant text. Top-level <code>tool_execution_start/end</code> ⇒ <code>on_tool</code>.
+   Stop at <code>agent_settled</code> — NOT <code>agent_end</code>, which retries/compaction may still follow.</li>
+<li>Return <code>TurnResult(text, session_ref=&lt;session file&gt;, aborted=…)</code> (Fine boundary;
+   <code>terminal.py</code> validates/repairs/wraps-up against that <code>session_ref</code>).</li>
 </ol>
 <h3 id="54-session-model-durable">5.4 Session model — <strong>Durable</strong></h3>
-<p>Run Pi <strong>with</strong> <code>--session-dir</code>; keep <code>_sessions[conv_key] → session_file</code> on <code>ManagedServer</code>;
-<code>switch_session</code> on relaunch. Matches opencode's disk-backed <code>channel.session: auto</code> continuity
-across pool restarts (TTL expiry / crash). <code>auto|none|custom</code> behave identically on both engines.</p>
+<p>Run Pi <strong>with</strong> <code>--session-dir</code>; keep <code>conv_key → session_file</code> in the <strong>pool-owned</strong> sessions
+map (§4.2 <code>sessions_map</code> — the SQLite-backed LRU that outlives <code>ManagedServer</code>s;
+<code>ManagedServer._sessions</code> stays a test-only fallback, <code>lifecycle.py:627</code>); <code>switch_session</code> on
+relaunch. Matches opencode's disk-backed <code>channel.session: auto</code> continuity across pool restarts
+(TTL expiry / crash). <code>auto|none|custom</code> behave identically on both engines.</p>
+<p>Map values are engine-native refs (opencode: <code>ses_…</code> id; Pi: session-file path) sharing one
+persisted store — <strong>namespace entries by engine type</strong> (or wipe on <code>engine.type</code> change) so
+flipping the engine on a persisted home can never feed an opencode id to <code>switch_session</code> as a
+path. Hygiene: <code>discard_session</code> = pop the map entry + delete the session file;
+<code>compact_session</code> = open item (§12) — Pi may expose no compact command; fallback is rotate.</p>
 <h3 id="55-bounds-abort-invariants-preserved">5.5 Bounds &amp; abort (invariants preserved)</h3>
 <ul>
 <li><strong><code>maxInvocationSeconds</code></strong> stays lane-owned: lane cancels the <code>run_turn</code> coroutine → driver
-  sends <code>{"type":"abort"}</code> → pool force-releases (ttl=0 → <code>PiDriver.stop</code> = SIGTERM→SIGKILL the
-  process group). Same shape as opencode's watchdog.</li>
+  sends <code>{"type":"abort"}</code> best-effort from the cancel path (shielded/non-blocking — a cancelled
+  coroutine can't await freely) → pool force-releases (ttl=0 → <code>PiDriver.stop</code> = SIGTERM→SIGKILL
+  the process group, the authoritative kill). Same shape as opencode's watchdog.</li>
 <li><strong><code>max_tool_calls</code></strong>: Pi has no native bound → <code>rpc.py</code> counts <code>tool_execution_start</code> and sends
-  <code>{"type":"abort"}</code> on exceed, then returns the terminal object. Enforced at the transport.</li>
+  <code>{"type":"abort"}</code> on exceed, then returns the accumulated text with <code>TurnResult.aborted=True</code>
+  — usually WITHOUT a terminal object; the wrap-up turn in <code>base/terminal.py</code> (§4.3) recovers
+  the contract, same as opencode today. Enforced at the transport.</li>
 <li><strong><code>on_kill</code></strong> → send <code>abort</code>.</li>
 </ul>
 <h2 id="6-mcp-egress-the-a2amcp-is-a-must-requirement">6. MCP egress (the "a2a/MCP is a must" requirement)</h2>
@@ -691,15 +733,18 @@ are <strong>all localhost MCP servers</strong>. MCP egress via pi-mcp-adapter ca
 is reviewed once at vendor time; <code>ek_</code> never reaches it (proxy-side injection).</p>
 <p><strong>Tool semantics — <code>directTools: true</code> (decided).</strong> Register named MCP tools in the system prompt
 (parity with opencode's native tool names), with <code>excludeTools</code> from <code>capability.filter.exclude</code>.
-Operator may drop specific large servers back to proxy mode. Headless settings: <code>sampling:false</code>
-(or <code>samplingAutoApprove</code>), <code>elicitation:false</code>, no OAuth (localhost only).</p>
+Operator may drop specific large servers back to proxy mode. Headless settings live in the
+adapter's mcp.json <code>settings</code> block (not Pi settings.json): <code>sampling:false</code> (or
+<code>samplingAutoApprove:true</code>), <code>elicitation:false</code>, no OAuth (localhost only).</p>
 <p><strong>a2a facade hosting (shared prerequisite).</strong> <code>build_a2a_mcp_server</code> is built-but-not-hosted today
 (<code>main.py:1341</code>, VERIFICATION DEBT / Plan 3/4) — incomplete for opencode too. SP1 hosts the a2a
 facade on a localhost port and adds it to the mcp block; <strong>both engines</strong> gain working a2a egress.</p>
 <h2 id="7-config-seam">7. Config seam</h2>
 <p><code>EngineBlock</code> gains <code>type: Literal["opencode","pi"] = "opencode"</code> (+ optional Pi sub-fields:
-<code>binaryPath</code>, non-interactive overrides). <code>_make_engine_runner</code> picks the driver by
-<code>cfg.engine.type</code>. CONTRACT + frozen schema (<code>docs/schemas/agent-config-v1.schema.json</code>)
+<code>binaryPath</code>, non-interactive overrides). <strong>Canonical wire name: <code>pi</code></strong> — the runtime spec §7.4
+currently reserves <code>pymono</code> for this slot; amend that list to <code>pi</code> rather than carrying an alias,
+so SP2's cross-repo <code>spec.engine.type</code> uses the same value. <code>_make_engine_runner</code> picks the
+driver by <code>cfg.engine.type</code>. CONTRACT + frozen schema (<code>docs/schemas/agent-config-v1.schema.json</code>)
 regenerated. The <code>ach-runtime</code> operator side (<code>spec.engine.type</code>) lands in <strong>SP2</strong> (separate repo).</p>
 <h2 id="8-security-ek_-hygiene-unchanged-invariants">8. Security / <code>ek_</code> hygiene (unchanged invariants)</h2>
 <ul>
@@ -720,7 +765,9 @@ them to the <strong>same</strong> stat contract (<code>ach:sessions</code>, <cod
 <li><strong>Opencode move is behavior-preserving</strong> — existing <code>tests/engine/</code> + <code>make conformance</code> are the
   safety net; must stay green.</li>
 <li><strong>Pi driver units</strong> against a fake <code>pi</code> subprocess replaying JSONL fixtures: happy turn, tool
-  loop, <code>max_tool_calls</code> abort, session switch/reuse, timeout/abort, terminal extract+repair.</li>
+  loop, <code>max_tool_calls</code> abort + wrap-up turn, session switch/reuse, repair/wrap-up continuing
+  the SAME <code>session_ref</code> (incl. <code>reuse=False</code>), discard/rotate hygiene, timeout/abort, terminal
+  extract+repair.</li>
 <li><strong><code>mcp.json</code> generation</strong> tests mirroring <code>test_mcp_passthrough.py</code> (facade/proxy → remote at
   loopback; codemem → local; passthrough; excludeTools).</li>
 <li><strong><code>models.json</code> generation</strong> tests (provider mapping per <code>model_type</code>; dummy apiKey; no ek).</li>
@@ -744,6 +791,9 @@ stats-mapping polish beyond parity, broad e2e matrix.</p>
   first so Pi inherits a proven facade.</li>
 <li>Carving the terminal-repair loop out of <code>run_invocation</code> touches IP-adjacent code — rely on the
   opencode test suite as the regression gate.</li>
+<li>Pi has no verified compact command (<code>compact_session</code>): docs describe compaction as automatic,
+  not RPC-triggerable. If absent, <code>session.overflow: compact</code> on Pi degrades to rotate (or
+  <code>new_session</code> with <code>parentSession</code>) — decide at plan time.</li>
 </ul>
 <h2 id="13-references">13. References</h2>
 <ul>

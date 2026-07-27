@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from ach_agent import identity
 from ach_agent.engine import repo_archive
 
 
@@ -51,7 +52,7 @@ async def test_read_repo_archive_decodes_blob(monkeypatch: pytest.MonkeyPatch) -
             return _Result()
 
     @asynccontextmanager
-    async def _fake_session(endpoint: str, ek: str):  # type: ignore[no-untyped-def]
+    async def _fake_session(endpoint: str, ek: str, request_identity: Any = None):  # type: ignore[no-untyped-def]
         assert endpoint == "https://mcp.example/gitlab"
         assert ek == "ek_test"
         yield _Session()
@@ -70,12 +71,98 @@ async def test_read_repo_archive_propagates_error(monkeypatch: pytest.MonkeyPatc
             raise RuntimeError("archive exceeds cap")
 
     @asynccontextmanager
-    async def _fake_session(endpoint: str, ek: str):  # type: ignore[no-untyped-def]
+    async def _fake_session(endpoint: str, ek: str, request_identity: Any = None):  # type: ignore[no-untyped-def]
         yield _Session()
 
     monkeypatch.setattr(repo_archive, "_archive_session", _fake_session)
     with pytest.raises(RuntimeError, match="exceeds cap"):
         await repo_archive.read_repo_archive("e", "k", "1234", "abc")
+
+
+@pytest.mark.asyncio
+async def test_archive_session_carries_process_identity_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_headers: dict[str, str] = {}
+
+    @asynccontextmanager
+    async def fake_create_mcp_http_client(headers: dict[str, str] | None = None):  # type: ignore[no-untyped-def]
+        nonlocal captured_headers
+        if headers:
+            captured_headers = dict(headers)
+        yield object()
+
+    @asynccontextmanager
+    async def fake_streamable_http_client(endpoint: str, http_client: Any = None):  # type: ignore[no-untyped-def]
+        yield (object(), object(), object())
+
+    identity.configure("archive-agent", "platform-env")
+
+    class FakeSession1:
+        async def __aenter__(self) -> FakeSession1:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def initialize(self) -> None:
+            pass
+
+    monkeypatch.setattr(repo_archive, "create_mcp_http_client", fake_create_mcp_http_client)
+    monkeypatch.setattr(repo_archive, "streamable_http_client", fake_streamable_http_client)
+    monkeypatch.setattr(repo_archive, "ClientSession", lambda read, write: FakeSession1())
+
+    try:
+        async with repo_archive._archive_session("https://mcp.example/gitlab", "ek_secret"):
+            pass
+    finally:
+        identity.reset_for_testing()
+
+    assert captured_headers.get("x-ach-key") == "ek_secret"
+    assert captured_headers.get("x-ach-agent") == "archive-agent"
+    assert captured_headers.get("x-ach-environment") == "platform-env"
+
+
+@pytest.mark.asyncio
+async def test_archive_session_with_explicit_request_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_headers: dict[str, str] = {}
+
+    @asynccontextmanager
+    async def fake_create_mcp_http_client(headers: dict[str, str] | None = None):  # type: ignore[no-untyped-def]
+        nonlocal captured_headers
+        if headers:
+            captured_headers = dict(headers)
+        yield object()
+
+    @asynccontextmanager
+    async def fake_streamable_http_client(endpoint: str, http_client: Any = None):  # type: ignore[no-untyped-def]
+        yield (object(), object(), object())
+
+    class FakeSession2:
+        async def __aenter__(self) -> FakeSession2:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def initialize(self) -> None:
+            pass
+
+    monkeypatch.setattr(repo_archive, "create_mcp_http_client", fake_create_mcp_http_client)
+    monkeypatch.setattr(repo_archive, "streamable_http_client", fake_streamable_http_client)
+    monkeypatch.setattr(repo_archive, "ClientSession", lambda read, write: FakeSession2())
+
+    custom_id = identity.ProcessIdentity(agent="explicit-agent", environment="explicit-env")
+    async with repo_archive._archive_session(
+        "https://mcp.example/gitlab", "ek_secret", request_identity=custom_id
+    ):
+        pass
+
+    assert captured_headers.get("x-ach-key") == "ek_secret"
+    assert captured_headers.get("x-ach-agent") == "explicit-agent"
+    assert captured_headers.get("x-ach-environment") == "explicit-env"
 
 
 def _make_targz(top: str, files: dict[str, bytes]) -> bytes:

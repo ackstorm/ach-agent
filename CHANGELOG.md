@@ -73,7 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ACH-fronted `{id,endpoint}` externals):
   - `repoCheckout` — harness-hosted `checkout_repo(project, ref, subpath?)` tool. Gives the agent an
     **on-disk** repo tree (full-tree `rg`, run tests, build) by reading gitlab-mcp's
-    `gitlab://{project}/archive/{ref}` resource **harness-side** with the `ek_` (`x-ach-key`),
+    `gitlab://{project}/archive/{ref}` resource **harness-side** with the `ek_` (`x-ach-key`) and canonical
+    identity headers (`x-ach-agent`, `x-ach-environment`),
     base64-decoding the gzip tar and extracting under `tmpBase` (path-traversal-safe via `tarfile`
     `filter="data"`). Fail-soft; TTL-swept on the next call (`ttlSeconds`). The gitlab MR/note channel
     stamps `head_sha`; the engine prompt gets a one-line `checkout_repo(...)` hint only when the

@@ -35,9 +35,7 @@ def with_identity_headers(
     """Replace any caller identity with exactly one authoritative header pair."""
     source = current() if identity is None else identity
     result = {
-        key: value
-        for key, value in headers.items()
-        if key.lower() not in _IDENTITY_HEADER_NAMES
+        key: value for key, value in headers.items() if key.lower() not in _IDENTITY_HEADER_NAMES
     }
     result["x-ach-agent"] = source.agent
     result["x-ach-environment"] = source.environment

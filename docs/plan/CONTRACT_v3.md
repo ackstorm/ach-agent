@@ -684,7 +684,8 @@ declared, the harness hosts a localhost MCP server exposing one tool, `checkout_
 so the agent can get an **on-disk** repo tree (full-tree `rg`, run tests, build) — things a
 per-file MCP call can't give. The harness reads gitlab-mcp's `gitlab://{project}/archive/{ref}
 [/{subpath}]` **resource** itself (opencode is an MCP client but discards resource blobs),
-authenticating with the `ek_` as `x-ach-key` harness-side, base64-decodes the gzip tar, and
+authenticating with the `ek_` as `x-ach-key` alongside canonical `x-ach-agent` and `x-ach-environment`
+headers harness-side, base64-decodes the gzip tar, and
 extracts it under `repoCheckout.tmpBase` (path-traversal-safe via `tarfile` `filter="data"`),
 returning the on-disk path. `sourceMcpServerId` names which hydrated `runtime.mcpServers[].id` serves the
 archive resource — so this rides the existing gitlab MCP provisioning, no new egress surface. It is

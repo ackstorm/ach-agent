@@ -1,13 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import pytest
-from prometheus_client import REGISTRY
 from pydantic import ValidationError
 
+from ach_agent import identity
 from ach_agent.engine.hydrate import (
     HydrationManifest,
     fetch_hydration_manifest,
     hydrate,
     resolve_model,
 )
+from ach_agent.identity import ProcessIdentity
+
+
+@pytest.fixture(autouse=True)
+def _reset_process_identity() -> None:
+    identity.reset_for_testing()
+    yield
+    identity.reset_for_testing()
+
 
 # Captured VERBATIM from the live ACH `POST /platform/hydrate` (2026-06-25). This is
 # the real contract: runtime.models are OBJECTS {id, endpoint}, NOT bare strings.
@@ -39,13 +51,20 @@ SAMPLE = {
 }
 
 
-async def test_hydrate_parses_manifest(monkeypatch):
-    async def fake_post(url, headers, manifest=SAMPLE):
+async def test_hydrate_parses_manifest(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_post(url: str, headers: dict[str, str], manifest: dict[str, object] = SAMPLE) -> dict[str, object]:
         assert headers["x-ach-key"] == "ek-abc"
+        assert headers["x-ach-agent"] == "hydrate-unit-agent"
+        assert headers["x-ach-environment"] == "platform"
         return SAMPLE
 
     monkeypatch.setattr("ach_agent.engine.hydrate._post_hydrate", fake_post)
-    m = await hydrate("https://ach.example.com", "ek-abc", agent_name="hydrate-unit-agent")
+    m = await hydrate(
+        "https://ach.example.com",
+        "ek-abc",
+        agent_name="hydrate-unit-agent",
+        requested_environment="platform",
+    )
     assert m.models == ["gemini.gemini-flash-latest"]  # property exposes the ids
     assert m.runtime.models[0].endpoint == "https://ach.example.com/v1"  # real endpoint kept
     assert m.mcp_servers[0].id == "mcp-google-calendar-ro"
@@ -63,53 +82,68 @@ async def test_fetch_hydration_manifest_rejects_missing_environment(
     monkeypatch.setattr("ach_agent.engine.hydrate._post_hydrate", fake_post)
 
     with pytest.raises(ValidationError, match="environment"):
-        await fetch_hydration_manifest("https://ach.example.com", "ek-abc")
+        await fetch_hydration_manifest(
+            "https://ach.example.com",
+            "ek-abc",
+            ProcessIdentity(agent="hydrate-unit-agent", environment="platform"),
+        )
 
 
-async def test_hydrate_sets_agent_info_only_after_required_manifest_validation(
+async def test_hydrate_sends_bootstrap_headers_then_commits_validated_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agent_name = "hydrated-info-test-agent"
-
     async def valid_post(url: str, headers: dict[str, str]) -> dict[str, object]:
+        assert url == "https://ach.example.com/platform/hydrate"
+        assert headers == {
+            "x-ach-key": "ek-abc",
+            "x-ach-agent": "classifier",
+            "x-ach-environment": "requested-platform",
+        }
         return SAMPLE
 
     monkeypatch.setattr("ach_agent.engine.hydrate._post_hydrate", valid_post)
-    manifest = await hydrate("https://ach.example.com", "ek-abc", agent_name=agent_name)
+    manifest = await hydrate(
+        "https://ach.example.com",
+        "ek-abc",
+        agent_name="classifier",
+        requested_environment="requested-platform",
+    )
 
     assert manifest.environment == "platform"
-    assert (
-        REGISTRY.get_sample_value(
-            "ach_agent_info", {"agent": agent_name, "environment": "platform"}
-        )
-        == 1.0
-    )
+    assert identity.current() == ProcessIdentity(agent="classifier", environment="platform")
 
-    missing_environment_agent = "hydrated-info-no-environment-agent"
+
+async def test_invalid_hydration_has_no_identity_side_effect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity.configure("already-committed", "stable")
+    before = identity.current()
     missing_environment = {key: value for key, value in SAMPLE.items() if key != "environment"}
 
-    async def missing_environment_post(url: str, headers: dict[str, str]) -> dict[str, object]:
+    async def invalid_post(url: str, headers: dict[str, str]) -> dict[str, object]:
+        assert headers["x-ach-agent"] == "new-agent"
+        assert headers["x-ach-environment"] == "requested-platform"
         return missing_environment
 
-    monkeypatch.setattr("ach_agent.engine.hydrate._post_hydrate", missing_environment_post)
+    monkeypatch.setattr("ach_agent.engine.hydrate._post_hydrate", invalid_post)
     with pytest.raises(ValidationError, match="environment"):
-        await hydrate("https://ach.example.com", "ek-abc", agent_name=missing_environment_agent)
+        await hydrate(
+            "https://ach.example.com",
+            "ek-abc",
+            agent_name="new-agent",
+            requested_environment="requested-platform",
+        )
 
-    assert not any(
-        sample.name == "ach_agent_info" and sample.labels.get("agent") == missing_environment_agent
-        for family in REGISTRY.collect()
-        if family.name == "ach_agent_info"
-        for sample in family.samples
-    )
+    assert identity.current() == before
 
 
-def test_resolve_model_hard_fails_when_absent():
+def test_resolve_model_hard_fails_when_absent() -> None:
     m = HydrationManifest.model_validate(SAMPLE)
     with pytest.raises(SystemExit):
         resolve_model(m, "gemini.not-there")
 
 
-def test_resolve_model_ok_returns_entry_when_present():
+def test_resolve_model_ok_returns_entry_when_present() -> None:
     m = HydrationManifest.model_validate(SAMPLE)
     entry = resolve_model(m, "gemini.gemini-flash-latest")  # no raise
     assert entry is not None

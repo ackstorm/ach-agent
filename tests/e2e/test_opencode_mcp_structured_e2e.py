@@ -88,7 +88,10 @@ async def test_hydration_returns_model_and_mcp_server(monkeypatch: Any) -> None:
         monkeypatch.setattr(hydrate_mod, "_post_hydrate", fake_post_hydrate)
 
         manifest = await hydrate(
-            "https://ach.example", "ek_guard_secret", agent_name="e2e-guard-agent"
+            "https://ach.example",
+            "ek_guard_secret",
+            agent_name="e2e-guard-agent",
+            requested_environment="guard",
         )
 
         assert manifest.models == ["openai.gpt-5"]

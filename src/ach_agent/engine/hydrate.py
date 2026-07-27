@@ -8,7 +8,8 @@ import httpx
 import structlog
 from pydantic import BaseModel, Field
 
-from ach_agent.engine.metrics import AGENT_INFO
+from ach_agent import identity
+from ach_agent.identity import ProcessIdentity
 
 log = structlog.get_logger(__name__)
 
@@ -79,14 +80,25 @@ async def _post_hydrate(url: str, headers: dict[str, str]) -> dict[str, Any]:
         return data
 
 
-async def fetch_hydration_manifest(base_url: str, ek: str) -> HydrationManifest:
-    data = await _post_hydrate(f"{base_url.rstrip('/')}/platform/hydrate", {"x-ach-key": ek})
+async def fetch_hydration_manifest(
+    base_url: str,
+    ek: str,
+    request_identity: ProcessIdentity,
+) -> HydrationManifest:
+    headers = identity.with_identity_headers({"x-ach-key": ek}, request_identity)
+    data = await _post_hydrate(f"{base_url.rstrip('/')}/platform/hydrate", headers)
     return HydrationManifest.model_validate(data)
 
 
-async def hydrate(base_url: str, ek: str, agent_name: str) -> HydrationManifest:
-    manifest = await fetch_hydration_manifest(base_url, ek)
-    AGENT_INFO.labels(agent=agent_name, environment=manifest.environment).set(1)
+async def hydrate(
+    base_url: str,
+    ek: str,
+    agent_name: str,
+    requested_environment: str,
+) -> HydrationManifest:
+    request_identity = ProcessIdentity(agent=agent_name, environment=requested_environment)
+    manifest = await fetch_hydration_manifest(base_url, ek, request_identity)
+    identity.configure(agent_name, manifest.environment)
     return manifest
 
 

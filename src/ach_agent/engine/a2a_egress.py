@@ -28,6 +28,7 @@ from uuid import uuid4
 
 import structlog
 
+from ach_agent import identity
 from ach_agent.engine.mcp_host import LocalMcpHost
 
 if TYPE_CHECKING:
@@ -79,6 +80,7 @@ class A2AAgentClient:
                 # (ACH's auth scheme — Authorization: Bearer 401s) so the SECRET STAYS
                 # IN THE HARNESS (opencode never sees it). Untested vs a live a2a peer.
                 headers["x-ach-key"] = self._api_key
+            headers = identity.with_identity_headers(headers)
             self._httpx_client = httpx.AsyncClient(
                 headers=headers,
                 timeout=httpx.Timeout(timeout=300.0),  # slow peer startup

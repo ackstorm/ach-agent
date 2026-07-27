@@ -18,6 +18,8 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+import ach_agent.engine.metrics  # noqa: F401
+from ach_agent import identity
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import ChannelConfig
 from ach_agent.http.app import create_app
@@ -26,6 +28,17 @@ from ach_agent.router.router import RouterAdmitResult
 # ---------------------------------------------------------------------------
 # Helpers / shared fixtures
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_process_identity() -> None:
+    identity.reset_for_testing()
+    yield
+    identity.reset_for_testing()
+
+
+def _metric_sample_lines(body: str) -> list[str]:
+    return [line for line in body.splitlines() if line and not line.startswith("#")]
 
 
 class FakeHandler:
@@ -128,21 +141,38 @@ def test_healthz(monkeypatch: pytest.MonkeyPatch) -> None:
         assert resp.json() == {"status": "ok"}
 
 
-def test_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
-    """HTTP-04: GET /metrics returns Prometheus metrics via make_asgi_app()."""
+def test_metrics_stamps_every_exposed_sample(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(SECRET_ENV, "s3cr3t")
-    cfg = _make_channel_cfg()
-    handler = FakeHandler()
-    app = create_app([cfg], handler)
+    identity.configure("classifier", "platform")
+    app = create_app([_make_channel_cfg()], FakeHandler())
 
     with TestClient(app) as client:
-        resp = client.get("/metrics")
-        assert resp.status_code == 200, f"metrics returned {resp.status_code}"
-        body = resp.text
-        # Prometheus text format contains "# HELP" or "# TYPE" or may be empty on first call
-        assert "# HELP" in body or "# TYPE" in body or body.strip() == "", (
-            f"metrics body does not look like Prometheus exposition: {body[:200]!r}"
+        response = client.get("/metrics/")
+
+    assert response.status_code == 200
+    samples = _metric_sample_lines(response.text)
+    assert samples
+    assert all('agent="classifier"' in line for line in samples)
+    assert all('environment="platform"' in line for line in samples)
+
+
+def test_metrics_name_restriction_remains_stamped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
+    identity.configure("classifier", "platform")
+    app = create_app([_make_channel_cfg()], FakeHandler())
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/metrics/",
+            params=[("name[]", "ach_agent_engine_watchdog_kills_total")],
         )
+
+    assert response.status_code == 200
+    samples = _metric_sample_lines(response.text)
+    assert samples
+    assert {line.split("{", 1)[0] for line in samples} == {"ach_agent_engine_watchdog_kills_total"}
+    assert all('agent="classifier"' in line for line in samples)
+    assert all('environment="platform"' in line for line in samples)
 
 
 def test_inbound_route_dispatches(monkeypatch: pytest.MonkeyPatch) -> None:

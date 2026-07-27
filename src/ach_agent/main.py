@@ -1316,7 +1316,12 @@ async def main(
     price_table: PriceTable | None = None
     accountant: CostAccountant | None = None
     if ek:
-        manifest = await hydrate(cfg.capability.ach.base_url, ek, cfg.agent.name)
+        manifest = await hydrate(
+            cfg.capability.ach.base_url,
+            ek,
+            cfg.agent.name,
+            cfg.capability.ach.environment,
+        )
         # hard-fail (sys.exit 1) if the configured model is absent from the hydrated set.
         resolve_model(manifest, cfg.model.name)
         # capability.filter.exclude — governance gate ABOVE the model. Skills are dropped

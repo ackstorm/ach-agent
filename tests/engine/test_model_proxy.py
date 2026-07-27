@@ -8,6 +8,7 @@ import aiohttp
 import pytest
 from aiohttp import web
 
+from ach_agent import identity
 from ach_agent.engine.cost import CostAccountant, ModelPrices, PriceTable, TokenUsage, compute_cost
 from ach_agent.engine.mcp_proxy import _forward, start_model_proxy, stop_model_proxies
 
@@ -492,3 +493,42 @@ async def test_litellm_headers_streaming_response_preserved_and_zero_cost() -> N
     finally:
         await stop_model_proxies()
         await runner.cleanup()
+
+
+async def test_direct_model_override_auth_still_replaces_identity_headers() -> None:
+    captured: list[dict[str, str]] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        captured.append(dict(request.headers))
+        return web.json_response({"ok": True})
+
+    runner, upstream_url = await _start_fake_ach_router(handler)
+    identity.configure("classifier", "platform")
+    try:
+        base = await start_model_proxy(
+            upstream_url,
+            "Bearer provider-key",
+            auth_header="Authorization",
+        )
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{base}/v1/chat/completions",
+                headers={
+                    "X-ACH-AGENT": "spoofed-agent",
+                    "X-Ach-Environment": "spoofed-environment",
+                },
+                json={"model": "test-model"},
+            ) as response:
+                assert response.status == 200
+                await response.read()
+    finally:
+        await stop_model_proxies()
+        await runner.cleanup()
+        identity.reset_for_testing()
+
+    lowered = {key.lower(): value for key, value in captured[0].items()}
+    assert lowered["authorization"] == "Bearer provider-key"
+    assert lowered["x-ach-agent"] == "classifier"
+    assert lowered["x-ach-environment"] == "platform"
+    assert sum(key.lower() == "x-ach-agent" for key in captured[0]) == 1
+    assert sum(key.lower() == "x-ach-environment" for key in captured[0]) == 1

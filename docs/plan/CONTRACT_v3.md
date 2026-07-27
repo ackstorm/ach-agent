@@ -399,16 +399,24 @@ When `governed: true`, the operator materializes these into the main container e
 |--------------------|--------------------------------------------------------|-------|
 | `ACH_BASE_URL`     | `CapabilityProfile.ach.endpoint`                       | fronts ALL egress — model, MCP, outbound A2A |
 | `ACH_TOKEN`        | the `ek_` (from `Agent.capability.identity.secretRef`) | ACH credential; held ONLY by the harness proxy; injected as the `x-ach-key` header; never logged; never reaches opencode |
-| `ACH_ENVIRONMENT`  | `CapabilityProfile.ach.name`                           | which ACH Hub Environment; sent as `x-ach-environment` on egress and used at boot self-hydration |
+| `ACH_ENVIRONMENT`  | `CapabilityProfile.ach.name`                           | which ACH Hub Environment; sent as `x-ach-environment` alongside `x-ach-agent` on egress and used at boot self-hydration |
 
 The `ek_` is **only** ever in `ACH_TOKEN`, held by the harness. **ACH's auth scheme is the
 `x-ach-key` header, NOT `Authorization: Bearer`** (a bearer 400s/401s against the ACH endpoint).
-The proxy pairs it with `x-ach-environment` on egress. Rotation by secret-hash restart.
+The proxy pairs it with canonical `x-ach-agent` and `x-ach-environment` headers on all egress.
+Process identity consists of `agent.name` from rendered config and the process environment.
+On initial boot, the requested environment comes from rendered `capability.ach.environment`;
+once the hydrate response validates, its required `environment` field becomes the committed
+process environment for subsequent metrics exposition and egress. If hydration fails validation
+or encounters a network error, no new process identity is committed. Rotation by secret-hash restart.
 
 **Hydration (no init container, no CLI).** At boot the harness self-hydrates from the single config,
 calling ACH's HTTP hydrate endpoint directly (it does **not** shell out to a CLI):
 
-1. **Hydrate** — the harness calls `POST {ACH_BASE_URL}/platform/hydrate` with `x-ach-key: ek_`.
+1. **Hydrate** — the harness calls `POST {ACH_BASE_URL}/platform/hydrate` carrying `x-ach-key: ek_`,
+   `x-ach-agent: <agent.name>`, and `x-ach-environment: <capability.ach.environment>` (trusted values
+   from rendered config for this bootstrap request). If the response fails validation, no new
+   process identity is committed.
    Manifest: `runtime.models[{id,endpoint}]`, `runtime.mcpServers[{id,endpoint}]`,
    `runtime.a2aAgents[{id,endpoint}]`, `context.{skills,prompts,artifacts}[{name,downloadUrl}]`.
    The Environment's **direct runtime** (models / mcpServers / a2aAgents) — the governed-ACH egress
@@ -419,9 +427,12 @@ calling ACH's HTTP hydrate endpoint directly (it does **not** shell out to a CLI
    `model.name` picks one of it. The operator chooses the model; the Environment bounds the choice.
 3. **Start the localhost proxy** (§9): a local reverse-proxy exposing `http://localhost/v1`
    (and `/gemini`, `/anthropic`) for the model, and local MCP routes (`/mcp/<id>`) for the
-   provisioned servers. The proxy injects `x-ach-key: ek_` (+ `x-ach-environment`) toward
-   `ACH_BASE_URL`, streaming SSE transparently. The model wire may override the auth header where a
-   provider requires it, but the `ek_` still lives only inside the proxy.
+   provisioned servers. The proxy injects `x-ach-key: ek_` along with canonical `x-ach-agent`
+   and `x-ach-environment` headers toward `ACH_BASE_URL`, streaming SSE transparently. Client-supplied
+   identity header names are stripped case-insensitively so that process-authoritative harness identity
+   always wins. Direct development model overrides (`ACH_MODEL_BASE_URL` / `ACH_MODEL_HEADER`) change
+   upstream auth parameters only and never disable identity header injection. The model wire may
+   override the auth header where a provider requires it, but the `ek_` still lives only inside the proxy.
 4. **Fetch context** — download each `skills/prompts/artifacts` `tar.gz` (with `x-ach-key: ek_`)
    and safe-extract (traversal-checked) into its directory: skills → reconciled into
    `<home>/.config/opencode/skills/<name>/`; prompts → `<home>/.ach-state/prompts/<name>/`;
@@ -502,6 +513,10 @@ GET  /healthz                          # liveness
 GET  /readyz                           # readiness = all enabled channel adapters listening
 GET  /metrics                          # Prometheus
 ```
+
+Every sample exposed by `GET /metrics`, including default Python/process metrics and `name[]`-restricted
+scrapes, carries the committed process `agent` and `environment` labels. Label stamping is performed
+at exposition via a non-mutating registry wrapper, ensuring process identity is attached to every exposed sample.
 
 `readyz`: Ready when adapters listen. Engine warmup is NOT a readiness gate, but if the engine
 does not reach ready within `startupTimeoutSeconds` the process exits.
@@ -621,16 +636,17 @@ class ConsentRequest(BaseModel):  action: Literal["consent"]    # RESERVED, v1.1
 
 The agent acts by calling **external MCP tool servers** (e.g. `gitlab-mcp`). opencode is a
 config-driven MCP client — **but it points only at the harness's localhost proxy.** The proxy
-fronts the ACH-fronted MCP servers, injecting the `ek_` (as `x-ach-key`, with `x-ach-environment`).
-opencode never sees the `ek_` or the real ACH URLs.
+fronts the ACH-fronted MCP servers, stripping any client-supplied `x-ach-agent` and `x-ach-environment`
+headers case-insensitively and injecting the `ek_` (as `x-ach-key`) alongside canonical `x-ach-agent`
+and `x-ach-environment` headers. opencode never sees the `ek_` or the real ACH URLs.
 
 **Where the tool set comes from (governed `type: ach`, the only v1 path):**
 - Hydration returns `runtime.mcpServers[{id, endpoint}]`. The harness creates a **localhost route**
   (`/mcp/<id>`) per server and writes it into `opencode.json` (`mcp.<id> = {type: remote,
   url: http://localhost/mcp/<id>}`).
 - The ACH Forwarder fronts all egress (model, MCP, outbound a2a). The localhost proxy strips any
-  client-supplied auth and adds the ACH `x-ach-key` + `x-ach-environment` — **no per-MCP
-  credentials, no real ACH URLs, and no `ek_` in `opencode.json`.**
+  client-supplied auth and identity headers case-insensitively and adds the ACH `x-ach-key` + `x-ach-agent`
+  + `x-ach-environment` — **no per-MCP credentials, no real ACH URLs, and no `ek_` in `opencode.json`.**
 
 **The local proxy is a credential-injection shim, not an egress re-implementation.** It is a dumb
 header-injecting passthrough in front of the *remote* ACH Forwarder (two forwarders in series; the
@@ -657,17 +673,19 @@ tool call at the proxy (complementing provisioning) and emit per-invocation egre
 
 **a2a egress = harness-hosted MCP tools.** Peer agents (`runtime.a2aAgents`) are surfaced to the
 model as MCP tools `a2a_{name}` / `a2a_{name}_async` / `a2a_{name}_status` (ported from ackbot
-`handlers/a2a/{tools,client,notification_store}.py`, a2a-sdk client). It is one of the harness's
-**hosted** MCP servers (the others: the memory facade §6.5, and the `checkout_repo` tool below);
-everything else is a proxied remote server. (Distinct from the inbound `a2a` **channel**, which
-receives calls — `channels/a2a.py`.)
+`handlers/a2a/{tools,client,notification_store}.py`, a2a-sdk client). Outbound requests from the
+harness-owned A2A `httpx.AsyncClient` carry `x-ach-key`, `x-ach-agent`, and `x-ach-environment` headers.
+It is one of the harness's **hosted** MCP servers (the others: the memory facade §6.5, and the `checkout_repo`
+tool below); everything else is a proxied remote server. (Distinct from the inbound `a2a` **channel**,
+which receives calls — `channels/a2a.py`.)
 
 **Repo checkout = harness-hosted MCP tool (opt-in, `mcpServers[].type=repoCheckout`).** When
 declared, the harness hosts a localhost MCP server exposing one tool, `checkout_repo(project, ref, subpath?)`,
 so the agent can get an **on-disk** repo tree (full-tree `rg`, run tests, build) — things a
 per-file MCP call can't give. The harness reads gitlab-mcp's `gitlab://{project}/archive/{ref}
 [/{subpath}]` **resource** itself (opencode is an MCP client but discards resource blobs),
-authenticating with the `ek_` as `x-ach-key` harness-side, base64-decodes the gzip tar, and
+authenticating with the `ek_` as `x-ach-key` alongside canonical `x-ach-agent` and `x-ach-environment`
+headers harness-side, base64-decodes the gzip tar, and
 extracts it under `repoCheckout.tmpBase` (path-traversal-safe via `tarfile` `filter="data"`),
 returning the on-disk path. `sourceMcpServerId` names which hydrated `runtime.mcpServers[].id` serves the
 archive resource — so this rides the existing gitlab MCP provisioning, no new egress surface. It is
@@ -704,7 +722,7 @@ memory (fail-open), tool egress is not fail-open — surface it as a per-invocat
    `src/ach_agent/engine/` and is reused. `engine` block removed; `model{name,type,params}` stays.
    Structured output is harness-validated (text extract + Pydantic + ≤1 retry). Router IP + tests kept. (2026-06-25)
 7. **Secret hygiene** — the harness fronts model + MCP on localhost; the `ek_` never reaches
-   opencode. ACH auth is the `x-ach-key` header (+ `x-ach-environment`), NOT `Authorization: Bearer`
+   opencode. ACH auth is the `x-ach-key` header (+ `x-ach-agent` and `x-ach-environment`), NOT `Authorization: Bearer`
    (§3/§6.10/§9). (2026-06-25)
 8. **Context** — skills / prompts / artifacts only (tar→dir at hydration); no plugins. Prompts and
    artifacts live under `<home>/.ach-state/{prompts,artifacts}`; skills under

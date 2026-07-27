@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from ach_agent import identity
 from ach_agent.engine import repo_archive
 
 
@@ -53,7 +54,7 @@ async def test_read_repo_archive_decodes_blob(monkeypatch: pytest.MonkeyPatch) -
     @asynccontextmanager
     async def _fake_session(endpoint: str, headers: dict[str, str]):  # type: ignore[no-untyped-def]
         assert endpoint == "https://mcp.example/gitlab"
-        assert headers == {"x-ach-key": "ek_test"}
+        assert headers["x-ach-key"] == "ek_test"
         yield _Session()
 
     monkeypatch.setattr(repo_archive, "mcp_session", _fake_session)
@@ -76,6 +77,62 @@ async def test_read_repo_archive_propagates_error(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(repo_archive, "mcp_session", _fake_session)
     with pytest.raises(RuntimeError, match="exceeds cap"):
         await repo_archive.read_repo_archive("e", "k", "1234", "abc")
+
+
+def _capture_session_headers(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """Patch repo_archive.mcp_session; return the dict the captured headers land in."""
+    captured: dict[str, str] = {}
+
+    class _Blob:
+        blob = base64.b64encode(b"gz").decode()
+
+    class _Result:
+        contents = [_Blob()]
+
+    class _Session:
+        async def read_resource(self, uri: Any) -> _Result:
+            return _Result()
+
+    @asynccontextmanager
+    async def _fake_session(endpoint: str, headers: dict[str, str]):  # type: ignore[no-untyped-def]
+        captured.update(headers)
+        yield _Session()
+
+    monkeypatch.setattr(repo_archive, "mcp_session", _fake_session)
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_read_repo_archive_carries_process_identity_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_headers = _capture_session_headers(monkeypatch)
+    identity.configure("archive-agent", "platform-env")
+    try:
+        await repo_archive.read_repo_archive(
+            "https://mcp.example/gitlab", "ek_secret", "1234", "abc"
+        )
+    finally:
+        identity.reset_for_testing()
+
+    assert captured_headers.get("x-ach-key") == "ek_secret"
+    assert captured_headers.get("x-ach-agent") == "archive-agent"
+    assert captured_headers.get("x-ach-environment") == "platform-env"
+
+
+@pytest.mark.asyncio
+async def test_read_repo_archive_with_explicit_request_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_headers = _capture_session_headers(monkeypatch)
+    custom_id = identity.ProcessIdentity(agent="explicit-agent", environment="explicit-env")
+    await repo_archive.read_repo_archive(
+        "https://mcp.example/gitlab", "ek_secret", "1234", "abc", request_identity=custom_id
+    )
+
+    assert captured_headers.get("x-ach-key") == "ek_secret"
+    assert captured_headers.get("x-ach-agent") == "explicit-agent"
+    assert captured_headers.get("x-ach-environment") == "explicit-env"
 
 
 def _make_targz(top: str, files: dict[str, bytes]) -> bytes:

@@ -65,7 +65,7 @@ from ach_agent.engine.cost import (
     validate_cost_source,
 )
 from ach_agent.engine.hydrate import hydrate, resolve_model
-from ach_agent.engine.mcp_passthrough import to_opencode_entry
+from ach_agent.engine.mcp_passthrough import to_engine_entry
 from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
 from ach_agent.engine.metrics import DRAIN_COMPLETED, ENGINE_LAUNCH_FAILURES
 from ach_agent.engine.sanitized_env import add_secret_redaction, configure_logging
@@ -586,7 +586,7 @@ def collect_passthrough_mcp(
     out: dict[str, dict[str, object]] = {}
     for name, spec in mcp_servers.items():
         if isinstance(spec, (LocalMcpServer, RemoteMcpServer)):
-            out[name] = to_opencode_entry(spec)
+            out[name] = to_engine_entry(spec)
     return out
 
 

@@ -27,7 +27,7 @@ def _contains_materialized_ek(value: Any, secrets: tuple[str, ...]) -> bool:
 
 
 def _passthrough_to_pi(entry: dict[str, Any]) -> dict[str, Any]:
-    """Convert an opencode-shaped passthrough entry into Pi adapter shape."""
+    """Reshape a canonical engine passthrough entry (mcp_passthrough) for the Pi adapter."""
     if entry.get("type") == "local":
         command = list(entry.get("command", []))
         out: dict[str, Any] = {

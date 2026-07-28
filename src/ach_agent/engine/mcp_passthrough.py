@@ -1,10 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Translate passthrough MCP config (local/remote) into opencode.json mcp entries.
+"""Translate passthrough MCP config (local/remote) into a canonical engine mcp entry.
 
-opencode is the MCP client for these — it connects DIRECTLY (not through the ACH localhost
-proxy). Mirrors ackbot-process._normalize_mcp_server: stdio → type "local" (command array),
-http → type "remote" (url + headers). Env NAMES / ${env:NAME} refs are resolved harness-side
-at write time — passthrough auth necessarily lands in opencode.json (opencode needs it).
+The ENGINE is the MCP client for these — it connects DIRECTLY, not through the ACH
+localhost proxy — so they carry no ACH credential and get no trace correlation from us.
+Every engine consumes this one shape: opencode writes it verbatim into its `mcp.<name>`
+block, Pi's adapter reshapes it in ``engine.pi.mcp_json``. Mirrors
+ackbot-process._normalize_mcp_server: stdio → type "local" (command array), http → type
+"remote" (url + headers). Env NAMES / ${env:NAME} refs are resolved harness-side at write
+time — passthrough auth necessarily lands in the engine's config file, which is what needs
+it.
 """
 
 from __future__ import annotations
@@ -23,8 +27,8 @@ def _expand_env_refs(value: str) -> str:
     return _ENV_REF.sub(lambda m: os.environ.get(m.group(1), ""), value)
 
 
-def to_opencode_entry(spec: LocalMcpServer | RemoteMcpServer) -> dict[str, object]:
-    """A single opencode.json `mcp.<name>` value for a passthrough server."""
+def to_engine_entry(spec: LocalMcpServer | RemoteMcpServer) -> dict[str, object]:
+    """The canonical engine mcp entry for one passthrough server."""
     if isinstance(spec, LocalMcpServer):
         entry: dict[str, object] = {
             "type": "local",

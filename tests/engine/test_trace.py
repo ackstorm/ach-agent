@@ -5,11 +5,18 @@ The two consumers of these header values live in other repos. What is asserted
 here is a local TRANSCRIPTION of the shapes they require — enough to catch a
 value this module could build wrong, not proof the contracts still read this way:
 
-  * LiteLLM's generic session sniffer — ``^x-.+-session-id$`` header name,
-    ``^[a-zA-Z0-9_\\-]{8,}$`` value (litellm/proxy/litellm_pre_call_utils.py).
+  * LiteLLM's ``langfuse_`` metadata prefix — ``LangFuseLogger.add_metadata_from_header``
+    copies every ``langfuse_*`` request header into metadata, which is the ONLY
+    session mechanism that works on the ``/gemini`` passthrough as well as on
+    ``/v1`` (the passthrough never runs the header sniffer that fills
+    ``metadata["session_id"]`` on ``/v1``).
   * The ACH forwarder's header strip — deletes every ``x-ach-*`` and
     ``x-litellm-*`` key (internal/forwarder/headers/strip.go), so a name that
     matches either prefix would silently never reach LiteLLM.
+
+Verified end-to-end 2026-07-28 through the public path (Istio → ach-gateway →
+forwarder → LiteLLM): both routes landed the probe's ``langfuse_session_id`` as
+the Langfuse ``session_id``.
 """
 
 from __future__ import annotations
@@ -23,8 +30,8 @@ from structlog.testing import capture_logs
 from ach_agent.engine import trace
 
 # Mirrors of the two external contracts above.
-LITELLM_SESSION_HEADER_RE = re.compile(r"^x-.+-session-id$", re.IGNORECASE)
-LITELLM_SESSION_VALUE_RE = re.compile(r"^[a-zA-Z0-9_\-]{8,}$")
+LANGFUSE_METADATA_PREFIX = "langfuse_"
+CLEAN_SESSION_VALUE_RE = re.compile(r"^[a-zA-Z0-9_\-]{8,}$")
 W3C_TRACEPARENT_RE = re.compile(r"^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$")
 FORWARDER_STRIPPED_PREFIXES = ("x-ach-", "x-litellm-")
 
@@ -45,7 +52,7 @@ def _clean_registry() -> None:
     ],
 )
 def test_session_id_always_satisfies_litellm(session_ref: str) -> None:
-    assert LITELLM_SESSION_VALUE_RE.match(trace.session_id_for(session_ref))
+    assert CLEAN_SESSION_VALUE_RE.match(trace.session_id_for(session_ref))
 
 
 def test_an_acceptable_ref_is_passed_through_verbatim() -> None:
@@ -71,11 +78,23 @@ def test_headers_survive_the_forwarder_strip() -> None:
         )
 
 
-def test_session_header_name_matches_litellms_sniffer() -> None:
+def test_the_session_header_uses_litellms_metadata_prefix() -> None:
+    """The `langfuse_` prefix is what makes this work on the passthrough too.
+
+    A vendor `x-…-session-id` name reaches `metadata["session_id"]` only on /v1,
+    where LiteLLM runs a header sniffer; the pass-through path never calls it and
+    the session is silently lost. `langfuse_*` headers are copied into metadata on
+    BOTH.
+    """
     token = trace.mint_token()
     trace.set_session(token, "ses_0001")
-    assert LITELLM_SESSION_HEADER_RE.match("x-agent-session-id")
-    assert "x-agent-session-id" in trace.headers(token)
+    sent = trace.headers(token)
+    session_headers = [name for name in sent if name != "traceparent"]
+    assert session_headers == ["langfuse_session_id"], (
+        "exactly one session header: sending a vendor x-…-session-id alongside it "
+        "makes /v1 fill the metadata twice and log a warning per request"
+    )
+    assert session_headers[0].startswith(LANGFUSE_METADATA_PREFIX)
 
 
 def test_traceparent_is_w3c_and_deterministic_in_the_invocation() -> None:
@@ -114,7 +133,7 @@ def test_one_invocation_is_one_trace_across_many_calls() -> None:
     trace.begin(token, "a1", "gitlab", "delivery-2")
     second = trace.headers(token)
     assert second["traceparent"] != first["traceparent"], "a new invocation is a new trace"
-    assert second["x-agent-session-id"] == first["x-agent-session-id"], "session outlives it"
+    assert second["langfuse_session_id"] == first["langfuse_session_id"], "session outlives it"
 
 
 def test_a_replaced_engine_session_replaces_the_session_id() -> None:
@@ -122,7 +141,7 @@ def test_a_replaced_engine_session_replaces_the_session_id() -> None:
     token = trace.mint_token()
     trace.set_session(token, "ses_0001")
     trace.set_session(token, "ses_0002")
-    assert trace.headers(token)["x-agent-session-id"] == "ses_0002"
+    assert trace.headers(token)["langfuse_session_id"] == "ses_0002"
 
 
 def test_no_headers_before_the_engine_resolves_anything() -> None:
@@ -157,7 +176,7 @@ def test_end_closes_the_trace_but_keeps_the_session() -> None:
     assert "traceparent" in trace.headers(token)
 
     trace.end(token)
-    assert trace.headers(token) == {"x-agent-session-id": "ses_0001"}
+    assert trace.headers(token) == {"langfuse_session_id": "ses_0001"}
 
     trace.begin(token, "a1", "gitlab", "delivery-2")
     assert "traceparent" in trace.headers(token), "the next invocation reopens it"
@@ -177,8 +196,8 @@ def test_tui_gets_an_invented_trace_and_a_constant_session() -> None:
 
     assert W3C_TRACEPARENT_RE.match(ha["traceparent"])
     assert ha["traceparent"] != hb["traceparent"], "invented per launch, not derived"
-    assert ha["x-agent-session-id"] == hb["x-agent-session-id"] == "tui_session"
-    assert LITELLM_SESSION_VALUE_RE.match(ha["x-agent-session-id"])
+    assert ha["langfuse_session_id"] == hb["langfuse_session_id"] == "tui_session"
+    assert CLEAN_SESSION_VALUE_RE.match(ha["langfuse_session_id"])
 
 
 def test_begin_tui_on_an_unknown_token_is_a_no_op() -> None:
@@ -225,7 +244,7 @@ def test_the_session_id_is_logged_as_it_is_sent() -> None:
         trace.set_session(token, "ses_0583b1827ffeaLtpVshBDEtCfe")
 
     entry = next(record for record in logs if record["event"] == "trace: session")
-    assert entry["session_id"] == trace.headers(token)["x-agent-session-id"]
+    assert entry["session_id"] == trace.headers(token)["langfuse_session_id"]
 
 
 def test_the_proxy_path_token_is_never_logged() -> None:
@@ -259,7 +278,7 @@ def test_inject_meta_carries_the_w3c_context_in_the_message() -> None:
 
 
 def test_inject_meta_does_not_carry_the_session_id() -> None:
-    """`_meta` is a W3C Trace Context carrier; x-agent-session-id is ours, not W3C."""
+    """`_meta` is a W3C Trace Context carrier; the session id is ours, not W3C."""
     token = trace.mint_token()
     trace.begin(token, "agent", "webhook", "delivery-1")
     trace.set_session(token, "ses_0583b1827ffeaLtpVshBDEtCfe")

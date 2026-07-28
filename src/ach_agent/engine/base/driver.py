@@ -142,7 +142,7 @@ class EngineDriver(Protocol):
 
         Every implementation MUST call ``trace.set_session(server.proxy_token, ref)`` as it
         resolves the ref and BEFORE the prompt that triggers the turn's model calls — that
-        is what puts the engine's own session id on ``x-agent-session-id`` (→ Langfuse
+        is what puts the engine's own session id on ``langfuse_session_id`` (→ Langfuse
         ``sessionId``). Doing it after the turn would leave every session's first turn
         uncorrelated."""
         ...

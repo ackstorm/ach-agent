@@ -17,13 +17,10 @@ Two grains, two headers:
     priority 2 — the HTTP traceparent header), so every model call of one
     invocation lands in a single Langfuse trace.
 
-``x-agent-session-id``
+``langfuse_session_id``
     The ENGINE's own session id (opencode's ``ses_…``, Pi's session file, …),
-    reported by the driver as it resolves the session for a turn. LiteLLM's
-    generic ``^x-.+-session-id$`` sniffer
-    (``litellm_pre_call_utils._extract_generic_session_id_from_headers``) turns
-    it into ``metadata.session_id`` → Langfuse ``sessionId``, so Langfuse groups
-    exactly what the agent itself considers one conversation.
+    reported by the driver as it resolves the session for a turn, so Langfuse
+    groups exactly what the agent itself considers one conversation.
 
     NOT derived from the harness session_key ("gitlab:group/repo", the PR the
     webhook came from): the mapping conv_key → engine session id already lives
@@ -31,10 +28,31 @@ Two grains, two headers:
     log line, so the observability backend gets the opaque engine id and no
     workload identifier ever leaves the cluster.
 
-Header choice is forced by the ACH forwarder: ``internal/forwarder/headers/
-strip.go`` deletes every ``x-ach-*`` and ``x-litellm-*`` key, so LiteLLM's
-explicit ``x-litellm-session-id`` never survives the hop. The generic vendor form
-and ``traceparent`` do.
+Two constraints pick these two names, and both were measured — do not "tidy"
+them into something that reads better:
+
+1. The ACH forwarder (``internal/forwarder/headers/strip.go``) deletes every
+   ``x-ach-*`` and ``x-litellm-*`` key, so LiteLLM's own ``x-litellm-session-id``
+   never survives the hop.
+2. On the ``/gemini`` PASSTHROUGH, session id is a METADATA concept while
+   traceparent is a HEADER one. ``/v1`` fills ``metadata["session_id"]`` from a
+   generic ``^x-.+-session-id$`` header sniffer, but nothing in LiteLLM's
+   pass-through path ever calls it — that path builds metadata from the API key
+   and the request BODY only. A vendor ``x-…-session-id`` therefore works on
+   ``/v1`` and is silently dropped on the passthrough. What DOES work on both is
+   the ``langfuse_`` prefix: ``LangFuseLogger.add_metadata_from_header`` copies
+   every ``langfuse_*`` request header into metadata, reading the raw header dict
+   the passthrough does populate. traceparent needs no such help — OTel reads it
+   straight off the raw headers on every route.
+
+Send ONLY ``langfuse_session_id``. Adding a vendor ``x-…-session-id`` alongside
+it makes ``/v1`` fill the metadata twice and log a "Overwriting Langfuse
+session_id" WARNING per request.
+
+⚠ The name carries UNDERSCORES. Prod fronts this with Istio/Envoy, which passes
+them; nginx DROPS underscore headers unless ``underscores_in_headers on``. A
+dev/e2e nginx shim in front of ACH will therefore lose the session silently while
+prod is fine.
 
 Independent of cost accounting on purpose — correlation must work with
 ``cost.source=none``, where no CostAccountant exists at all.
@@ -53,11 +71,11 @@ import structlog
 
 log = structlog.get_logger(__name__)
 
-# LiteLLM only accepts a session id matching ^[a-zA-Z0-9_\-]{8,}$. Opencode's
-# `ses_…` passes as-is; Pi hands back a session FILE PATH, which does not.
-_LITELLM_SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{8,}$")
+# The shape a session id is kept in (see `session_id_for`). Opencode's `ses_…`
+# passes as-is; Pi hands back a session FILE PATH, which does not.
+_CLEAN_SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{8,}$")
 _UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
-_SESSION_HEADER = "x-agent-session-id"
+_SESSION_HEADER = "langfuse_session_id"
 _READABLE_PREFIX = 40
 _TUI_SESSION_ID = "tui_session"
 
@@ -93,15 +111,20 @@ def _digest(value: str) -> str:
 
 
 def session_id_for(session_ref: str) -> str:
-    """Coerce an engine session ref into LiteLLM's session-id shape.
+    """Coerce an engine session ref into a well-behaved session id.
 
-    A ref LiteLLM already accepts is passed through VERBATIM, so an opencode
-    ``ses_…`` copied from a log line is an exact-match search in Langfuse. Only
-    a ref that would be rejected (Pi's session file path) is rewritten: readable
+    A ref already in shape is passed through VERBATIM, so an opencode ``ses_…``
+    copied from a log line is an exact-match search in Langfuse. Only a ref that
+    would not be (Pi's session file path — slashes, dots) is rewritten: readable
     tail for grepping, digest suffix so two files that sanitize alike stay
-    distinct. Always >= 8 chars, so the value never fails LiteLLM's sniffer.
+    distinct.
+
+    The shape is LiteLLM's old sniffer regex ``^[A-Za-z0-9_-]{8,}$``. Nothing
+    validates it on the ``langfuse_session_id`` path — it is copied into metadata
+    verbatim — so this is now self-imposed: a session id is a URL-visible
+    grouping key in Langfuse, and a raw filesystem path is a poor one.
     """
-    if _LITELLM_SESSION_ID.match(session_ref):
+    if _CLEAN_SESSION_ID.match(session_ref):
         return session_ref
     tail = session_ref.rsplit("/", 1)[-1]
     return f"{_UNSAFE.sub('-', tail)[:_READABLE_PREFIX]}-{_digest(session_ref)[:8]}"

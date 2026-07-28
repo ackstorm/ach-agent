@@ -186,7 +186,7 @@ async def _start_header_recording_upstream(
             {
                 key.lower(): value
                 for key, value in request.headers.items()
-                if key.lower() in ("traceparent", "x-agent-session-id")
+                if key.lower() in ("traceparent", "langfuse_session_id")
             }
         )
         return web.json_response({"ok": True})
@@ -232,7 +232,7 @@ async def test_a_tool_call_joins_its_invocations_trace() -> None:
     assert seen == [
         {
             "traceparent": trace.traceparent_for("agent", "webhook", "delivery-1"),
-            "x-agent-session-id": "ses_0583b1827ffeaLtpVshBDEtCfe",
+            "langfuse_session_id": "ses_0583b1827ffeaLtpVshBDEtCfe",
         }
     ], "an MCP tool call must carry the same trace + session as the model calls"
 
@@ -297,7 +297,7 @@ async def test_a_forged_traceparent_is_dropped_between_turns() -> None:
         trace.reset_for_testing()
 
     assert seen == [
-        {"x-agent-session-id": "ses_0583b1827ffeaLtpVshBDEtCfe"}
+        {"langfuse_session_id": "ses_0583b1827ffeaLtpVshBDEtCfe"}
     ], "the session survives the turn boundary; a forged traceparent must not"
 
 

@@ -573,7 +573,7 @@ async def test_token_route_injects_trace_and_session_headers() -> None:
 
     lowered = {key.lower(): value for key, value in captured[0].items()}
     assert lowered["traceparent"] == expected["traceparent"]
-    assert lowered["x-agent-session-id"] == expected["x-agent-session-id"]
+    assert lowered["langfuse_session_id"] == expected["langfuse_session_id"]
     assert sum(key.lower() == "traceparent" for key in captured[0]) == 1
 
 

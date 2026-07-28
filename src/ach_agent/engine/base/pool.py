@@ -36,7 +36,6 @@ from typing import TYPE_CHECKING
 import structlog
 
 from ach_agent.engine import trace
-from ach_agent.engine.cost import tokenize_model_base_url
 
 if TYPE_CHECKING:
     from ach_agent.engine.base.driver import EngineConfig, EngineDriver
@@ -356,8 +355,15 @@ class EnginePool:
             token = trace.mint_token()
             if accountant is not None:
                 accountant.adopt_token(token)
+            # Every proxied wire the engine is handed, not just the model: an MCP tool
+            # call is part of the same invocation and has to reach the same trace.
             config = dataclasses.replace(
-                config, model_base_url=tokenize_model_base_url(config.model_base_url, token)
+                config,
+                model_base_url=trace.tokenize_url(config.model_base_url, token),
+                mcp_local_urls={
+                    sid: trace.tokenize_url(url, token)
+                    for sid, url in config.mcp_local_urls.items()
+                },
             )
             # try/finally, NOT `except Exception`: a cold start can be CANCELLED
             # (the lane's asyncio.timeout(maxInvocationSeconds) wraps this call),

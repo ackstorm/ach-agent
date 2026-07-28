@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Trace + session correlation headers for the model proxy.
 
-One agent invocation is N model calls made by the engine subprocess, which never
-sets a correlation header of its own. The only per-server channel we control is
-the model proxy's ``/t/{token}/…`` route, so this module keeps a token →
-correlation registry that :mod:`ach_agent.engine.mcp_proxy` reads on every
-forward.
+One agent invocation is N model calls AND N tool calls made by the engine
+subprocess, which never sets a correlation header of its own. The only
+per-server channel we control is the ``/t/{token}/…`` route both localhost
+proxies serve, so this module keeps a token → correlation registry that
+:func:`ach_agent.engine.mcp_proxy._forward` reads on every forward — model wire
+and MCP wire alike, so a tool call lands in the trace of the invocation that
+asked for it.
 
 Two grains, two headers:
 
@@ -44,6 +46,11 @@ import hashlib
 import re
 import secrets
 from dataclasses import dataclass
+from urllib.parse import urlsplit, urlunsplit
+
+import structlog
+
+log = structlog.get_logger(__name__)
 
 # LiteLLM only accepts a session id matching ^[a-zA-Z0-9_\-]{8,}$. Opencode's
 # `ses_…` passes as-is; Pi hands back a session FILE PATH, which does not.
@@ -106,6 +113,20 @@ def traceparent_for(agent: str, channel: str, idempotency_key: str) -> str:
     return f"00-{d[:32]}-{d[32:48]}-01"
 
 
+def tokenize_url(url: str, token: str) -> str:
+    """Insert /t/<token> after the authority: http://h:p/v1 -> http://h:p/t/<tok>/v1.
+
+    The one way a localhost proxy learns WHICH pooled engine server made a call:
+    the engine subprocess is handed a per-server URL and never sets a header of
+    its own. Applied to every proxied wire the engine is pointed at — the model
+    base URL and each MCP server URL — so both land in the same trace/session.
+    """
+    parts = urlsplit(url)
+    return urlunsplit(
+        (parts.scheme, parts.netloc, f"/t/{token}{parts.path}", parts.query, parts.fragment)
+    )
+
+
 def mint_token() -> str:
     """Mint the model proxy's per-server path token.
 
@@ -127,6 +148,12 @@ def set_session(token: str, session_ref: str) -> None:
     entry = _registry.get(token)
     if entry is not None and session_ref:
         entry.session_id = session_id_for(session_ref)
+        # Correlation is otherwise invisible: the headers are set deep in the proxy
+        # forward, so without this line the only way to tell whether a turn was
+        # correlated is to query the observability backend. Logged once per session
+        # resolution, never per forward. The token is NEVER logged — it is the model
+        # proxy's `/t/{token}/` path secret.
+        log.info("trace: session", session_id=entry.session_id)
 
 
 def begin(token: str, agent: str, channel: str, idempotency_key: str) -> None:
@@ -142,6 +169,17 @@ def begin(token: str, agent: str, channel: str, idempotency_key: str) -> None:
     entry = _registry.get(token)
     if entry is not None:
         entry.traceparent = traceparent_for(agent, channel, idempotency_key)
+        # `trace_id` is the middle W3C field and is what Langfuse indexes: it can be
+        # pasted straight into the UI, while the full traceparent cannot. Both are
+        # logged — the traceparent so a request can be replayed verbatim, the trace id
+        # so an operator can jump to the trace without parsing anything.
+        log.info(
+            "trace: invocation",
+            traceparent=entry.traceparent,
+            trace_id=entry.traceparent.split("-")[1],
+            channel=channel,
+            idempotency_key=idempotency_key,
+        )
 
 
 def begin_tui(token: str) -> None:
@@ -159,6 +197,13 @@ def begin_tui(token: str) -> None:
     if entry is not None:
         entry.session_id = _TUI_SESSION_ID
         entry.traceparent = f"00-{secrets.token_hex(16)}-{secrets.token_hex(8)}-01"
+        log.info(
+            "trace: invocation",
+            traceparent=entry.traceparent,
+            trace_id=entry.traceparent.split("-")[1],
+            channel="tui",
+            session_id=entry.session_id,
+        )
 
 
 def end(token: str) -> None:

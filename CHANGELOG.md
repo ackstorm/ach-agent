@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Added
+
+- MCP tool calls now join their invocation's Langfuse trace. The localhost MCP proxy
+  serves the same `/t/{token}/` correlated routes the model proxy does, and every
+  proxied wire the engine is handed — model base URL and each MCP server URL — is
+  tokenized with the same per-server token. Before this, a tool call reached the
+  observability backend as its own orphan trace. The plain `/mcp/{id}` routes stay
+  valid and simply forward uncorrelated.
+- The correlation a turn is running under is now visible in the agent log
+  (`trace: invocation` / `trace: session`, with the `trace_id` Langfuse indexes so it
+  can be pasted straight into the UI). The proxy path token is never logged.
+
 ## [0.10.3] - 2026-07-28
 
 ### Added

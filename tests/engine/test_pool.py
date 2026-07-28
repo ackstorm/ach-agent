@@ -8,6 +8,7 @@ session_key; releasing one key never affects another.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -262,6 +263,37 @@ def _real_config(
 
 def _make_accountant() -> CostAccountant:
     return CostAccountant(source="litellm_usage", wire="openai", prices=None, model_name="m")
+
+
+async def test_acquire_tokenizes_every_proxied_wire_not_just_the_model() -> None:
+    # A tool call is part of the same invocation as the model calls that requested it,
+    # so the MCP wires carry the SAME token — otherwise they reach Langfuse as their
+    # own orphan traces, which is exactly what they used to do.
+    pool = EnginePool()
+    captured: dict[str, EngineConfig] = {}
+    fake = _make_fake_server(alive=True)
+
+    async def fake_start(cfg: EngineConfig, session_key: str) -> ManagedServer:
+        captured["cfg"] = cfg
+        return fake
+
+    pool._start_server = fake_start
+
+    config = dataclasses.replace(
+        _real_config(),
+        mcp_local_urls={
+            "mcp-zoho-desk": "http://127.0.0.1:35057/mcp/mcp-zoho-desk",
+            "mcp-slack": "http://127.0.0.1:35057/mcp/mcp-slack",
+        },
+    )
+    server = await pool.acquire("k1", config)
+
+    token = server.proxy_token
+    assert captured["cfg"].mcp_local_urls == {
+        "mcp-zoho-desk": f"http://127.0.0.1:35057/t/{token}/mcp/mcp-zoho-desk",
+        "mcp-slack": f"http://127.0.0.1:35057/t/{token}/mcp/mcp-slack",
+    }
+    assert captured["cfg"].model_base_url == f"http://127.0.0.1:9/t/{token}/v1"
 
 
 @pytest.mark.parametrize("engine_type", ["opencode", "pi"])

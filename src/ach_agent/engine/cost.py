@@ -17,7 +17,6 @@ import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
-from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 import structlog
@@ -359,14 +358,6 @@ class TurnTokens:
             cache_read=base.cache_read + usage.cached_read_tokens,
             cache_write=base.cache_write + usage.cache_creation_tokens,
         )
-
-
-def tokenize_model_base_url(url: str, token: str) -> str:
-    """Insert /t/<token> after the authority: http://h:p/v1 -> http://h:p/t/<tok>/v1."""
-    parts = urlsplit(url)
-    return urlunsplit(
-        (parts.scheme, parts.netloc, f"/t/{token}{parts.path}", parts.query, parts.fragment)
-    )
 
 
 class _TokenBucket:

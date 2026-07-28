@@ -1,11 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """Localhost MCP reverse-proxy.
 
-Fronts each ACH MCP server on 127.0.0.1 so opencode points only at localhost and
-NEVER sees the ``ek_`` or the real ACH endpoint. Each localhost request to
-``/mcp/<id>`` is forwarded to that server's real endpoint with the ACH
+Fronts each ACH MCP server on 127.0.0.1 so the engine — whichever one the agent
+runs — points only at localhost and NEVER sees the ``ek_`` or the real ACH
+endpoint. Each localhost request to
+``/mcp/<id>`` — or ``/t/{token}/mcp/<id>``, the correlated form the pool hands
+out — is forwarded to that server's real endpoint with the ACH
 ``x-ach-key: {ek}`` header ADDED, and the upstream response is streamed back
 (SSE / ``text/event-stream`` safe — the body is never fully buffered).
+
+Both proxies here egress through :func:`_forward`, which is the single place
+every outbound header is decided: auth, agent identity
+(:mod:`ach_agent.identity`) and trace/session correlation
+(:mod:`ach_agent.engine.trace`). A new route therefore cannot ship a subset of
+them by forgetting an argument — it only chooses whether it carries a token.
 
 Security: the ``ek`` lives ONLY inside the per-server handler closure. It is never
 stored on an instance attribute and never logged.
@@ -98,7 +106,7 @@ async def _forward(
     label: str = "proxy",
     auth_header: str = "x-ach-key",
     observer: CostObserver | None = None,
-    extra_headers: dict[str, str] | None = None,
+    token: str = "",
 ) -> web.StreamResponse:
     """Forward ``request`` to ``target`` injecting auth, streaming the response.
 
@@ -108,15 +116,21 @@ async def _forward(
     to ACH's ``x-ach-key``; the model proxy can override it (e.g. ``Authorization`` for
     a litellm-direct bypass). ``observer`` (cost accounting, Plan 1) parses a COPY of the
     bytes — it never gates a write and a failure in it never touches the relay.
-    ``extra_headers`` (trace/session correlation) is applied LAST so it wins over
-    anything the engine happened to send under the same name.
+
+    This is the ONE place every outbound header is decided — auth, agent identity
+    and trace/session correlation — so a new proxy route cannot ship half of them.
+    ``token`` is the per-server handle from the ``/t/{token}/`` path; an empty or
+    unknown one simply yields no correlation headers (the plain, untokenized routes),
+    never an error. Correlation is applied LAST so it wins over anything the engine
+    happened to send under the same name.
     """
+    correlation = trace.headers(token)
     # Case-insensitive drop of the names we are about to set, like
     # _DROP_REQUEST_HEADERS and identity.with_identity_headers above: this dict
     # keeps the wire case, so a client-sent `Traceparent` would survive a plain
     # update() as a SECOND key and leave which one wins to aiohttp's CIMultiDict
     # coercion.
-    shadowed = {name.lower() for name in (extra_headers or {})}
+    shadowed = {name.lower() for name in correlation}
     headers = {
         key: value
         for key, value in request.headers.items()
@@ -124,8 +138,7 @@ async def _forward(
     }
     headers[auth_header] = auth_value
     headers = identity.with_identity_headers(headers)
-    if extra_headers:
-        headers.update(extra_headers)
+    headers.update(correlation)
 
     body = await request.read()
     if observer is not None:
@@ -256,6 +269,13 @@ class McpProxy(_LocalProxy):
                 handler = self._make_handler(server.endpoint, ek)  # ek: closure only
                 app.router.add_route("*", f"/mcp/{server.id}", handler)
                 app.router.add_route("*", f"/mcp/{server.id}/{{tail:.*}}", handler)
+                # Same shape the model proxy uses: this proxy is process-wide (one per
+                # agent, shared by every session), so the token in the path is the only
+                # thing that says WHICH pooled engine server is calling — and therefore
+                # which invocation's trace the tool call belongs to. The plain routes
+                # above stay valid and simply forward uncorrelated.
+                app.router.add_route("*", f"/t/{{token}}/mcp/{server.id}", handler)
+                app.router.add_route("*", f"/t/{{token}}/mcp/{server.id}/{{tail:.*}}", handler)
 
         ids = [s.id for s in routed]
         port = await self._serve("mcp proxy", add_routes, servers=ids)
@@ -273,7 +293,9 @@ class McpProxy(_LocalProxy):
             tail = request.match_info.get("tail", "")
             target = f"{base}/{tail}" if tail else base
             assert self._session is not None  # start() always creates it
-            return await _forward(self._session, target, request, ek, label="mcp")
+            # Empty on the plain /mcp/<id> routes — _forward then adds no correlation.
+            token = request.match_info.get("token", "")
+            return await _forward(self._session, target, request, ek, label="mcp", token=token)
 
         return handler
 
@@ -367,7 +389,7 @@ class ModelProxy(_LocalProxy):
                 label="model",
                 auth_header=auth_header,
                 observer=observer,
-                extra_headers=trace.headers(token),
+                token=token,
             )
 
         return handler

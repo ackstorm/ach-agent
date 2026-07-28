@@ -9,6 +9,7 @@ import aiohttp
 from aiohttp import web
 
 from ach_agent import identity
+from ach_agent.engine import trace
 from ach_agent.engine.hydrate import McpServer
 from ach_agent.engine.mcp_proxy import McpProxy
 
@@ -162,3 +163,113 @@ async def test_mcp_proxy_replaces_case_variant_client_identity() -> None:
     assert seen_identity == [
         [("x-ach-agent", "classifier"), ("x-ach-environment", "platform")]
     ]
+
+
+async def _start_header_recording_upstream(
+    seen: list[dict[str, str]],
+) -> tuple[web.AppRunner, str]:
+    """Upstream that records the correlation headers of every request it receives."""
+
+    async def handler(request: web.Request) -> web.Response:
+        seen.append(
+            {
+                key.lower(): value
+                for key, value in request.headers.items()
+                if key.lower() in ("traceparent", "x-agent-session-id")
+            }
+        )
+        return web.json_response({"ok": True})
+
+    app = web.Application()
+    app.router.add_route("*", "/{tail:.*}", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host="127.0.0.1", port=0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+    return runner, f"http://127.0.0.1:{port}"
+
+
+async def test_a_tool_call_joins_its_invocations_trace() -> None:
+    """The defect this route fixes: MCP calls used to reach Langfuse uncorrelated.
+
+    The engine subprocess sets no correlation header of its own, so the token in the
+    path is the only thing tying a tool call to the invocation that caused it.
+    """
+    seen: list[dict[str, str]] = []
+    upstream_runner, upstream_url = await _start_header_recording_upstream(seen)
+    proxy = McpProxy()
+    token = trace.mint_token()
+    trace.begin(token, "agent", "webhook", "delivery-1")
+    trace.set_session(token, "ses_0583b1827ffeaLtpVshBDEtCfe")
+    try:
+        urls = await proxy.start(
+            [McpServer(id="m1", endpoint=upstream_url)], ek="ek-xyz", exclude=set()
+        )
+        tokenized = trace.tokenize_url(urls["m1"], token)
+        assert f"/t/{token}/mcp/m1" in tokenized
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(tokenized, json={"hello": "world"}) as resp:
+                assert resp.status == 200
+                await resp.read()
+    finally:
+        await proxy.stop()
+        await upstream_runner.cleanup()
+        trace.reset_for_testing()
+
+    assert seen == [
+        {
+            "traceparent": trace.traceparent_for("agent", "webhook", "delivery-1"),
+            "x-agent-session-id": "ses_0583b1827ffeaLtpVshBDEtCfe",
+        }
+    ], "an MCP tool call must carry the same trace + session as the model calls"
+
+
+async def test_the_plain_route_still_works_uncorrelated() -> None:
+    """Backward compatibility: anything still pointed at /mcp/<id> keeps forwarding."""
+    seen: list[dict[str, str]] = []
+    upstream_runner, upstream_url = await _start_header_recording_upstream(seen)
+    proxy = McpProxy()
+    token = trace.mint_token()
+    trace.begin(token, "agent", "webhook", "delivery-1")
+    try:
+        urls = await proxy.start(
+            [McpServer(id="m1", endpoint=upstream_url)], ek="ek-xyz", exclude=set()
+        )
+        async with aiohttp.ClientSession() as session:
+            async with session.post(urls["m1"], json={"hello": "world"}) as resp:
+                assert resp.status == 200
+                await resp.read()
+    finally:
+        await proxy.stop()
+        await upstream_runner.cleanup()
+        trace.reset_for_testing()
+
+    assert seen == [{}], "the untokenized route must forward, just without correlation"
+
+
+async def test_a_client_supplied_traceparent_never_wins() -> None:
+    """The engine must not be able to forge the correlation of its own tool calls."""
+    seen: list[dict[str, str]] = []
+    upstream_runner, upstream_url = await _start_header_recording_upstream(seen)
+    proxy = McpProxy()
+    token = trace.mint_token()
+    trace.begin(token, "agent", "webhook", "delivery-1")
+    try:
+        urls = await proxy.start(
+            [McpServer(id="m1", endpoint=upstream_url)], ek="ek-xyz", exclude=set()
+        )
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                trace.tokenize_url(urls["m1"], token),
+                headers={"Traceparent": "00-" + "f" * 32 + "-" + "f" * 16 + "-01"},
+            ) as resp:
+                assert resp.status == 200
+                await resp.read()
+    finally:
+        await proxy.stop()
+        await upstream_runner.cleanup()
+        trace.reset_for_testing()
+
+    assert seen[0]["traceparent"] == trace.traceparent_for("agent", "webhook", "delivery-1")

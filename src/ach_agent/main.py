@@ -1661,17 +1661,20 @@ async def main(
                 if debug_mode or not sys.stdout.isatty():
                     await run_tui_console(router)
                 elif cfg.engine.type == "pi":
-                    from ach_agent.engine.cost import tokenize_model_base_url
                     from ach_agent.engine.pi.driver import PiDriver
 
-                    # Native Pi bypasses the pool, so nothing has tokenized its model
-                    # base URL. Mint here or the console's model calls take the proxy's
-                    # PLAIN route and reach Langfuse uncorrelated.
+                    # Native Pi bypasses the pool, so nothing has tokenized its proxied
+                    # wires. Mint here or the console's model AND tool calls take the
+                    # proxies' PLAIN routes and reach Langfuse uncorrelated.
                     tui_token = trace.mint_token()
                     trace.begin_tui(tui_token)
                     warm_cfg = dataclasses.replace(
                         warm_cfg,
-                        model_base_url=tokenize_model_base_url(warm_cfg.model_base_url, tui_token),
+                        model_base_url=trace.tokenize_url(warm_cfg.model_base_url, tui_token),
+                        mcp_local_urls={
+                            sid: trace.tokenize_url(url, tui_token)
+                            for sid, url in warm_cfg.mcp_local_urls.items()
+                        },
                     )
                     await PiDriver().run_tui(warm_cfg, _CONSOLE_SESSION_KEY)
                 else:

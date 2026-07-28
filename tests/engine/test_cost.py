@@ -21,7 +21,6 @@ from ach_agent.engine.cost import (
     UsageObserver,
     compute_cost,
     report_price_load_result,
-    tokenize_model_base_url,
     report_price_load_result,
     validate_cost_source,
 )
@@ -403,10 +402,6 @@ def _priced_table(model_name: str, prices: ModelPrices) -> PriceTable:
     table = PriceTable("http://unused", "ek")
     table._prices[model_name] = prices  # test-only poke; PriceTable exposes no setter
     return table
-
-
-def test_tokenize_model_base_url() -> None:
-    assert tokenize_model_base_url("http://127.0.0.1:9/v1", "T") == "http://127.0.0.1:9/t/T/v1"
 
 
 def test_interleaved_tokens_attributed_independently() -> None:

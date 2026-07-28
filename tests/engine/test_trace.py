@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 
 import pytest
+from structlog.testing import capture_logs
 
 from ach_agent.engine import trace
 
@@ -181,3 +182,59 @@ def test_tui_gets_an_invented_trace_and_a_constant_session() -> None:
 
 def test_begin_tui_on_an_unknown_token_is_a_no_op() -> None:
     trace.begin_tui("never-minted")
+
+
+def test_tokenize_url_inserts_the_token_after_the_authority() -> None:
+    assert trace.tokenize_url("http://127.0.0.1:9/v1", "T") == "http://127.0.0.1:9/t/T/v1"
+
+
+def test_every_proxied_wire_tokenizes_the_same_way() -> None:
+    # The model wire and an MCP wire must produce the SAME token segment, or a tool
+    # call lands outside its invocation's trace — the defect this shape fixes.
+    token = trace.mint_token()
+    model = trace.tokenize_url("http://127.0.0.1:45495/gemini/v1beta", token)
+    mcp = trace.tokenize_url("http://127.0.0.1:35057/mcp/mcp-zoho-desk", token)
+
+    assert model == f"http://127.0.0.1:45495/t/{token}/gemini/v1beta"
+    assert mcp == f"http://127.0.0.1:35057/t/{token}/mcp/mcp-zoho-desk"
+
+
+def test_an_untokenized_wire_yields_no_correlation_rather_than_an_error() -> None:
+    # The plain /mcp/<id> and /v1 routes stay valid: they forward uncorrelated.
+    assert trace.headers("") == {}
+
+
+def test_the_logged_trace_id_is_the_one_langfuse_indexes() -> None:
+    # The operator pastes trace_id (the middle W3C field), never the traceparent,
+    # into Langfuse — a wrong slice here makes the log line silently useless.
+    token = trace.mint_token()
+    with capture_logs() as logs:
+        trace.begin(token, "agent", "webhook", "delivery-1")
+
+    entry = next(record for record in logs if record["event"] == "trace: invocation")
+    traceparent = trace.headers(token)["traceparent"]
+    assert entry["traceparent"] == traceparent
+    assert entry["trace_id"] == traceparent.split("-")[1]
+    assert re.fullmatch(r"[0-9a-f]{32}", entry["trace_id"])
+
+
+def test_the_session_id_is_logged_as_it_is_sent() -> None:
+    token = trace.mint_token()
+    with capture_logs() as logs:
+        trace.set_session(token, "ses_0583b1827ffeaLtpVshBDEtCfe")
+
+    entry = next(record for record in logs if record["event"] == "trace: session")
+    assert entry["session_id"] == trace.headers(token)["x-agent-session-id"]
+
+
+def test_the_proxy_path_token_is_never_logged() -> None:
+    # `token` is the model proxy's /t/{token}/ path secret: anything that reaches
+    # a log line here would leak a working route into stdout.
+    token = trace.mint_token()
+    with capture_logs() as logs:
+        trace.begin(token, "agent", "webhook", "delivery-1")
+        trace.set_session(token, "ses_0583b1827ffeaLtpVshBDEtCfe")
+        trace.begin_tui(token)
+
+    assert logs, "expected the correlation log lines"
+    assert token not in repr(logs)

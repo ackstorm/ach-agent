@@ -14,6 +14,7 @@ value this module could build wrong, not proof the contracts still read this way
 
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
@@ -238,3 +239,64 @@ def test_the_proxy_path_token_is_never_logged() -> None:
 
     assert logs, "expected the correlation log lines"
     assert token not in repr(logs)
+
+
+def _call(**params: object) -> bytes:
+    return json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params}).encode()
+
+
+def test_inject_meta_carries_the_w3c_context_in_the_message() -> None:
+    """SEP-414: the MCP span parents to the MESSAGE's context, not the transport's."""
+    token = trace.mint_token()
+    trace.begin(token, "agent", "webhook", "delivery-1")
+
+    out = json.loads(trace.inject_meta(_call(name="search"), token))
+
+    assert out["params"]["_meta"]["traceparent"] == trace.traceparent_for(
+        "agent", "webhook", "delivery-1"
+    )
+    assert out["params"]["name"] == "search", "the caller's params must survive intact"
+
+
+def test_inject_meta_does_not_carry_the_session_id() -> None:
+    """`_meta` is a W3C Trace Context carrier; x-agent-session-id is ours, not W3C."""
+    token = trace.mint_token()
+    trace.begin(token, "agent", "webhook", "delivery-1")
+    trace.set_session(token, "ses_0583b1827ffeaLtpVshBDEtCfe")
+
+    meta = json.loads(trace.inject_meta(_call(name="search"), token))["params"]["_meta"]
+
+    assert set(meta) == {"traceparent"}
+
+
+def test_inject_meta_creates_params_when_the_request_has_none() -> None:
+    token = trace.mint_token()
+    trace.begin(token, "agent", "webhook", "delivery-1")
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).encode()
+
+    out = json.loads(trace.inject_meta(body, token))
+
+    assert out["params"]["_meta"]["traceparent"]
+
+
+def test_inject_meta_never_breaks_a_call() -> None:
+    """Correlation is best-effort: anything unparseable or non-request passes through."""
+    token = trace.mint_token()
+    trace.begin(token, "agent", "webhook", "delivery-1")
+
+    assert trace.inject_meta(b"", token) == b""
+    assert trace.inject_meta(b"not json", token) == b"not json"
+    assert trace.inject_meta(b"[1, 2]", token) == b"[1, 2]"  # batch: left alone
+    response = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}}).encode()
+    assert trace.inject_meta(response, token) == response
+
+
+def test_inject_meta_is_a_no_op_without_an_invocation() -> None:
+    """Between turns trace.end clears the traceparent — nothing to propagate."""
+    token = trace.mint_token()
+    trace.begin(token, "agent", "webhook", "delivery-1")
+    trace.end(token)
+
+    body = _call(name="search")
+    assert trace.inject_meta(body, token) == body
+    assert trace.inject_meta(body, "never-minted") == body

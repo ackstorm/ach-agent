@@ -146,6 +146,12 @@ async def _forward(
             body = observer.mutate_request(body, request.headers.get("Content-Type", ""))
         except Exception:  # noqa: BLE001
             log.debug(f"{label} observer mutate_request failed", exc_info=True)
+    if label == "mcp":
+        # Correlate the MESSAGE, not just the transport: one streamable-HTTP session
+        # multiplexes many messages, so the header alone would glue them all under the
+        # session's first request. Additive to the header, and a no-op on anything that
+        # is not a JSON-RPC request.
+        body = trace.inject_meta(body, token)
     # Diagnostics for MCP toolCount=0 triage: the JSON-RPC method opencode sends and the
     # MCP session-id round-trip. NEVER logs the ek (injected above, never read here) nor
     # request/response bodies/params — only the method name + header presence + status.

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import aiohttp
 from aiohttp import web
@@ -324,3 +325,56 @@ async def test_a_client_supplied_traceparent_never_wins() -> None:
         trace.reset_for_testing()
 
     assert seen[0]["traceparent"] == trace.traceparent_for("agent", "webhook", "delivery-1")
+
+
+async def test_a_tool_call_carries_its_trace_in_the_message_too() -> None:
+    """The MCP-native carrier (SEP-414), on top of the header.
+
+    A streamable-HTTP session multiplexes many messages over one connection, so a
+    header-only correlation glues every message under the session's first request.
+    LiteLLM reads this carrier only under LITELLM_OTEL_V2, so the assertion is on
+    what leaves US — the contract we control.
+    """
+    bodies: list[bytes] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        bodies.append(await request.read())
+        return web.json_response({"ok": True})
+
+    app = web.Application()
+    app.router.add_route("*", "/{tail:.*}", handler)
+    upstream_runner = web.AppRunner(app)
+    await upstream_runner.setup()
+    site = web.TCPSite(upstream_runner, host="127.0.0.1", port=0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+
+    proxy = McpProxy()
+    token = trace.mint_token()
+    trace.begin(token, "agent", "webhook", "delivery-1")
+    try:
+        urls = await proxy.start(
+            [McpServer(id="m1", endpoint=f"http://127.0.0.1:{port}")], ek="ek-xyz", exclude=set()
+        )
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                trace.tokenize_url(urls["m1"], token),
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": "search", "arguments": {"q": "x"}},
+                },
+            ) as resp:
+                assert resp.status == 200
+                await resp.read()
+    finally:
+        await proxy.stop()
+        await upstream_runner.cleanup()
+        trace.reset_for_testing()
+
+    sent = json.loads(bodies[0])
+    assert sent["params"]["_meta"]["traceparent"] == trace.traceparent_for(
+        "agent", "webhook", "delivery-1"
+    )
+    assert sent["params"]["arguments"] == {"q": "x"}, "the tool's own arguments must survive"

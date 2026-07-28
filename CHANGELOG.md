@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.10.3] - 2026-07-28
+
 ### Added
 
 - Model calls now carry trace/session correlation headers, so one agent invocation is one

@@ -87,11 +87,6 @@ _TUI_SESSION_ID = "tui_session"
 # verbatim, letting a tool call claim any trace it likes.
 CORRELATION_HEADERS = frozenset({"traceparent", _SESSION_HEADER})
 
-# The subset that is W3C Trace Context, i.e. what travels in an MCP message's
-# `params._meta` as well as on the wire. The session id is ours, not W3C, and has
-# no place in that carrier — see :func:`inject_meta`.
-_W3C_HEADERS = frozenset({"traceparent", "tracestate"})
-
 
 @dataclass(slots=True)
 class _Entry:
@@ -262,7 +257,7 @@ def drop(token: str) -> None:
 
 
 def inject_meta(body: bytes, token: str) -> bytes:
-    """Put this token's W3C context in a JSON-RPC message's ``params._meta``.
+    """Put this token's correlation in a JSON-RPC message's ``params._meta``.
 
     The MCP-native way to propagate a trace (SEP-414 / the OTel MCP semconv, and
     what Langfuse documents): an HTTP header correlates the TRANSPORT, but a
@@ -270,15 +265,25 @@ def inject_meta(body: bytes, token: str) -> bytes:
     span has to parent to the context carried by the MESSAGE or every message
     glues under the session's first request.
 
-    Additive — the header still goes out. LiteLLM reads this carrier only with
-    ``LITELLM_OTEL_V2`` enabled (``_mcp_meta_trace_carrier``), so today it is
-    inert there; ``_meta`` is reserved by the MCP spec for exactly this, so a
-    server that does not understand it must ignore it.
+    Carries the SESSION id too, not just the W3C ``traceparent``. On the HTTP
+    routes the session rides a request header, but an MCP message span never sees
+    those headers: it deliberately does not parent to the transport span, so it
+    inherits nothing from the request the message arrived on. ``_meta`` is the
+    only channel that reaches it. LiteLLM's own extractor reads ``traceparent``
+    and ignores the rest of the carrier (it refuses remote Baggage outright, so a
+    client cannot spoof span identity attributes); reading the session key back
+    out is our ``otel_v2_patches`` callback's job, and a session id is a grouping
+    key with no authorization meaning.
+
+    Additive — the headers still go out. LiteLLM reads this carrier only with
+    ``LITELLM_OTEL_V2`` enabled (``_mcp_meta_trace_carrier``); ``_meta`` is
+    reserved by the MCP spec for exactly this, so a server that does not
+    understand it must ignore it.
 
     Anything that is not a JSON-RPC request object is returned untouched:
     correlation must never break a tool call.
     """
-    carrier = {name: value for name, value in headers(token).items() if name in _W3C_HEADERS}
+    carrier = headers(token)
     if not body or not carrier:
         return body
     try:

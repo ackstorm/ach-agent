@@ -277,15 +277,20 @@ def test_inject_meta_carries_the_w3c_context_in_the_message() -> None:
     assert out["params"]["name"] == "search", "the caller's params must survive intact"
 
 
-def test_inject_meta_does_not_carry_the_session_id() -> None:
-    """`_meta` is a W3C Trace Context carrier; the session id is ours, not W3C."""
+def test_inject_meta_carries_the_session_id_too() -> None:
+    """An MCP span sees no request headers, so `_meta` is the session's only channel.
+
+    It does not parent to the transport span (SEP-414), so it inherits nothing
+    from the HTTP request the message arrived on — including the session header.
+    """
     token = trace.mint_token()
     trace.begin(token, "agent", "webhook", "delivery-1")
     trace.set_session(token, "ses_0583b1827ffeaLtpVshBDEtCfe")
 
     meta = json.loads(trace.inject_meta(_call(name="search"), token))["params"]["_meta"]
 
-    assert set(meta) == {"traceparent"}
+    assert meta["langfuse_session_id"] == "ses_0583b1827ffeaLtpVshBDEtCfe"
+    assert meta["traceparent"]
 
 
 def test_inject_meta_creates_params_when_the_request_has_none() -> None:

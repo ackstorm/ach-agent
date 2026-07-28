@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [unreleased]
+## [0.11.0] - 2026-07-28
 
 ### Added
 
@@ -13,11 +13,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serves the same `/t/{token}/` correlated routes the model proxy does, and every
   proxied wire the engine is handed — model base URL and each MCP server URL — is
   tokenized with the same per-server token. Before this, a tool call reached the
-  observability backend as its own orphan trace. The plain `/mcp/{id}` routes stay
-  valid and simply forward uncorrelated.
+  observability backend as its own orphan trace.
+- The trace is also propagated inside the MCP message itself, in the JSON-RPC
+  `params._meta` (SEP-414 / the OTel MCP semconv). An HTTP header correlates the
+  transport, but one streamable-HTTP session multiplexes many messages, so the span
+  has to parent to the context the MESSAGE carries.
+- `params._meta` now carries the SESSION id as well as the traceparent. An MCP
+  message span never sees the request headers — it parents to the message context
+  and records the transport span only as a link — so `_meta` is the only channel
+  that reaches it.
 - The correlation a turn is running under is now visible in the agent log
   (`trace: invocation` / `trace: session`, with the `trace_id` Langfuse indexes so it
   can be pasted straight into the UI). The proxy path token is never logged.
+
+### Changed
+
+- **Breaking for anything that bypassed the proxy's correlated routes:** both
+  localhost proxies now serve ONLY `/t/{token}/…`. An untokenized request gets a
+  404 instead of being forwarded uncorrelated — a loud failure beats silently
+  uncorrelated data.
+- The session id travels as `langfuse_session_id`, replacing `x-agent-session-id`.
+  That is the only mechanism LiteLLM honours on the `/gemini` pass-through as well
+  as on `/v1`: the pass-through builds its metadata from the API key and the request
+  body and never sniffs a vendor `x-…-session-id` header.
+
+### Fixed
+
+- Correlation headers supplied by the engine subprocess are now dropped on every
+  forward, not only when the harness has a value of its own to put there. Between
+  turns the traceparent is cleared but the session is not, which left a real window
+  where a forged header would have been passed through verbatim.
 
 ## [0.10.3] - 2026-07-28
 

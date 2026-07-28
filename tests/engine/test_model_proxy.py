@@ -46,7 +46,8 @@ async def test_model_proxy_injects_ek_and_streams_sse() -> None:
         assert "ek-model-1" not in base
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(f"{base}/v1/responses", json={"x": 1}) as resp:
+            url = f"{base}/t/{trace.mint_token()}/v1/responses"
+            async with session.post(url, json={"x": 1}) as resp:
                 assert resp.status == 200
                 body = await resp.read()
 
@@ -513,7 +514,7 @@ async def test_direct_model_override_auth_still_replaces_identity_headers() -> N
         )
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"{base}/v1/chat/completions",
+                f"{base}/t/{trace.mint_token()}/v1/chat/completions",
                 headers={
                     "X-ACH-AGENT": "spoofed-agent",
                     "X-Ach-Environment": "spoofed-environment",
@@ -576,8 +577,14 @@ async def test_token_route_injects_trace_and_session_headers() -> None:
     assert sum(key.lower() == "traceparent" for key in captured[0]) == 1
 
 
-async def test_plain_route_carries_no_correlation_headers() -> None:
-    """Only the token routes correlate — the plain prefixes have no token to key on."""
+async def test_an_untokenized_request_is_rejected() -> None:
+    """No route without a token, on purpose.
+
+    We define the base URL the engine is handed — `main` appends the wire prefix,
+    the pool inserts the token — so everything the engine appends rides inside the
+    tube. A request that arrives without one has escaped it, and a 404 makes that
+    visible instead of silently producing uncorrelated observability data.
+    """
     captured: list[dict[str, str]] = []
 
     async def handler(request: web.Request) -> web.Response:
@@ -589,11 +596,9 @@ async def test_plain_route_carries_no_correlation_headers() -> None:
         base = await start_model_proxy(upstream_url, "ek-1")
         async with aiohttp.ClientSession() as session:
             async with session.post(f"{base}/v1/chat/completions", json={}) as response:
-                await response.read()
+                assert response.status == 404
     finally:
         await stop_model_proxies()
         await runner.cleanup()
 
-    lowered = {key.lower() for key in captured[0]}
-    assert "traceparent" not in lowered
-    assert "x-agent-session-id" not in lowered
+    assert captured == [], "an untokenized request must never reach the upstream"

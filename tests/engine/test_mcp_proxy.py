@@ -14,6 +14,15 @@ from ach_agent.engine.hydrate import McpServer
 from ach_agent.engine.mcp_proxy import McpProxy
 
 
+def _routable(url: str) -> str:
+    """Bind an unbound proxy URL to a fresh token.
+
+    The proxy serves only ``/t/{token}/…``, so even a test that does not care about
+    correlation has to go through the tube — same as the pool does in production.
+    """
+    return trace.tokenize_url(url, trace.mint_token())
+
+
 async def _start_fake_upstream(seen_auth: list[str | None]) -> tuple[web.AppRunner, str]:
     """Start a real aiohttp upstream on 127.0.0.1:0 that records the Authorization header."""
 
@@ -44,9 +53,10 @@ async def test_proxy_injects_ek_and_returns_localhost_url() -> None:
         assert urls["m1"].startswith("http://127.0.0.1:")
         assert "/mcp/m1" in urls["m1"]
         assert "ek-xyz" not in urls["m1"]
+        target = _routable(urls["m1"])
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(urls["m1"], json={"hello": "world"}) as resp:
+            async with session.post(target, json={"hello": "world"}) as resp:
                 assert resp.status == 200
                 data = await resp.json()
 
@@ -104,7 +114,7 @@ async def test_stop_is_prompt_even_with_a_hanging_upstream_stream() -> None:
     try:
         urls = await proxy.start([McpServer(id="m1", endpoint=up_url)], ek="ek-x", exclude=set())
         # Fire a request that gets stuck mid-stream inside the proxy handler.
-        req_task = asyncio.create_task(client.get(urls["m1"]))
+        req_task = asyncio.create_task(client.get(_routable(urls["m1"])))
         await asyncio.sleep(0.5)  # let the proxy handler reach the hung-stream state
 
         loop = asyncio.get_running_loop()
@@ -147,7 +157,7 @@ async def test_mcp_proxy_replaces_case_variant_client_identity() -> None:
         )
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                urls["m1"],
+                _routable(urls["m1"]),
                 headers={
                     "X-Ach-Agent": "spoofed-agent",
                     "x-ACH-environment": "spoofed-environment",
@@ -226,35 +236,14 @@ async def test_a_tool_call_joins_its_invocations_trace() -> None:
     ], "an MCP tool call must carry the same trace + session as the model calls"
 
 
-async def test_the_plain_route_still_works_uncorrelated() -> None:
-    """Backward compatibility: anything still pointed at /mcp/<id> keeps forwarding."""
-    seen: list[dict[str, str]] = []
-    upstream_runner, upstream_url = await _start_header_recording_upstream(seen)
-    proxy = McpProxy()
-    token = trace.mint_token()
-    trace.begin(token, "agent", "webhook", "delivery-1")
-    try:
-        urls = await proxy.start(
-            [McpServer(id="m1", endpoint=upstream_url)], ek="ek-xyz", exclude=set()
-        )
-        async with aiohttp.ClientSession() as session:
-            async with session.post(urls["m1"], json={"hello": "world"}) as resp:
-                assert resp.status == 200
-                await resp.read()
-    finally:
-        await proxy.stop()
-        await upstream_runner.cleanup()
-        trace.reset_for_testing()
+async def test_an_untokenized_request_is_rejected() -> None:
+    """No route without a token, on purpose.
 
-    assert seen == [{}], "the untokenized route must forward, just without correlation"
-
-
-async def test_the_plain_route_drops_a_forged_traceparent() -> None:
-    """No token to replace it with is not a reason to pass the engine's own value on.
-
-    The plain routes add no correlation of their own, so a naive implementation
-    leaves an engine-supplied `traceparent` untouched and the tool call lands in
-    whatever trace the engine named.
+    We define the base URL the engine is handed, so everything it appends stays
+    inside the token prefix. A request that arrives without one has escaped the
+    tube: 404 makes that visible, whereas forwarding it would silently produce
+    uncorrelated observability data — the exact failure class this whole path
+    exists to prevent.
     """
     seen: list[dict[str, str]] = []
     upstream_runner, upstream_url = await _start_header_recording_upstream(seen)
@@ -264,12 +253,40 @@ async def test_the_plain_route_drops_a_forged_traceparent() -> None:
             [McpServer(id="m1", endpoint=upstream_url)], ek="ek-xyz", exclude=set()
         )
         async with aiohttp.ClientSession() as session:
+            async with session.post(urls["m1"], json={"hello": "world"}) as resp:
+                assert resp.status == 404
+    finally:
+        await proxy.stop()
+        await upstream_runner.cleanup()
+        trace.reset_for_testing()
+
+    assert seen == [], "an untokenized request must never reach the upstream"
+
+
+async def test_a_forged_traceparent_is_dropped_between_turns() -> None:
+    """Having no traceparent to substitute is not a reason to pass the engine's on.
+
+    Live case, not hypothetical: `trace.end` clears the traceparent at the end of an
+    invocation but keeps the session, and a warm pooled server keeps serving the
+    engine's own between-turn calls (title, summary, compaction). A shadow set keyed
+    on the headers being ADDED would be missing `traceparent` in exactly that window,
+    letting the engine name its own trace.
+    """
+    seen: list[dict[str, str]] = []
+    upstream_runner, upstream_url = await _start_header_recording_upstream(seen)
+    proxy = McpProxy()
+    token = trace.mint_token()
+    trace.begin(token, "agent", "webhook", "delivery-1")
+    trace.set_session(token, "ses_0583b1827ffeaLtpVshBDEtCfe")
+    trace.end(token)
+    try:
+        urls = await proxy.start(
+            [McpServer(id="m1", endpoint=upstream_url)], ek="ek-xyz", exclude=set()
+        )
+        async with aiohttp.ClientSession() as session:
             async with session.post(
-                urls["m1"],
-                headers={
-                    "Traceparent": "00-" + "f" * 32 + "-" + "f" * 16 + "-01",
-                    "X-Agent-Session-Id": "ses_forged",
-                },
+                trace.tokenize_url(urls["m1"], token),
+                headers={"Traceparent": "00-" + "f" * 32 + "-" + "f" * 16 + "-01"},
             ) as resp:
                 assert resp.status == 200
                 await resp.read()
@@ -278,7 +295,9 @@ async def test_the_plain_route_drops_a_forged_traceparent() -> None:
         await upstream_runner.cleanup()
         trace.reset_for_testing()
 
-    assert seen == [{}], "an engine-forged correlation must not reach the upstream"
+    assert seen == [
+        {"x-agent-session-id": "ses_0583b1827ffeaLtpVshBDEtCfe"}
+    ], "the session survives the turn boundary; a forged traceparent must not"
 
 
 async def test_a_client_supplied_traceparent_never_wins() -> None:

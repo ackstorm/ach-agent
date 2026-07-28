@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 import aiohttp
 import structlog
 
+from ach_agent.engine import trace
 from ach_agent.engine.base.driver import EngineConfig, TurnResult
 from ach_agent.engine.opencode.client import OpenCodeClient
 
@@ -86,6 +87,7 @@ class OpencodeDriver:
         if session_ref is not None:
             stats["session_ref"] = session_ref
             stats["oc_session_id"] = session_ref
+            trace.set_session(server.proxy_token, session_ref)
             text = await _consume(session_ref)
             aborted = bool(stats.get("aborted"))
             return TurnResult(text=text, session_ref=session_ref, aborted=aborted)
@@ -109,6 +111,7 @@ class OpencodeDriver:
         )
         stats["session_ref"] = oc_session_id
         stats["oc_session_id"] = oc_session_id
+        trace.set_session(server.proxy_token, oc_session_id)
         try:
             text = await _consume(oc_session_id)
         except aiohttp.ClientResponseError as exc:
@@ -118,6 +121,7 @@ class OpencodeDriver:
             sessions[conv_key] = oc_session_id
             stats["session_ref"] = oc_session_id
             stats["oc_session_id"] = oc_session_id
+            trace.set_session(server.proxy_token, oc_session_id)
             text = await _consume(oc_session_id)
         aborted = bool(stats.get("aborted"))
         return TurnResult(text=text, session_ref=oc_session_id, aborted=aborted)

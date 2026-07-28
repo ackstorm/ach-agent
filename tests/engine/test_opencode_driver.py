@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from ach_agent.engine import trace
 from ach_agent.engine.base.driver import TurnResult
 from ach_agent.engine.opencode.driver import OpencodeDriver
 
@@ -16,6 +17,8 @@ class _FakeClient:
 
 
 class _FakeServer:
+    proxy_token = "tok"
+
     def __init__(self) -> None:
         self._client = _FakeClient()
 
@@ -78,6 +81,38 @@ async def test_run_turn_with_session_ref_bypasses_map() -> None:
     assert result.text == "wrapped"
     assert sessions == {}          # map never touched on the session_ref path
     mk.assert_not_awaited()        # no create on the continue path
+
+
+async def test_session_is_correlated_before_the_prompt_is_sent() -> None:
+    # Ordering is the whole point: consume_sse_after_send is what sends the prompt,
+    # so a set_session AFTER it would leave every session's first turn without a
+    # sessionId in Langfuse. Capture the header state from inside the send.
+    trace.reset_for_testing()
+    server = _FakeServer()
+    server.proxy_token = trace.mint_token()
+    seen: dict[str, str] = {}
+
+    async def fake_consume(*_args: Any, **_kwargs: Any) -> str:
+        seen.update(trace.headers(server.proxy_token))
+        return "hello"
+
+    with (
+        patch("ach_agent.engine.lifecycle._create_oc_session", return_value="ses_8a1b2c3d"),
+        patch("ach_agent.engine.lifecycle.consume_sse_after_send", new=fake_consume),
+    ):
+        await OpencodeDriver().run_turn(
+            server,
+            conv_key="k1",
+            prompt="p",
+            reuse=True,
+            sessions={},
+            on_text=None,
+            on_tool=None,
+            max_tool_calls=0,
+            stats={},
+        )
+    assert seen == {"x-agent-session-id": "ses_8a1b2c3d"}
+    trace.reset_for_testing()
 
 
 def test_signature_canonical_matches_protocol() -> None:

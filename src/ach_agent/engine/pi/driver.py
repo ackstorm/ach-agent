@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from ach_agent.engine import trace
 from ach_agent.engine.base.driver import EngineConfig, TurnResult
 from ach_agent.engine.pi import events as pe
 from ach_agent.engine.pi.config import build_pi_env, build_pi_settings
@@ -242,6 +243,8 @@ class PiDriver:
                     await self._switch_session(client, ref)
             else:
                 ref = await self._new_session(client)
+            # Before the prompt: the model calls it triggers must carry the session.
+            trace.set_session(server.proxy_token, ref)
             await client.send({"type": CMD_PROMPT, "message": prompt})
         except asyncio.CancelledError:
             with contextlib.suppress(Exception):

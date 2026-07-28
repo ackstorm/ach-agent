@@ -9,11 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Model calls now carry trace/session correlation headers so one agent invocation is one
-  Langfuse trace, and the invocations sharing a pooled engine server are one Langfuse
-  session. The harness sends `traceparent` (derived from agent + channel + idempotency key)
-  and `x-agent-session-id` (derived from the session key) on every call it proxies. This is
-  independent of `cost.source` — correlation works with cost accounting off.
+- Model calls now carry trace/session correlation headers, so one agent invocation is one
+  Langfuse trace and the invocations sharing an engine session are one Langfuse session.
+  The harness sends `traceparent` (derived from agent + channel + idempotency key) and
+  `x-agent-session-id` (the ENGINE's own session id — opencode's `ses_…`, Pi's session
+  file) on every call it proxies. A second comment on the same MR reuses the engine
+  session but is a new invocation: same `sessionId`, new trace. Independent of
+  `cost.source` — correlation works with cost accounting off.
+- `--tui` is correlated too: one invented trace id minted at launch under the constant
+  session id `tui_session`. Native TUI drives its own loop, so the harness sees no turn
+  boundary and no engine session — the console session is one trace by design. Pi's
+  native TUI also gets a proxy path token now; before, its model calls took the proxy's
+  plain route.
 
 ### Changed
 
@@ -22,9 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Note
 
-- The session key reaches LiteLLM and Langfuse in cleartext, so workload identifiers appear
-  in the observability backend: `owner/repo:PR` for GitHub, `project_id:mr_iid` for GitLab.
-  No credentials are involved.
+- No workload identifier leaves the cluster: the session id is the engine's opaque id, not
+  the harness session key (`owner/repo:PR`, `project_id:mr_iid`). The mapping lives in the
+  pool's persistent session map and in the `engine: opencode session` log line.
 
 ## [0.10.2] - 2026-07-27
 

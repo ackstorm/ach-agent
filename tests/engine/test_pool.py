@@ -298,7 +298,9 @@ async def test_no_accountant_still_mints_a_token_for_correlation() -> None:
     server = await pool.acquire("k1", _real_config())
     assert server.proxy_token != ""
     assert captured["cfg"].model_base_url == f"http://127.0.0.1:9/t/{server.proxy_token}/v1"
-    assert trace.headers(server.proxy_token)["x-agent-session-id"].startswith("k1-")
+    # The session id is the ENGINE's and arrives later (driver.run_turn →
+    # trace.set_session); the token is what has to exist by now.
+    assert server.proxy_token in trace._registry
 
 
 async def test_reuse_alive_server_does_not_mint_second_token() -> None:

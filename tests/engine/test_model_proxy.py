@@ -551,7 +551,8 @@ async def test_token_route_injects_trace_and_session_headers() -> None:
 
     runner, upstream_url = await _start_fake_ach_router(handler)
     trace.reset_for_testing()
-    token = trace.mint_token("gitlab:group/repo")
+    token = trace.mint_token()
+    trace.set_session(token, "ses_8a1b2c3d")
     trace.begin(token, "classifier", "gitlab", "delivery-abc")
     expected = trace.headers(token)
     try:

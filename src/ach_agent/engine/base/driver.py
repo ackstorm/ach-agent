@@ -137,7 +137,13 @@ class EngineDriver(Protocol):
     ) -> TurnResult:
         """Run ONE prompt. If ``session_ref`` is given, continue exactly that engine session
         (repair/wrap-up) and bypass ``conv_key``/``reuse``/the map. Writes the final ref into
-        ``stats['session_ref']`` (opencode also writes ``stats['oc_session_id']``)."""
+        ``stats['session_ref']`` (opencode also writes ``stats['oc_session_id']``).
+
+        Every implementation MUST call ``trace.set_session(server.proxy_token, ref)`` as it
+        resolves the ref and BEFORE the prompt that triggers the turn's model calls — that
+        is what puts the engine's own session id on ``x-agent-session-id`` (→ Langfuse
+        ``sessionId``). Doing it after the turn would leave every session's first turn
+        uncorrelated."""
         ...
 
     async def discard_session(self, server: ManagedServer, session_ref: str) -> None: ...

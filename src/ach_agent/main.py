@@ -1661,11 +1661,24 @@ async def main(
                 if debug_mode or not sys.stdout.isatty():
                     await run_tui_console(router)
                 elif cfg.engine.type == "pi":
+                    from ach_agent.engine.cost import tokenize_model_base_url
                     from ach_agent.engine.pi.driver import PiDriver
 
+                    # Native Pi bypasses the pool, so nothing has tokenized its model
+                    # base URL. Mint here or the console's model calls take the proxy's
+                    # PLAIN route and reach Langfuse uncorrelated.
+                    tui_token = trace.mint_token()
+                    trace.begin_tui(tui_token)
+                    warm_cfg = dataclasses.replace(
+                        warm_cfg,
+                        model_base_url=tokenize_model_base_url(warm_cfg.model_base_url, tui_token),
+                    )
                     await PiDriver().run_tui(warm_cfg, _CONSOLE_SESSION_KEY)
                 else:
                     warm_server = await pool.acquire(_CONSOLE_SESSION_KEY, warm_cfg)
+                    # attach drives opencode's own loop — run_turn never runs, so this is
+                    # the only place the console session can be correlated.
+                    trace.begin_tui(warm_server.proxy_token)
                     # No stdout banner — opencode's own --print-logs already announces the
                     # listening address. Keep one structured info line with the loopback address.
                     log.info(

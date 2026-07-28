@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from ach_agent.engine import trace
 from ach_agent.engine.base.driver import EngineConfig, TurnResult
 from ach_agent.engine.pi.driver import PiDriver
 from ach_agent.engine.pi.protocol import (
@@ -39,6 +40,8 @@ class _ScriptedClient:
 
 
 class _Server:
+    proxy_token = "tok"
+
     def __init__(self, client: _ScriptedClient) -> None:
         self._client = client
 
@@ -253,6 +256,43 @@ async def test_agent_end_will_retry_is_not_terminal() -> None:
         stats={},
     )
     assert result.text == "beforeafter"
+
+
+async def test_session_is_correlated_before_the_prompt_is_sent() -> None:
+    # Same ordering guarantee as the opencode driver, at Pi's own send site: a
+    # set_session after CMD_PROMPT would miss the turn it is supposed to label.
+    trace.reset_for_testing()
+    token = trace.mint_token()
+    seen: dict[str, dict[str, str]] = {}
+
+    class _Recording(_ScriptedClient):
+        async def send(self, cmd: dict[str, Any]) -> None:
+            seen[str(cmd.get("type"))] = trace.headers(token)
+            await super().send(cmd)
+
+    server = _Server(
+        _Recording(
+            [
+                {"type": EV_SESSION_CREATED, "sessionPath": "/s/fresh-session.json"},
+                _text("hi"),
+                {"type": EV_AGENT_SETTLED},
+            ]
+        )
+    )
+    server.proxy_token = token
+    await PiDriver().run_turn(
+        server,
+        conv_key="k1",
+        prompt="p",
+        reuse=False,
+        sessions={},
+        on_text=None,
+        on_tool=None,
+        max_tool_calls=0,
+        stats={},
+    )
+    assert seen["prompt"]["x-agent-session-id"].startswith("fresh-session-json-")
+    trace.reset_for_testing()
 
 
 async def test_new_session_response_is_correlated_before_prompt() -> None:

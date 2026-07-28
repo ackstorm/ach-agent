@@ -16,10 +16,18 @@ Two grains, two headers:
     invocation lands in a single Langfuse trace.
 
 ``x-agent-session-id``
-    Derived from the session_key, so it is stable across the many invocations
-    that share a pooled engine server. LiteLLM's generic ``^x-.+-session-id$``
-    sniffer (``litellm_pre_call_utils._extract_generic_session_id_from_headers``)
-    turns it into ``metadata.session_id`` → Langfuse ``sessionId``.
+    The ENGINE's own session id (opencode's ``ses_…``, Pi's session file, …),
+    reported by the driver as it resolves the session for a turn. LiteLLM's
+    generic ``^x-.+-session-id$`` sniffer
+    (``litellm_pre_call_utils._extract_generic_session_id_from_headers``) turns
+    it into ``metadata.session_id`` → Langfuse ``sessionId``, so Langfuse groups
+    exactly what the agent itself considers one conversation.
+
+    NOT derived from the harness session_key ("gitlab:group/repo", the PR the
+    webhook came from): the mapping conv_key → engine session id already lives
+    in the pool's persistent session map and in the ``engine: opencode session``
+    log line, so the observability backend gets the opaque engine id and no
+    workload identifier ever leaves the cluster.
 
 Header choice is forced by the ACH forwarder: ``internal/forwarder/headers/
 strip.go`` deletes every ``x-ach-*`` and ``x-litellm-*`` key, so LiteLLM's
@@ -37,18 +45,20 @@ import re
 import secrets
 from dataclasses import dataclass
 
-# LiteLLM only accepts a session id matching ^[a-zA-Z0-9_\-]{8,}$, so a raw
-# session_key ("gitlab:group/repo", "cron:nightly") has to be sanitized.
+# LiteLLM only accepts a session id matching ^[a-zA-Z0-9_\-]{8,}$. Opencode's
+# `ses_…` passes as-is; Pi hands back a session FILE PATH, which does not.
+_LITELLM_SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{8,}$")
 _UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
 _SESSION_HEADER = "x-agent-session-id"
 _READABLE_PREFIX = 40
+_TUI_SESSION_ID = "tui_session"
 
 
 @dataclass(slots=True)
 class _Entry:
     """One pooled engine server's correlation state."""
 
-    session_id: str
+    session_id: str = ""
     traceparent: str = ""
 
 
@@ -61,15 +71,19 @@ def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def session_id_for(session_key: str) -> str:
-    """Sanitize ``session_key`` into LiteLLM's session-id shape.
+def session_id_for(session_ref: str) -> str:
+    """Coerce an engine session ref into LiteLLM's session-id shape.
 
-    Keeps a readable prefix so the Langfuse Sessions view is greppable, and
-    appends a digest so two keys that sanitize alike stay distinct. Always
-    >= 8 chars, so the value never fails LiteLLM's sniffer.
+    A ref LiteLLM already accepts is passed through VERBATIM, so an opencode
+    ``ses_…`` copied from a log line is an exact-match search in Langfuse. Only
+    a ref that would be rejected (Pi's session file path) is rewritten: readable
+    tail for grepping, digest suffix so two files that sanitize alike stay
+    distinct. Always >= 8 chars, so the value never fails LiteLLM's sniffer.
     """
-    safe = _UNSAFE.sub("-", session_key)[:_READABLE_PREFIX]
-    return f"{safe}-{_digest(session_key)[:8]}"
+    if _LITELLM_SESSION_ID.match(session_ref):
+        return session_ref
+    tail = session_ref.rsplit("/", 1)[-1]
+    return f"{_UNSAFE.sub('-', tail)[:_READABLE_PREFIX]}-{_digest(session_ref)[:8]}"
 
 
 def traceparent_for(agent: str, channel: str, idempotency_key: str) -> str:
@@ -92,11 +106,27 @@ def traceparent_for(agent: str, channel: str, idempotency_key: str) -> str:
     return f"00-{d[:32]}-{d[32:48]}-01"
 
 
-def mint_token(session_key: str) -> str:
-    """Mint the model proxy's per-server path token and register its session."""
+def mint_token() -> str:
+    """Mint the model proxy's per-server path token.
+
+    The session id is unknown until the engine resolves one — see
+    :func:`set_session`, called by the driver before it sends the turn's prompt.
+    """
     token = secrets.token_urlsafe(16)
-    _registry[token] = _Entry(session_id=session_id_for(session_key))
+    _registry[token] = _Entry()
     return token
+
+
+def set_session(token: str, session_ref: str) -> None:
+    """Record the engine's own session id for ``token``'s server.
+
+    Drivers call this as they create/reuse/replace a session, BEFORE the prompt
+    that triggers the turn's model calls — otherwise the first turn of every new
+    session would ship uncorrelated. No-op for an unknown token or empty ref.
+    """
+    entry = _registry.get(token)
+    if entry is not None and session_ref:
+        entry.session_id = session_id_for(session_ref)
 
 
 def begin(token: str, agent: str, channel: str, idempotency_key: str) -> None:
@@ -112,6 +142,23 @@ def begin(token: str, agent: str, channel: str, idempotency_key: str) -> None:
     entry = _registry.get(token)
     if entry is not None:
         entry.traceparent = traceparent_for(agent, channel, idempotency_key)
+
+
+def begin_tui(token: str) -> None:
+    """Correlate a native-TUI console session: one invented trace, fixed session id.
+
+    ``--tui`` has no inbound event to key a trace on and no turn boundary the
+    harness can see — opencode attach and Pi native both drive their own loop,
+    so ``run_turn`` never executes. So the WHOLE console session is one trace
+    (random W3C trace id, minted at launch) under a constant session id. No
+    attempt is made to learn the engine's real session: it would take an event
+    stream subscription (opencode) or watching ``--session-dir`` (Pi), which is
+    a lot of machinery for an interactive dev path.
+    """
+    entry = _registry.get(token)
+    if entry is not None:
+        entry.session_id = _TUI_SESSION_ID
+        entry.traceparent = f"00-{secrets.token_hex(16)}-{secrets.token_hex(8)}-01"
 
 
 def end(token: str) -> None:
@@ -137,7 +184,9 @@ def headers(token: str) -> dict[str, str]:
     entry = _registry.get(token)
     if entry is None:
         return {}
-    out = {_SESSION_HEADER: entry.session_id}
+    out: dict[str, str] = {}
+    if entry.session_id:
+        out[_SESSION_HEADER] = entry.session_id
     if entry.traceparent:
         out["traceparent"] = entry.traceparent
     return out

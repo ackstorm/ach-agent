@@ -353,7 +353,7 @@ class EnginePool:
             # cost.source=none). The accountant creates its bucket lazily on the
             # first begin_turn, so it needs no mint of its own.
             accountant = self._accountant
-            token = trace.mint_token(session_key)
+            token = trace.mint_token()
             if accountant is not None:
                 accountant.adopt_token(token)
             config = dataclasses.replace(

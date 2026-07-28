@@ -60,6 +60,14 @@ _SESSION_HEADER = "x-agent-session-id"
 _READABLE_PREFIX = 40
 _TUI_SESSION_ID = "tui_session"
 
+# Every header this module can set, lowercase. `_forward` drops these from the
+# INBOUND request unconditionally — not only when it has a value of its own to
+# put there — because the engine subprocess never has a legitimate reason to set
+# them: correlation is ours to decide. Keying the drop on what we produce instead
+# would leave the untokenized routes forwarding an engine-forged `traceparent`
+# verbatim, letting a tool call claim any trace it likes.
+CORRELATION_HEADERS = frozenset({"traceparent", _SESSION_HEADER})
+
 
 @dataclass(slots=True)
 class _Entry:

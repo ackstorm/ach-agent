@@ -249,6 +249,38 @@ async def test_the_plain_route_still_works_uncorrelated() -> None:
     assert seen == [{}], "the untokenized route must forward, just without correlation"
 
 
+async def test_the_plain_route_drops_a_forged_traceparent() -> None:
+    """No token to replace it with is not a reason to pass the engine's own value on.
+
+    The plain routes add no correlation of their own, so a naive implementation
+    leaves an engine-supplied `traceparent` untouched and the tool call lands in
+    whatever trace the engine named.
+    """
+    seen: list[dict[str, str]] = []
+    upstream_runner, upstream_url = await _start_header_recording_upstream(seen)
+    proxy = McpProxy()
+    try:
+        urls = await proxy.start(
+            [McpServer(id="m1", endpoint=upstream_url)], ek="ek-xyz", exclude=set()
+        )
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                urls["m1"],
+                headers={
+                    "Traceparent": "00-" + "f" * 32 + "-" + "f" * 16 + "-01",
+                    "X-Agent-Session-Id": "ses_forged",
+                },
+            ) as resp:
+                assert resp.status == 200
+                await resp.read()
+    finally:
+        await proxy.stop()
+        await upstream_runner.cleanup()
+        trace.reset_for_testing()
+
+    assert seen == [{}], "an engine-forged correlation must not reach the upstream"
+
+
 async def test_a_client_supplied_traceparent_never_wins() -> None:
     """The engine must not be able to forge the correlation of its own tool calls."""
     seen: list[dict[str, str]] = []

@@ -35,7 +35,7 @@ dependencies = [
     # plain uvicorn (no [standard]): the [standard] extras (uvloop, httptools, websockets,
     # watchfiles) add ~20MB of speedups this single-replica harness does not need. The
     # asyncio loop + h11 are plenty for the webhook/a2a/health surface.
-    "uvicorn==0.50.2",
+    "uvicorn==0.51.0",
     "pyyaml>=6,<7",
 ]
 

@@ -186,7 +186,10 @@ async def _start_header_recording_upstream(
             {
                 key.lower(): value
                 for key, value in request.headers.items()
-                if key.lower() in ("traceparent", "langfuse_session_id")
+                # Deliberately NOT trace.is_correlation_header: a recorder keyed on the
+                # code under test goes blind on exactly the header that predicate
+                # wrongly lets through.
+                if key.lower().startswith(("langfuse", "trace"))
             }
         )
         return web.json_response({"ok": True})
@@ -302,7 +305,15 @@ async def test_a_forged_traceparent_is_dropped_between_turns() -> None:
 
 
 async def test_a_client_supplied_traceparent_never_wins() -> None:
-    """The engine must not be able to forge the correlation of its own tool calls."""
+    """The engine must not be able to forge the correlation of its own tool calls.
+
+    `traceparent` is not the only lever: LiteLLM's
+    `LangFuseLogger.add_metadata_from_header` copies EVERY `langfuse_*` request header
+    into metadata, so an engine setting `langfuse_trace_id` would attribute its call to
+    a trace of its choosing. `tracestate` rides along — we replace `traceparent`, so
+    keeping the engine's half of the pair leaves an incoherent W3C context. No session
+    is set here, so a leaked `langfuse_*` shows up as an EXTRA key.
+    """
     seen: list[dict[str, str]] = []
     upstream_runner, upstream_url = await _start_header_recording_upstream(seen)
     proxy = McpProxy()
@@ -315,7 +326,13 @@ async def test_a_client_supplied_traceparent_never_wins() -> None:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 trace.tokenize_url(urls["m1"], token),
-                headers={"Traceparent": "00-" + "f" * 32 + "-" + "f" * 16 + "-01"},
+                headers={
+                    "Traceparent": "00-" + "f" * 32 + "-" + "f" * 16 + "-01",
+                    "langfuse_trace_id": "forged-trace",
+                    "Langfuse_Parent_Observation_Id": "forged-parent",
+                    "langfuse_tags": "forged",
+                    "tracestate": "vendor=forged",
+                },
             ) as resp:
                 assert resp.status == 200
                 await resp.read()
@@ -324,7 +341,9 @@ async def test_a_client_supplied_traceparent_never_wins() -> None:
         await upstream_runner.cleanup()
         trace.reset_for_testing()
 
-    assert seen[0]["traceparent"] == trace.traceparent_for("agent", "webhook", "delivery-1")
+    assert seen == [
+        {"traceparent": trace.traceparent_for("agent", "webhook", "delivery-1")}
+    ], "ours replaces the forged traceparent; no other forged key survives"
 
 
 async def test_a_tool_call_carries_its_trace_in_the_message_too() -> None:

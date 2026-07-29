@@ -119,22 +119,22 @@ async def _forward(
 
     This is the ONE place every outbound header is decided — auth, agent identity
     and trace/session correlation — so a new proxy route cannot ship half of them.
-    ``token`` is the per-server handle from the ``/t/{token}/`` path; an empty or
-    unknown one simply yields no correlation headers (the plain, untokenized routes),
-    never an error. Either way the engine's own correlation headers are dropped
-    inbound, so a tool call can never claim a trace the harness did not give it.
+    ``token`` is the per-server handle from the ``/t/{token}/`` path; an unknown one
+    simply yields no correlation headers, never an error. Either way the engine's own
+    correlation headers are dropped inbound (:func:`trace.is_correlation_header`), so a
+    tool call can never claim a trace the harness did not give it.
     """
     correlation = trace.headers(token)
     # Case-insensitive drop, like _DROP_REQUEST_HEADERS and
     # identity.with_identity_headers above: this dict keeps the wire case, so a
     # client-sent `Traceparent` would survive a plain update() as a SECOND key and
-    # leave which one wins to aiohttp's CIMultiDict coercion. Keyed on the full
-    # trace.CORRELATION_HEADERS set rather than on `correlation`, so the engine's
-    # own value is dropped even on a route that adds none of ours.
+    # leave which one wins to aiohttp's CIMultiDict coercion. Keyed on
+    # trace.is_correlation_header rather than on `correlation`, so the engine's own
+    # value is dropped even on a route that adds none of ours.
     headers = {
         key: value
         for key, value in request.headers.items()
-        if key.lower() not in _DROP_REQUEST_HEADERS and key.lower() not in trace.CORRELATION_HEADERS
+        if key.lower() not in _DROP_REQUEST_HEADERS and not trace.is_correlation_header(key)
     }
     headers[auth_header] = auth_value
     headers = identity.with_identity_headers(headers)

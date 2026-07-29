@@ -220,7 +220,9 @@ def test_every_proxied_wire_tokenizes_the_same_way() -> None:
 
 
 def test_an_untokenized_wire_yields_no_correlation_rather_than_an_error() -> None:
-    # The plain /mcp/<id> and /v1 routes stay valid: they forward uncorrelated.
+    # A token the registry never minted (a stopped/replaced server) must not raise in
+    # the proxy handler — it forwards uncorrelated. Arriving with NO token at all is a
+    # 404 at the router; see test_an_untokenized_request_is_rejected.
     assert trace.headers("") == {}
 
 

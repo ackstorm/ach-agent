@@ -19,6 +19,7 @@ import aiohttp
 from aiohttp import web
 
 from ach_agent.engine import hydrate as hydrate_mod
+from ach_agent.engine import trace
 from ach_agent.engine.hydrate import McpServer, hydrate
 from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
 from ach_agent.engine.validator import extract_terminal
@@ -117,8 +118,11 @@ async def test_mcp_via_proxy_carries_ek() -> None:
         assert localhost_url.startswith("http://127.0.0.1:")
         assert "ek" not in localhost_url
 
+        # The proxy serves only /t/{token}/…, so even a leg that does not care about
+        # correlation goes through the tube — same as the pool does in production.
+        routable = trace.tokenize_url(localhost_url, trace.mint_token())
         async with aiohttp.ClientSession() as session:
-            async with session.post(localhost_url, json={"jsonrpc": "2.0"}) as resp:
+            async with session.post(routable, json={"jsonrpc": "2.0"}) as resp:
                 assert resp.status == 200
                 data = await resp.json()
 
@@ -138,8 +142,9 @@ async def test_model_proxy_sse_and_terminal_parse() -> None:
         assert base.startswith("http://127.0.0.1:")
         assert "ek_guard_secret" not in base
 
+        routable = trace.tokenize_url(f"{base}/v1/responses", trace.mint_token())
         async with aiohttp.ClientSession() as session:
-            async with session.post(f"{base}/v1/responses", json={"x": 1}) as resp:
+            async with session.post(routable, json={"x": 1}) as resp:
                 assert resp.status == 200
                 body = await resp.read()
 

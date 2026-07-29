@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-07-29
+
+### Changed
+
+- `trace_id` and `session_id` are now bound to the logging context for the whole
+  invocation instead of being logged once at the start, so every line a turn emits
+  carries them. `engine: summary` in particular used to end a turn with a cost, a
+  duration and no way to reach the trace that produced it; reading it now hands you
+  the id to paste into Langfuse. Both are unbound when the invocation closes, so a
+  warm pooled server does not stamp a finished trace on what the engine does
+  between turns.
+
 ## [0.11.0] - 2026-07-28
 
 ### Added

@@ -79,6 +79,7 @@ _SESSION_HEADER = "langfuse_session_id"
 _READABLE_PREFIX = 40
 _TUI_SESSION_ID = "tui_session"
 
+
 def is_correlation_header(name: str) -> bool:
     """True for a header that could claim a trace/session the harness did not grant.
 
@@ -184,6 +185,7 @@ def set_session(token: str, session_ref: str) -> None:
     entry = _registry.get(token)
     if entry is not None and session_ref:
         entry.session_id = session_id_for(session_ref)
+        structlog.contextvars.bind_contextvars(session_id=entry.session_id)
         # Correlation is otherwise invisible: the headers are set deep in the proxy
         # forward, so without this line the only way to tell whether a turn was
         # correlated is to query the observability backend. Logged once per session
@@ -209,6 +211,14 @@ def begin(token: str, agent: str, channel: str, idempotency_key: str) -> None:
         # pasted straight into the UI, while the full traceparent cannot. Both are
         # logged — the traceparent so a request can be replayed verbatim, the trace id
         # so an operator can jump to the trace without parsing anything.
+        #
+        # Bound to the CONTEXT as well, not just emitted here, so every line the
+        # invocation goes on to log carries it — `engine: summary` above all, which
+        # is the line an operator reads first and which used to end a turn with a
+        # cost and no way to reach the trace that produced it. structlog's
+        # `merge_contextvars` is in the processor chain (see sanitized_env) and
+        # contextvars are task-local, so concurrent lanes cannot see each other's.
+        structlog.contextvars.bind_contextvars(trace_id=entry.traceparent.split("-")[1])
         log.info(
             "trace: invocation",
             traceparent=entry.traceparent,
@@ -233,6 +243,9 @@ def begin_tui(token: str) -> None:
     if entry is not None:
         entry.session_id = _TUI_SESSION_ID
         entry.traceparent = f"00-{secrets.token_hex(16)}-{secrets.token_hex(8)}-01"
+        structlog.contextvars.bind_contextvars(
+            trace_id=entry.traceparent.split("-")[1], session_id=entry.session_id
+        )
         log.info(
             "trace: invocation",
             traceparent=entry.traceparent,
@@ -253,6 +266,12 @@ def end(token: str) -> None:
     entry = _registry.get(token)
     if entry is not None:
         entry.traceparent = ""
+    # Unconditional, and not gated on the entry: the binding belongs to the task
+    # that ran the invocation, so it has to go even when the token is already
+    # gone (server replaced mid-turn). `session_id` goes with it — a pooled
+    # server keeps its engine session, but between turns nothing should log it
+    # as if a turn were in flight.
+    structlog.contextvars.unbind_contextvars("trace_id", "session_id")
 
 
 def drop(token: str) -> None:

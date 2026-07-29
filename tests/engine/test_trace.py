@@ -25,6 +25,7 @@ import json
 import re
 
 import pytest
+import structlog
 from structlog.testing import capture_logs
 
 from ach_agent.engine import trace
@@ -238,6 +239,43 @@ def test_the_logged_trace_id_is_the_one_langfuse_indexes() -> None:
     assert entry["traceparent"] == traceparent
     assert entry["trace_id"] == traceparent.split("-")[1]
     assert re.fullmatch(r"[0-9a-f]{32}", entry["trace_id"])
+
+
+def test_the_invocation_binds_the_correlation_to_the_logging_context() -> None:
+    # `engine: summary` (main.py) ends a turn with a cost, a duration and no way
+    # to reach the trace that produced it. Rather than thread the ids through to
+    # that one call site, `begin`/`set_session` bind them to the task context, so
+    # every line the invocation logs carries them. Asserted on the context itself
+    # — `capture_logs` swaps out the processor chain that merges contextvars, so
+    # it cannot see this.
+    structlog.contextvars.clear_contextvars()
+    token = trace.mint_token()
+    trace.begin(token, "agent", "webhook", "delivery-1")
+    trace.set_session(token, "ses_0583b1827ffeaLtpVshBDEtCfe")
+
+    bound = structlog.contextvars.get_contextvars()
+    assert bound["trace_id"] == trace.headers(token)["traceparent"].split("-")[1]
+    assert bound["session_id"] == trace.headers(token)["langfuse_session_id"]
+
+    # The window closes with the invocation: a warm pooled server must not stamp a
+    # finished trace on whatever the engine does between turns, in the log either.
+    trace.end(token)
+    after = structlog.contextvars.get_contextvars()
+    assert "trace_id" not in after
+    assert "session_id" not in after
+
+
+def test_end_unbinds_the_context_even_when_the_token_is_gone() -> None:
+    # A server replaced mid-turn drops its entry, but the binding lives on the
+    # task, not on the entry — gating the unbind on the entry would leak the
+    # finished trace id onto every later line.
+    structlog.contextvars.clear_contextvars()
+    token = trace.mint_token()
+    trace.begin(token, "agent", "webhook", "delivery-1")
+    trace.drop(token)
+
+    trace.end(token)
+    assert "trace_id" not in structlog.contextvars.get_contextvars()
 
 
 def test_the_session_id_is_logged_as_it_is_sent() -> None:

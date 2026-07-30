@@ -50,7 +50,7 @@ dev = [
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "ruff==0.15.20",
-    "mypy==2.1.0",
+    "mypy==2.3.0",
     "types-pyyaml>=6,<7",
 ]
 
@@ -59,7 +59,7 @@ dev = [
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "ruff==0.15.20",
-    "mypy==2.1.0",
+    "mypy==2.3.0",
     "types-pyyaml>=6,<7",
     "mkdocs-material==9.5.49",
     "mike==2.1.3",

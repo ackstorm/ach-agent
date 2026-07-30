@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.12.0] - 2026-07-30
+
 ### Added
 
 - Model-proxy correlation headers now also carry `x-litellm-session-id` and

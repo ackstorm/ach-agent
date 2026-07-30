@@ -189,7 +189,7 @@ async def _start_header_recording_upstream(
                 # Deliberately NOT trace.is_correlation_header: a recorder keyed on the
                 # code under test goes blind on exactly the header that predicate
                 # wrongly lets through.
-                if key.lower().startswith(("langfuse", "trace"))
+                if key.lower().startswith(("langfuse", "trace", "x-litellm"))
             }
         )
         return web.json_response({"ok": True})
@@ -232,10 +232,13 @@ async def test_a_tool_call_joins_its_invocations_trace() -> None:
         await upstream_runner.cleanup()
         trace.reset_for_testing()
 
+    invocation_traceparent = trace.traceparent_for("agent", "webhook", "delivery-1")
     assert seen == [
         {
-            "traceparent": trace.traceparent_for("agent", "webhook", "delivery-1"),
+            "traceparent": invocation_traceparent,
             "langfuse_session_id": "ses_0583b1827ffeaLtpVshBDEtCfe",
+            "x-litellm-session-id": "ses_0583b1827ffeaLtpVshBDEtCfe",
+            "x-litellm-trace-id": invocation_traceparent.split("-")[1],
         }
     ], "an MCP tool call must carry the same trace + session as the model calls"
 
@@ -300,7 +303,10 @@ async def test_a_forged_traceparent_is_dropped_between_turns() -> None:
         trace.reset_for_testing()
 
     assert seen == [
-        {"langfuse_session_id": "ses_0583b1827ffeaLtpVshBDEtCfe"}
+        {
+            "langfuse_session_id": "ses_0583b1827ffeaLtpVshBDEtCfe",
+            "x-litellm-session-id": "ses_0583b1827ffeaLtpVshBDEtCfe",
+        }
     ], "the session survives the turn boundary; a forged traceparent must not"
 
 
@@ -341,9 +347,55 @@ async def test_a_client_supplied_traceparent_never_wins() -> None:
         await upstream_runner.cleanup()
         trace.reset_for_testing()
 
+    invocation_traceparent = trace.traceparent_for("agent", "webhook", "delivery-1")
     assert seen == [
-        {"traceparent": trace.traceparent_for("agent", "webhook", "delivery-1")}
+        {
+            "traceparent": invocation_traceparent,
+            "x-litellm-trace-id": invocation_traceparent.split("-")[1],
+        }
     ], "ours replaces the forged traceparent; no other forged key survives"
+
+
+async def test_a_client_supplied_litellm_session_id_never_wins() -> None:
+    """The ach forwarder allowlist (ackstorm/ach#172) opens exactly this lever.
+
+    `x-litellm-session-id`/`x-litellm-trace-id` are the two keys LiteLLM's own
+    `get_chain_id_from_headers` reads to group spend logs — an engine forging
+    them would pick its own LiteLLM conversation grouping. No session is set
+    here (correlation would otherwise silently overwrite the forgery with the
+    right value), so a leaked one shows up as an EXTRA key instead.
+    """
+    seen: list[dict[str, str]] = []
+    upstream_runner, upstream_url = await _start_header_recording_upstream(seen)
+    proxy = McpProxy()
+    token = trace.mint_token()
+    trace.begin(token, "agent", "webhook", "delivery-1")
+    try:
+        urls = await proxy.start(
+            [McpServer(id="m1", endpoint=upstream_url)], ek="ek-xyz", exclude=set()
+        )
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                trace.tokenize_url(urls["m1"], token),
+                headers={
+                    "X-Litellm-Session-Id": "forged-session",
+                    "X-Litellm-Trace-Id": "forged-trace",
+                },
+            ) as resp:
+                assert resp.status == 200
+                await resp.read()
+    finally:
+        await proxy.stop()
+        await upstream_runner.cleanup()
+        trace.reset_for_testing()
+
+    invocation_traceparent = trace.traceparent_for("agent", "webhook", "delivery-1")
+    assert seen == [
+        {
+            "traceparent": invocation_traceparent,
+            "x-litellm-trace-id": invocation_traceparent.split("-")[1],
+        }
+    ], "ours replaces the forged x-litellm-trace-id; the forged session-id is dropped"
 
 
 async def test_a_tool_call_carries_its_trace_in_the_message_too() -> None:

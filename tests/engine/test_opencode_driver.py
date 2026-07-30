@@ -111,7 +111,10 @@ async def test_session_is_correlated_before_the_prompt_is_sent() -> None:
             max_tool_calls=0,
             stats={},
         )
-    assert seen == {"langfuse_session_id": "ses_8a1b2c3d"}
+    assert seen == {
+        "langfuse_session_id": "ses_8a1b2c3d",
+        "x-litellm-session-id": "ses_8a1b2c3d",
+    }
     trace.reset_for_testing()
 
 

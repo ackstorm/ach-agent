@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [unreleased]
+
+### Added
+
+- Model-proxy correlation headers now also carry `x-litellm-session-id` and
+  `x-litellm-trace-id`, mirroring `langfuse_session_id`/`traceparent`, so LiteLLM
+  groups an invocation's calls into one conversation in `LiteLLM_SpendLogs` —
+  independent of Langfuse grouping. Reaches LiteLLM only because the ACH forwarder
+  opened an exact allowlist for these two keys (ackstorm/ach#172); silently ignored
+  on the `/gemini`/`/anthropic` passthrough routes, same as the existing
+  `langfuse_session_id` vendor-header caveat.
+
 ## [0.11.1] - 2026-07-29
 
 ### Changed

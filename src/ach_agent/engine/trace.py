@@ -9,18 +9,20 @@ proxies serve, so this module keeps a token → correlation registry that
 and MCP wire alike, so a tool call lands in the trace of the invocation that
 asked for it.
 
-Two grains, two headers:
+Two grains, four headers (two consumers per grain):
 
-``traceparent``
-    W3C, one per INVOCATION, derived from the event's idempotency key. LiteLLM
-    parents its own spans under it (``opentelemetry.py`` ``_get_span_context``,
-    priority 2 — the HTTP traceparent header), so every model call of one
-    invocation lands in a single Langfuse trace.
+``traceparent`` / ``x-litellm-trace-id``
+    W3C, one per INVOCATION, derived from the event's idempotency key.
+    ``traceparent`` is read by LiteLLM's OTel exporter (``opentelemetry.py``
+    ``_get_span_context``, priority 2) so every model call of one invocation
+    lands in a single Langfuse trace. ``x-litellm-trace-id`` carries the same
+    trace id (the middle W3C field) for LiteLLM's OWN grouping — see below.
 
-``langfuse_session_id``
+``langfuse_session_id`` / ``x-litellm-session-id``
     The ENGINE's own session id (opencode's ``ses_…``, Pi's session file, …),
-    reported by the driver as it resolves the session for a turn, so Langfuse
-    groups exactly what the agent itself considers one conversation.
+    reported by the driver as it resolves the session for a turn, so both
+    Langfuse and LiteLLM group exactly what the agent itself considers one
+    conversation.
 
     NOT derived from the harness session_key ("gitlab:group/repo", the PR the
     webhook came from): the mapping conv_key → engine session id already lives
@@ -28,26 +30,35 @@ Two grains, two headers:
     log line, so the observability backend gets the opaque engine id and no
     workload identifier ever leaves the cluster.
 
-Two constraints pick these two names, and both were measured — do not "tidy"
-them into something that reads better:
+Two DIFFERENT downstream consumers, not one duplicated:
 
-1. The ACH forwarder (``internal/forwarder/headers/strip.go``) deletes every
-   ``x-ach-*`` and ``x-litellm-*`` key, so LiteLLM's own ``x-litellm-session-id``
-   never survives the hop.
-2. On the ``/gemini`` PASSTHROUGH, session id is a METADATA concept while
-   traceparent is a HEADER one. ``/v1`` fills ``metadata["session_id"]`` from a
-   generic ``^x-.+-session-id$`` header sniffer, but nothing in LiteLLM's
-   pass-through path ever calls it — that path builds metadata from the API key
-   and the request BODY only. A vendor ``x-…-session-id`` therefore works on
-   ``/v1`` and is silently dropped on the passthrough. What DOES work on both is
-   the ``langfuse_`` prefix: ``LangFuseLogger.add_metadata_from_header`` copies
-   every ``langfuse_*`` request header into metadata, reading the raw header dict
-   the passthrough does populate. traceparent needs no such help — OTel reads it
-   straight off the raw headers on every route.
+1. ``langfuse_*`` → Langfuse. ``LangFuseLogger.add_metadata_from_header``
+   copies every ``langfuse_*`` request header into metadata, reading the raw
+   header dict LiteLLM populates on every route. On the ``/gemini`` and
+   ``/anthropic`` PASSTHROUGH routes this is the ONLY session mechanism that
+   survives: passthrough builds metadata from the API key and the request BODY
+   only, so a vendor ``x-…-session-id`` is silently dropped there. traceparent
+   needs no such help — OTel reads it straight off the raw headers on every
+   route.
+2. ``x-litellm-session-id`` / ``x-litellm-trace-id`` → LiteLLM's OWN spend-log
+   grouping (``get_chain_id_from_headers``, ``litellm_pre_call_utils.py``),
+   independent of Langfuse — it is what groups an invocation's calls into one
+   conversation in ``LiteLLM_SpendLogs``. Only reaches LiteLLM at all because
+   the ACH forwarder (``internal/forwarder/headers/strip.go``) carved an exact
+   allowlist for these two keys out of its otherwise blanket ``x-litellm-*``
+   strip (ackstorm/ach#172, 2026-07-29) — every OTHER ``x-litellm-*``/``x-ach-*``
+   header is still dropped. Silently ignored on ``/gemini``/``/anthropic``
+   passthrough (same reason as point 1's vendor-header caveat) — harmless, not
+   an error.
 
-Send ONLY ``langfuse_session_id``. Adding a vendor ``x-…-session-id`` alongside
-it makes ``/v1`` fill the metadata twice and log a "Overwriting Langfuse
-session_id" WARNING per request.
+On ``/v1`` both fire for the session grain: LiteLLM's generic
+``^x-.+-session-id$`` sniffer ALSO reads ``x-litellm-session-id`` into
+``metadata["session_id"]``, on top of the ``langfuse_`` copy — same value both
+times (both derived from the one registry entry), so the resulting
+"Overwriting Langfuse session_id" WARNING per request is known, harmless log
+noise, not a bug. Do not "simplify" this back to one header — the two serve
+different consumers (Langfuse UI vs. LiteLLM's own spend-log grouping) and one
+of them silently loses coverage on the passthrough routes.
 
 ⚠ The name carries UNDERSCORES. Prod fronts this with Istio/Envoy, which passes
 them; nginx DROPS underscore headers unless ``underscores_in_headers on``. A
@@ -76,6 +87,8 @@ log = structlog.get_logger(__name__)
 _CLEAN_SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{8,}$")
 _UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
 _SESSION_HEADER = "langfuse_session_id"
+_LITELLM_SESSION_HEADER = "x-litellm-session-id"
+_LITELLM_TRACE_HEADER = "x-litellm-trace-id"
 _READABLE_PREFIX = 40
 _TUI_SESSION_ID = "tui_session"
 
@@ -84,13 +97,21 @@ def is_correlation_header(name: str) -> bool:
     """True for a header that could claim a trace/session the harness did not grant.
 
     ``_forward`` drops these from the INBOUND request unconditionally — correlation is
-    ours to decide. Matched by PREFIX, not by the two names this module sends:
-    ``add_metadata_from_header`` copies EVERY ``langfuse_*`` header into metadata (see
-    above), so an engine setting ``langfuse_trace_id`` would pick its own trace.
-    ``tracestate`` goes with ``traceparent`` — half a W3C pair is an incoherent context.
+    ours to decide. Matched by PREFIX for ``langfuse_``, not just the one name this
+    module sends: ``add_metadata_from_header`` copies EVERY ``langfuse_*`` header into
+    metadata (see above), so an engine setting ``langfuse_trace_id`` would pick its own
+    trace. ``tracestate`` goes with ``traceparent`` — half a W3C pair is an incoherent
+    context. The two ``x-litellm-*`` names are matched exactly (not by prefix): they are
+    the same closed allowlist the ACH forwarder itself carves out of the ``x-litellm-*``
+    strip (see module docstring), so an engine setting either one would pick its own
+    LiteLLM spend-log grouping.
     """
     lowered = name.lower()
-    return lowered.startswith("langfuse_") or lowered in ("traceparent", "tracestate")
+    return (
+        lowered.startswith("langfuse_")
+        or lowered in ("traceparent", "tracestate")
+        or lowered in (_LITELLM_SESSION_HEADER, _LITELLM_TRACE_HEADER)
+    )
 
 
 @dataclass(slots=True)
@@ -330,15 +351,22 @@ def inject_meta(body: bytes, token: str) -> bytes:
 
 
 def headers(token: str) -> dict[str, str]:
-    """Correlation headers to inject on a forward, empty for an unknown token."""
+    """Correlation headers to inject on a forward, empty for an unknown token.
+
+    Each grain goes out under two names — see the module docstring: one for
+    Langfuse, one for LiteLLM's own spend-log grouping. Both derive from the
+    SAME registry value, so they never disagree.
+    """
     entry = _registry.get(token)
     if entry is None:
         return {}
     out: dict[str, str] = {}
     if entry.session_id:
         out[_SESSION_HEADER] = entry.session_id
+        out[_LITELLM_SESSION_HEADER] = entry.session_id
     if entry.traceparent:
         out["traceparent"] = entry.traceparent
+        out[_LITELLM_TRACE_HEADER] = entry.traceparent.split("-")[1]
     return out
 
 

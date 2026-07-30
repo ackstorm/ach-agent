@@ -68,13 +68,19 @@ def test_two_pi_session_files_that_sanitize_alike_stay_distinct() -> None:
     assert a != b, "the tail is identical; only the digest of the full ref separates them"
 
 
+FORWARDER_ALLOWLISTED_EXACT = ("x-litellm-session-id", "x-litellm-trace-id")
+
+
 def test_headers_survive_the_forwarder_strip() -> None:
     token = trace.mint_token()
     trace.set_session(token, "ses_0001")
     trace.begin(token, "a1", "webhook", "delivery-1")
     assert trace.headers(token), "an empty dict would pass this vacuously"
     for name in trace.headers(token):
-        assert not name.lower().startswith(FORWARDER_STRIPPED_PREFIXES), (
+        lowered = name.lower()
+        if lowered in FORWARDER_ALLOWLISTED_EXACT:
+            continue  # ackstorm/ach#172: exact allowlist carved out of the prefix strip
+        assert not lowered.startswith(FORWARDER_STRIPPED_PREFIXES), (
             f"{name} would be deleted by internal/forwarder/headers/strip.go"
         )
 
@@ -84,18 +90,22 @@ def test_the_session_header_uses_litellms_metadata_prefix() -> None:
 
     A vendor `x-…-session-id` name reaches `metadata["session_id"]` only on /v1,
     where LiteLLM runs a header sniffer; the pass-through path never calls it and
-    the session is silently lost. `langfuse_*` headers are copied into metadata on
-    BOTH.
+    the session is silently lost there — so `langfuse_session_id` still has to go
+    out even though `x-litellm-session-id` also does (it feeds a DIFFERENT
+    consumer: LiteLLM's own spend-log grouping, allowlisted by ach#172).
     """
     token = trace.mint_token()
     trace.set_session(token, "ses_0001")
     sent = trace.headers(token)
-    session_headers = [name for name in sent if name != "traceparent"]
-    assert session_headers == ["langfuse_session_id"], (
-        "exactly one session header: sending a vendor x-…-session-id alongside it "
-        "makes /v1 fill the metadata twice and log a warning per request"
+    session_headers = {name for name in sent if name != "traceparent" and name != "x-litellm-trace-id"}
+    assert session_headers == {"langfuse_session_id", "x-litellm-session-id"}
+    assert any(name.startswith(LANGFUSE_METADATA_PREFIX) for name in session_headers), (
+        "the langfuse_ prefix must survive — it's the only session mechanism the "
+        "/gemini and /anthropic passthrough routes read"
     )
-    assert session_headers[0].startswith(LANGFUSE_METADATA_PREFIX)
+    assert sent["langfuse_session_id"] == sent["x-litellm-session-id"] == "ses_0001", (
+        "same registry value on both names, or they'd disagree in LiteLLM"
+    )
 
 
 def test_traceparent_is_w3c_and_deterministic_in_the_invocation() -> None:
@@ -177,7 +187,10 @@ def test_end_closes_the_trace_but_keeps_the_session() -> None:
     assert "traceparent" in trace.headers(token)
 
     trace.end(token)
-    assert trace.headers(token) == {"langfuse_session_id": "ses_0001"}
+    assert trace.headers(token) == {
+        "langfuse_session_id": "ses_0001",
+        "x-litellm-session-id": "ses_0001",
+    }
 
     trace.begin(token, "a1", "gitlab", "delivery-2")
     assert "traceparent" in trace.headers(token), "the next invocation reopens it"

@@ -3,7 +3,7 @@
 Covers:
   - (a) gitlab_comment webhook config: boots app, registers route, returns 202,
         dispatches to router with delivery_context.
-  - (b) _make_engine_runner dispatches to dispatch_actions with event.delivery_context.
+  - (b) make_engine_runner dispatches to dispatch_actions with event.delivery_context.
   - (c) build_engine_prompt builds real MR prompt (WR-07).
 """
 
@@ -456,7 +456,7 @@ def test_channel_idle_ttl_from_config() -> None:
     idle_ttl = EngineBlock.model_validate({}).idle_ttl_seconds
     assert idle_ttl == 30.0
 
-    # Boot-time map (main._make_engine_runner wiring): {ch.name: engine.idle_ttl_seconds}.
+    # Boot-time map (boot.engine_runner.make_engine_runner wiring): {ch.name: engine.idle_ttl_seconds}.
     channels = [("hook", "webhook"), ("tick", "cron")]
     channel_ttl = {name: idle_ttl for name, _typ in channels}
     assert channel_ttl == {"hook": 30.0, "tick": 30.0}
@@ -471,10 +471,10 @@ async def test_engine_runner_passes_pool_oc_sessions_to_run_invocation() -> None
     """engine_runner threads the pool-owned session map into run_contract_turn."""
 
     import ach_agent.engine.base.terminal as terminal
+    from ach_agent.boot.engine_runner import make_engine_runner
     from ach_agent.channels.message_event import MessageEvent
     from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.engine.opencode.driver import OpencodeDriver
-    from ach_agent.main import _make_engine_runner
 
     class _Pool:
         def __init__(self) -> None:
@@ -503,7 +503,7 @@ async def test_engine_runner_passes_pool_oc_sessions_to_run_invocation() -> None
     )
 
     with patch.object(terminal, "run_contract_turn", new=AsyncMock(side_effect=_fake_run)):
-        runner = _make_engine_runner(
+        runner = make_engine_runner(
             pool=pool,
             driver=OpencodeDriver(),
             engine_cfg=EngineConfig(),
@@ -585,8 +585,8 @@ async def _run_sess_case(
     from types import SimpleNamespace
 
     import ach_agent.engine.base.terminal as terminal
+    from ach_agent.boot.engine_runner import make_engine_runner
     from ach_agent.engine.lifecycle import EngineConfig
-    from ach_agent.main import _make_engine_runner
 
     pool = pool if pool is not None else _SessPool()
     captured: dict[str, Any] = {}
@@ -603,7 +603,7 @@ async def _run_sess_case(
     channels = {"ch1": _sess_chcfg(session)} if session is not None else {}
 
     with patch.object(terminal, "run_contract_turn", new=AsyncMock(side_effect=_fake_run)):
-        runner = _make_engine_runner(
+        runner = make_engine_runner(
             pool=pool,
             driver=driver,
             engine_cfg=EngineConfig(),

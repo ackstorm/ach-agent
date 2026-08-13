@@ -134,11 +134,11 @@ async def test_fail_open() -> None:
 async def test_engine_runner_reachable_branch() -> None:
     """Task 2 / MEM-01 / D-02: engine_runner passes EngineConfig with memory MCP server
     to pool.acquire when memory backend is reachable, and ## Memory summaries in prompt."""
+    from ach_agent.boot.engine_runner import make_engine_runner
     from ach_agent.channels.message_event import MessageEvent
     from ach_agent.config.schema import HindsightMemory, HindsightParams
     from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.engine.opencode.driver import OpencodeDriver
-    from ach_agent.main import _make_engine_runner
 
     endpoint = "http://hindsight.svc:8080"
     memory_section = "## Memory\n\n### coding-habits\nPrefers TDD."
@@ -189,12 +189,12 @@ async def test_engine_runner_reachable_branch() -> None:
     facade_url = "http://127.0.0.1:7/mcp"
     with (
         patch(
-            "ach_agent.main.prepare_memory",
+            "ach_agent.boot.engine_runner.prepare_memory",
             new=AsyncMock(return_value=(True, memory_section)),
         ),
         patch("ach_agent.engine.base.terminal.run_contract_turn", fake_run_contract_turn),
     ):
-        runner = _make_engine_runner(
+        runner = make_engine_runner(
             pool=fake_pool,
             driver=OpencodeDriver(),
             engine_cfg=base_engine_cfg,
@@ -224,11 +224,11 @@ async def test_engine_runner_reachable_branch() -> None:
 async def test_engine_runner_degraded_path() -> None:
     """Task 2 / MEM-02 / D-02: engine_runner excludes memory MCP server from pool.acquire
     when memory backend is unreachable, invocation still completes (no exception, no retry)."""
+    from ach_agent.boot.engine_runner import make_engine_runner
     from ach_agent.channels.message_event import MessageEvent
     from ach_agent.config.schema import HindsightMemory, HindsightParams
     from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.engine.opencode.driver import OpencodeDriver
-    from ach_agent.main import _make_engine_runner
 
     endpoint = "http://hindsight.svc:8080"
     degraded_section = "## Memory\n\nUnavailable (backend unreachable)."
@@ -277,12 +277,12 @@ async def test_engine_runner_degraded_path() -> None:
     # No exception must propagate (MEM-02 fail-open)
     with (
         patch(
-            "ach_agent.main.prepare_memory",
+            "ach_agent.boot.engine_runner.prepare_memory",
             new=AsyncMock(return_value=(False, degraded_section)),
         ),
         patch("ach_agent.engine.base.terminal.run_contract_turn", fake_run_contract_turn),
     ):
-        runner = _make_engine_runner(
+        runner = make_engine_runner(
             pool=fake_pool,
             driver=OpencodeDriver(),
             engine_cfg=base_engine_cfg,

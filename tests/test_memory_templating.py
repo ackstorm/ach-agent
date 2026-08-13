@@ -12,11 +12,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from ach_agent.boot.engine_runner import make_engine_runner
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.tui import _CONSOLE_SESSION_KEY
 from ach_agent.config.schema import CodememMemory, CodememParams
 from ach_agent.engine.lifecycle import EngineConfig
-from ach_agent.main import _make_engine_runner
 from ach_agent.templating import build_template_context, render_template
 
 
@@ -63,7 +63,7 @@ async def test_codemem_project_template_rendered_into_acquire_cfg() -> None:
     base_cfg = EngineConfig(codemem_project="{{ internal.session.key }}")
 
     with patch.object(terminal, "run_contract_turn", new=AsyncMock(side_effect=_fake_run)):
-        runner = _make_engine_runner(
+        runner = make_engine_runner(
             pool=pool,
             driver=OpencodeDriver(),
             engine_cfg=base_cfg,
@@ -92,7 +92,7 @@ async def test_codemem_project_literal_passes_through() -> None:
     base_cfg = EngineConfig(codemem_project="ach-agent")
 
     with patch.object(terminal, "run_contract_turn", new=AsyncMock(side_effect=_fake_run)):
-        runner = _make_engine_runner(
+        runner = make_engine_runner(
             pool=pool,
             driver=OpencodeDriver(),
             engine_cfg=base_cfg,

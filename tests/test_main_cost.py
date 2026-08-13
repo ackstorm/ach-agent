@@ -10,10 +10,10 @@ import pytest
 from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
+from ach_agent.boot.engine_runner import make_engine_runner
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.engine.base.events import OpenCodeUsage
 from ach_agent.engine.cost import CostAccountant, ModelPrices, PriceTable, TokenUsage
-from ach_agent.main import _make_engine_runner
 from ach_agent.stats import metrics
 from ach_agent.stats.sink import StatsSink
 
@@ -92,7 +92,7 @@ async def _run_turn(
         return {"action": "none", "text": "done"}
 
     with patch("ach_agent.engine.base.terminal.run_contract_turn", fake_run_contract_turn):
-        runner = _make_engine_runner(
+        runner = make_engine_runner(
             pool=pool,
             driver=driver,
             engine_cfg=SimpleNamespace(model=MODEL),

@@ -135,7 +135,8 @@ class EngineBlock(BaseModel):
     # maxInvocationSeconds remains the always-on time backstop. Recommend ~80 when opting in.
     max_tool_calls: int = Field(default=0, ge=0, alias="maxToolCalls")
     # SP1: which engine runs this agent. Canonical wire name is "pi" (runtime spec §7.4 amended
-    # from the reserved "pymono"). Selects the EngineDriver in main._make_engine_runner.
+    # from the reserved "pymono"). Selects the EngineDriver in
+    # ach_agent.boot.engine_runner.make_engine_runner.
     type: Literal["opencode", "pi"] = Field(default="opencode", alias="type")
     # Pi sub-block — only consulted when type == "pi"; optional so opencode configs never carry it.
     pi: PiEngineBlock | None = Field(default=None, alias="pi")

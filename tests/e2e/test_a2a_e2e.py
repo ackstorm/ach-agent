@@ -171,9 +171,9 @@ async def test_engine_runner_signals_on_fail_on_engine_error(
     delivery_context['on_fail'] (and still re-raise). Otherwise the a2a bridge — whose
     execute() awaits completion.wait() with NO timeout — hangs forever.
     """
+    from ach_agent.boot.engine_runner import make_engine_runner
     from ach_agent.engine.base import terminal
     from ach_agent.engine.lifecycle import EngineConfig
-    from ach_agent.main import _make_engine_runner
 
     class _FakeServer:
         def is_alive(self) -> bool:
@@ -191,13 +191,13 @@ async def test_engine_runner_signals_on_fail_on_engine_error(
     async def _boom(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         raise RuntimeError("engine exploded")
 
-    # _make_engine_runner imports run_contract_turn from base.terminal at call time —
+    # make_engine_runner imports run_contract_turn from base.terminal at call time —
     # patch the source.
     monkeypatch.setattr(terminal, "run_contract_turn", _boom)
 
     from ach_agent.engine.opencode.driver import OpencodeDriver
 
-    runner = _make_engine_runner(
+    runner = make_engine_runner(
         pool=_FakePool(),
         driver=OpencodeDriver(),
         engine_cfg=EngineConfig(),

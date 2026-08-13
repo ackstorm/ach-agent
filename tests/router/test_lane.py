@@ -66,11 +66,11 @@ async def test_lane_timeout_increments_watchdog_metric() -> None:
 
 
 async def _build_runner(fake_pool, channel_ttl: dict[str, float]):
+    from ach_agent.boot.engine_runner import make_engine_runner
     from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.engine.opencode.driver import OpencodeDriver
-    from ach_agent.main import _make_engine_runner
 
-    return _make_engine_runner(
+    return make_engine_runner(
         pool=fake_pool,
         driver=OpencodeDriver(),
         engine_cfg=EngineConfig(),

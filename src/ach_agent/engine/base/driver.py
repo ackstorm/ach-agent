@@ -85,8 +85,9 @@ class EngineConfig:
     thinking_effort: str | None = None
 
     # SP1: which driver runs this config. "opencode" | "pi". Selects the EngineDriver in
-    # _make_engine_runner (main.py) and namespaces the pool sessions map (base/pool.py) so an
-    # opencode ses_ id and a Pi session-file path never collide on a persisted home.
+    # make_engine_runner (boot/engine_runner.py) and namespaces the pool sessions map
+    # (base/pool.py) so an opencode ses_ id and a Pi session-file path never collide on a
+    # persisted home.
     engine_type: str = "opencode"
 
 

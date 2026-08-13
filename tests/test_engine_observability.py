@@ -98,7 +98,7 @@ def test_usage_round_trips_through_stats_for_summary(capfd):
     stats: dict = {"tool_count": acc.tool_count(), "usage": acc.usage()}
 
     usage = stats["usage"]
-    # This mirrors exactly what _make_engine_runner logs:
+    # This mirrors exactly what make_engine_runner logs:
     assert stats["tool_count"] == 0
     assert usage.input_tokens == 100
     assert usage.output_tokens == 40

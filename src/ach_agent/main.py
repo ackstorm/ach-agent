@@ -52,6 +52,11 @@ from ach_agent.boot.prompt import (
     resolve_system_prompt,
     terminal_action_for,
 )
+from ach_agent.boot.secrets import (
+    collect_secret_env_names,
+    resolve_model_upstream,
+    strip_forwarded_secrets,
+)
 from ach_agent.boot.stores import open_dedup_store, open_session_store
 from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a2a_agent_card
 from ach_agent.channels.cron import CronScheduler
@@ -85,7 +90,7 @@ from ach_agent.http.app import create_app
 from ach_agent.memory.facade import MemoryFacade
 from ach_agent.memory.hindsight import prepare_memory, provision_memory
 from ach_agent.router import Router
-from ach_agent.security.preflight import DEGRADED_ENV, run_preflight
+from ach_agent.security.preflight import run_preflight
 from ach_agent.templating import build_template_context, render_template
 
 # configure_logging() is called at module TOP (not in main()) so that any
@@ -749,43 +754,6 @@ class _A2AHandler:
         return await self._rtr.handle(event)
 
 
-def collect_secret_env_names(cfg: Any) -> list[str]:
-    """Every secret.env name across webhook + a2a channel auth + the memory admin secret."""
-    names: list[str] = []
-    for ch in cfg.channels:
-        wh = getattr(ch, "webhook", None)
-        if wh is not None and wh.auth.secret is not None and wh.auth.secret.env:
-            names.append(wh.auth.secret.env)
-        a2a = getattr(ch, "a2a", None)
-        if a2a is not None and a2a.auth.secret is not None and a2a.auth.secret.env:
-            names.append(a2a.auth.secret.env)
-    # memory.hindsight.auth: the admin secret joins the same forwardEnv-strip + log-redaction
-    # path as channel secrets. No-auth memory config → nothing appended.
-    mem = getattr(cfg, "memory", None)
-    if isinstance(mem, HindsightMemory) and mem.hindsight.auth is not None:
-        names.append(mem.hindsight.auth.env)
-    return names
-
-
-def strip_forwarded_secrets(cfg: Any) -> list[str]:
-    """Fail-SAFE: remove any secret.env name from engine.forwardEnv so a misconfig can never
-    leak the secret into opencode's env. Returns the cleaned forward-env list; logs a WARN for
-    each stripped name (operator agreement: strip + warn, NOT hard-fail).
-    """
-    secret_names = set(collect_secret_env_names(cfg))
-    cleaned: list[str] = []
-    stripped: list[str] = []
-    for name in cfg.engine.forward_env:
-        (stripped if name in secret_names else cleaned).append(name)
-    if stripped:
-        log.warning(
-            "secret env name(s) present in engine.forwardEnv — stripped so they never reach the "
-            "agent (fix the config)",
-            names=sorted(stripped),
-        )
-    return cleaned
-
-
 async def _run_opencode_attach(
     router: Any,
     *,
@@ -866,49 +834,6 @@ def _engine_runtime_fields(cfg: Any) -> dict[str, Any]:
         "pi_mcp_adapter_path": pi.mcp_adapter_path,
         **thinking,
     }
-
-
-def _resolve_model_upstream(ek: str, default_base: str) -> tuple[str, str, str]:
-    """Resolve the model proxy's upstream (base_url, auth header, token).
-
-    Default: the ACH base URL + the ek_. The ACH_MODEL_* env vars swap in a raw provider
-    key for local A/B testing — that bypasses ACH governance and ek-hygiene, so it is
-    gated behind ACH_INSECURE_ALLOW_DEGRADED=1 (same gate as the preflight host checks).
-    The credential itself is NEVER logged.
-    """
-    override_base = os.environ.get("ACH_MODEL_BASE_URL")
-    override_header = os.environ.get("ACH_MODEL_HEADER")
-    raw_token = os.environ.get("ACH_MODEL_TOKEN", "")
-    if not (override_base or override_header or raw_token):
-        return default_base, "x-ach-key", ek
-
-    if os.environ.get(DEGRADED_ENV) != "1":
-        log.error(
-            "ACH_MODEL_* upstream override is set but the degraded gate is not. This path "
-            "uses a raw provider key instead of the ek_ and bypasses ACH governance. "
-            f"Set {DEGRADED_ENV}=1 to allow it (local testing only), or unset the override.",
-        )
-        raise SystemExit(1)
-
-    log.warning(
-        "model proxy upstream override ACTIVE — raw provider key, ek-hygiene bypassed",
-        base_url=override_base or default_base,
-        auth_header=override_header or "x-ach-key",
-    )
-    # Catch the classic 'No api key passed in' 401: ACH_MODEL_TOKEN set but its credential
-    # is empty — e.g. `Bearer ${LITELLM_API_KEY}` where the var was never exported, so it
-    # expanded to a bare scheme word. The credential itself is NEVER logged.
-    cred = raw_token.split(" ", 1)[1] if " " in raw_token.strip() else raw_token
-    if raw_token and not cred.strip():
-        log.warning(
-            "ACH_MODEL_TOKEN has an empty credential — only a scheme word, no key. "
-            "Likely an unexpanded ${...} var. The upstream will 401 'No api key passed in.'",
-        )
-    return (
-        override_base or default_base,
-        override_header or "x-ach-key",
-        raw_token or ek,
-    )
 
 
 async def main(
@@ -1073,7 +998,7 @@ async def main(
         # token is injected VERBATIM as the header value (carry `Bearer ` in it if the
         # backend needs it). SECURITY: this path uses a raw provider key, NOT the ek_ — it
         # bypasses ACH governance/ek-hygiene and is for local testing, never production.
-        model_up_base, model_up_header, model_up_token = _resolve_model_upstream(
+        model_up_base, model_up_header, model_up_token = resolve_model_upstream(
             ek, cfg.capability.ach.base_url
         )
         price_table, accountant = await _build_cost_accounting(

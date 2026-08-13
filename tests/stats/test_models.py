@@ -51,8 +51,61 @@ def test_to_entry_is_all_strings_and_versioned():
 def test_to_entry_roundtrip_fields_present():
     entry = _build().to_entry()
     for key in (
-        "v", "ts", "session_key", "channel", "source", "model", "provider", "task",
-        "input_tokens", "output_tokens", "cache_read", "cache_write", "cost", "turns",
-        "duration_ms", "tokens_per_s", "status", "retry",
+        "v",
+        "ts",
+        "session_key",
+        "channel",
+        "source",
+        "model",
+        "provider",
+        "task",
+        "input_tokens",
+        "output_tokens",
+        "cache_read",
+        "cache_write",
+        "cost",
+        "turns",
+        "duration_ms",
+        "tokens_per_s",
+        "status",
+        "retry",
     ):
         assert key in entry, key
+
+
+def test_redact_scrubs_without_truncating():
+    from ach_agent.stats.models import redact
+
+    text = "x" * 200 + " token ek_abc123DEF-456 tail"
+    out = redact(text)
+    assert "ek_abc123DEF-456" not in out
+    assert "[redacted]" in out
+    assert len(out) > 80  # redact() must NOT truncate — that is redact_task's job
+
+
+def test_build_tool_stat_redacts_error():
+    from types import SimpleNamespace
+
+    from ach_agent.stats.sink import build_tool_stat
+
+    update = SimpleNamespace(
+        state=SimpleNamespace(
+            status="error",
+            output="",
+            error="upstream 401: header x-ach-key: ek_live_SECRET99 rejected",
+            input=None,
+        )
+    )
+    stat = build_tool_stat(
+        update,
+        session_key="k",
+        channel="c",
+        source="s",
+        model="m",
+        tool="t",
+        tool_type="mcp",
+        duration_ms=1,
+        ts_ms=0,
+    )
+    assert "ek_live_SECRET99" not in stat.error
+    assert "[redacted]" in stat.error

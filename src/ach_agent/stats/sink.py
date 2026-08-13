@@ -16,7 +16,7 @@ from typing import Any, Protocol, cast
 import structlog
 
 from ach_agent.stats import metrics
-from ach_agent.stats.models import SessionStat, ToolStat
+from ach_agent.stats.models import SessionStat, ToolStat, redact
 
 log = structlog.get_logger()
 
@@ -202,5 +202,5 @@ def build_tool_stat(
         duration_ms=duration_ms,
         input_size=len(str(inp)) if inp else 0,
         output_size=len(output) if output else len(error),
-        error=error[:300],
+        error=redact(error)[:300],
     )

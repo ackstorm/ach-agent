@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import signal
 import sys
@@ -37,7 +36,6 @@ import uvicorn
 
 if TYPE_CHECKING:
     from ach_agent.engine.base.driver import EngineDriver
-    from ach_agent.engine.events import OpenCodeToolUpdate
     from ach_agent.engine.hydrate import McpServer
 
 from ach_agent.boot.paths import (
@@ -58,6 +56,7 @@ from ach_agent.boot.secrets import (
     strip_forwarded_secrets,
 )
 from ach_agent.boot.stores import open_dedup_store, open_session_store
+from ach_agent.boot.tooling import log_engine_tool, make_tool_recorder
 from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a2a_agent_card
 from ach_agent.channels.cron import CronScheduler
 from ach_agent.channels.message_event import MessageEvent
@@ -117,114 +116,6 @@ _MODEL_ENDPOINT_PREFIX: dict[str, str] = {
 CONFIG_PATH_ENV = "ACH_CONFIG_PATH"
 DEFAULT_CONFIG_PATH = "/etc/ach-agent/config.json"
 PID_FILE = Path("/tmp/ach-agent.pid")
-
-
-def _clean_tool_name(name: str) -> str:
-    """Collapse opencode's doubled MCP prefix for readability.
-
-    opencode ids MCP tools as ``<server>_<server>_<tool>`` (the server segment repeats,
-    e.g. ``mcp-gitlab-ro_mcp-gitlab-ro_gitlab_get_merge_request``). Render it as
-    ``<server>/<tool>``. Native tools (``grep``, ``bash``) have no such prefix and pass through.
-    """
-    parts = name.split("_", 2)
-    if len(parts) == 3 and parts[0] == parts[1]:
-        return f"{parts[0]}/{parts[2]}"
-    return name
-
-
-def _tool_detail(raw: str) -> str:
-    """Best-effort decode of a tool result for readable logging.
-
-    gitlab-mcp (and friends) return ``{"result": "<json-string>"}`` — doubly JSON-encoded,
-    which structlog then repr-escapes into an unreadable ``{\\n \\"...`` blob. Parse it, unwrap
-    a lone ``result`` string, and re-dump compact single-line JSON. Non-JSON output (file
-    reads, truncation notices) falls through to the raw text. Always truncated to 300 chars.
-    """
-    text = raw.strip()
-    try:
-        obj = json.loads(text)
-    except (ValueError, TypeError):
-        return text[:300]
-    if isinstance(obj, dict) and list(obj) == ["result"] and isinstance(obj["result"], str):
-        try:
-            obj = json.loads(obj["result"])
-        except (ValueError, TypeError):
-            obj = obj["result"]
-    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))[:300]
-
-
-def _log_engine_tool(update: OpenCodeToolUpdate) -> None:
-    """Default on_tool sink for channel invocations.
-
-    run_invocation calls this as each tool moves running→completed/error. Wired only when
-    the channel provides no on_tool of its own (--debug/console keep their own streaming
-    sinks), so a channel turn shows the tools it ran — the action and its result — instead
-    of dead air. The ``running`` transition is skipped so each tool logs ONCE (on
-    completed/error); the result is JSON-decoded for readability and both fields are bounded.
-    """
-    state = update.state
-    if state.status == "running":
-        return  # one line per tool — the completed/error transition carries the result
-    fields: dict[str, Any] = {
-        "tool": _clean_tool_name(update.tool_name),
-        "status": state.status,
-    }
-    action = getattr(state, "title", "")
-    if action:
-        fields["action"] = action[:200]
-    detail = getattr(state, "output", "") or getattr(state, "error", "")
-    if detail:
-        fields["detail"] = _tool_detail(detail)
-    log.info("engine: tool", **fields)
-
-
-def _make_tool_recorder(
-    inner: Callable[[OpenCodeToolUpdate], None],
-    tool_sink: Any,
-    event: MessageEvent,
-    model: str,
-) -> Callable[[OpenCodeToolUpdate], None]:
-    """Wrap an on_tool sink to also record one ToolStat per tool call (Tier 1 agent trace).
-
-    Stamps a monotonic start on the ``running`` transition; on the ``completed``/``error``
-    transition computes the duration and records once per call_id, then delegates to ``inner``
-    (the channel's sink or _log_engine_tool). Per-invocation state — a fresh map each turn.
-    """
-    from ach_agent.stats.sink import build_tool_stat
-
-    starts: dict[str, float] = {}
-    done: set[str] = set()
-    source = getattr(event, "source", event.channel_name)
-
-    def on_tool(update: OpenCodeToolUpdate) -> None:
-        cid = update.call_id or update.part_id
-        status = update.state.status
-        if status == "running":
-            starts.setdefault(cid, time.monotonic())
-        elif status in ("completed", "error") and cid not in done:
-            done.add(cid)
-            start = starts.pop(cid, None)
-            # ponytail: duration from SSE arrival (running→terminal), not opencode's own tool
-            # clock — needs the running event; missing it → duration None (count still recorded).
-            dur_ms = int((time.monotonic() - start) * 1000) if start is not None else None
-            display = _clean_tool_name(update.tool_name)
-            tool_type = "mcp" if "/" in display else "builtin"
-            tool_sink.record(
-                build_tool_stat(
-                    update,
-                    session_key=event.session_key,
-                    channel=event.channel_name,
-                    source=source,
-                    model=model,
-                    tool=display,
-                    tool_type=tool_type,
-                    duration_ms=dur_ms,
-                    ts_ms=int(time.time() * 1000),
-                )
-            )
-        inner(update)
-
-    return on_tool
 
 
 # resolve_codemem_wiring has moved to ach_agent.memory.codemem; re-exported here for
@@ -455,11 +346,11 @@ def _make_engine_runner(
             # Default observability sink: channels wire no on_tool (only --debug does), so
             # without this a channel turn shows nothing about the tools it ran.
             if on_tool is None:
-                on_tool = _log_engine_tool
+                on_tool = log_engine_tool
             # Tier 1 agent trace: record one ToolStat per tool call (metrics always; ach:tools
             # stream when ACH_STATS_REDIS_URL is set). Wraps whatever on_tool renders/logs.
             if tool_sink is not None:
-                on_tool = _make_tool_recorder(on_tool, tool_sink, event, engine_cfg.model)
+                on_tool = make_tool_recorder(on_tool, tool_sink, event, engine_cfg.model)
             # Conversation identity (session block). The router lane key
             # (event.session_key) is NOT affected — only which opencode session
             # this turn reuses. No ch_cfg (--tui console) → auto: REPL continuity.

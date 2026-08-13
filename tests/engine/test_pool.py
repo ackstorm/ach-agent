@@ -459,7 +459,7 @@ async def test_distinct_keys_get_distinct_servers_and_refcounts() -> None:
 
 # ---------------------------------------------------------------------------
 # Non-keyed coverage preserved from the pre-migration test file:
-# _default_start_server home behavior and main._harness_log_dir.
+# _default_start_server home behavior and boot.paths.harness_log_dir.
 # ---------------------------------------------------------------------------
 
 
@@ -493,9 +493,9 @@ async def test_default_start_server_uses_config_home(tmp_path: Path, monkeypatch
 
 
 def test_harness_log_dir_is_volatile_tmp() -> None:
-    from ach_agent.main import _harness_log_dir
+    from ach_agent.boot.paths import harness_log_dir
 
-    d = _harness_log_dir()
+    d = harness_log_dir()
     assert str(d).startswith("/tmp/")
     assert d.is_dir()
 

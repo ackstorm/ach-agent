@@ -40,6 +40,12 @@ if TYPE_CHECKING:
     from ach_agent.engine.events import OpenCodeToolUpdate
     from ach_agent.engine.hydrate import McpServer
 
+from ach_agent.boot.paths import (
+    harness_log_dir,
+    link_ach_state,
+    resolve_engine_paths,
+    write_pid_file,
+)
 from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a2a_agent_card
 from ach_agent.channels.cron import CronScheduler
 from ach_agent.channels.message_event import MessageEvent
@@ -99,22 +105,6 @@ _MODEL_ENDPOINT_PREFIX: dict[str, str] = {
 CONFIG_PATH_ENV = "ACH_CONFIG_PATH"
 DEFAULT_CONFIG_PATH = "/etc/ach-agent/config.json"
 PID_FILE = Path("/tmp/ach-agent.pid")
-
-
-def _write_pid_file(pid_path: Path) -> None:
-    """Write PID file for single-replica guard (Pitfall 11).
-
-    Tolerate a non-writable path in dev by logging and continuing.
-    """
-    try:
-        pid_path.write_text(str(os.getpid()), encoding="utf-8")
-        log.info("PID file written", path=str(pid_path))
-    except OSError as exc:
-        log.warning(
-            "PID file not writable — continuing without it (dev mode)",
-            path=str(pid_path),
-            error=str(exc),
-        )
 
 
 def _open_dedup_store(cfg: Any) -> Any:
@@ -483,49 +473,9 @@ def build_output_instructions(channel_cfg: Any, free_form: bool) -> str:
     return NONE_OUTPUT_INSTRUCTIONS
 
 
-def resolve_engine_paths(cfg: Any) -> tuple[str, str]:
-    """Resolve the opencode HOME and the agent workDir from the contract.
-
-    Both are definable (engine.home / engine.workDir). When omitted:
-      - home → <mountPath>/home if persistence.enabled (persistent), else /tmp/ach-home.
-      - work_dir → <home>/workspace.
-    Static state (config, skills, sessions) lives under HOME; HOME under mountPath persists.
-    """
-    home = cfg.engine.home
-    if not home:
-        home = f"{cfg.persistence.mount_path}/home" if cfg.persistence.enabled else "/tmp/ach-home"
-    work_dir = cfg.engine.work_dir or f"{home}/workspace"
-    return home, work_dir
-
-
 # resolve_codemem_wiring has moved to ach_agent.memory.codemem; re-exported here for
 # back-compat with existing callers (tests/integration/test_codemem_wiring.py, etc.).
 from ach_agent.memory.codemem import resolve_codemem_wiring as resolve_codemem_wiring  # noqa: E402
-
-
-def ach_state_dir(home: str) -> Path:
-    """The single hydration state root: <home>/.ach-state (prompts + artifacts)."""
-    return Path(home) / ".ach-state"
-
-
-def link_ach_state(home: str, work_dir: str) -> Path:
-    """Create <home>/.ach-state and, when workDir differs, a <workDir>/.ach-state symlink.
-
-    The symlink gives the agent's shell (cwd = workDir) one stable path to hydrated
-    artifacts; HOME stays the canonical read-only root. Best-effort: a symlink failure
-    (e.g. unsupported FS) is non-fatal — the agent can still reach state under HOME.
-    """
-    state = ach_state_dir(home)
-    state.mkdir(parents=True, exist_ok=True)
-    if work_dir and Path(work_dir).resolve() != Path(home).resolve():
-        link = Path(work_dir) / ".ach-state"
-        link.parent.mkdir(parents=True, exist_ok=True)
-        if not link.exists():
-            try:
-                link.symlink_to(state, target_is_directory=True)
-            except OSError as e:
-                log.warning("workDir .ach-state symlink failed (non-fatal)", error=str(e))
-    return state
 
 
 def resolve_system_prompt(prompt_block: Any, state_dir: Path) -> str:
@@ -1096,17 +1046,6 @@ class _A2AHandler:
         return await self._rtr.handle(event)
 
 
-def _harness_log_dir() -> Path:
-    """Volatile dir for transient harness logs (e.g. the --tui attach log).
-
-    Lives under /tmp, never the opencode HOME — harness logs are throwaway and must not
-    pollute the persistent home/state tree.
-    """
-    d = Path("/tmp/ach-harness")
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
 def collect_secret_env_names(cfg: Any) -> list[str]:
     """Every secret.env name across webhook + a2a channel auth + the memory admin secret."""
     names: list[str] = []
@@ -1182,7 +1121,7 @@ async def _run_opencode_attach(
     env = {**os.environ, "HOME": str(ephemeral_home), "TMPDIR": "/tmp"}
     if config_path is not None:
         env["OPENCODE_CONFIG"] = str(config_path)
-    log_path = _harness_log_dir() / "tui-attach.log"
+    log_path = harness_log_dir() / "tui-attach.log"
     log.info("ach-agent: --tui → opencode attach", url=url, log_file=str(log_path))
 
     real_stderr = sys.stderr
@@ -1329,7 +1268,7 @@ async def main(
             sys.exit(1)
 
     # Step 4: PID file (Pitfall 11 — tolerate non-writable in dev)
-    _write_pid_file(PID_FILE)
+    write_pid_file(PID_FILE)
 
     # Plan 2 (CONTRACT §6.10): self-hydrate from ACH, then front the model + MCP traffic
     # via localhost reverse-proxies that inject the ek_. opencode points ONLY at localhost

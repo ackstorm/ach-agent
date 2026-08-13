@@ -424,7 +424,7 @@ def test_uvicorn_boots_for_any_config(channel_types: list[str]) -> None:
 def test_resolve_engine_paths_defaults_and_overrides() -> None:
     from types import SimpleNamespace
 
-    from ach_agent.main import resolve_engine_paths
+    from ach_agent.boot.paths import resolve_engine_paths
 
     # persistence enabled, nothing pinned → home under mountPath, workDir under home
     cfg = SimpleNamespace(

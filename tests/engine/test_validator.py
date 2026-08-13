@@ -23,3 +23,16 @@ def test_extract_a2a_reply():
 
 def test_extract_returns_none_when_absent():
     assert extract_terminal("no json here") is None
+
+
+def test_extract_terminal_tolerates_whitespace_after_brace():
+    text = 'preamble\n{\n  "action": "none",\n  "text": "done"\n}'
+    obj = extract_terminal(text)
+    assert obj == {"action": "none", "text": "done"}
+
+
+def test_extract_terminal_still_takes_the_last_object():
+    text = '{"action":"none","text":"first"}\nthen\n{ "action":"none","text":"last"}'
+    obj = extract_terminal(text)
+    assert obj is not None
+    assert obj["text"] == "last"

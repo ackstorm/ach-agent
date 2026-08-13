@@ -23,6 +23,10 @@ log = structlog.get_logger(__name__)
 # Strip markdown ```json ... ``` fences before searching for JSON
 _FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL)
 
+# Terminal object opener: '{' + optional whitespace + '"action"'. rfind on the tight
+# literal missed pretty-printed output and forced a pointless repair turn.
+_OPENER_RE = re.compile(r'\{\s*"action"')
+
 
 # ---------------------------------------------------------------------------
 # Extraction algorithm (Pattern 6 from 00-RESEARCH.md)
@@ -63,7 +67,7 @@ def extract_terminal(accumulated_text: str) -> dict[str, Any] | None:
 
     Algorithm:
       1. Strip markdown code fences (```json ... ```)
-      2. Find last occurrence of '{"action"' via rfind (handles preamble + multi-blob)
+      2. Find the last '{' + optional whitespace + '"action"' opener (handles preamble + multi-blob)
       3. Match the closing brace via _find_matching_brace
       4. json.loads the matched slice
 
@@ -73,9 +77,10 @@ def extract_terminal(accumulated_text: str) -> dict[str, Any] | None:
     fence = _FENCE_RE.search(text)
     if fence:
         text = fence.group(1).strip()
-    pos = text.rfind('{"action"')
-    if pos == -1:
+    matches = list(_OPENER_RE.finditer(text))
+    if not matches:
         return None
+    pos = matches[-1].start()
     end = _find_matching_brace(text, pos)
     if end == -1:
         return None

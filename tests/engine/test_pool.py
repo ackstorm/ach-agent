@@ -619,7 +619,7 @@ def test_sqlite_session_map_pop_deletes_row(tmp_path):
 
 
 def test_pool_accepts_injected_session_map():
-    """A caller (main._open_session_store) can inject the disk-resident map."""
+    """A caller (boot.stores.open_session_store) can inject the disk-resident map."""
     from ach_agent.engine.pool import EnginePool
 
     injected: dict[str, str] = {"opencode:lane-1": "ses-a"}

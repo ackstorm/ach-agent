@@ -3,7 +3,7 @@
 Architecture: hermetic, no live services.
 
 Task 1 (store selection, RED gate):
-  - test_store_selection_in_memory: _open_dedup_store with persistence.enabled=False
+  - test_store_selection_in_memory: open_dedup_store with persistence.enabled=False
     returns an InMemoryDedupStore.
   - test_store_selection_file_backed: persistence.enabled=True + writable tmp_path
     returns a FileBackedDedupStore and creates ${mount}/state/state.db.
@@ -88,11 +88,11 @@ def _make_headers(secret: str, *, event_uuid: str | None = None) -> dict[str, st
 
 def test_store_selection_in_memory() -> None:
     """DUR-01 / D-03: persistence.enabled=False → InMemoryDedupStore returned."""
-    from ach_agent.main import _open_dedup_store
+    from ach_agent.boot.stores import open_dedup_store
     from ach_agent.router.dedup import InMemoryDedupStore
 
     cfg = _make_persistence_cfg(enabled=False)
-    store = _open_dedup_store(cfg)
+    store = open_dedup_store(cfg)
     assert isinstance(store, InMemoryDedupStore), (
         f"Expected InMemoryDedupStore, got {type(store).__name__}"
     )
@@ -103,11 +103,11 @@ def test_store_selection_file_backed(tmp_path: Path) -> None:
 
     Asserts the state.db file is created in the mountPath/state directory.
     """
-    from ach_agent.main import _open_dedup_store
+    from ach_agent.boot.stores import open_dedup_store
     from ach_agent.router.dedup import FileBackedDedupStore
 
     cfg = _make_persistence_cfg(enabled=True, mount_path=str(tmp_path))
-    store = _open_dedup_store(cfg)
+    store = open_dedup_store(cfg)
     assert isinstance(store, FileBackedDedupStore), (
         f"Expected FileBackedDedupStore, got {type(store).__name__}"
     )
@@ -119,12 +119,12 @@ def test_store_selection_file_backed(tmp_path: Path) -> None:
 
 def test_missing_mount_exits() -> None:
     """DUR-01 / D-04a: persistence.enabled=True + missing mount → sys.exit(1) (fail-closed)."""
-    from ach_agent.main import _open_dedup_store
+    from ach_agent.boot.stores import open_dedup_store
 
     # Use a path guaranteed not to exist
     cfg = _make_persistence_cfg(enabled=True, mount_path="/nonexistent/ach-agent-test-dir")
     with pytest.raises(SystemExit) as exc_info:
-        _open_dedup_store(cfg)
+        open_dedup_store(cfg)
     assert exc_info.value.code == 1, f"Expected sys.exit(1), got exit code {exc_info.value.code}"
 
 
@@ -134,7 +134,7 @@ def test_corrupt_db_fail_open(tmp_path: Path) -> None:
     The store must work (can mark/seen) and PERSISTENCE_DEGRADED must be incremented.
     Must NOT raise SystemExit.
     """
-    from ach_agent.main import _open_dedup_store
+    from ach_agent.boot.stores import open_dedup_store
     from ach_agent.router.metrics import PERSISTENCE_DEGRADED
 
     # Plant a garbage file as state.db
@@ -146,7 +146,7 @@ def test_corrupt_db_fail_open(tmp_path: Path) -> None:
     before_val = list(PERSISTENCE_DEGRADED.collect())[0].samples[0].value
 
     cfg = _make_persistence_cfg(enabled=True, mount_path=str(tmp_path))
-    store = _open_dedup_store(cfg)
+    store = open_dedup_store(cfg)
 
     # Must not have raised SystemExit (we are here, so it did not)
     # Store must be usable
@@ -161,7 +161,7 @@ def test_corrupt_db_fail_open(tmp_path: Path) -> None:
     )
 
     # Corrupt file must have been moved aside (not deleted).
-    # _open_dedup_store uses db_path.with_suffix(f".corrupt.{ts}.db"), so
+    # open_dedup_store uses db_path.with_suffix(f".corrupt.{ts}.db"), so
     # "state.db" → "state.corrupt.{ts}.db" (with_suffix replaces the last suffix).
     state_dir = tmp_path / "state"
     aside_files = list(state_dir.glob("state.corrupt.*.db"))

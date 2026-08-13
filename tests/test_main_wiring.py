@@ -172,7 +172,7 @@ def test_build_engine_prompt_mr_webhook_is_non_empty() -> None:
     After the fix: build_engine_prompt(event) must return a non-empty string containing
     the MR title when the payload has object_attributes.title.
     """
-    from ach_agent.main import build_engine_prompt
+    from ach_agent.boot.prompt import build_engine_prompt
 
     event = MessageEvent(
         idempotency_key="test-key",
@@ -205,7 +205,7 @@ def test_build_engine_prompt_cron_uses_scheduled_tick() -> None:
     Cron events have no MR payload — they carry a scheduled_tick key.
     The prompt must be the tick string (original cron behavior preserved).
     """
-    from ach_agent.main import build_engine_prompt
+    from ach_agent.boot.prompt import build_engine_prompt
 
     tick = "2026-06-20T00:00:00Z"
     event = MessageEvent(
@@ -223,7 +223,7 @@ def test_build_engine_prompt_cron_uses_scheduled_tick() -> None:
 
 
 def test_build_engine_prompt_issue_uses_issue_reference() -> None:
-    from ach_agent.main import build_engine_prompt
+    from ach_agent.boot.prompt import build_engine_prompt
 
     event = MessageEvent(
         idempotency_key="k",
@@ -250,7 +250,7 @@ def test_build_engine_prompt_issue_uses_issue_reference() -> None:
 
 
 def test_build_engine_prompt_note_on_mr_includes_comment_and_ref() -> None:
-    from ach_agent.main import build_engine_prompt
+    from ach_agent.boot.prompt import build_engine_prompt
 
     event = MessageEvent(
         idempotency_key="k",
@@ -274,7 +274,7 @@ def test_build_engine_prompt_note_on_mr_includes_comment_and_ref() -> None:
 
 
 def test_build_engine_prompt_note_on_issue_includes_comment_and_ref() -> None:
-    from ach_agent.main import build_engine_prompt
+    from ach_agent.boot.prompt import build_engine_prompt
 
     event = MessageEvent(
         idempotency_key="k",

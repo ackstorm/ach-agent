@@ -24,9 +24,6 @@ from ach_agent.router.slots import SlotManager
 
 log = structlog.get_logger(__name__)
 
-# Default maxInvocationSeconds when not provided (conservative upper bound)
-_DEFAULT_MAX_INVOCATION_SECONDS: float = 300.0
-
 # Short window for the GitLab logical content composite (secondary dedup key). Deliberately
 # SHORT (legacy used 2s): a content-based key on the long idempotency window would wrongly
 # dedup two INTENTIONAL identical comments minutes apart. Exact-delivery retries are covered
@@ -67,7 +64,7 @@ class Router:
         idempotency_window_seconds: int,
         dedup_store: DedupStore,
         engine_runner: Callable[..., Any],
-        max_invocation_seconds: float = _DEFAULT_MAX_INVOCATION_SECONDS,
+        max_invocation_seconds: float,
         channel_concurrency: dict[str, int] | None = None,
     ) -> None:
         self._max_queued_total = max_queued_total

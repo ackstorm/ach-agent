@@ -60,6 +60,7 @@ async def test_global_concurrency_cap(fake_engine: FakeEngine) -> None:
         idempotency_window_seconds=60,
         dedup_store=InMemoryDedupStore(),
         engine_runner=fake_engine.run,
+        max_invocation_seconds=600.0,
         channel_concurrency={"test-channel": 10},  # global_sem (=2) is the bottleneck
     )
 
@@ -119,6 +120,7 @@ async def test_queued_total_released_when_engine_skips_on_kill() -> None:
         idempotency_window_seconds=60,
         dedup_store=InMemoryDedupStore(),
         engine_runner=SilentEngine().run,
+        max_invocation_seconds=600.0,
     )
 
     # Submit more events than the queue can hold IF it never drained.
@@ -162,6 +164,7 @@ async def test_timeout_path_does_not_over_release() -> None:
         idempotency_window_seconds=60,
         dedup_store=InMemoryDedupStore(),
         engine_runner=TimeoutEngine().run,
+        max_invocation_seconds=600.0,
     )
 
     for i in range(4):

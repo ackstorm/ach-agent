@@ -139,6 +139,7 @@ async def test_a2a_task_routes_to_engine_and_enqueues_completed_event(
         idempotency_window_seconds=3600,
         dedup_store=InMemoryDedupStore(),
         engine_runner=fake_engine_runner,
+        max_invocation_seconds=600.0,
     )
 
     channel_cfg = _make_a2a_channel_cfg_with_secret(monkeypatch)
@@ -249,6 +250,7 @@ async def test_a2a_engine_not_ready_still_routes_to_engine(monkeypatch: pytest.M
         idempotency_window_seconds=3600,
         dedup_store=InMemoryDedupStore(),
         engine_runner=fake_engine_runner,
+        max_invocation_seconds=600.0,
     )
 
     channel_cfg = _make_a2a_channel_cfg_with_secret(monkeypatch)
@@ -293,6 +295,7 @@ async def test_a2a_dedup_rejects_repeated_task_id(monkeypatch: pytest.MonkeyPatc
         idempotency_window_seconds=3600,
         dedup_store=InMemoryDedupStore(),
         engine_runner=fake_engine_runner,
+        max_invocation_seconds=600.0,
     )
 
     channel_cfg = _make_a2a_channel_cfg_with_secret(monkeypatch)

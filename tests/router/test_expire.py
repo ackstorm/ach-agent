@@ -39,6 +39,7 @@ async def test_full_queue_non_silent() -> None:
         idempotency_window_seconds=60,
         dedup_store=InMemoryDedupStore(),
         engine_runner=fake_engine,
+        max_invocation_seconds=600.0,
     )
 
     # Capture baseline counters

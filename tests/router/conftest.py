@@ -87,6 +87,7 @@ def router(fake_engine: FakeEngine) -> Router:
         idempotency_window_seconds=60,
         dedup_store=InMemoryDedupStore(),
         engine_runner=fake_engine.run,
+        max_invocation_seconds=600.0,
     )  # type: ignore[call-arg]
 
 

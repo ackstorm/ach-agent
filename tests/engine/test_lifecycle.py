@@ -1354,7 +1354,7 @@ async def test_run_invocation_wrapup_after_abort() -> None:
     assert calls[0]["mtc"] == 5, "main turn carries the budget"
     assert calls[1]["mtc"] == 0, "wrap-up turn disables the budget"
     assert calls[1]["prompt"].startswith("You have reached your tool-call budget")
-    assert result == {"action": "none", "text": "wrapped up"}
+    assert result == {"action": "none", "text": "wrapped up", "thoughts": ""}
 
 
 async def test_run_invocation_no_wrapup_when_not_aborted() -> None:

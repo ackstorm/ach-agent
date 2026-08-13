@@ -194,6 +194,7 @@ async def test_sigterm_flips_readyz(monkeypatch: pytest.MonkeyPatch) -> None:
     Tests via the shared state dict (app.extra['state']) directly — same path
     the drain handler uses — without sending an actual OS signal.
     """
+    from ach_agent.boot.health import HealthState
     from ach_agent.channels.message_event import MessageEvent
     from ach_agent.http.app import create_app
     from ach_agent.router import Router
@@ -216,8 +217,8 @@ async def test_sigterm_flips_readyz(monkeypatch: pytest.MonkeyPatch) -> None:
 
     app = create_app(channels=[channel_cfg], handler=router)
 
-    # Flip state via the same dict the drain handler uses
-    state: dict[str, Any] = app.extra["state"]
+    # Flip state via the same object the drain handler uses
+    state: HealthState = app.extra["state"]
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -225,16 +226,16 @@ async def test_sigterm_flips_readyz(monkeypatch: pytest.MonkeyPatch) -> None:
     ) as client:
         # Before drain: app lifespan is not running in test mode, so ready=False.
         # We set ready=True manually to prove drain flips it back to False.
-        state["ready"] = True
-        state["draining"] = False
+        state.ready = True
+        state.draining = False
         resp_before = await client.get("/readyz")
         assert resp_before.status_code == 200, (
             f"Expected 200 before drain, got {resp_before.status_code}"
         )
 
         # Simulate what _drain does: flip draining + ready
-        state["draining"] = True
-        state["ready"] = False
+        state.draining = True
+        state.ready = False
 
         resp_after = await client.get("/readyz")
         assert resp_after.status_code == 503, (
@@ -248,6 +249,7 @@ async def test_sigterm_stops_intake(monkeypatch: pytest.MonkeyPatch) -> None:
 
     No router handler should be invoked.
     """
+    from ach_agent.boot.health import HealthState
     from ach_agent.channels.message_event import MessageEvent
     from ach_agent.http.app import create_app
     from ach_agent.router import Router
@@ -273,11 +275,11 @@ async def test_sigterm_stops_intake(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     app = create_app(channels=[channel_cfg], handler=router)
-    state: dict[str, Any] = app.extra["state"]
+    state: HealthState = app.extra["state"]
 
     # Set draining = True (as _drain does)
-    state["draining"] = True
-    state["ready"] = True  # would be False in prod; test the straggler gate separately
+    state.draining = True
+    state.ready = True  # would be False in prod; test the straggler gate separately
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -307,6 +309,7 @@ async def test_sigterm_drain_completes_inflight(monkeypatch: pytest.MonkeyPatch)
     """
     from unittest.mock import MagicMock
 
+    from ach_agent.boot.health import HealthState
     from ach_agent.channels.message_event import MessageEvent
     from ach_agent.engine.metrics import DRAIN_COMPLETED
     from ach_agent.http.app import create_app
@@ -337,7 +340,7 @@ async def test_sigterm_drain_completes_inflight(monkeypatch: pytest.MonkeyPatch)
     )
 
     app = create_app(channels=[channel_cfg], handler=router)
-    state: dict[str, Any] = app.extra["state"]
+    state: HealthState = app.extra["state"]
 
     # Record DRAIN_COMPLETED value before
     before_val = list(DRAIN_COMPLETED.collect())[0].samples[0].value

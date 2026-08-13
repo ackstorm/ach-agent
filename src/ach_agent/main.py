@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from ach_agent.engine.hydrate import McpServer
 
 from ach_agent.boot.engine_runner import make_engine_runner
+from ach_agent.boot.health import HealthState
 from ach_agent.boot.paths import (
     harness_log_dir,
     link_ach_state,
@@ -186,7 +187,7 @@ async def _build_cost_accounting(
 
 
 async def _drain(
-    state: dict[str, Any],
+    state: HealthState,
     uv_server: Any,
     cron_scheduler: CronScheduler | None,
     router: Any,
@@ -206,8 +207,8 @@ async def _drain(
     Never logs ek_/GITLAB_TOKEN (T-03-07): log emits only path/count/reason fields.
     """
     # 1. Flip draining flag + readyz NotReady (D-09, D-12 straggler gate)
-    state["draining"] = True
-    state["ready"] = False
+    state.draining = True
+    state.ready = False
     log.info("drain: readyz flipped NotReady, intake stopped")
 
     # 2. Signal uvicorn to stop accepting new connections
@@ -834,8 +835,8 @@ async def main(
         handler=router,
         a2a_mounts=a2a_mounts,
     )
-    # Expose state dict so _drain can flip draining/ready (same ref as app.extra['state'])
-    state: dict[str, Any] = app.extra["state"]
+    # Expose state so _drain can flip draining/ready (same ref as app.extra['state'])
+    state: HealthState = app.extra["state"]
 
     # Step 7: wire channel adapters (D-08: one CronScheduler for ALL cron channels, SC#3)
     tasks: list[asyncio.Task[None]] = []

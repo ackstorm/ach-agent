@@ -8,7 +8,7 @@ RTR-03: The global asyncio.Semaphore (maxConcurrentInvocations) is acquired via
 `async with` before dispatching, enforcing the concurrency cap across all lanes.
 
 Pitfall 4: All semaphore acquisition is via `async with` (never bare acquire/release).
-Pitfall 6: Empty lanes are evicted via `router._maybe_evict_lane(session_key)` after
+Pitfall 6: Empty lanes are evicted via `router.on_lane_idle(session_key)` after
 each task_done() to prevent unbounded Queue/task leak over long-lived deployments.
 
 Constraint: NEVER import from hermes_agent.* here (RTR-06, D-08).
@@ -45,7 +45,7 @@ class Lane:
 
     Lifecycle:
       - Created by Router._get_or_create_lane() on first event for a session key.
-      - Evicted by Router._maybe_evict_lane() when the queue drains (Pitfall 6).
+      - Evicted by Router.on_lane_idle() when the queue drains (Pitfall 6).
     """
 
     def __init__(
@@ -129,7 +129,7 @@ class Lane:
                 if self.is_empty():
                     router = self._router_ref()
                     if router is not None:
-                        router._maybe_evict_lane(self._session_key)
+                        router.on_lane_idle(self._session_key)
 
     def _queued_total_dec(self) -> None:
         """Decrement the router's queued_total counter.
@@ -139,7 +139,7 @@ class Lane:
         """
         router = self._router_ref()
         if router is not None:
-            router._queued_total_dec()
+            router.release_queued_slot()
 
     def is_empty(self) -> bool:
         """True when no events are pending in this lane's queue.

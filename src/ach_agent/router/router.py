@@ -157,10 +157,10 @@ class Router:
             )
         return self._lanes[session_key]
 
-    def _maybe_evict_lane(self, session_key: str) -> None:
+    def on_lane_idle(self, session_key: str) -> None:
         """Remove an empty lane from the lane map and cancel its consumer task.
 
-        Called from Lane._consume() after task_done() when the queue is empty.
+        Called by Lane._consume() after task_done() when the lane reports empty.
         This prevents unbounded accumulation of Lane objects and asyncio.Queue
         instances over long-lived deployments (Pitfall 6, T-01-LANELEAK).
         """
@@ -170,10 +170,10 @@ class Router:
             # Cancel the consumer task so it does not leak (Pitfall 6)
             lane.cancel()
 
-    def _queued_total_dec(self) -> None:
+    def release_queued_slot(self) -> None:
         """Decrement queued_total counter.
 
-        Called from Lane._queued_total_dec() via on_kill (idempotent). This is
+        Called by Lane._queued_total_dec() via on_kill (idempotent). This is
         the canonical decrement point — the lane finally calls on_kill on every
         outcome, so queued_total is released exactly once per invocation whether
         the engine completed normally, timed out, or errored (Pitfall 4 / RTR-04).

@@ -21,10 +21,10 @@ from tests.router.conftest import make_event
 class _FakeRouter:
     """Minimal router stand-in for direct Lane construction."""
 
-    def _maybe_evict_lane(self, session_key: str) -> None:
+    def on_lane_idle(self, session_key: str) -> None:
         pass
 
-    def _queued_total_dec(self) -> None:
+    def release_queued_slot(self) -> None:
         pass
 
 

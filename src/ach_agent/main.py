@@ -72,7 +72,7 @@ from ach_agent.http.app import create_app
 from ach_agent.memory.facade import MemoryFacade
 from ach_agent.memory.hindsight import prepare_memory, provision_memory
 from ach_agent.router import Router
-from ach_agent.security.preflight import run_preflight
+from ach_agent.security.preflight import DEGRADED_ENV, run_preflight
 from ach_agent.templating import build_template_context, render_template
 
 # configure_logging() is called at module TOP (not in main()) so that any
@@ -1226,6 +1226,49 @@ def _engine_runtime_fields(cfg: Any) -> dict[str, Any]:
     }
 
 
+def _resolve_model_upstream(ek: str, default_base: str) -> tuple[str, str, str]:
+    """Resolve the model proxy's upstream (base_url, auth header, token).
+
+    Default: the ACH base URL + the ek_. The ACH_MODEL_* env vars swap in a raw provider
+    key for local A/B testing — that bypasses ACH governance and ek-hygiene, so it is
+    gated behind ACH_INSECURE_ALLOW_DEGRADED=1 (same gate as the preflight host checks).
+    The credential itself is NEVER logged.
+    """
+    override_base = os.environ.get("ACH_MODEL_BASE_URL")
+    override_header = os.environ.get("ACH_MODEL_HEADER")
+    raw_token = os.environ.get("ACH_MODEL_TOKEN", "")
+    if not (override_base or override_header or raw_token):
+        return default_base, "x-ach-key", ek
+
+    if os.environ.get(DEGRADED_ENV) != "1":
+        log.error(
+            "ACH_MODEL_* upstream override is set but the degraded gate is not. This path "
+            "uses a raw provider key instead of the ek_ and bypasses ACH governance. "
+            f"Set {DEGRADED_ENV}=1 to allow it (local testing only), or unset the override.",
+        )
+        raise SystemExit(1)
+
+    log.warning(
+        "model proxy upstream override ACTIVE — raw provider key, ek-hygiene bypassed",
+        base_url=override_base or default_base,
+        auth_header=override_header or "x-ach-key",
+    )
+    # Catch the classic 'No api key passed in' 401: ACH_MODEL_TOKEN set but its credential
+    # is empty — e.g. `Bearer ${LITELLM_API_KEY}` where the var was never exported, so it
+    # expanded to a bare scheme word. The credential itself is NEVER logged.
+    cred = raw_token.split(" ", 1)[1] if " " in raw_token.strip() else raw_token
+    if raw_token and not cred.strip():
+        log.warning(
+            "ACH_MODEL_TOKEN has an empty credential — only a scheme word, no key. "
+            "Likely an unexpanded ${...} var. The upstream will 401 'No api key passed in.'",
+        )
+    return (
+        override_base or default_base,
+        override_header or "x-ach-key",
+        raw_token or ek,
+    )
+
+
 async def main(
     tui_mode: bool = False, one_shot_prompt: str | None = None, debug_mode: bool = False
 ) -> None:
@@ -1388,29 +1431,9 @@ async def main(
         # token is injected VERBATIM as the header value (carry `Bearer ` in it if the
         # backend needs it). SECURITY: this path uses a raw provider key, NOT the ek_ — it
         # bypasses ACH governance/ek-hygiene and is for local testing, never production.
-        model_up_base = os.environ.get("ACH_MODEL_BASE_URL") or cfg.capability.ach.base_url
-        model_up_header = os.environ.get("ACH_MODEL_HEADER", "x-ach-key")
-        model_up_token = os.environ.get("ACH_MODEL_TOKEN") or ek
-        if os.environ.get("ACH_MODEL_BASE_URL") or os.environ.get("ACH_MODEL_HEADER"):
-            log.info(
-                "model proxy upstream override (dev/test)",
-                base_url=model_up_base,
-                auth_header=model_up_header,
-            )
-            # Catch the classic 'No api key passed in' 401: ACH_MODEL_TOKEN set but its
-            # credential is empty — e.g. `Bearer ${LITELLM_API_KEY}` where LITELLM_API_KEY
-            # was never exported, so it expanded to a bare scheme. Strip a leading scheme
-            # word (Bearer/Token/…) + whitespace; warn if nothing is left. The credential
-            # itself is NEVER logged.
-            _raw = os.environ.get("ACH_MODEL_TOKEN", "")
-            _cred = _raw.split(" ", 1)[1] if " " in _raw.strip() else _raw
-            if _raw and not _cred.strip():
-                log.warning(
-                    "ACH_MODEL_TOKEN has an empty credential — only a scheme word, no key. "
-                    "Likely an unexpanded ${...} var. The upstream will 401 'No api key "
-                    "passed in.' Export the key in the env that launches the container.",
-                    auth_header=model_up_header,
-                )
+        model_up_base, model_up_header, model_up_token = _resolve_model_upstream(
+            ek, cfg.capability.ach.base_url
+        )
         price_table, accountant = await _build_cost_accounting(
             source=cfg.cost.source,
             wire=cfg.model.type,

@@ -13,9 +13,12 @@ from __future__ import annotations
 import weakref
 from collections.abc import Callable
 from enum import Enum, auto
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
+
+if TYPE_CHECKING:
+    from ach_agent.router.lane import Lane
 
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.router.dedup import DedupStore
@@ -85,7 +88,7 @@ class Router:
         self._queued_total: int = 0
 
         # Lane map: session_key → Lane (bounded by eviction, Pitfall 6)
-        self._lanes: dict[str, Any] = {}  # dict[str, Lane] — deferred import avoided
+        self._lanes: dict[str, Lane] = {}
 
     async def handle(self, event: MessageEvent) -> RouterAdmitResult:
         """Admit or reject an event. ORDER IS NORMATIVE (CONTRACT §6.2).
@@ -135,7 +138,7 @@ class Router:
         await lane.put(event)
         return RouterAdmitResult.ACCEPTED
 
-    def _get_or_create_lane(self, session_key: str, channel_name: str) -> Any:
+    def _get_or_create_lane(self, session_key: str, channel_name: str) -> Lane:
         """Get the existing lane for session_key or create a new one.
 
         Deferred import of Lane to avoid circular imports (lane.py imports
@@ -162,7 +165,7 @@ class Router:
         instances over long-lived deployments (Pitfall 6, T-01-LANELEAK).
         """
         lane = self._lanes.get(session_key)
-        if lane is not None and lane._queue.empty():
+        if lane is not None and lane.is_empty():
             del self._lanes[session_key]
             # Cancel the consumer task so it does not leak (Pitfall 6)
             lane.cancel()
@@ -178,6 +181,6 @@ class Router:
         self._queued_total -= 1
 
     @property
-    def lanes(self) -> dict[str, Any]:
+    def lanes(self) -> dict[str, Lane]:
         """Read-only view of the lane map (for test introspection)."""
         return self._lanes

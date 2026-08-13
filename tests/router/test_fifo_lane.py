@@ -127,3 +127,11 @@ async def test_empty_lane_is_evicted() -> None:
     assert session in router._lanes, (
         "New event for evicted session_key must create a fresh lane"
     )
+
+
+@pytest.mark.asyncio
+async def test_lane_reports_emptiness_through_its_own_api(router):
+    # Router must never need to reach into lane._queue to know if a lane is drainable.
+    session = "sess-is-empty"
+    lane = router._get_or_create_lane(session, "webhook")
+    assert lane.is_empty() is True

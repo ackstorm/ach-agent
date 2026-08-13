@@ -126,7 +126,7 @@ class Lane:
                 on_kill()
                 self._queue.task_done()
                 # Pitfall 6: evict empty lane to prevent Queue/task memory leak
-                if self._queue.empty():
+                if self.is_empty():
                     router = self._router_ref()
                     if router is not None:
                         router._maybe_evict_lane(self._session_key)
@@ -140,6 +140,14 @@ class Lane:
         router = self._router_ref()
         if router is not None:
             router._queued_total_dec()
+
+    def is_empty(self) -> bool:
+        """True when no events are pending in this lane's queue.
+
+        The Router's eviction check (Pitfall 6) goes through here rather than
+        reaching into the queue directly.
+        """
+        return self._queue.empty()
 
     def cancel(self) -> None:
         """Cancel the consumer task (called during lane eviction)."""

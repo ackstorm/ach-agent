@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Annotated, Any, Literal
 
 import structlog
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 log = structlog.get_logger(__name__)
 
@@ -89,3 +90,45 @@ def extract_terminal(accumulated_text: str) -> dict[str, Any] | None:
         return result
     except json.JSONDecodeError:
         return None
+
+
+class NoneAction(BaseModel):
+    """Async channel classes (webhook, cron, queue) — CONTRACT §8."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    action: Literal["none"]
+    text: str = ""
+    thoughts: str = ""
+
+
+class A2AReply(BaseModel):
+    """a2a channel class — the reply text is what the caller receives (CONTRACT §8)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    action: Literal["a2a_reply"]
+    text: str
+    thoughts: str = ""
+
+
+# Single object, NOT a list. ConsentRequest is RESERVED for v1.1 and deliberately absent.
+_TERMINAL_ADAPTER: TypeAdapter[NoneAction | A2AReply] = TypeAdapter(
+    Annotated[NoneAction | A2AReply, Field(discriminator="action")]
+)
+
+
+def validate_terminal(obj: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Validate an extracted terminal object against the §8 model union.
+
+    Returns the normalized dict (defaults filled in) or None on any miss: unknown
+    action, missing required field, wrong type, extra field. None in → None out.
+    """
+    if obj is None:
+        return None
+    try:
+        model = _TERMINAL_ADAPTER.validate_python(obj)
+    except ValidationError as exc:
+        log.warning("terminal object failed validation", errors=exc.error_count())
+        return None
+    return model.model_dump()

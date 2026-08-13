@@ -29,7 +29,6 @@ async def test_inv10_fifo_per_session(fake_engine: FakeEngine) -> None:
         idempotency_window_seconds=60,
         dedup_store=InMemoryDedupStore(),
         engine_runner=fake_engine.run,
-        delivery_adapter=None,
     )
 
     session = "fifo-conformance-session"

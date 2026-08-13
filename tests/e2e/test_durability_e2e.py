@@ -211,7 +211,6 @@ async def test_sigterm_flips_readyz(monkeypatch: pytest.MonkeyPatch) -> None:
         idempotency_window_seconds=3600,
         dedup_store=InMemoryDedupStore(),
         engine_runner=fake_engine,
-        delivery_adapter=None,
     )
 
     app = create_app(channels=[channel_cfg], handler=router)
@@ -269,7 +268,6 @@ async def test_sigterm_stops_intake(monkeypatch: pytest.MonkeyPatch) -> None:
         idempotency_window_seconds=3600,
         dedup_store=InMemoryDedupStore(),
         engine_runner=fake_engine,
-        delivery_adapter=None,
     )
 
     app = create_app(channels=[channel_cfg], handler=router)
@@ -333,7 +331,6 @@ async def test_sigterm_drain_completes_inflight(monkeypatch: pytest.MonkeyPatch)
         idempotency_window_seconds=3600,
         dedup_store=InMemoryDedupStore(),
         engine_runner=slow_engine,
-        delivery_adapter=None,
     )
 
     app = create_app(channels=[channel_cfg], handler=router)

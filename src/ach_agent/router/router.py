@@ -67,7 +67,6 @@ class Router:
         idempotency_window_seconds: int,
         dedup_store: DedupStore,
         engine_runner: Callable[..., Any],
-        delivery_adapter: Any,
         max_invocation_seconds: float = _DEFAULT_MAX_INVOCATION_SECONDS,
         channel_concurrency: dict[str, int] | None = None,
     ) -> None:
@@ -75,7 +74,6 @@ class Router:
         self._idempotency_window_seconds = idempotency_window_seconds
         self._dedup = dedup_store
         self._engine_runner = engine_runner
-        self._delivery_adapter = delivery_adapter
         self._max_invocation_seconds = max_invocation_seconds
 
         # Slot manager: global semaphore (maxConcurrentInvocations) + per-channel slot

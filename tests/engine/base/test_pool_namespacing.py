@@ -23,7 +23,6 @@ def test_pool_sessions_is_namespaced_by_driver_engine_type() -> None:
     pool = EnginePool(driver=_Piish(), sessions_map=store)
     pool.sessions["c"] = "/sessions/abc.json"
     assert store == {"pi:c": "/sessions/abc.json"}
-    assert pool.oc_sessions is pool.sessions   # back-compat alias
 
 
 def test_pool_defaults_to_opencode_driver() -> None:

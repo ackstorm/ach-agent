@@ -31,7 +31,6 @@ async def test_fifo_serialization(fake_engine: FakeEngine) -> None:
         idempotency_window_seconds=60,
         dedup_store=InMemoryDedupStore(),
         engine_runner=fake_engine.run,
-        delivery_adapter=None,
     )
 
     session = "fifo-session"
@@ -94,7 +93,6 @@ async def test_empty_lane_is_evicted() -> None:
         idempotency_window_seconds=60,
         dedup_store=InMemoryDedupStore(),
         engine_runner=fast_engine,
-        delivery_adapter=None,
     )
 
     session = "evict-session"

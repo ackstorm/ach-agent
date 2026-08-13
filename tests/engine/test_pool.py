@@ -541,9 +541,9 @@ def test_pool_owns_oc_sessions_map() -> None:
     from ach_agent.engine.pool import EnginePool, _LRUSessionMap, _NamespacedSessionMap
 
     pool = EnginePool()
-    assert isinstance(pool.oc_sessions, _NamespacedSessionMap)
-    assert isinstance(pool.oc_sessions._inner, _LRUSessionMap)
-    assert len(pool.oc_sessions) == 0
+    assert isinstance(pool.sessions, _NamespacedSessionMap)
+    assert isinstance(pool.sessions._inner, _LRUSessionMap)
+    assert len(pool.sessions) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -623,8 +623,7 @@ def test_pool_accepts_injected_session_map():
     from ach_agent.engine.pool import EnginePool
 
     injected: dict[str, str] = {"opencode:lane-1": "ses-a"}
-    pool = EnginePool(oc_sessions=injected)
-    assert pool.oc_sessions is pool.sessions
+    pool = EnginePool(sessions_map=injected)
     assert pool.sessions.get("lane-1") == "ses-a"
     pool.sessions["lane-1"] = "ses-b"
     assert injected == {"opencode:lane-1": "ses-b"}
@@ -635,6 +634,6 @@ def test_pool_default_session_map_is_lru_still():
     from ach_agent.engine.pool import EnginePool, _LRUSessionMap, _NamespacedSessionMap
 
     pool = EnginePool()
-    assert isinstance(pool.oc_sessions, _NamespacedSessionMap)
-    assert isinstance(pool.oc_sessions._inner, _LRUSessionMap)
-    assert len(pool.oc_sessions) == 0
+    assert isinstance(pool.sessions, _NamespacedSessionMap)
+    assert isinstance(pool.sessions._inner, _LRUSessionMap)
+    assert len(pool.sessions) == 0

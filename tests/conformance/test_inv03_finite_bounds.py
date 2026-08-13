@@ -33,7 +33,6 @@ async def test_inv03_finite_bounds(fake_engine: FakeEngine) -> None:
         idempotency_window_seconds=60,
         dedup_store=InMemoryDedupStore(),
         engine_runner=fake_engine.run,
-        delivery_adapter=None,
     )
 
     # ---- maxQueuedTotal enforcement ----
@@ -59,7 +58,6 @@ async def test_inv03_finite_bounds(fake_engine: FakeEngine) -> None:
         idempotency_window_seconds=60,
         dedup_store=InMemoryDedupStore(),
         engine_runner=cap_engine.run,
-        delivery_adapter=None,
         channel_concurrency={"test-channel": 10},  # global sem is the limiting factor
     )
 

@@ -193,7 +193,6 @@ async def test_cron_skeleton_fires_log_invocation(
         idempotency_window_seconds=cfg.limits.idempotency_window_seconds,
         dedup_store=InMemoryDedupStore(),
         engine_runner=fake_engine.run,
-        delivery_adapter=None,
     )
 
     cron_channels = [ch for ch in cfg.channels if ch.type == "cron"]

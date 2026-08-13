@@ -1610,7 +1610,6 @@ async def main(
         idempotency_window_seconds=cfg.limits.idempotency_window_seconds,
         dedup_store=dedup_store,
         engine_runner=engine_runner,
-        delivery_adapter=None,
         max_invocation_seconds=float(cfg.limits.max_invocation_seconds),
         channel_concurrency={ch.name: ch.concurrency for ch in cfg.channels},
     )
@@ -1695,8 +1694,8 @@ async def main(
         finally:
             # Stop any warm-held engine server (idle TTL may not have elapsed at EOF).
             await pool.stop_all()
-            if hasattr(pool.oc_sessions, "close"):
-                pool.oc_sessions.close()
+            if hasattr(pool.sessions, "close"):
+                pool.sessions.close()
             await stop_model_proxies()
             if mcp_proxy is not None:
                 await mcp_proxy.stop()
@@ -1860,8 +1859,8 @@ async def main(
         # own process group) would survive the harness exit and orphan (leaking the port).
         # Idempotent; also cancels the pending TTL tasks.
         await pool.stop_all()
-        if hasattr(pool.oc_sessions, "close"):
-            pool.oc_sessions.close()
+        if hasattr(pool.sessions, "close"):
+            pool.sessions.close()
         # Plan 2: tear down the localhost proxies (closes their aiohttp runners/sessions).
         await stop_model_proxies()
         if mcp_proxy is not None:

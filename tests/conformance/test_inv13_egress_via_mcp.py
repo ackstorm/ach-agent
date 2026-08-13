@@ -1,10 +1,10 @@
 """CONTRACT §6.9: egress is the agent's (via external MCP), NOT the channel's.
 
 Invariant: the harness has NO channel-side posting path. The old v2 delivery layer
-(`ach_agent.actions.*`) is gone, the Router carries `delivery_adapter=None`, and the
-engine_runner never posts on the model's behalf — for an async event with no reply
-seam it does nothing (egress already happened via the agent's MCP tool calls). The
-ONLY delivery seam is the injected `on_complete`/reply_future callback.
+(`ach_agent.actions.*`) is gone, and the engine_runner never posts on the model's
+behalf — for an async event with no reply seam it does nothing (egress already
+happened via the agent's MCP tool calls). The ONLY delivery seam is the injected
+`on_complete`/reply_future callback.
 """
 
 from __future__ import annotations

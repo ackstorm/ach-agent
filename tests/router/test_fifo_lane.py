@@ -71,7 +71,7 @@ async def test_empty_lane_is_evicted() -> None:
     """Pitfall 6 / T-01-LANELEAK: after a lane drains, session_key is evicted from lane map.
 
     After draining:
-      - session_key must NOT be present in router._lanes.
+      - session_key must NOT be present in router.lanes.
       - The consumer task must be done or cancelled (no asyncio.Task leak).
 
     A subsequent event for the same session_key must create a fresh lane.
@@ -106,14 +106,14 @@ async def test_empty_lane_is_evicted() -> None:
 
     # Wait until the invocation completes and the lane drains
     deadline = asyncio.get_event_loop().time() + 2.0
-    while session in router._lanes:
+    while session in router.lanes:
         if asyncio.get_event_loop().time() > deadline:
             pytest.fail("Timeout: session_key was never evicted from lane map (Pitfall 6)")
         await asyncio.sleep(0.01)
 
     # session_key must be gone from the lane map
-    assert session not in router._lanes, (
-        "Empty lane must be evicted from router._lanes (Pitfall 6, T-01-LANELEAK)"
+    assert session not in router.lanes, (
+        "Empty lane must be evicted from router.lanes (Pitfall 6, T-01-LANELEAK)"
     )
 
     # A new event for the same session_key must create a fresh lane
@@ -124,7 +124,7 @@ async def test_empty_lane_is_evicted() -> None:
     )
 
     # Confirm a new lane was created
-    assert session in router._lanes, (
+    assert session in router.lanes, (
         "New event for evicted session_key must create a fresh lane"
     )
 

@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Added
+
+- The agent's terminal JSON object is now validated against the §8 Pydantic contract
+  models (`NoneAction`/`A2AReply`, `extra="forbid"`). An object with an unknown `action`,
+  a missing required field, or an extra key is treated as a miss: one repair turn is run,
+  then the documented fallback applies. For the `a2a` channel this means a malformed reply
+  that used to be delivered as-is now surfaces as a FAILED callback instead.
+
+### Fixed
+
+- Bearer tokens are scrubbed from the `ach:tools` stats stream's `error` field.
+- The GitLab secondary dedup key is no longer emitted for events with no content
+  discriminator, which previously let distinct events collapse into one.
+
+### Changed
+
+- **Breaking:** the `ACH_MODEL_BASE_URL` / `ACH_MODEL_HEADER` / `ACH_MODEL_TOKEN` dev
+  overrides swap the ACH `ek_` for a raw provider key and bypass ACH governance, so setting
+  any of them without `ACH_INSECURE_ALLOW_DEGRADED=1` now aborts the process
+  (`SystemExit(1)`) instead of silently taking effect.
+- **Internal:** `Router.__init__` no longer takes `delivery_adapter`, and
+  `max_invocation_seconds` is now a required parameter (no stale default).
+- **Internal:** `main.py` is split into the `src/ach_agent/boot/` package (secrets, prompt
+  assembly, engine runner, filesystem paths, dedup/session store builders).
+
 ## [0.10.2] - 2026-07-27
 
 ### Fixed

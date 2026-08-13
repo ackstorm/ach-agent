@@ -108,7 +108,7 @@ def test_readyz(monkeypatch: pytest.MonkeyPatch) -> None:
     app = create_app([cfg], handler)
 
     # Before lifespan is entered — use raw ASGITransport to bypass lifespan.
-    # The ASGI transport does NOT trigger lifespan, so state["ready"] is False → 503.
+    # The ASGI transport does NOT trigger lifespan, so state.ready is False → 503.
     # Use asyncio.run() to create a fresh event loop (avoids "no current event loop"
     # when running after pytest-asyncio tests that close their event loops).
     async def get_readyz_no_lifespan() -> int:

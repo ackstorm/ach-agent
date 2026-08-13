@@ -224,3 +224,33 @@ def test_gitlab_composite_never_raises_on_empty_body() -> None:
     from ach_agent.router.dedup import derive_gitlab_composite_key
 
     assert isinstance(derive_gitlab_composite_key({}), str)
+
+
+def test_gitlab_composite_key_is_empty_without_a_content_discriminator() -> None:
+    # A pipeline-ish body with no note/description/title/updated_at/status: there is
+    # nothing to tell two distinct events apart, so emitting a shared key would
+    # OVER-dedup (spec §18.4.0: safe failure mode is "fail to dedup").
+    from ach_agent.router.dedup import derive_gitlab_composite_key
+
+    body = {
+        "object_kind": "pipeline",
+        "project": {"id": 42},
+        "user": {"username": "jc"},
+        "object_attributes": {"iid": 7},
+    }
+    assert derive_gitlab_composite_key(body) == ""
+
+
+def test_gitlab_composite_key_still_collapses_open_plus_update() -> None:
+    from ach_agent.router.dedup import derive_gitlab_composite_key
+
+    base = {
+        "object_kind": "merge_request",
+        "project": {"id": 42},
+        "user": {"username": "jc"},
+    }
+    opened = {**base, "object_attributes": {"iid": 7, "action": "open", "title": "Fix"}}
+    updated = {**base, "object_attributes": {"iid": 7, "action": "update", "title": "Fix"}}
+    key = derive_gitlab_composite_key(opened)
+    assert key != ""
+    assert key == derive_gitlab_composite_key(updated)

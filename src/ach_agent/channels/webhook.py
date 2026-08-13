@@ -350,7 +350,7 @@ async def handle_webhook_request(
     # later `update`; ach-agent has no harness trigger step (every event is forwarded to the
     # agent) and the composite is content-sensitive on a short window, so no shadowing is
     # possible — the secondary key is safe to compute here at parse time.
-    secondary_key = derive_gitlab_composite_key(body) if source == "gitlab" else None
+    secondary_key = (derive_gitlab_composite_key(body) or None) if source == "gitlab" else None
 
     # Correlation id — uuid4 hex, echoed on 202 and logged by engine_runner for log/trace
     # correlation ONLY (not persisted, not queryable).

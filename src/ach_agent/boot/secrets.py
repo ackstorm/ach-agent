@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Secret env-NAME helpers: collect them, strip them out of engine.forwardEnv, and
-resolve the model proxy's upstream credential.
+"""Secret env-NAME helpers: collect, strip, and resolve upstream credentials.
 
-These functions handle env NAMES, never values — the rendered config carries names;
-the process reads `os.environ[NAME]` at use time. Nothing in this module may log a
-credential value, only names/headers/base URLs.
+`collect_secret_env_names` and `strip_forwarded_secrets` handle env NAMES only — the
+rendered config carries names; the process reads `os.environ[NAME]` at use time.
+`resolve_model_upstream` resolves the actual credential value and must never log it,
+only the header name and base URL.
 """
 
 from __future__ import annotations

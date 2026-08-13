@@ -112,8 +112,9 @@ async def run_contract_turn(
         # §8 "if invalid after retries": async classes log + ignore (the work already
         # happened via MCP tools); a2a turns this into a FAILED callback because the
         # action is not a2a_reply (main.py). Never silent.
+        retry_note = "after retries" if terminal_retries > 0 else "no retries configured"
         log.warning(
-            "no valid terminal object after retries — falling back to none",
+            f"no valid terminal object ({retry_note}) — falling back to none",
             session_id=conv_key,
             expected_action=terminal_action,
         )

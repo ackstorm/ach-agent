@@ -68,28 +68,30 @@ def extract_terminal(accumulated_text: str) -> dict[str, Any] | None:
 
     Algorithm:
       1. Strip markdown code fences (```json ... ```)
-      2. Find the last '{' + optional whitespace + '"action"' opener (handles preamble + multi-blob)
-      3. Match the closing brace via _find_matching_brace
-      4. json.loads the matched slice
+      2. Find every '{' + optional whitespace + '"action"' opener (handles preamble + multi-blob)
+      3. Walk the openers from last to first; return the first one that both brace-matches
+         (_find_matching_brace) and json.loads successfully. This keeps "last one wins" while
+         skipping trailing prose that merely looks like an opener (e.g. a post-hoc mention of
+         '{ "action"' after the real terminal object).
 
-    Returns None on: no marker, unmatched brace, JSONDecodeError.
+    Returns None if no opener yields a parseable object.
     """
     text = accumulated_text
     fence = _FENCE_RE.search(text)
     if fence:
         text = fence.group(1).strip()
     matches = list(_OPENER_RE.finditer(text))
-    if not matches:
-        return None
-    pos = matches[-1].start()
-    end = _find_matching_brace(text, pos)
-    if end == -1:
-        return None
-    try:
-        result: dict[str, Any] = json.loads(text[pos : end + 1])
+    for match in reversed(matches):
+        pos = match.start()
+        end = _find_matching_brace(text, pos)
+        if end == -1:
+            continue
+        try:
+            result: dict[str, Any] = json.loads(text[pos : end + 1])
+        except json.JSONDecodeError:
+            continue
         return result
-    except json.JSONDecodeError:
-        return None
+    return None
 
 
 class NoneAction(BaseModel):
@@ -129,6 +131,12 @@ def validate_terminal(obj: dict[str, Any] | None) -> dict[str, Any] | None:
     try:
         model = _TERMINAL_ADAPTER.validate_python(obj)
     except ValidationError as exc:
-        log.warning("terminal object failed validation", errors=exc.error_count())
+        # Never log `obj`/the validation input — it carries model text that can contain
+        # secrets. `loc`/`type` alone name which field(s) tripped, not their values.
+        log.warning(
+            "terminal object failed validation",
+            action=obj.get("action"),
+            errors=[{"loc": e["loc"], "type": e["type"]} for e in exc.errors()],
+        )
         return None
     return model.model_dump()

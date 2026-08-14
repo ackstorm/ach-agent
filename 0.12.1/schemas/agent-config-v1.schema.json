@@ -1,0 +1,1169 @@
+{
+  "$defs": {
+    "A2AAuthBlock": {
+      "additionalProperties": false,
+      "description": "CONTRACT §2 a2a.auth sub-block (§14.6 / §3 bearer discipline).",
+      "properties": {
+        "header": {
+          "default": "x-a2a-custom-api-key",
+          "title": "Header",
+          "type": "string"
+        },
+        "secret": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SecretSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "A2AAuthBlock",
+      "type": "object"
+    },
+    "A2ABlock": {
+      "additionalProperties": false,
+      "description": "Operator contract §2 a2a channel sub-block (CHN-05; async-only in v1).",
+      "properties": {
+        "auth": {
+          "$ref": "#/$defs/A2AAuthBlock"
+        },
+        "mode": {
+          "const": "async",
+          "default": "async",
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "title": "A2ABlock",
+      "type": "object"
+    },
+    "AgentBlock": {
+      "additionalProperties": false,
+      "description": "CONTRACT §2 agent block.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "AgentBlock",
+      "type": "object"
+    },
+    "CapabilityAchBlock": {
+      "additionalProperties": false,
+      "description": "Operator contract §2 capability.ach sub-block.",
+      "properties": {
+        "baseUrl": {
+          "default": "",
+          "title": "Baseurl",
+          "type": "string"
+        },
+        "environment": {
+          "default": "platform",
+          "title": "Environment",
+          "type": "string"
+        }
+      },
+      "title": "CapabilityAchBlock",
+      "type": "object"
+    },
+    "CapabilityBlock": {
+      "additionalProperties": false,
+      "description": "Operator contract §2 capability block (D-05: ach-only; direct → hard-fail).",
+      "properties": {
+        "ach": {
+          "$ref": "#/$defs/CapabilityAchBlock"
+        },
+        "filter": {
+          "$ref": "#/$defs/CapabilityFilterBlock"
+        },
+        "type": {
+          "const": "ach",
+          "default": "ach",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ach"
+      ],
+      "title": "CapabilityBlock",
+      "type": "object"
+    },
+    "CapabilityFilterBlock": {
+      "additionalProperties": false,
+      "description": "Operator contract §2 capability.filter sub-block.",
+      "properties": {
+        "exclude": {
+          "$ref": "#/$defs/CapabilityFilterExcludeBlock"
+        }
+      },
+      "title": "CapabilityFilterBlock",
+      "type": "object"
+    },
+    "CapabilityFilterExcludeBlock": {
+      "additionalProperties": false,
+      "description": "Operator contract §2 capability.filter.exclude sub-block — gate ABOVE the model.",
+      "properties": {
+        "mcpServers": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Mcpservers",
+          "type": "array"
+        },
+        "skills": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Skills",
+          "type": "array"
+        },
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tools",
+          "type": "array"
+        }
+      },
+      "title": "CapabilityFilterExcludeBlock",
+      "type": "object"
+    },
+    "ChannelConfig": {
+      "additionalProperties": false,
+      "description": "Operator contract §2 channel entry. extra=forbid catches unknown channel-level keys.",
+      "properties": {
+        "a2a": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/A2ABlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "concurrency": {
+          "default": 1,
+          "title": "Concurrency",
+          "type": "integer"
+        },
+        "cron": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CronBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "prompt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt"
+        },
+        "queue": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QueueBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "session": {
+          "$ref": "#/$defs/SessionBlock"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "enum": [
+                "gitlab",
+                "github",
+                "generic"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "type": {
+          "enum": [
+            "webhook",
+            "cron",
+            "queue",
+            "a2a"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "webhook": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebhookBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "title": "ChannelConfig",
+      "type": "object"
+    },
+    "CodememMemory": {
+      "additionalProperties": false,
+      "description": "CONTRACT §2 memory block — codemem backend (local stdio MCP, model-managed).\n\nMinimal form: ``{type: codemem}`` — the ``codemem`` sub-block and both its fields\n(``dbPath``, ``project``) are optional and derived/defaulted. Override via\n``{type: codemem, codemem: {dbPath: ..., project: ...}}``. A flat ``dbPath`` at the\n``memory`` level is rejected (extra='forbid').",
+      "properties": {
+        "codemem": {
+          "$ref": "#/$defs/CodememParams"
+        },
+        "type": {
+          "const": "codemem",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "CodememMemory",
+      "type": "object"
+    },
+    "CodememParams": {
+      "additionalProperties": false,
+      "description": "codemem backend params — the ``memory.codemem`` sub-block (CONTRACT §2).",
+      "properties": {
+        "dbPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dbpath"
+        },
+        "project": {
+          "default": "ach-agent",
+          "title": "Project",
+          "type": "string"
+        }
+      },
+      "title": "CodememParams",
+      "type": "object"
+    },
+    "CostBlock": {
+      "additionalProperties": false,
+      "description": "Where the per-invocation cost figure comes from (spec.cost.source).\n\nFree-string on the CRD side; this Literal is the SINGLE enforcer — an unknown\nvalue raises ValidationError at load and hard-fails the process, exactly as\nengine.type does. Omitted everywhere → \"engine\" (today's behaviour).",
+      "properties": {
+        "source": {
+          "default": "engine",
+          "enum": [
+            "engine",
+            "litellm_usage",
+            "litellm_headers",
+            "none"
+          ],
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "title": "CostBlock",
+      "type": "object"
+    },
+    "CronBlock": {
+      "additionalProperties": false,
+      "description": "Operator contract §2 cron channel sub-block (CHN-02).",
+      "properties": {
+        "schedule": {
+          "title": "Schedule",
+          "type": "string"
+        },
+        "timezone": {
+          "default": "UTC",
+          "title": "Timezone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schedule"
+      ],
+      "title": "CronBlock",
+      "type": "object"
+    },
+    "EngineBlock": {
+      "additionalProperties": false,
+      "description": "Engine runtime knobs (harness-local; operator-optional).\n\nCarries \"how we run opencode\": its working directory, startup deadline, and the\nenv-forwarding allowlist. opencode's subprocess env is built clean-slate from a small\nbase allowlist (engine.lifecycle.build_opencode_env); ``forward_env`` lists extra var\nNAMES to forward — never the ek_ (ACH_TOKEN/ACH_API_KEY).",
+      "properties": {
+        "forwardEnv": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Forwardenv",
+          "type": "array"
+        },
+        "home": {
+          "default": "",
+          "title": "Home",
+          "type": "string"
+        },
+        "idleTtlSeconds": {
+          "default": 30.0,
+          "minimum": 0,
+          "title": "Idlettlseconds",
+          "type": "number"
+        },
+        "maxToolCalls": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Maxtoolcalls",
+          "type": "integer"
+        },
+        "pi": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PiEngineBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "startupTimeoutSeconds": {
+          "default": 30,
+          "title": "Startuptimeoutseconds",
+          "type": "integer"
+        },
+        "type": {
+          "default": "opencode",
+          "enum": [
+            "opencode",
+            "pi"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "workDir": {
+          "default": "",
+          "title": "Workdir",
+          "type": "string"
+        }
+      },
+      "title": "EngineBlock",
+      "type": "object"
+    },
+    "HealthBlock": {
+      "additionalProperties": false,
+      "description": "CONTRACT §2 health block.",
+      "properties": {
+        "host": {
+          "default": "0.0.0.0",
+          "title": "Host",
+          "type": "string"
+        },
+        "port": {
+          "default": 8080,
+          "title": "Port",
+          "type": "integer"
+        }
+      },
+      "title": "HealthBlock",
+      "type": "object"
+    },
+    "HindsightMemory": {
+      "additionalProperties": false,
+      "description": "CONTRACT §2 memory block — Hindsight backend (fail-open §31).\n\nStrict nested form: ``{type: hindsight, hindsight: {...}}``. There is NO backward-compat\nfor a flat block or a missing ``type`` — the schema hard-fails (extra='forbid').",
+      "properties": {
+        "hindsight": {
+          "$ref": "#/$defs/HindsightParams"
+        },
+        "type": {
+          "const": "hindsight",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "hindsight"
+      ],
+      "title": "HindsightMemory",
+      "type": "object"
+    },
+    "HindsightParams": {
+      "additionalProperties": false,
+      "description": "Hindsight backend params — the ``memory.hindsight`` sub-block (CONTRACT §2).",
+      "properties": {
+        "auth": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SecretSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "bank": {
+          "default": "",
+          "title": "Bank",
+          "type": "string"
+        },
+        "endpoint": {
+          "title": "Endpoint",
+          "type": "string"
+        },
+        "mentalModels": {
+          "items": {
+            "$ref": "#/$defs/MentalModelSpec"
+          },
+          "title": "Mentalmodels",
+          "type": "array"
+        },
+        "mission": {
+          "default": "",
+          "title": "Mission",
+          "type": "string"
+        }
+      },
+      "required": [
+        "endpoint"
+      ],
+      "title": "HindsightParams",
+      "type": "object"
+    },
+    "LimitsBlock": {
+      "additionalProperties": false,
+      "description": "CONTRACT §2 limits block (§18.6 — all finite, always enforced).",
+      "properties": {
+        "idempotencyWindowSeconds": {
+          "default": 3600,
+          "title": "Idempotencywindowseconds",
+          "type": "integer"
+        },
+        "maxConcurrentInvocations": {
+          "default": 1,
+          "title": "Maxconcurrentinvocations",
+          "type": "integer"
+        },
+        "maxInvocationSeconds": {
+          "default": 600,
+          "title": "Maxinvocationseconds",
+          "type": "integer"
+        },
+        "maxQueuedTotal": {
+          "default": 100,
+          "title": "Maxqueuedtotal",
+          "type": "integer"
+        },
+        "maxSteps": {
+          "default": 50,
+          "title": "Maxsteps",
+          "type": "integer"
+        },
+        "terminalOutputRetries": {
+          "default": 1,
+          "title": "Terminaloutputretries",
+          "type": "integer"
+        }
+      },
+      "title": "LimitsBlock",
+      "type": "object"
+    },
+    "LocalMcpServer": {
+      "additionalProperties": false,
+      "description": "PASSTHROUGH: opencode LAUNCHES this as a stdio subprocess.",
+      "properties": {
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Args",
+          "type": "array"
+        },
+        "command": {
+          "title": "Command",
+          "type": "string"
+        },
+        "env": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Env",
+          "type": "array"
+        },
+        "type": {
+          "const": "local",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "command"
+      ],
+      "title": "LocalMcpServer",
+      "type": "object"
+    },
+    "MentalModelSpec": {
+      "additionalProperties": false,
+      "description": "A pinned reflection the harness provisions into Hindsight at boot (CONTRACT §2).",
+      "properties": {
+        "autoRefresh": {
+          "default": false,
+          "title": "Autorefresh",
+          "type": "boolean"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "maxTokens": {
+          "default": 2048,
+          "title": "Maxtokens",
+          "type": "integer"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "sourceQuery": {
+          "title": "Sourcequery",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "sourceQuery"
+      ],
+      "title": "MentalModelSpec",
+      "type": "object"
+    },
+    "ModelBlock": {
+      "additionalProperties": false,
+      "description": "Operator contract §2 model block: provider-selecting name + open params.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "title": "Params",
+          "type": "object"
+        },
+        "thinking": {
+          "$ref": "#/$defs/ThinkingBlock"
+        },
+        "type": {
+          "enum": [
+            "openai",
+            "gemini",
+            "anthropic"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "title": "ModelBlock",
+      "type": "object"
+    },
+    "PersistenceBlock": {
+      "additionalProperties": false,
+      "description": "CONTRACT §2 persistence block.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "mountPath": {
+          "default": "/var/lib/ach-agent",
+          "title": "Mountpath",
+          "type": "string"
+        }
+      },
+      "title": "PersistenceBlock",
+      "type": "object"
+    },
+    "PiEngineBlock": {
+      "additionalProperties": false,
+      "description": "Pi-engine sub-block (consulted only when engine.type == 'pi').\n\nONLY executable knobs live here. `binaryPath` pins the `pi` executable;\n`mcpAdapterPath` is the vendored pi-mcp-adapter package path referenced from Pi's\nsettings.json `packages` (never a runtime `pi install`). Empty `mcpAdapterPath` → the\ndriver falls back to the image's vendored default (SP2 pins it). Model identity and\nthinking/reasoning intent live in the model block (ModelBlock.thinking) — the\nv0.8.1-only `model`/`thinkingLevel` fields here were removed in v0.9.0.",
+      "properties": {
+        "binaryPath": {
+          "default": "pi",
+          "title": "Binarypath",
+          "type": "string"
+        },
+        "mcpAdapterPath": {
+          "default": "",
+          "title": "Mcpadapterpath",
+          "type": "string"
+        }
+      },
+      "title": "PiEngineBlock",
+      "type": "object"
+    },
+    "PromptBlock": {
+      "additionalProperties": false,
+      "description": "CONTRACT §2 prompt block.",
+      "properties": {
+        "compose": {
+          "default": "append",
+          "enum": [
+            "append",
+            "replace"
+          ],
+          "title": "Compose",
+          "type": "string"
+        },
+        "system": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "ach": "#/$defs/SystemAch",
+                  "file": "#/$defs/SystemFile",
+                  "text": "#/$defs/SystemText"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/SystemText"
+                },
+                {
+                  "$ref": "#/$defs/SystemFile"
+                },
+                {
+                  "$ref": "#/$defs/SystemAch"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "System"
+        }
+      },
+      "title": "PromptBlock",
+      "type": "object"
+    },
+    "QueueBlock": {
+      "additionalProperties": false,
+      "description": "Operator contract §2 queue channel sub-block (redis-only in v1, §7).",
+      "properties": {
+        "ackMode": {
+          "const": "onComplete",
+          "default": "onComplete",
+          "title": "Ackmode",
+          "type": "string"
+        },
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "type": {
+          "const": "redis",
+          "default": "redis",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "title": "QueueBlock",
+      "type": "object"
+    },
+    "RemoteMcpServer": {
+      "additionalProperties": false,
+      "description": "PASSTHROUGH: opencode CONNECTS directly to a remote MCP endpoint.",
+      "properties": {
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Headers",
+          "type": "object"
+        },
+        "type": {
+          "const": "remote",
+          "title": "Type",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "url"
+      ],
+      "title": "RemoteMcpServer",
+      "type": "object"
+    },
+    "RepoCheckoutParams": {
+      "additionalProperties": false,
+      "description": "Params for the harness-hosted repoCheckout facade (the `checkout_repo` tool).",
+      "properties": {
+        "sourceMcpServerId": {
+          "title": "Sourcemcpserverid",
+          "type": "string"
+        },
+        "tmpBase": {
+          "default": "/tmp/gitlab",
+          "title": "Tmpbase",
+          "type": "string"
+        },
+        "ttlSeconds": {
+          "default": 3600.0,
+          "minimum": 0,
+          "title": "Ttlseconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "sourceMcpServerId"
+      ],
+      "title": "RepoCheckoutParams",
+      "type": "object"
+    },
+    "RepoCheckoutServer": {
+      "additionalProperties": false,
+      "description": "INTERNAL: the harness HOSTS this MCP (FastMCP facade), injecting the ek_.",
+      "properties": {
+        "repoCheckout": {
+          "$ref": "#/$defs/RepoCheckoutParams"
+        },
+        "type": {
+          "const": "repoCheckout",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "repoCheckout"
+      ],
+      "title": "RepoCheckoutServer",
+      "type": "object"
+    },
+    "SecretSource": {
+      "additionalProperties": false,
+      "description": "Operator contract §2 secret source — env-only (no disk secrets).\n\nenv → the harness reads the value from os.environ[NAME] at use time (hardened default:\n      dumpable=0 hides it from the co-resident agent; the NAME must NOT be in\n      engine.forwardEnv — the harness strips it from the forwarded set + WARNs).",
+      "properties": {
+        "env": {
+          "default": "",
+          "title": "Env",
+          "type": "string"
+        }
+      },
+      "title": "SecretSource",
+      "type": "object"
+    },
+    "SessionBlock": {
+      "additionalProperties": false,
+      "description": "channel.session — conversation identity + growth bounds.\n\ntype: 'none'   → fresh opencode session per event, DELETEd post-turn (no residue);\n      'auto'   → reuse the channel-derived session_key (per-MR for gitlab, name for cron…);\n      'custom' → reuse the session under `key` ({{ }} template rendered per event).\nkey: the {{ }} template (payload.* / internal.*). REQUIRED iff type=='custom',\n     FORBIDDEN otherwise. An empty render falls back to 'none' behavior + WARN.\nmax_tokens: when the previous turn's input_tokens exceed this, apply `overflow`\n            (applies to 'auto'/'custom'; ignored for 'none').\noverflow: 'compact' → POST /session/{id}/compact in place (keeps memory);\n          'rotate' → drop the LRU entry + DELETE the old session (fresh start).\nThe router lane key (event.session_key) is NOT affected by any of this.",
+      "properties": {
+        "key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key"
+        },
+        "maxTokens": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Maxtokens"
+        },
+        "overflow": {
+          "default": "compact",
+          "enum": [
+            "compact",
+            "rotate"
+          ],
+          "title": "Overflow",
+          "type": "string"
+        },
+        "type": {
+          "default": "none",
+          "enum": [
+            "auto",
+            "none",
+            "custom"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "title": "SessionBlock",
+      "type": "object"
+    },
+    "SystemAch": {
+      "additionalProperties": false,
+      "description": "Persona sourced from a hydrated prompt by ACH name (harness resolves the file).\n\n``ach`` is the hydrated prompt name → ``<home>/.ach-state/prompts/<ach>/``. ``file`` is\nan optional subpath within it; when empty the harness uses the prompt dir's sole file\n(and errors if the dir has 0 or >1 files). Convenience over ``file`` — the operator\nnames the prompt, not its on-disk path.",
+      "properties": {
+        "ach": {
+          "title": "Ach",
+          "type": "string"
+        },
+        "file": {
+          "default": "",
+          "title": "File",
+          "type": "string"
+        },
+        "type": {
+          "const": "ach",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "ach"
+      ],
+      "title": "SystemAch",
+      "type": "object"
+    },
+    "SystemFile": {
+      "additionalProperties": false,
+      "description": "Persona sourced from a hydrated prompt file under <home>/.ach-state.",
+      "properties": {
+        "file": {
+          "title": "File",
+          "type": "string"
+        },
+        "type": {
+          "const": "file",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "file"
+      ],
+      "title": "SystemFile",
+      "type": "object"
+    },
+    "SystemText": {
+      "additionalProperties": false,
+      "description": "Inline persona text.",
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "title": "SystemText",
+      "type": "object"
+    },
+    "ThinkingBlock": {
+      "additionalProperties": false,
+      "description": "CONTRACT §2 model.thinking — normalized, engine-neutral reasoning intent.\n\nThe canonical surface for \"should this model think, and how hard\". Each engine\ntranslates it (pi: models.json `reasoning` + `--thinking <effort>`; opencode:\nper-call providerOptions merged into the generated model options). Deliberately NOT\nmodel.params — params stays provider-specific per-call passthrough and wins on key\ncollision with the generated translation.",
+      "properties": {
+        "effort": {
+          "anyOf": [
+            {
+              "enum": [
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Effort"
+        },
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        }
+      },
+      "title": "ThinkingBlock",
+      "type": "object"
+    },
+    "WebhookAuthBlock": {
+      "additionalProperties": false,
+      "description": "Operator contract §2 webhook.auth sub-block.",
+      "properties": {
+        "header": {
+          "default": "",
+          "title": "Header",
+          "type": "string"
+        },
+        "secret": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SecretSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "default": "hmac",
+          "enum": [
+            "gitlab_token",
+            "hmac",
+            "header_token",
+            "none"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "title": "WebhookAuthBlock",
+      "type": "object"
+    },
+    "WebhookBlock": {
+      "additionalProperties": false,
+      "description": "Operator contract §2 webhook channel sub-block (deliver/deliverOnly removed).",
+      "properties": {
+        "auth": {
+          "$ref": "#/$defs/WebhookAuthBlock"
+        },
+        "botUsername": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Botusername"
+        },
+        "gitlabEvents": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "merge_request",
+                  "issue",
+                  "note"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gitlabevents"
+        },
+        "triggerUsers": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Triggerusers"
+        }
+      },
+      "title": "WebhookBlock",
+      "type": "object"
+    }
+  },
+  "$id": "https://ackstorm.github.io/ach-agent/stable/schemas/agent-config-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Full operator contract §2 rendered runtime config (D-01: modeled in one pass).\n\nConfigDict(extra='forbid', strict=True) ensures unknown top-level keys\ncause a ValidationError that hard-fails the process (CFG-02).",
+  "properties": {
+    "agent": {
+      "$ref": "#/$defs/AgentBlock"
+    },
+    "capability": {
+      "$ref": "#/$defs/CapabilityBlock"
+    },
+    "channels": {
+      "items": {
+        "$ref": "#/$defs/ChannelConfig"
+      },
+      "title": "Channels",
+      "type": "array"
+    },
+    "cost": {
+      "$ref": "#/$defs/CostBlock"
+    },
+    "engine": {
+      "$ref": "#/$defs/EngineBlock"
+    },
+    "health": {
+      "$ref": "#/$defs/HealthBlock"
+    },
+    "limits": {
+      "$ref": "#/$defs/LimitsBlock"
+    },
+    "mcpServers": {
+      "additionalProperties": {
+        "discriminator": {
+          "mapping": {
+            "local": "#/$defs/LocalMcpServer",
+            "remote": "#/$defs/RemoteMcpServer",
+            "repoCheckout": "#/$defs/RepoCheckoutServer"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/RepoCheckoutServer"
+          },
+          {
+            "$ref": "#/$defs/LocalMcpServer"
+          },
+          {
+            "$ref": "#/$defs/RemoteMcpServer"
+          }
+        ]
+      },
+      "title": "Mcpservers",
+      "type": "object"
+    },
+    "memory": {
+      "anyOf": [
+        {
+          "discriminator": {
+            "mapping": {
+              "codemem": "#/$defs/CodememMemory",
+              "hindsight": "#/$defs/HindsightMemory"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/HindsightMemory"
+            },
+            {
+              "$ref": "#/$defs/CodememMemory"
+            }
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Memory"
+    },
+    "model": {
+      "$ref": "#/$defs/ModelBlock"
+    },
+    "persistence": {
+      "$ref": "#/$defs/PersistenceBlock"
+    },
+    "prompt": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PromptBlock"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "schemaVersion": {
+      "const": "1",
+      "title": "Schemaversion",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "agent",
+    "model",
+    "capability"
+  ],
+  "title": "AgentConfig",
+  "type": "object"
+}

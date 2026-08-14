@@ -817,7 +817,7 @@ RTR-01 preserved) and mark (step 3).</p>
   mid-tool turn.</li>
 <li><strong>Config: <code>engine.max_tool_calls</code> (<code>ge=0</code>), default 0 = OFF.</strong> Zero behaviour change vs pre-Plan-4
   unless an operator opts in (recommend ~80); <code>maxInvocationSeconds</code> remains the always-on backstop.
-  Wired through <code>main._make_engine_runner</code> beside <code>terminal_output_retries</code>.</li>
+  Wired through <code>ach_agent.boot.engine_runner.make_engine_runner</code> beside <code>terminal_output_retries</code>.</li>
 <li><strong>Tool-only correction did NOT port.</strong> Legacy's <code>has_text_beyond_action</code> retried a tool-only agent
   that wrote prose then appended <code>{"action":"none"}</code>. NOT ported: ach-agent's terminal contract
   EXPECTS prose + a trailing terminal object and <code>extract_terminal</code> <code>rfind</code>s the last <code>{"action"…}</code>,

@@ -903,7 +903,10 @@ calling ACH's HTTP hydrate endpoint directly (it does <strong>not</strong> shell
    identity header names are stripped case-insensitively so that process-authoritative harness identity
    always wins. Direct development model overrides (<code>ACH_MODEL_BASE_URL</code> / <code>ACH_MODEL_HEADER</code>) change
    upstream auth parameters only and never disable identity header injection. The model wire may
-   override the auth header where a provider requires it, but the <code>ek_</code> still lives only inside the proxy.</li>
+   override the auth header where a provider requires it, but the <code>ek_</code> still lives only inside the proxy.
+   Setting any <code>ACH_MODEL_*</code> override swaps the <code>ek_</code> for a raw provider key, bypassing ACH
+   governance — the harness refuses to boot (<code>SystemExit(1)</code>) unless <code>ACH_INSECURE_ALLOW_DEGRADED=1</code>
+   is also set.</li>
 <li><strong>Fetch context</strong> — download each <code>skills/prompts/artifacts</code> <code>tar.gz</code> (with <code>x-ach-key: ek_</code>)
    and safe-extract (traversal-checked) into its directory: skills → reconciled into
    <code>&lt;home&gt;/.config/opencode/skills/&lt;name&gt;/</code>; prompts → <code>&lt;home&gt;/.ach-state/prompts/&lt;name&gt;/</code>;

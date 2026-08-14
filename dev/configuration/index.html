@@ -619,7 +619,8 @@ labeling.</p>
 <li><strong>Header Sanitization</strong>: Any client-supplied model or MCP identity headers are removed
   case-insensitively before forwarding; harness process identity always wins.</li>
 <li><strong>Direct Model Overrides</strong>: Development model overrides (<code>ACH_MODEL_BASE_URL</code> / <code>ACH_MODEL_HEADER</code>)
-  retain full identity header injection.</li>
+  retain full identity header injection. Because they swap the <code>ek_</code> for a raw provider key, the
+  harness aborts boot with <code>SystemExit(1)</code> unless <code>ACH_INSECURE_ALLOW_DEGRADED=1</code> is also set.</li>
 <li><strong>Prometheus Series Identity</strong>: Adding these labels to every exposed sample changes Prometheus
   series identity in <code>v0.10.1</code>. Range queries spanning rollout show a series discontinuity
   between pre-<code>v0.10.1</code> and post-<code>v0.10.1</code> metrics.</li>

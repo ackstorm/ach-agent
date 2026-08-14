@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.12.1] - 2026-08-14
+
 ### Added
 
 - The agent's terminal JSON object is now validated against the §8 Pydantic contract

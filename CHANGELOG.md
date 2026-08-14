@@ -31,6 +31,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `max_invocation_seconds` is now a required parameter (no stale default).
 - **Internal:** `main.py` is split into the `src/ach_agent/boot/` package (secrets, prompt
   assembly, engine runner, filesystem paths, dedup/session store builders).
+## [0.12.0] - 2026-07-30
+
+### Added
+
+- Model-proxy correlation headers now also carry `x-litellm-session-id` and
+  `x-litellm-trace-id`, mirroring `langfuse_session_id`/`traceparent`, so LiteLLM
+  groups an invocation's calls into one conversation in `LiteLLM_SpendLogs` —
+  independent of Langfuse grouping. Reaches LiteLLM only because the ACH forwarder
+  opened an exact allowlist for these two keys (ackstorm/ach#172); silently ignored
+  on the `/gemini`/`/anthropic` passthrough routes, same as the existing
+  `langfuse_session_id` vendor-header caveat.
+
+## [0.11.1] - 2026-07-29
+
+### Changed
+
+- `trace_id` and `session_id` are now bound to the logging context for the whole
+  invocation instead of being logged once at the start, so every line a turn emits
+  carries them. `engine: summary` in particular used to end a turn with a cost, a
+  duration and no way to reach the trace that produced it; reading it now hands you
+  the id to paste into Langfuse. Both are unbound when the invocation closes, so a
+  warm pooled server does not stamp a finished trace on what the engine does
+  between turns.
+
+## [0.11.0] - 2026-07-28
+
+### Added
+
+- MCP tool calls now join their invocation's Langfuse trace. The localhost MCP proxy
+  serves the same `/t/{token}/` correlated routes the model proxy does, and every
+  proxied wire the engine is handed — model base URL and each MCP server URL — is
+  tokenized with the same per-server token. Before this, a tool call reached the
+  observability backend as its own orphan trace.
+- The trace is also propagated inside the MCP message itself, in the JSON-RPC
+  `params._meta` (SEP-414 / the OTel MCP semconv). An HTTP header correlates the
+  transport, but one streamable-HTTP session multiplexes many messages, so the span
+  has to parent to the context the MESSAGE carries.
+- `params._meta` now carries the SESSION id as well as the traceparent. An MCP
+  message span never sees the request headers — it parents to the message context
+  and records the transport span only as a link — so `_meta` is the only channel
+  that reaches it.
+- The correlation a turn is running under is now visible in the agent log
+  (`trace: invocation` / `trace: session`, with the `trace_id` Langfuse indexes so it
+  can be pasted straight into the UI). The proxy path token is never logged.
+
+### Changed
+
+- **Breaking for anything that bypassed the proxy's correlated routes:** both
+  localhost proxies now serve ONLY `/t/{token}/…`. An untokenized request gets a
+  404 instead of being forwarded uncorrelated — a loud failure beats silently
+  uncorrelated data.
+- The session id travels as `langfuse_session_id`, replacing `x-agent-session-id`.
+  That is the only mechanism LiteLLM honours on the `/gemini` pass-through as well
+  as on `/v1`: the pass-through builds its metadata from the API key and the request
+  body and never sniffs a vendor `x-…-session-id` header.
+
+### Fixed
+
+- Correlation headers supplied by the engine subprocess are now dropped on every
+  forward, not only when the harness has a value of its own to put there. Between
+  turns the traceparent is cleared but the session is not, which left a real window
+  where a forged header would have been passed through verbatim.
+
+## [0.10.3] - 2026-07-28
+
+### Added
+
+- Model calls now carry trace/session correlation headers, so one agent invocation is one
+  Langfuse trace and the invocations sharing an engine session are one Langfuse session.
+  The harness sends `traceparent` (derived from agent + channel + idempotency key) and
+  `x-agent-session-id` (the ENGINE's own session id — opencode's `ses_…`, Pi's session
+  file) on every call it proxies. A second comment on the same MR reuses the engine
+  session but is a new invocation: same `sessionId`, new trace. Independent of
+  `cost.source` — correlation works with cost accounting off.
+- `--tui` is correlated too: one invented trace id minted at launch under the constant
+  session id `tui_session`. Native TUI drives its own loop, so the harness sees no turn
+  boundary and no engine session — the console session is one trace by design. Pi's
+  native TUI also gets a proxy path token now; before, its model calls took the proxy's
+  plain route.
+
+### Changed
+
+- The model proxy's `/t/{token}/` path token is now minted for every engine server, not only
+  when cost accounting is wired, because it is what the correlation registry keys on.
+
+### Note
+
+- No workload identifier leaves the cluster: the session id is the engine's opaque id, not
+  the harness session key (`owner/repo:PR`, `project_id:mr_iid`). The mapping lives in the
+  pool's persistent session map and in the `engine: opencode session` log line.
 
 ## [0.10.2] - 2026-07-27
 

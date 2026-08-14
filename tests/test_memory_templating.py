@@ -7,6 +7,7 @@ on the EngineConfig passed to pool.acquire, and that a literal project passes th
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -29,7 +30,7 @@ class _CapturingPool:
 
     async def acquire(self, _session_key: str, cfg: Any) -> Any:
         self.acquired_cfgs.append(cfg)
-        return object()  # fake server
+        return SimpleNamespace(proxy_token="tok")  # fake server
 
     async def release(self, _session_key: str, ttl_seconds: float = 0.0) -> None:
         return None

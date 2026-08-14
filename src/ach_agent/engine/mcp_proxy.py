@@ -1,11 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
 """Localhost MCP reverse-proxy.
 
-Fronts each ACH MCP server on 127.0.0.1 so opencode points only at localhost and
-NEVER sees the ``ek_`` or the real ACH endpoint. Each localhost request to
-``/mcp/<id>`` is forwarded to that server's real endpoint with the ACH
-``x-ach-key: {ek}`` header ADDED, and the upstream response is streamed back
-(SSE / ``text/event-stream`` safe — the body is never fully buffered).
+Fronts each ACH MCP server on 127.0.0.1 so the engine — whichever one the agent
+runs — points only at localhost and NEVER sees the ``ek_`` or the real ACH
+endpoint. Each localhost request to ``/t/{token}/mcp/<id>`` is forwarded to that
+server's real endpoint with the ACH ``x-ach-key: {ek}`` header ADDED, and the
+upstream response is streamed back (SSE / ``text/event-stream`` safe — the body
+is never fully buffered).
+
+Both proxies serve ONLY the ``/t/{token}/…`` shape. We define the base URL the
+engine is handed, so everything it appends to it rides inside the token prefix;
+a request that arrives without one has escaped the tube, and a loud 404 beats
+forwarding it silently uncorrelated.
+
+Both proxies egress through :func:`_forward`, which is the single place every
+outbound header is decided: auth, agent identity (:mod:`ach_agent.identity`) and
+trace/session correlation (:mod:`ach_agent.engine.trace`). A new route therefore
+cannot ship a subset of them by forgetting an argument.
 
 Security: the ``ek`` lives ONLY inside the per-server handler closure. It is never
 stored on an instance attribute and never logged.
@@ -22,6 +33,7 @@ import structlog
 from aiohttp import web
 
 from ach_agent import identity
+from ach_agent.engine import trace
 from ach_agent.engine.hydrate import McpServer
 
 if TYPE_CHECKING:
@@ -47,9 +59,6 @@ _DROP_REQUEST_HEADERS = frozenset(
 _DROP_RESPONSE_HEADERS = frozenset({"content-length", "transfer-encoding", "content-encoding"})
 
 _Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
-
-# Path prefixes the model proxy forwards to ACH (OpenAI / Gemini / Anthropic wires).
-_MODEL_PREFIXES = ("/v1", "/gemini", "/anthropic")
 
 # aiohttp's AppRunner defaults shutdown_timeout to 60s: cleanup() waits that long for
 # in-flight handlers to finish. A proxied long-lived MCP/SSE stream (blocked in the
@@ -97,6 +106,7 @@ async def _forward(
     label: str = "proxy",
     auth_header: str = "x-ach-key",
     observer: CostObserver | None = None,
+    token: str = "",
 ) -> web.StreamResponse:
     """Forward ``request`` to ``target`` injecting auth, streaming the response.
 
@@ -106,14 +116,29 @@ async def _forward(
     to ACH's ``x-ach-key``; the model proxy can override it (e.g. ``Authorization`` for
     a litellm-direct bypass). ``observer`` (cost accounting, Plan 1) parses a COPY of the
     bytes — it never gates a write and a failure in it never touches the relay.
+
+    This is the ONE place every outbound header is decided — auth, agent identity
+    and trace/session correlation — so a new proxy route cannot ship half of them.
+    ``token`` is the per-server handle from the ``/t/{token}/`` path; an unknown one
+    simply yields no correlation headers, never an error. Either way the engine's own
+    correlation headers are dropped inbound (:func:`trace.is_correlation_header`), so a
+    tool call can never claim a trace the harness did not give it.
     """
+    correlation = trace.headers(token)
+    # Case-insensitive drop, like _DROP_REQUEST_HEADERS and
+    # identity.with_identity_headers above: this dict keeps the wire case, so a
+    # client-sent `Traceparent` would survive a plain update() as a SECOND key and
+    # leave which one wins to aiohttp's CIMultiDict coercion. Keyed on
+    # trace.is_correlation_header rather than on `correlation`, so the engine's own
+    # value is dropped even on a route that adds none of ours.
     headers = {
         key: value
         for key, value in request.headers.items()
-        if key.lower() not in _DROP_REQUEST_HEADERS
+        if key.lower() not in _DROP_REQUEST_HEADERS and not trace.is_correlation_header(key)
     }
     headers[auth_header] = auth_value
     headers = identity.with_identity_headers(headers)
+    headers.update(correlation)
 
     body = await request.read()
     if observer is not None:
@@ -121,6 +146,12 @@ async def _forward(
             body = observer.mutate_request(body, request.headers.get("Content-Type", ""))
         except Exception:  # noqa: BLE001
             log.debug(f"{label} observer mutate_request failed", exc_info=True)
+    if label == "mcp":
+        # Correlate the MESSAGE, not just the transport: one streamable-HTTP session
+        # multiplexes many messages, so the header alone would glue them all under the
+        # session's first request. Additive to the header, and a no-op on anything that
+        # is not a JSON-RPC request.
+        body = trace.inject_meta(body, token)
     # Diagnostics for MCP toolCount=0 triage: the JSON-RPC method opencode sends and the
     # MCP session-id round-trip. NEVER logs the ek (injected above, never read here) nor
     # request/response bodies/params — only the method name + header presence + status.
@@ -235,6 +266,10 @@ class McpProxy(_LocalProxy):
     async def start(self, servers: list[McpServer], ek: str, exclude: set[str]) -> dict[str, str]:
         """Start the localhost proxy and return ``{server_id: localhost_url}``.
 
+        The URL is the UNBOUND form and is NOT routable as-is: the pool binds it to
+        that server's token with :func:`ach_agent.engine.trace.tokenize_url` before
+        the engine ever sees it.
+
         Servers whose ``id`` is in ``exclude`` are not started and get no route.
         """
         routed = [s for s in servers if s.id not in exclude]
@@ -242,8 +277,12 @@ class McpProxy(_LocalProxy):
         def add_routes(app: web.Application) -> None:
             for server in routed:
                 handler = self._make_handler(server.endpoint, ek)  # ek: closure only
-                app.router.add_route("*", f"/mcp/{server.id}", handler)
-                app.router.add_route("*", f"/mcp/{server.id}/{{tail:.*}}", handler)
+                # Same shape the model proxy uses: this proxy is process-wide (one per
+                # agent, shared by every session), so the token in the path is the only
+                # thing that says WHICH pooled engine server is calling — and therefore
+                # which invocation's trace the tool call belongs to.
+                app.router.add_route("*", f"/t/{{token}}/mcp/{server.id}", handler)
+                app.router.add_route("*", f"/t/{{token}}/mcp/{server.id}/{{tail:.*}}", handler)
 
         ids = [s.id for s in routed]
         port = await self._serve("mcp proxy", add_routes, servers=ids)
@@ -261,7 +300,9 @@ class McpProxy(_LocalProxy):
             tail = request.match_info.get("tail", "")
             target = f"{base}/{tail}" if tail else base
             assert self._session is not None  # start() always creates it
-            return await _forward(self._session, target, request, ek, label="mcp")
+            # Always set by the route; an unknown one just yields no correlation.
+            token = request.match_info.get("token", "")
+            return await _forward(self._session, target, request, ek, label="mcp", token=token)
 
         return handler
 
@@ -269,9 +310,12 @@ class McpProxy(_LocalProxy):
 class ModelProxy(_LocalProxy):
     """aiohttp reverse-proxy that fronts the ACH model wires on 127.0.0.1.
 
-    Routes ``/v1``, ``/gemini`` and ``/anthropic`` (and their subpaths) to
-    ``{ach_base_url}/<same path>`` with the ACH ``x-ach-key: {ek}`` header injected,
-    streaming the response so SSE (``/v1/responses``) is never buffered.
+    Forwards ``/t/{token}/<tail>`` to ``{ach_base_url}/<tail>`` with the ACH
+    ``x-ach-key: {ek}`` header injected, streaming the response so SSE
+    (``/v1/responses``) is never buffered. The wire prefix (``/v1``, ``/gemini``,
+    ``/anthropic``) is part of the tail: ``main`` appends it to the returned base and
+    the pool inserts the token, so the engine is pointed at
+    ``…/t/<token>/v1`` and everything it appends to that rides inside the tube.
 
     Lifecycle::
 
@@ -290,38 +334,17 @@ class ModelProxy(_LocalProxy):
     ) -> str:
         """Start the localhost model proxy and return its base URL.
 
-        ``accountant``, when given, is bound only to the token-attributed ``/t/{token}``
-        routes (Plan 1 cost accounting) — the plain ``_MODEL_PREFIXES`` routes below stay
-        byte-identical to today (no observer).
+        The returned base is the UNBOUND form — the caller appends the wire prefix and
+        the pool inserts the token; nothing is routable until it carries one.
         """
         ach_base = base_url.rstrip("/")
 
         def add_routes(app: web.Application) -> None:
-            handler = self._make_handler(ach_base, auth_value, auth_header)  # auth: closure only
-            for prefix in _MODEL_PREFIXES:
-                app.router.add_route("*", prefix, handler)
-                app.router.add_route("*", f"{prefix}/{{tail:.*}}", handler)
-
             token_handler = self._make_token_handler(ach_base, auth_value, auth_header, accountant)
             app.router.add_route("*", "/t/{token}/{tail:.*}", token_handler)
 
-        port = await self._serve("model proxy", add_routes, prefixes=list(_MODEL_PREFIXES))
+        port = await self._serve("model proxy", add_routes)
         return f"http://127.0.0.1:{port}"
-
-    def _make_handler(self, ach_base: str, auth_value: str, auth_header: str) -> _Handler:
-        """Build a handler that forwards the incoming path upstream injecting auth.
-
-        ``auth_value`` is captured in this closure only — never stored on the instance.
-        """
-
-        async def handler(request: web.Request) -> web.StreamResponse:
-            target = f"{ach_base}{request.path}"
-            assert self._session is not None  # start() always creates it
-            return await _forward(
-                self._session, target, request, auth_value, label="model", auth_header=auth_header
-            )
-
-        return handler
 
     def _make_token_handler(
         self,
@@ -331,7 +354,8 @@ class ModelProxy(_LocalProxy):
         accountant: CostAccountant | None,
     ) -> _Handler:
         """Build the ``/t/{token}/{tail:.*}`` handler: strips the token prefix, forwards
-        the tail verbatim, and binds a per-request cost observer to that token.
+        the tail verbatim, binds a per-request cost observer to that token, and injects
+        that server's trace/session correlation headers (see :mod:`ach_agent.engine.trace`).
 
         ``auth_value`` is captured in this closure only — never stored on the instance.
         """
@@ -354,6 +378,7 @@ class ModelProxy(_LocalProxy):
                 label="model",
                 auth_header=auth_header,
                 observer=observer,
+                token=token,
             )
 
         return handler

@@ -176,6 +176,10 @@ async def test_engine_runner_signals_on_fail_on_engine_error(
     from ach_agent.engine.lifecycle import EngineConfig
 
     class _FakeServer:
+        # trace.begin/end stamp the invocation's correlation on this token, so the
+        # double must carry it exactly like ManagedServer does.
+        proxy_token = ""
+
         def is_alive(self) -> bool:
             return True
 

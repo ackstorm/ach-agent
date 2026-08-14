@@ -57,7 +57,7 @@ async def _run_turn(
     usage: OpenCodeUsage | None,
 ) -> tuple[list[object], list[dict[str, object]], float]:
     token = accountant.mint_token() if accountant is not None else ""
-    server = SimpleNamespace(cost_token=token)
+    server = SimpleNamespace(proxy_token=token)
     pool = SimpleNamespace(
         acquire=AsyncMock(return_value=server),
         release=AsyncMock(),

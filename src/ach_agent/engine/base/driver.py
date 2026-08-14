@@ -61,9 +61,10 @@ class EngineConfig:
     # Stable codemem project namespace (config memory.codemem.project → CODEMEM_PROJECT env).
     # Required in config; carried here so the codemem MCP entry pins a consistent project.
     codemem_project: str = ""
-    # Passthrough MCP servers (mcpServers type local|remote), pre-normalized to opencode.json
-    # mcp.<name> entries by engine.mcp_passthrough.to_opencode_entry. opencode connects to these
-    # DIRECTLY (not via the localhost proxy). Static per-agent (boot-computed from cfg.mcp_servers).
+    # Passthrough MCP servers (mcpServers type local|remote), pre-normalized to the canonical
+    # engine mcp entry by engine.mcp_passthrough.to_engine_entry (each engine reshapes it as
+    # its own config file requires). The ENGINE connects to these DIRECTLY, not via the
+    # localhost proxy. Static per-agent (boot-computed from cfg.mcp_servers).
     extra_mcp_servers: dict[str, dict[str, object]] = field(default_factory=dict)
     # SEC-01 / ek-hygiene: extra env var NAMES the operator wants forwarded from the harness
     # env into the opencode subprocess (engine.forwardEnv). The opencode env is built
@@ -138,7 +139,13 @@ class EngineDriver(Protocol):
     ) -> TurnResult:
         """Run ONE prompt. If ``session_ref`` is given, continue exactly that engine session
         (repair/wrap-up) and bypass ``conv_key``/``reuse``/the map. Writes the final ref into
-        ``stats['session_ref']`` (opencode also writes ``stats['oc_session_id']``)."""
+        ``stats['session_ref']`` (opencode also writes ``stats['oc_session_id']``).
+
+        Every implementation MUST call ``trace.set_session(server.proxy_token, ref)`` as it
+        resolves the ref and BEFORE the prompt that triggers the turn's model calls — that
+        is what puts the engine's own session id on ``langfuse_session_id`` (→ Langfuse
+        ``sessionId``). Doing it after the turn would leave every session's first turn
+        uncorrelated."""
         ...
 
     async def discard_session(self, server: ManagedServer, session_ref: str) -> None: ...

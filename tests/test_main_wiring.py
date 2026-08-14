@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -481,7 +482,7 @@ async def test_engine_runner_passes_pool_oc_sessions_to_run_invocation() -> None
             self.sessions: dict[str, str] = {}
 
         async def acquire(self, _session_key: str, _cfg: Any) -> Any:
-            return object()
+            return SimpleNamespace(proxy_token="tok")
 
         async def release(self, _session_key: str, ttl_seconds: float = 0.0) -> None:
             return None
@@ -524,7 +525,7 @@ class _SessPool:
         self.sessions: dict[str, str] = {}
 
     async def acquire(self, _session_key: str, _cfg: Any) -> Any:
-        return object()
+        return SimpleNamespace(proxy_token="tok")
 
     async def release(self, _session_key: str, ttl_seconds: float = 0.0) -> None:
         return None

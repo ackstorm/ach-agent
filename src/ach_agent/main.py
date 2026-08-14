@@ -66,6 +66,7 @@ from ach_agent.config.schema import (
     RepoCheckoutParams,
     RepoCheckoutServer,
 )
+from ach_agent.engine import trace
 from ach_agent.engine.context import fetch_context
 from ach_agent.engine.cost import (
     CostAccountant,
@@ -74,7 +75,7 @@ from ach_agent.engine.cost import (
     validate_cost_source,
 )
 from ach_agent.engine.hydrate import hydrate, resolve_model
-from ach_agent.engine.mcp_passthrough import to_opencode_entry
+from ach_agent.engine.mcp_passthrough import to_engine_entry
 from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
 from ach_agent.engine.metrics import DRAIN_COMPLETED
 from ach_agent.engine.sanitized_env import add_secret_redaction, configure_logging
@@ -127,7 +128,7 @@ def collect_passthrough_mcp(
     out: dict[str, dict[str, object]] = {}
     for name, spec in mcp_servers.items():
         if isinstance(spec, (LocalMcpServer, RemoteMcpServer)):
-            out[name] = to_opencode_entry(spec)
+            out[name] = to_engine_entry(spec)
     return out
 
 
@@ -754,9 +755,25 @@ async def main(
                 elif cfg.engine.type == "pi":
                     from ach_agent.engine.pi.driver import PiDriver
 
+                    # Native Pi bypasses the pool, so nothing has tokenized its proxied
+                    # wires. Mint here or the console's model AND tool calls take the
+                    # proxies' PLAIN routes and reach Langfuse uncorrelated.
+                    tui_token = trace.mint_token()
+                    trace.begin_tui(tui_token)
+                    warm_cfg = dataclasses.replace(
+                        warm_cfg,
+                        model_base_url=trace.tokenize_url(warm_cfg.model_base_url, tui_token),
+                        mcp_local_urls={
+                            sid: trace.tokenize_url(url, tui_token)
+                            for sid, url in warm_cfg.mcp_local_urls.items()
+                        },
+                    )
                     await PiDriver().run_tui(warm_cfg, _CONSOLE_SESSION_KEY)
                 else:
                     warm_server = await pool.acquire(_CONSOLE_SESSION_KEY, warm_cfg)
+                    # attach drives opencode's own loop — run_turn never runs, so this is
+                    # the only place the console session can be correlated.
+                    trace.begin_tui(warm_server.proxy_token)
                     # No stdout banner — opencode's own --print-logs already announces the
                     # listening address. Keep one structured info line with the loopback address.
                     log.info(

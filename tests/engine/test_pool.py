@@ -8,11 +8,13 @@ session_key; releasing one key never affects another.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
+from ach_agent.engine import trace
 from ach_agent.engine.base.driver import EngineConfig
 from ach_agent.engine.cost import CostAccountant
 from ach_agent.engine.pool import EnginePool
@@ -30,12 +32,6 @@ def _make_fake_server(alive: bool = True):
     return srv
 
 
-def _config():
-    from unittest.mock import MagicMock
-
-    return MagicMock(name="EngineConfig")
-
-
 async def test_pool_reuse_same_key() -> None:
     """Second acquire with the same key reuses the alive server (no new start)."""
     pool = EnginePool()
@@ -48,8 +44,8 @@ async def test_pool_reuse_same_key() -> None:
 
     pool._start_server = fake_start
 
-    s1 = await pool.acquire("k1", _config())
-    s2 = await pool.acquire("k1", _config())
+    s1 = await pool.acquire("k1", _real_config())
+    s2 = await pool.acquire("k1", _real_config())
     assert calls["n"] == 1, "Same key must reuse the server"
     assert s1 is fake and s2 is fake
     assert pool._ref_counts["k1"] == 2
@@ -66,8 +62,8 @@ async def test_pool_distinct_keys_get_distinct_servers() -> None:
 
     pool._start_server = fake_start
 
-    a = await pool.acquire("k1", _config())
-    b = await pool.acquire("k2", _config())
+    a = await pool.acquire("k1", _real_config())
+    b = await pool.acquire("k2", _real_config())
 
     assert a is servers["k1"]
     assert b is servers["k2"]
@@ -85,8 +81,8 @@ async def test_release_one_key_does_not_stop_another() -> None:
 
     pool._start_server = fake_start
 
-    await pool.acquire("k1", _config())
-    await pool.acquire("k2", _config())
+    await pool.acquire("k1", _real_config())
+    await pool.acquire("k2", _real_config())
 
     await pool.release("k1", ttl_seconds=0)
 
@@ -106,7 +102,7 @@ async def test_ttl0_stops_immediately() -> None:
 
     pool._start_server = fake_start
 
-    await pool.acquire("k1", _config())
+    await pool.acquire("k1", _real_config())
     await pool.release("k1", ttl_seconds=0)
     fake.stop.assert_awaited_once()
     assert "k1" not in pool._servers
@@ -122,7 +118,7 @@ async def test_ttl_expires_after_delay() -> None:
 
     pool._start_server = fake_start
 
-    await pool.acquire("k1", _config())
+    await pool.acquire("k1", _real_config())
     await pool.release("k1", ttl_seconds=0.05)
     assert fake.stop.call_count == 0
     assert "k1" in pool._servers
@@ -142,9 +138,9 @@ async def test_reacquire_cancels_pending_ttl() -> None:
 
     pool._start_server = fake_start
 
-    await pool.acquire("k1", _config())
+    await pool.acquire("k1", _real_config())
     await pool.release("k1", ttl_seconds=0.05)
-    await pool.acquire("k1", _config())  # cancels expiry
+    await pool.acquire("k1", _real_config())  # cancels expiry
     await asyncio.sleep(0.12)
     fake.stop.assert_not_awaited()
     assert "k1" in pool._servers
@@ -162,9 +158,9 @@ async def test_warm_reuse_within_ttl() -> None:
 
     pool._start_server = fake_start
 
-    s1 = await pool.acquire("k1", _config())
+    s1 = await pool.acquire("k1", _real_config())
     await pool.release("k1", ttl_seconds=0.2)  # warm — expiry armed
-    s2 = await pool.acquire("k1", _config())  # within TTL — reuse, cancel expiry
+    s2 = await pool.acquire("k1", _real_config())  # within TTL — reuse, cancel expiry
     assert s1 is fake and s2 is fake
     assert calls["n"] == 1, "warm reuse must not start a second server"
     fake.stop.assert_not_awaited()
@@ -185,9 +181,9 @@ async def test_expire_rechecks_before_stop() -> None:
 
     pool._start_server = fake_start
 
-    await pool.acquire("k1", _config())
+    await pool.acquire("k1", _real_config())
     await pool.release("k1", ttl_seconds=0.01)  # arm expiry (fires very soon)
-    await pool.acquire("k1", _config())  # re-acquire: ref→1, expiry cancelled
+    await pool.acquire("k1", _real_config())  # re-acquire: ref→1, expiry cancelled
     await asyncio.sleep(0.05)  # let any stale _expire run past its sleep
 
     fake.stop.assert_not_awaited()
@@ -205,8 +201,8 @@ async def test_ref_count_keeps_server_until_last_release() -> None:
 
     pool._start_server = fake_start
 
-    await pool.acquire("k1", _config())
-    await pool.acquire("k1", _config())
+    await pool.acquire("k1", _real_config())
+    await pool.acquire("k1", _real_config())
     await pool.release("k1", ttl_seconds=0)
     fake.stop.assert_not_awaited()
     assert "k1" in pool._servers
@@ -227,9 +223,9 @@ async def test_dead_server_replaced_on_acquire() -> None:
 
     pool._start_server = fake_start
 
-    s1 = await pool.acquire("k1", _config())
+    s1 = await pool.acquire("k1", _real_config())
     assert s1 is dead
-    s2 = await pool.acquire("k1", _config())  # dead → replace
+    s2 = await pool.acquire("k1", _real_config())  # dead → replace
     assert s2 is live
     dead.stop.assert_awaited_once()
 
@@ -245,8 +241,8 @@ async def test_stop_all_stops_every_server() -> None:
 
     pool._start_server = fake_start
 
-    await pool.acquire("k1", _config())
-    await pool.acquire("k2", _config())
+    await pool.acquire("k1", _real_config())
+    await pool.acquire("k2", _real_config())
 
     await pool.stop_all()
     servers["k1"].stop.assert_awaited_once()
@@ -269,6 +265,37 @@ def _make_accountant() -> CostAccountant:
     return CostAccountant(source="litellm_usage", wire="openai", prices=None, model_name="m")
 
 
+async def test_acquire_tokenizes_every_proxied_wire_not_just_the_model() -> None:
+    # A tool call is part of the same invocation as the model calls that requested it,
+    # so the MCP wires carry the SAME token — otherwise they reach Langfuse as their
+    # own orphan traces, which is exactly what they used to do.
+    pool = EnginePool()
+    captured: dict[str, EngineConfig] = {}
+    fake = _make_fake_server(alive=True)
+
+    async def fake_start(cfg: EngineConfig, session_key: str) -> ManagedServer:
+        captured["cfg"] = cfg
+        return fake
+
+    pool._start_server = fake_start
+
+    config = dataclasses.replace(
+        _real_config(),
+        mcp_local_urls={
+            "mcp-zoho-desk": "http://127.0.0.1:35057/mcp/mcp-zoho-desk",
+            "mcp-slack": "http://127.0.0.1:35057/mcp/mcp-slack",
+        },
+    )
+    server = await pool.acquire("k1", config)
+
+    token = server.proxy_token
+    assert captured["cfg"].mcp_local_urls == {
+        "mcp-zoho-desk": f"http://127.0.0.1:35057/t/{token}/mcp/mcp-zoho-desk",
+        "mcp-slack": f"http://127.0.0.1:35057/t/{token}/mcp/mcp-slack",
+    }
+    assert captured["cfg"].model_base_url == f"http://127.0.0.1:9/t/{token}/v1"
+
+
 @pytest.mark.parametrize("engine_type", ["opencode", "pi"])
 async def test_acquire_mints_and_tokenizes_base_url_on_fresh_key(engine_type: str) -> None:
     acc = _make_accountant()
@@ -283,12 +310,14 @@ async def test_acquire_mints_and_tokenizes_base_url_on_fresh_key(engine_type: st
     pool._start_server = fake_start
 
     server = await pool.acquire("k1", _real_config(engine_type=engine_type))
-    assert server.cost_token != ""
-    assert captured["cfg"].model_base_url == f"http://127.0.0.1:9/t/{server.cost_token}/v1"
+    assert server.proxy_token != ""
+    assert captured["cfg"].model_base_url == f"http://127.0.0.1:9/t/{server.proxy_token}/v1"
 
 
-async def test_no_accountant_leaves_config_and_token_untouched() -> None:
-    pool = EnginePool()  # no accountant — AC-2: byte-identical to today
+async def test_no_accountant_still_mints_a_token_for_correlation() -> None:
+    # The token is the model proxy's per-server handle for BOTH cost and
+    # trace/session correlation, so it is minted even with cost.source=none.
+    pool = EnginePool()  # no accountant
     captured: dict[str, EngineConfig] = {}
     fake = _make_fake_server(alive=True)
 
@@ -299,8 +328,11 @@ async def test_no_accountant_leaves_config_and_token_untouched() -> None:
     pool._start_server = fake_start
 
     server = await pool.acquire("k1", _real_config())
-    assert server.cost_token == ""
-    assert captured["cfg"].model_base_url == "http://127.0.0.1:9/v1"
+    assert server.proxy_token != ""
+    assert captured["cfg"].model_base_url == f"http://127.0.0.1:9/t/{server.proxy_token}/v1"
+    # The session id is the ENGINE's and arrives later (driver.run_turn →
+    # trace.set_session); the token is what has to exist by now.
+    assert server.proxy_token in trace._registry
 
 
 async def test_reuse_alive_server_does_not_mint_second_token() -> None:
@@ -316,10 +348,10 @@ async def test_reuse_alive_server_does_not_mint_second_token() -> None:
     pool._start_server = fake_start
 
     s1 = await pool.acquire("k1", _real_config())
-    token1 = s1.cost_token
+    token1 = s1.proxy_token
     s2 = await pool.acquire("k1", _real_config())
     assert s2 is s1
-    assert s2.cost_token == token1
+    assert s2.proxy_token == token1
     assert calls["n"] == 1, "warm reuse must not mint a second token"
 
 
@@ -336,13 +368,13 @@ async def test_dead_server_replaced_drops_old_token() -> None:
     pool._start_server = fake_start
 
     s1 = await pool.acquire("k1", _real_config())
-    old_token = s1.cost_token
+    old_token = s1.proxy_token
     assert old_token != ""
     assert old_token in acc._buckets
 
     s2 = await pool.acquire("k1", _real_config())
     assert s2 is live
-    assert s2.cost_token != old_token
+    assert s2.proxy_token != old_token
     assert old_token not in acc._buckets, "the dead server's old token must be dropped"
 
 
@@ -372,7 +404,7 @@ async def test_release_drops_token() -> None:
     pool._start_server = fake_start
 
     server = await pool.acquire("k1", _real_config())
-    token = server.cost_token
+    token = server.proxy_token
     assert token in acc._buckets
 
     await pool.release("k1", ttl_seconds=0)
@@ -390,7 +422,7 @@ async def test_expiry_drops_token() -> None:
     pool._start_server = fake_start
 
     server = await pool.acquire("k1", _real_config())
-    token = server.cost_token
+    token = server.proxy_token
     await pool.release("k1", ttl_seconds=0.05)
     assert token in acc._buckets, "still warm — token stays attached until actually stopped"
 
@@ -411,7 +443,7 @@ async def test_stop_all_drops_all_tokens() -> None:
 
     s1 = await pool.acquire("k1", _real_config())
     s2 = await pool.acquire("k2", _real_config())
-    t1, t2 = s1.cost_token, s2.cost_token
+    t1, t2 = s1.proxy_token, s2.proxy_token
 
     await pool.stop_all()
     assert t1 not in acc._buckets
@@ -442,8 +474,8 @@ async def test_distinct_keys_get_distinct_servers_and_refcounts() -> None:
 
     pool._start_server = fake_start
 
-    await pool.acquire("gitlab.example.com/group/repo-a", _config())
-    await pool.acquire("gitlab.example.com/group/repo-b", _config())
+    await pool.acquire("gitlab.example.com/group/repo-a", _real_config())
+    await pool.acquire("gitlab.example.com/group/repo-b", _real_config())
 
     assert pool._servers["gitlab.example.com/group/repo-a"] is srv_a
     assert pool._servers["gitlab.example.com/group/repo-b"] is srv_b
@@ -637,3 +669,30 @@ def test_pool_default_session_map_is_lru_still():
     assert isinstance(pool.sessions, _NamespacedSessionMap)
     assert isinstance(pool.sessions._inner, _LRUSessionMap)
     assert len(pool.sessions) == 0
+async def test_cancelled_cold_start_does_not_leak_the_token() -> None:
+    """A cancel mid-_start_server must release the token from BOTH registries.
+
+    Reachable in production: the lane wraps engine_runner in
+    asyncio.timeout(maxInvocationSeconds), so a slow cold start is cancelled.
+    CancelledError is a BaseException, so an `except Exception` here would miss
+    it and strand the token — no server holds it, so no stop/expire/stop_all
+    path can ever reclaim it.
+    """
+    trace.reset_for_testing()
+    acc = _make_accountant()
+    pool = EnginePool(accountant=acc)
+
+    async def never_starts(cfg: EngineConfig, session_key: str) -> ManagedServer:
+        await asyncio.sleep(3600)
+        raise AssertionError("unreachable")
+
+    pool._start_server = never_starts
+
+    task = asyncio.create_task(pool.acquire("k1", _real_config()))
+    await asyncio.sleep(0)  # let acquire reach the await inside _start_server
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert trace._registry == {}, "cancelled cold start leaked a trace token"
+    assert acc._buckets == {}, "cancelled cold start leaked a cost token"

@@ -23,6 +23,7 @@ from ach_agent.boot.prompt import (
 from ach_agent.boot.tooling import log_engine_tool, make_tool_recorder
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import ChannelConfig, CodememMemory, HindsightMemory, Memory
+from ach_agent.engine import trace
 from ach_agent.engine.cost import CostAccountant
 from ach_agent.engine.metrics import ENGINE_LAUNCH_FAILURES
 from ach_agent.memory.hindsight import prepare_memory
@@ -185,8 +186,13 @@ def make_engine_runner(
         try:
             server = await pool.acquire(event.session_key, invocation_engine_cfg)
             acquired = True
+            # Correlation for this invocation: every model call the engine makes
+            # from here on carries the same traceparent (one Langfuse trace) and
+            # the server's session id (Langfuse sessionId). Unconditional —
+            # unlike cost accounting, this does not depend on cost.source.
+            trace.begin(server.proxy_token, agent_name, event.channel_name, event.idempotency_key)
             if accountant is not None:
-                accountant.begin_turn(server.cost_token)
+                accountant.begin_turn(server.proxy_token)
             # MEM-01: append ## Memory section (summaries or unavailable note) to prompt.
             base_prompt = build_engine_prompt(
                 event,
@@ -277,7 +283,7 @@ def make_engine_runner(
             )
             _usage = turn_stats.get("usage")
             if accountant is not None:
-                _usage = accountant.end_turn(server.cost_token, _usage)
+                _usage = accountant.end_turn(server.proxy_token, _usage)
             elif cost_source == "none" and _usage is not None:
                 _usage = dataclasses.replace(_usage, cost=0.0)
             turn_stats["usage"] = _usage
@@ -399,8 +405,12 @@ def make_engine_runner(
             if server is not None:
                 ttl = 0.0 if timed_out else ttl_by_channel.get(event.channel_name, 0.0)
                 try:
+                    # Close the correlation window with the cost turn: a warm
+                    # pooled server must not stamp this invocation's traceparent
+                    # on whatever the engine does between turns.
+                    trace.end(server.proxy_token)
                     if accountant is not None:
-                        accountant.discard_turn(server.cost_token)
+                        accountant.discard_turn(server.proxy_token)
                     await pool.release(event.session_key, ttl_seconds=ttl)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("pool release error", task_id=event.task_id, error=str(exc))

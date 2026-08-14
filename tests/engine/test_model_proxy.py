@@ -9,6 +9,7 @@ import pytest
 from aiohttp import web
 
 from ach_agent import identity
+from ach_agent.engine import trace
 from ach_agent.engine.cost import CostAccountant, ModelPrices, PriceTable, TokenUsage, compute_cost
 from ach_agent.engine.mcp_proxy import _forward, start_model_proxy, stop_model_proxies
 
@@ -45,7 +46,8 @@ async def test_model_proxy_injects_ek_and_streams_sse() -> None:
         assert "ek-model-1" not in base
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(f"{base}/v1/responses", json={"x": 1}) as resp:
+            url = f"{base}/t/{trace.mint_token()}/v1/responses"
+            async with session.post(url, json={"x": 1}) as resp:
                 assert resp.status == 200
                 body = await resp.read()
 
@@ -512,7 +514,7 @@ async def test_direct_model_override_auth_still_replaces_identity_headers() -> N
         )
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"{base}/v1/chat/completions",
+                f"{base}/t/{trace.mint_token()}/v1/chat/completions",
                 headers={
                     "X-ACH-AGENT": "spoofed-agent",
                     "X-Ach-Environment": "spoofed-environment",
@@ -532,3 +534,71 @@ async def test_direct_model_override_auth_still_replaces_identity_headers() -> N
     assert lowered["x-ach-environment"] == "platform"
     assert sum(key.lower() == "x-ach-agent" for key in captured[0]) == 1
     assert sum(key.lower() == "x-ach-environment" for key in captured[0]) == 1
+
+
+async def test_token_route_injects_trace_and_session_headers() -> None:
+    """The /t/{token} route carries the invocation's correlation headers upstream.
+
+    test_trace.py covers the registry in isolation; this asserts the wiring —
+    that what trace.begin() records actually reaches ACH on a real request, and
+    that a client-sent header of the same name (any case) does not survive
+    alongside it.
+    """
+    captured: list[dict[str, str]] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        captured.append(dict(request.headers))
+        return web.json_response({"ok": True})
+
+    runner, upstream_url = await _start_fake_ach_router(handler)
+    trace.reset_for_testing()
+    token = trace.mint_token()
+    trace.set_session(token, "ses_8a1b2c3d")
+    trace.begin(token, "classifier", "gitlab", "delivery-abc")
+    expected = trace.headers(token)
+    try:
+        base = await start_model_proxy(upstream_url, "ek-1")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{base}/t/{token}/v1/chat/completions",
+                headers={"Traceparent": "00-" + "f" * 32 + "-" + "f" * 16 + "-01"},
+                json={"model": "test-model"},
+            ) as response:
+                assert response.status == 200
+                await response.read()
+    finally:
+        await stop_model_proxies()
+        await runner.cleanup()
+        trace.reset_for_testing()
+
+    lowered = {key.lower(): value for key, value in captured[0].items()}
+    assert lowered["traceparent"] == expected["traceparent"]
+    assert lowered["langfuse_session_id"] == expected["langfuse_session_id"]
+    assert sum(key.lower() == "traceparent" for key in captured[0]) == 1
+
+
+async def test_an_untokenized_request_is_rejected() -> None:
+    """No route without a token, on purpose.
+
+    We define the base URL the engine is handed — `main` appends the wire prefix,
+    the pool inserts the token — so everything the engine appends rides inside the
+    tube. A request that arrives without one has escaped it, and a 404 makes that
+    visible instead of silently producing uncorrelated observability data.
+    """
+    captured: list[dict[str, str]] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        captured.append(dict(request.headers))
+        return web.json_response({"ok": True})
+
+    runner, upstream_url = await _start_fake_ach_router(handler)
+    try:
+        base = await start_model_proxy(upstream_url, "ek-1")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{base}/v1/chat/completions", json={}) as response:
+                assert response.status == 404
+    finally:
+        await stop_model_proxies()
+        await runner.cleanup()
+
+    assert captured == [], "an untokenized request must never reach the upstream"

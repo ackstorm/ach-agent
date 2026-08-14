@@ -108,7 +108,7 @@ def test_readyz(monkeypatch: pytest.MonkeyPatch) -> None:
     app = create_app([cfg], handler)
 
     # Before lifespan is entered — use raw ASGITransport to bypass lifespan.
-    # The ASGI transport does NOT trigger lifespan, so state["ready"] is False → 503.
+    # The ASGI transport does NOT trigger lifespan, so state.ready is False → 503.
     # Use asyncio.run() to create a fresh event loop (avoids "no current event loop"
     # when running after pytest-asyncio tests that close their event loops).
     async def get_readyz_no_lifespan() -> int:
@@ -247,7 +247,7 @@ def test_webhook_503_only_when_draining(monkeypatch: pytest.MonkeyPatch) -> None
         )
         assert resp.status_code == 202, f"engine-not-ready must never 503, got {resp.status_code}"
 
-        app.extra["state"]["draining"] = True
+        app.extra["state"].draining = True
         resp = client.post(
             "/channels/gitlab-mr-review/events",
             content=json.dumps(MR_PAYLOAD).encode(),
@@ -268,7 +268,7 @@ def test_draining_503(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with TestClient(app) as client:
         # Simulate drain: set draining on the shared state dict exposed via app.extra
-        app.extra["state"]["draining"] = True
+        app.extra["state"].draining = True
         resp = client.post(
             "/channels/gitlab-mr-review/events",
             content=json.dumps(MR_PAYLOAD).encode(),

@@ -23,12 +23,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import signal
 import sys
-import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -37,9 +34,23 @@ import uvicorn
 
 if TYPE_CHECKING:
     from ach_agent.engine.base.driver import EngineDriver
-    from ach_agent.engine.events import OpenCodeToolUpdate
     from ach_agent.engine.hydrate import McpServer
 
+from ach_agent.boot.engine_runner import make_engine_runner
+from ach_agent.boot.health import HealthState
+from ach_agent.boot.paths import (
+    harness_log_dir,
+    link_ach_state,
+    resolve_engine_paths,
+    write_pid_file,
+)
+from ach_agent.boot.prompt import resolve_system_prompt
+from ach_agent.boot.secrets import (
+    collect_secret_env_names,
+    resolve_model_upstream,
+    strip_forwarded_secrets,
+)
+from ach_agent.boot.stores import open_dedup_store, open_session_store
 from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a2a_agent_card
 from ach_agent.channels.cron import CronScheduler
 from ach_agent.channels.message_event import MessageEvent
@@ -51,7 +62,6 @@ from ach_agent.config.schema import (
     HindsightMemory,
     LocalMcpServer,
     McpServerConfig,
-    Memory,
     RemoteMcpServer,
     RepoCheckoutParams,
     RepoCheckoutServer,
@@ -66,7 +76,7 @@ from ach_agent.engine.cost import (
 from ach_agent.engine.hydrate import hydrate, resolve_model
 from ach_agent.engine.mcp_passthrough import to_opencode_entry
 from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
-from ach_agent.engine.metrics import DRAIN_COMPLETED, ENGINE_LAUNCH_FAILURES
+from ach_agent.engine.metrics import DRAIN_COMPLETED
 from ach_agent.engine.sanitized_env import add_secret_redaction, configure_logging
 from ach_agent.http.app import create_app
 from ach_agent.memory.facade import MemoryFacade
@@ -101,477 +111,9 @@ DEFAULT_CONFIG_PATH = "/etc/ach-agent/config.json"
 PID_FILE = Path("/tmp/ach-agent.pid")
 
 
-def _write_pid_file(pid_path: Path) -> None:
-    """Write PID file for single-replica guard (Pitfall 11).
-
-    Tolerate a non-writable path in dev by logging and continuing.
-    """
-    try:
-        pid_path.write_text(str(os.getpid()), encoding="utf-8")
-        log.info("PID file written", path=str(pid_path))
-    except OSError as exc:
-        log.warning(
-            "PID file not writable — continuing without it (dev mode)",
-            path=str(pid_path),
-            error=str(exc),
-        )
-
-
-def _open_dedup_store(cfg: Any) -> Any:
-    """Select and open the dedup store per persistence config (D-03/D-04).
-
-    persistence.enabled=false → InMemoryDedupStore (no disk dependency).
-    persistence.enabled=true  → FileBackedDedupStore on mountPath/state/state.db
-      (shared harness sqlite; dedup is its first table, more may follow).
-      Missing / non-writable mount → sys.exit(1) fail-closed (D-04a,
-      mirrors ENG-06 poll_ready exit pattern).
-      Corrupt state.db → fail-open: move aside, start fresh, WARN +
-      PERSISTENCE_DEGRADED metric (D-04b, T-03-08: file preserved for forensics).
-
-    Never logs ek_ / GITLAB_TOKEN values (T-03-07 mitigation).
-    """
-    from ach_agent.router.dedup import FileBackedDedupStore, InMemoryDedupStore
-    from ach_agent.router.metrics import PERSISTENCE_DEGRADED
-
-    if not cfg.persistence.enabled:
-        return InMemoryDedupStore()
-
-    mount = Path(cfg.persistence.mount_path)
-
-    # D-04a: missing / non-writable mount → fail-closed (loud — ENG-06 pattern)
-    if not mount.exists() or not os.access(mount, os.W_OK):
-        log.error(
-            "persistence.enabled=true but mountPath missing or not writable — exiting",
-            mount_path=str(mount),
-        )
-        sys.exit(1)
-
-    db_path = mount / "state" / "state.db"
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-
-    try:
-        store = FileBackedDedupStore(db_path)
-        log.info("durable dedup store opened", db_path=str(db_path))
-        return store
-    except Exception as exc:
-        # D-04b: corrupt / unreadable DB → fail-open: move aside, start fresh.
-        # Preserved for forensics (T-03-08: not deleted, only renamed).
-        aside_path = db_path.with_suffix(f".corrupt.{int(time.time())}.db")
-        try:
-            db_path.rename(aside_path)
-            log.warning(
-                "state.db corrupt — moved aside, starting fresh (fail-open)",
-                db_path=str(db_path),
-                aside_path=str(aside_path),
-                error=str(exc),
-            )
-        except OSError as rename_exc:
-            log.warning(
-                "state.db corrupt and could not be moved aside — retrying fresh store",
-                db_path=str(db_path),
-                error=str(exc),
-                rename_error=str(rename_exc),
-            )
-        PERSISTENCE_DEGRADED.inc()
-        # Retry with a fresh DB file after moving the corrupt one aside
-        try:
-            return FileBackedDedupStore(db_path)
-        except Exception:
-            # Final fallback: in-memory (degraded mode, DB path still unusable)
-            return InMemoryDedupStore()
-
-
-def _open_session_store(cfg: Any) -> Any:
-    """Select the pool's session_key → opencode-session map per persistence config.
-
-    persistence.enabled=false → in-memory _LRUSessionMap (volatile, current behavior).
-    persistence.enabled=true  → _SqliteSessionMap on mountPath/state/state.db, so
-      channel.session='auto' continuity survives a full harness restart; bounded to
-      maxsize rows (LRU by last_used).
-
-    Fail-OPEN (unlike _open_dedup_store, which fail-CLOSES): a missing mount or a DB
-    error degrades to the in-memory map + WARN + PERSISTENCE_DEGRADED, because losing
-    conversational continuity is a soft degrade, not a duplicate-firing hazard.
-
-    Call AFTER _open_dedup_store: that opens/repairs state.db first, so this second WAL
-    connection just adds the oc_sessions table to an already-valid file.
-    """
-    from ach_agent.engine.pool import _LRUSessionMap, _SqliteSessionMap
-    from ach_agent.router.metrics import PERSISTENCE_DEGRADED
-
-    if not cfg.persistence.enabled:
-        return _LRUSessionMap()
-
-    db_path = Path(cfg.persistence.mount_path) / "state" / "state.db"
-    try:
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        store = _SqliteSessionMap(db_path)
-        log.info("durable session map opened", db_path=str(db_path), rows=len(store))
-        return store
-    except Exception as exc:  # noqa: BLE001 — fail-open to in-memory (degraded, not fatal)
-        log.warning(
-            "session map open failed — using in-memory (fail-open)",
-            db_path=str(db_path),
-            error=str(exc),
-        )
-        PERSISTENCE_DEGRADED.inc()
-        return _LRUSessionMap()
-
-
-def _clean_tool_name(name: str) -> str:
-    """Collapse opencode's doubled MCP prefix for readability.
-
-    opencode ids MCP tools as ``<server>_<server>_<tool>`` (the server segment repeats,
-    e.g. ``mcp-gitlab-ro_mcp-gitlab-ro_gitlab_get_merge_request``). Render it as
-    ``<server>/<tool>``. Native tools (``grep``, ``bash``) have no such prefix and pass through.
-    """
-    parts = name.split("_", 2)
-    if len(parts) == 3 and parts[0] == parts[1]:
-        return f"{parts[0]}/{parts[2]}"
-    return name
-
-
-def _tool_detail(raw: str) -> str:
-    """Best-effort decode of a tool result for readable logging.
-
-    gitlab-mcp (and friends) return ``{"result": "<json-string>"}`` — doubly JSON-encoded,
-    which structlog then repr-escapes into an unreadable ``{\\n \\"...`` blob. Parse it, unwrap
-    a lone ``result`` string, and re-dump compact single-line JSON. Non-JSON output (file
-    reads, truncation notices) falls through to the raw text. Always truncated to 300 chars.
-    """
-    text = raw.strip()
-    try:
-        obj = json.loads(text)
-    except (ValueError, TypeError):
-        return text[:300]
-    if isinstance(obj, dict) and list(obj) == ["result"] and isinstance(obj["result"], str):
-        try:
-            obj = json.loads(obj["result"])
-        except (ValueError, TypeError):
-            obj = obj["result"]
-    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))[:300]
-
-
-def _log_engine_tool(update: OpenCodeToolUpdate) -> None:
-    """Default on_tool sink for channel invocations.
-
-    run_invocation calls this as each tool moves running→completed/error. Wired only when
-    the channel provides no on_tool of its own (--debug/console keep their own streaming
-    sinks), so a channel turn shows the tools it ran — the action and its result — instead
-    of dead air. The ``running`` transition is skipped so each tool logs ONCE (on
-    completed/error); the result is JSON-decoded for readability and both fields are bounded.
-    """
-    state = update.state
-    if state.status == "running":
-        return  # one line per tool — the completed/error transition carries the result
-    fields: dict[str, Any] = {
-        "tool": _clean_tool_name(update.tool_name),
-        "status": state.status,
-    }
-    action = getattr(state, "title", "")
-    if action:
-        fields["action"] = action[:200]
-    detail = getattr(state, "output", "") or getattr(state, "error", "")
-    if detail:
-        fields["detail"] = _tool_detail(detail)
-    log.info("engine: tool", **fields)
-
-
-def _make_tool_recorder(
-    inner: Callable[[OpenCodeToolUpdate], None],
-    tool_sink: Any,
-    event: MessageEvent,
-    model: str,
-) -> Callable[[OpenCodeToolUpdate], None]:
-    """Wrap an on_tool sink to also record one ToolStat per tool call (Tier 1 agent trace).
-
-    Stamps a monotonic start on the ``running`` transition; on the ``completed``/``error``
-    transition computes the duration and records once per call_id, then delegates to ``inner``
-    (the channel's sink or _log_engine_tool). Per-invocation state — a fresh map each turn.
-    """
-    from ach_agent.stats.sink import build_tool_stat
-
-    starts: dict[str, float] = {}
-    done: set[str] = set()
-    source = getattr(event, "source", event.channel_name)
-
-    def on_tool(update: OpenCodeToolUpdate) -> None:
-        cid = update.call_id or update.part_id
-        status = update.state.status
-        if status == "running":
-            starts.setdefault(cid, time.monotonic())
-        elif status in ("completed", "error") and cid not in done:
-            done.add(cid)
-            start = starts.pop(cid, None)
-            # ponytail: duration from SSE arrival (running→terminal), not opencode's own tool
-            # clock — needs the running event; missing it → duration None (count still recorded).
-            dur_ms = int((time.monotonic() - start) * 1000) if start is not None else None
-            display = _clean_tool_name(update.tool_name)
-            tool_type = "mcp" if "/" in display else "builtin"
-            tool_sink.record(
-                build_tool_stat(
-                    update,
-                    session_key=event.session_key,
-                    channel=event.channel_name,
-                    source=source,
-                    model=model,
-                    tool=display,
-                    tool_type=tool_type,
-                    duration_ms=dur_ms,
-                    ts_ms=int(time.time() * 1000),
-                )
-            )
-        inner(update)
-
-    return on_tool
-
-
-def _checkout_hint(project_id: Any, head_sha: str) -> str:
-    return (
-        f" You can copy the repo locally for deep analysis: "
-        f"checkout_repo(project={project_id}, ref={head_sha}) — returns a path with the full "
-        f"tree for rg/tests/build (read-only snapshot, no .git)."
-    )
-
-
-def build_engine_prompt(
-    event: MessageEvent,
-    channel_cfg: Any = None,
-    agent_name: str = "",
-    memory_bank: str = "",
-    repo_checkout_enabled: bool = False,
-) -> str:
-    """Build a meaningful engine prompt from a MessageEvent.
-
-    When the channel declares a `prompt` template, it wins: it is rendered through the
-    {{ }} engine against the event payload + harness internals (channel.prompt is the
-    contract-specified per-channel instruction). Otherwise the legacy fallback applies:
-    cron `scheduled_tick`, free-form `payload['text']`, or a built MR review instruction.
-
-    Never raises; falls back to an empty string if no usable content is found.
-    """
-    # Channel-prompt path: render the contract-authored template (CONTRACT §2 channel.prompt)
-    if channel_cfg is not None and getattr(channel_cfg, "prompt", None):
-        ctx = build_template_context(
-            event.payload,
-            channel_name=event.channel_name,
-            channel_type=getattr(channel_cfg, "type", "") or "",
-            channel_source=getattr(channel_cfg, "source", "") or "",
-            agent_name=agent_name,
-            memory_bank=memory_bank,
-            event_id=event.idempotency_key,
-            session_key=event.session_key,
-        )
-        return render_template(channel_cfg.prompt, ctx)
-
-    # Cron path: payload has a scheduled_tick key
-    scheduled_tick = event.payload.get("scheduled_tick")
-    if scheduled_tick is not None:
-        return str(scheduled_tick)
-
-    # Free-form text path: the --tui console (and queue/a2a) carry the prompt verbatim
-    # in payload['text']. In console mode the typed line IS the prompt.
-    text = event.payload.get("text")
-    if text:
-        return str(text)
-
-    # Webhook path: build prompt from delivery_context + payload, per event kind.
-    # Missing "kind" defaults to merge_request (back-compat with pre-Task-1 events).
-    dc = event.delivery_context
-    project_id = dc.get("project_id", "")
-    kind = dc.get("kind", "merge_request")
-
-    obj_attrs: dict[str, Any] = {}
-    raw_obj_attrs = event.payload.get("object_attributes")
-    if isinstance(raw_obj_attrs, dict):
-        obj_attrs = raw_obj_attrs
-
-    if kind == "note":
-        # A comment on an MR or issue: give the agent the note body + the target reference
-        # so it can fetch context via MCP. Never emit an empty "Review MR !." line.
-        target_type = dc.get("target_type", "")
-        if target_type == "issue":
-            ref = f"issue #{dc.get('issue_iid', '')}"
-        else:
-            ref = f"MR !{dc.get('mr_iid', '')}"
-        raw_user = event.payload.get("user")
-        user = raw_user.get("username", "") if isinstance(raw_user, dict) else ""
-        note = obj_attrs.get("note", "")
-        header = f"New comment on {ref} in project {project_id}"
-        header = f"{header} by {user}:" if user else f"{header}:"
-        parts = [header]
-        if note:
-            parts.append(str(note))
-        head_sha = dc.get("head_sha", "")
-        if repo_checkout_enabled and head_sha and target_type != "issue":
-            parts.append(_checkout_hint(project_id, str(head_sha)))
-        return " ".join(parts)
-
-    title = obj_attrs.get("title", "")
-    description = obj_attrs.get("description", "")
-
-    if kind == "issue":
-        issue_iid = dc.get("issue_iid", "")
-        parts = [f"Review issue #{issue_iid} in project {project_id}."]
-    else:  # merge_request (default)
-        mr_iid = dc.get("mr_iid", "")
-        parts = [f"Review MR !{mr_iid} in project {project_id}."]
-    if title:
-        parts.append(f"Title: {title}")
-    if description:
-        parts.append(f"Description: {description}")
-
-    head_sha = dc.get("head_sha", "")
-    if repo_checkout_enabled and head_sha and kind != "issue":
-        parts.append(_checkout_hint(project_id, str(head_sha)))
-    return " ".join(parts)
-
-
-# Harness-owned terminal-contract directive, appended per channel class to every
-# structured turn (NOT free-form tui). The terminal JSON envelope is harness IP — the
-# harness parses it — so operators never hand-write it in channel.prompt. This is the
-# ONLY per-turn place the model is told which action its final object must carry; without
-# it a model can emit a valid-but-wrong {"action":"none"} on an a2a turn, which
-# extract_terminal accepts and the a2a path (main.py) then delivers to the caller as a
-# FAILURE (on_fail). See operator contract §8.
-#
-# Each block exposes ONLY the action its channel class expects — the a2a block never
-# names "none" (naming the wrong action just plants it: pink-elephant). The matching
-# lifecycle repair/wrap turns are kept action-consistent via run_invocation(terminal_action=…).
-A2A_OUTPUT_INSTRUCTIONS = (
-    "<output_format>\n"
-    "Do your reasoning and tool work first. Then END your reply with exactly one compact "
-    "JSON object on its own line — this object is the ONLY thing delivered to the caller:\n"
-    '{"action":"a2a_reply","text":"<RESULT>","thoughts":"<OPTIONAL>"}\n'
-    '"text" is what the caller reads — keep it non-empty. Single line, keys in this order, '
-    "no code fences.\n"
-    "</output_format>"
-)
-
-NONE_OUTPUT_INSTRUCTIONS = (
-    "<output_format>\n"
-    "Do your reasoning and tool work first. Then END your reply with exactly one compact "
-    "JSON object on its own line:\n"
-    '{"action":"none","text":"<SUMMARY>","thoughts":"<OPTIONAL>"}\n'
-    "Do all real work through your tools; this object only reports completion. Single line, "
-    "keys in this order, no code fences.\n"
-    "</output_format>"
-)
-
-
-def terminal_action_for(channel_cfg: Any, free_form: bool) -> str:
-    """The terminal action this turn's channel class expects — the single source of truth
-    the harness reuses for both the up-front <output_format> block and the lifecycle
-    repair/wrap turns. a2a → 'a2a_reply'; every other class (and a missing type) → 'none'.
-    free_form (--tui) has no contract and skips extraction, so its value is unused ('none').
-    """
-    if not free_form and getattr(channel_cfg, "type", None) == "a2a":
-        return "a2a_reply"
-    return "none"
-
-
-def build_output_instructions(channel_cfg: Any, free_form: bool) -> str:
-    """Return the harness-owned <output_format> block for this turn, or "".
-
-    free_form (--tui console) → "" (no terminal contract). Otherwise the block for the
-    channel class's expected action (terminal_action_for): a2a_reply for a2a, none else.
-    """
-    if free_form:
-        return ""
-    if terminal_action_for(channel_cfg, free_form) == "a2a_reply":
-        return A2A_OUTPUT_INSTRUCTIONS
-    return NONE_OUTPUT_INSTRUCTIONS
-
-
-def resolve_engine_paths(cfg: Any) -> tuple[str, str]:
-    """Resolve the opencode HOME and the agent workDir from the contract.
-
-    Both are definable (engine.home / engine.workDir). When omitted:
-      - home → <mountPath>/home if persistence.enabled (persistent), else /tmp/ach-home.
-      - work_dir → <home>/workspace.
-    Static state (config, skills, sessions) lives under HOME; HOME under mountPath persists.
-    """
-    home = cfg.engine.home
-    if not home:
-        home = f"{cfg.persistence.mount_path}/home" if cfg.persistence.enabled else "/tmp/ach-home"
-    work_dir = cfg.engine.work_dir or f"{home}/workspace"
-    return home, work_dir
-
-
 # resolve_codemem_wiring has moved to ach_agent.memory.codemem; re-exported here for
 # back-compat with existing callers (tests/integration/test_codemem_wiring.py, etc.).
 from ach_agent.memory.codemem import resolve_codemem_wiring as resolve_codemem_wiring  # noqa: E402
-
-
-def ach_state_dir(home: str) -> Path:
-    """The single hydration state root: <home>/.ach-state (prompts + artifacts)."""
-    return Path(home) / ".ach-state"
-
-
-def link_ach_state(home: str, work_dir: str) -> Path:
-    """Create <home>/.ach-state and, when workDir differs, a <workDir>/.ach-state symlink.
-
-    The symlink gives the agent's shell (cwd = workDir) one stable path to hydrated
-    artifacts; HOME stays the canonical read-only root. Best-effort: a symlink failure
-    (e.g. unsupported FS) is non-fatal — the agent can still reach state under HOME.
-    """
-    state = ach_state_dir(home)
-    state.mkdir(parents=True, exist_ok=True)
-    if work_dir and Path(work_dir).resolve() != Path(home).resolve():
-        link = Path(work_dir) / ".ach-state"
-        link.parent.mkdir(parents=True, exist_ok=True)
-        if not link.exists():
-            try:
-                link.symlink_to(state, target_is_directory=True)
-            except OSError as e:
-                log.warning("workDir .ach-state symlink failed (non-fatal)", error=str(e))
-    return state
-
-
-def resolve_system_prompt(prompt_block: Any, state_dir: Path) -> str:
-    """Resolve prompt.system (text | file | ach | None) into the persona string.
-
-    text → the inline text. file → <state_dir>/<file>. ach → the named hydrated prompt at
-    <state_dir>/prompts/<ach>/ (its sole file, or the given `file` subpath). For every
-    on-disk form the resolved REAL path is re-checked to stay inside state_dir (defense in
-    depth over the schema validator, which only sees the literal path), and a missing file
-    is a hard startup failure — a persona the operator declared but hydration did not deliver
-    is a misconfiguration, not fail-open. None → "" (no persona).
-    """
-    if prompt_block is None or prompt_block.system is None:
-        return ""
-    system = prompt_block.system
-    if system.type == "text":
-        return str(system.text)
-    root = state_dir.resolve()
-    if system.type == "file":
-        target = (root / str(system.file)).resolve()
-    else:  # ach — resolve the named prompt dir, then pick its file
-        prompt_dir = (root / "prompts" / str(system.ach)).resolve()
-        if not prompt_dir.is_relative_to(root) or not prompt_dir.is_dir():
-            log.error("prompt.system.ach not hydrated under .ach-state/prompts", ach=system.ach)
-            sys.exit(1)
-        if system.file:
-            target = (prompt_dir / str(system.file)).resolve()
-        else:
-            files = sorted(p for p in prompt_dir.rglob("*") if p.is_file())
-            if len(files) != 1:
-                log.error(
-                    "prompt.system.ach needs an explicit `file:` — the prompt dir has 0 or "
-                    ">1 files",
-                    ach=system.ach,
-                    count=len(files),
-                    files=[f.name for f in files],
-                )
-                sys.exit(1)
-            target = files[0].resolve()
-    if not target.is_relative_to(root):
-        log.error("prompt.system file escapes .ach-state", path=str(target))
-        sys.exit(1)
-    if not target.is_file():
-        log.error("prompt.system file not found under .ach-state", path=str(target))
-        sys.exit(1)
-    return target.read_text(encoding="utf-8")
 
 
 def collect_passthrough_mcp(
@@ -615,378 +157,6 @@ def resolve_repo_archive_endpoint(mcp_servers: list[McpServer], server_id: str) 
     return None
 
 
-async def select_memory_wiring_async(
-    memory_cfg: Memory | None,
-    facade_url: str | None,
-) -> tuple[list[str], str]:
-    """Probe memory + build the prompt section; return the FACADE url (not the raw endpoint).
-
-    The agent only ever reaches Hindsight through the harness facade, so the mcp_servers list
-    carries the facade URL. Gated by prepare_memory's probe (D-02 fail-open) AND by the facade
-    actually being up. codemem is NOT handled here — it is static per-agent and resolved once
-    at boot (resolve_codemem_wiring → engine_cfg).
-    """
-    if not isinstance(memory_cfg, HindsightMemory):
-        return [], ""
-
-    mem_available, memory_prompt = await prepare_memory(memory_cfg)
-    mcp_servers = [facade_url] if (mem_available and facade_url) else []
-    return mcp_servers, memory_prompt
-
-
-def _make_engine_runner(
-    pool: Any,
-    driver: EngineDriver,
-    engine_cfg: Any,
-    max_invocation_seconds: int,
-    terminal_output_retries: int = 1,
-    max_tool_calls: int = 0,
-    memory_cfg: Any = None,
-    channel_ttl: dict[str, float] | None = None,
-    channels_by_name: dict[str, Any] | None = None,
-    agent_name: str = "",
-    memory_bank: str = "",
-    stats_sink: Any = None,
-    tool_sink: Any = None,
-    memory_facade_url: str | None = None,
-    repo_facade_url: str | None = None,
-    a2a_facade_url: str | None = None,
-    accountant: CostAccountant | None = None,
-    cost_source: str = "engine",
-) -> Callable[..., Any]:
-    """Build the engine_runner callable injected into the Router.
-
-    The runner is called by Lane as: engine_runner(event, on_kill).
-    It acquires a ManagedServer from the pool, calls run_contract_turn(driver, ...)
-    (which returns the single terminal object), then relays the terminal `text`:
-
-    - reply mode (event.reply_future is not None):
-        set_result(text) on the future. The route is awaiting this future to return
-        200 + body to the client.
-        CRITICAL: the future MUST always be resolved (set_result or set_exception)
-        even on error, otherwise the route hangs indefinitely. A try/except sets the
-        exception on error before re-raising.
-
-    - on_complete mode (event.delivery_context['on_complete'] present, e.g. a2a):
-        call on_complete(session_key, text) — the channel wiring relays the reply.
-
-    - async mode (neither): nothing to deliver. Egress already happened via the
-        agent's external MCP tool calls — the harness never posts on the model's behalf.
-
-    The subprocess launch env is built by build_opencode_env (SEC-01): the
-    engine_cfg carries paths, never ek_ values.
-
-    memory_cfg (MEM-01/MEM-02/D-02): optional MemoryBlock from config.memory.
-    When present, prepare_memory is called BEFORE pool.acquire so the opencode.json
-    written for that server includes or excludes the memory MCP server (Pitfall 3).
-    Fail-open: unreachable backend → exclude MCP server, log WARN + metric, run anyway.
-
-    channel_ttl: {channel_name: idle_ttl_seconds} — the wait after a conversation ends
-    before the opencode server is stopped, built at boot from engine.idle_ttl_seconds.
-    Unknown channels (e.g. the --tui console) default to 0 = stop immediately. --tui pins a
-    held ref so 0 never actually stops it mid-session (see the console-mode pre-warm).
-    """
-    from ach_agent.engine.base.terminal import run_contract_turn
-    from ach_agent.engine.events import InvocationTimeout
-    from ach_agent.stats.sink import build_session_stat
-
-    ttl_by_channel = channel_ttl or {}
-    channels_by_name = channels_by_name or {}
-
-    async def engine_runner(event: MessageEvent, on_kill: Callable[[], None]) -> None:
-        # Resolve channel cfg early so ctx can be built before the memory probe.
-        ch_cfg = channels_by_name.get(event.channel_name)
-        ctx = build_template_context(
-            event.payload,
-            channel_name=event.channel_name,
-            channel_type=getattr(ch_cfg, "type", "") or "",
-            channel_source=getattr(ch_cfg, "source", "") or "",
-            agent_name=agent_name,
-            memory_bank=memory_bank,
-            event_id=event.idempotency_key,
-            session_key=event.session_key,
-        )
-
-        # MEM-01/MEM-02/D-02: probe memory backend BEFORE pool.acquire (Pitfall 3).
-        # prepare_memory never raises (fail-open contract).
-        # When unavailable: MEMORY_DEGRADED incremented + WARN logged inside prepare_memory.
-        # bank is static (T-04-03, schema-enforced: no {{ }}) — the mental-model fetch, the
-        # boot-started facade, and the prompt's {{ memory.bank }} all use the SAME value, so
-        # there is no per-event bank rendering to keep them in sync.
-        mcp_servers, memory_prompt = await select_memory_wiring_async(memory_cfg, memory_facade_url)
-        # The repo-checkout facade (if enabled) is a static localhost MCP server; append it to
-        # every invocation alongside the (dynamic) memory facade — the agent reaches gitlab-mcp's
-        # archive resource ONLY through it (ek injected harness-side).
-        if repo_facade_url:
-            mcp_servers = [*mcp_servers, repo_facade_url]
-        # a2a egress facade (SP1 §6): a static localhost MCP server carried on every invocation,
-        # so the agent can call peer agents. Same wiring as the memory/repo facades.
-        if a2a_facade_url:
-            mcp_servers = [*mcp_servers, a2a_facade_url]
-
-        # Build per-invocation engine config with the (dynamic) hindsight MCP server iff
-        # reachable (D-02). codemem fields are static per-agent and already on engine_cfg from
-        # boot — dataclasses.replace preserves them. Original engine_cfg is not mutated.
-        import dataclasses
-
-        if dataclasses.is_dataclass(engine_cfg) and not isinstance(engine_cfg, type):
-            invocation_engine_cfg = dataclasses.replace(engine_cfg, mcp_servers=mcp_servers)
-        else:
-            # Non-dataclass (e.g. MagicMock in tests) — attach attribute directly.
-            invocation_engine_cfg = engine_cfg
-            invocation_engine_cfg.mcp_servers = mcp_servers
-
-        # Project (codemem) — render after mcp_servers replace, before acquire. Keyed pool reuses
-        # one agente per session_key, so codemem_project is fixed by the first event — correct
-        # for a session-invariant template.
-        if (
-            isinstance(memory_cfg, CodememMemory)
-            and "{{" in memory_cfg.codemem.project
-            and dataclasses.is_dataclass(engine_cfg)
-            and not isinstance(engine_cfg, type)
-        ):
-            rendered_project = render_template(memory_cfg.codemem.project, ctx)
-            invocation_engine_cfg = dataclasses.replace(
-                invocation_engine_cfg, codemem_project=rendered_project
-            )
-
-        # CR-01: in reply mode the future MUST always be resolved (set_result or
-        # set_exception), otherwise the awaiting route hangs forever. The except branches
-        # below resolve it on every failure path.
-        future = event.reply_future
-        # on_fail (a2a) MUST be signalled on every failure path too — otherwise the a2a
-        # executor's completion.wait() (no timeout) hangs forever. Read it here so the
-        # success branch AND the except branches below all resolve it.
-        on_fail = event.delivery_context.get("on_fail")
-        server = None
-        timed_out = False
-        acquired = False
-        try:
-            server = await pool.acquire(event.session_key, invocation_engine_cfg)
-            acquired = True
-            if accountant is not None:
-                accountant.begin_turn(server.cost_token)
-            # MEM-01: append ## Memory section (summaries or unavailable note) to prompt.
-            base_prompt = build_engine_prompt(
-                event,
-                channel_cfg=ch_cfg,
-                agent_name=agent_name,
-                memory_bank=memory_bank,
-                # Advertise checkout_repo only when the facade is actually wired (started),
-                # not merely config-enabled — else we'd hint a tool the agent can't call.
-                repo_checkout_enabled=repo_facade_url is not None,
-            )
-            full_prompt = f"{base_prompt}\n\n{memory_prompt}" if memory_prompt else base_prompt
-            # Free-form channels (--tui console) carry no terminal contract: return
-            # the raw reply, no terminal extraction/repair (delivery_context marker).
-            free_form = bool(event.delivery_context.get("free_form"))
-            # Harness-owned terminal-contract directive, per channel class. Appended LAST
-            # (after the message + any memory block) so it wins on recency; tui gets none.
-            # The same action drives the lifecycle repair/wrap turns (terminal_action below)
-            # so an a2a repair turn never re-exposes 'none'.
-            _terminal_action = terminal_action_for(ch_cfg, free_form)
-            _output_instructions = build_output_instructions(ch_cfg, free_form)
-            if _output_instructions:
-                full_prompt = f"{full_prompt}\n\n{_output_instructions}"
-            # Optional live-text sink (the --debug console sets this to stream the reply
-            # as it's produced, so a slow trailing tool call doesn't hide the text).
-            on_text = event.delivery_context.get("on_text")
-            # Optional tool-lifecycle sink (the --debug console shows "⚙ running <tool>"
-            # so a long-blocking tool call isn't dead air).
-            on_tool = event.delivery_context.get("on_tool")
-            # Default observability sink: channels wire no on_tool (only --debug does), so
-            # without this a channel turn shows nothing about the tools it ran.
-            if on_tool is None:
-                on_tool = _log_engine_tool
-            # Tier 1 agent trace: record one ToolStat per tool call (metrics always; ach:tools
-            # stream when ACH_STATS_REDIS_URL is set). Wraps whatever on_tool renders/logs.
-            if tool_sink is not None:
-                on_tool = _make_tool_recorder(on_tool, tool_sink, event, engine_cfg.model)
-            # Conversation identity (session block). The router lane key
-            # (event.session_key) is NOT affected — only which opencode session
-            # this turn reuses. No ch_cfg (--tui console) → auto: REPL continuity.
-            session_cfg = getattr(ch_cfg, "session", None)
-            conv_key = event.session_key
-            if session_cfg is None or session_cfg.type == "auto":
-                reuse = True
-            elif session_cfg.type == "none":
-                reuse = False
-            else:  # custom: render the key template per event (validator guarantees key set)
-                tmpl = session_cfg.key or ""
-                rendered = render_template(tmpl, ctx).strip()
-                if rendered:
-                    conv_key, reuse = rendered, True
-                else:
-                    log.warning(
-                        "session: template rendered empty — falling back to none",
-                        channel=event.channel_name,
-                        template=tmpl,
-                    )
-                    reuse = False
-            log.info(
-                "engine: prompt",
-                channel=event.channel_name,
-                session_key=event.session_key,
-                prompt=full_prompt,
-            )
-            turn_stats: dict[str, Any] = {}
-            obj = await run_contract_turn(
-                driver,
-                server,
-                conv_key=conv_key,
-                prompt=full_prompt,
-                reuse=reuse,
-                sessions=pool.sessions,
-                free_form=free_form,
-                terminal_action=_terminal_action,
-                terminal_retries=terminal_output_retries,
-                on_text=on_text,
-                on_tool=on_tool,
-                max_tool_calls=max_tool_calls,
-                stats=turn_stats,
-            )
-
-            text = str(obj.get("text", ""))
-            log.info(
-                "engine: response",
-                channel=event.channel_name,
-                session_key=event.session_key,
-                action=obj.get("action"),
-                text=text,
-            )
-            _usage = turn_stats.get("usage")
-            if accountant is not None:
-                _usage = accountant.end_turn(server.cost_token, _usage)
-            elif cost_source == "none" and _usage is not None:
-                _usage = dataclasses.replace(_usage, cost=0.0)
-            turn_stats["usage"] = _usage
-            log.info(
-                "engine: summary",
-                channel=event.channel_name,
-                session_key=event.session_key,
-                tools=turn_stats.get("tool_count", 0),
-                input_tokens=getattr(_usage, "input_tokens", 0),
-                output_tokens=getattr(_usage, "output_tokens", 0),
-                cost_usd=getattr(_usage, "cost", 0.0),
-                duration_ms=getattr(_usage, "duration_ms", 0),
-            )
-            # Post-turn session hygiene. Skipped on timeout (this code is not reached
-            # when the lane cancels the turn) — that orphan is accepted, the
-            # server is force-killed anyway.
-            _sid = turn_stats.get("session_ref", "")
-            if _sid and not reuse:
-                # key='none' (or empty template render): stateless turn leaves no residue.
-                await driver.discard_session(server, _sid)
-            elif (
-                _sid
-                and session_cfg is not None
-                and session_cfg.max_tokens is not None
-                and getattr(_usage, "input_tokens", 0) > session_cfg.max_tokens
-            ):
-                if session_cfg.overflow == "compact":
-                    log.info(
-                        "session: maxTokens exceeded — compacting",
-                        session_key=event.session_key,
-                        session_ref=_sid,
-                        input_tokens=getattr(_usage, "input_tokens", 0),
-                        max_tokens=session_cfg.max_tokens,
-                    )
-                    await driver.compact_session(server, _sid)
-                else:  # rotate: drop the map entry + delete the old session (clean)
-                    log.info(
-                        "session: maxTokens exceeded — rotating",
-                        session_key=event.session_key,
-                        session_ref=_sid,
-                        input_tokens=getattr(_usage, "input_tokens", 0),
-                        max_tokens=session_cfg.max_tokens,
-                    )
-                    pool.sessions.pop(conv_key, None)
-                    await driver.discard_session(server, _sid)
-            if stats_sink is not None:
-                stats_sink.record(
-                    build_session_stat(
-                        event,
-                        obj,
-                        turn_stats,
-                        model=engine_cfg.model,
-                        ts_ms=int(time.time() * 1000),
-                    )
-                )
-
-            if future is not None:
-                # Reply mode: resolve the future the route is awaiting.
-                if not future.done():
-                    future.set_result(text)
-                return
-
-            # A2A completion path (W9 — engine_runner does NOT import channels.a2a):
-            # The on_complete callable is injected by the A2A wiring closure in main.py
-            # into event.delivery_context['on_complete'] before handler.handle() is called.
-            on_complete = event.delivery_context.get("on_complete")
-            if on_complete is not None or on_fail is not None:
-                action = obj.get("action")
-                if action == "a2a_reply" and text.strip():
-                    if on_complete is not None:
-                        on_complete(event.session_key, text)
-                else:
-                    reason = (
-                        f"invalid terminal output (action={action!r}, "
-                        f"empty_text={not text.strip()})"
-                    )
-                    if on_fail is not None:
-                        on_fail(event.session_key, reason)
-                return
-
-            # Async mode: nothing to deliver. Egress already happened via the agent's
-            # external MCP tool calls — the harness never posts on the model's behalf.
-            return
-        except asyncio.CancelledError:
-            # The lane's maxInvocationSeconds deadline (or a shutdown) cancelled us.
-            # Force-kill the runaway (finally releases with ttl=0) so a warm TTL is never
-            # armed on a timed-out server, and release the awaiting caller so it can't hang.
-            timed_out = True
-            if future is not None and not future.done():
-                future.set_exception(InvocationTimeout(max_invocation_seconds))
-            if on_fail is not None:
-                on_fail(event.session_key, f"invocation timed out after {max_invocation_seconds}s")
-            raise
-        except Exception as exc:
-            if not acquired:
-                # pool.acquire itself failed — the agente could not be launched for
-                # this session_key. Explicit metric + WARN (no silent drop): acceptance
-                # is decoupled from engine readiness, so this is where a launch failure
-                # first surfaces. Never log ek_/tokens — session_key + error string only.
-                ENGINE_LAUNCH_FAILURES.inc()
-                log.warning(
-                    "engine: launch failed (pool.acquire)",
-                    session_key=event.session_key,
-                    task_id=event.task_id,
-                    error=str(exc),
-                )
-            if future is not None and not future.done():
-                future.set_exception(exc)
-            if on_fail is not None:
-                on_fail(event.session_key, f"engine failure: {exc}")
-            raise
-        finally:
-            # Return the engine server to the pool. Slot release is owned by the lane:
-            # its `async with` blocks free the semaphores and its finally calls on_kill
-            # for queued_total. A timed-out invocation ALWAYS releases with ttl=0 (force
-            # kill of the runaway); otherwise the channel's warm idle TTL is applied so
-            # session:auto persists the server across events. `if server is not None`
-            # guards a cancel during a cold-start acquire.
-            if server is not None:
-                ttl = 0.0 if timed_out else ttl_by_channel.get(event.channel_name, 0.0)
-                try:
-                    if accountant is not None:
-                        accountant.discard_turn(server.cost_token)
-                    await pool.release(event.session_key, ttl_seconds=ttl)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("pool release error", task_id=event.task_id, error=str(exc))
-
-    return engine_runner
-
-
 async def _build_cost_accounting(
     *,
     source: str,
@@ -1017,7 +187,7 @@ async def _build_cost_accounting(
 
 
 async def _drain(
-    state: dict[str, Any],
+    state: HealthState,
     uv_server: Any,
     cron_scheduler: CronScheduler | None,
     router: Any,
@@ -1037,8 +207,8 @@ async def _drain(
     Never logs ek_/GITLAB_TOKEN (T-03-07): log emits only path/count/reason fields.
     """
     # 1. Flip draining flag + readyz NotReady (D-09, D-12 straggler gate)
-    state["draining"] = True
-    state["ready"] = False
+    state.draining = True
+    state.ready = False
     log.info("drain: readyz flipped NotReady, intake stopped")
 
     # 2. Signal uvicorn to stop accepting new connections
@@ -1096,54 +266,6 @@ class _A2AHandler:
         return await self._rtr.handle(event)
 
 
-def _harness_log_dir() -> Path:
-    """Volatile dir for transient harness logs (e.g. the --tui attach log).
-
-    Lives under /tmp, never the opencode HOME — harness logs are throwaway and must not
-    pollute the persistent home/state tree.
-    """
-    d = Path("/tmp/ach-harness")
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def collect_secret_env_names(cfg: Any) -> list[str]:
-    """Every secret.env name across webhook + a2a channel auth + the memory admin secret."""
-    names: list[str] = []
-    for ch in cfg.channels:
-        wh = getattr(ch, "webhook", None)
-        if wh is not None and wh.auth.secret is not None and wh.auth.secret.env:
-            names.append(wh.auth.secret.env)
-        a2a = getattr(ch, "a2a", None)
-        if a2a is not None and a2a.auth.secret is not None and a2a.auth.secret.env:
-            names.append(a2a.auth.secret.env)
-    # memory.hindsight.auth: the admin secret joins the same forwardEnv-strip + log-redaction
-    # path as channel secrets. No-auth memory config → nothing appended.
-    mem = getattr(cfg, "memory", None)
-    if isinstance(mem, HindsightMemory) and mem.hindsight.auth is not None:
-        names.append(mem.hindsight.auth.env)
-    return names
-
-
-def strip_forwarded_secrets(cfg: Any) -> list[str]:
-    """Fail-SAFE: remove any secret.env name from engine.forwardEnv so a misconfig can never
-    leak the secret into opencode's env. Returns the cleaned forward-env list; logs a WARN for
-    each stripped name (operator agreement: strip + warn, NOT hard-fail).
-    """
-    secret_names = set(collect_secret_env_names(cfg))
-    cleaned: list[str] = []
-    stripped: list[str] = []
-    for name in cfg.engine.forward_env:
-        (stripped if name in secret_names else cleaned).append(name)
-    if stripped:
-        log.warning(
-            "secret env name(s) present in engine.forwardEnv — stripped so they never reach the "
-            "agent (fix the config)",
-            names=sorted(stripped),
-        )
-    return cleaned
-
-
 async def _run_opencode_attach(
     router: Any,
     *,
@@ -1182,7 +304,7 @@ async def _run_opencode_attach(
     env = {**os.environ, "HOME": str(ephemeral_home), "TMPDIR": "/tmp"}
     if config_path is not None:
         env["OPENCODE_CONFIG"] = str(config_path)
-    log_path = _harness_log_dir() / "tui-attach.log"
+    log_path = harness_log_dir() / "tui-attach.log"
     log.info("ach-agent: --tui → opencode attach", url=url, log_file=str(log_path))
 
     real_stderr = sys.stderr
@@ -1286,7 +408,7 @@ async def main(
             sys.exit(1)
 
     # Step 4: PID file (Pitfall 11 — tolerate non-writable in dev)
-    _write_pid_file(PID_FILE)
+    write_pid_file(PID_FILE)
 
     # Plan 2 (CONTRACT §6.10): self-hydrate from ACH, then front the model + MCP traffic
     # via localhost reverse-proxies that inject the ek_. opencode points ONLY at localhost
@@ -1388,29 +510,9 @@ async def main(
         # token is injected VERBATIM as the header value (carry `Bearer ` in it if the
         # backend needs it). SECURITY: this path uses a raw provider key, NOT the ek_ — it
         # bypasses ACH governance/ek-hygiene and is for local testing, never production.
-        model_up_base = os.environ.get("ACH_MODEL_BASE_URL") or cfg.capability.ach.base_url
-        model_up_header = os.environ.get("ACH_MODEL_HEADER", "x-ach-key")
-        model_up_token = os.environ.get("ACH_MODEL_TOKEN") or ek
-        if os.environ.get("ACH_MODEL_BASE_URL") or os.environ.get("ACH_MODEL_HEADER"):
-            log.info(
-                "model proxy upstream override (dev/test)",
-                base_url=model_up_base,
-                auth_header=model_up_header,
-            )
-            # Catch the classic 'No api key passed in' 401: ACH_MODEL_TOKEN set but its
-            # credential is empty — e.g. `Bearer ${LITELLM_API_KEY}` where LITELLM_API_KEY
-            # was never exported, so it expanded to a bare scheme. Strip a leading scheme
-            # word (Bearer/Token/…) + whitespace; warn if nothing is left. The credential
-            # itself is NEVER logged.
-            _raw = os.environ.get("ACH_MODEL_TOKEN", "")
-            _cred = _raw.split(" ", 1)[1] if " " in _raw.strip() else _raw
-            if _raw and not _cred.strip():
-                log.warning(
-                    "ACH_MODEL_TOKEN has an empty credential — only a scheme word, no key. "
-                    "Likely an unexpanded ${...} var. The upstream will 401 'No api key "
-                    "passed in.' Export the key in the env that launches the container.",
-                    auth_header=model_up_header,
-                )
+        model_up_base, model_up_header, model_up_token = resolve_model_upstream(
+            ek, cfg.capability.ach.base_url
+        )
         price_table, accountant = await _build_cost_accounting(
             source=cfg.cost.source,
             wire=cfg.model.type,
@@ -1521,8 +623,8 @@ async def main(
     # D-03/D-04: dedup store first — it opens/repairs state.db (fail-closed on a bad
     # mount). Then the session map shares that now-valid file (fail-open). The pool
     # owns the session map so run_invocation reuses opencode sessions across restarts.
-    dedup_store = _open_dedup_store(cfg)
-    session_store = _open_session_store(cfg)
+    dedup_store = open_dedup_store(cfg)
+    session_store = open_session_store(cfg)
     if cfg.engine.type == "pi":
         from ach_agent.engine.pi.driver import PiDriver
 
@@ -1559,7 +661,7 @@ async def main(
     channel_ttl = {ch.name: cfg.engine.idle_ttl_seconds for ch in cfg.channels}
     channels_by_name = {c.name: c for c in cfg.channels}
     memory_bank = cfg.memory.hindsight.bank if isinstance(cfg.memory, HindsightMemory) else ""
-    engine_runner = _make_engine_runner(
+    engine_runner = make_engine_runner(
         pool=pool,
         driver=driver,
         engine_cfg=engine_cfg,
@@ -1587,7 +689,6 @@ async def main(
         idempotency_window_seconds=cfg.limits.idempotency_window_seconds,
         dedup_store=dedup_store,
         engine_runner=engine_runner,
-        delivery_adapter=None,
         max_invocation_seconds=float(cfg.limits.max_invocation_seconds),
         channel_concurrency={ch.name: ch.concurrency for ch in cfg.channels},
     )
@@ -1672,8 +773,8 @@ async def main(
         finally:
             # Stop any warm-held engine server (idle TTL may not have elapsed at EOF).
             await pool.stop_all()
-            if hasattr(pool.oc_sessions, "close"):
-                pool.oc_sessions.close()
+            if hasattr(pool.sessions, "close"):
+                pool.sessions.close()
             await stop_model_proxies()
             if mcp_proxy is not None:
                 await mcp_proxy.stop()
@@ -1734,8 +835,8 @@ async def main(
         handler=router,
         a2a_mounts=a2a_mounts,
     )
-    # Expose state dict so _drain can flip draining/ready (same ref as app.extra['state'])
-    state: dict[str, Any] = app.extra["state"]
+    # Expose state so _drain can flip draining/ready (same ref as app.extra['state'])
+    state: HealthState = app.extra["state"]
 
     # Step 7: wire channel adapters (D-08: one CronScheduler for ALL cron channels, SC#3)
     tasks: list[asyncio.Task[None]] = []
@@ -1837,8 +938,8 @@ async def main(
         # own process group) would survive the harness exit and orphan (leaking the port).
         # Idempotent; also cancels the pending TTL tasks.
         await pool.stop_all()
-        if hasattr(pool.oc_sessions, "close"):
-            pool.oc_sessions.close()
+        if hasattr(pool.sessions, "close"):
+            pool.sessions.close()
         # Plan 2: tear down the localhost proxies (closes their aiohttp runners/sessions).
         await stop_model_proxies()
         if mcp_proxy is not None:

@@ -44,7 +44,7 @@ async def run_contract_turn(
     max_tool_calls: int,
     stats: dict[str, Any],
 ) -> dict[str, Any]:
-    from ach_agent.engine.validator import extract_terminal
+    from ach_agent.engine.validator import extract_terminal, validate_terminal
 
     result = await driver.run_turn(
         server,
@@ -90,7 +90,7 @@ async def run_contract_turn(
     if free_form:
         return {"action": "none", "text": text}
 
-    obj = extract_terminal(text)
+    obj = validate_terminal(extract_terminal(text))
     if obj is None and terminal_retries > 0:
         hint = _terminal_object_hint(terminal_action)
         repair = f"Reply with ONLY a terminal JSON object: {hint}."
@@ -106,6 +106,17 @@ async def run_contract_turn(
             max_tool_calls=0,
             stats={},
         )
-        obj = extract_terminal(result.text)
+        obj = validate_terminal(extract_terminal(result.text))
         text = result.text
-    return obj if obj is not None else {"action": "none", "text": text}
+    if obj is None:
+        # §8 "if invalid after retries": async classes log + ignore (the work already
+        # happened via MCP tools); a2a turns this into a FAILED callback because the
+        # action is not a2a_reply (main.py). Never silent.
+        retry_note = "after retries" if terminal_retries > 0 else "no retries configured"
+        log.warning(
+            f"no valid terminal object ({retry_note}) — falling back to none",
+            session_id=conv_key,
+            expected_action=terminal_action,
+        )
+        return {"action": "none", "text": text}
+    return obj

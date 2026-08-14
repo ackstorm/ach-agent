@@ -32,7 +32,7 @@ async def test_inv04_expire_non_silent() -> None:
         idempotency_window_seconds=60,
         dedup_store=InMemoryDedupStore(),
         engine_runner=fast_engine,
-        delivery_adapter=None,
+        max_invocation_seconds=600.0,
     )
 
     baseline_bp = BACKPRESSURE_REJECTS._value.get()

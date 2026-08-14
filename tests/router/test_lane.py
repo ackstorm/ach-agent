@@ -21,10 +21,10 @@ from tests.router.conftest import make_event
 class _FakeRouter:
     """Minimal router stand-in for direct Lane construction."""
 
-    def _maybe_evict_lane(self, session_key: str) -> None:
+    def on_lane_idle(self, session_key: str) -> None:
         pass
 
-    def _queued_total_dec(self) -> None:
+    def release_queued_slot(self) -> None:
         pass
 
 
@@ -66,11 +66,11 @@ async def test_lane_timeout_increments_watchdog_metric() -> None:
 
 
 async def _build_runner(fake_pool, channel_ttl: dict[str, float]):
+    from ach_agent.boot.engine_runner import make_engine_runner
     from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.engine.opencode.driver import OpencodeDriver
-    from ach_agent.main import _make_engine_runner
 
-    return _make_engine_runner(
+    return make_engine_runner(
         pool=fake_pool,
         driver=OpencodeDriver(),
         engine_cfg=EngineConfig(),

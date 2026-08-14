@@ -68,7 +68,7 @@ async def test_inv07_engine_not_ready_does_not_gate_acceptance(
         idempotency_window_seconds=3600,
         dedup_store=InMemoryDedupStore(),
         engine_runner=fake_engine,
-        delivery_adapter=None,
+        max_invocation_seconds=600.0,
     )
 
     # There is no engine-readiness gate anymore — acceptance depends only on harness

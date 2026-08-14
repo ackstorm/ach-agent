@@ -251,7 +251,6 @@ class EnginePool:
         driver: EngineDriver | None = None,
         sessions_map: MutableMapping[str, str] | None = None,
         *,
-        oc_sessions: MutableMapping[str, str] | None = None,
         accountant: CostAccountant | None = None,
     ) -> None:
         from ach_agent.engine.opencode.driver import OpencodeDriver
@@ -264,11 +263,9 @@ class EnginePool:
         self._accountant = accountant
 
         # Pool-owned session store, wrapped in a per-engine-type namespaced view (SP1 §5.4).
-        # `sessions_map` (or the legacy `oc_sessions` kwarg) is the raw backing store (SQLite
-        # when persistence.enabled, else the in-memory LRU); `self.sessions` is what callers use.
-        inner = sessions_map if sessions_map is not None else oc_sessions
-        if inner is None:
-            inner = _LRUSessionMap()
+        # `sessions_map` is the raw backing store (SQLite when persistence.enabled, else the
+        # in-memory LRU); `self.sessions` is what callers use.
+        inner = sessions_map if sessions_map is not None else _LRUSessionMap()
         self.sessions: MutableMapping[str, str] = _NamespacedSessionMap(
             inner, self._driver.engine_type
         )
@@ -284,11 +281,6 @@ class EnginePool:
 
             launch = _missing_launch
         self._start_server: Callable[[EngineConfig, str], Awaitable[ManagedServer]] = launch
-
-    @property
-    def oc_sessions(self) -> MutableMapping[str, str]:
-        """Deprecated alias for `sessions` (SP1 renamed it; kept to avoid churn)."""
-        return self.sessions
 
     def _get_lock(self, session_key: str) -> asyncio.Lock:
         """Return the per-key lock, creating it on first use.

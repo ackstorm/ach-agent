@@ -2,7 +2,7 @@
 import pytest
 
 from ach_agent.config.schema import PromptBlock
-from ach_agent.main import resolve_system_prompt
+from ach_agent.boot.prompt import resolve_system_prompt
 
 
 def test_text_form_returns_inline(tmp_path):

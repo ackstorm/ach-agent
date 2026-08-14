@@ -6,7 +6,7 @@ import pytest
 
 from ach_agent.engine.context import fetch_context
 from ach_agent.engine.hydrate import Context, ContextItem
-from ach_agent.main import ach_state_dir, link_ach_state
+from ach_agent.boot.paths import ach_state_dir, link_ach_state
 
 
 def _make_skill_targz() -> bytes:

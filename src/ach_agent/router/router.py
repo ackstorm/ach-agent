@@ -13,9 +13,12 @@ from __future__ import annotations
 import weakref
 from collections.abc import Callable
 from enum import Enum, auto
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
+
+if TYPE_CHECKING:
+    from ach_agent.router.lane import Lane
 
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.router.dedup import DedupStore
@@ -23,9 +26,6 @@ from ach_agent.router.metrics import BACKPRESSURE_REJECTS, DEDUP_DISCARDS, EXPIR
 from ach_agent.router.slots import SlotManager
 
 log = structlog.get_logger(__name__)
-
-# Default maxInvocationSeconds when not provided (conservative upper bound)
-_DEFAULT_MAX_INVOCATION_SECONDS: float = 300.0
 
 # Short window for the GitLab logical content composite (secondary dedup key). Deliberately
 # SHORT (legacy used 2s): a content-based key on the long idempotency window would wrongly
@@ -67,15 +67,13 @@ class Router:
         idempotency_window_seconds: int,
         dedup_store: DedupStore,
         engine_runner: Callable[..., Any],
-        delivery_adapter: Any,
-        max_invocation_seconds: float = _DEFAULT_MAX_INVOCATION_SECONDS,
+        max_invocation_seconds: float,
         channel_concurrency: dict[str, int] | None = None,
     ) -> None:
         self._max_queued_total = max_queued_total
         self._idempotency_window_seconds = idempotency_window_seconds
         self._dedup = dedup_store
         self._engine_runner = engine_runner
-        self._delivery_adapter = delivery_adapter
         self._max_invocation_seconds = max_invocation_seconds
 
         # Slot manager: global semaphore (maxConcurrentInvocations) + per-channel slot
@@ -90,7 +88,7 @@ class Router:
         self._queued_total: int = 0
 
         # Lane map: session_key → Lane (bounded by eviction, Pitfall 6)
-        self._lanes: dict[str, Any] = {}  # dict[str, Lane] — deferred import avoided
+        self._lanes: dict[str, Lane] = {}
 
     async def handle(self, event: MessageEvent) -> RouterAdmitResult:
         """Admit or reject an event. ORDER IS NORMATIVE (CONTRACT §6.2).
@@ -140,7 +138,7 @@ class Router:
         await lane.put(event)
         return RouterAdmitResult.ACCEPTED
 
-    def _get_or_create_lane(self, session_key: str, channel_name: str) -> Any:
+    def _get_or_create_lane(self, session_key: str, channel_name: str) -> Lane:
         """Get the existing lane for session_key or create a new one.
 
         Deferred import of Lane to avoid circular imports (lane.py imports
@@ -159,23 +157,23 @@ class Router:
             )
         return self._lanes[session_key]
 
-    def _maybe_evict_lane(self, session_key: str) -> None:
+    def on_lane_idle(self, session_key: str) -> None:
         """Remove an empty lane from the lane map and cancel its consumer task.
 
-        Called from Lane._consume() after task_done() when the queue is empty.
+        Called by Lane._consume() after task_done() when the lane reports empty.
         This prevents unbounded accumulation of Lane objects and asyncio.Queue
         instances over long-lived deployments (Pitfall 6, T-01-LANELEAK).
         """
         lane = self._lanes.get(session_key)
-        if lane is not None and lane._queue.empty():
+        if lane is not None and lane.is_empty():
             del self._lanes[session_key]
             # Cancel the consumer task so it does not leak (Pitfall 6)
             lane.cancel()
 
-    def _queued_total_dec(self) -> None:
+    def release_queued_slot(self) -> None:
         """Decrement queued_total counter.
 
-        Called from Lane._queued_total_dec() via on_kill (idempotent). This is
+        Called by Lane._queued_total_dec() via on_kill (idempotent). This is
         the canonical decrement point — the lane finally calls on_kill on every
         outcome, so queued_total is released exactly once per invocation whether
         the engine completed normally, timed out, or errored (Pitfall 4 / RTR-04).
@@ -183,6 +181,6 @@ class Router:
         self._queued_total -= 1
 
     @property
-    def lanes(self) -> dict[str, Any]:
+    def lanes(self) -> dict[str, Lane]:
         """Read-only view of the lane map (for test introspection)."""
         return self._lanes

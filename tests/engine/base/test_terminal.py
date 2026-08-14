@@ -39,7 +39,7 @@ async def test_happy_path_extracts_terminal_no_repair() -> None:
         max_tool_calls=0,
         stats={},
     )
-    assert obj == {"action": "none", "text": "done"}
+    assert obj == {"action": "none", "text": "done", "thoughts": ""}
     assert len(drv.calls) == 1  # no repair
 
 
@@ -83,7 +83,7 @@ async def test_aborted_runs_wrapup_on_same_session_ref() -> None:
         max_tool_calls=80,
         stats={},
     )
-    assert obj == {"action": "none", "text": "wrapped"}
+    assert obj == {"action": "none", "text": "wrapped", "thoughts": ""}
     assert drv.calls[1]["session_ref"] == "ses_9"      # wrap-up continued the SAME session
     assert drv.calls[1]["max_tool_calls"] == 0          # budget off on wrap-up
 
@@ -108,7 +108,7 @@ async def test_missing_terminal_triggers_one_repair() -> None:
         max_tool_calls=0,
         stats={},
     )
-    assert obj == {"action": "a2a_reply", "text": "fixed"}
+    assert obj == {"action": "a2a_reply", "text": "fixed", "thoughts": ""}
     assert drv.calls[1]["session_ref"] == "ses_2" and drv.calls[1]["on_text"] is None
 
 

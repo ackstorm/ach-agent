@@ -10,7 +10,7 @@ Namespaces (roots of the context dict): `payload`, `internal`. There is NO
 `env` namespace — process env (where the ek_ lives) is structurally unreachable from a
 template. That is the ek-hygiene guarantee at the template layer (CONTRACT §3).
 
-Consumer: channel.prompt substitution (main.build_engine_prompt). The pure `resolve_path`
+Consumer: channel.prompt substitution (boot.prompt.build_engine_prompt). The pure `resolve_path`
 primitive is the deliberate substrate for the future per-event memory-tag resolver (see the
 memory bank+tags design note); tag-omit semantics live in that resolver, not here.
 """

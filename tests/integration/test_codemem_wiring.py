@@ -19,9 +19,10 @@ from pathlib import Path
 
 import pytest
 
+from ach_agent.boot.engine_runner import select_memory_wiring_async
 from ach_agent.config.schema import AgentConfig, HindsightMemory, HindsightParams
 from ach_agent.engine.lifecycle import EngineConfig, write_opencode_config
-from ach_agent.main import resolve_codemem_wiring, select_memory_wiring_async
+from ach_agent.main import resolve_codemem_wiring
 
 pytestmark = pytest.mark.integration  # opt-in; runs in normal suite unless deselected
 
@@ -139,9 +140,9 @@ async def test_hindsight_path_produces_no_codemem_entry(
     async def _ok(_cfg: object) -> tuple[bool, str]:
         return (True, "## Memory\nx")
 
-    import ach_agent.main as m
+    import ach_agent.boot.engine_runner as engine_runner_mod
 
-    monkeypatch.setattr(m, "prepare_memory", _ok)
+    monkeypatch.setattr(engine_runner_mod, "prepare_memory", _ok)
 
     facade_url = "http://127.0.0.1:7/mcp"
     cfg_mem = HindsightMemory(

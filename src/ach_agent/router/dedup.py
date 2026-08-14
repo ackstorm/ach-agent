@@ -169,7 +169,8 @@ def derive_gitlab_composite_key(body: dict[str, Any]) -> str:
     UUID key misses. ACTION is deliberately EXCLUDED so open+update collapse; a content
     discriminator is INCLUDED so a genuinely edited change does not. Ported from legacy
     ackbot-process gitlab handler `_is_duplicate` (kind:project:target:user:content_hash).
-    Never raises — degrades to a stable string on malformed bodies.
+    Never raises. Returns "" when the body carries no content discriminator — the caller
+    must then send NO secondary key (spec §18.4.0: fail to dedup, never over-dedup).
     """
     attrs = body.get("object_attributes") or {}
     kind = str(body.get("object_kind") or body.get("event_type") or "")
@@ -192,7 +193,11 @@ def derive_gitlab_composite_key(body: dict[str, Any]) -> str:
         or attrs.get("status")
         or ""
     )
-    content_hash = hashlib.md5(content.encode("utf-8")).hexdigest()[:8] if content else ""
+    if not content:
+        # No content discriminator: any key we built here would be shared by genuinely
+        # distinct events. Spec §18.4.0 — fail to dedup, never over-dedup.
+        return ""
+    content_hash = hashlib.md5(content.encode("utf-8")).hexdigest()[:8]
     return f"gl:{kind}:{project_id}:{target_id}:{user}:{content_hash}"
 
 

@@ -315,7 +315,7 @@ Plan 4 is implemented. Ported legacy
   mid-tool turn.
 - **Config: `engine.max_tool_calls` (`ge=0`), default 0 = OFF.** Zero behaviour change vs pre-Plan-4
   unless an operator opts in (recommend ~80); `maxInvocationSeconds` remains the always-on backstop.
-  Wired through `main._make_engine_runner` beside `terminal_output_retries`.
+  Wired through `ach_agent.boot.engine_runner.make_engine_runner` beside `terminal_output_retries`.
 - **Tool-only correction did NOT port.** Legacy's `has_text_beyond_action` retried a tool-only agent
   that wrote prose then appended `{"action":"none"}`. NOT ported: ach-agent's terminal contract
   EXPECTS prose + a trailing terminal object and `extract_terminal` `rfind`s the last `{"action"…}`,

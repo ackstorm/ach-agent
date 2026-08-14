@@ -13,7 +13,7 @@ from ach_agent.config.schema import (
     WebhookAuthBlock,
     WebhookBlock,
 )
-from ach_agent.main import collect_secret_env_names, strip_forwarded_secrets
+from ach_agent.boot.secrets import collect_secret_env_names, strip_forwarded_secrets
 
 
 def _base_kwargs() -> dict:

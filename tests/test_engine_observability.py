@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+from ach_agent.boot.tooling import log_engine_tool, tool_detail
 from ach_agent.engine.events import OpenCodeToolUpdate, ToolStateCompleted, ToolStateRunning
-from ach_agent.main import _log_engine_tool, _tool_detail
 
 
 def test_tool_detail_unwraps_double_encoded_gitlab_result():
     """gitlab-mcp {"result": "<json>"} → compact single-line JSON, no \\n / no double-escape."""
     raw = '{"result": "{\\n  \\"merge_requests\\": [{\\"iid\\": 1}]\\n}"}'
-    out = _tool_detail(raw)
+    out = tool_detail(raw)
     assert out == '{"merge_requests":[{"iid":1}]}'
     assert "\\n" not in out and "\n" not in out
 
@@ -15,22 +15,22 @@ def test_tool_detail_unwraps_double_encoded_gitlab_result():
 def test_tool_detail_passes_through_non_json():
     """A non-JSON tool result (file read / truncation notice) is returned raw, truncated."""
     raw = "...75043 bytes truncated... saved to /tmp/x"
-    assert _tool_detail(raw) == raw
-    assert _tool_detail("y" * 500) == "y" * 300
+    assert tool_detail(raw) == raw
+    assert tool_detail("y" * 500) == "y" * 300
 
 
 def test_log_engine_tool_skips_running_logs_once_on_completed(capfd):
     """The sink logs ONCE per tool: the running transition is suppressed, completed is logged."""
     base = dict(session_id="s1", part_id="p1", message_id="m1", call_id="c1")
 
-    _log_engine_tool(
+    log_engine_tool(
         OpenCodeToolUpdate(tool_name="mcp-gitlab-ro.gitlab_get_merge_request",
                            state=ToolStateRunning(), **base)
     )
     out, err = capfd.readouterr()
     assert (out + err).strip() == "", "running transition must not log"
 
-    _log_engine_tool(
+    log_engine_tool(
         OpenCodeToolUpdate(tool_name="mcp-gitlab-ro.gitlab_get_merge_request",
                            state=ToolStateCompleted(output="done"), **base)
     )
@@ -55,7 +55,7 @@ def test_log_engine_tool_includes_title_and_truncated_output(capfd):
         ),
     )
 
-    _log_engine_tool(update)
+    log_engine_tool(update)
 
     combined = capfd.readouterr()
     out = combined.out + combined.err
@@ -78,7 +78,7 @@ def test_log_engine_tool_cleans_doubled_mcp_prefix_and_omits_empty_fields(capfd)
         state=ToolStateCompleted(),  # completed with empty title+output
     )
 
-    _log_engine_tool(update)
+    log_engine_tool(update)
 
     out, err = capfd.readouterr()
     combined = out + err
@@ -98,7 +98,7 @@ def test_usage_round_trips_through_stats_for_summary(capfd):
     stats: dict = {"tool_count": acc.tool_count(), "usage": acc.usage()}
 
     usage = stats["usage"]
-    # This mirrors exactly what _make_engine_runner logs:
+    # This mirrors exactly what make_engine_runner logs:
     assert stats["tool_count"] == 0
     assert usage.input_tokens == 100
     assert usage.output_tokens == 40

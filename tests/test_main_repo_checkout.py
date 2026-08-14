@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.engine.hydrate import McpServer
-from ach_agent.main import build_engine_prompt, resolve_repo_archive_endpoint
+from ach_agent.boot.prompt import build_engine_prompt
+from ach_agent.main import resolve_repo_archive_endpoint
 
 
 def test_resolve_finds_by_id() -> None:

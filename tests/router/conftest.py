@@ -87,8 +87,8 @@ def router(fake_engine: FakeEngine) -> Router:
         idempotency_window_seconds=60,
         dedup_store=InMemoryDedupStore(),
         engine_runner=fake_engine.run,
-        delivery_adapter=None,  # LogDeliveryAdapter() added in 01-03/01-04
-    )  # type: ignore[call-arg]
+        max_invocation_seconds=600.0,
+    )
 
 
 @pytest.fixture()

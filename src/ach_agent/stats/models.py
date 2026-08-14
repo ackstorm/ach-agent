@@ -22,10 +22,14 @@ _MAX = 80
 _SECRET = re.compile(r"(ek_[A-Za-z0-9_\-]+|sk-[A-Za-z0-9_\-]+)")
 
 
+def redact(text: str) -> str:
+    """Scrub bearer/API tokens. No truncation — callers pick their own bound."""
+    return _SECRET.sub("[redacted]", text)
+
+
 def redact_task(text: str) -> str:
     """Scrub bearer/API tokens, then truncate to <=80 chars."""
-    scrubbed = _SECRET.sub("[redacted]", text)
-    return scrubbed[:_MAX]
+    return redact(text)[:_MAX]
 
 
 @dataclass(slots=True, frozen=True)

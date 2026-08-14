@@ -459,7 +459,7 @@ async def test_distinct_keys_get_distinct_servers_and_refcounts() -> None:
 
 # ---------------------------------------------------------------------------
 # Non-keyed coverage preserved from the pre-migration test file:
-# _default_start_server home behavior and main._harness_log_dir.
+# _default_start_server home behavior and boot.paths.harness_log_dir.
 # ---------------------------------------------------------------------------
 
 
@@ -493,9 +493,9 @@ async def test_default_start_server_uses_config_home(tmp_path: Path, monkeypatch
 
 
 def test_harness_log_dir_is_volatile_tmp() -> None:
-    from ach_agent.main import _harness_log_dir
+    from ach_agent.boot.paths import harness_log_dir
 
-    d = _harness_log_dir()
+    d = harness_log_dir()
     assert str(d).startswith("/tmp/")
     assert d.is_dir()
 
@@ -541,9 +541,9 @@ def test_pool_owns_oc_sessions_map() -> None:
     from ach_agent.engine.pool import EnginePool, _LRUSessionMap, _NamespacedSessionMap
 
     pool = EnginePool()
-    assert isinstance(pool.oc_sessions, _NamespacedSessionMap)
-    assert isinstance(pool.oc_sessions._inner, _LRUSessionMap)
-    assert len(pool.oc_sessions) == 0
+    assert isinstance(pool.sessions, _NamespacedSessionMap)
+    assert isinstance(pool.sessions._inner, _LRUSessionMap)
+    assert len(pool.sessions) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -619,12 +619,11 @@ def test_sqlite_session_map_pop_deletes_row(tmp_path):
 
 
 def test_pool_accepts_injected_session_map():
-    """A caller (main._open_session_store) can inject the disk-resident map."""
+    """A caller (boot.stores.open_session_store) can inject the disk-resident map."""
     from ach_agent.engine.pool import EnginePool
 
     injected: dict[str, str] = {"opencode:lane-1": "ses-a"}
-    pool = EnginePool(oc_sessions=injected)
-    assert pool.oc_sessions is pool.sessions
+    pool = EnginePool(sessions_map=injected)
     assert pool.sessions.get("lane-1") == "ses-a"
     pool.sessions["lane-1"] = "ses-b"
     assert injected == {"opencode:lane-1": "ses-b"}
@@ -635,6 +634,6 @@ def test_pool_default_session_map_is_lru_still():
     from ach_agent.engine.pool import EnginePool, _LRUSessionMap, _NamespacedSessionMap
 
     pool = EnginePool()
-    assert isinstance(pool.oc_sessions, _NamespacedSessionMap)
-    assert isinstance(pool.oc_sessions._inner, _LRUSessionMap)
-    assert len(pool.oc_sessions) == 0
+    assert isinstance(pool.sessions, _NamespacedSessionMap)
+    assert isinstance(pool.sessions._inner, _LRUSessionMap)
+    assert len(pool.sessions) == 0

@@ -1,10 +1,10 @@
 """CONTRACT §6.9: egress is the agent's (via external MCP), NOT the channel's.
 
 Invariant: the harness has NO channel-side posting path. The old v2 delivery layer
-(`ach_agent.actions.*`) is gone, the Router carries `delivery_adapter=None`, and the
-engine_runner never posts on the model's behalf — for an async event with no reply
-seam it does nothing (egress already happened via the agent's MCP tool calls). The
-ONLY delivery seam is the injected `on_complete`/reply_future callback.
+(`ach_agent.actions.*`) is gone, and the engine_runner never posts on the model's
+behalf — for an async event with no reply seam it does nothing (egress already
+happened via the agent's MCP tool calls). The ONLY delivery seam is the injected
+`on_complete`/reply_future callback.
 """
 
 from __future__ import annotations
@@ -48,21 +48,21 @@ async def test_engine_runner_does_not_post(monkeypatch: Any) -> None:
     posting anywhere. A positive control proves the ONLY delivery path is the injected
     on_complete callback — there is no hardcoded poster.
     """
+    from ach_agent.boot.engine_runner import make_engine_runner
     import ach_agent.engine.base.terminal as terminal
     from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.engine.opencode.driver import OpencodeDriver
-    from ach_agent.main import _make_engine_runner
 
     async def _fake_run_contract_turn(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         # a2a_reply terminal so the positive-control seam fires (engine_runner routes a
         # valid a2a_reply to on_complete; a none-action async event simply falls through).
         return {"action": "a2a_reply", "text": "the agent already acted via MCP"}
 
-    # _make_engine_runner imports run_contract_turn from base.terminal at call time —
+    # make_engine_runner imports run_contract_turn from base.terminal at call time —
     # patch the source.
     monkeypatch.setattr(terminal, "run_contract_turn", _fake_run_contract_turn)
 
-    runner = _make_engine_runner(
+    runner = make_engine_runner(
         pool=_FakePool(),
         driver=OpencodeDriver(),
         engine_cfg=EngineConfig(),

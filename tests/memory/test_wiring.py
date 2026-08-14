@@ -3,7 +3,8 @@ import types
 
 import pytest
 
-import ach_agent.main as m
+import ach_agent.boot.engine_runner as engine_runner_mod
+from ach_agent.boot.secrets import collect_secret_env_names
 from ach_agent.config.schema import HindsightMemory
 
 
@@ -26,8 +27,10 @@ async def test_wiring_returns_facade_url_not_endpoint(monkeypatch):
     async def fake_prepare(cfg):
         return True, "## Memory\n\nok"
 
-    monkeypatch.setattr(m, "prepare_memory", fake_prepare)
-    servers, prompt = await m.select_memory_wiring_async(_cfg(), "http://127.0.0.1:9/mcp")
+    monkeypatch.setattr(engine_runner_mod, "prepare_memory", fake_prepare)
+    servers, prompt = await engine_runner_mod.select_memory_wiring_async(
+        _cfg(), "http://127.0.0.1:9/mcp"
+    )
     assert servers == ["http://127.0.0.1:9/mcp"]  # facade URL, NOT the hindsight endpoint
     assert prompt == "## Memory\n\nok"
 
@@ -37,8 +40,10 @@ async def test_wiring_empty_when_unavailable(monkeypatch):
     async def fake_prepare(cfg):
         return False, "## Memory\n\nUnavailable"
 
-    monkeypatch.setattr(m, "prepare_memory", fake_prepare)
-    servers, _ = await m.select_memory_wiring_async(_cfg(), "http://127.0.0.1:9/mcp")
+    monkeypatch.setattr(engine_runner_mod, "prepare_memory", fake_prepare)
+    servers, _ = await engine_runner_mod.select_memory_wiring_async(
+        _cfg(), "http://127.0.0.1:9/mcp"
+    )
     assert servers == []
 
 
@@ -46,7 +51,7 @@ def test_memory_auth_env_collected_for_forward_env_strip():
     """SECURITY: the memory admin secret env NAME must be collected so it's stripped from
     engine.forwardEnv + redacted from logs — same as webhook/a2a secrets."""
     cfg = types.SimpleNamespace(channels=[], memory=_cfg())  # _cfg() has auth={env:HS_TOK}
-    assert "HS_TOK" in m.collect_secret_env_names(cfg)
+    assert "HS_TOK" in collect_secret_env_names(cfg)
 
 
 def test_memory_no_auth_collects_nothing():
@@ -57,4 +62,4 @@ def test_memory_no_auth_collects_nothing():
         }
     )
     cfg = types.SimpleNamespace(channels=[], memory=mem)
-    assert m.collect_secret_env_names(cfg) == []
+    assert collect_secret_env_names(cfg) == []

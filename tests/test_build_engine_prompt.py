@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import ChannelConfig, WebhookAuthBlock, WebhookBlock
-from ach_agent.main import (
+from ach_agent.boot.prompt import (
     A2A_OUTPUT_INSTRUCTIONS,
     NONE_OUTPUT_INSTRUCTIONS,
     build_engine_prompt,

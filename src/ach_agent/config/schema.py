@@ -118,7 +118,7 @@ class EngineBlock(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     # Empty by default — the harness derives the concrete paths at boot from
-    # persistence (see ach_agent.main.resolve_engine_paths): persistence.enabled →
+    # persistence (see ach_agent.boot.paths.resolve_engine_paths): persistence.enabled →
     # home=<mountPath>/home (persistent), else /tmp/ach-home (volatile); work_dir
     # defaults to <home>/workspace. Set either here to pin an explicit path.
     home: str = Field(default="", alias="home")
@@ -135,7 +135,8 @@ class EngineBlock(BaseModel):
     # maxInvocationSeconds remains the always-on time backstop. Recommend ~80 when opting in.
     max_tool_calls: int = Field(default=0, ge=0, alias="maxToolCalls")
     # SP1: which engine runs this agent. Canonical wire name is "pi" (runtime spec §7.4 amended
-    # from the reserved "pymono"). Selects the EngineDriver in main._make_engine_runner.
+    # from the reserved "pymono"). Selects the EngineDriver in
+    # ach_agent.boot.engine_runner.make_engine_runner.
     type: Literal["opencode", "pi"] = Field(default="opencode", alias="type")
     # Pi sub-block — only consulted when type == "pi"; optional so opencode configs never carry it.
     pi: PiEngineBlock | None = Field(default=None, alias="pi")

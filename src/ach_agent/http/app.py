@@ -25,6 +25,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from prometheus_client import make_asgi_app
 
+from ach_agent.boot.health import HealthState
 from ach_agent.channels.webhook import handle_webhook_request
 from ach_agent.http.metrics import IdentityRegistry
 
@@ -63,8 +64,8 @@ def create_app(
 
     # Mutable state — set in lifespan after channel wiring is complete.
     # draining: flipped True by drain handler (SIGTERM, Plan 03-03) — D-12 straggler gate.
-    # Using a mutable container so the closure captures the reference, not the value.
-    state: dict[str, Any] = {"ready": False, "draining": False}
+    # Using a mutable object so the closure captures the reference, not the value.
+    state = HealthState()
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> Any:
@@ -74,10 +75,10 @@ def create_app(
         the flag. Engine warmup is NOT part of the ready gate (spec §8.5/HTTP-02).
         """
         # Wiring is complete — channels are registered and the route is active
-        state["ready"] = True
+        state.ready = True
         log.info("http: app ready — inbound route listening", channel_count=len(channel_map))
         yield
-        state["ready"] = False
+        state.ready = False
         log.info("http: app shutdown")
 
     app = FastAPI(title="ach-agent", lifespan=lifespan)
@@ -107,7 +108,7 @@ def create_app(
         # Acceptance is decoupled from engine readiness (the A′ gate was removed):
         # the engine starts lazily per session_key inside the lane, never a
         # precondition for accepting the message (mirrors legacy ackbot-process).
-        if state["draining"]:
+        if state.draining:
             log.info(
                 "http: 503 pre-admission",
                 reason="draining",
@@ -190,7 +191,7 @@ def create_app(
         Ready = the webhook adapter is listening (lifespan set the flag).
         Engine warmup is NOT a gate (spec §8.5).
         """
-        if not state["ready"]:
+        if not state.ready:
             return JSONResponse({"status": "not_ready"}, status_code=503)
         return JSONResponse({"status": "ok"}, status_code=200)
 

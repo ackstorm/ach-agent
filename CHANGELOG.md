@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.13.4] - 2026-09-02
+
 ### Added
 
 - Add `webhook-script`, an authenticated asynchronous webhook channel that executes a

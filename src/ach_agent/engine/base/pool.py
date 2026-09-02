@@ -475,11 +475,7 @@ class EnginePool:
 
     async def _stop_locked(self, session_key: str) -> None:
         ttl_task = self._ttl_tasks.pop(session_key, None)
-        if (
-            ttl_task is not None
-            and ttl_task is not asyncio.current_task()
-            and not ttl_task.done()
-        ):
+        if ttl_task is not None and ttl_task is not asyncio.current_task() and not ttl_task.done():
             ttl_task.cancel()
         server = self._servers.pop(session_key, None)
         cleanup = self._cleanups.pop(session_key, None)

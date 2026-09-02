@@ -270,7 +270,7 @@ async def run_cleanup(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
             workspace=str(workspace),
             timeout_seconds=cfg.timeout_seconds,
         )
-        returncode, stderr = await _execute_hook(
+        returncode, _ = await _execute_hook(
             cfg.script,
             cfg.timeout_seconds,
             cwd=workspace.parent,
@@ -295,7 +295,6 @@ async def run_cleanup(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
             "cleanup: script exited nonzero",
             session_key=event.session_key,
             returncode=returncode,
-            stderr=stderr.decode("utf-8", "replace")[-_STDERR_TAIL_CHARS:].strip(),
         )
         return
 

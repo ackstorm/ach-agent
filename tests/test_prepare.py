@@ -277,6 +277,20 @@ async def test_cleanup_nonzero_is_best_effort(tmp_path: Path) -> None:
     failures.labels.return_value.inc.assert_called_once_with()
 
 
+async def test_cleanup_nonzero_log_omits_env_values(tmp_path: Path) -> None:
+    ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
+    value = "not-for-cleanup-logs"
+    cfg = _block('printf "%s" "$MODE" >&2; exit 7', env={"MODE": value})
+
+    with capture_logs() as logs:
+        await run_cleanup(cfg, _event(), ws)
+
+    assert logs[-1]["event"] == "cleanup: script exited nonzero"
+    assert logs[-1]["returncode"] == 7
+    assert value not in str(logs)
+    assert cfg.script not in str(logs)
+
+
 async def test_cleanup_timeout_is_best_effort(tmp_path: Path) -> None:
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
 

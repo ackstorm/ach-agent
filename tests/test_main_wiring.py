@@ -104,10 +104,18 @@ async def test_engine_runner_registers_cleanup_before_prepare(tmp_path: Path) ->
 
     pool = _HookPool()
 
+    def prepare_workspace(*_args: Any) -> Path:
+        pool.calls.append("prepare_workspace")
+        return tmp_path / "workspace"
+
     async def prepare(*_args: Any) -> None:
         pool.calls.append("prepare")
 
     with (
+        patch(
+            "ach_agent.boot.engine_runner.prepare_workspace",
+            side_effect=prepare_workspace,
+        ),
         patch("ach_agent.boot.engine_runner.run_prepare", new=AsyncMock(side_effect=prepare)),
         patch("ach_agent.boot.engine_runner.run_cleanup", new=AsyncMock()),
         patch.object(
@@ -128,7 +136,7 @@ async def test_engine_runner_registers_cleanup_before_prepare(tmp_path: Path) ->
         )
         await runner(_hook_event(), lambda: None)
 
-    assert pool.calls[:3] == ["begin", "prepare", "acquire"]
+    assert pool.calls == ["begin", "prepare_workspace", "prepare", "acquire", "release:0.0"]
 
 
 async def test_prepare_failure_discards_reserved_cleanup(tmp_path: Path) -> None:

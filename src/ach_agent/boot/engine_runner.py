@@ -16,7 +16,13 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from ach_agent.boot.prepare import PrepareFailed, prepare_workspace, run_cleanup, run_prepare
+from ach_agent.boot.prepare import (
+    PrepareFailed,
+    prepare_workspace,
+    run_cleanup,
+    run_prepare,
+    workspace_dir,
+)
 from ach_agent.boot.prompt import (
     build_engine_prompt,
     build_output_instructions,
@@ -195,9 +201,7 @@ def make_engine_runner(
             prepare_cfg = getattr(ch_cfg, "prepare", None) if ch_cfg is not None else None
             cleanup_cfg = getattr(ch_cfg, "cleanup", None) if ch_cfg is not None else None
             if prepare_cfg is not None:
-                workspace = prepare_workspace(
-                    engine_cfg.home, engine_cfg.work_dir, event.session_key
-                )
+                workspace = workspace_dir(engine_cfg.work_dir, event.session_key)
                 cleanup = (
                     partial(run_cleanup, cleanup_cfg, event, workspace)
                     if cleanup_cfg is not None
@@ -205,6 +209,9 @@ def make_engine_runner(
                 )
                 await pool.begin_session(event.session_key, cleanup)
                 session_reserved = True
+                workspace = prepare_workspace(
+                    engine_cfg.home, engine_cfg.work_dir, event.session_key
+                )
                 await run_prepare(prepare_cfg, event, workspace)
                 if dataclasses.is_dataclass(invocation_engine_cfg) and not isinstance(
                     invocation_engine_cfg, type

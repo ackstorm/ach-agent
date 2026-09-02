@@ -44,6 +44,8 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
+CleanupCallback = Callable[[], Awaitable[None]]
+
 
 class _LRUSessionMap(OrderedDict[str, str]):
     """Bounded LRU of session_key → opencode session id (``ses_…``).
@@ -258,6 +260,7 @@ class EnginePool:
         self._servers: dict[str, ManagedServer] = {}
         self._ref_counts: dict[str, int] = {}
         self._ttl_tasks: dict[str, asyncio.Task[None]] = {}
+        self._cleanups: dict[str, CleanupCallback] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._driver: EngineDriver = driver if driver is not None else OpencodeDriver()
         self._accountant = accountant
@@ -293,6 +296,21 @@ class EnginePool:
             lock = asyncio.Lock()
             self._locks[session_key] = lock
         return lock
+
+    async def begin_session(
+        self,
+        session_key: str,
+        cleanup: CleanupCallback | None,
+    ) -> None:
+        """Cancel pending expiry and register the latest event's cleanup before prepare."""
+        async with self._get_lock(session_key):
+            ttl_task = self._ttl_tasks.pop(session_key, None)
+            if ttl_task is not None and not ttl_task.done():
+                ttl_task.cancel()
+            if cleanup is None:
+                self._cleanups.pop(session_key, None)
+            else:
+                self._cleanups[session_key] = cleanup
 
     def _drop_token(self, server: ManagedServer) -> None:
         """Release a stopped server's proxy token from both token registries."""
@@ -447,36 +465,46 @@ class EnginePool:
             if self._ttl_tasks.get(session_key) not in (None, asyncio.current_task()):
                 # A newer release scheduled a different expiry task — let it own the stop.
                 return
-            self._ttl_tasks.pop(session_key, None)
-            server = self._servers.pop(session_key, None)
-            self._ref_counts.pop(session_key, None)
-        if server is None:
-            return
-        self._drop_token(server)
-        log.info("EnginePool._expire: TTL elapsed — stopping", session_key=session_key, ttl=ttl)
-        try:
-            await self._driver.stop(server)
-        except Exception:  # noqa: BLE001
-            log.warning("EnginePool._expire: stop error", session_key=session_key, exc_info=True)
+            await self._stop_locked(session_key)
+
+    async def discard(self, session_key: str) -> None:
+        await self._stop(session_key)
 
     async def _stop(self, session_key: str) -> None:
         """Stop and drop the server for one key (idempotent)."""
-        lock = self._get_lock(session_key)
-        async with lock:
-            server = self._servers.pop(session_key, None)
-            self._ref_counts.pop(session_key, None)
-        if server is None:
-            return
-        self._drop_token(server)
-        try:
-            await self._driver.stop(server)
-            log.info("EnginePool._stop: server stopped", session_key=session_key)
-        except Exception:  # noqa: BLE001
-            log.warning(
-                "EnginePool._stop: error stopping server",
-                session_key=session_key,
-                exc_info=True,
-            )
+        async with self._get_lock(session_key):
+            await self._stop_locked(session_key)
+
+    async def _stop_locked(self, session_key: str) -> None:
+        ttl_task = self._ttl_tasks.pop(session_key, None)
+        if (
+            ttl_task is not None
+            and ttl_task is not asyncio.current_task()
+            and not ttl_task.done()
+        ):
+            ttl_task.cancel()
+        server = self._servers.pop(session_key, None)
+        cleanup = self._cleanups.pop(session_key, None)
+        self._ref_counts.pop(session_key, None)
+
+        if server is not None:
+            self._drop_token(server)
+            try:
+                await self._driver.stop(server)
+            except Exception:  # noqa: BLE001
+                log.warning(
+                    "EnginePool: error stopping server", session_key=session_key, exc_info=True
+                )
+
+        if cleanup is not None:
+            try:
+                await cleanup()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                log.warning(
+                    "EnginePool: cleanup callback failed", session_key=session_key, exc_info=True
+                )
 
     async def stop_all(self) -> None:
         """Stop every live server and clear the pool (shutdown / tui exit)."""
@@ -484,5 +512,6 @@ class EnginePool:
             if not task.done():
                 task.cancel()
         self._ttl_tasks.clear()
-        for session_key in list(self._servers.keys()):
+        keys = set(self._servers) | set(self._cleanups)
+        for session_key in keys:
             await self._stop(session_key)

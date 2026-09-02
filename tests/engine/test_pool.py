@@ -11,6 +11,7 @@ import asyncio
 import dataclasses
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -24,8 +25,6 @@ if TYPE_CHECKING:
 
 
 def _make_fake_server(alive: bool = True):
-    from unittest.mock import AsyncMock, MagicMock
-
     srv = MagicMock()
     srv.is_alive.return_value = alive
     srv.stop = AsyncMock()
@@ -248,6 +247,127 @@ async def test_stop_all_stops_every_server() -> None:
     servers["k1"].stop.assert_awaited_once()
     servers["k2"].stop.assert_awaited_once()
     assert pool._servers == {}
+
+
+async def test_ttl_expiry_stops_engine_before_cleanup() -> None:
+    order: list[str] = []
+    cleaned = asyncio.Event()
+    driver = MagicMock(engine_type="test")
+    driver.stop = AsyncMock(side_effect=lambda _server: order.append("stop"))
+    pool = EnginePool(driver=driver)
+    pool._start_server = AsyncMock(return_value=_make_fake_server())
+
+    async def cleanup() -> None:
+        order.append("cleanup")
+        cleaned.set()
+
+    await pool.begin_session("k1", cleanup)
+    await pool.acquire("k1", _real_config())
+    await pool.release("k1", ttl_seconds=0.01)
+
+    assert order == []
+    await asyncio.wait_for(cleaned.wait(), timeout=1)
+
+    assert order == ["stop", "cleanup"]
+
+
+async def test_ttl_zero_runs_cleanup_immediately() -> None:
+    cleanup = AsyncMock()
+    pool = EnginePool()
+    pool._start_server = AsyncMock(return_value=_make_fake_server())
+
+    await pool.begin_session("k1", cleanup)
+    await pool.acquire("k1", _real_config())
+    await pool.release("k1", ttl_seconds=0)
+
+    cleanup.assert_awaited_once_with()
+
+
+async def test_begin_session_cancels_pending_cleanup() -> None:
+    cleanup = AsyncMock()
+    pool = EnginePool()
+    pool._start_server = AsyncMock(return_value=_make_fake_server())
+
+    await pool.begin_session("k1", cleanup)
+    await pool.acquire("k1", _real_config())
+    await pool.release("k1", ttl_seconds=0.05)
+    await pool.begin_session("k1", cleanup)
+    await asyncio.sleep(0.12)
+
+    cleanup.assert_not_awaited()
+
+
+async def test_cleanup_in_progress_blocks_new_session_begin() -> None:
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def cleanup() -> None:
+        started.set()
+        await finish.wait()
+
+    pool = EnginePool()
+    pool._start_server = AsyncMock(return_value=_make_fake_server())
+    await pool.begin_session("k1", cleanup)
+    await pool.acquire("k1", _real_config())
+    await pool.release("k1", ttl_seconds=0.01)
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    new_begin = asyncio.create_task(pool.begin_session("k1", None))
+    await asyncio.sleep(0)
+    assert not new_begin.done()
+    finish.set()
+    await new_begin
+
+
+async def test_stop_all_runs_cleanup_without_server() -> None:
+    cleanup = AsyncMock()
+    pool = EnginePool()
+    await pool.begin_session("prepare-failed", cleanup)
+
+    await pool.stop_all()
+
+    cleanup.assert_awaited_once_with()
+
+
+async def test_cleanup_failure_does_not_escape_release() -> None:
+    async def cleanup() -> None:
+        raise RuntimeError("cleanup failed")
+
+    pool = EnginePool()
+    pool._start_server = AsyncMock(return_value=_make_fake_server())
+    await pool.begin_session("k1", cleanup)
+    await pool.acquire("k1", _real_config())
+
+    await pool.release("k1", ttl_seconds=0)
+
+    assert "k1" not in pool._servers
+    assert "k1" not in pool._cleanups
+
+
+async def test_dead_server_replacement_retains_cleanup() -> None:
+    cleanup = AsyncMock()
+    pool = EnginePool()
+    dead = _make_fake_server(alive=False)
+    live = _make_fake_server(alive=True)
+    pool._start_server = AsyncMock(side_effect=[dead, live])
+
+    await pool.begin_session("k1", cleanup)
+    await pool.acquire("k1", _real_config())
+    await pool.acquire("k1", _real_config())
+
+    cleanup.assert_not_awaited()
+    await pool.release("k1", ttl_seconds=0)
+    cleanup.assert_awaited_once_with()
+
+
+async def test_discard_runs_cleanup_without_server() -> None:
+    cleanup = AsyncMock()
+    pool = EnginePool()
+    await pool.begin_session("k1", cleanup)
+
+    await pool.discard("k1")
+
+    cleanup.assert_awaited_once_with()
 
 
 # ---------------------------------------------------------------------------

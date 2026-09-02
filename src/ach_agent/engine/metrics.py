@@ -44,6 +44,12 @@ PREPARE_FAILURES: prometheus_client.Counter = prometheus_client.Counter(
     ["reason"],
 )
 
+CLEANUP_FAILURES: prometheus_client.Counter = prometheus_client.Counter(
+    "ach_agent_cleanup_failures_total",
+    "channel.cleanup scripts that failed after the session engine stopped",
+    ["reason"],
+)
+
 # ach_agent_cost_unpriced_total: every point where cost accounting gives up and a turn is
 # billed 0. Boot reasons (fetch_failed/no_entry/malformed/unpriced) fire ONCE at startup —
 # alert on `> 0`, not on rate(). The per-response reasons (unpriced, usage_missing) keep

@@ -29,10 +29,11 @@ def collect_secret_env_names(cfg: AgentConfig) -> list[str]:
         a2a = ch.a2a
         if a2a is not None and a2a.auth.secret is not None and a2a.auth.secret.env:
             names.append(a2a.auth.secret.env)
-        # channel.prepare.secretEnv: the outbound (clone/push) credentials. Same treatment as
-        # the inbound ones — redacted in logs, and never forwarded into the engine's env.
-        if ch.prepare is not None:
-            names.extend(src.env for src in ch.prepare.secret_env.values() if src.env)
+        # channel hook secretEnv: outbound credentials. Same treatment as the inbound ones —
+        # redacted in logs, and never forwarded into the engine's env.
+        for hook in (ch.prepare, ch.cleanup):
+            if hook is not None:
+                names.extend(src.env for src in hook.secret_env.values() if src.env)
     # memory.hindsight.auth: the admin secret joins the same forwardEnv-strip + log-redaction
     # path as channel secrets. No-auth memory config → nothing appended.
     mem = cfg.memory

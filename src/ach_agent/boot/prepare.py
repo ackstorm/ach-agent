@@ -42,7 +42,7 @@ import structlog
 from ach_agent.boot.paths import link_ach_state
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import PrepareBlock, resolve_secret
-from ach_agent.engine.metrics import PREPARE_FAILURES
+from ach_agent.engine.metrics import CLEANUP_FAILURES, PREPARE_FAILURES
 
 log = structlog.get_logger(__name__)
 
@@ -75,6 +75,14 @@ class PrepareFailed(RuntimeError):
     fail-CLOSED (unlike memory's fail-open probe): a review posted after a failed clone
     is a review of a repo that is not there, which is worse than no review at all.
     """
+
+
+class _HookSpawnFailed(RuntimeError):
+    pass
+
+
+class _HookTimedOut(RuntimeError):
+    pass
 
 
 async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
@@ -169,6 +177,41 @@ def build_prepare_env(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
     return env
 
 
+async def _execute_hook(
+    script: str,
+    timeout_seconds: int,
+    *,
+    cwd: Path,
+    env: dict[str, str],
+) -> tuple[int, bytes]:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "/bin/sh",
+            "-eu",
+            "-s",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(cwd),
+            env=env,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        raise _HookSpawnFailed(str(exc)) from exc
+
+    try:
+        _, stderr = await asyncio.wait_for(
+            proc.communicate(script.encode()), timeout=timeout_seconds
+        )
+    except TimeoutError:
+        await _kill_process_group(proc)
+        raise _HookTimedOut from None
+    except asyncio.CancelledError:
+        await _kill_process_group(proc)
+        raise
+    return proc.returncode or 0, stderr
+
+
 async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -> None:
     """Run the prepare script to completion; raise PrepareFailed on any bad outcome.
 
@@ -179,40 +222,31 @@ async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
     env = build_prepare_env(cfg, event, workspace)
     started = asyncio.get_running_loop().time()
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "/bin/sh",
-            "-eu",
-            "-s",
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(workspace),
-            env=env,
-            start_new_session=True,  # own process group, so a timeout kills the children too
+        log.info(
+            "prepare: script running",
+            session_key=event.session_key,
+            workspace=str(workspace),
+            timeout_seconds=cfg.timeout_seconds,
         )
-    except OSError as exc:
+        returncode, stderr = await _execute_hook(
+            cfg.script,
+            cfg.timeout_seconds,
+            cwd=workspace,
+            env=env,
+        )
+    except _HookSpawnFailed as exc:
         PREPARE_FAILURES.labels(reason="spawn").inc()
         raise PrepareFailed(f"prepare script could not be started: {exc}") from exc
-
-    try:
-        _, stderr = await asyncio.wait_for(
-            proc.communicate(cfg.script.encode()), timeout=cfg.timeout_seconds
-        )
-    except TimeoutError:
-        # Kill the whole group: `git clone` spawns children that outlive a bare proc.kill().
-        await _kill_process_group(proc)
+    except _HookTimedOut:
         PREPARE_FAILURES.labels(reason="timeout").inc()
         raise PrepareFailed(f"prepare script timed out after {cfg.timeout_seconds}s") from None
-    except asyncio.CancelledError:
-        await _kill_process_group(proc)
-        raise
 
-    if proc.returncode != 0:
+    if returncode != 0:
         PREPARE_FAILURES.labels(reason="exit").inc()
         # The tail can contain whatever the script echoed; structlog's secret-redaction
         # processors cover every secretEnv name (collect_secret_env_names).
         raise PrepareFailed(
-            f"prepare script exited {proc.returncode}: "
+            f"prepare script exited {returncode}: "
             f"{stderr.decode('utf-8', 'replace')[-_STDERR_TAIL_CHARS:].strip()}"
         )
 
@@ -220,5 +254,55 @@ async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
         "prepare: workspace ready",
         session_key=event.session_key,
         workspace=str(workspace),
+        returncode=returncode,
+        duration_ms=int((asyncio.get_running_loop().time() - started) * 1000),
+    )
+
+
+async def run_cleanup(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -> None:
+    """Run the best-effort cleanup hook after an invocation finishes."""
+    env = build_prepare_env(cfg, event, workspace)
+    started = asyncio.get_running_loop().time()
+    try:
+        log.info(
+            "cleanup: script running",
+            session_key=event.session_key,
+            workspace=str(workspace),
+            timeout_seconds=cfg.timeout_seconds,
+        )
+        returncode, stderr = await _execute_hook(
+            cfg.script,
+            cfg.timeout_seconds,
+            cwd=workspace.parent,
+            env=env,
+        )
+    except _HookSpawnFailed as exc:
+        CLEANUP_FAILURES.labels(reason="spawn").inc()
+        log.warning("cleanup: script could not be started", error=str(exc))
+        return
+    except _HookTimedOut:
+        CLEANUP_FAILURES.labels(reason="timeout").inc()
+        log.warning(
+            "cleanup: script timed out",
+            session_key=event.session_key,
+            timeout_seconds=cfg.timeout_seconds,
+        )
+        return
+
+    if returncode != 0:
+        CLEANUP_FAILURES.labels(reason="exit").inc()
+        log.warning(
+            "cleanup: script exited nonzero",
+            session_key=event.session_key,
+            returncode=returncode,
+            stderr=stderr.decode("utf-8", "replace")[-_STDERR_TAIL_CHARS:].strip(),
+        )
+        return
+
+    log.info(
+        "cleanup: workspace hook complete",
+        session_key=event.session_key,
+        workspace=str(workspace),
+        returncode=returncode,
         duration_ms=int((asyncio.get_running_loop().time() - started) * 1000),
     )

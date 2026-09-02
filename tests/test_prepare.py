@@ -5,14 +5,18 @@ from __future__ import annotations
 
 import asyncio
 import os
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import ValidationError
+from structlog.testing import capture_logs
 
 from ach_agent.boot.prepare import (
     PrepareFailed,
     build_prepare_env,
     prepare_workspace,
+    run_cleanup,
     run_prepare,
     workspace_dir,
 )
@@ -61,6 +65,39 @@ def test_prepare_allowed_on_any_channel_type() -> None:
         }
     )
     assert ch.prepare is not None
+
+
+def test_cleanup_uses_prepare_shape() -> None:
+    ch = ChannelConfig.model_validate(
+        {
+            "name": "review",
+            "type": "cron",
+            "cron": {"schedule": "* * * * *"},
+            "prepare": {"script": "true"},
+            "cleanup": {
+                "script": "rm -rf -- \"$ACH_WORKSPACE\"",
+                "env": {"MODE": "review"},
+                "secretEnv": {"TOKEN": {"env": "CLEANUP_TOKEN"}},
+                "timeoutSeconds": 30,
+            },
+        }
+    )
+    assert ch.cleanup is not None
+    assert ch.cleanup.env == {"MODE": "review"}
+    assert ch.cleanup.secret_env["TOKEN"].env == "CLEANUP_TOKEN"
+    assert ch.cleanup.timeout_seconds == 30
+
+
+def test_cleanup_requires_prepare() -> None:
+    with pytest.raises(ValidationError, match="cleanup.*requires.*prepare"):
+        ChannelConfig.model_validate(
+            {
+                "name": "review",
+                "type": "cron",
+                "cron": {"schedule": "* * * * *"},
+                "cleanup": {"script": "true"},
+            }
+        )
 
 
 # ------------------------------------------------------------------- env / trust boundary
@@ -214,3 +251,111 @@ def test_prepare_secrets_are_stripped_from_forward_env() -> None:
     )
     assert "ACH_SECRET_CLONE" in collect_secret_env_names(cfg)
     assert strip_forwarded_secrets(cfg) == ["SSL_CERT_FILE"]
+
+
+async def test_cleanup_runs_from_workspace_parent_with_isolated_env(tmp_path: Path) -> None:
+    ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
+    marker = ws.parent / "cleanup.txt"
+    cfg = _block(
+        'printf "%s|%s|%s" "$ACH_WORKSPACE" "$ACH_SESSION_KEY" "$ONLY_CLEANUP" '
+        f'> "{marker}"',
+        env={"ONLY_CLEANUP": "yes"},
+    )
+
+    await run_cleanup(cfg, _event(), ws)
+
+    assert marker.read_text() == f"{ws}|42:7|yes"
+
+
+async def test_cleanup_nonzero_is_best_effort(tmp_path: Path) -> None:
+    ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
+
+    with patch("ach_agent.boot.prepare.CLEANUP_FAILURES") as failures:
+        await run_cleanup(_block("echo failed >&2; exit 7"), _event(), ws)
+
+    failures.labels.assert_called_once_with(reason="exit")
+    failures.labels.return_value.inc.assert_called_once_with()
+
+
+async def test_cleanup_timeout_is_best_effort(tmp_path: Path) -> None:
+    ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
+
+    with patch("ach_agent.boot.prepare.CLEANUP_FAILURES") as failures:
+        await run_cleanup(_block("sleep 30", timeoutSeconds=1), _event(), ws)
+
+    failures.labels.assert_called_once_with(reason="timeout")
+
+
+async def test_cleanup_spawn_failure_is_best_effort(tmp_path: Path) -> None:
+    ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
+
+    with (
+        patch(
+            "ach_agent.boot.prepare.asyncio.create_subprocess_exec",
+            new=AsyncMock(side_effect=OSError("no shell")),
+        ),
+        patch("ach_agent.boot.prepare.CLEANUP_FAILURES") as failures,
+    ):
+        await run_cleanup(_block("true"), _event(), ws)
+
+    failures.labels.assert_called_once_with(reason="spawn")
+
+
+async def test_cleanup_cancellation_kills_process_group(tmp_path: Path) -> None:
+    ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
+    pid_file = ws.parent / "cleanup-pid"
+    task = asyncio.create_task(
+        run_cleanup(
+            _block(f'echo $$ > "{pid_file}"; exec sleep 30'),
+            _event(),
+            ws,
+        )
+    )
+    async with asyncio.timeout(2):
+        while not pid_file.exists():
+            await asyncio.sleep(0.01)
+
+    pid = int(pid_file.read_text())
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+@pytest.mark.parametrize(
+    ("runner", "start_event", "success_event"),
+    [
+        (run_prepare, "prepare: script running", "prepare: workspace ready"),
+        (run_cleanup, "cleanup: script running", "cleanup: workspace hook complete"),
+    ],
+)
+async def test_hook_logs_safe_start_and_success(
+    tmp_path: Path,
+    runner: object,
+    start_event: str,
+    success_event: str,
+) -> None:
+    ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
+    secret = "not-for-logs"
+    cfg = _block('printf "%s" "$SECRET_VALUE"', env={"SECRET_VALUE": secret})
+
+    with capture_logs() as logs:
+        await runner(cfg, _event(), ws)  # type: ignore[operator]
+
+    start, success = logs
+    assert start == {
+        "event": start_event,
+        "log_level": "info",
+        "session_key": "42:7",
+        "workspace": str(ws),
+        "timeout_seconds": 120,
+    }
+    assert success["event"] == success_event
+    assert success["log_level"] == "info"
+    assert success["session_key"] == "42:7"
+    assert success["workspace"] == str(ws)
+    assert success["returncode"] == 0
+    assert isinstance(success["duration_ms"], int)
+    assert secret not in str(logs)
+    assert cfg.script not in str(logs)

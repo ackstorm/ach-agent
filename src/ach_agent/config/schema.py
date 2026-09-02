@@ -645,16 +645,12 @@ RESERVED_PREPARE_ENV_PREFIX = "ACH_EVENT_"
 
 
 class PrepareBlock(BaseModel):
-    """Operator contract §2 channel.prepare — the per-invocation workspace hook.
+    """Operator contract §2 channel hook — a static per-invocation script.
 
-    A `/bin/sh` script run on the lane before the engine turn, cwd = the invocation's
-    workspace (`$ACH_WORKSPACE`), which then becomes the engine's cwd. Typical use: clone
-    the repo a merge-request event names, so the agent reviews a real checkout without
-    ever holding the forge credential.
-
-    `script` is STATIC text — `{{ }}` templating is deliberately unsupported. Event data
-    reaches the script only as environment variables, which is what makes a shell hook
-    safe to hand a webhook payload (see boot/prepare.py).
+    The harness runs `prepare` before the engine turn and `cleanup` after it. `script` is
+    STATIC text — `{{ }}` templating is deliberately unsupported. Event data reaches the
+    script only as environment variables, which is what makes a shell hook safe to hand a
+    webhook payload (see boot/prepare.py).
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -670,15 +666,17 @@ class PrepareBlock(BaseModel):
     @model_validator(mode="after")
     def _check(self) -> PrepareBlock:
         if not self.script.strip():
-            raise ValueError("prepare: 'script' must not be empty")
+            raise ValueError("channel hook: 'script' must not be empty")
         for name in (*self.env, *self.secret_env):
             if not _ENV_NAME_RE.match(name):
-                raise ValueError(f"prepare: not a valid environment variable name: {name!r}")
+                raise ValueError(f"channel hook: not a valid environment variable name: {name!r}")
             if name in RESERVED_PREPARE_ENV or name.startswith(RESERVED_PREPARE_ENV_PREFIX):
-                raise ValueError(f"prepare: env name '{name}' is reserved by the harness")
+                raise ValueError(f"channel hook: env name '{name}' is reserved by the harness")
         clash = set(self.env) & set(self.secret_env)
         if clash:
-            raise ValueError(f"prepare: env name(s) in both env and secretEnv: {sorted(clash)}")
+            raise ValueError(
+                f"channel hook: env name(s) in both env and secretEnv: {sorted(clash)}"
+            )
         return self
 
 
@@ -695,6 +693,7 @@ class ChannelConfig(BaseModel):
     # Optional for every channel type (a cron channel may want a workspace too), hence
     # outside the type↔block coherence check below.
     prepare: PrepareBlock | None = None
+    cleanup: PrepareBlock | None = None
     source: Literal["gitlab", "github", "generic"] | None = None
     webhook: WebhookBlock | None = None
     cron: CronBlock | None = None
@@ -721,6 +720,8 @@ class ChannelConfig(BaseModel):
         'source'. Raises ValueError (wrapped by Pydantic into ValidationError →
         sys.exit(1)).
         """
+        if self.cleanup is not None and self.prepare is None:
+            raise ValueError("channel cleanup requires channel prepare")
         t = self.type
         if getattr(self, t) is None:
             article = "an" if t == "a2a" else "a"

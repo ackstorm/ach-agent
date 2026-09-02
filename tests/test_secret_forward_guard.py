@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
+from ach_agent.boot.secrets import collect_secret_env_names, strip_forwarded_secrets
 from ach_agent.config.schema import (
     AgentBlock,
     AgentConfig,
@@ -13,7 +14,6 @@ from ach_agent.config.schema import (
     WebhookAuthBlock,
     WebhookBlock,
 )
-from ach_agent.boot.secrets import collect_secret_env_names, strip_forwarded_secrets
 
 
 def _base_kwargs() -> dict:
@@ -61,3 +61,26 @@ def test_strip_removes_secret_from_forward_env(cfg_secret_also_forwarded):
     cleaned = strip_forwarded_secrets(cfg_secret_also_forwarded)
     assert "ACH_SECRET_X" not in cleaned
     assert "SAFE_VAR" in cleaned
+
+
+def test_cleanup_secret_is_redacted_and_stripped_from_engine() -> None:
+    channel = ChannelConfig.model_validate(
+        {
+            "name": "cleanup",
+            "type": "cron",
+            "cron": {"schedule": "* * * * *"},
+            "prepare": {"script": "true"},
+            "cleanup": {
+                "script": "true",
+                "secretEnv": {"TOKEN": {"env": "ACH_SECRET_CLEANUP_TOKEN"}},
+            },
+        }
+    )
+    cfg = AgentConfig(
+        channels=[channel],
+        engine=EngineBlock(forward_env=["SAFE_VAR", "ACH_SECRET_CLEANUP_TOKEN"]),
+        **_base_kwargs(),
+    )
+
+    assert "ACH_SECRET_CLEANUP_TOKEN" in collect_secret_env_names(cfg)
+    assert strip_forwarded_secrets(cfg) == ["SAFE_VAR"]

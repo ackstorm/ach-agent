@@ -699,7 +699,7 @@
     },
     "PrepareBlock": {
       "additionalProperties": false,
-      "description": "Operator contract §2 channel hook — a static per-invocation script.\n\nThe harness runs `prepare` before the engine turn and `cleanup` after it. `script` is\nSTATIC text — `{{ }}` templating is deliberately unsupported. Event data reaches the\nscript only as environment variables, which is what makes a shell hook safe to hand a\nwebhook payload (see boot/prepare.py).",
+      "description": "Operator contract §2 channel hook — a static session-lifecycle script.\n\n`prepare` runs on the lane before the session engine is acquired or reused for each\ninvocation and is fail-closed. `cleanup` is best-effort when the reserved session is\ntorn down: after an acquired engine stops, or after prepare/engine-acquire failure\nbefore acquisition completes. Prepare and engine cwd are `ACH_WORKSPACE`; cleanup cwd\nis its parent. Graceful shutdown attempts cleanup, but abrupt loss cannot guarantee it.\n\n`script` is STATIC text — `{{ }}` templating is deliberately unsupported. Event data\nreaches the script only as environment variables, which is what makes a shell hook safe\nto hand a webhook payload (see boot/prepare.py).",
       "properties": {
         "env": {
           "additionalProperties": {

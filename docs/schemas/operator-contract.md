@@ -285,8 +285,8 @@ mismatch.
       // The SAME engine + namespaces render memory.hindsight.bank / memory.codemem.project (§2 memory).
       "prompt": "Review this merge request: {{ payload.object_attributes.url }}",
       // prepare: OPTIONAL per-invocation workspace hook (§9.1). A /bin/sh script run on the
-      //   LANE (after dedup + backpressure, before the agente exists) with cwd =
-      //   $ACH_WORKSPACE, which then becomes the engine's cwd. Valid on ANY channel type.
+      //   LANE (after dedup + backpressure, before the session engine is acquired or reused)
+      //   with cwd = $ACH_WORKSPACE, which is also the engine's cwd. Valid on ANY channel type.
       //   script is STATIC — {{ }} is NOT rendered here. Event data arrives ONLY as env.
       "prepare": {
         "script": "…sh, see §9.1…",
@@ -715,27 +715,30 @@ prompt gets a one-line `checkout_repo(project=…, ref=…)` hint only when the 
 head SHA is present. Requires gitlab-mcp to actually serve the archive resource (behind
 `GITLAB_REPO_ARCHIVE=1`); until then, leave the `repoCheckout` entry out of `mcpServers`.
 
-### 9.1 `channel.prepare` — the per-invocation workspace hook
+### 9.1 `channel.prepare` / `channel.cleanup` — session workspace hooks
 
 The **preferred** way to give an agent a real repo, and the intended successor to
 `repoCheckout` (which stays supported for now — it has live users). A `/bin/sh` script,
 declared per channel, that the harness runs **on the lane** — after `dedup → backpressure`
-admitted the event, before `pool.acquire` — with cwd set to that session's workspace. The
-workspace then becomes the **engine's cwd**, so the repo is on disk before the first token:
-no tool call, no `checkout_hint`, no base64 tarball, and a real `.git` (blame, log, local
-`merge-base`, `diff base...head`).
+admitted each event, before `pool.acquire` acquires or reuses the session engine — with cwd
+set to that session's workspace. That workspace is also the **engine's cwd**, so the repo is
+on disk before the first token: no tool call, no `checkout_hint`, no base64 tarball, and a
+real `.git` (blame, log, local `merge-base`, `diff base...head`). Prepare is fail-closed.
 
 `cleanup` is an optional singular sibling of `prepare` and is valid only when
 `prepare` is present. The lifecycle is:
 
-`reserve session/cancel expiry -> prepare -> acquire engine -> invocation ->
-release -> idle TTL -> stop engine -> cleanup`.
+`reserve session/cancel expiry -> prepare -> acquire/reuse engine -> invocation ->
+release -> idle TTL -> stop acquired engine -> cleanup`.
+
+If `prepare` or engine acquisition fails after reservation, teardown runs `cleanup` without
+an acquired engine to stop.
 
 Cleanup runs through `/bin/sh -eu -s` from the parent of `ACH_WORKSPACE` and
 receives the latest event's validated `ACH_EVENT_*` values plus only its own
 configured `env` and `secretEnv`. Spawn, timeout, and nonzero-exit failures are
-best-effort: they are logged and counted without changing invocation delivery.
-Graceful shutdown attempts every registered cleanup after stopping its engine;
+best-effort: they are logged and counted without changing invocation delivery. Graceful
+shutdown attempts every registered cleanup, stopping an acquired engine first when present;
 `SIGKILL`, node loss, and container-runtime failure provide no cleanup guarantee.
 
 *Why on the lane and not in the channel's HTTP handler:* a cold clone blows GitLab's ~10 s
@@ -754,7 +757,7 @@ read `/proc/<pid>/environ`. "We do not hand it over" ≠ "it cannot be obtained"
 
 | Env var | Meaning |
 |---|---|
-| `ACH_WORKSPACE` | the workspace (== cwd == the engine's cwd). Put the checkout at `$ACH_WORKSPACE/repo`. |
+| `ACH_WORKSPACE` | the workspace (prepare cwd and engine cwd; cleanup cwd is its parent). Put the checkout at `$ACH_WORKSPACE/repo`. |
 | `ACH_SESSION_KEY`, `ACH_EVENT_ID`, `ACH_CHANNEL` | invocation identity |
 | `ACH_EVENT_<FIELD>` | every scalar in the channel's delivery context, upper-cased. gitlab: `PROJECT_ID`, `PROJECT_PATH`, `KIND`, `TARGET_TYPE`, `MR_IID`/`ISSUE_IID`, `HEAD_SHA`. github: `REPO`, `PR_NUMBER`. |
 
@@ -812,9 +815,9 @@ own scoped secret.
 and `GIT_LFS_SKIP_SMUDGE=1` are in the script for that reason, and a prompt that says "run the
 tests" executes attacker-supplied code inside the agent container, at the harness's uid.
 
-**Growth.** Workspaces are keyed by `session_key` under `engine.workDir` and are **not** reclaimed
-today — N repos × M open MRs accumulate on the volume. Cap the volume, or prune `workDir` out of
-band, until eviction lands.
+**Growth.** Workspaces are keyed by `session_key` under `engine.workDir`. Growth is bounded only
+when a configured cleanup succeeds; absent or failed cleanup can leave workspaces behind. Cap the
+volume or prune `workDir` out of band if that residual growth is unacceptable.
 
 **The tool-limiting / consent gate is provisioning, not validation.**
 `capability.filter.exclude.{tools,mcpServers,skills}` **withholds** capabilities **before** they

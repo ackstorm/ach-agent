@@ -7,7 +7,7 @@
 ## Goal
 
 Let a channel release the session-owned resources created by
-`channels[].prepare` when that session's engine is finally stopped. The first
+`channels[].prepare` when that reserved session is torn down. The first
 use case is deleting a Git checkout under `ACH_WORKSPACE` so a long-lived Pod
 does not accumulate one clone for every issue or merge request it has seen.
 
@@ -133,9 +133,9 @@ shell lifecycle hooks; the agent configuration owns every resource operation.
 
 The documented GitLab example uses one idempotent clone per active session:
 prepare reuses and fetches the checkout on subsequent events for that session,
-and cleanup removes it after the session goes idle. This bounds clone count by
-active/warm sessions instead of all sessions observed during the Pod's
-lifetime.
+and cleanup removes it after the session goes idle. When cleanup succeeds, this
+bounds clone count by active/warm sessions instead of all sessions observed
+during the Pod's lifetime; absent or failed cleanup can leave workspaces behind.
 
 A deployment may instead implement a shared bare mirror plus per-session Git
 worktrees entirely inside its prepare and cleanup scripts. That script is also

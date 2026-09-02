@@ -344,6 +344,35 @@ async def test_cleanup_in_progress_blocks_new_session_begin() -> None:
     await new_begin
 
 
+async def test_stop_all_waits_for_cleanup_already_running_on_ttl_expiry() -> None:
+    started = asyncio.Event()
+    finish = asyncio.Event()
+    calls = 0
+
+    async def cleanup() -> None:
+        nonlocal calls
+        calls += 1
+        started.set()
+        await finish.wait()
+
+    pool = EnginePool()
+    pool._start_server = AsyncMock(return_value=_make_fake_server())
+    await pool.begin_session("k1", cleanup)
+    await pool.acquire("k1", _real_config())
+    await pool.release("k1", ttl_seconds=0.01)
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    stop_all = asyncio.create_task(pool.stop_all())
+    await asyncio.sleep(0)
+    try:
+        assert not stop_all.done()
+    finally:
+        finish.set()
+        await stop_all
+
+    assert calls == 1
+
+
 async def test_stop_all_runs_cleanup_without_server() -> None:
     cleanup = AsyncMock()
     pool = EnginePool()
@@ -814,6 +843,8 @@ def test_pool_default_session_map_is_lru_still():
     assert isinstance(pool.sessions, _NamespacedSessionMap)
     assert isinstance(pool.sessions._inner, _LRUSessionMap)
     assert len(pool.sessions) == 0
+
+
 async def test_cancelled_cold_start_does_not_leak_the_token() -> None:
     """A cancel mid-_start_server must release the token from BOTH registries.
 

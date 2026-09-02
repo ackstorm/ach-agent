@@ -2,8 +2,9 @@
 """The engine runner: the hot-path closure the router's lane drives for every invocation.
 
 `make_engine_runner` builds the callable injected into the Router as `engine_runner`:
-acquire an engine from the keyed pool, build the per-invocation config, run the turn,
-record stats, and resolve the reply future / a2a completion callback / async no-op.
+reserve and prepare the session, acquire or reuse an engine from the keyed pool, build the
+per-invocation config, run the turn, record stats, and resolve the reply future / a2a
+completion callback / async no-op.
 """
 
 from __future__ import annotations
@@ -194,9 +195,9 @@ def make_engine_runner(
         session_reserved = False
         try:
             # channel.prepare: build this session's workspace on the LANE — after dedup and
-            # backpressure admitted the event, before the agente exists. Its cwd becomes the
-            # engine's cwd, so it must be ready (and fixed) before acquire. Fail-CLOSED: a
-            # PrepareFailed takes the except path below and nothing is posted.
+            # backpressure admitted the event, before its engine is acquired or reused. The
+            # workspace is the engine's cwd, so it must be ready before acquire. Fail-CLOSED:
+            # a PrepareFailed takes the except path below and nothing is posted.
             # getattr: tests inject a SimpleNamespace channel cfg, as elsewhere in this runner.
             prepare_cfg = getattr(ch_cfg, "prepare", None) if ch_cfg is not None else None
             cleanup_cfg = getattr(ch_cfg, "cleanup", None) if ch_cfg is not None else None

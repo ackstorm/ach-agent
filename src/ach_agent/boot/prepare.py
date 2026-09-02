@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
-"""channel.prepare — the per-invocation workspace hook (CONTRACT §2).
+"""Channel prepare/cleanup workspace hooks (CONTRACT §2).
 
-An operator-supplied `/bin/sh` script the harness runs on the LANE, after the router
-admitted the event and before `pool.acquire`, with the invocation's workspace as cwd.
-Its canonical use is cloning the repo a merge-request event names, so the agent gets a
-real `.git` checkout it never had to fetch — and never holds the credential for.
+The harness runs prepare on the LANE after the router admits each event and before
+`pool.acquire` acquires or reuses its session engine, with `ACH_WORKSPACE` as cwd. Cleanup
+runs best-effort from the workspace's parent when the reserved session is torn down: after
+an acquired engine stops, or after prepare/engine-acquire failure before acquisition.
+The canonical use is cloning and later removing the repo a merge-request event names, so
+the agent gets a real `.git` checkout it never had to fetch — and never holds the credential
+for.
 
 Why here and not in the channel's HTTP handler: the pinned order is
 `dedup → backpressure → lane`. Cloning before admit turns a redelivery flood into a
@@ -260,7 +263,7 @@ async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
 
 
 async def run_cleanup(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -> None:
-    """Run the best-effort cleanup hook after an invocation finishes."""
+    """Run the best-effort cleanup hook when a reserved session is torn down."""
     env = build_prepare_env(cfg, event, workspace)
     started = asyncio.get_running_loop().time()
     try:

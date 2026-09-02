@@ -477,28 +477,34 @@ class EnginePool:
         ttl_task = self._ttl_tasks.pop(session_key, None)
         if ttl_task is not None and ttl_task is not asyncio.current_task() and not ttl_task.done():
             ttl_task.cancel()
-        server = self._servers.pop(session_key, None)
-        cleanup = self._cleanups.pop(session_key, None)
+        server = self._servers.get(session_key)
+        cleanup = self._cleanups.get(session_key)
         self._ref_counts.pop(session_key, None)
 
-        if server is not None:
-            self._drop_token(server)
-            try:
-                await self._driver.stop(server)
-            except Exception:  # noqa: BLE001
-                log.warning(
-                    "EnginePool: error stopping server", session_key=session_key, exc_info=True
-                )
+        try:
+            if server is not None:
+                self._drop_token(server)
+                try:
+                    await self._driver.stop(server)
+                except Exception:  # noqa: BLE001
+                    log.warning(
+                        "EnginePool: error stopping server", session_key=session_key, exc_info=True
+                    )
 
-        if cleanup is not None:
-            try:
-                await cleanup()
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001
-                log.warning(
-                    "EnginePool: cleanup callback failed", session_key=session_key, exc_info=True
-                )
+            if cleanup is not None:
+                try:
+                    await cleanup()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    log.warning(
+                        "EnginePool: cleanup callback failed",
+                        session_key=session_key,
+                        exc_info=True,
+                    )
+        finally:
+            self._servers.pop(session_key, None)
+            self._cleanups.pop(session_key, None)
 
     async def stop_all(self) -> None:
         """Stop every live server and clear the pool (shutdown / tui exit)."""

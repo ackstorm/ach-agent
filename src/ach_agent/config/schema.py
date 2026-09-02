@@ -645,12 +645,17 @@ RESERVED_PREPARE_ENV_PREFIX = "ACH_EVENT_"
 
 
 class PrepareBlock(BaseModel):
-    """Operator contract §2 channel hook — a static per-invocation script.
+    """Operator contract §2 channel hook — a static session-lifecycle script.
 
-    The harness runs `prepare` before the engine turn and `cleanup` after it. `script` is
-    STATIC text — `{{ }}` templating is deliberately unsupported. Event data reaches the
-    script only as environment variables, which is what makes a shell hook safe to hand a
-    webhook payload (see boot/prepare.py).
+    `prepare` runs on the lane before the session engine is acquired or reused for each
+    invocation and is fail-closed. `cleanup` is best-effort when the reserved session is
+    torn down: after an acquired engine stops, or after prepare/engine-acquire failure
+    before acquisition completes. Prepare and engine cwd are `ACH_WORKSPACE`; cleanup cwd
+    is its parent. Graceful shutdown attempts cleanup, but abrupt loss cannot guarantee it.
+
+    `script` is STATIC text — `{{ }}` templating is deliberately unsupported. Event data
+    reaches the script only as environment variables, which is what makes a shell hook safe
+    to hand a webhook payload (see boot/prepare.py).
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)

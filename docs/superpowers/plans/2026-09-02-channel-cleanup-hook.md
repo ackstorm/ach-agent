@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a generic per-session `channels[].cleanup` script that runs after the session engine stops, so configuration-owned resources created by `prepare` can be released without leaking across a long-lived Pod.
+**Goal:** Add a generic per-session `channels[].cleanup` script that runs when the reserved session is torn down, so configuration-owned resources created by `prepare` can be released without leaking across a long-lived Pod.
 
 **Architecture:** The harness registers a cleanup callback in `EnginePool` before running `prepare`; the pool owns that callback until immediate release, idle-TTL expiry, failure, or graceful shutdown, and serializes cleanup against new activity with its existing per-key lock. The operator reuses `PrepareSpec` for the singular cleanup block, resolves its independent `forwardEnv` allowlist, and renders the same internal `script`/`env`/`secretEnv`/`timeoutSeconds` shape accepted by ach-agent. Both components remain resource-agnostic: Git clone, cache, worktree, locking, and deletion behavior exist only in user-authored scripts and documentation examples.
 
@@ -15,7 +15,7 @@
 - This is an additive `v1alpha1` API and agent-config change.
 - `cleanup` is one optional sibling of `prepare`, never a list, and it is invalid unless the same channel has `prepare`.
 - `cleanup` has the operator-facing shape `{script, forwardEnv, timeoutSeconds}` and the rendered shape `{script, env, secretEnv, timeoutSeconds}`.
-- Cleanup runs only after the session engine is stopped: on idle-TTL expiry, `idleTtlSeconds: 0`, preparation or launch failure after reservation, and graceful shutdown.
+- Cleanup runs when a reserved session is torn down: after the acquired engine stops on idle-TTL expiry, `idleTtlSeconds: 0`, or graceful shutdown; or after preparation/engine-acquire failure before acquisition completes.
 - New activity for the same session cancels a pending expiry before prepare starts; cleanup already in progress completes under the per-session lock before the new prepare starts.
 - Prepare remains fail-closed; cleanup spawn, timeout, and exit failures are logged and counted but never fail an invocation or pool release.
 - Unknown cleanup `forwardEnv` names are ignored and remain unset.
@@ -325,7 +325,7 @@ Add to `src/ach_agent/engine/metrics.py`:
 ```python
 CLEANUP_FAILURES: prometheus_client.Counter = prometheus_client.Counter(
     "ach_agent_cleanup_failures_total",
-    "channel.cleanup scripts that failed after the session engine stopped",
+    "channel.cleanup scripts that failed during reserved-session teardown",
     ["reason"],
 )
 ```
@@ -915,14 +915,17 @@ text:
 `cleanup` is an optional singular sibling of `prepare` and is valid only when
 `prepare` is present. The lifecycle is:
 
-`reserve session/cancel expiry -> prepare -> acquire engine -> invocation ->
-release -> idle TTL -> stop engine -> cleanup`.
+`reserve session/cancel expiry -> prepare -> acquire/reuse engine -> invocation ->
+release -> idle TTL -> stop acquired engine -> cleanup`.
+
+If `prepare` or engine acquisition fails after reservation, teardown runs `cleanup` without
+an acquired engine to stop.
 
 Cleanup runs through `/bin/sh -eu -s` from the parent of `ACH_WORKSPACE` and
 receives the latest event's validated `ACH_EVENT_*` values plus only its own
 configured `env` and `secretEnv`. Spawn, timeout, and nonzero-exit failures are
-best-effort: they are logged and counted without changing invocation delivery.
-Graceful shutdown attempts every registered cleanup after stopping its engine;
+best-effort: they are logged and counted without changing invocation delivery. Graceful
+shutdown attempts every registered cleanup, stopping an acquired engine first when present;
 `SIGKILL`, node loss, and container-runtime failure provide no cleanup guarantee.
 ```
 
@@ -1369,19 +1372,24 @@ cleanup:
 ```
 
 In `examples/agent-runtime/README.md`, document that both blocks are generic user scripts,
-cleanup is attempted only after engine stop, abrupt termination is not guaranteed, and mirror/
-worktree caching belongs in these scripts rather than the operator or harness.
+prepare runs before engine acquisition/reuse, cleanup runs on reserved-session teardown,
+abrupt termination is not guaranteed, and mirror/worktree caching belongs in these scripts
+rather than the operator or harness.
 
 Use this exact note:
 
 ```markdown
 `prepare` and `cleanup` are generic configuration-owned shell hooks. The
-operator and harness do not clone, cache, lock, or delete repositories. Cleanup
-runs after the session engine stops on idle-TTL expiry (or immediately when the
-TTL is zero) and is also attempted during graceful shutdown; abrupt Pod/node
-termination cannot guarantee it. If you use a shared bare mirror and per-session
-worktrees, implement both the Git operations and cross-session locking inside
-these scripts.
+operator and harness do not clone, cache, lock, or delete repositories. Prepare
+runs on the lane before the session engine is acquired or reused for each invocation
+and is fail-closed. Cleanup runs best-effort when the reserved session is torn down:
+after an acquired engine stops, or after prepare/engine-acquire failure before
+acquisition completes. Graceful shutdown attempts cleanup; abrupt Pod/node termination
+cannot guarantee it. Prepare and engine cwd are `ACH_WORKSPACE`; cleanup cwd is its
+parent. Workspace growth is bounded only when configured cleanup succeeds; absent or
+failed cleanup can leave workspaces behind. If you use a shared bare mirror and
+per-session worktrees, implement both the Git operations and cross-session locking
+inside these scripts.
 ```
 
 - [ ] **Step 5: Add the operator changelog entry**

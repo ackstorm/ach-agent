@@ -72,8 +72,12 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/app/deps
 # invocation (each opencode runs under a fresh ephemeral HOME). Baking it avoids the
 # download (and works offline). Calendar-only agents rarely hit it, but code agents do.
 # libatomic1: Node 26 (codemem-bin) links against it; python:3.12-slim doesn't ship it.
+# git + openssh-client + ca-certificates: channel.prepare scripts clone the repo an event
+# names (HTTPS or SSH) before the turn starts. Without git in the image a prepare hook
+# fails on every invocation, and the agent reviews nothing.
 RUN apt-get update -qq \
- && apt-get install -y --no-install-recommends ripgrep libatomic1 \
+ && apt-get install -y --no-install-recommends \
+      ripgrep libatomic1 git openssh-client ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/deps /app/deps

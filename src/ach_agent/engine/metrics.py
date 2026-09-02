@@ -35,6 +35,15 @@ ENGINE_LAUNCH_FAILURES: prometheus_client.Counter = prometheus_client.Counter(
     "opencode agente launches that failed in engine_runner (pool.acquire raised)",
 )
 
+# ach_agent_prepare_failures_total: incremented by boot/prepare.py when a channel.prepare
+# script fails to start, times out, or exits non-zero. Fail-CLOSED — every increment is an
+# invocation that never reached the engine, so alert on rate() > 0.
+PREPARE_FAILURES: prometheus_client.Counter = prometheus_client.Counter(
+    "ach_agent_prepare_failures_total",
+    "channel.prepare scripts that failed (the invocation was abandoned)",
+    ["reason"],
+)
+
 # ach_agent_cost_unpriced_total: every point where cost accounting gives up and a turn is
 # billed 0. Boot reasons (fetch_failed/no_entry/malformed/unpriced) fire ONCE at startup —
 # alert on `> 0`, not on rate(). The per-response reasons (unpriced, usage_missing) keep

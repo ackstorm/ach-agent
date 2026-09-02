@@ -1,0 +1,197 @@
+# SPDX-License-Identifier: Apache-2.0
+"""channel.prepare — schema guards, env construction (the trust boundary), and execution."""
+
+from __future__ import annotations
+
+import pytest
+from pydantic import ValidationError
+
+from ach_agent.boot.prepare import (
+    PrepareFailed,
+    build_prepare_env,
+    prepare_workspace,
+    run_prepare,
+    workspace_dir,
+)
+from ach_agent.channels.message_event import MessageEvent
+from ach_agent.config.schema import ChannelConfig, PrepareBlock
+
+
+def _event(**dc: object) -> MessageEvent:
+    return MessageEvent(
+        idempotency_key="evt-1",
+        session_key="42:7",
+        channel_name="gitlab-mr-review",
+        delivery_context=dict(dc),
+    )
+
+
+def _block(script: str = "true", **kw: object) -> PrepareBlock:
+    return PrepareBlock.model_validate({"script": script, **kw})
+
+
+# --------------------------------------------------------------------------- schema
+
+
+def test_reserved_env_names_rejected() -> None:
+    """The harness pins these last; a config entry would be silently discarded."""
+    for name in ("ACH_WORKSPACE", "HOME", "ACH_EVENT_PROJECT_PATH"):
+        with pytest.raises(ValidationError, match="reserved"):
+            _block(env={name: "x"})
+
+
+def test_empty_script_and_env_clash_rejected() -> None:
+    with pytest.raises(ValidationError, match="must not be empty"):
+        _block("   ")
+    with pytest.raises(ValidationError, match="both env and secretEnv"):
+        _block(env={"T": "a"}, secretEnv={"T": {"env": "ACH_SECRET_T"}})
+
+
+def test_prepare_allowed_on_any_channel_type() -> None:
+    """A cron channel may want a workspace too — prepare is outside the type↔block check."""
+    ch = ChannelConfig.model_validate(
+        {
+            "name": "nightly",
+            "type": "cron",
+            "cron": {"schedule": "0 8 * * *"},
+            "prepare": {"script": "true"},
+        }
+    )
+    assert ch.prepare is not None
+
+
+# ------------------------------------------------------------------- env / trust boundary
+
+
+def test_event_scalars_become_env_but_callables_do_not() -> None:
+    """delivery_context also carries the on_complete/on_fail callables — never stringify them."""
+    env = build_prepare_env(
+        _block(),
+        _event(
+            project_id=42, project_path="group/sub/proj", head_sha="abc", on_fail=lambda *_: None
+        ),
+        workspace_dir("/w", "42:7"),
+    )
+    assert env["ACH_EVENT_PROJECT_ID"] == "42"
+    assert env["ACH_EVENT_PROJECT_PATH"] == "group/sub/proj"
+    assert "ACH_EVENT_ON_FAIL" not in env
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "https://evil.test/x",  # a scheme would redirect the credential off-host
+        "oauth2:token@evil.test/x",  # userinfo
+        "../../etc/passwd",  # traversal
+        "group/../../evil",  # traversal mid-path
+        "group/proj\nrm -rf /",  # newline
+    ],
+)
+def test_malformed_repo_paths_are_dropped(bad: str) -> None:
+    """Origin comes from config; the payload supplies only a path. Anything else is dropped,
+    and `sh -u` then aborts the script rather than cloning from an attacker's host."""
+    env = build_prepare_env(_block(), _event(project_path=bad), workspace_dir("/w", "k"))
+    assert "ACH_EVENT_PROJECT_PATH" not in env
+
+
+def test_harness_vars_win_over_operator_env() -> None:
+    env = build_prepare_env(
+        _block(env={"REPO_BASE_URL": "https://gitlab.example.com"}),
+        _event(),
+        workspace_dir("/w", "42:7"),
+    )
+    assert env["REPO_BASE_URL"] == "https://gitlab.example.com"
+    assert env["ACH_WORKSPACE"].startswith("/w/")
+    assert env["HOME"] == env["ACH_WORKSPACE"]
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["ACH_SESSION_KEY"] == "42:7"
+
+
+def test_secret_env_resolved_at_use_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    block = _block(secretEnv={"GITLAB_TOKEN": {"env": "ACH_SECRET_CLONE"}})
+    monkeypatch.setenv("ACH_SECRET_CLONE", "glpat-rotated")
+    env = build_prepare_env(block, _event(), workspace_dir("/w", "k"))
+    assert env["GITLAB_TOKEN"] == "glpat-rotated"
+
+
+def test_unset_secret_is_omitted_not_blank(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail closed: `sh -u` must abort, not run an anonymous clone with an empty token."""
+    monkeypatch.delenv("ACH_SECRET_CLONE", raising=False)
+    block = _block(secretEnv={"GITLAB_TOKEN": {"env": "ACH_SECRET_CLONE"}})
+    assert "GITLAB_TOKEN" not in build_prepare_env(block, _event(), workspace_dir("/w", "k"))
+
+
+def test_workspace_is_stable_per_session_key_and_separates_keys() -> None:
+    assert workspace_dir("/w", "42:7") == workspace_dir("/w", "42:7")
+    assert workspace_dir("/w", "42:7") != workspace_dir("/w", "42:8")
+    assert ":" not in workspace_dir("/w", "42:7").name
+
+
+# ------------------------------------------------------------------------- execution
+
+
+async def test_script_runs_in_the_workspace(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "42:7")
+    await run_prepare(_block('echo "$ACH_EVENT_MR_IID" > marker'), _event(mr_iid=7), ws)
+    assert (ws / "marker").read_text().strip() == "7"
+
+
+async def test_payload_text_cannot_escape_into_the_shell(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The injection test: a payload field that looks like shell stays inert, because it is
+    only ever an env VALUE — the script text itself is static config."""
+    ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
+    await run_prepare(
+        _block('printf "%s" "$ACH_EVENT_TITLE" > out'),
+        _event(title='x"; touch pwned; #'),
+        ws,
+    )
+    assert not (ws / "pwned").exists()
+    assert (ws / "out").read_text() == 'x"; touch pwned; #'
+
+
+async def test_nonzero_exit_fails_closed(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
+    with pytest.raises(PrepareFailed, match="exited 3"):
+        await run_prepare(_block("echo boom >&2; exit 3"), _event(), ws)
+
+
+async def test_unset_var_aborts_the_script(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """`sh -u`: a missing credential is loud, never a half-working anonymous clone."""
+    ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
+    with pytest.raises(PrepareFailed):
+        await run_prepare(_block('git clone "$MISSING_TOKEN"'), _event(), ws)
+
+
+async def test_timeout_kills_the_process_group(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
+    with pytest.raises(PrepareFailed, match="timed out"):
+        await run_prepare(_block("sleep 30", timeoutSeconds=1), _event(), ws)
+
+
+def test_prepare_secrets_are_stripped_from_forward_env() -> None:
+    """A secretEnv name a misconfig also lists in engine.forwardEnv must never reach opencode."""
+    from ach_agent.boot.secrets import collect_secret_env_names, strip_forwarded_secrets
+    from ach_agent.config.schema import AgentConfig
+
+    cfg = AgentConfig.model_validate(
+        {
+            "schemaVersion": "1",
+            "agent": {"name": "a"},
+            "model": {"name": "m", "type": "openai"},
+            "capability": {"type": "ach", "ach": {"baseUrl": "https://ach.example.com"}},
+            "engine": {"forwardEnv": ["ACH_SECRET_CLONE", "SSL_CERT_FILE"]},
+            "channels": [
+                {
+                    "name": "c",
+                    "type": "cron",
+                    "cron": {"schedule": "0 8 * * *"},
+                    "prepare": {
+                        "script": "true",
+                        "secretEnv": {"GITLAB_TOKEN": {"env": "ACH_SECRET_CLONE"}},
+                    },
+                }
+            ],
+        }
+    )
+    assert "ACH_SECRET_CLONE" in collect_secret_env_names(cfg)
+    assert strip_forwarded_secrets(cfg) == ["SSL_CERT_FILE"]

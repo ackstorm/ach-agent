@@ -122,6 +122,18 @@ def _mr_head_sha(container: dict[str, Any]) -> str:
     return str(last.get("id", "")) if isinstance(last, dict) else ""
 
 
+def _project_path_fields(body: dict[str, Any]) -> dict[str, str]:
+    """{"project_path": "group/project"} from the hook, or {} when absent (like head_sha).
+
+    Deliberately the PATH only. A channel.prepare script gets the clone ORIGIN from channel
+    config; a forged hook must never be able to aim the harness's credential at an
+    attacker-controlled host. boot/prepare.py re-validates the path against a strict slug
+    regex before it becomes an environment variable.
+    """
+    path = str((body.get("project") or {}).get("path_with_namespace", "") or "")
+    return {"project_path": path} if path else {}
+
+
 def _parse_gitlab(body: dict[str, Any], allowed: set[str]) -> tuple[dict[str, Any], str] | None:
     """Route a GitLab hook, accept-ignore (None), or raise on a routable-but-malformed payload.
 
@@ -140,6 +152,7 @@ def _parse_gitlab(body: dict[str, Any], allowed: set[str]) -> tuple[dict[str, An
         mr_iid = int(body["object_attributes"]["iid"])
         dc: dict[str, Any] = {
             "project_id": project_id,
+            **_project_path_fields(body),
             "kind": "merge_request",
             "target_type": "mr",
             "mr_iid": mr_iid,
@@ -155,6 +168,7 @@ def _parse_gitlab(body: dict[str, Any], allowed: set[str]) -> tuple[dict[str, An
         return (
             {
                 "project_id": project_id,
+                **_project_path_fields(body),
                 "kind": "issue",
                 "target_type": "issue",
                 "issue_iid": issue_iid,
@@ -173,7 +187,13 @@ def _parse_gitlab(body: dict[str, Any], allowed: set[str]) -> tuple[dict[str, An
         if noteable == "mergerequest" and "merge_request" in allowed:
             project_id = int(body["project"]["id"])
             mr_iid = int(body["merge_request"]["iid"])
-            dc = {"project_id": project_id, "kind": "note", "target_type": "mr", "mr_iid": mr_iid}
+            dc = {
+                "project_id": project_id,
+                **_project_path_fields(body),
+                "kind": "note",
+                "target_type": "mr",
+                "mr_iid": mr_iid,
+            }
             head_sha = _mr_head_sha(body["merge_request"])
             if head_sha:
                 dc["head_sha"] = head_sha
@@ -184,6 +204,7 @@ def _parse_gitlab(body: dict[str, Any], allowed: set[str]) -> tuple[dict[str, An
             return (
                 {
                     "project_id": project_id,
+                    **_project_path_fields(body),
                     "kind": "note",
                     "target_type": "issue",
                     "issue_iid": issue_iid,

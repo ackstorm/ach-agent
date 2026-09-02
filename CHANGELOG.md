@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.13.0] - 2026-09-02
+
+### Added
+
+- **`channel.prepare` — a per-invocation workspace hook (CONTRACT §9.1).** An optional
+  `/bin/sh` script, declared per channel, that the harness runs **on the lane** (after
+  `dedup → backpressure` admit, before `pool.acquire`) with cwd set to that session's
+  workspace, which then becomes the engine's cwd. Its intended use is cloning the repo a
+  merge-request event names, so the agent reviews a real `.git` checkout — with blame, log
+  and a local `merge-base` — that it never had to fetch and never holds a credential for.
+  This is the preferred successor to `mcpServers[].type=repoCheckout`, which still works.
+  - `script` is **static text**: `{{ }}` is not rendered in it and no payload value is ever
+    interpolated into shell source. Event data reaches the script only as environment
+    variables (`ACH_WORKSPACE`, `ACH_SESSION_KEY`, `ACH_EVENT_ID`, `ACH_CHANNEL`, and
+    `ACH_EVENT_<FIELD>` for every scalar in the delivery context).
+  - `secretEnv` names credentials by env NAME through the same env-only `SecretSource` as
+    `webhook.auth.secret`: resolved per use, redacted in logs, and stripped from
+    `engine.forwardEnv` so the opencode subprocess can never inherit them.
+  - Runs as `sh -eu` fed on **stdin** — the script is never written to disk (the
+    co-resident agent shares the harness uid) and never appears in `/proc/<pid>/cmdline`.
+  - Fail-**closed**: non-zero exit, timeout (`timeoutSeconds`, default 120, SIGKILL to the
+    process group) or spawn failure abandons the invocation and posts nothing, counted by
+    the new `ach_agent_prepare_failures_total{reason}` metric.
+  - The workspace is keyed by `session_key` and persists across that key's events (it is
+    the clone cache), so **scripts must be idempotent** — clone-or-fetch, not clone. It is
+    not reclaimed yet: cap the volume or prune `engine.workDir` out of band.
+- The GitLab webhook channel now stamps `project_path` (`path_with_namespace`) into the
+  delivery context on MR, issue and note events, so a prepare script can build its clone
+  URL as `{configured origin}/{path}`. The **origin comes from config, never the payload** —
+  the harness re-validates the path against a strict slug regex (no scheme, host, userinfo
+  or `..`) and drops it otherwise, so a forged hook cannot aim the credential at another host.
+- The runtime image now ships `git`, `openssh-client` and `ca-certificates` for prepare
+  scripts that clone over HTTPS or SSH.
+
+### Fixed
+
+- `example.yaml` used the long-removed `secretPath:` key for webhook and a2a auth, so the
+  published example no longer loaded. It now uses `secret: {env: NAME}`.
+
 ## [0.12.1] - 2026-08-14
 
 ### Added

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from ach_agent.boot.prepare import PrepareFailed, prepare_workspace, run_prepare
 from ach_agent.boot.prompt import (
     build_engine_prompt,
     build_output_instructions,
@@ -184,6 +185,23 @@ def make_engine_runner(
         timed_out = False
         acquired = False
         try:
+            # channel.prepare: build this session's workspace on the LANE — after dedup and
+            # backpressure admitted the event, before the agente exists. Its cwd becomes the
+            # engine's cwd, so it must be ready (and fixed) before acquire. Fail-CLOSED: a
+            # PrepareFailed takes the except path below and nothing is posted.
+            # getattr: tests inject a SimpleNamespace channel cfg, as elsewhere in this runner.
+            prepare_cfg = getattr(ch_cfg, "prepare", None) if ch_cfg is not None else None
+            if prepare_cfg is not None:
+                workspace = prepare_workspace(
+                    engine_cfg.home, engine_cfg.work_dir, event.session_key
+                )
+                await run_prepare(prepare_cfg, event, workspace)
+                if dataclasses.is_dataclass(invocation_engine_cfg) and not isinstance(
+                    invocation_engine_cfg, type
+                ):
+                    invocation_engine_cfg = dataclasses.replace(
+                        invocation_engine_cfg, work_dir=str(workspace)
+                    )
             server = await pool.acquire(event.session_key, invocation_engine_cfg)
             acquired = True
             # Correlation for this invocation: every model call the engine makes
@@ -378,7 +396,7 @@ def make_engine_runner(
                 on_fail(event.session_key, f"invocation timed out after {max_invocation_seconds}s")
             raise
         except Exception as exc:
-            if not acquired:
+            if not acquired and not isinstance(exc, PrepareFailed):
                 # pool.acquire itself failed — the agente could not be launched for
                 # this session_key. Explicit metric + WARN (no silent drop): acceptance
                 # is decoupled from engine readiness, so this is where a launch failure
@@ -386,6 +404,14 @@ def make_engine_runner(
                 ENGINE_LAUNCH_FAILURES.inc()
                 log.warning(
                     "engine: launch failed (pool.acquire)",
+                    session_key=event.session_key,
+                    task_id=event.task_id,
+                    error=str(exc),
+                )
+            if isinstance(exc, PrepareFailed):
+                # Its own metric is already counted (with a reason label) in run_prepare.
+                log.warning(
+                    "prepare: workspace hook failed — invocation abandoned",
                     session_key=event.session_key,
                     task_id=event.task_id,
                     error=str(exc),

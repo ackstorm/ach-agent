@@ -99,9 +99,36 @@ channels:
     webhook:
       auth:
         type: gitlab_token              # gitlab_token | hmac | header_token | none
-        secretPath: /etc/ach-agent/secrets/gitlab-webhook/secret   # a path, never a value
+        secret: {env: ACH_SECRET_GITLAB_WEBHOOK}   # env NAME, never a value (env-only)
       gitlabEvents: [merge_request, note]    # route MR hooks + MR/issue comments; omit → MR+issue+note.
                                              # Other kinds (push, pipeline, …) → HTTP 200 ignored, never 422.
+    # prepare: a /bin/sh script run on the lane before the turn, cwd = $ACH_WORKSPACE, which
+    # then becomes the agent's cwd. The harness holds the clone credential; the agent never
+    # does. The script is STATIC — event data arrives only as env (no {{ }}, no injection).
+    # It re-runs on every event for this MR, so it must be idempotent. See CONTRACT §9.1.
+    prepare:
+      env:
+        REPO_BASE_URL: https://gitlab.example.com   # ORIGIN from config, path from the payload
+      secretEnv:
+        GITLAB_TOKEN: {env: ACH_SECRET_GITLAB_CLONE}   # read-only clone token, env NAME only
+      timeoutSeconds: 120
+      script: |
+        # Auth as a header, never in the URL: a token in the clone URL persists into
+        # .git/config, inside the working tree the agent has a shell over.
+        AUTH=$(printf 'oauth2:%s' "$GITLAB_TOKEN" | base64 -w0)
+        export GIT_CONFIG_COUNT=1 \
+               GIT_CONFIG_KEY_0=http.extraHeader \
+               GIT_CONFIG_VALUE_0="Authorization: Basic $AUTH"
+        export GIT_LFS_SKIP_SMUDGE=1
+
+        REPO="$ACH_WORKSPACE/repo"
+        [ -d "$REPO/.git" ] || git clone --filter=blob:none --no-checkout \
+          --no-recurse-submodules "$REPO_BASE_URL/$ACH_EVENT_PROJECT_PATH.git" "$REPO"
+        # The MR head ref is MUTABLE — check out the SHA the event named, not FETCH_HEAD,
+        # or a push mid-review makes the agent review a different revision.
+        git -C "$REPO" fetch --filter=blob:none origin \
+          "+refs/merge-requests/$ACH_EVENT_MR_IID/head:refs/ach/mr-$ACH_EVENT_MR_IID"
+        git -C "$REPO" checkout --force --detach "$ACH_EVENT_HEAD_SHA"
 
   - name: generic-hook
     type: webhook
@@ -112,7 +139,7 @@ channels:
       auth:
         type: header_token              # static shared secret in a chosen header
         header: X-Api-Key
-        secretPath: /etc/ach-agent/secrets/generic-hook/secret
+        secret: {env: ACH_SECRET_GENERIC_HOOK}
 
   - name: daily-security
     type: cron
@@ -138,4 +165,4 @@ channels:
       mode: async                       # async only in v1
       auth:
         header: x-a2a-custom-api-key
-        secretPath: /etc/ach-agent/secrets/a2a/key
+        secret: {env: ACH_SECRET_A2A_INTAKE}

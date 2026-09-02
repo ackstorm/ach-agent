@@ -284,6 +284,17 @@ mismatch.
       // event.id, session.key). One filter: | default("x"). No env namespace (ek-hygiene).
       // The SAME engine + namespaces render memory.hindsight.bank / memory.codemem.project (§2 memory).
       "prompt": "Review this merge request: {{ payload.object_attributes.url }}",
+      // prepare: OPTIONAL per-invocation workspace hook (§9.1). A /bin/sh script run on the
+      //   LANE (after dedup + backpressure, before the agente exists) with cwd =
+      //   $ACH_WORKSPACE, which then becomes the engine's cwd. Valid on ANY channel type.
+      //   script is STATIC — {{ }} is NOT rendered here. Event data arrives ONLY as env.
+      "prepare": {
+        "script": "…sh, see §9.1…",
+        "env": { "REPO_BASE_URL": "https://gitlab.example.com" },  // literal values (non-secret)
+        "secretEnv": { "GITLAB_TOKEN": { "env": "ACH_SECRET_GITLAB_CLONE" } },  // env NAMES only
+        "timeoutSeconds": 120                 // 1..3600, default 120. Exceeded → SIGKILL to the
+        //                                       process group; the invocation is abandoned.
+      },
       "webhook": { "auth": { "type": "gitlab_token",
                              // secret: {env: NAME} — env-only (no disk secrets). The harness reads
                              // os.environ[NAME] at use time; dumpable=0 + opencode's clean-slate env
@@ -703,6 +714,94 @@ ephemeral). The gitlab MR/note channel stamps `head_sha` into the delivery conte
 prompt gets a one-line `checkout_repo(project=…, ref=…)` hint only when the facade is wired AND a
 head SHA is present. Requires gitlab-mcp to actually serve the archive resource (behind
 `GITLAB_REPO_ARCHIVE=1`); until then, leave the `repoCheckout` entry out of `mcpServers`.
+
+### 9.1 `channel.prepare` — the per-invocation workspace hook
+
+The **preferred** way to give an agent a real repo, and the intended successor to
+`repoCheckout` (which stays supported for now — it has live users). A `/bin/sh` script,
+declared per channel, that the harness runs **on the lane** — after `dedup → backpressure`
+admitted the event, before `pool.acquire` — with cwd set to that session's workspace. The
+workspace then becomes the **engine's cwd**, so the repo is on disk before the first token:
+no tool call, no `checkout_hint`, no base64 tarball, and a real `.git` (blame, log, local
+`merge-base`, `diff base...head`).
+
+*Why on the lane and not in the channel's HTTP handler:* a cold clone blows GitLab's ~10 s
+webhook budget (failed delivery **and** a redelivery for work already done), cloning before
+admit turns a redelivery flood into a clone flood on events dedup was about to discard, and
+nothing bounds parallel clones until `maxConcurrentInvocations` applies. On the lane, all
+three come free from machinery that already exists.
+
+**The credential is the harness's, never the agent's.** `secretEnv` names go through the same
+env-only `SecretSource` as `webhook.auth.secret`: resolved from `os.environ` per use, redacted
+in logs, and stripped from `engine.forwardEnv` so the opencode subprocess cannot inherit them.
+Honest ceiling: harness and opencode share a container and a uid, so an agent with a shell can
+read `/proc/<pid>/environ`. "We do not hand it over" ≠ "it cannot be obtained".
+
+**Contract for script authors:**
+
+| Env var | Meaning |
+|---|---|
+| `ACH_WORKSPACE` | the workspace (== cwd == the engine's cwd). Put the checkout at `$ACH_WORKSPACE/repo`. |
+| `ACH_SESSION_KEY`, `ACH_EVENT_ID`, `ACH_CHANNEL` | invocation identity |
+| `ACH_EVENT_<FIELD>` | every scalar in the channel's delivery context, upper-cased. gitlab: `PROJECT_ID`, `PROJECT_PATH`, `KIND`, `TARGET_TYPE`, `MR_IID`/`ISSUE_IID`, `HEAD_SHA`. github: `REPO`, `PR_NUMBER`. |
+
+- The script is **static text**: `{{ }}` is not rendered in it, and no payload value is ever
+  interpolated into shell source. That is what makes handing a webhook payload to a shell hook
+  safe — there is no injection surface, only environment variables.
+- It runs as `sh -eu` fed on **stdin** (never written to disk, so the co-resident agent cannot
+  rewrite a script the harness will execute with its own secrets in env; nothing appears in
+  `/proc/<pid>/cmdline` either). First failing command aborts; an unset var aborts.
+- **It must be idempotent.** The workspace is keyed by `session_key` and survives across events
+  (that is the cache), so the second comment on an MR re-runs the script against a populated
+  directory: clone-or-fetch, not clone.
+- Non-zero exit, timeout, or spawn failure ⇒ **fail-closed**: the invocation is abandoned,
+  nothing is posted, `ach_agent_prepare_failures_total{reason}` increments. Deliberately the
+  opposite of memory's fail-open probe — a review of a repo that is not there is worse than
+  no review.
+- `HOME` is pinned to the workspace and `GIT_TERMINAL_PROMPT=0` is set. The base env is a small
+  allowlist (`PATH`, `SHELL`, `LANG`, `LANGUAGE`, `TZ`) plus what `env`/`secretEnv` declare.
+
+**Two rules the reference script exists to demonstrate:**
+
+1. **Origin from config, path from the payload.** Never clone `payload.project.git_http_url`.
+   Anyone who can forge a hook body would point it at their own host and harvest the token, and
+   a GitLab webhook secret is typically shared across an instance's hooks. The harness re-validates
+   `ACH_EVENT_PROJECT_PATH`/`ACH_EVENT_REPO` against a strict slug regex (no scheme, no host, no
+   userinfo, no `..`) and drops the variable if it fails — `sh -u` then aborts the script.
+2. **The token never lands in `.git/config`.** `https://oauth:$TOKEN@host/…` persists the
+   credential into the working tree the agent has a shell over. Pass it as a header via
+   `GIT_CONFIG_*` env (not `-c`, which is visible in `/proc/<pid>/cmdline`).
+
+```sh
+# GitLab MR review — idempotent clone-or-fetch of the MR head.
+AUTH=$(printf 'oauth2:%s' "$GITLAB_TOKEN" | base64 -w0)
+export GIT_CONFIG_COUNT=1 \
+       GIT_CONFIG_KEY_0=http.extraHeader \
+       GIT_CONFIG_VALUE_0="Authorization: Basic $AUTH"
+export GIT_LFS_SKIP_SMUDGE=1
+
+REPO="$ACH_WORKSPACE/repo"
+[ -d "$REPO/.git" ] || git clone --filter=blob:none --no-checkout --no-recurse-submodules \
+  "$REPO_BASE_URL/$ACH_EVENT_PROJECT_PATH.git" "$REPO"
+# The MR head ref is MUTABLE — it advances on every push. Fetch it, then check out the SHA the
+# event named, or the agent reviews a different revision than the one it was told about.
+git -C "$REPO" fetch --filter=blob:none origin \
+  "+refs/merge-requests/$ACH_EVENT_MR_IID/head:refs/ach/mr-$ACH_EVENT_MR_IID"
+git -C "$REPO" checkout --force --detach "$ACH_EVENT_HEAD_SHA"
+```
+
+`refs/merge-requests/{iid}/head` (GitLab) and `refs/pull/{n}/head` (GitHub) are published on the
+**target** repo, so fork MRs need no second remote, no fork URL from the payload and no second
+credential. Keep the clone credential **read-only**; a push hook, if one is ever added, gets its
+own scoped secret.
+
+**Untrusted content warning.** The workspace holds MR-authored code. `--no-recurse-submodules`
+and `GIT_LFS_SKIP_SMUDGE=1` are in the script for that reason, and a prompt that says "run the
+tests" executes attacker-supplied code inside the agent container, at the harness's uid.
+
+**Growth.** Workspaces are keyed by `session_key` under `engine.workDir` and are **not** reclaimed
+today — N repos × M open MRs accumulate on the volume. Cap the volume, or prune `workDir` out of
+band, until eviction lands.
 
 **The tool-limiting / consent gate is provisioning, not validation.**
 `capability.filter.exclude.{tools,mcpServers,skills}` **withholds** capabilities **before** they

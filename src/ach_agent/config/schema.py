@@ -635,6 +635,53 @@ class SessionBlock(BaseModel):
         return self
 
 
+# Env names boot/prepare.py pins itself for every prepare script. Operator config may not
+# set them: the harness writes them last, so a config entry would be silently discarded.
+RESERVED_PREPARE_ENV: frozenset[str] = frozenset(
+    {"ACH_WORKSPACE", "ACH_SESSION_KEY", "ACH_EVENT_ID", "ACH_CHANNEL", "HOME"}
+)
+# Reserved namespace for the event's normalized fields (ACH_EVENT_PROJECT_PATH, …).
+RESERVED_PREPARE_ENV_PREFIX = "ACH_EVENT_"
+
+
+class PrepareBlock(BaseModel):
+    """Operator contract §2 channel.prepare — the per-invocation workspace hook.
+
+    A `/bin/sh` script run on the lane before the engine turn, cwd = the invocation's
+    workspace (`$ACH_WORKSPACE`), which then becomes the engine's cwd. Typical use: clone
+    the repo a merge-request event names, so the agent reviews a real checkout without
+    ever holding the forge credential.
+
+    `script` is STATIC text — `{{ }}` templating is deliberately unsupported. Event data
+    reaches the script only as environment variables, which is what makes a shell hook
+    safe to hand a webhook payload (see boot/prepare.py).
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    script: str
+    env: dict[str, str] = Field(default_factory=dict)
+    # Credentials, by env NAME (never a value) — same env-only SecretSource as webhook.auth,
+    # resolved per use so rotation takes effect, and stripped from engine.forwardEnv so the
+    # agent's own process can never inherit them.
+    secret_env: dict[str, SecretSource] = Field(default_factory=dict, alias="secretEnv")
+    timeout_seconds: int = Field(default=120, alias="timeoutSeconds", gt=0, le=3600)
+
+    @model_validator(mode="after")
+    def _check(self) -> PrepareBlock:
+        if not self.script.strip():
+            raise ValueError("prepare: 'script' must not be empty")
+        for name in (*self.env, *self.secret_env):
+            if not _ENV_NAME_RE.match(name):
+                raise ValueError(f"prepare: not a valid environment variable name: {name!r}")
+            if name in RESERVED_PREPARE_ENV or name.startswith(RESERVED_PREPARE_ENV_PREFIX):
+                raise ValueError(f"prepare: env name '{name}' is reserved by the harness")
+        clash = set(self.env) & set(self.secret_env)
+        if clash:
+            raise ValueError(f"prepare: env name(s) in both env and secretEnv: {sorted(clash)}")
+        return self
+
+
 class ChannelConfig(BaseModel):
     """Operator contract §2 channel entry. extra=forbid catches unknown channel-level keys."""
 
@@ -645,6 +692,9 @@ class ChannelConfig(BaseModel):
     concurrency: int = 1
     prompt: str | None = None
     session: SessionBlock = Field(default_factory=SessionBlock)
+    # Optional for every channel type (a cron channel may want a workspace too), hence
+    # outside the type↔block coherence check below.
+    prepare: PrepareBlock | None = None
     source: Literal["gitlab", "github", "generic"] | None = None
     webhook: WebhookBlock | None = None
     cron: CronBlock | None = None

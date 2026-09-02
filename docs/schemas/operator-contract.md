@@ -767,10 +767,12 @@ read `/proc/<pid>/environ`. "We do not hand it over" ≠ "it cannot be obtained"
 - It runs as `sh -eu` fed on **stdin** (never written to disk, so the co-resident agent cannot
   rewrite a script the harness will execute with its own secrets in env; nothing appears in
   `/proc/<pid>/cmdline` either). First failing command aborts; an unset var aborts.
-- **It must be idempotent.** The workspace is keyed by `session_key` and survives across events
+- **Prepare must be idempotent.** The workspace is keyed by `session_key` and survives across events
   (that is the cache), so the second comment on an MR re-runs the script against a populated
   directory: clone-or-fetch, not clone.
-- Non-zero exit, timeout, or spawn failure ⇒ **fail-closed**: the invocation is abandoned,
+- Cleanup should also be idempotent so a later process can safely clean a workspace left by an
+  interrupted cleanup. Its failures are best-effort: logged and counted without changing delivery.
+- For prepare, non-zero exit, timeout, or spawn failure ⇒ **fail-closed**: the invocation is abandoned,
   nothing is posted, `ach_agent_prepare_failures_total{reason}` increments. Deliberately the
   opposite of memory's fail-open probe — a review of a repo that is not there is worse than
   no review.

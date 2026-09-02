@@ -285,10 +285,48 @@ async def test_cleanup_nonzero_log_omits_env_values(tmp_path: Path) -> None:
     with capture_logs() as logs:
         await run_cleanup(cfg, _event(), ws)
 
-    assert logs[-1]["event"] == "cleanup: script exited nonzero"
-    assert logs[-1]["returncode"] == 7
-    assert value not in str(logs)
-    assert cfg.script not in str(logs)
+    warning = logs[-1]
+    assert warning["event"] == "cleanup: script exited nonzero"
+    assert warning["returncode"] == 7
+    assert value not in str(warning)
+    assert cfg.script not in str(warning)
+
+
+async def test_cleanup_debug_log_contains_bounded_script_output(tmp_path: Path) -> None:
+    ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
+    script = "printf stdout; printf stderr >&2; exit 10"
+
+    with capture_logs() as logs:
+        await run_cleanup(_block(script), _event(), ws)
+
+    output = next(entry for entry in logs if entry["event"] == "cleanup: script output")
+    assert output["log_level"] == "debug"
+    assert output["stdout"] == "stdout"
+    assert output["stderr"] == "stderr"
+    assert output["truncated"] is False
+
+
+async def test_prepare_debug_log_contains_script_output(tmp_path: Path) -> None:
+    ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
+
+    with capture_logs() as logs:
+        await run_prepare(_block("printf ready; printf warning >&2"), _event(), ws)
+
+    output = next(entry for entry in logs if entry["event"] == "prepare: script output")
+    assert output["stdout"] == "ready"
+    assert output["stderr"] == "warning"
+
+
+async def test_cleanup_debug_output_keeps_only_the_tail(tmp_path: Path) -> None:
+    ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
+    script = 'i=0; while [ "$i" -lt 5000 ]; do printf x; i=$((i + 1)); done'
+
+    with capture_logs() as logs:
+        await run_cleanup(_block(script), _event(), ws)
+
+    output = next(entry for entry in logs if entry["event"] == "cleanup: script output")
+    assert output["stdout"] == "x" * 4096
+    assert output["truncated"] is True
 
 
 async def test_cleanup_timeout_is_best_effort(tmp_path: Path) -> None:
@@ -357,7 +395,7 @@ async def test_hook_logs_safe_start_and_success(
     with capture_logs() as logs:
         await runner(cfg, _event(), ws)  # type: ignore[operator]
 
-    start, success = logs
+    start, success = (entry for entry in logs if entry["log_level"] == "info")
     assert start == {
         "event": start_event,
         "log_level": "info",
@@ -371,5 +409,5 @@ async def test_hook_logs_safe_start_and_success(
     assert success["workspace"] == str(ws)
     assert success["returncode"] == 0
     assert isinstance(success["duration_ms"], int)
-    assert secret not in str(logs)
+    assert secret not in str((start, success))
     assert cfg.script not in str(logs)

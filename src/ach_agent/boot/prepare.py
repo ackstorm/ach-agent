@@ -65,9 +65,8 @@ _REPO_PATH_KEYS = frozenset({"project_path", "repo"})
 # Every credential it may use is named explicitly in `prepare.secretEnv`.
 _BASE_ENV = ("PATH", "SHELL", "LANG", "LANGUAGE", "TZ")
 
-# Only the last of a failing script's stderr is logged — enough to diagnose, bounded so a
-# runaway script cannot flood the log pipeline.
-_STDERR_TAIL_CHARS = 2000
+# Hook output is diagnostic and potentially noisy, so retain only a bounded tail.
+_HOOK_OUTPUT_TAIL_BYTES = 4096
 
 
 class PrepareFailed(RuntimeError):
@@ -93,6 +92,17 @@ async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
         os.killpg(proc.pid, signal.SIGKILL)
     with contextlib.suppress(Exception):
         await proc.wait()
+
+
+async def _read_tail(stream: asyncio.StreamReader) -> tuple[bytes, bool]:
+    tail = bytearray()
+    truncated = False
+    while chunk := await stream.read(8192):
+        tail.extend(chunk)
+        if len(tail) > _HOOK_OUTPUT_TAIL_BYTES:
+            del tail[:-_HOOK_OUTPUT_TAIL_BYTES]
+            truncated = True
+    return bytes(tail), truncated
 
 
 def workspace_dir(work_dir: str, session_key: str) -> Path:
@@ -186,14 +196,14 @@ async def _execute_hook(
     *,
     cwd: Path,
     env: dict[str, str],
-) -> tuple[int, bytes]:
+) -> tuple[int, bytes, bytes, bool]:
     try:
         proc = await asyncio.create_subprocess_exec(
             "/bin/sh",
             "-eu",
             "-s",
             stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(cwd),
             env=env,
@@ -202,17 +212,55 @@ async def _execute_hook(
     except OSError as exc:
         raise _HookSpawnFailed(str(exc)) from exc
 
+    async def communicate() -> tuple[int, bytes, bytes, bool]:
+        assert proc.stdin is not None
+        assert proc.stdout is not None
+        assert proc.stderr is not None
+        stdout_task = asyncio.create_task(_read_tail(proc.stdout))
+        stderr_task = asyncio.create_task(_read_tail(proc.stderr))
+        try:
+            try:
+                proc.stdin.write(script.encode())
+                await proc.stdin.drain()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            finally:
+                proc.stdin.close()
+            returncode = await proc.wait()
+            stdout, stderr = await asyncio.gather(stdout_task, stderr_task)
+            return returncode, stdout[0], stderr[0], stdout[1] or stderr[1]
+        finally:
+            stdout_task.cancel()
+            stderr_task.cancel()
+            await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+
     try:
-        _, stderr = await asyncio.wait_for(
-            proc.communicate(script.encode()), timeout=timeout_seconds
-        )
+        result = await asyncio.wait_for(communicate(), timeout=timeout_seconds)
     except TimeoutError:
         await _kill_process_group(proc)
         raise _HookTimedOut from None
     except asyncio.CancelledError:
         await _kill_process_group(proc)
         raise
-    return proc.returncode or 0, stderr
+    return result
+
+
+def _log_hook_output(
+    hook: str,
+    event: MessageEvent,
+    returncode: int,
+    stdout: bytes,
+    stderr: bytes,
+    truncated: bool,
+) -> None:
+    log.debug(
+        f"{hook}: script output",
+        session_key=event.session_key,
+        returncode=returncode,
+        stdout=stdout.decode("utf-8", "replace"),
+        stderr=stderr.decode("utf-8", "replace"),
+        truncated=truncated,
+    )
 
 
 async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -> None:
@@ -231,7 +279,7 @@ async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
             workspace=str(workspace),
             timeout_seconds=cfg.timeout_seconds,
         )
-        returncode, stderr = await _execute_hook(
+        returncode, stdout, stderr, truncated = await _execute_hook(
             cfg.script,
             cfg.timeout_seconds,
             cwd=workspace,
@@ -244,13 +292,15 @@ async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
         PREPARE_FAILURES.labels(reason="timeout").inc()
         raise PrepareFailed(f"prepare script timed out after {cfg.timeout_seconds}s") from None
 
+    _log_hook_output("prepare", event, returncode, stdout, stderr, truncated)
+
     if returncode != 0:
         PREPARE_FAILURES.labels(reason="exit").inc()
         # The tail can contain whatever the script echoed; structlog's secret-redaction
         # processors cover every secretEnv name (collect_secret_env_names).
         raise PrepareFailed(
             f"prepare script exited {returncode}: "
-            f"{stderr.decode('utf-8', 'replace')[-_STDERR_TAIL_CHARS:].strip()}"
+            f"{stderr.decode('utf-8', 'replace').strip()}"
         )
 
     log.info(
@@ -273,7 +323,7 @@ async def run_cleanup(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
             workspace=str(workspace),
             timeout_seconds=cfg.timeout_seconds,
         )
-        returncode, _ = await _execute_hook(
+        returncode, stdout, stderr, truncated = await _execute_hook(
             cfg.script,
             cfg.timeout_seconds,
             cwd=workspace.parent,
@@ -291,6 +341,8 @@ async def run_cleanup(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
             timeout_seconds=cfg.timeout_seconds,
         )
         return
+
+    _log_hook_output("cleanup", event, returncode, stdout, stderr, truncated)
 
     if returncode != 0:
         CLEANUP_FAILURES.labels(reason="exit").inc()

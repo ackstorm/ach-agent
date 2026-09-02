@@ -134,14 +134,15 @@ _LOG_LEVELS = {
 
 
 def _resolve_log_level() -> int:
-    """Resolve the filtering level from ACH_LOG_LEVEL (default INFO).
+    """Resolve the filtering level from LOG_LEVEL (default INFO).
 
     Default INFO keeps the console readable: at debug, the opencode stdout/stderr drain
     re-logs every line opencode prints (~135/178 lines in a calendar run) and buries the
-    agent reply on the shared TTY. ACH_LOG_LEVEL=debug restores the full firehose,
-    including the raw per-event SSE trace.
+    agent reply on the shared TTY. LOG_LEVEL=debug restores the full firehose, including
+    the raw per-event SSE trace. ACH_LOG_LEVEL remains as a compatibility fallback.
     """
-    return _LOG_LEVELS.get(os.environ.get("ACH_LOG_LEVEL", "").strip().lower(), logging.INFO)
+    value = os.environ.get("LOG_LEVEL", os.environ.get("ACH_LOG_LEVEL", ""))
+    return _LOG_LEVELS.get(value.strip().lower(), logging.INFO)
 
 
 # Secret.env NAMES to redact from logs; filled post config-load by add_secret_redaction().

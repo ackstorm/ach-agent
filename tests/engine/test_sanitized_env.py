@@ -4,9 +4,19 @@ Implements the CI secret-leakage test required by the plan's threat model (T-00-
 """
 from __future__ import annotations
 
+import logging
 import os
 
 import pytest
+
+
+def test_public_log_level_enables_debug(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ach_agent.engine.sanitized_env import _resolve_log_level
+
+    monkeypatch.delenv("ACH_LOG_LEVEL", raising=False)
+    monkeypatch.setenv("LOG_LEVEL", "debug")
+
+    assert _resolve_log_level() == logging.DEBUG
 
 
 # ---------------------------------------------------------------------------
@@ -25,7 +35,7 @@ def test_ek_never_logged(capsys: pytest.CaptureFixture[str], fake_ek_env: None) 
     """
     import structlog
 
-    from ach_agent.engine.sanitized_env import configure_logging, redact_ek_processor
+    from ach_agent.engine.sanitized_env import configure_logging
 
     # Configure structlog with redaction processor
     configure_logging()

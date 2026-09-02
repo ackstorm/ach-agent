@@ -436,9 +436,9 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#91-channelprepare-the-per-invocation-workspace-hook" class="md-nav__link">
+  <a href="#91-channelprepare-channelcleanup-session-workspace-hooks" class="md-nav__link">
     <span class="md-ellipsis">
-      9.1 channel.prepare — the per-invocation workspace hook
+      9.1 channel.prepare / channel.cleanup — session workspace hooks
     </span>
   </a>
   
@@ -759,8 +759,8 @@ mismatch.</p>
       // The SAME engine + namespaces render memory.hindsight.bank / memory.codemem.project (§2 memory).
       "prompt": "Review this merge request: {{ payload.object_attributes.url }}",
       // prepare: OPTIONAL per-invocation workspace hook (§9.1). A /bin/sh script run on the
-      //   LANE (after dedup + backpressure, before the agente exists) with cwd =
-      //   $ACH_WORKSPACE, which then becomes the engine's cwd. Valid on ANY channel type.
+      //   LANE (after dedup + backpressure, before the session engine is acquired or reused)
+      //   with cwd = $ACH_WORKSPACE, which is also the engine's cwd. Valid on ANY channel type.
       //   script is STATIC — {{ }} is NOT rendered here. Event data arrives ONLY as env.
       "prepare": {
         "script": "…sh, see §9.1…",
@@ -1185,14 +1185,26 @@ ephemeral). The gitlab MR/note channel stamps <code>head_sha</code> into the del
 prompt gets a one-line <code>checkout_repo(project=…, ref=…)</code> hint only when the facade is wired AND a
 head SHA is present. Requires gitlab-mcp to actually serve the archive resource (behind
 <code>GITLAB_REPO_ARCHIVE=1</code>); until then, leave the <code>repoCheckout</code> entry out of <code>mcpServers</code>.</p>
-<h3 id="91-channelprepare-the-per-invocation-workspace-hook">9.1 <code>channel.prepare</code> — the per-invocation workspace hook</h3>
+<h3 id="91-channelprepare-channelcleanup-session-workspace-hooks">9.1 <code>channel.prepare</code> / <code>channel.cleanup</code> — session workspace hooks</h3>
 <p>The <strong>preferred</strong> way to give an agent a real repo, and the intended successor to
 <code>repoCheckout</code> (which stays supported for now — it has live users). A <code>/bin/sh</code> script,
 declared per channel, that the harness runs <strong>on the lane</strong> — after <code>dedup → backpressure</code>
-admitted the event, before <code>pool.acquire</code> — with cwd set to that session's workspace. The
-workspace then becomes the <strong>engine's cwd</strong>, so the repo is on disk before the first token:
-no tool call, no <code>checkout_hint</code>, no base64 tarball, and a real <code>.git</code> (blame, log, local
-<code>merge-base</code>, <code>diff base...head</code>).</p>
+admitted each event, before <code>pool.acquire</code> acquires or reuses the session engine — with cwd
+set to that session's workspace. That workspace is also the <strong>engine's cwd</strong>, so the repo is
+on disk before the first token: no tool call, no <code>checkout_hint</code>, no base64 tarball, and a
+real <code>.git</code> (blame, log, local <code>merge-base</code>, <code>diff base...head</code>). Prepare is fail-closed.</p>
+<p><code>cleanup</code> is an optional singular sibling of <code>prepare</code> and is valid only when
+<code>prepare</code> is present. The lifecycle is:</p>
+<p><code>reserve session/cancel expiry -&gt; prepare -&gt; acquire/reuse engine -&gt; invocation -&gt;
+release -&gt; idle TTL -&gt; stop acquired engine -&gt; cleanup</code>.</p>
+<p>If <code>prepare</code> or engine acquisition fails after reservation, teardown runs <code>cleanup</code> without
+an acquired engine to stop.</p>
+<p>Cleanup runs through <code>/bin/sh -eu -s</code> from the parent of <code>ACH_WORKSPACE</code> and
+receives the latest event's validated <code>ACH_EVENT_*</code> values plus only its own
+configured <code>env</code> and <code>secretEnv</code>. Spawn, timeout, and nonzero-exit failures are
+best-effort: they are logged and counted without changing invocation delivery. Graceful
+shutdown attempts every registered cleanup, stopping an acquired engine first when present;
+<code>SIGKILL</code>, node loss, and container-runtime failure provide no cleanup guarantee.</p>
 <p><em>Why on the lane and not in the channel's HTTP handler:</em> a cold clone blows GitLab's ~10 s
 webhook budget (failed delivery <strong>and</strong> a redelivery for work already done), cloning before
 admit turns a redelivery flood into a clone flood on events dedup was about to discard, and
@@ -1214,7 +1226,7 @@ read <code>/proc/&lt;pid&gt;/environ</code>. "We do not hand it over" ≠ "it ca
 <tbody>
 <tr>
 <td><code>ACH_WORKSPACE</code></td>
-<td>the workspace (== cwd == the engine's cwd). Put the checkout at <code>$ACH_WORKSPACE/repo</code>.</td>
+<td>the workspace (prepare cwd and engine cwd; cleanup cwd is its parent). Put the checkout at <code>$ACH_WORKSPACE/repo</code>.</td>
 </tr>
 <tr>
 <td><code>ACH_SESSION_KEY</code>, <code>ACH_EVENT_ID</code>, <code>ACH_CHANNEL</code></td>
@@ -1233,10 +1245,12 @@ read <code>/proc/&lt;pid&gt;/environ</code>. "We do not hand it over" ≠ "it ca
 <li>It runs as <code>sh -eu</code> fed on <strong>stdin</strong> (never written to disk, so the co-resident agent cannot
   rewrite a script the harness will execute with its own secrets in env; nothing appears in
   <code>/proc/&lt;pid&gt;/cmdline</code> either). First failing command aborts; an unset var aborts.</li>
-<li><strong>It must be idempotent.</strong> The workspace is keyed by <code>session_key</code> and survives across events
+<li><strong>Prepare must be idempotent.</strong> The workspace is keyed by <code>session_key</code> and survives across events
   (that is the cache), so the second comment on an MR re-runs the script against a populated
   directory: clone-or-fetch, not clone.</li>
-<li>Non-zero exit, timeout, or spawn failure ⇒ <strong>fail-closed</strong>: the invocation is abandoned,
+<li>Cleanup should also be idempotent so a later process can safely clean a workspace left by an
+  interrupted cleanup. Its failures are best-effort: logged and counted without changing delivery.</li>
+<li>For prepare, non-zero exit, timeout, or spawn failure ⇒ <strong>fail-closed</strong>: the invocation is abandoned,
   nothing is posted, <code>ach_agent_prepare_failures_total{reason}</code> increments. Deliberately the
   opposite of memory's fail-open probe — a review of a repo that is not there is worse than
   no review.</li>
@@ -1277,9 +1291,9 @@ own scoped secret.</p>
 <p><strong>Untrusted content warning.</strong> The workspace holds MR-authored code. <code>--no-recurse-submodules</code>
 and <code>GIT_LFS_SKIP_SMUDGE=1</code> are in the script for that reason, and a prompt that says "run the
 tests" executes attacker-supplied code inside the agent container, at the harness's uid.</p>
-<p><strong>Growth.</strong> Workspaces are keyed by <code>session_key</code> under <code>engine.workDir</code> and are <strong>not</strong> reclaimed
-today — N repos × M open MRs accumulate on the volume. Cap the volume, or prune <code>workDir</code> out of
-band, until eviction lands.</p>
+<p><strong>Growth.</strong> Workspaces are keyed by <code>session_key</code> under <code>engine.workDir</code>. Growth is bounded only
+when a configured cleanup succeeds; absent or failed cleanup can leave workspaces behind. Cap the
+volume or prune <code>workDir</code> out of band if that residual growth is unacceptable.</p>
 <p><strong>The tool-limiting / consent gate is provisioning, not validation.</strong>
 <code>capability.filter.exclude.{tools,mcpServers,skills}</code> <strong>withholds</strong> capabilities <strong>before</strong> they
 are offered to opencode — the model literally cannot call/see them. The reserved <code>consent</code> terminal

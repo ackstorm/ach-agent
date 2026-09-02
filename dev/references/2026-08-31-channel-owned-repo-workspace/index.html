@@ -315,6 +315,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#shipped-preparecleanup-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      Shipped prepare/cleanup example
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#why" class="md-nav__link">
     <span class="md-ellipsis">
       Why
@@ -420,9 +429,43 @@ sketched below. Everything above "Config shape" held; the config shape did not. 
 an operator-supplied <code>/bin/sh</code> on the lane with the workspace as cwd, and every event field
 arrives as an environment variable. One generic seam (~150 lines) instead of a typed clone
 block per forge; it also covers pushes, SSH remotes and non-git preparation without a schema
-change. The rest of this note stands as the reasoning, and the "Deferred" section is unchanged.
+change. ach-agent executes configuration-owned scripts and contains no Git/cache policy. The rest
+of this note stands as the reasoning, and the "Deferred" section is unchanged.
 <strong>Supersedes:</strong> <code>mcpServers: {type: repoCheckout}</code> + <code>engine/repo_facade.py</code> +
 <code>engine/repo_archive.py</code> — still present and supported (live users), now the legacy path.</p>
+<h2 id="shipped-preparecleanup-example">Shipped prepare/cleanup example</h2>
+<div class="highlight"><pre><span></span><code><span class="nt">prepare</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">script</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">    </span><span class="no">set -eu</span>
+<span class="w">    </span><span class="no">AUTH=$(printf 'oauth2:%s' "$GITLAB_TOKEN" | base64 -w0)</span>
+<span class="w">    </span><span class="no">export GIT_CONFIG_COUNT=1</span>
+<span class="w">    </span><span class="no">export GIT_CONFIG_KEY_0=http.extraHeader</span>
+<span class="w">    </span><span class="no">export GIT_CONFIG_VALUE_0="Authorization: Basic $AUTH"</span>
+<span class="w">    </span><span class="no">export GIT_TERMINAL_PROMPT=0</span>
+<span class="w">    </span><span class="no">export GIT_LFS_SKIP_SMUDGE=1</span>
+<span class="w">    </span><span class="no">REPO="$ACH_WORKSPACE/repo"</span>
+<span class="w">    </span><span class="no">URL="$GITLAB_REPO_BASEURL/$ACH_EVENT_PROJECT_PATH.git"</span>
+<span class="w">    </span><span class="no">if [ -d "$REPO/.git" ]; then</span>
+<span class="w">      </span><span class="no">git -C "$REPO" remote set-url origin "$URL"</span>
+<span class="w">      </span><span class="no">git -C "$REPO" fetch --prune origin</span>
+<span class="w">    </span><span class="no">else</span>
+<span class="w">      </span><span class="no">git clone --filter=blob:none --no-recurse-submodules "$URL" "$REPO"</span>
+<span class="w">    </span><span class="no">fi</span>
+<span class="w">    </span><span class="no">if [ -n "${ACH_EVENT_MR_IID:-}" ] &amp;&amp; [ -n "${ACH_EVENT_HEAD_SHA:-}" ]; then</span>
+<span class="w">      </span><span class="no">git -C "$REPO" fetch origin "refs/merge-requests/$ACH_EVENT_MR_IID/head"</span>
+<span class="w">      </span><span class="no">git -C "$REPO" checkout --detach "$ACH_EVENT_HEAD_SHA"</span>
+<span class="w">    </span><span class="no">fi</span>
+<span class="w">  </span><span class="nt">forwardEnv</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">GITLAB_TOKEN</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">GITLAB_REPO_BASEURL</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="nt">timeoutSeconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">120</span>
+<span class="nt">cleanup</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">script</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">    </span><span class="no">set -eu</span>
+<span class="w">    </span><span class="no">test -n "$ACH_WORKSPACE"</span>
+<span class="w">    </span><span class="no">rm -rf -- "$ACH_WORKSPACE"</span>
+<span class="w">  </span><span class="nt">timeoutSeconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
+</code></pre></div>
+<p>A shared bare mirror/worktree optimization, including its cross-session locking, must also be
+implemented in these scripts rather than in ach-agent.</p>
 <h2 id="why">Why</h2>
 <p>The agent needs a real on-disk repo to review a merge request. Today it gets one through the
 <code>repoCheckout</code> facade: a harness-hosted MCP tool (<code>checkout_repo</code>) that reads gitlab-mcp's

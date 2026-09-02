@@ -139,12 +139,51 @@
     },
     "ChannelConfig": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "cleanup": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "cleanup"
+            ]
+          },
+          "then": {
+            "properties": {
+              "prepare": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "prepare"
+            ]
+          }
+        }
+      ],
       "description": "Operator contract §2 channel entry. extra=forbid catches unknown channel-level keys.",
       "properties": {
         "a2a": {
           "anyOf": [
             {
               "$ref": "#/$defs/A2ABlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cleanup": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PrepareBlock"
             },
             {
               "type": "null"
@@ -660,7 +699,7 @@
     },
     "PrepareBlock": {
       "additionalProperties": false,
-      "description": "Operator contract §2 channel.prepare — the per-invocation workspace hook.\n\nA `/bin/sh` script run on the lane before the engine turn, cwd = the invocation's\nworkspace (`$ACH_WORKSPACE`), which then becomes the engine's cwd. Typical use: clone\nthe repo a merge-request event names, so the agent reviews a real checkout without\never holding the forge credential.\n\n`script` is STATIC text — `{{ }}` templating is deliberately unsupported. Event data\nreaches the script only as environment variables, which is what makes a shell hook\nsafe to hand a webhook payload (see boot/prepare.py).",
+      "description": "Operator contract §2 channel hook — a static session-lifecycle script.\n\n`prepare` runs on the lane before the session engine is acquired or reused for each\ninvocation and is fail-closed. `cleanup` is best-effort when the reserved session is\ntorn down: after an acquired engine stops, or after prepare/engine-acquire failure\nbefore acquisition completes. Prepare and engine cwd are `ACH_WORKSPACE`; cleanup cwd\nis its parent. Graceful shutdown attempts cleanup, but abrupt loss cannot guarantee it.\n\n`script` is STATIC text — `{{ }}` templating is deliberately unsupported. Event data\nreaches the script only as environment variables, which is what makes a shell hook safe\nto hand a webhook payload (see boot/prepare.py).",
       "properties": {
         "env": {
           "additionalProperties": {

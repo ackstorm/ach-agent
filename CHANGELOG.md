@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+- Limit the pre-push secret scan to new commits and remove the duplicate trufflehog pass.
+
 ## [0.13.2] - 2026-09-02
 
 - Add best-effort `channels[].cleanup` hooks bound to session engine expiry and graceful shutdown.

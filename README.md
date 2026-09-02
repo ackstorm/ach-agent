@@ -136,7 +136,8 @@ the same change.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). Run
-`make verify` before pushing — the pre-push hook enforces the same gate. Security issues: see
+Run `make verify` for the full local gate; the pre-push hook checks only commits being pushed.
+Security issues: see
 [SECURITY.md](SECURITY.md).
 
 ## License

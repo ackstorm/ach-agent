@@ -1,0 +1,632 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>Channel cleanup hook design - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#channel-cleanup-hook-design" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Channel cleanup hook design
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#goal" class="md-nav__link">
+    <span class="md-ellipsis">
+      Goal
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#user-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      User API
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lifecycle
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cleanup-execution-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      Cleanup execution contract
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#application-owned-resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      Application-owned resources
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cross-repository-surfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      Cross-repository surfaces
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Cross-repository surfaces">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ach-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      ach-agent
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ach-operator" class="md-nav__link">
+    <span class="md-ellipsis">
+      ach operator
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verification-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      Verification requirements
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="channel-cleanup-hook-design">Channel cleanup hook design</h1>
+<p><strong>Date:</strong> 2026-09-02<br />
+<strong>Status:</strong> Approved<br />
+<strong>Compatibility:</strong> Additive change to the <code>v1alpha1</code> CRD and agent config schema</p>
+<h2 id="goal">Goal</h2>
+<p>Let a channel release the session-owned resources created by
+<code>channels[].prepare</code> when that reserved session is torn down. The first
+use case is deleting a Git checkout under <code>ACH_WORKSPACE</code> so a long-lived Pod
+does not accumulate one clone for every issue or merge request it has seen.</p>
+<h2 id="user-api">User API</h2>
+<p><code>cleanup</code> is one optional block beside <code>prepare</code>, not a list:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">channels</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gitlab-review</span>
+<span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">webhook</span>
+<span class="w">      </span><span class="nt">prepare</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">script</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">          </span><span class="no">set -eu</span>
+<span class="w">          </span><span class="no">AUTH=$(printf 'oauth2:%s' "$GITLAB_TOKEN" | base64 -w0)</span>
+<span class="w">          </span><span class="no">export GIT_CONFIG_COUNT=1</span>
+<span class="w">          </span><span class="no">export GIT_CONFIG_KEY_0=http.extraHeader</span>
+<span class="w">          </span><span class="no">export GIT_CONFIG_VALUE_0="Authorization: Basic $AUTH"</span>
+<span class="w">          </span><span class="no">if [ ! -d "$ACH_WORKSPACE/repo/.git" ]; then</span>
+<span class="w">            </span><span class="no">git clone "$GITLAB_BASE_URL/$ACH_EVENT_PROJECT_PATH.git" \</span>
+<span class="w">              </span><span class="no">"$ACH_WORKSPACE/repo"</span>
+<span class="w">          </span><span class="no">else</span>
+<span class="w">            </span><span class="no">git -C "$ACH_WORKSPACE/repo" fetch --prune origin</span>
+<span class="w">          </span><span class="no">fi</span>
+<span class="w">        </span><span class="nt">forwardEnv</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">GITLAB_TOKEN</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">GITLAB_BASE_URL</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="nt">timeoutSeconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">120</span>
+<span class="w">      </span><span class="nt">cleanup</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">script</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">          </span><span class="no">set -eu</span>
+<span class="w">          </span><span class="no">test -n "$ACH_WORKSPACE"</span>
+<span class="w">          </span><span class="no">rm -rf -- "$ACH_WORKSPACE"</span>
+<span class="w">        </span><span class="nt">timeoutSeconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
+</code></pre></div>
+<p>The operator-facing <code>cleanup</code> shape is identical to <code>prepare</code>:</p>
+<ul>
+<li><code>script</code>: required, static shell text; <code>{{ }}</code> is not rendered.</li>
+<li><code>forwardEnv</code>: optional set of names selected from the merged
+  <code>AgentProfile.spec.env</code> and <code>ACHAgent.spec.env</code>.</li>
+<li><code>timeoutSeconds</code>: optional integer from 1 through 3600; default 120.</li>
+</ul>
+<p><code>cleanup</code> requires <code>prepare</code>. This keeps <code>ACH_WORKSPACE</code> ownership explicit and
+avoids silently changing channels without a workspace hook from the engine's
+global work directory to a per-session directory.</p>
+<p>The rendered ach-agent config resolves <code>forwardEnv</code> to the existing hook shape:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"cleanup"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"script"</span><span class="p">:</span><span class="w"> </span><span class="s2">"set -eu\nrm -rf -- \"$ACH_WORKSPACE\"\n"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"env"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"GITLAB_BASE_URL"</span><span class="p">:</span><span class="w"> </span><span class="s2">"https://git.example.com"</span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"secretEnv"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"GITLAB_TOKEN"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"env"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ACH_SECRET_GITLAB_REVIEW_CLEANUP_GITLAB_TOKEN"</span><span class="p">}},</span>
+<span class="w">    </span><span class="nt">"timeoutSeconds"</span><span class="p">:</span><span class="w"> </span><span class="mi">30</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>An unknown <code>forwardEnv</code> name is ignored and remains unset. Prepare and cleanup
+use independent allowlists and independent generated secret aliases.</p>
+<h2 id="lifecycle">Lifecycle</h2>
+<p>For a session with <code>prepare</code> and <code>cleanup</code>, the harness performs:</p>
+<ol>
+<li>Reserve the <code>session_key</code> in the engine pool and cancel any pending idle-TTL
+   expiry before starting <code>prepare</code>.</li>
+<li>Run <code>prepare</code> on the lane with the session workspace as its current working
+   directory.</li>
+<li>Acquire or reuse the session engine, with that workspace as the engine work
+   directory.</li>
+<li>Release the engine after the invocation.</li>
+<li>If another event for the same session arrives before the idle TTL expires,
+   cancel expiry and retain the engine and workspace.</li>
+<li>When the final idle TTL expires, stop the engine and then run <code>cleanup</code>.</li>
+</ol>
+<p><code>idleTtlSeconds: 0</code> stops the engine and runs cleanup immediately after the
+invocation. A prepare or engine-launch failure after session reservation runs
+cleanup immediately. Graceful process shutdown stops every tracked engine and
+runs every registered cleanup.</p>
+<p>The pool's per-session lock serializes expiry/cleanup with new session
+activity. If expiry has already started, a new event waits until cleanup ends
+and then prepares a fresh workspace. If the new event reserves the session
+first, it cancels expiry before prepare begins. Cleanup therefore cannot delete
+a workspace while a new prepare script is using it.</p>
+<h2 id="cleanup-execution-contract">Cleanup execution contract</h2>
+<p>Cleanup receives the same isolated environment as prepare:</p>
+<ul>
+<li><code>ACH_WORKSPACE</code></li>
+<li><code>ACH_SESSION_KEY</code></li>
+<li><code>ACH_EVENT_ID</code></li>
+<li><code>ACH_CHANNEL</code></li>
+<li>validated scalar <code>ACH_EVENT_*</code> variables from the most recent event</li>
+<li>only the literal and secret variables selected by <code>cleanup.forwardEnv</code></li>
+<li>the small runtime base environment already used by prepare</li>
+</ul>
+<p>Cleanup runs through <code>/bin/sh -eu -s</code>; the script is sent on stdin and is never
+written into the agent-readable workspace. Its current working directory is
+the parent of <code>ACH_WORKSPACE</code>, allowing it to remove the complete workspace.
+It uses the same process-group kill and stderr-tail redaction rules as prepare.</p>
+<p>Prepare remains fail-closed. Cleanup is best-effort: spawn, timeout, or nonzero
+exit increments <code>ach_agent_cleanup_failures_total{reason=...}</code> and emits a
+warning, but never changes an already produced reply or raises into pool
+release. Cancellation still kills and reaps the cleanup process group before
+propagating <code>CancelledError</code>.</p>
+<p>Cleanup scripts should be idempotent. The harness aims to invoke one registered
+cleanup once, but cannot guarantee execution after <code>SIGKILL</code>, node loss, or
+container-runtime failure. A failed cleanup is not retried automatically; a
+later event for the session registers a new cleanup attempt.</p>
+<h2 id="application-owned-resources">Application-owned resources</h2>
+<p>The harness has no Git-specific behavior. It does not choose between clone,
+fetch, bare mirrors, or worktrees, and it never deletes a workspace unless the
+configured cleanup script says to do so. <code>prepare</code> and <code>cleanup</code> are generic
+shell lifecycle hooks; the agent configuration owns every resource operation.</p>
+<p>The documented GitLab example uses one idempotent clone per active session:
+prepare reuses and fetches the checkout on subsequent events for that session,
+and cleanup removes it after the session goes idle. When cleanup succeeds, this
+bounds clone count by active/warm sessions instead of all sessions observed
+during the Pod's lifetime; absent or failed cleanup can leave workspaces behind.</p>
+<p>A deployment may instead implement a shared bare mirror plus per-session Git
+worktrees entirely inside its prepare and cleanup scripts. That script is also
+responsible for cross-session locking and stale-lock recovery around mirror
+updates. No repository cache, Git command, lock manager, or automatic workspace
+garbage collector belongs in ach-agent or the operator.</p>
+<h2 id="cross-repository-surfaces">Cross-repository surfaces</h2>
+<h3 id="ach-agent">ach-agent</h3>
+<ul>
+<li>Add <code>channels[].cleanup</code> to the Pydantic contract and frozen JSON Schema.</li>
+<li>Share the safe shell execution machinery with prepare.</li>
+<li>Register cleanup ownership in <code>EnginePool</code> before prepare starts.</li>
+<li>Run cleanup on TTL expiry, immediate release, failed preparation/launch, and
+  graceful shutdown.</li>
+<li>Add cleanup failure metrics, lifecycle/race tests, contract docs, and a Git
+  checkout example.</li>
+</ul>
+<h3 id="ach-operator">ach operator</h3>
+<ul>
+<li>Add <code>ChannelSpec.Cleanup</code> using the existing <code>PrepareSpec</code> shape.</li>
+<li>Resolve cleanup <code>forwardEnv</code> from the merged profile/agent environment.</li>
+<li>Generate <code>ACH_SECRET_&lt;CHANNEL&gt;_CLEANUP_&lt;NAME&gt;</code> aliases for forwarded secrets.</li>
+<li>Render cleanup into the agent ConfigMap without secret plaintext.</li>
+<li>Regenerate deepcopy code, CRDs, Helm CRD copies, API reference, the field
+  shape golden, and the vendored ach-agent JSON Schema.</li>
+</ul>
+<h2 id="verification-requirements">Verification requirements</h2>
+<p>Tests must prove:</p>
+<ol>
+<li>Cleanup without prepare is rejected by both schemas.</li>
+<li>Cleanup uses the same validated environment and secret isolation as prepare.</li>
+<li>Exit, spawn, and timeout failures are observable and best-effort.</li>
+<li>Cancellation kills and reaps cleanup children.</li>
+<li>TTL zero, TTL expiry, preparation failure, launch failure, and graceful
+   shutdown all invoke cleanup.</li>
+<li>A new event before expiry cancels cleanup.</li>
+<li>Cleanup already in progress is serialized before a new prepare starts.</li>
+<li>Operator literal, secret, and missing-name rendering matches the contract,
+   and secret plaintext never enters the ConfigMap.</li>
+<li>Generated schemas, CRDs, Helm copies, API docs, examples, and field-shape
+   golden agree across both repositories.</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../../..", "features": [], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

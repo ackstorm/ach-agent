@@ -322,37 +322,36 @@ async def test_cleanup_debug_log_contains_bounded_script_output(tmp_path: Path) 
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
     script = "printf stdout; printf stderr >&2; exit 10"
 
-    with capture_logs() as logs:
+    with patch("ach_agent.boot.prepare.log.debug") as debug:
         await run_cleanup(_block(script), _event(), ws)
 
-    output = next(entry for entry in logs if entry["event"] == "cleanup: script output")
-    assert output["log_level"] == "debug"
-    assert output["stdout"] == "stdout"
-    assert output["stderr"] == "stderr"
-    assert output["truncated"] is False
+    assert debug.call_args.args == ("cleanup: script output",)
+    assert debug.call_args.kwargs["stdout"] == "stdout"
+    assert debug.call_args.kwargs["stderr"] == "stderr"
+    assert debug.call_args.kwargs["truncated"] is False
 
 
 async def test_prepare_debug_log_contains_script_output(tmp_path: Path) -> None:
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
 
-    with capture_logs() as logs:
+    with patch("ach_agent.boot.prepare.log.debug") as debug:
         await run_prepare(_block("printf ready; printf warning >&2"), _event(), ws)
 
-    output = next(entry for entry in logs if entry["event"] == "prepare: script output")
-    assert output["stdout"] == "ready"
-    assert output["stderr"] == "warning"
+    assert debug.call_args.args == ("prepare: script output",)
+    assert debug.call_args.kwargs["stdout"] == "ready"
+    assert debug.call_args.kwargs["stderr"] == "warning"
 
 
 async def test_cleanup_debug_output_keeps_only_the_tail(tmp_path: Path) -> None:
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
     script = 'i=0; while [ "$i" -lt 5000 ]; do printf x; i=$((i + 1)); done'
 
-    with capture_logs() as logs:
+    with patch("ach_agent.boot.prepare.log.debug") as debug:
         await run_cleanup(_block(script), _event(), ws)
 
-    output = next(entry for entry in logs if entry["event"] == "cleanup: script output")
-    assert output["stdout"] == "x" * 4096
-    assert output["truncated"] is True
+    assert debug.call_args.args == ("cleanup: script output",)
+    assert debug.call_args.kwargs["stdout"] == "x" * 4096
+    assert debug.call_args.kwargs["truncated"] is True
 
 
 async def test_cleanup_timeout_is_best_effort(tmp_path: Path) -> None:

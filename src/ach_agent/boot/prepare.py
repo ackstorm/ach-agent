@@ -306,8 +306,7 @@ async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
         # The tail can contain whatever the script echoed; structlog's secret-redaction
         # processors cover every secretEnv name (collect_secret_env_names).
         raise PrepareFailed(
-            f"prepare script exited {returncode}: "
-            f"{stderr.decode('utf-8', 'replace').strip()}"
+            f"prepare script exited {returncode}: {stderr.decode('utf-8', 'replace').strip()}"
         )
 
     log.info(
@@ -355,8 +354,7 @@ async def run_webhook_script(cfg: PrepareBlock, event: MessageEvent, work_dir: s
         if returncode != 0:
             WEBHOOK_SCRIPT_FAILURES.labels(reason="exit").inc()
             raise WebhookScriptFailed(
-                f"webhook script exited {returncode}: "
-                f"{stderr.decode('utf-8', 'replace').strip()}"
+                f"webhook script exited {returncode}: {stderr.decode('utf-8', 'replace').strip()}"
             )
         log.info(
             "webhook-script: script complete",

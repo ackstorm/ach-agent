@@ -811,9 +811,7 @@ async def main(
         return
 
     # Collect webhook channels to wire; build FastAPI app if any exist
-    webhook_channels = [
-        ch for ch in cfg.channels if ch.type in ("webhook", "webhook-script")
-    ]
+    webhook_channels = [ch for ch in cfg.channels if ch.type in ("webhook", "webhook-script")]
 
     # Build A2A bridges and sub-apps (topology A: mounted under the same FastAPI/uvicorn socket).
     # W9: engine_runner must NOT import channels.a2a or hold a bridge reference.

@@ -511,21 +511,22 @@ class WebhookBlock(BaseModel):
     # Which GitLab event kinds this channel routes to its agent or script handler. None → the
     # conversational defaults (merge_request, issue, note). Kinds not listed are accepted-and-
     # ignored (HTTP 200), never 422. A note routes only when "note" and its base kind are allowed.
-    gitlab_events: list[
-        Literal[
-            "merge_request",
-            "issue",
-            "note",
-            "push",
-            "project_create",
-            "project_rename",
-            "project_transfer",
-            "project_update",
-            "repository_update",
+    gitlab_events: (
+        list[
+            Literal[
+                "merge_request",
+                "issue",
+                "note",
+                "push",
+                "project_create",
+                "project_rename",
+                "project_transfer",
+                "project_update",
+                "repository_update",
+            ]
         ]
-    ] | None = Field(
-        default=None, alias="gitlabEvents"
-    )
+        | None
+    ) = Field(default=None, alias="gitlabEvents")
 
     # GitLab loop-guard: the GitLab username the agent posts AS (the egress PAT's user, NOT
     # agent.name — a distinct fact the operator must supply). When set, inbound gitlab events

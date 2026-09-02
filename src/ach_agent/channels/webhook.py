@@ -365,9 +365,7 @@ async def handle_webhook_request(
                 return WebhookResult(status_code=200, body={"status": "ignored"})
             delivery_context, session_key = parsed
             if channel_cfg.type == "webhook-script":
-                session_key = (
-                    f"{delivery_context['project_id']}:webhook-script:{channel_cfg.name}"
-                )
+                session_key = f"{delivery_context['project_id']}:webhook-script:{channel_cfg.name}"
             # ACTOR GATES (gitlab only, pre-enqueue). Loop-guard first, then allowlist.
             actor = _gitlab_actor(body)
             wh = channel_cfg.webhook

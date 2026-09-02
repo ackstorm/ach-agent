@@ -725,6 +725,19 @@ workspace then becomes the **engine's cwd**, so the repo is on disk before the f
 no tool call, no `checkout_hint`, no base64 tarball, and a real `.git` (blame, log, local
 `merge-base`, `diff base...head`).
 
+`cleanup` is an optional singular sibling of `prepare` and is valid only when
+`prepare` is present. The lifecycle is:
+
+`reserve session/cancel expiry -> prepare -> acquire engine -> invocation ->
+release -> idle TTL -> stop engine -> cleanup`.
+
+Cleanup runs through `/bin/sh -eu -s` from the parent of `ACH_WORKSPACE` and
+receives the latest event's validated `ACH_EVENT_*` values plus only its own
+configured `env` and `secretEnv`. Spawn, timeout, and nonzero-exit failures are
+best-effort: they are logged and counted without changing invocation delivery.
+Graceful shutdown attempts every registered cleanup after stopping its engine;
+`SIGKILL`, node loss, and container-runtime failure provide no cleanup guarantee.
+
 *Why on the lane and not in the channel's HTTP handler:* a cold clone blows GitLab's ~10 s
 webhook budget (failed delivery **and** a redelivery for work already done), cloning before
 admit turns a redelivery flood into a clone flood on events dedup was about to discard, and

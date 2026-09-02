@@ -44,6 +44,14 @@ def test_artifact_is_valid_json_schema() -> None:
     Draft202012Validator.check_schema(schema)
 
 
+def test_cleanup_uses_the_prepare_block_schema() -> None:
+    """Cleanup and prepare expose the same validated hook shape."""
+    schema = json.loads(_ARTIFACT.read_text(encoding="utf-8"))
+    hook = {"$ref": "#/$defs/PrepareBlock"}
+    assert hook in schema["$defs"]["ChannelConfig"]["properties"]["cleanup"]["anyOf"]
+    assert hook in schema["$defs"]["ChannelConfig"]["properties"]["prepare"]["anyOf"]
+
+
 @pytest.mark.parametrize("fixture", _FIXTURES, ids=lambda p: p.name)
 def test_rendered_fixtures_validate_against_schema(fixture: Path) -> None:
     """Every rendered-contract fixture (what the operator emits) passes the frozen schema."""

@@ -6,9 +6,47 @@ sketched below. Everything above "Config shape" held; the config shape did not. 
 an operator-supplied `/bin/sh` on the lane with the workspace as cwd, and every event field
 arrives as an environment variable. One generic seam (~150 lines) instead of a typed clone
 block per forge; it also covers pushes, SSH remotes and non-git preparation without a schema
-change. The rest of this note stands as the reasoning, and the "Deferred" section is unchanged.
+change. ach-agent executes configuration-owned scripts and contains no Git/cache policy. The rest
+of this note stands as the reasoning, and the "Deferred" section is unchanged.
 **Supersedes:** `mcpServers: {type: repoCheckout}` + `engine/repo_facade.py` +
 `engine/repo_archive.py` — still present and supported (live users), now the legacy path.
+
+## Shipped prepare/cleanup example
+
+```yaml
+prepare:
+  script: |
+    set -eu
+    AUTH=$(printf 'oauth2:%s' "$GITLAB_TOKEN" | base64 -w0)
+    export GIT_CONFIG_COUNT=1
+    export GIT_CONFIG_KEY_0=http.extraHeader
+    export GIT_CONFIG_VALUE_0="Authorization: Basic $AUTH"
+    export GIT_TERMINAL_PROMPT=0
+    export GIT_LFS_SKIP_SMUDGE=1
+    REPO="$ACH_WORKSPACE/repo"
+    URL="$GITLAB_REPO_BASEURL/$ACH_EVENT_PROJECT_PATH.git"
+    if [ -d "$REPO/.git" ]; then
+      git -C "$REPO" remote set-url origin "$URL"
+      git -C "$REPO" fetch --prune origin
+    else
+      git clone --filter=blob:none --no-recurse-submodules "$URL" "$REPO"
+    fi
+    if [ -n "${ACH_EVENT_MR_IID:-}" ] && [ -n "${ACH_EVENT_HEAD_SHA:-}" ]; then
+      git -C "$REPO" fetch origin "refs/merge-requests/$ACH_EVENT_MR_IID/head"
+      git -C "$REPO" checkout --detach "$ACH_EVENT_HEAD_SHA"
+    fi
+  forwardEnv: [GITLAB_TOKEN, GITLAB_REPO_BASEURL]
+  timeoutSeconds: 120
+cleanup:
+  script: |
+    set -eu
+    test -n "$ACH_WORKSPACE"
+    rm -rf -- "$ACH_WORKSPACE"
+  timeoutSeconds: 30
+```
+
+A shared bare mirror/worktree optimization, including its cross-session locking, must also be
+implemented in these scripts rather than in ach-agent.
 
 ## Why
 

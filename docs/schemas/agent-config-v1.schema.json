@@ -152,6 +152,17 @@
           ],
           "default": null
         },
+        "cleanup": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PrepareBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "concurrency": {
           "default": 1,
           "title": "Concurrency",
@@ -660,7 +671,7 @@
     },
     "PrepareBlock": {
       "additionalProperties": false,
-      "description": "Operator contract §2 channel.prepare — the per-invocation workspace hook.\n\nA `/bin/sh` script run on the lane before the engine turn, cwd = the invocation's\nworkspace (`$ACH_WORKSPACE`), which then becomes the engine's cwd. Typical use: clone\nthe repo a merge-request event names, so the agent reviews a real checkout without\never holding the forge credential.\n\n`script` is STATIC text — `{{ }}` templating is deliberately unsupported. Event data\nreaches the script only as environment variables, which is what makes a shell hook\nsafe to hand a webhook payload (see boot/prepare.py).",
+      "description": "Operator contract §2 channel hook — a static per-invocation script.\n\nThe harness runs `prepare` before the engine turn and `cleanup` after it. `script` is\nSTATIC text — `{{ }}` templating is deliberately unsupported. Event data reaches the\nscript only as environment variables, which is what makes a shell hook safe to hand a\nwebhook payload (see boot/prepare.py).",
       "properties": {
         "env": {
           "additionalProperties": {

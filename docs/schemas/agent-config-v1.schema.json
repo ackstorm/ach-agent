@@ -139,6 +139,34 @@
     },
     "ChannelConfig": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "cleanup": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "cleanup"
+            ]
+          },
+          "then": {
+            "properties": {
+              "prepare": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "prepare"
+            ]
+          }
+        }
+      ],
       "description": "Operator contract §2 channel entry. extra=forbid catches unknown channel-level keys.",
       "properties": {
         "a2a": {

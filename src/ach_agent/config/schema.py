@@ -683,7 +683,24 @@ class PrepareBlock(BaseModel):
 class ChannelConfig(BaseModel):
     """Operator contract §2 channel entry. extra=forbid catches unknown channel-level keys."""
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+        json_schema_extra={
+            "allOf": [
+                {
+                    "if": {
+                        "required": ["cleanup"],
+                        "properties": {"cleanup": {"not": {"type": "null"}}},
+                    },
+                    "then": {
+                        "required": ["prepare"],
+                        "properties": {"prepare": {"not": {"type": "null"}}},
+                    },
+                }
+            ]
+        },
+    )
 
     name: str
     type: ChannelType  # Literal union rejects unknown types (CFG-03)

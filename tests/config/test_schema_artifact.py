@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
 
 _REPO = Path(__file__).resolve().parents[2]
 _ARTIFACT = _REPO / "docs" / "schemas" / "agent-config-v1.schema.json"
@@ -50,6 +51,16 @@ def test_cleanup_uses_the_prepare_block_schema() -> None:
     hook = {"$ref": "#/$defs/PrepareBlock"}
     assert hook in schema["$defs"]["ChannelConfig"]["properties"]["cleanup"]["anyOf"]
     assert hook in schema["$defs"]["ChannelConfig"]["properties"]["prepare"]["anyOf"]
+
+
+def test_cleanup_requires_prepare() -> None:
+    """The artifact rejects cleanup-only channel hooks before deployment."""
+    schema = json.loads(_ARTIFACT.read_text(encoding="utf-8"))
+    instance = json.loads(_FIXTURES[0].read_text(encoding="utf-8"))
+    instance["channels"][0]["cleanup"] = {"script": "true"}
+
+    with pytest.raises(ValidationError, match="prepare"):
+        Draft202012Validator(schema).validate(instance)
 
 
 @pytest.mark.parametrize("fixture", _FIXTURES, ids=lambda p: p.name)

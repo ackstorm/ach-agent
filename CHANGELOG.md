@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.13.1] - 2026-09-02
+
 ### Fixed
 
 - Cancelling a running `channel.prepare` hook now kills and reaps its process group, so

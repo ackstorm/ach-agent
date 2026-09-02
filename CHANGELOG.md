@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.13.3] - 2026-09-02
+
 - Limit the pre-push secret scan to new commits and remove the duplicate trufflehog pass.
+- Support `LOG_LEVEL=debug` and log bounded prepare/cleanup stdout and stderr at debug level.
 
 ## [0.13.2] - 2026-09-02
 

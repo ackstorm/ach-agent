@@ -165,6 +165,68 @@
               "prepare"
             ]
           }
+        },
+        {
+          "else": {
+            "not": {
+              "required": [
+                "script"
+              ]
+            }
+          },
+          "if": {
+            "properties": {
+              "type": {
+                "const": "webhook-script"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "prompt"
+                  ]
+                },
+                {
+                  "required": [
+                    "prepare"
+                  ]
+                },
+                {
+                  "required": [
+                    "cleanup"
+                  ]
+                }
+              ]
+            },
+            "properties": {
+              "script": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "source": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "webhook": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "source",
+              "webhook",
+              "script"
+            ]
+          }
         }
       ],
       "description": "Operator contract §2 channel entry. extra=forbid catches unknown channel-level keys.",
@@ -245,6 +307,17 @@
           ],
           "default": null
         },
+        "script": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PrepareBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "session": {
           "$ref": "#/$defs/SessionBlock"
         },
@@ -268,6 +341,7 @@
         "type": {
           "enum": [
             "webhook",
+            "webhook-script",
             "cron",
             "queue",
             "a2a"
@@ -699,7 +773,7 @@
     },
     "PrepareBlock": {
       "additionalProperties": false,
-      "description": "Operator contract §2 channel hook — a static session-lifecycle script.\n\n`prepare` runs on the lane before the session engine is acquired or reused for each\ninvocation and is fail-closed. `cleanup` is best-effort when the reserved session is\ntorn down: after an acquired engine stops, or after prepare/engine-acquire failure\nbefore acquisition completes. Prepare and engine cwd are `ACH_WORKSPACE`; cleanup cwd\nis its parent. Graceful shutdown attempts cleanup, but abrupt loss cannot guarantee it.\n\n`script` is STATIC text — `{{ }}` templating is deliberately unsupported. Event data\nreaches the script only as environment variables, which is what makes a shell hook safe\nto hand a webhook payload (see boot/prepare.py).",
+      "description": "Operator contract §2 static channel script block.\n\n`prepare` runs on the lane before the session engine is acquired or reused for each\ninvocation and is fail-closed. `cleanup` is best-effort when the reserved session is\ntorn down: after an acquired engine stops, or after prepare/engine-acquire failure\nbefore acquisition completes. Prepare and engine cwd are `ACH_WORKSPACE`; cleanup cwd\nis its parent. Graceful shutdown attempts cleanup, but abrupt loss cannot guarantee it.\n\n`webhook-script` uses the same validated block but receives normalized webhook JSON on\nstdin, runs in a temporary workspace, and never acquires or invokes an engine.\n\n`script` is STATIC text — `{{ }}` templating is deliberately unsupported. Event data\nreaches the script only as environment variables, which is what makes a shell hook safe\nto hand a webhook payload (see boot/prepare.py).",
       "properties": {
         "env": {
           "additionalProperties": {
@@ -1107,7 +1181,13 @@
                 "enum": [
                   "merge_request",
                   "issue",
-                  "note"
+                  "note",
+                  "push",
+                  "project_create",
+                  "project_rename",
+                  "project_transfer",
+                  "project_update",
+                  "repository_update"
                 ],
                 "type": "string"
               },

@@ -508,11 +508,22 @@ class WebhookBlock(BaseModel):
 
     auth: WebhookAuthBlock = Field(default_factory=WebhookAuthBlock)
 
-    # Which GitLab event kinds this channel ROUTES to the agent. None → all routable kinds
-    # (merge_request, issue, note). Kinds not listed are accepted-and-ignored (HTTP 200), never
-    # 422 — so GitLab does not auto-disable the hook. A note (comment) routes only when "note"
-    # AND its noteable base kind (merge_request/issue) are both allowed.
-    gitlab_events: list[Literal["merge_request", "issue", "note"]] | None = Field(
+    # Which GitLab event kinds this channel routes to its agent or script handler. None → the
+    # conversational defaults (merge_request, issue, note). Kinds not listed are accepted-and-
+    # ignored (HTTP 200), never 422. A note routes only when "note" and its base kind are allowed.
+    gitlab_events: list[
+        Literal[
+            "merge_request",
+            "issue",
+            "note",
+            "push",
+            "project_create",
+            "project_rename",
+            "project_transfer",
+            "project_update",
+            "repository_update",
+        ]
+    ] | None = Field(
         default=None, alias="gitlabEvents"
     )
 
@@ -597,7 +608,7 @@ class QueueBlock(BaseModel):
 # slack/telegram removed; queue added per operator contract §2.
 # NOTE: `tui` is NOT a channel — it is the `--tui` launch modifier (console mode that
 # ignores configured channels). See main.py. So it is intentionally absent here.
-ChannelType = Literal["webhook", "cron", "queue", "a2a"]
+ChannelType = Literal["webhook", "webhook-script", "cron", "queue", "a2a"]
 
 
 class SessionBlock(BaseModel):
@@ -645,13 +656,16 @@ RESERVED_PREPARE_ENV_PREFIX = "ACH_EVENT_"
 
 
 class PrepareBlock(BaseModel):
-    """Operator contract §2 channel hook — a static session-lifecycle script.
+    """Operator contract §2 static channel script block.
 
     `prepare` runs on the lane before the session engine is acquired or reused for each
     invocation and is fail-closed. `cleanup` is best-effort when the reserved session is
     torn down: after an acquired engine stops, or after prepare/engine-acquire failure
     before acquisition completes. Prepare and engine cwd are `ACH_WORKSPACE`; cleanup cwd
     is its parent. Graceful shutdown attempts cleanup, but abrupt loss cannot guarantee it.
+
+    `webhook-script` uses the same validated block but receives normalized webhook JSON on
+    stdin, runs in a temporary workspace, and never acquires or invokes an engine.
 
     `script` is STATIC text — `{{ }}` templating is deliberately unsupported. Event data
     reaches the script only as environment variables, which is what makes a shell hook safe
@@ -702,7 +716,29 @@ class ChannelConfig(BaseModel):
                         "required": ["prepare"],
                         "properties": {"prepare": {"not": {"type": "null"}}},
                     },
-                }
+                },
+                {
+                    "if": {
+                        "required": ["type"],
+                        "properties": {"type": {"const": "webhook-script"}},
+                    },
+                    "then": {
+                        "required": ["source", "webhook", "script"],
+                        "properties": {
+                            "source": {"not": {"type": "null"}},
+                            "webhook": {"not": {"type": "null"}},
+                            "script": {"not": {"type": "null"}},
+                        },
+                        "not": {
+                            "anyOf": [
+                                {"required": ["prompt"]},
+                                {"required": ["prepare"]},
+                                {"required": ["cleanup"]},
+                            ]
+                        },
+                    },
+                    "else": {"not": {"required": ["script"]}},
+                },
             ]
         },
     )
@@ -716,6 +752,7 @@ class ChannelConfig(BaseModel):
     # outside the type↔block coherence check below.
     prepare: PrepareBlock | None = None
     cleanup: PrepareBlock | None = None
+    script: PrepareBlock | None = None
     source: Literal["gitlab", "github", "generic"] | None = None
     webhook: WebhookBlock | None = None
     cron: CronBlock | None = None
@@ -737,22 +774,38 @@ class ChannelConfig(BaseModel):
     def check_type_block_coherence(self) -> ChannelConfig:
         """D-04: enforce channel type↔sub-block coherence at config load time.
 
-        The channel type names its required sub-block (type Literal == field name,
-        1:1); every other type's block is forbidden. webhook additionally requires
-        'source'. Raises ValueError (wrapped by Pydantic into ValidationError →
-        sys.exit(1)).
+        Each channel requires its transport block; webhook-script additionally requires
+        its script handler. Every unrelated block is forbidden. HTTP channels require
+        'source'. Raises ValueError (wrapped by Pydantic into ValidationError → sys.exit(1)).
         """
         if self.cleanup is not None and self.prepare is None:
             raise ValueError("channel cleanup requires channel prepare")
         t = self.type
-        if getattr(self, t) is None:
+        if t == "webhook-script":
+            if self.webhook is None:
+                raise ValueError(
+                    f"channel '{self.name}': type='webhook-script' requires a webhook block"
+                )
+            if self.script is None:
+                raise ValueError(
+                    f"channel '{self.name}': type='webhook-script' requires a script block"
+                )
+            for field in ("prompt", "prepare", "cleanup"):
+                if getattr(self, field) is not None:
+                    raise ValueError(
+                        f"channel '{self.name}': type='webhook-script' forbids '{field}' block"
+                    )
+        elif getattr(self, t) is None:
             article = "an" if t == "a2a" else "a"
             raise ValueError(f"channel '{self.name}': type='{t}' requires {article} '{t}' block")
-        if t == "webhook" and self.source is None:
-            raise ValueError(f"channel '{self.name}': type='webhook' requires 'source' field")
+        if t in ("webhook", "webhook-script") and self.source is None:
+            raise ValueError(f"channel '{self.name}': type='{t}' requires 'source' field")
         for foreign in ("webhook", "cron", "queue", "a2a"):
-            if foreign != t and getattr(self, foreign) is not None:
+            allowed = foreign == t or (t == "webhook-script" and foreign == "webhook")
+            if not allowed and getattr(self, foreign) is not None:
                 raise ValueError(f"channel '{self.name}': type='{t}' forbids '{foreign}' block")
+        if t != "webhook-script" and self.script is not None:
+            raise ValueError(f"channel '{self.name}': type='{t}' forbids 'script' block")
         return self
 
 

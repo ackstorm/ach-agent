@@ -36,7 +36,8 @@ Spec reference: `ach-agent-runtime-spec-v1_4_7.md` (API group `runtime.ackstorm.
 > 1. **Egress is external MCP tools, not channel delivery.** `responseActions`, `inputSchema`,
 >    `consentTier`, `webhook.deliver`, and `response` are **removed**. The agent acts by calling
 >    **external MCP tool servers** (e.g. `gitlab-mcp`); the harness no longer dispatches actions.
-> 2. **Channel set redrawn.** v1 = `webhook` (`source`-selected), `cron`, `queue`, `tui`, `a2a`.
+> 2. **Channel set redrawn.** v1 = `webhook` (`source`-selected), `webhook-script`,
+>    `cron`, `queue`, `tui`, `a2a`.
 >    No `slack`/`telegram`/`openai-compatible`. `gitlab` = `webhook` + `source: gitlab`.
 > 3. **Engine is opencode (`opencode serve` + SSE), hardcoded; the `engine` block is removed;
 >    `model` stays.** opencode is a complete, provider-agnostic agent with a config-driven MCP
@@ -301,14 +302,15 @@ mismatch.
                              // keep it from the agent. NAME MUST NOT be in engine.forwardEnv. A {file}
                              // source is NOT supported and is rejected at config load (extra_forbidden).
                              "secret": { "env": "ACH_SECRET_GITLAB_REVIEW_WEBHOOK" } },
-                   // gitlabEvents: which GitLab event kinds THIS channel ROUTES to the agent.
-                   //   Omit / null → all routable kinds ["merge_request","issue","note"].
+                   // gitlabEvents: which GitLab event kinds THIS channel routes to its handler.
+                   //   Omit / null → conversational defaults ["merge_request","issue","note"].
                    //   Routable kinds yield a per-conversation session_key:
                    //     merge_request hook & MR-comment → "{project}:{mr_iid}"    (shared lane)
                    //     issue hook & issue-comment       → "{project}:issue:{iid}" (namespaced)
                    //   A note (comment) routes only when "note" AND its noteable base kind
-                   //   (merge_request/issue) are both listed. Kinds not listed — and non-routable
-                   //   kinds (push, tag_push, pipeline, emoji, …) — are accepted-and-IGNORED
+                   //   (merge_request/issue) are both listed. webhook-script also supports push
+                   //   and selected project/repository System Hook events. Kinds not listed — and
+                   //   unsupported kinds (tag_push, pipeline, emoji, …) — are accepted-and-IGNORED
                    //   (HTTP 200 {"status":"ignored"}), NEVER 422, so GitLab does not auto-disable
                    //   the hook. 422 is reserved for a routable-but-malformed payload only.
                    "gitlabEvents": ["merge_request", "note"],
@@ -329,6 +331,20 @@ mismatch.
       "webhook": { "auth": { "type": "header_token",   // static shared secret in a configurable header
                              "header": "X-Api-Key",
                              "secret": { "env": "ACH_SECRET_GENERIC_HOOK" } } } },
+
+    { "name": "gitlab-register", "type": "webhook-script", "source": "gitlab",
+      // Auth/filter/admission are identical to webhook. After 202 admission, the static
+      // script runs with normalized webhook JSON on stdin and no engine/model invocation.
+      "webhook": { "auth": { "type": "gitlab_token",
+                              "secret": { "env": "ACH_SECRET_GITLAB_REGISTER" } },
+                   "gitlabEvents": ["project_create", "project_rename", "project_transfer",
+                                    "project_update", "repository_update", "push",
+                                    "merge_request"] },
+      "script": {
+        "script": "payload=$(cat); ...",
+        "secretEnv": { "GITLAB_TOKEN": { "env": "ACH_SECRET_GITLAB_REGISTER_TOKEN" } },
+        "timeoutSeconds": 120
+      } },
 
     { "name": "daily-security", "type": "cron", "concurrency": 1,
       "cron": { "schedule": "0 8 * * 1-5", "timezone": "Europe/Madrid" },
@@ -635,6 +651,7 @@ config field.
 | Channel class | Channels | Terminal contract | If invalid after retries |
 |---------------|----------|-------------------|--------------------------|
 | **async (no result expected)** | webhook, cron, queue | `{"action":"none","text":"…","thoughts":"…"}` | log + **ignore** (work already done via tools) |
+| **deterministic script** | webhook-script | **none** — normalized payload on stdin | log + failure metric |
 | **call — async result** | a2a (async-only) | `{"action":"a2a_reply","text":"…"}` | **callback FAILED** to the caller (`TaskStatusUpdateEvent(state=failed)`) |
 | **call — free** | tui (`--tui` modifier) | **none** — stream text to the terminal | n/a |
 
@@ -652,6 +669,20 @@ class ConsentRequest(BaseModel):  action: Literal["consent"]    # RESERVED, v1.1
 ---
 
 ## 9. Tools / egress — external MCP via the localhost proxy
+
+### 9.0 `webhook-script` — deterministic ingress handler
+
+`webhook-script` is the no-model sibling of `webhook`. Authentication, GitLab event
+filtering, deduplication, backpressure, project-scoped lanes, and concurrency happen before
+the script. The admitted event then runs as `/bin/sh -eu -c <static-script>` with normalized
+webhook JSON on stdin, a temporary `ACH_WORKSPACE`, validated `ACH_EVENT_*` environment, and
+only explicitly configured `env`/`secretEnv`. Its workspace is removed after every event.
+It never probes memory, acquires the engine pool, builds a prompt, or invokes a model.
+
+The endpoint remains asynchronous: it returns `202` after admission, so later script failures
+are surfaced through structured logs and `ach_agent_webhook_script_failures_total`, not by
+changing the HTTP response. The output tail follows the same bounded debug logging and secret
+redaction as prepare/cleanup.
 
 The agent acts by calling **external MCP tool servers** (e.g. `gitlab-mcp`). opencode is a
 config-driven MCP client — **but it points only at the harness's localhost proxy.** The proxy

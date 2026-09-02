@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -14,10 +15,12 @@ from structlog.testing import capture_logs
 
 from ach_agent.boot.prepare import (
     PrepareFailed,
+    WebhookScriptFailed,
     build_prepare_env,
     prepare_workspace,
     run_cleanup,
     run_prepare,
+    run_webhook_script,
     workspace_dir,
 )
 from ach_agent.channels.message_event import MessageEvent
@@ -174,6 +177,29 @@ async def test_script_runs_in_the_workspace(tmp_path) -> None:  # type: ignore[n
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "42:7")
     await run_prepare(_block('echo "$ACH_EVENT_MR_IID" > marker'), _event(mr_iid=7), ws)
     assert (ws / "marker").read_text().strip() == "7"
+
+
+async def test_webhook_script_receives_payload_on_stdin_and_removes_workspace(
+    tmp_path: Path,
+) -> None:
+    payload_file = tmp_path / "payload.json"
+    workspace_file = tmp_path / "workspace.txt"
+    event = _event(project_id=42)
+    event.payload = {"event_name": "push", "project_id": 42}
+    cfg = _block(
+        'cat > "$PAYLOAD_FILE"; printf "%s" "$ACH_WORKSPACE" > "$WORKSPACE_FILE"',
+        env={"PAYLOAD_FILE": str(payload_file), "WORKSPACE_FILE": str(workspace_file)},
+    )
+
+    await run_webhook_script(cfg, event, str(tmp_path / "work"))
+
+    assert json.loads(payload_file.read_text()) == event.payload
+    assert not Path(workspace_file.read_text()).exists()
+
+
+async def test_webhook_script_nonzero_fails_without_an_engine(tmp_path: Path) -> None:
+    with pytest.raises(WebhookScriptFailed, match="exited 9"):
+        await run_webhook_script(_block("exit 9"), _event(), str(tmp_path / "work"))
 
 
 async def test_payload_text_cannot_escape_into_the_shell(tmp_path) -> None:  # type: ignore[no-untyped-def]

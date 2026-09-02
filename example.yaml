@@ -101,7 +101,7 @@ channels:
         type: gitlab_token              # gitlab_token | hmac | header_token | none
         secret: {env: ACH_SECRET_GITLAB_WEBHOOK}   # env NAME, never a value (env-only)
       gitlabEvents: [merge_request, note]    # route MR hooks + MR/issue comments; omit → MR+issue+note.
-                                             # Other kinds (push, pipeline, …) → HTTP 200 ignored, never 422.
+                                             # Unlisted kinds → HTTP 200 ignored, never 422.
     # prepare: a /bin/sh script run on the lane before the turn, cwd = $ACH_WORKSPACE, which
     # then becomes the agent's cwd. The harness holds the clone credential; the agent never
     # does. The script is STATIC — event data arrives only as env (no {{ }}, no injection).

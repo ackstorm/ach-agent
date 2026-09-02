@@ -94,7 +94,9 @@ configure_logging()
 log = structlog.get_logger(__name__)
 
 # D-02: only channel types wired in this build
-WIRED_CHANNEL_TYPES: frozenset[str] = frozenset({"cron", "webhook", "a2a", "queue"})
+WIRED_CHANNEL_TYPES: frozenset[str] = frozenset(
+    {"cron", "webhook", "webhook-script", "a2a", "queue"}
+)
 
 # model.type → ACH compat-endpoint path prefix fronted by the model proxy. opencode's
 # provider baseURL becomes "http://127.0.0.1:<port>/<prefix>". Each type hits its NATIVE wire:
@@ -809,7 +811,9 @@ async def main(
         return
 
     # Collect webhook channels to wire; build FastAPI app if any exist
-    webhook_channels = [ch for ch in cfg.channels if ch.type == "webhook"]
+    webhook_channels = [
+        ch for ch in cfg.channels if ch.type in ("webhook", "webhook-script")
+    ]
 
     # Build A2A bridges and sub-apps (topology A: mounted under the same FastAPI/uvicorn socket).
     # W9: engine_runner must NOT import channels.a2a or hold a bridge reference.

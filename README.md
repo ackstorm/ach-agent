@@ -5,7 +5,7 @@
 
 `ach-agent` is a generic **execution plane** for managed AI agents: a single-process **Python**
 runtime ("the harness") that boots from a rendered runtime config, runs channel adapters
-(`webhook`, `cron`, `queue`, `a2a`), serializes inbound events through a governed
+(`webhook`, `webhook-script`, `cron`, `queue`, `a2a`), serializes inbound events through a governed
 FIFO **router**, drives the [opencode](https://github.com/sst/opencode) engine over HTTP/SSE,
 and lets the agent act through external MCP servers (fronted by ACH); egress is model-initiated
 and the harness does not deliver results itself.

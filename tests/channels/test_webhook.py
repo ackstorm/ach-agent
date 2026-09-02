@@ -523,6 +523,21 @@ def _make_cfg_events(
     )
 
 
+def _make_script_cfg(events: list[str]) -> ChannelConfig:
+    return ChannelConfig.model_validate(
+        {
+            "name": "gitlab-register",
+            "type": "webhook-script",
+            "source": "gitlab",
+            "webhook": {
+                "auth": {"type": "gitlab_token", "secret": {"env": SECRET_ENV}},
+                "gitlabEvents": events,
+            },
+            "script": {"script": "true"},
+        }
+    )
+
+
 def _note_by(username: str, *, system: bool = False) -> dict[str, Any]:
     """A note-on-MR hook authored by `username` (project 42, MR 7)."""
     attrs: dict[str, Any] = {"noteable_type": "MergeRequest", "note": "please rebase"}
@@ -552,6 +567,47 @@ async def _post(payload: dict[str, Any], cfg: ChannelConfig, secret: str) -> tup
     headers = _make_headers(secret, event_uuid=str(uuid.uuid4()))
     result = await handle_webhook_request(json.dumps(payload).encode(), headers, cfg, handler)
     return result, handler
+
+
+@pytest.mark.asyncio
+async def test_webhook_script_routes_system_project_create_per_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(SECRET_ENV, "s")
+    payload = {
+        "event_name": "project_create",
+        "project_id": 74,
+        "path_with_namespace": "blueprints/new-project",
+    }
+
+    result, handler = await _post(payload, _make_script_cfg(["project_create"]), "s")
+
+    assert result.status_code == 202
+    event = handler.events[0]
+    assert event.session_key == "74:webhook-script:gitlab-register"
+    assert event.delivery_context == {
+        "project_id": 74,
+        "project_path": "blueprints/new-project",
+        "kind": "project_create",
+    }
+
+
+@pytest.mark.asyncio
+async def test_webhook_script_routes_system_push_per_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(SECRET_ENV, "s")
+    payload = {
+        "event_name": "push",
+        "project_id": 42,
+        "project": {"id": 42, "path_with_namespace": "blueprints/example"},
+    }
+
+    result, handler = await _post(payload, _make_script_cfg(["push"]), "s")
+
+    assert result.status_code == 202
+    assert handler.events[0].session_key == "42:webhook-script:gitlab-register"
+    assert handler.events[0].delivery_context["kind"] == "push"
 
 
 @pytest.mark.asyncio

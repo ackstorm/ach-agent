@@ -139,6 +139,41 @@ async def test_engine_runner_registers_cleanup_before_prepare(tmp_path: Path) ->
     assert pool.calls == ["begin", "prepare_workspace", "prepare", "acquire", "release:0.0"]
 
 
+async def test_webhook_script_runner_never_acquires_an_engine(tmp_path: Path) -> None:
+    from ach_agent.boot.engine_runner import make_engine_runner
+    from ach_agent.engine.lifecycle import EngineConfig
+    from ach_agent.engine.opencode.driver import OpencodeDriver
+
+    pool = _HookPool()
+    channel = ChannelConfig.model_validate(
+        {
+            "name": "gitlab-register",
+            "type": "webhook-script",
+            "source": "gitlab",
+            "webhook": {"auth": {"type": "none"}},
+            "script": {"script": "true"},
+        }
+    )
+    runner = make_engine_runner(
+        pool=pool,
+        driver=OpencodeDriver(),
+        engine_cfg=EngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
+        max_invocation_seconds=30,
+        channels_by_name={channel.name: channel},
+    )
+    event = MessageEvent(
+        idempotency_key="event-1",
+        session_key="42:webhook-script:gitlab-register",
+        channel_name=channel.name,
+        payload={"event_name": "push", "project_id": 42},
+        delivery_context={"project_id": 42, "kind": "push"},
+    )
+
+    await runner(event, lambda: None)
+
+    assert pool.calls == []
+
+
 async def test_prepare_failure_discards_reserved_cleanup(tmp_path: Path) -> None:
     from ach_agent.boot.engine_runner import make_engine_runner
     from ach_agent.boot.prepare import PrepareFailed
@@ -615,7 +650,8 @@ def test_channel_idle_ttl_from_config() -> None:
     idle_ttl = EngineBlock.model_validate({}).idle_ttl_seconds
     assert idle_ttl == 30.0
 
-    # Boot-time map (boot.engine_runner.make_engine_runner wiring): {ch.name: engine.idle_ttl_seconds}.
+    # Boot-time map (boot.engine_runner.make_engine_runner wiring):
+    # {ch.name: engine.idle_ttl_seconds}.
     channels = [("hook", "webhook"), ("tick", "cron")]
     channel_ttl = {name: idle_ttl for name, _typ in channels}
     assert channel_ttl == {"hook": 30.0, "tick": 30.0}

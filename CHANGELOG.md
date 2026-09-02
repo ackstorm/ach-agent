@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Added
+
+- Add `webhook-script`, an authenticated asynchronous webhook channel that executes a
+  deterministic static shell script with normalized JSON on stdin and never starts an engine.
+- Accept GitLab `push`, `project_create`, `project_rename`, `project_transfer`,
+  `project_update`, and `repository_update` events for deterministic project automation.
+
 ## [0.13.3] - 2026-09-02
 
 - Limit the pre-push secret scan to new commits and remove the duplicate trufflehog pass.

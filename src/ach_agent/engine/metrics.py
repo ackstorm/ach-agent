@@ -50,6 +50,12 @@ CLEANUP_FAILURES: prometheus_client.Counter = prometheus_client.Counter(
     ["reason"],
 )
 
+WEBHOOK_SCRIPT_FAILURES: prometheus_client.Counter = prometheus_client.Counter(
+    "ach_agent_webhook_script_failures_total",
+    "webhook-script handlers that failed after the event was admitted",
+    ["reason"],
+)
+
 # ach_agent_cost_unpriced_total: every point where cost accounting gives up and a turn is
 # billed 0. Boot reasons (fetch_failed/no_entry/malformed/unpriced) fire ONCE at startup —
 # alert on `> 0`, not on rate(). The per-response reasons (unpriced, usage_missing) keep

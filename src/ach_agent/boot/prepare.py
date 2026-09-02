@@ -34,9 +34,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import json
 import os
 import re
+import shutil
 import signal
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +48,7 @@ import structlog
 from ach_agent.boot.paths import link_ach_state
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import PrepareBlock, resolve_secret
-from ach_agent.engine.metrics import CLEANUP_FAILURES, PREPARE_FAILURES
+from ach_agent.engine.metrics import CLEANUP_FAILURES, PREPARE_FAILURES, WEBHOOK_SCRIPT_FAILURES
 
 log = structlog.get_logger(__name__)
 
@@ -77,6 +80,10 @@ class PrepareFailed(RuntimeError):
     fail-CLOSED (unlike memory's fail-open probe): a review posted after a failed clone
     is a review of a repo that is not there, which is worse than no review at all.
     """
+
+
+class WebhookScriptFailed(RuntimeError):
+    """A deterministic webhook script failed before completing its event."""
 
 
 class _HookSpawnFailed(RuntimeError):
@@ -196,12 +203,12 @@ async def _execute_hook(
     *,
     cwd: Path,
     env: dict[str, str],
+    stdin_payload: bytes | None = None,
 ) -> tuple[int, bytes, bytes, bool]:
+    argv = ("/bin/sh", "-eu", "-s") if stdin_payload is None else ("/bin/sh", "-eu", "-c", script)
     try:
         proc = await asyncio.create_subprocess_exec(
-            "/bin/sh",
-            "-eu",
-            "-s",
+            *argv,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -220,7 +227,7 @@ async def _execute_hook(
         stderr_task = asyncio.create_task(_read_tail(proc.stderr))
         try:
             try:
-                proc.stdin.write(script.encode())
+                proc.stdin.write(script.encode() if stdin_payload is None else stdin_payload)
                 await proc.stdin.drain()
             except (BrokenPipeError, ConnectionResetError):
                 pass
@@ -310,6 +317,55 @@ async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
         returncode=returncode,
         duration_ms=int((asyncio.get_running_loop().time() - started) * 1000),
     )
+
+
+async def run_webhook_script(cfg: PrepareBlock, event: MessageEvent, work_dir: str) -> None:
+    """Run a deterministic webhook handler with normalized JSON on stdin and no engine."""
+    base = Path(work_dir)
+    base.mkdir(parents=True, exist_ok=True)
+    workspace = Path(tempfile.mkdtemp(prefix="webhook-script-", dir=base))
+    env = build_prepare_env(cfg, event, workspace)
+    payload = json.dumps(event.payload, ensure_ascii=False, separators=(",", ":")).encode()
+    started = asyncio.get_running_loop().time()
+    try:
+        log.info(
+            "webhook-script: script running",
+            session_key=event.session_key,
+            workspace=str(workspace),
+            timeout_seconds=cfg.timeout_seconds,
+        )
+        try:
+            returncode, stdout, stderr, truncated = await _execute_hook(
+                cfg.script,
+                cfg.timeout_seconds,
+                cwd=workspace,
+                env=env,
+                stdin_payload=payload,
+            )
+        except _HookSpawnFailed as exc:
+            WEBHOOK_SCRIPT_FAILURES.labels(reason="spawn").inc()
+            raise WebhookScriptFailed(f"webhook script could not be started: {exc}") from exc
+        except _HookTimedOut:
+            WEBHOOK_SCRIPT_FAILURES.labels(reason="timeout").inc()
+            raise WebhookScriptFailed(
+                f"webhook script timed out after {cfg.timeout_seconds}s"
+            ) from None
+
+        _log_hook_output("webhook-script", event, returncode, stdout, stderr, truncated)
+        if returncode != 0:
+            WEBHOOK_SCRIPT_FAILURES.labels(reason="exit").inc()
+            raise WebhookScriptFailed(
+                f"webhook script exited {returncode}: "
+                f"{stderr.decode('utf-8', 'replace').strip()}"
+            )
+        log.info(
+            "webhook-script: script complete",
+            session_key=event.session_key,
+            returncode=returncode,
+            duration_ms=int((asyncio.get_running_loop().time() - started) * 1000),
+        )
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
 
 
 async def run_cleanup(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -> None:

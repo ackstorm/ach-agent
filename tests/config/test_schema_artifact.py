@@ -53,6 +53,32 @@ def test_cleanup_uses_the_prepare_block_schema() -> None:
     assert hook in schema["$defs"]["ChannelConfig"]["properties"]["prepare"]["anyOf"]
 
 
+def test_webhook_script_contract_is_published() -> None:
+    schema = json.loads(_ARTIFACT.read_text(encoding="utf-8"))
+    channel = schema["$defs"]["ChannelConfig"]
+    assert "webhook-script" in channel["properties"]["type"]["enum"]
+    hook = {"$ref": "#/$defs/PrepareBlock"}
+    assert hook in channel["properties"]["script"]["anyOf"]
+    events = schema["$defs"]["WebhookBlock"]["properties"]["gitlabEvents"]["anyOf"][0]
+    assert {"push", "project_create", "repository_update"} <= set(events["items"]["enum"])
+
+
+def test_webhook_script_artifact_requires_script() -> None:
+    schema = json.loads(_ARTIFACT.read_text(encoding="utf-8"))
+    instance = json.loads(_FIXTURES[0].read_text(encoding="utf-8"))
+    instance["channels"] = [
+        {
+            "name": "register",
+            "type": "webhook-script",
+            "source": "gitlab",
+            "webhook": {"auth": {"type": "none"}},
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="script"):
+        Draft202012Validator(schema).validate(instance)
+
+
 def test_cleanup_requires_prepare() -> None:
     """The artifact rejects cleanup-only channel hooks before deployment."""
     schema = json.loads(_ARTIFACT.read_text(encoding="utf-8"))

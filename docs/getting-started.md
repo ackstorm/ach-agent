@@ -76,7 +76,7 @@ ACH_TOKEN=ek-<your-key> ACH_BASE_URL=https://<your-ach-host> \
   docker compose run --rm agent --prompt "Review MR !42 in project 7"
 ```
 
-To drive **real channels** (webhook / cron / queue / a2a) instead of the console, add a
+To drive **real channels** (webhook / webhook-script / cron / queue / a2a) instead of the console, add a
 `channels:` block to `config.yaml` and launch **without** `--tui`/`--prompt` — the harness then
 serves its HTTP surface and runs the configured channels. See [Configuration](configuration.md).
 

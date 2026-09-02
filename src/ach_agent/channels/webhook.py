@@ -44,6 +44,14 @@ log = structlog.get_logger(__name__)
 
 # GitLab event kinds routed when a channel does not set webhook.gitlabEvents.
 _DEFAULT_GITLAB_EVENTS = {"merge_request", "issue", "note"}
+_PROJECT_GITLAB_EVENTS = {
+    "push",
+    "project_create",
+    "project_rename",
+    "project_transfer",
+    "project_update",
+    "repository_update",
+}
 
 
 @dataclass
@@ -130,7 +138,11 @@ def _project_path_fields(body: dict[str, Any]) -> dict[str, str]:
     attacker-controlled host. boot/prepare.py re-validates the path against a strict slug
     regex before it becomes an environment variable.
     """
-    path = str((body.get("project") or {}).get("path_with_namespace", "") or "")
+    path = str(
+        (body.get("project") or {}).get("path_with_namespace", "")
+        or body.get("path_with_namespace", "")
+        or ""
+    )
     return {"project_path": path} if path else {}
 
 
@@ -145,7 +157,7 @@ def _parse_gitlab(body: dict[str, Any], allowed: set[str]) -> tuple[dict[str, An
       MR hook & MR-comment    → f"{project_id}:{mr_iid}"        (UNCHANGED — shared lane)
       Issue hook & issue-comment → f"{project_id}:issue:{issue_iid}"  (namespaced)
     """
-    kind = body.get("object_kind", "")
+    kind = body.get("object_kind") or body.get("event_name") or ""
 
     if kind == "merge_request" and "merge_request" in allowed:
         project_id = int(body["project"]["id"])
@@ -213,7 +225,19 @@ def _parse_gitlab(body: dict[str, Any], allowed: set[str]) -> tuple[dict[str, An
             )
         return None  # comment on commit/snippet, or noteable kind not allowed → ignore
 
-    return None  # kind not allowed / not routable (push, pipeline, emoji, …) → ignore
+    if kind in _PROJECT_GITLAB_EVENTS and kind in allowed:
+        project = body.get("project") or {}
+        project_id = int(project.get("id") or body["project_id"])
+        return (
+            {
+                "project_id": project_id,
+                **_project_path_fields(body),
+                "kind": kind,
+            },
+            f"{project_id}:{kind}",
+        )
+
+    return None  # kind not allowed / not routable (pipeline, emoji, tag_push, …) → ignore
 
 
 def _parse_github(body: dict[str, Any]) -> tuple[dict[str, Any], str]:
@@ -340,6 +364,10 @@ async def handle_webhook_request(
                 )
                 return WebhookResult(status_code=200, body={"status": "ignored"})
             delivery_context, session_key = parsed
+            if channel_cfg.type == "webhook-script":
+                session_key = (
+                    f"{delivery_context['project_id']}:webhook-script:{channel_cfg.name}"
+                )
             # ACTOR GATES (gitlab only, pre-enqueue). Loop-guard first, then allowlist.
             actor = _gitlab_actor(body)
             wh = channel_cfg.webhook

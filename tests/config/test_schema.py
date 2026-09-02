@@ -331,14 +331,65 @@ def test_webhook_gitlab_events() -> None:
     assert WebhookBlock.model_validate({"auth": {"type": "none"}}).gitlab_events is None
     # Config key is camelCase `gitlabEvents` (renamed from snake_case — no dual name).
     b = WebhookBlock.model_validate(
-        {"auth": {"type": "none"}, "gitlabEvents": ["merge_request", "note"]}
+        {
+            "auth": {"type": "none"},
+            "gitlabEvents": ["merge_request", "note", "push", "project_create"],
+        }
     )
-    assert b.gitlab_events == ["merge_request", "note"]
+    assert b.gitlab_events == ["merge_request", "note", "push", "project_create"]
     with pytest.raises(ValidationError):
         WebhookBlock.model_validate({"auth": {"type": "none"}, "gitlabEvents": ["pipeline"]})
     # snake_case is REJECTED (extra=forbid) — this is a rename, not an alias.
     with pytest.raises(ValidationError):
         WebhookBlock.model_validate({"auth": {"type": "none"}, "gitlab_events": ["merge_request"]})
+
+
+def test_webhook_script_channel_requires_its_script_block() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import ChannelConfig
+
+    channel = ChannelConfig.model_validate(
+        {
+            "name": "gitlab-register",
+            "type": "webhook-script",
+            "source": "gitlab",
+            "webhook": {"auth": {"type": "none"}, "gitlabEvents": ["push"]},
+            "script": {"script": "true", "timeoutSeconds": 30},
+        }
+    )
+    assert channel.script is not None
+    assert channel.script.timeout_seconds == 30
+
+    with pytest.raises(ValidationError, match="requires.*script"):
+        ChannelConfig.model_validate(
+            {
+                "name": "gitlab-register",
+                "type": "webhook-script",
+                "source": "gitlab",
+                "webhook": {"auth": {"type": "none"}},
+            }
+        )
+
+
+def test_webhook_script_channel_rejects_agent_lifecycle_blocks() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import ChannelConfig
+
+    with pytest.raises(ValidationError, match="forbids.*prepare"):
+        ChannelConfig.model_validate(
+            {
+                "name": "gitlab-register",
+                "type": "webhook-script",
+                "source": "gitlab",
+                "webhook": {"auth": {"type": "none"}},
+                "script": {"script": "true"},
+                "prepare": {"script": "true"},
+            }
+        )
 
 
 def test_channel_session_and_expire_rejected() -> None:

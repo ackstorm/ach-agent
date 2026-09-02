@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """The engine runner: the hot-path closure the router's lane drives for every invocation.
 
-`make_engine_runner` builds the callable injected into the Router as `engine_runner`:
-reserve and prepare the session, acquire or reuse an engine from the keyed pool, build the
-per-invocation config, run the turn, record stats, and resolve the reply future / a2a
-completion callback / async no-op.
+`make_engine_runner` builds the callable injected into the Router. Model channels reserve
+and prepare the session, acquire or reuse an engine, run the turn, and resolve delivery.
+`webhook-script` channels return through their deterministic script before any engine work.
 """
 
 from __future__ import annotations
@@ -22,6 +21,7 @@ from ach_agent.boot.prepare import (
     prepare_workspace,
     run_cleanup,
     run_prepare,
+    run_webhook_script,
     workspace_dir,
 )
 from ach_agent.boot.prompt import (
@@ -127,6 +127,10 @@ def make_engine_runner(
     async def engine_runner(event: MessageEvent, on_kill: Callable[[], None]) -> None:
         # Resolve channel cfg early so ctx can be built before the memory probe.
         ch_cfg: ChannelConfig | None = channels_by_name.get(event.channel_name)
+        if ch_cfg is not None and ch_cfg.type == "webhook-script":
+            assert ch_cfg.script is not None
+            await run_webhook_script(ch_cfg.script, event, engine_cfg.work_dir)
+            return
         ctx = build_template_context(
             event.payload,
             channel_name=event.channel_name,

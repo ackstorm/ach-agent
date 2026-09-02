@@ -31,7 +31,7 @@ def collect_secret_env_names(cfg: AgentConfig) -> list[str]:
             names.append(a2a.auth.secret.env)
         # channel hook secretEnv: outbound credentials. Same treatment as the inbound ones —
         # redacted in logs, and never forwarded into the engine's env.
-        for hook in (ch.prepare, ch.cleanup):
+        for hook in (ch.prepare, ch.cleanup, ch.script):
             if hook is not None:
                 names.extend(src.env for src in hook.secret_env.values() if src.env)
     # memory.hindsight.auth: the admin secret joins the same forwardEnv-strip + log-redaction

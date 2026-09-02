@@ -139,6 +139,7 @@ Each entry has `name`, `type`, an optional `concurrency` (per-channel cap, ≤ t
 | Type | Sub-block | Notes |
 |------|-----------|-------|
 | `webhook` | `webhook.auth` + `source` (`gitlab`\|`github`\|`generic`) | Auth `type`: `gitlab_token` \| `hmac` \| `header_token` \| `none`. `secretPath` is a file path, never a value; `header_token` also takes a `header` name. |
+| `webhook-script` | `webhook` + `script` + `source` | Authenticated asynchronous webhook that runs a static `/bin/sh` script and never invokes the model. |
 | `cron` | `cron.schedule` + `cron.timezone` | Cron expression + IANA tz. |
 | `queue` | `queue` (`type: redis`, `key`, `ackMode: onComplete`) | Redis only in v1. |
 | `a2a` | `a2a` (`mode: async`, `auth.header` + `auth.secretPath`) | Async only in v1. |
@@ -156,6 +157,20 @@ prompt: "Review {{ payload.object_attributes.url }} in {{ payload.project.path_w
   `agent.name`, `memory.bank`, `event.id`, `session.key`). `header.*` is reserved.
 - One filter: `{{ path | default("fallback") }}`. A missing token with no default renders empty.
 - **No `env` namespace** — process env (the `ek_`) is structurally unreachable from a template.
+
+### `webhook-script`
+
+Use `webhook-script` for deterministic webhook automation that does not need an agent. It
+shares webhook authentication, event filtering, deduplication, backpressure, lanes, and
+`concurrency`, but executes only `script.script`. The normalized JSON payload is supplied on
+stdin, validated event fields are available as `ACH_EVENT_*`, and `ACH_WORKSPACE` is temporary.
+The script runs asynchronously after the endpoint returns `202`; failures appear in logs and
+`ach_agent_webhook_script_failures_total`.
+
+For GitLab System Hooks, useful registrar events are `project_create`, `project_rename`,
+`project_transfer`, `project_update`, `repository_update`, `push`, and `merge_request`.
+Project events use one lane per project and channel, preventing concurrent reconciliation of
+the same project.
 
 ## Full example
 
@@ -257,6 +272,7 @@ channels:
         secretPath: /etc/ach-agent/secrets/generic-hook/secret
 
   - name: daily-security
+    # See the webhook-script section above for deterministic no-model handlers.
     type: cron
     concurrency: 1
     cron:

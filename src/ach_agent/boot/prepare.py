@@ -77,6 +77,13 @@ class PrepareFailed(RuntimeError):
     """
 
 
+async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(proc.pid, signal.SIGKILL)
+    with contextlib.suppress(Exception):
+        await proc.wait()
+
+
 def workspace_dir(work_dir: str, session_key: str) -> Path:
     """The stable workspace path for a session_key under the engine workDir.
 
@@ -193,12 +200,12 @@ async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
         )
     except TimeoutError:
         # Kill the whole group: `git clone` spawns children that outlive a bare proc.kill().
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(proc.pid, signal.SIGKILL)
-        with contextlib.suppress(Exception):
-            await proc.wait()
+        await _kill_process_group(proc)
         PREPARE_FAILURES.labels(reason="timeout").inc()
         raise PrepareFailed(f"prepare script timed out after {cfg.timeout_seconds}s") from None
+    except asyncio.CancelledError:
+        await _kill_process_group(proc)
+        raise
 
     if proc.returncode != 0:
         PREPARE_FAILURES.labels(reason="exit").inc()

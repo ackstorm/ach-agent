@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Fixed
+
+- Cancelling a running `channel.prepare` hook now kills and reaps its process group, so
+  invocation timeouts and shutdown no longer orphan clone/script subprocesses.
+
 ## [0.13.0] - 2026-09-02
 
 ### Added

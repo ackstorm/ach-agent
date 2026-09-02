@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
+
 import pytest
 from pydantic import ValidationError
 
@@ -166,6 +169,22 @@ async def test_timeout_kills_the_process_group(tmp_path) -> None:  # type: ignor
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
     with pytest.raises(PrepareFailed, match="timed out"):
         await run_prepare(_block("sleep 30", timeoutSeconds=1), _event(), ws)
+
+
+async def test_cancellation_kills_the_process_group(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Lane timeout/shutdown cancellation must not orphan the prepare command."""
+    ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
+    task = asyncio.create_task(run_prepare(_block("echo $$ > pid; exec sleep 30"), _event(), ws))
+    async with asyncio.timeout(2):
+        while not (ws / "pid").exists():
+            await asyncio.sleep(0.01)
+
+    pid = int((ws / "pid").read_text())
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
 
 
 def test_prepare_secrets_are_stripped_from_forward_env() -> None:

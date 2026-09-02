@@ -531,7 +531,7 @@ variables. No host Python.</p>
 <span class="nv">ACH_TOKEN</span><span class="o">=</span>ek-&lt;your-key&gt;<span class="w"> </span><span class="nv">ACH_BASE_URL</span><span class="o">=</span>https://&lt;your-ach-host&gt;<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>docker<span class="w"> </span>compose<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>agent<span class="w"> </span>--prompt<span class="w"> </span><span class="s2">"Review MR !42 in project 7"</span>
 </code></pre></div>
-<p>To drive <strong>real channels</strong> (webhook / cron / queue / a2a) instead of the console, add a
+<p>To drive <strong>real channels</strong> (webhook / webhook-script / cron / queue / a2a) instead of the console, add a
 <code>channels:</code> block to <code>config.yaml</code> and launch <strong>without</strong> <code>--tui</code>/<code>--prompt</code> — the harness then
 serves its HTTP surface and runs the configured channels. See <a href="../configuration/">Configuration</a>.</p>
 <h2 id="launch-modifiers">Launch modifiers</h2>

@@ -410,6 +410,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#webhook-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      webhook-script
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -541,6 +550,15 @@
   <a href="#channelprompt-templating" class="md-nav__link">
     <span class="md-ellipsis">
       channel.prompt templating
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#webhook-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      webhook-script
     </span>
   </a>
   
@@ -840,6 +858,11 @@ env. <strong>Never list the <code>ek_</code></strong> (<code>ACH_TOKEN</code>/<c
 <td>Auth <code>type</code>: <code>gitlab_token</code> | <code>hmac</code> | <code>header_token</code> | <code>none</code>. <code>secretPath</code> is a file path, never a value; <code>header_token</code> also takes a <code>header</code> name.</td>
 </tr>
 <tr>
+<td><code>webhook-script</code></td>
+<td><code>webhook</code> + <code>script</code> + <code>source</code></td>
+<td>Authenticated asynchronous webhook that runs a static <code>/bin/sh</code> script and never invokes the model.</td>
+</tr>
+<tr>
 <td><code>cron</code></td>
 <td><code>cron.schedule</code> + <code>cron.timezone</code></td>
 <td>Cron expression + IANA tz.</td>
@@ -867,6 +890,17 @@ channel adapts per event:</p>
 <li>One filter: <code>{{ path | default("fallback") }}</code>. A missing token with no default renders empty.</li>
 <li><strong>No <code>env</code> namespace</strong> — process env (the <code>ek_</code>) is structurally unreachable from a template.</li>
 </ul>
+<h3 id="webhook-script"><code>webhook-script</code></h3>
+<p>Use <code>webhook-script</code> for deterministic webhook automation that does not need an agent. It
+shares webhook authentication, event filtering, deduplication, backpressure, lanes, and
+<code>concurrency</code>, but executes only <code>script.script</code>. The normalized JSON payload is supplied on
+stdin, validated event fields are available as <code>ACH_EVENT_*</code>, and <code>ACH_WORKSPACE</code> is temporary.
+The script runs asynchronously after the endpoint returns <code>202</code>; failures appear in logs and
+<code>ach_agent_webhook_script_failures_total</code>.</p>
+<p>For GitLab System Hooks, useful registrar events are <code>project_create</code>, <code>project_rename</code>,
+<code>project_transfer</code>, <code>project_update</code>, <code>repository_update</code>, <code>push</code>, and <code>merge_request</code>.
+Project events use one lane per project and channel, preventing concurrent reconciliation of
+the same project.</p>
 <h2 id="full-example">Full example</h2>
 <p>A complete, schema-valid contract showing every block lives at
 <a href="https://github.com/ackstorm/ach-agent/blob/main/example.yaml"><code>example.yaml</code></a> in the repo root:</p>
@@ -964,6 +998,7 @@ channel adapts per event:</p>
 <span class="w">        </span><span class="nt">secretPath</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/ach-agent/secrets/generic-hook/secret</span>
 
 <span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily-security</span>
+<span class="w">    </span><span class="c1"># See the webhook-script section above for deterministic no-model handlers.</span>
 <span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cron</span>
 <span class="w">    </span><span class="nt">concurrency</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
 <span class="w">    </span><span class="nt">cron</span><span class="p">:</span>

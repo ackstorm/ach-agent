@@ -11,11 +11,12 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from ach_agent.boot.prepare import PrepareFailed, prepare_workspace, run_prepare
+from ach_agent.boot.prepare import PrepareFailed, prepare_workspace, run_cleanup, run_prepare
 from ach_agent.boot.prompt import (
     build_engine_prompt,
     build_output_instructions,
@@ -184,6 +185,7 @@ def make_engine_runner(
         server = None
         timed_out = False
         acquired = False
+        session_reserved = False
         try:
             # channel.prepare: build this session's workspace on the LANE — after dedup and
             # backpressure admitted the event, before the agente exists. Its cwd becomes the
@@ -191,10 +193,18 @@ def make_engine_runner(
             # PrepareFailed takes the except path below and nothing is posted.
             # getattr: tests inject a SimpleNamespace channel cfg, as elsewhere in this runner.
             prepare_cfg = getattr(ch_cfg, "prepare", None) if ch_cfg is not None else None
+            cleanup_cfg = getattr(ch_cfg, "cleanup", None) if ch_cfg is not None else None
             if prepare_cfg is not None:
                 workspace = prepare_workspace(
                     engine_cfg.home, engine_cfg.work_dir, event.session_key
                 )
+                cleanup = (
+                    partial(run_cleanup, cleanup_cfg, event, workspace)
+                    if cleanup_cfg is not None
+                    else None
+                )
+                await pool.begin_session(event.session_key, cleanup)
+                session_reserved = True
                 await run_prepare(prepare_cfg, event, workspace)
                 if dataclasses.is_dataclass(invocation_engine_cfg) and not isinstance(
                     invocation_engine_cfg, type
@@ -428,6 +438,16 @@ def make_engine_runner(
             # kill of the runaway); otherwise the channel's warm idle TTL is applied so
             # session:auto persists the server across events. `if server is not None`
             # guards a cancel during a cold-start acquire.
+            if session_reserved and not acquired:
+                try:
+                    await pool.discard(event.session_key)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "pool discard error",
+                        session_key=event.session_key,
+                        task_id=event.task_id,
+                        error=str(exc),
+                    )
             if server is not None:
                 ttl = 0.0 if timed_out else ttl_by_channel.get(event.channel_name, 0.0)
                 try:

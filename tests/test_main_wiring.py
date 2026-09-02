@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from collections.abc import Awaitable, Callable
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -39,6 +41,154 @@ class FakeHandler:
     async def handle(self, event: MessageEvent) -> RouterAdmitResult:
         self.events.append(event)
         return self._result
+
+
+class _HookPool:
+    def __init__(self, *, fail_acquire: bool = False) -> None:
+        self.sessions: dict[str, str] = {}
+        self.calls: list[str] = []
+        self.cleanup: Callable[[], Awaitable[None]] | None = None
+        self.fail_acquire = fail_acquire
+
+    async def begin_session(
+        self,
+        _key: str,
+        cleanup: Callable[[], Awaitable[None]] | None,
+    ) -> None:
+        self.calls.append("begin")
+        self.cleanup = cleanup
+
+    async def acquire(self, _key: str, _cfg: Any) -> Any:
+        self.calls.append("acquire")
+        if self.fail_acquire:
+            raise RuntimeError("launch failed")
+        return SimpleNamespace(proxy_token="tok")
+
+    async def release(self, _key: str, ttl_seconds: float) -> None:
+        self.calls.append(f"release:{ttl_seconds}")
+
+    async def discard(self, _key: str) -> None:
+        self.calls.append("discard")
+        if self.cleanup is not None:
+            await self.cleanup()
+
+
+def _hook_channel() -> ChannelConfig:
+    return ChannelConfig.model_validate(
+        {
+            "name": "hooks",
+            "type": "cron",
+            "cron": {"schedule": "* * * * *"},
+            "prepare": {"script": "true"},
+            "cleanup": {"script": "true"},
+        }
+    )
+
+
+def _hook_event() -> MessageEvent:
+    return MessageEvent(
+        idempotency_key="event-1",
+        session_key="session-1",
+        channel_name="hooks",
+        payload={},
+        delivery_context={},
+        source_trait="async_no_retry",
+    )
+
+
+async def test_engine_runner_registers_cleanup_before_prepare(tmp_path: Path) -> None:
+    import ach_agent.engine.base.terminal as terminal
+    from ach_agent.boot.engine_runner import make_engine_runner
+    from ach_agent.engine.lifecycle import EngineConfig
+    from ach_agent.engine.opencode.driver import OpencodeDriver
+
+    pool = _HookPool()
+
+    async def prepare(*_args: Any) -> None:
+        pool.calls.append("prepare")
+
+    with (
+        patch("ach_agent.boot.engine_runner.run_prepare", new=AsyncMock(side_effect=prepare)),
+        patch("ach_agent.boot.engine_runner.run_cleanup", new=AsyncMock()),
+        patch.object(
+            terminal,
+            "run_contract_turn",
+            new=AsyncMock(return_value={"action": "none", "text": ""}),
+        ),
+    ):
+        runner = make_engine_runner(
+            pool=pool,
+            driver=OpencodeDriver(),
+            engine_cfg=EngineConfig(
+                home=str(tmp_path / "home"),
+                work_dir=str(tmp_path / "work"),
+            ),
+            max_invocation_seconds=30,
+            channels_by_name={"hooks": _hook_channel()},
+        )
+        await runner(_hook_event(), lambda: None)
+
+    assert pool.calls[:3] == ["begin", "prepare", "acquire"]
+
+
+async def test_prepare_failure_discards_reserved_cleanup(tmp_path: Path) -> None:
+    from ach_agent.boot.engine_runner import make_engine_runner
+    from ach_agent.boot.prepare import PrepareFailed
+    from ach_agent.engine.lifecycle import EngineConfig
+    from ach_agent.engine.opencode.driver import OpencodeDriver
+
+    pool = _HookPool()
+    cleanup = AsyncMock()
+    with (
+        patch(
+            "ach_agent.boot.engine_runner.run_prepare",
+            new=AsyncMock(side_effect=PrepareFailed("broken")),
+        ),
+        patch("ach_agent.boot.engine_runner.run_cleanup", new=cleanup),
+    ):
+        runner = make_engine_runner(
+            pool=pool,
+            driver=OpencodeDriver(),
+            engine_cfg=EngineConfig(
+                home=str(tmp_path / "home"),
+                work_dir=str(tmp_path / "work"),
+            ),
+            max_invocation_seconds=30,
+            channels_by_name={"hooks": _hook_channel()},
+        )
+        with pytest.raises(PrepareFailed, match="broken"):
+            await runner(_hook_event(), lambda: None)
+
+    assert pool.calls == ["begin", "discard"]
+    cleanup.assert_awaited_once()
+
+
+async def test_launch_failure_discards_reserved_cleanup(tmp_path: Path) -> None:
+    from ach_agent.boot.engine_runner import make_engine_runner
+    from ach_agent.engine.lifecycle import EngineConfig
+    from ach_agent.engine.opencode.driver import OpencodeDriver
+
+    pool = _HookPool(fail_acquire=True)
+    cleanup = AsyncMock()
+    with (
+        patch("ach_agent.boot.engine_runner.run_prepare", new=AsyncMock()),
+        patch("ach_agent.boot.engine_runner.run_cleanup", new=cleanup),
+    ):
+        runner = make_engine_runner(
+            pool=pool,
+            driver=OpencodeDriver(),
+            engine_cfg=EngineConfig(
+                home=str(tmp_path / "home"),
+                work_dir=str(tmp_path / "work"),
+            ),
+            max_invocation_seconds=30,
+            channels_by_name={"hooks": _hook_channel()},
+        )
+        with pytest.raises(RuntimeError, match="launch failed"):
+            await runner(_hook_event(), lambda: None)
+
+    assert pool.calls == ["begin", "acquire", "discard"]
+    cleanup.assert_awaited_once()
 
 
 MR_PAYLOAD = {

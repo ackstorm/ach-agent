@@ -391,6 +391,12 @@ decision, prefixed <code>YYYY-MM-DD-</code> so <code>ls</code> sorts chronologic
 <td>Shipped</td>
 <td>Thinking intent moves to a normalized <code>model.thinking</code>; <code>engine.pi</code> back to executable knobs only; each engine translates.</td>
 </tr>
+<tr>
+<td>2026-08-31</td>
+<td><a href="2026-08-31-channel-owned-repo-workspace/">channel-owned-repo-workspace</a></td>
+<td>Shipped (v0.13.0)</td>
+<td>Harness prepares the repo per event: credentials + origin on the channel, executed on the lane (post-dedup), workspace as the engine cwd. Landed as the generic <code>channel.prepare</code> script hook, not a typed clone block.</td>
+</tr>
 </tbody>
 </table>
 

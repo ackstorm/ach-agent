@@ -172,6 +172,17 @@
           "title": "Name",
           "type": "string"
         },
+        "prepare": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PrepareBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "prompt": {
           "anyOf": [
             {
@@ -645,6 +656,42 @@
         }
       },
       "title": "PiEngineBlock",
+      "type": "object"
+    },
+    "PrepareBlock": {
+      "additionalProperties": false,
+      "description": "Operator contract §2 channel.prepare — the per-invocation workspace hook.\n\nA `/bin/sh` script run on the lane before the engine turn, cwd = the invocation's\nworkspace (`$ACH_WORKSPACE`), which then becomes the engine's cwd. Typical use: clone\nthe repo a merge-request event names, so the agent reviews a real checkout without\never holding the forge credential.\n\n`script` is STATIC text — `{{ }}` templating is deliberately unsupported. Event data\nreaches the script only as environment variables, which is what makes a shell hook\nsafe to hand a webhook payload (see boot/prepare.py).",
+      "properties": {
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Env",
+          "type": "object"
+        },
+        "script": {
+          "title": "Script",
+          "type": "string"
+        },
+        "secretEnv": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SecretSource"
+          },
+          "title": "Secretenv",
+          "type": "object"
+        },
+        "timeoutSeconds": {
+          "default": 120,
+          "exclusiveMinimum": 0,
+          "maximum": 3600,
+          "title": "Timeoutseconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "script"
+      ],
+      "title": "PrepareBlock",
       "type": "object"
     },
     "PromptBlock": {

@@ -709,9 +709,9 @@ Follows <code>src/ach_agent/router/metrics.py</code>; exposed via <code>/metrics
 <div class="highlight"><pre><span></span><code>range   { start, end, days, coverage_start, tz }   # coverage_start = oldest entry in stream
 totals  { sessions, tokens, spend, avg_cost_per_session, aborted, partial }
 leaderboard {
-  sorted_by: &quot;spend&quot; | &quot;score&quot;,                    # explicit; UI renders the header from this
+  sorted_by: "spend" | "score",                    # explicit; UI renders the header from this
   rows: [ { rank, model, provider,
-            score,        # nullable — eval seam (B fills); null → row tagged &quot;unrated&quot;
+            score,        # nullable — eval seam (B fills); null → row tagged "unrated"
             speed_tok_s, cost_per_mtok, spend, sessions, tag } ]
 }
 cost_per_session [ { model, avg } ]

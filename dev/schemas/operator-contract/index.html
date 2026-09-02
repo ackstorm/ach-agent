@@ -432,6 +432,21 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="9. Tools / egress — external MCP via the localhost proxy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#91-channelprepare-the-per-invocation-workspace-hook" class="md-nav__link">
+    <span class="md-ellipsis">
+      9.1 channel.prepare — the per-invocation workspace hook
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -552,20 +567,20 @@ only. The harness is tested against a hand-written rendered config.</p>
 validates with Pydantic v2 (<code>extra='forbid'</code>, <code>strict=True</code>) and hard-fails (<code>sys.exit(1)</code>) on any
 mismatch.</p>
 <div class="highlight"><pre><span></span><code>{
-  &quot;schemaVersion&quot;: &quot;1&quot;,                     // harness validates &quot;1&quot;; ach-runtime renders &quot;1&quot;
-  &quot;agent&quot;: { &quot;name&quot;: &quot;gitlab-ackstorm&quot; },   // name only — namespace/generation removed
+  "schemaVersion": "1",                     // harness validates "1"; ach-runtime renders "1"
+  "agent": { "name": "gitlab-ackstorm" },   // name only — namespace/generation removed
 
-  // The engine is opencode, hardcoded. &quot;engine&quot; is a HARNESS-LOCAL block (how we run opencode:
+  // The engine is opencode, hardcoded. "engine" is a HARNESS-LOCAL block (how we run opencode:
   // home, workDir, startup deadline, env-forwarding allowlist) — the operator may render or omit it.
   // The harness writes opencode.json at hydration, pointing at the localhost proxy (§3/§9).
-  // No &quot;model.provider&quot; (retired in v2).
-  &quot;model&quot;: {
-    &quot;name&quot;: &quot;openai.gpt-5&quot;,                 // model id, passed verbatim; MUST be in hydrated models
-    &quot;type&quot;: &quot;openai&quot;,                       // openai | gemini | anthropic — picks the ACH compat endpoint
-    &quot;params&quot;: { &quot;temperature&quot;: 1 },         // OPEN, UNVALIDATED dict, splatted to the model client
-    &quot;thinking&quot;: {                           // normalized, engine-neutral reasoning intent — the
-      &quot;enabled&quot;: false,                     //   CANONICAL thinking surface (never params). Strict bool.
-      &quot;effort&quot;: null                        // minimal|low|medium|high|xhigh; requires
+  // No "model.provider" (retired in v2).
+  "model": {
+    "name": "openai.gpt-5",                 // model id, passed verbatim; MUST be in hydrated models
+    "type": "openai",                       // openai | gemini | anthropic — picks the ACH compat endpoint
+    "params": { "temperature": 1 },         // OPEN, UNVALIDATED dict, splatted to the model client
+    "thinking": {                           // normalized, engine-neutral reasoning intent — the
+      "enabled": false,                     //   CANONICAL thinking surface (never params). Strict bool.
+      "effort": null                        // minimal|low|medium|high|xhigh; requires
       //                                       enabled=true (hard-fail otherwise). `max` and
       //                                       provider-specific levels (e.g. ultracode) are NOT
       //                                       portable — reach them via params passthrough.
@@ -580,34 +595,34 @@ mismatch.</p>
       //                                       params — explicit params keys win on collision.
     }
   },
-  &quot;cost&quot;: {
-    &quot;source&quot;: &quot;engine&quot;                    // engine (default) | litellm_usage | litellm_headers | none
+  "cost": {
+    "source": "engine"                    // engine (default) | litellm_usage | litellm_headers | none
                                              // omit this block, or source, to use engine
   },
-  &quot;engine&quot;: {                               // harness-local; operator-optional
-    &quot;home&quot;: &quot;/var/lib/ach-agent/home&quot;,      // ONE shared home for all agentes: skills + .ach-state +
+  "engine": {                               // harness-local; operator-optional
+    "home": "/var/lib/ach-agent/home",      // ONE shared home for all agentes: skills + .ach-state +
     //                                         session store + node_modules live here. Per-session_key
     //                                         isolation = opencode config file selected via OPENCODE_CONFIG
     //                                         (&lt;home&gt;/.config/opencode/opencode_&lt;session_key&gt;.json).
-    &quot;workDir&quot;: &quot;/var/lib/ach-agent/home/workspace&quot;,  // shared cwd (same for all agentes)
-    &quot;startupTimeoutSeconds&quot;: 30,
-    &quot;idleTtlSeconds&quot;: 30,                     // seconds an idle keyed agente lingers after its last
+    "workDir": "/var/lib/ach-agent/home/workspace",  // shared cwd (same for all agentes)
+    "startupTimeoutSeconds": 30,
+    "idleTtlSeconds": 30,                     // seconds an idle keyed agente lingers after its last
     //                                           release before being stopped. &gt;0 keeps it warm so
     //                                           channel.session=auto persists the opencode session
     //                                           across events for the same session_key; 0 =
     //                                           spawn-per-invocation. Default 30.
-    &quot;forwardEnv&quot;: [],                        // extra env-var NAMES to forward into opencode; never the ek_
-    &quot;maxToolCalls&quot;: 0,                        // runaway control (Plan 4): abort a turn after N DISTINCT
+    "forwardEnv": [],                        // extra env-var NAMES to forward into opencode; never the ek_
+    "maxToolCalls": 0,                        // runaway control (Plan 4): abort a turn after N DISTINCT
     //                                           tool calls, then run one wrap-up turn so the model still
     //                                           returns a valid terminal object. 0 = OFF (default);
     //                                           recommend ~80 when opting in. maxInvocationSeconds
     //                                           (limits) stays the always-on time backstop.
-    &quot;type&quot;: &quot;opencode&quot;,                       // opencode | pi. Selects the EngineDriver. Rendered
+    "type": "opencode",                       // opencode | pi. Selects the EngineDriver. Rendered
     //                                           by ../ach (AgentProfile.engine.type, free string);
     //                                           the harness is the enforcer (unknown → hard-fail).
-    &quot;pi&quot;: {                                   // PiEngineBlock; consulted only when type == &quot;pi&quot;.
-      &quot;binaryPath&quot;: &quot;pi&quot;,                     //   ONLY executable knobs — model identity and
-      &quot;mcpAdapterPath&quot;: &quot;&quot;                     //   thinking live in the model block above. &quot;&quot; →
+    "pi": {                                   // PiEngineBlock; consulted only when type == "pi".
+      "binaryPath": "pi",                     //   ONLY executable knobs — model identity and
+      "mcpAdapterPath": ""                     //   thinking live in the model block above. "" →
       //                                          image default:
       //                                          /opt/pi-mcp-adapter/node_modules/pi-mcp-adapter.
       //                                          (engine.pi.model/thinkingLevel existed only in
@@ -618,41 +633,41 @@ mismatch.</p>
   // The ach-agent IMAGE must ship the `pi` binary + pinned pi-mcp-adapter BEFORE any
   // control plane renders engine.type=pi — otherwise the rendered config names a binary
   // the image lacks. Ship order: ach-agent image (Pi SP2) → then ../ach advertises pi.
-  &quot;capability&quot;: {
-    &quot;type&quot;: &quot;ach&quot;,                          // ach only in v1 (direct is out — §7)
-    &quot;ach&quot;: { &quot;baseUrl&quot;: &quot;https://ach.ackstorm.ai&quot;, &quot;environment&quot;: &quot;engineering-prod&quot; },
-    &quot;filter&quot;: {                             // gate ABOVE the model (withhold before offering)
-      &quot;exclude&quot;: {
-        &quot;tools&quot;: [&quot;gitlab_merge_merge_request&quot;],  // ids MUST match opencode&#39;s MCP tool names (boot probe logs them)
-        &quot;mcpServers&quot;: [&quot;dangerous-admin&quot;],
-        &quot;skills&quot;: [&quot;send-email&quot;]
+  "capability": {
+    "type": "ach",                          // ach only in v1 (direct is out — §7)
+    "ach": { "baseUrl": "https://ach.ackstorm.ai", "environment": "engineering-prod" },
+    "filter": {                             // gate ABOVE the model (withhold before offering)
+      "exclude": {
+        "tools": ["gitlab_merge_merge_request"],  // ids MUST match opencode's MCP tool names (boot probe logs them)
+        "mcpServers": ["dangerous-admin"],
+        "skills": ["send-email"]
       }
     }
   },
-  &quot;prompt&quot;: {                               // typed source; the bare-string shorthand is REJECTED
-    &quot;system&quot;: { &quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;…agent persona (markdown ok)…&quot; },
-    //   or { &quot;type&quot;: &quot;file&quot;, &quot;file&quot;: &quot;prompts/&lt;name&gt;/&lt;file&gt;.md&quot; }  (relative to &lt;home&gt;/.ach-state; no &quot;..&quot;)
-    //   or { &quot;type&quot;: &quot;ach&quot;,  &quot;ach&quot;: &quot;&lt;prompt-name&gt;&quot;, &quot;file&quot;: &quot;&lt;subpath&gt;.md&quot;? }  (harness resolves the file)
-    &quot;compose&quot;: &quot;append&quot;                     // contract-reserved (accepted, NOT yet executed)
+  "prompt": {                               // typed source; the bare-string shorthand is REJECTED
+    "system": { "type": "text", "text": "…agent persona (markdown ok)…" },
+    //   or { "type": "file", "file": "prompts/&lt;name&gt;/&lt;file&gt;.md" }  (relative to &lt;home&gt;/.ach-state; no "..")
+    //   or { "type": "ach",  "ach": "&lt;prompt-name&gt;", "file": "&lt;subpath&gt;.md"? }  (harness resolves the file)
+    "compose": "append"                     // contract-reserved (accepted, NOT yet executed)
   },
-  &quot;memory&quot;: {                               // null if not configured; fail-open (§6.5).
-    // STRICT discriminated union on &quot;type&quot; — &quot;type&quot; REQUIRED, no legacy/no-type default.
+  "memory": {                               // null if not configured; fail-open (§6.5).
+    // STRICT discriminated union on "type" — "type" REQUIRED, no legacy/no-type default.
     // Params live NESTED under memory.&lt;type&gt;.*.
-    &quot;type&quot;: &quot;hindsight&quot;,                    // hindsight | codemem  (future: mem0, …)
-    &quot;hindsight&quot;: {
-      &quot;endpoint&quot;: &quot;http://hindsight.engineering.svc:8080/mcp&quot;,
-      &quot;bank&quot;: &quot;gitlab-pr-review&quot;,           // static bank_id, harness-owned; the agent NEVER
+    "type": "hindsight",                    // hindsight | codemem  (future: mem0, …)
+    "hindsight": {
+      "endpoint": "http://hindsight.engineering.svc:8080/mcp",
+      "bank": "gitlab-pr-review",           // static bank_id, harness-owned; the agent NEVER
                                             //   sees or sets it. Per-repo split = tags, NOT
                                             //   templating (T-04-03).
-      &quot;auth&quot;: { &quot;env&quot;: &quot;ACH_SECRET_MEMORY_HINDSIGHT&quot; }, // OPTIONAL (omit for internal/no-auth
+      "auth": { "env": "ACH_SECRET_MEMORY_HINDSIGHT" }, // OPTIONAL (omit for internal/no-auth
                                             //   URL). Bearer admin secret, NOT the ek_. env-only.
                                             //   The OPERATOR generates the ACH_SECRET_* name
                                             //   (like ACH_SECRET_GITLAB_WEBHOOK); the author only
                                             //   picks the Secret + key. Unset-at-runtime → degrade.
-      &quot;mission&quot;: &quot;AI code reviewer&quot;,        // optional; passed to create_bank at boot.
-      &quot;mentalModels&quot;: [                     // rich specs the harness PROVISIONS + reads at boot
-        { &quot;id&quot;: &quot;architecture&quot;, &quot;name&quot;: &quot;Architecture&quot;,
-          &quot;sourceQuery&quot;: &quot;What is the architecture?&quot;, &quot;autoRefresh&quot;: true, &quot;maxTokens&quot;: 2048 }
+      "mission": "AI code reviewer",        // optional; passed to create_bank at boot.
+      "mentalModels": [                     // rich specs the harness PROVISIONS + reads at boot
+        { "id": "architecture", "name": "Architecture",
+          "sourceQuery": "What is the architecture?", "autoRefresh": true, "maxTokens": 2048 }
       ]
     }
     // FACADE: the agent reaches Hindsight ONLY through a harness-hosted localhost MCP server
@@ -661,10 +676,10 @@ mismatch.</p>
     // admin/destructive tools. The harness injects bank_id + the admin Bearer per call; the
     // raw Hindsight endpoint and the admin secret never reach opencode. Provisioning
     // (create_bank + create/refresh mental_model) runs boot-once, fail-open.
-    // codemem variant: { &quot;type&quot;: &quot;codemem&quot;, &quot;codemem&quot;: { &quot;dbPath&quot;: &quot;…&quot;, &quot;project&quot;: &quot;…&quot; } }
-    //   dbPath: absolute, no &quot;..&quot; (a local stdio MCP, model-managed); omit → derived from
+    // codemem variant: { "type": "codemem", "codemem": { "dbPath": "…", "project": "…" } }
+    //   dbPath: absolute, no ".." (a local stdio MCP, model-managed); omit → derived from
     //           persistence (&lt;mountPath&gt;/codemem/codemem.db, else /tmp/ach-home/…).
-    //   project: CODEMEM_PROJECT for the agente&#39;s codemem child; default fixed &quot;ach-agent&quot;
+    //   project: CODEMEM_PROJECT for the agente's codemem child; default fixed "ach-agent"
     //           (no magic). TEMPLATABLE (see below).
     //
     // TEMPLATING of memory.codemem.project: same {{ }} engine and namespaces as channel.prompt
@@ -672,124 +687,135 @@ mismatch.</p>
     // event context, then baked into opencode.json when the agente launches.
     // (memory.hindsight.bank is STATIC — the facade captures it once at boot; use tags for
     //  per-repo partitioning, never a templated bank.)
-    // Because the agente is 1:1 with session_key and is REUSED across that key&#39;s events, the value is
+    // Because the agente is 1:1 with session_key and is REUSED across that key's events, the value is
     // captured from the FIRST event that launched the agente and fixed for its lifetime — so a
-    // templated bank/project MUST be invariant per session_key (e.g. &quot;{{ internal.session.key }}&quot;,
-    // or a payload field that IS the session identity like the telegram user&#39;s email). A per-event
+    // templated bank/project MUST be invariant per session_key (e.g. "{{ internal.session.key }}",
+    // or a payload field that IS the session identity like the telegram user's email). A per-event
     // field that varies within a session_key would go stale.
   },
-  &quot;mcpServers&quot;: {                           // harness-managed MCP servers (map keyed by name),
-    // STRICT discriminated union on &quot;type&quot;. Distinct namespace from runtime.mcpServers (hydrate&#39;s
+  "mcpServers": {                           // harness-managed MCP servers (map keyed by name),
+    // STRICT discriminated union on "type". Distinct namespace from runtime.mcpServers (hydrate's
     // ACH-fronted {id,endpoint} externals) — no collision. Empty/omitted → no extra MCP wiring.
-    &quot;repo-checkout&quot;: {                      // INTERNAL: the harness HOSTS it (FastMCP facade + ek_)
-      &quot;type&quot;: &quot;repoCheckout&quot;,               //   exposes checkout_repo(project,ref,subpath?); see §9.
-      &quot;repoCheckout&quot;: {                     //   params nested (built-in &quot;special&quot; wiring)
-        &quot;sourceMcpServerId&quot;: &quot;mcp-gitlab-ro&quot;,  // which hydrated runtime.mcpServers[].id serves the
+    "repo-checkout": {                      // INTERNAL: the harness HOSTS it (FastMCP facade + ek_)
+      "type": "repoCheckout",               //   exposes checkout_repo(project,ref,subpath?); see §9.
+      "repoCheckout": {                     //   params nested (built-in "special" wiring)
+        "sourceMcpServerId": "mcp-gitlab-ro",  // which hydrated runtime.mcpServers[].id serves the
         //                                        gitlab://{project}/archive/{ref} resource the
         //                                        harness reads (with the ek_, harness-side).
-        &quot;tmpBase&quot;: &quot;/tmp/gitlab&quot;,           //   parent dir for per-checkout mkdtemp dirs (default)
-        &quot;ttlSeconds&quot;: 3600                  //   stale-checkout sweep TTL, &gt;= 0 (repoCheckout-only)
+        "tmpBase": "/tmp/gitlab",           //   parent dir for per-checkout mkdtemp dirs (default)
+        "ttlSeconds": 3600                  //   stale-checkout sweep TTL, &gt;= 0 (repoCheckout-only)
       }
     },
-    &quot;filesystem&quot;: {                         // PASSTHROUGH local: opencode LAUNCHES it (stdio subprocess).
-      &quot;type&quot;: &quot;local&quot;,                      //   opencode is the MCP client — connects DIRECTLY (no proxy).
-      &quot;command&quot;: &quot;docker&quot;,
-      &quot;args&quot;: [&quot;run&quot;,&quot;-i&quot;,&quot;--rm&quot;,
-               &quot;--mount&quot;,&quot;type=bind,src=/data/desktop,dst=/projects/desktop&quot;,
-               &quot;mcp/filesystem&quot;,&quot;/projects&quot;],
-      &quot;env&quot;: []                             //   env NAMES to forward (never the ek_); optional
+    "filesystem": {                         // PASSTHROUGH local: opencode LAUNCHES it (stdio subprocess).
+      "type": "local",                      //   opencode is the MCP client — connects DIRECTLY (no proxy).
+      "command": "docker",
+      "args": ["run","-i","--rm",
+               "--mount","type=bind,src=/data/desktop,dst=/projects/desktop",
+               "mcp/filesystem","/projects"],
+      "env": []                             //   env NAMES to forward (never the ek_); optional
     },
-    &quot;other&quot;: {                              // PASSTHROUGH remote: opencode CONNECTS directly
-      &quot;type&quot;: &quot;remote&quot;,
-      &quot;url&quot;: &quot;https://mcp.example.com/mcp&quot;,
-      &quot;headers&quot;: { &quot;Authorization&quot;: &quot;Bearer ${env:OTHER_MCP_TOKEN}&quot; }  // ${env:NAME} refs, not values
+    "other": {                              // PASSTHROUGH remote: opencode CONNECTS directly
+      "type": "remote",
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer ${env:OTHER_MCP_TOKEN}" }  // ${env:NAME} refs, not values
     }
   },
-  &quot;limits&quot;: {
-    &quot;maxConcurrentInvocations&quot;: 8,
-    &quot;maxInvocationSeconds&quot;: 1800,
-    &quot;maxQueuedTotal&quot;: 100,
-    &quot;idempotencyWindowSeconds&quot;: 3600,
-    &quot;maxSteps&quot;: 50,
-    &quot;terminalOutputRetries&quot;: 1              // §8 — harness validates + ≤1 backstop retry
+  "limits": {
+    "maxConcurrentInvocations": 8,
+    "maxInvocationSeconds": 1800,
+    "maxQueuedTotal": 100,
+    "idempotencyWindowSeconds": 3600,
+    "maxSteps": 50,
+    "terminalOutputRetries": 1              // §8 — harness validates + ≤1 backstop retry
   },
-  &quot;persistence&quot;: { &quot;enabled&quot;: true, &quot;mountPath&quot;: &quot;/var/lib/ach-agent&quot; },
-  &quot;health&quot;: { &quot;host&quot;: &quot;0.0.0.0&quot;, &quot;port&quot;: 8000 },
-  &quot;channels&quot;: [
-    { &quot;name&quot;: &quot;gitlab-mr-review&quot;, &quot;type&quot;: &quot;webhook&quot;, &quot;source&quot;: &quot;gitlab&quot;,
-      &quot;concurrency&quot;: 4,                       // per-channel sub-cap under maxConcurrentInvocations
-      &quot;session&quot;: { &quot;type&quot;: &quot;none&quot; },          // SessionBlock | string shorthand. BREAKING (v3→v3.1):
-      //   default changed auto → none. type (&quot;auto&quot;|&quot;none&quot;|&quot;custom&quot;, default &quot;none&quot;) is the
+  "persistence": { "enabled": true, "mountPath": "/var/lib/ach-agent" },
+  "health": { "host": "0.0.0.0", "port": 8000 },
+  "channels": [
+    { "name": "gitlab-mr-review", "type": "webhook", "source": "gitlab",
+      "concurrency": 4,                       // per-channel sub-cap under maxConcurrentInvocations
+      "session": { "type": "none" },          // SessionBlock | string shorthand. BREAKING (v3→v3.1):
+      //   default changed auto → none. type ("auto"|"none"|"custom", default "none") is the
       //   discriminator for which opencode session a turn reuses:
-      //     &quot;none&quot;   = fresh session per event, deleted post-turn (no residue).
-      //     &quot;auto&quot;   = the channel-derived session_key (per-MR for gitlab/github, channel name for
+      //     "none"   = fresh session per event, deleted post-turn (no residue).
+      //     "auto"   = the channel-derived session_key (per-MR for gitlab/github, channel name for
       //                cron/queue, context_id for a2a) — conversational continuity, same ses_ reused.
-      //     &quot;custom&quot; = reuse the session under `key`, a {{ }} template rendered per event
+      //     "custom" = reuse the session under `key`, a {{ }} template rendered per event
       //                (payload.*, internal.*; header.* reserved, empty). Empty render → none
-      //                behavior + WARN (never a shared &quot;&quot; key).
-      //   key (string): REQUIRED iff type==&quot;custom&quot;, FORBIDDEN otherwise (the {{ }} template).
-      //   maxTokens (int&gt;0, optional): once the previous turn&#39;s input_tokens exceed it, apply
-      //   overflow (auto/custom only; ignored for none). overflow (&quot;compact&quot;|&quot;rotate&quot;, default
-      //   &quot;compact&quot;): compact summarizes the session in place (POST /session/{id}/compact);
+      //                behavior + WARN (never a shared "" key).
+      //   key (string): REQUIRED iff type=="custom", FORBIDDEN otherwise (the {{ }} template).
+      //   maxTokens (int&gt;0, optional): once the previous turn's input_tokens exceed it, apply
+      //   overflow (auto/custom only; ignored for none). overflow ("compact"|"rotate", default
+      //   "compact"): compact summarizes the session in place (POST /session/{id}/compact);
       //   rotate starts a fresh session and deletes the old one.
-      //   Shorthand: &quot;session&quot;: &quot;auto&quot; ≡ {&quot;type&quot;:&quot;auto&quot;}; &quot;none&quot; ≡ {&quot;type&quot;:&quot;none&quot;}; any other
-      //   string (a template) ≡ {&quot;type&quot;:&quot;custom&quot;,&quot;key&quot;:&quot;&lt;str&gt;&quot;}.
+      //   Shorthand: "session": "auto" ≡ {"type":"auto"}; "none" ≡ {"type":"none"}; any other
+      //   string (a template) ≡ {"type":"custom","key":"&lt;str&gt;"}.
       //   This toggles ONLY which opencode session is reused — it does NOT change session_key:
-      //   the router lane + pool key stays stable (&quot;none&quot; ≠ null key). Recommended: auto for
+      //   the router lane + pool key stays stable ("none" ≠ null key). Recommended: auto for
       //   gitlab/github and a2a channels; none (default) elsewhere unless conversational memory
       //   is wanted.
       // channel.prompt is rendered with {{ }} substitution. Namespaces: payload.* (the
       // inbound JSON body), internal.* (channel.name|type|source, agent.name, memory.bank,
-      // event.id, session.key). One filter: | default(&quot;x&quot;). No env namespace (ek-hygiene).
+      // event.id, session.key). One filter: | default("x"). No env namespace (ek-hygiene).
       // The SAME engine + namespaces render memory.hindsight.bank / memory.codemem.project (§2 memory).
-      &quot;prompt&quot;: &quot;Review this merge request: {{ payload.object_attributes.url }}&quot;,
-      &quot;webhook&quot;: { &quot;auth&quot;: { &quot;type&quot;: &quot;gitlab_token&quot;,
+      "prompt": "Review this merge request: {{ payload.object_attributes.url }}",
+      // prepare: OPTIONAL per-invocation workspace hook (§9.1). A /bin/sh script run on the
+      //   LANE (after dedup + backpressure, before the agente exists) with cwd =
+      //   $ACH_WORKSPACE, which then becomes the engine's cwd. Valid on ANY channel type.
+      //   script is STATIC — {{ }} is NOT rendered here. Event data arrives ONLY as env.
+      "prepare": {
+        "script": "…sh, see §9.1…",
+        "env": { "REPO_BASE_URL": "https://gitlab.example.com" },  // literal values (non-secret)
+        "secretEnv": { "GITLAB_TOKEN": { "env": "ACH_SECRET_GITLAB_CLONE" } },  // env NAMES only
+        "timeoutSeconds": 120                 // 1..3600, default 120. Exceeded → SIGKILL to the
+        //                                       process group; the invocation is abandoned.
+      },
+      "webhook": { "auth": { "type": "gitlab_token",
                              // secret: {env: NAME} — env-only (no disk secrets). The harness reads
-                             // os.environ[NAME] at use time; dumpable=0 + opencode&#39;s clean-slate env
+                             // os.environ[NAME] at use time; dumpable=0 + opencode's clean-slate env
                              // keep it from the agent. NAME MUST NOT be in engine.forwardEnv. A {file}
                              // source is NOT supported and is rejected at config load (extra_forbidden).
-                             &quot;secret&quot;: { &quot;env&quot;: &quot;ACH_SECRET_GITLAB_REVIEW_WEBHOOK&quot; } },
+                             "secret": { "env": "ACH_SECRET_GITLAB_REVIEW_WEBHOOK" } },
                    // gitlabEvents: which GitLab event kinds THIS channel ROUTES to the agent.
-                   //   Omit / null → all routable kinds [&quot;merge_request&quot;,&quot;issue&quot;,&quot;note&quot;].
+                   //   Omit / null → all routable kinds ["merge_request","issue","note"].
                    //   Routable kinds yield a per-conversation session_key:
-                   //     merge_request hook &amp; MR-comment → &quot;{project}:{mr_iid}&quot;    (shared lane)
-                   //     issue hook &amp; issue-comment       → &quot;{project}:issue:{iid}&quot; (namespaced)
-                   //   A note (comment) routes only when &quot;note&quot; AND its noteable base kind
+                   //     merge_request hook &amp; MR-comment → "{project}:{mr_iid}"    (shared lane)
+                   //     issue hook &amp; issue-comment       → "{project}:issue:{iid}" (namespaced)
+                   //   A note (comment) routes only when "note" AND its noteable base kind
                    //   (merge_request/issue) are both listed. Kinds not listed — and non-routable
                    //   kinds (push, tag_push, pipeline, emoji, …) — are accepted-and-IGNORED
-                   //   (HTTP 200 {&quot;status&quot;:&quot;ignored&quot;}), NEVER 422, so GitLab does not auto-disable
+                   //   (HTTP 200 {"status":"ignored"}), NEVER 422, so GitLab does not auto-disable
                    //   the hook. 422 is reserved for a routable-but-malformed payload only.
-                   &quot;gitlabEvents&quot;: [&quot;merge_request&quot;, &quot;note&quot;],
-                   // botUsername: the GitLab username the agent posts AS (the egress PAT&#39;s user —
+                   "gitlabEvents": ["merge_request", "note"],
+                   // botUsername: the GitLab username the agent posts AS (the egress PAT's user —
                    //   a DISTINCT fact from agent.name). When set, inbound events authored by this
                    //   user, plus gitlab-generated system notes, are dropped pre-enqueue (HTTP 200
-                   //   {&quot;status&quot;:&quot;ignored&quot;}) — the harness loop-guard, so the agent never
+                   //   {"status":"ignored"}) — the harness loop-guard, so the agent never
                    //   re-triggers on its own comments/MRs. Omit/null → guard off (agent must
                    //   self-guard via prompt). gitlab source only.
-                   &quot;botUsername&quot;: &quot;ackbot&quot;,
+                   "botUsername": "ackbot",
                    // triggerUsers: actor allowlist — only these GitLab usernames may trigger the
                    //   agent (applies to EVERY routed kind: mr/issue/note). Omit/null → any author
                    //   triggers. Non-listed authors are dropped pre-enqueue (HTTP 200 ignored).
                    //   gitlab source only.
-                   &quot;triggerUsers&quot;: [&quot;juancarlos.moreno&quot;, &quot;ivan.hernanz&quot;] } },
+                   "triggerUsers": ["juancarlos.moreno", "ivan.hernanz"] } },
 
-    { &quot;name&quot;: &quot;generic-hook&quot;, &quot;type&quot;: &quot;webhook&quot;, &quot;source&quot;: &quot;generic&quot;,
-      &quot;webhook&quot;: { &quot;auth&quot;: { &quot;type&quot;: &quot;header_token&quot;,   // static shared secret in a configurable header
-                             &quot;header&quot;: &quot;X-Api-Key&quot;,
-                             &quot;secret&quot;: { &quot;env&quot;: &quot;ACH_SECRET_GENERIC_HOOK&quot; } } } },
+    { "name": "generic-hook", "type": "webhook", "source": "generic",
+      "webhook": { "auth": { "type": "header_token",   // static shared secret in a configurable header
+                             "header": "X-Api-Key",
+                             "secret": { "env": "ACH_SECRET_GENERIC_HOOK" } } } },
 
-    { &quot;name&quot;: &quot;daily-security&quot;, &quot;type&quot;: &quot;cron&quot;, &quot;concurrency&quot;: 1,
-      &quot;cron&quot;: { &quot;schedule&quot;: &quot;0 8 * * 1-5&quot;, &quot;timezone&quot;: &quot;Europe/Madrid&quot; },
-      &quot;prompt&quot;: &quot;Scan main for new CVEs; open an issue via your tools if any are critical.&quot; },
+    { "name": "daily-security", "type": "cron", "concurrency": 1,
+      "cron": { "schedule": "0 8 * * 1-5", "timezone": "Europe/Madrid" },
+      "prompt": "Scan main for new CVEs; open an issue via your tools if any are critical." },
 
-    { &quot;name&quot;: &quot;ticket-triage&quot;, &quot;type&quot;: &quot;queue&quot;, &quot;concurrency&quot;: 2,
-      &quot;queue&quot;: { &quot;type&quot;: &quot;redis&quot;, &quot;key&quot;: &quot;ach:triage&quot;, &quot;ackMode&quot;: &quot;onComplete&quot; },
-      &quot;prompt&quot;: &quot;Triage this ticket and act via your tools.&quot; },
+    { "name": "ticket-triage", "type": "queue", "concurrency": 2,
+      "queue": { "type": "redis", "key": "ach:triage", "ackMode": "onComplete" },
+      "prompt": "Triage this ticket and act via your tools." },
 
-    { &quot;name&quot;: &quot;peer-intake&quot;, &quot;type&quot;: &quot;a2a&quot;, &quot;concurrency&quot;: 2,
-      &quot;a2a&quot;: { &quot;mode&quot;: &quot;async&quot;,
-               &quot;auth&quot;: { &quot;header&quot;: &quot;x-a2a-custom-api-key&quot;,
-                         &quot;secret&quot;: { &quot;env&quot;: &quot;ACH_SECRET_PEER_INTAKE_A2A&quot; } } } }
+    { "name": "peer-intake", "type": "a2a", "concurrency": 2,
+      "a2a": { "mode": "async",
+               "auth": { "header": "x-a2a-custom-api-key",
+                         "secret": { "env": "ACH_SECRET_PEER_INTAKE_A2A" } } } }
   ]
 }
 </code></pre></div>
@@ -1093,10 +1119,10 @@ config field.</p>
 </table>
 <p>Terminal action models (Pydantic discriminated union — <strong>single object, NOT a list</strong>). Every action
 carries a free-text <code>text</code> field so the model always has a place to "finish" with natural language:</p>
-<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">NoneAction</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>      <span class="n">action</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;none&quot;</span><span class="p">];</span>      <span class="n">text</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">;</span> <span class="n">thoughts</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-<span class="k">class</span><span class="w"> </span><span class="nc">A2AReply</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>        <span class="n">action</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;a2a_reply&quot;</span><span class="p">];</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">;</span>      <span class="n">thoughts</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-<span class="k">class</span><span class="w"> </span><span class="nc">ConsentRequest</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>  <span class="n">action</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;consent&quot;</span><span class="p">]</span>    <span class="c1"># RESERVED, v1.1</span>
-    <span class="n">tool</span><span class="p">:</span> <span class="nb">str</span><span class="p">;</span> <span class="n">args</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="p">{};</span> <span class="n">reason</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">NoneAction</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>      <span class="n">action</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"none"</span><span class="p">];</span>      <span class="n">text</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span><span class="p">;</span> <span class="n">thoughts</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">A2AReply</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>        <span class="n">action</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"a2a_reply"</span><span class="p">];</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">;</span>      <span class="n">thoughts</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ConsentRequest</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>  <span class="n">action</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"consent"</span><span class="p">]</span>    <span class="c1"># RESERVED, v1.1</span>
+    <span class="n">tool</span><span class="p">:</span> <span class="nb">str</span><span class="p">;</span> <span class="n">args</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="p">{};</span> <span class="n">reason</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
 <span class="c1"># TerminalAction = NoneAction | A2AReply | ConsentRequest | …</span>
 </code></pre></div>
 <hr />
@@ -1159,6 +1185,101 @@ ephemeral). The gitlab MR/note channel stamps <code>head_sha</code> into the del
 prompt gets a one-line <code>checkout_repo(project=…, ref=…)</code> hint only when the facade is wired AND a
 head SHA is present. Requires gitlab-mcp to actually serve the archive resource (behind
 <code>GITLAB_REPO_ARCHIVE=1</code>); until then, leave the <code>repoCheckout</code> entry out of <code>mcpServers</code>.</p>
+<h3 id="91-channelprepare-the-per-invocation-workspace-hook">9.1 <code>channel.prepare</code> — the per-invocation workspace hook</h3>
+<p>The <strong>preferred</strong> way to give an agent a real repo, and the intended successor to
+<code>repoCheckout</code> (which stays supported for now — it has live users). A <code>/bin/sh</code> script,
+declared per channel, that the harness runs <strong>on the lane</strong> — after <code>dedup → backpressure</code>
+admitted the event, before <code>pool.acquire</code> — with cwd set to that session's workspace. The
+workspace then becomes the <strong>engine's cwd</strong>, so the repo is on disk before the first token:
+no tool call, no <code>checkout_hint</code>, no base64 tarball, and a real <code>.git</code> (blame, log, local
+<code>merge-base</code>, <code>diff base...head</code>).</p>
+<p><em>Why on the lane and not in the channel's HTTP handler:</em> a cold clone blows GitLab's ~10 s
+webhook budget (failed delivery <strong>and</strong> a redelivery for work already done), cloning before
+admit turns a redelivery flood into a clone flood on events dedup was about to discard, and
+nothing bounds parallel clones until <code>maxConcurrentInvocations</code> applies. On the lane, all
+three come free from machinery that already exists.</p>
+<p><strong>The credential is the harness's, never the agent's.</strong> <code>secretEnv</code> names go through the same
+env-only <code>SecretSource</code> as <code>webhook.auth.secret</code>: resolved from <code>os.environ</code> per use, redacted
+in logs, and stripped from <code>engine.forwardEnv</code> so the opencode subprocess cannot inherit them.
+Honest ceiling: harness and opencode share a container and a uid, so an agent with a shell can
+read <code>/proc/&lt;pid&gt;/environ</code>. "We do not hand it over" ≠ "it cannot be obtained".</p>
+<p><strong>Contract for script authors:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Env var</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ACH_WORKSPACE</code></td>
+<td>the workspace (== cwd == the engine's cwd). Put the checkout at <code>$ACH_WORKSPACE/repo</code>.</td>
+</tr>
+<tr>
+<td><code>ACH_SESSION_KEY</code>, <code>ACH_EVENT_ID</code>, <code>ACH_CHANNEL</code></td>
+<td>invocation identity</td>
+</tr>
+<tr>
+<td><code>ACH_EVENT_&lt;FIELD&gt;</code></td>
+<td>every scalar in the channel's delivery context, upper-cased. gitlab: <code>PROJECT_ID</code>, <code>PROJECT_PATH</code>, <code>KIND</code>, <code>TARGET_TYPE</code>, <code>MR_IID</code>/<code>ISSUE_IID</code>, <code>HEAD_SHA</code>. github: <code>REPO</code>, <code>PR_NUMBER</code>.</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>The script is <strong>static text</strong>: <code>{{ }}</code> is not rendered in it, and no payload value is ever
+  interpolated into shell source. That is what makes handing a webhook payload to a shell hook
+  safe — there is no injection surface, only environment variables.</li>
+<li>It runs as <code>sh -eu</code> fed on <strong>stdin</strong> (never written to disk, so the co-resident agent cannot
+  rewrite a script the harness will execute with its own secrets in env; nothing appears in
+  <code>/proc/&lt;pid&gt;/cmdline</code> either). First failing command aborts; an unset var aborts.</li>
+<li><strong>It must be idempotent.</strong> The workspace is keyed by <code>session_key</code> and survives across events
+  (that is the cache), so the second comment on an MR re-runs the script against a populated
+  directory: clone-or-fetch, not clone.</li>
+<li>Non-zero exit, timeout, or spawn failure ⇒ <strong>fail-closed</strong>: the invocation is abandoned,
+  nothing is posted, <code>ach_agent_prepare_failures_total{reason}</code> increments. Deliberately the
+  opposite of memory's fail-open probe — a review of a repo that is not there is worse than
+  no review.</li>
+<li><code>HOME</code> is pinned to the workspace and <code>GIT_TERMINAL_PROMPT=0</code> is set. The base env is a small
+  allowlist (<code>PATH</code>, <code>SHELL</code>, <code>LANG</code>, <code>LANGUAGE</code>, <code>TZ</code>) plus what <code>env</code>/<code>secretEnv</code> declare.</li>
+</ul>
+<p><strong>Two rules the reference script exists to demonstrate:</strong></p>
+<ol>
+<li><strong>Origin from config, path from the payload.</strong> Never clone <code>payload.project.git_http_url</code>.
+   Anyone who can forge a hook body would point it at their own host and harvest the token, and
+   a GitLab webhook secret is typically shared across an instance's hooks. The harness re-validates
+   <code>ACH_EVENT_PROJECT_PATH</code>/<code>ACH_EVENT_REPO</code> against a strict slug regex (no scheme, no host, no
+   userinfo, no <code>..</code>) and drops the variable if it fails — <code>sh -u</code> then aborts the script.</li>
+<li><strong>The token never lands in <code>.git/config</code>.</strong> <code>https://oauth:$TOKEN@host/…</code> persists the
+   credential into the working tree the agent has a shell over. Pass it as a header via
+   <code>GIT_CONFIG_*</code> env (not <code>-c</code>, which is visible in <code>/proc/&lt;pid&gt;/cmdline</code>).</li>
+</ol>
+<div class="highlight"><pre><span></span><code><span class="c1"># GitLab MR review — idempotent clone-or-fetch of the MR head.</span>
+<span class="nv">AUTH</span><span class="o">=</span><span class="k">$(</span><span class="nb">printf</span><span class="w"> </span><span class="s1">'oauth2:%s'</span><span class="w"> </span><span class="s2">"</span><span class="nv">$GITLAB_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>base64<span class="w"> </span>-w0<span class="k">)</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">GIT_CONFIG_COUNT</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">       </span><span class="nv">GIT_CONFIG_KEY_0</span><span class="o">=</span>http.extraHeader<span class="w"> </span><span class="se">\</span>
+<span class="w">       </span><span class="nv">GIT_CONFIG_VALUE_0</span><span class="o">=</span><span class="s2">"Authorization: Basic </span><span class="nv">$AUTH</span><span class="s2">"</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">GIT_LFS_SKIP_SMUDGE</span><span class="o">=</span><span class="m">1</span>
+
+<span class="nv">REPO</span><span class="o">=</span><span class="s2">"</span><span class="nv">$ACH_WORKSPACE</span><span class="s2">/repo"</span>
+<span class="o">[</span><span class="w"> </span>-d<span class="w"> </span><span class="s2">"</span><span class="nv">$REPO</span><span class="s2">/.git"</span><span class="w"> </span><span class="o">]</span><span class="w"> </span><span class="o">||</span><span class="w"> </span>git<span class="w"> </span>clone<span class="w"> </span>--filter<span class="o">=</span>blob:none<span class="w"> </span>--no-checkout<span class="w"> </span>--no-recurse-submodules<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">"</span><span class="nv">$REPO_BASE_URL</span><span class="s2">/</span><span class="nv">$ACH_EVENT_PROJECT_PATH</span><span class="s2">.git"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$REPO</span><span class="s2">"</span>
+<span class="c1"># The MR head ref is MUTABLE — it advances on every push. Fetch it, then check out the SHA the</span>
+<span class="c1"># event named, or the agent reviews a different revision than the one it was told about.</span>
+git<span class="w"> </span>-C<span class="w"> </span><span class="s2">"</span><span class="nv">$REPO</span><span class="s2">"</span><span class="w"> </span>fetch<span class="w"> </span>--filter<span class="o">=</span>blob:none<span class="w"> </span>origin<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">"+refs/merge-requests/</span><span class="nv">$ACH_EVENT_MR_IID</span><span class="s2">/head:refs/ach/mr-</span><span class="nv">$ACH_EVENT_MR_IID</span><span class="s2">"</span>
+git<span class="w"> </span>-C<span class="w"> </span><span class="s2">"</span><span class="nv">$REPO</span><span class="s2">"</span><span class="w"> </span>checkout<span class="w"> </span>--force<span class="w"> </span>--detach<span class="w"> </span><span class="s2">"</span><span class="nv">$ACH_EVENT_HEAD_SHA</span><span class="s2">"</span>
+</code></pre></div>
+<p><code>refs/merge-requests/{iid}/head</code> (GitLab) and <code>refs/pull/{n}/head</code> (GitHub) are published on the
+<strong>target</strong> repo, so fork MRs need no second remote, no fork URL from the payload and no second
+credential. Keep the clone credential <strong>read-only</strong>; a push hook, if one is ever added, gets its
+own scoped secret.</p>
+<p><strong>Untrusted content warning.</strong> The workspace holds MR-authored code. <code>--no-recurse-submodules</code>
+and <code>GIT_LFS_SKIP_SMUDGE=1</code> are in the script for that reason, and a prompt that says "run the
+tests" executes attacker-supplied code inside the agent container, at the harness's uid.</p>
+<p><strong>Growth.</strong> Workspaces are keyed by <code>session_key</code> under <code>engine.workDir</code> and are <strong>not</strong> reclaimed
+today — N repos × M open MRs accumulate on the volume. Cap the volume, or prune <code>workDir</code> out of
+band, until eviction lands.</p>
 <p><strong>The tool-limiting / consent gate is provisioning, not validation.</strong>
 <code>capability.filter.exclude.{tools,mcpServers,skills}</code> <strong>withholds</strong> capabilities <strong>before</strong> they
 are offered to opencode — the model literally cannot call/see them. The reserved <code>consent</code> terminal

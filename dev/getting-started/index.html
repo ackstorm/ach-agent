@@ -478,7 +478,7 @@ variables. No host Python.</p>
 <p>A ready-to-run example lives in the sibling repo <strong><code>../ach-agent-test</code></strong> (<code>config.yaml</code> +
 <code>docker-compose.yaml</code>); the files below are the same shape.</p>
 <h2 id="1-a-minimal-configyaml">1. A minimal <code>config.yaml</code></h2>
-<div class="highlight"><pre><span></span><code><span class="nt">schemaVersion</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1&quot;</span>
+<div class="highlight"><pre><span></span><code><span class="nt">schemaVersion</span><span class="p">:</span><span class="w"> </span><span class="s">"1"</span>
 
 <span class="nt">agent</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">local-dev-agent</span>
@@ -495,7 +495,7 @@ variables. No host Python.</p>
 <span class="nt">prompt</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">system</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">text</span>
-<span class="w">    </span><span class="nt">text</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;You</span><span class="nv"> </span><span class="s">are</span><span class="nv"> </span><span class="s">a</span><span class="nv"> </span><span class="s">concise</span><span class="nv"> </span><span class="s">software-engineering</span><span class="nv"> </span><span class="s">assistant.&quot;</span>
+<span class="w">    </span><span class="nt">text</span><span class="p">:</span><span class="w"> </span><span class="s">"You</span><span class="nv"> </span><span class="s">are</span><span class="nv"> </span><span class="s">a</span><span class="nv"> </span><span class="s">concise</span><span class="nv"> </span><span class="s">software-engineering</span><span class="nv"> </span><span class="s">assistant."</span>
 <span class="w">  </span><span class="nt">compose</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">append</span>
 
 <span class="nt">engine</span><span class="p">:</span>
@@ -513,7 +513,7 @@ variables. No host Python.</p>
 <div class="highlight"><pre><span></span><code><span class="nt">services</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">agent</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ghcr.io/ackstorm/ach-agent:latest</span>
-<span class="w">    </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;--tui&quot;</span><span class="p p-Indicator">]</span><span class="w">                </span><span class="c1"># console REPL</span>
+<span class="w">    </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"--tui"</span><span class="p p-Indicator">]</span><span class="w">                </span><span class="c1"># console REPL</span>
 <span class="w">    </span><span class="nt">environment</span><span class="p">:</span>
 <span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ACH_TOKEN=${ACH_TOKEN:?set ACH_TOKEN=ek-... in your shell}</span>
 <span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ACH_BASE_URL=${ACH_BASE_URL:?set ACH_BASE_URL=https://your-ach-host in your shell}</span>
@@ -529,7 +529,7 @@ variables. No host Python.</p>
 
 <span class="c1"># one-shot instead of the REPL</span>
 <span class="nv">ACH_TOKEN</span><span class="o">=</span>ek-&lt;your-key&gt;<span class="w"> </span><span class="nv">ACH_BASE_URL</span><span class="o">=</span>https://&lt;your-ach-host&gt;<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>docker<span class="w"> </span>compose<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>agent<span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;Review MR !42 in project 7&quot;</span>
+<span class="w">  </span>docker<span class="w"> </span>compose<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>agent<span class="w"> </span>--prompt<span class="w"> </span><span class="s2">"Review MR !42 in project 7"</span>
 </code></pre></div>
 <p>To drive <strong>real channels</strong> (webhook / cron / queue / a2a) instead of the console, add a
 <code>channels:</code> block to <code>config.yaml</code> and launch <strong>without</strong> <code>--tui</code>/<code>--prompt</code> — the harness then

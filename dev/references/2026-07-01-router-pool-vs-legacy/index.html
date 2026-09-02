@@ -871,7 +871,7 @@ whose key — and therefore whose engine instance — hasn't been created yet. T
 race that needed tightening; it was checking the wrong thing.</p>
 <p><strong>Confirmed against legacy.</strong> <code>ackbot-process/src/handlers/gitlab/handler.py:359-360</code>:
 <div class="highlight"><pre><span></span><code><span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_processor</span><span class="o">.</span><span class="n">process_message</span><span class="p">(</span><span class="n">msg</span><span class="p">))</span>
-<span class="k">return</span> <span class="n">JSONResponse</span><span class="p">({</span><span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;accepted&quot;</span><span class="p">},</span> <span class="n">status_code</span><span class="o">=</span><span class="mi">202</span><span class="p">)</span>
+<span class="k">return</span> <span class="n">JSONResponse</span><span class="p">({</span><span class="s2">"status"</span><span class="p">:</span> <span class="s2">"accepted"</span><span class="p">},</span> <span class="n">status_code</span><span class="o">=</span><span class="mi">202</span><span class="p">)</span>
 </code></pre></div>
 No engine-readiness gate anywhere in that handler or in <code>bus/processor.py</code>. The only 503 in
 legacy is backpressure (<code>MessageProcessor</code> docstring: "Requests that wait longer than expire

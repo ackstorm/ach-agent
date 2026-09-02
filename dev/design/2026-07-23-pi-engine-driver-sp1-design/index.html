@@ -620,7 +620,7 @@ matters — is unchanged and shared).</p>
                        <span class="n">session_ref</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>  <span class="c1"># continue EXACTLY this engine session</span>
                                                         <span class="c1"># (repair/wrap-up) — bypasses conv_key/reuse</span>
                        <span class="n">on_text</span><span class="p">,</span> <span class="n">on_tool</span><span class="p">,</span> <span class="n">max_tool_calls</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">stats</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">TurnResult</span><span class="p">:</span> <span class="o">...</span>
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">discard_session</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">server</span><span class="p">:</span> <span class="n">ManagedServer</span><span class="p">,</span> <span class="n">session_ref</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>  <span class="c1"># &#39;none&#39;/rotate</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">discard_session</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">server</span><span class="p">:</span> <span class="n">ManagedServer</span><span class="p">,</span> <span class="n">session_ref</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>  <span class="c1"># 'none'/rotate</span>
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">compact_session</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">server</span><span class="p">:</span> <span class="n">ManagedServer</span><span class="p">,</span> <span class="n">session_ref</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>  <span class="c1"># overflow=compact</span>
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">stop</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">server</span><span class="p">:</span> <span class="n">ManagedServer</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
 </code></pre></div>
@@ -657,10 +657,10 @@ move carves both loops out of <code>run_invocation</code>; the existing opencode
 <div class="highlight"><pre><span></span><code>env:    PI_CODING_AGENT_DIR=&lt;home&gt;/pi/&lt;key-suffix&gt;          # isolation primitive
         + build_pi_env()   # clean-slate allowlist, same ek-hygiene as build_opencode_env
 write:  $PI_CODING_AGENT_DIR/models.json    # localhost ek-proxy provider (dummy apiKey)
-        $PI_CODING_AGENT_DIR/settings.json  # skills:[&lt;shared dir&gt;], defaultProjectTrust:&quot;always&quot;
-                                            # (valid: ask|always|never — &quot;trust&quot; does not exist),
+        $PI_CODING_AGENT_DIR/settings.json  # skills:[&lt;shared dir&gt;], defaultProjectTrust:"always"
+                                            # (valid: ask|always|never — "trust" does not exist),
                                             # packages:[&lt;vendored pi-mcp-adapter path&gt;]
-        $PI_CODING_AGENT_DIR/mcp.json       # section 6; the adapter&#39;s &quot;settings&quot; block carries
+        $PI_CODING_AGENT_DIR/mcp.json       # section 6; the adapter's "settings" block carries
                                             # the headless knobs (directTools, elicitation:false,
                                             # sampling:false or samplingAutoApprove:true) — those
                                             # are ADAPTER settings, not Pi settings.json

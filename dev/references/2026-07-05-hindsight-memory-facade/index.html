@@ -474,16 +474,16 @@ is the one exception — that is a genuine boot error, same as the sibling local
 degrades to "run without memory" and increments <code>MEMORY_DEGRADED</code>; it never raises into a turn
 or crashes boot.</p>
 <h2 id="config-shape-contract-2-breaking-change">Config shape (CONTRACT §2, breaking change)</h2>
-<div class="highlight"><pre><span></span><code>&quot;memory&quot;: {
-  &quot;type&quot;: &quot;hindsight&quot;,
-  &quot;hindsight&quot;: {
-    &quot;endpoint&quot;: &quot;https://hindsight.../mcp&quot;,
-    &quot;bank&quot;: &quot;gitlab-pr-review&quot;,                 // static, harness-owned; agent NEVER sees/sets it
-    &quot;auth&quot;: { &quot;env&quot;: &quot;ACH_SECRET_MEMORY_HINDSIGHT&quot; }, // OPTIONAL (omit for internal/no-auth URL). Bearer, NOT the ek_. env-only
-    &quot;mission&quot;: &quot;AI code reviewer&quot;,              // optional; passed to create_bank
-    &quot;mentalModels&quot;: [                            // rich specs the harness provisions at boot
-      { &quot;id&quot;: &quot;architecture&quot;, &quot;name&quot;: &quot;Architecture&quot;, &quot;sourceQuery&quot;: &quot;What is the architecture?&quot;,
-        &quot;autoRefresh&quot;: true, &quot;maxTokens&quot;: 2048 }
+<div class="highlight"><pre><span></span><code>"memory": {
+  "type": "hindsight",
+  "hindsight": {
+    "endpoint": "https://hindsight.../mcp",
+    "bank": "gitlab-pr-review",                 // static, harness-owned; agent NEVER sees/sets it
+    "auth": { "env": "ACH_SECRET_MEMORY_HINDSIGHT" }, // OPTIONAL (omit for internal/no-auth URL). Bearer, NOT the ek_. env-only
+    "mission": "AI code reviewer",              // optional; passed to create_bank
+    "mentalModels": [                            // rich specs the harness provisions at boot
+      { "id": "architecture", "name": "Architecture", "sourceQuery": "What is the architecture?",
+        "autoRefresh": true, "maxTokens": 2048 }
     ]
   }
 }

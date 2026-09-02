@@ -424,10 +424,11 @@ class EnginePool:
                 )
                 return
             self._ref_counts.pop(session_key, None)
+            if ttl_seconds == 0:
+                await self._stop_locked(session_key)
+                return
             # Schedule the TTL task under the lock so _ttl_tasks mutations are
-            # always lock-protected (consistent with acquire()). ttl==0 stops the
-            # server via _stop() below — which takes the same lock, so it must run
-            # AFTER this block exits to avoid re-entrant deadlock.
+            # always lock-protected (consistent with acquire()).
             if ttl_seconds > 0:
                 log.debug(
                     "EnginePool.release: scheduling TTL expiry",
@@ -440,9 +441,6 @@ class EnginePool:
                 self._ttl_tasks[session_key] = asyncio.create_task(
                     self._expire(session_key, ttl_seconds)
                 )
-
-        if ttl_seconds == 0:
-            await self._stop(session_key)
 
     async def _expire(self, session_key: str, ttl: float) -> None:
         """Sleep ttl seconds, then stop the key's server (unless re-acquired / superseded).

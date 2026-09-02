@@ -283,6 +283,31 @@ async def test_ttl_zero_runs_cleanup_immediately() -> None:
     cleanup.assert_awaited_once_with()
 
 
+async def test_ttl_zero_release_finishes_before_queued_begin_session() -> None:
+    old_cleanup = AsyncMock()
+    new_cleanup = AsyncMock()
+    pool = EnginePool()
+    pool._start_server = AsyncMock(return_value=_make_fake_server())
+    await pool.begin_session("k1", old_cleanup)
+    await pool.acquire("k1", _real_config())
+
+    lock = pool._get_lock("k1")
+    await lock.acquire()
+    release = asyncio.create_task(pool.release("k1", ttl_seconds=0))
+    await asyncio.sleep(0)
+    assert not release.done()
+    new_begin = asyncio.create_task(pool.begin_session("k1", new_cleanup))
+    await asyncio.sleep(0)
+    assert not new_begin.done()
+    lock.release()
+
+    await asyncio.gather(release, new_begin)
+
+    old_cleanup.assert_awaited_once_with()
+    new_cleanup.assert_not_awaited()
+    assert pool._cleanups["k1"] is new_cleanup
+
+
 async def test_begin_session_cancels_pending_cleanup() -> None:
     cleanup = AsyncMock()
     pool = EnginePool()

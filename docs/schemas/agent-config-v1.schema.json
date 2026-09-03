@@ -168,10 +168,10 @@
         },
         {
           "else": {
-            "not": {
-              "required": [
-                "script"
-              ]
+            "properties": {
+              "script": {
+                "type": "null"
+              }
             }
           },
           "if": {
@@ -185,26 +185,16 @@
             ]
           },
           "then": {
-            "not": {
-              "anyOf": [
-                {
-                  "required": [
-                    "prompt"
-                  ]
-                },
-                {
-                  "required": [
-                    "prepare"
-                  ]
-                },
-                {
-                  "required": [
-                    "cleanup"
-                  ]
-                }
-              ]
-            },
             "properties": {
+              "cleanup": {
+                "type": "null"
+              },
+              "prepare": {
+                "type": "null"
+              },
+              "prompt": {
+                "type": "null"
+              },
               "script": {
                 "not": {
                   "type": "null"

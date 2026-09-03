@@ -150,7 +150,7 @@ async def test_webhook_script_runner_never_acquires_an_engine(tmp_path: Path) ->
             "name": "gitlab-register",
             "type": "webhook-script",
             "source": "gitlab",
-            "webhook": {"auth": {"type": "none"}},
+            "webhook": {"auth": {"type": "none"}, "gitlabEvents": ["push"]},
             "script": {"script": "true"},
         }
     )

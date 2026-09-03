@@ -501,6 +501,14 @@ class WebhookAuthBlock(BaseModel):
         return self
 
 
+# The GitLab kinds an engine-backed conversation can act on: they carry a target the agent
+# replies to (an MR, an issue, a note on one). Also the default when a channel omits
+# gitlabEvents — channels/webhook.py imports THIS set rather than restating it. Every other
+# kind is a project/system event with no conversational target, so it is webhook-script only
+# (check_type_block_coherence).
+CONVERSATIONAL_GITLAB_EVENTS = frozenset({"merge_request", "issue", "note"})
+
+
 class WebhookBlock(BaseModel):
     """Operator contract §2 webhook channel sub-block (deliver/deliverOnly removed)."""
 
@@ -723,22 +731,22 @@ class ChannelConfig(BaseModel):
                         "required": ["type"],
                         "properties": {"type": {"const": "webhook-script"}},
                     },
+                    # Every clause is `{"type": "null"}` / `{"not": {"type": "null"}}` rather
+                    # than a bare `required` test: the loader treats an explicit null as
+                    # absent, and a Go renderer without `omitempty` emits null for every
+                    # unset block. A bare presence test would reject configs the harness runs.
                     "then": {
                         "required": ["source", "webhook", "script"],
                         "properties": {
                             "source": {"not": {"type": "null"}},
                             "webhook": {"not": {"type": "null"}},
                             "script": {"not": {"type": "null"}},
-                        },
-                        "not": {
-                            "anyOf": [
-                                {"required": ["prompt"]},
-                                {"required": ["prepare"]},
-                                {"required": ["cleanup"]},
-                            ]
+                            "prompt": {"type": "null"},
+                            "prepare": {"type": "null"},
+                            "cleanup": {"type": "null"},
                         },
                     },
-                    "else": {"not": {"required": ["script"]}},
+                    "else": {"properties": {"script": {"type": "null"}}},
                 },
             ]
         },
@@ -796,11 +804,33 @@ class ChannelConfig(BaseModel):
                     raise ValueError(
                         f"channel '{self.name}': type='webhook-script' forbids '{field}' block"
                     )
+            # The project-scoped lane (`<project-id>:webhook-script:<channel>`) is derived from
+            # the GitLab project id. github/generic carry no project identity, so their lane key
+            # would fall back to the per-delivery idempotency key and the documented "no two
+            # events reconcile the same project concurrently" guarantee would silently not hold.
+            if self.source != "gitlab":
+                raise ValueError(f"channel '{self.name}': type='webhook-script' requires gitlab")
+            # No conversational default can be right for a channel that forbids 'prompt': it
+            # would 200-ignore every system event the channel exists to handle.
+            if self.webhook.gitlab_events is None:
+                raise ValueError(
+                    f"channel '{self.name}': type='webhook-script' requires webhook.gitlabEvents"
+                )
         elif getattr(self, t) is None:
             article = "an" if t == "a2a" else "a"
             raise ValueError(f"channel '{self.name}': type='{t}' requires {article} '{t}' block")
         if t in ("webhook", "webhook-script") and self.source is None:
             raise ValueError(f"channel '{self.name}': type='{t}' requires 'source' field")
+        if t == "webhook" and self.webhook is not None and self.webhook.gitlab_events:
+            # Project/system kinds have no MR or issue to reply to: routing one into an engine
+            # channel spends a full billed turn per `git push` with a delivery_context that
+            # names no target. They belong to webhook-script.
+            extra = sorted(set(self.webhook.gitlab_events) - CONVERSATIONAL_GITLAB_EVENTS)
+            if extra:
+                raise ValueError(
+                    f"channel '{self.name}': type='webhook' cannot route {extra} — "
+                    f"project/system events require type='webhook-script'"
+                )
         for foreign in ("webhook", "cron", "queue", "a2a"):
             allowed = foreign == t or (t == "webhook-script" and foreign == "webhook")
             if not allowed and getattr(self, foreign) is not None:
@@ -852,6 +882,27 @@ class AgentConfig(BaseModel):
     persistence: PersistenceBlock = Field(default_factory=PersistenceBlock)
     health: HealthBlock = Field(default_factory=HealthBlock)
     channels: list[ChannelConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _hook_timeouts_fit_the_lane(self) -> AgentConfig:
+        """prepare/script run INSIDE the lane's maxInvocationSeconds deadline.
+
+        A hook timeout above that deadline can never fire: the lane cancels the invocation
+        first, which counts an engine watchdog kill (on a webhook-script channel that never
+        launches an engine) and leaves `*_failures_total{reason="timeout"}` — the counter the
+        docs tell operators to alert on — at zero. Both values are individually valid, so the
+        mismatch is only visible here.
+        """
+        limit = self.limits.max_invocation_seconds
+        for channel in self.channels:
+            for field in ("prepare", "script"):
+                block = getattr(channel, field)
+                if block is not None and block.timeout_seconds > limit:
+                    raise ValueError(
+                        f"channel '{channel.name}': {field}.timeoutSeconds "
+                        f"({block.timeout_seconds}) exceeds limits.maxInvocationSeconds ({limit})"
+                    )
+        return self
 
 
 # ---------------------------------------------------------------------------

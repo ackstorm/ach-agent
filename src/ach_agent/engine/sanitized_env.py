@@ -151,6 +151,21 @@ def _resolve_log_level() -> int:
 _SECRET_ENV_NAMES: list[str] = []
 
 
+def redact_text(text: str) -> str:
+    """Redact every known secret from a plain string.
+
+    The processors above walk event_dict VALUES only, so a secret embedded in an EXCEPTION
+    message escapes them: log.exception renders the traceback from exc_info AFTER the chain
+    has run. Anything that folds subprocess output into an exception must pass it through
+    here first (boot/prepare.py).
+    """
+    text = _EK_PATTERN.sub("[REDACTED]", text)
+    for name in ("GITLAB_TOKEN", *_SECRET_ENV_NAMES):
+        if value := os.environ.get(name):
+            text = text.replace(value, "[REDACTED]")
+    return text
+
+
 def configure_logging() -> None:
     """Configure structlog with the redact_ek_processor in the processor chain.
 

@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Fixed
+
+- Terminate the `webhook-script` stdin payload with a newline: `read -r line` returned 1 at
+  EOF and aborted the script under `sh -e`, and `while read` discarded the payload silently.
+- Serialize the `webhook-script` payload before creating its workspace, and escape non-ASCII:
+  a lone surrogate (a truncated emoji in a commit message) raised after `mkdtemp` and leaked
+  one workspace per delivery.
+- Keep the script text out of world-readable `/proc/<pid>/cmdline` when stdin carries the
+  payload: it is passed through `ACH_SCRIPT` and `eval`ed by a trampoline that unsets it.
+- Redact the script stderr tail folded into `PrepareFailed`/`WebhookScriptFailed`: an
+  exception message reaches the log through a traceback, rendered after the redaction
+  processors have run.
+- Remove the `webhook-script` workspace off the event loop (`asyncio.to_thread`) and log
+  removal failures instead of ignoring them.
+- Return 422 instead of 500 for a webhook body whose `project` is not an object; the
+  `AttributeError` escaped the handler, and repeated 5xx makes GitLab disable the hook.
+- Publish the `script`/`prompt`/`prepare`/`cleanup` coherence rules in the JSON Schema
+  artifact as null-guarded clauses, so an explicit `null` (what a Go renderer without
+  `omitempty` emits) is accepted by the artifact exactly as the loader accepts it.
+- Label `ach_agent_channel_inbound_events_total` with the channel's real type instead of
+  hardcoding `webhook`.
+
+### Added
+
+- `ach_agent_webhook_script_runs_total{channel,status}` — a `webhook-script` channel writes no
+  `ach:sessions` entry, so this is the only per-run evidence it is running.
+
+### Changed
+
+- **Breaking (config):** `webhook-script` now requires `source: gitlab` and an explicit
+  `webhook.gitlabEvents`; the GitLab project/system kinds (`push`, `project_*`,
+  `repository_update`) are rejected on an engine-backed `type: webhook`; and
+  `prepare`/`script` `timeoutSeconds` may not exceed `limits.maxInvocationSeconds`.
+
 ## [0.13.4] - 2026-09-02
 
 ### Added

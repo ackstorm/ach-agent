@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from ach_agent.channels.message_event import MessageEvent
-from ach_agent.config.schema import SecretSource, resolve_secret
+from ach_agent.config.schema import CONVERSATIONAL_GITLAB_EVENTS, SecretSource, resolve_secret
 from ach_agent.router.dedup import derive_gitlab_composite_key, derive_webhook_idempotency_key
 from ach_agent.router.metrics import CHANNEL_INBOUND
 from ach_agent.router.router import RouterAdmitResult
@@ -41,17 +41,6 @@ if TYPE_CHECKING:
     from ach_agent.config.schema import ChannelConfig, WebhookAuthBlock
 
 log = structlog.get_logger(__name__)
-
-# GitLab event kinds routed when a channel does not set webhook.gitlabEvents.
-_DEFAULT_GITLAB_EVENTS = {"merge_request", "issue", "note"}
-_PROJECT_GITLAB_EVENTS = {
-    "push",
-    "project_create",
-    "project_rename",
-    "project_transfer",
-    "project_update",
-    "repository_update",
-}
 
 
 @dataclass
@@ -225,7 +214,11 @@ def _parse_gitlab(body: dict[str, Any], allowed: set[str]) -> tuple[dict[str, An
             )
         return None  # comment on commit/snippet, or noteable kind not allowed → ignore
 
-    if kind in _PROJECT_GITLAB_EVENTS and kind in allowed:
+    if kind in allowed:
+        # Everything conversational returned above, so this is a project/system event
+        # (push, project_*, repository_update — the schema's Literal bounds the set).
+        # `project` may be any JSON type in a forged body; a non-dict raises AttributeError,
+        # which the caller maps to 422 alongside KeyError/TypeError/ValueError.
         project = body.get("project") or {}
         project_id = int(project.get("id") or body["project_id"])
         return (
@@ -353,7 +346,7 @@ async def handle_webhook_request(
         elif source == "generic":
             delivery_context, session_key = _parse_generic(idempotency_key)
         else:  # source == "gitlab"
-            allowed = set(channel_cfg.webhook.gitlab_events or _DEFAULT_GITLAB_EVENTS)
+            allowed = set(channel_cfg.webhook.gitlab_events or CONVERSATIONAL_GITLAB_EVENTS)
             parsed = _parse_gitlab(body, allowed)
             if parsed is None:
                 log.info(
@@ -383,7 +376,7 @@ async def handle_webhook_request(
                     actor=actor,
                 )
                 return WebhookResult(status_code=200, body={"status": "ignored"})
-    except (KeyError, TypeError, ValueError) as exc:
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
         log.warning(
             "webhook: payload missing required fields",
             channel=channel_cfg.name,
@@ -415,7 +408,7 @@ async def handle_webhook_request(
         task_id=task_id,
     )
 
-    CHANNEL_INBOUND.labels(channel=channel_cfg.name, type="webhook").inc()
+    CHANNEL_INBOUND.labels(channel=channel_cfg.name, type=channel_cfg.type).inc()
 
     log.info(
         "webhook: dispatching event",

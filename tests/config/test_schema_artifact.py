@@ -16,6 +16,8 @@ import pytest
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
+from ach_agent.config.schema import AgentConfig
+
 _REPO = Path(__file__).resolve().parents[2]
 _ARTIFACT = _REPO / "docs" / "schemas" / "agent-config-v1.schema.json"
 _FIXTURES = sorted((_REPO / "tests" / "config" / "fixtures").glob("config_*.json"))
@@ -77,6 +79,37 @@ def test_webhook_script_artifact_requires_script() -> None:
 
     with pytest.raises(ValidationError, match="script"):
         Draft202012Validator(schema).validate(instance)
+
+
+def test_artifact_accepts_the_explicit_nulls_the_loader_accepts() -> None:
+    """A Go renderer without `omitempty` emits null for every unset block; both sides agree."""
+    schema = json.loads(_ARTIFACT.read_text(encoding="utf-8"))
+    instance = json.loads(_FIXTURES[0].read_text(encoding="utf-8"))
+    instance["channels"] = [
+        {
+            "name": "register",
+            "type": "webhook-script",
+            "source": "gitlab",
+            "webhook": {"auth": {"type": "none"}, "gitlabEvents": ["push"]},
+            "script": {"script": "true"},
+            "prompt": None,
+            "prepare": None,
+            "cleanup": None,
+            "cron": None,
+            "queue": None,
+            "a2a": None,
+        },
+        {
+            "name": "review",
+            "type": "webhook",
+            "source": "gitlab",
+            "prompt": "review it",
+            "webhook": {"auth": {"type": "none"}},
+            "script": None,
+        },
+    ]
+    Draft202012Validator(schema).validate(instance)
+    AgentConfig.model_validate(instance)
 
 
 def test_cleanup_requires_prepare() -> None:

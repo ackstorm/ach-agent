@@ -56,6 +56,16 @@ WEBHOOK_SCRIPT_FAILURES: prometheus_client.Counter = prometheus_client.Counter(
     ["reason"],
 )
 
+# ach_agent_webhook_script_runs_total: every admitted webhook-script event, by outcome. A
+# script channel writes no ach:sessions entry (it runs no engine turn), so this counter is
+# the only evidence the channel is doing anything — alert on the absence of status="ok" as
+# well as on failures.
+WEBHOOK_SCRIPT_RUNS: prometheus_client.Counter = prometheus_client.Counter(
+    "ach_agent_webhook_script_runs_total",
+    "webhook-script handlers run, labeled by channel and outcome",
+    ["channel", "status"],
+)
+
 # ach_agent_cost_unpriced_total: every point where cost accounting gives up and a turn is
 # billed 0. Boot reasons (fetch_failed/no_entry/malformed/unpriced) fire ONCE at startup —
 # alert on `> 0`, not on rate(). The per-response reasons (unpriced, usage_missing) keep

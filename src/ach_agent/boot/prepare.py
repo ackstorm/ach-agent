@@ -24,9 +24,11 @@ Three rules make the seam safe, and none of them are optional:
    paths must match a strict slug regex with no `..` segment — a script builds its clone
    URL as `{configured base}/{ACH_EVENT_PROJECT_PATH}.git`, so that variable is a trust
    boundary.
-3. **The script is fed on stdin, never written to disk.** The agent shares this uid; a
-   script file inside the workspace would be a file the agent could rewrite between
-   events and have the harness execute with the harness's secrets in env.
+3. **The script is never written to disk and never placed in argv.** The agent shares this
+   uid; a script file inside the workspace would be a file the agent could rewrite between
+   events and have the harness execute with the harness's secrets in env. `/proc/<pid>/cmdline`
+   is world-readable, so the script text does not go there either — it arrives on stdin, or
+   (when stdin carries the event payload) through the env, via `_SCRIPT_TRAMPOLINE`.
 """
 
 from __future__ import annotations
@@ -48,7 +50,13 @@ import structlog
 from ach_agent.boot.paths import link_ach_state
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import PrepareBlock, resolve_secret
-from ach_agent.engine.metrics import CLEANUP_FAILURES, PREPARE_FAILURES, WEBHOOK_SCRIPT_FAILURES
+from ach_agent.engine.metrics import (
+    CLEANUP_FAILURES,
+    PREPARE_FAILURES,
+    WEBHOOK_SCRIPT_FAILURES,
+    WEBHOOK_SCRIPT_RUNS,
+)
+from ach_agent.engine.sanitized_env import redact_text
 
 log = structlog.get_logger(__name__)
 
@@ -70,6 +78,11 @@ _BASE_ENV = ("PATH", "SHELL", "LANG", "LANGUAGE", "TZ")
 
 # Hook output is diagnostic and potentially noisy, so retain only a bounded tail.
 _HOOK_OUTPUT_TAIL_BYTES = 4096
+
+# Runs the script when stdin is already taken by the event payload. The script travels in
+# ACH_SCRIPT (env, owner-readable) instead of argv (/proc/<pid>/cmdline, world-readable),
+# and is unset before eval so no grandchild process inherits it.
+_SCRIPT_TRAMPOLINE = 's="$ACH_SCRIPT"; unset ACH_SCRIPT; eval "$s"'
 
 
 class PrepareFailed(RuntimeError):
@@ -110,6 +123,22 @@ async def _read_tail(stream: asyncio.StreamReader) -> tuple[bytes, bool]:
             del tail[:-_HOOK_OUTPUT_TAIL_BYTES]
             truncated = True
     return bytes(tail), truncated
+
+
+def _rmtree_failed(func: Any, path: str, exc: BaseException) -> None:
+    """shutil.rmtree onexc hook — a workspace that cannot be removed must not be silent."""
+    log.warning("hook: workspace removal failed", path=path, error=str(exc))
+
+
+def _stderr_tail(stderr: bytes) -> str:
+    """The script's stderr tail, safe to embed in an exception message.
+
+    The log processors redact event_dict VALUES; an exception message reaches the output
+    through log.exception's traceback, which structlog renders from exc_info after the
+    chain has run. A script echoing `git clone https://oauth2:$TOKEN@…` on failure would
+    otherwise print its credential verbatim, so the tail is redacted here at the source.
+    """
+    return redact_text(stderr.decode("utf-8", "replace").strip())
 
 
 def workspace_dir(work_dir: str, session_key: str) -> Path:
@@ -205,7 +234,12 @@ async def _execute_hook(
     env: dict[str, str],
     stdin_payload: bytes | None = None,
 ) -> tuple[int, bytes, bytes, bool]:
-    argv = ("/bin/sh", "-eu", "-s") if stdin_payload is None else ("/bin/sh", "-eu", "-c", script)
+    argv: tuple[str, ...]
+    if stdin_payload is None:
+        argv = ("/bin/sh", "-eu", "-s")
+    else:
+        argv = ("/bin/sh", "-eu", "-c", _SCRIPT_TRAMPOLINE)
+        env = {**env, "ACH_SCRIPT": script}
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv,
@@ -303,11 +337,7 @@ async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
 
     if returncode != 0:
         PREPARE_FAILURES.labels(reason="exit").inc()
-        # The tail can contain whatever the script echoed; structlog's secret-redaction
-        # processors cover every secretEnv name (collect_secret_env_names).
-        raise PrepareFailed(
-            f"prepare script exited {returncode}: {stderr.decode('utf-8', 'replace').strip()}"
-        )
+        raise PrepareFailed(f"prepare script exited {returncode}: {_stderr_tail(stderr)}")
 
     log.info(
         "prepare: workspace ready",
@@ -320,13 +350,19 @@ async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
 
 async def run_webhook_script(cfg: PrepareBlock, event: MessageEvent, work_dir: str) -> None:
     """Run a deterministic webhook handler with normalized JSON on stdin and no engine."""
+    # Serialized BEFORE the workspace exists, so a payload that cannot be encoded leaves no
+    # directory behind. ensure_ascii (the default) is what makes that total: json.loads
+    # accepts a lone surrogate — a truncated emoji in a commit message — and encoding one as
+    # UTF-8 raises. The trailing newline is load-bearing: without it `read -r line` returns 1
+    # at EOF (and `sh -e` aborts the script), while `while read` drops the payload entirely.
+    payload = json.dumps(event.payload, separators=(",", ":")).encode() + b"\n"
     base = Path(work_dir)
     base.mkdir(parents=True, exist_ok=True)
     workspace = Path(tempfile.mkdtemp(prefix="webhook-script-", dir=base))
-    env = build_prepare_env(cfg, event, workspace)
-    payload = json.dumps(event.payload, ensure_ascii=False, separators=(",", ":")).encode()
     started = asyncio.get_running_loop().time()
+    status = "failed"
     try:
+        env = build_prepare_env(cfg, event, workspace)
         log.info(
             "webhook-script: script running",
             session_key=event.session_key,
@@ -353,9 +389,8 @@ async def run_webhook_script(cfg: PrepareBlock, event: MessageEvent, work_dir: s
         _log_hook_output("webhook-script", event, returncode, stdout, stderr, truncated)
         if returncode != 0:
             WEBHOOK_SCRIPT_FAILURES.labels(reason="exit").inc()
-            raise WebhookScriptFailed(
-                f"webhook script exited {returncode}: {stderr.decode('utf-8', 'replace').strip()}"
-            )
+            raise WebhookScriptFailed(f"webhook script exited {returncode}: {_stderr_tail(stderr)}")
+        status = "ok"
         log.info(
             "webhook-script: script complete",
             session_key=event.session_key,
@@ -363,7 +398,13 @@ async def run_webhook_script(cfg: PrepareBlock, event: MessageEvent, work_dir: s
             duration_ms=int((asyncio.get_running_loop().time() - started) * 1000),
         )
     finally:
-        shutil.rmtree(workspace, ignore_errors=True)
+        # The only per-run signal this channel type emits: it writes no ach:sessions entry
+        # (no engine turn to describe), so without it a script-only agent looks idle.
+        WEBHOOK_SCRIPT_RUNS.labels(channel=event.channel_name, status=status).inc()
+        # Off the event loop: the workspace can hold a full checkout, and rmtree is O(files)
+        # of blocking syscalls on the same loop that serves uvicorn, every other lane and the
+        # SSE readers. onexc (not ignore_errors) so a directory left behind is visible.
+        await asyncio.to_thread(shutil.rmtree, workspace, onexc=_rmtree_failed)
 
 
 async def run_cleanup(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -> None:

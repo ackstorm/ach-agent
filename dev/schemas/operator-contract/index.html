@@ -732,6 +732,8 @@ mismatch.</p>
   },
   "limits": {
     "maxConcurrentInvocations": 8,
+    "maxConcurrentScripts": 4,                // optional; webhook-script pool (default: unset
+                                              // = share maxConcurrentInvocations)
     "maxInvocationSeconds": 1800,
     "maxQueuedTotal": 100,
     "idempotencyWindowSeconds": 3600,
@@ -1060,7 +1062,13 @@ lazy start), not a synchronous HTTP status and not (yet) a task-status API.</p>
      (<code>open</code>+<code>update</code>, fresh-UUID re-delivery) the UUID key misses, without deduping intentional
      identical comments minutes apart. <code>None</code> for every non-gitlab channel (unchanged behaviour).</li>
 <li><strong>Pre-lane order: dedup → backpressure (maxQueuedTotal) → lane.</strong></li>
-<li><strong>Three finite bounds always enforced:</strong> maxConcurrentInvocations, maxInvocationSeconds, maxQueuedTotal.</li>
+<li><strong>Three finite bounds always enforced:</strong> maxConcurrentInvocations, maxInvocationSeconds, maxQueuedTotal.
+   Every admitted event holds exactly ONE invocation slot for its whole processing (prepare +
+   engine turn, or the deterministic script). <code>webhook-script</code> channels take that slot from
+   <code>maxConcurrentScripts</code> instead — a separate, equally finite pool, because they never acquire
+   an agente and would otherwise starve every model channel behind them for <code>timeoutSeconds</code>.
+   Unset (the default) → they draw on <code>maxConcurrentInvocations</code>, exactly as before.
+   <code>maxQueuedTotal</code> stays shared: it bounds process memory, which is one resource.</li>
 <li><strong><code>expire</code> exhaustion / full queue is never silent:</strong> 503 sync / NACK-redelivery / drop-log.</li>
 <li><strong>Memory is fail-open:</strong> backend down → run without memory context, log it, never fail.</li>
 <li><strong>Startup deadline:</strong> engine/hydration not ready within startupTimeoutSeconds → exit.</li>
@@ -1161,14 +1169,35 @@ carries a free-text <code>text</code> field so the model always has a place to "
 <h3 id="90-webhook-script-deterministic-ingress-handler">9.0 <code>webhook-script</code> — deterministic ingress handler</h3>
 <p><code>webhook-script</code> is the no-model sibling of <code>webhook</code>. Authentication, GitLab event
 filtering, deduplication, backpressure, project-scoped lanes, and concurrency happen before
-the script. The admitted event then runs as <code>/bin/sh -eu -c &lt;static-script&gt;</code> with normalized
-webhook JSON on stdin, a temporary <code>ACH_WORKSPACE</code>, validated <code>ACH_EVENT_*</code> environment, and
-only explicitly configured <code>env</code>/<code>secretEnv</code>. Its workspace is removed after every event.
-It never probes memory, acquires the engine pool, builds a prompt, or invokes a model.</p>
+the script. The admitted event then runs under <code>/bin/sh -eu</code> with <strong>newline-terminated</strong>
+normalized webhook JSON on stdin, a temporary <code>ACH_WORKSPACE</code>, validated <code>ACH_EVENT_*</code>
+environment, and only explicitly configured <code>env</code>/<code>secretEnv</code>. Its workspace is removed after
+every event. It never probes memory, acquires the engine pool, builds a prompt, or invokes a
+model.</p>
+<p>Because stdin carries the payload, the script text travels in <code>ACH_SCRIPT</code> and is <code>eval</code>ed by a
+fixed trampoline that unsets it first — the same invariant as every other hook: never on disk,
+never in world-readable <code>/proc/&lt;pid&gt;/cmdline</code> (§9.x).</p>
+<p>Three rules the loader enforces, all of them cross-field:</p>
+<ul>
+<li><code>source</code> must be <code>gitlab</code>. The project-scoped lane key is derived from the GitLab project id;
+  github/generic have none, so their lane would degrade to one per delivery.</li>
+<li><code>webhook.gitlabEvents</code> is REQUIRED. The conversational default (<code>merge_request</code>, <code>issue</code>,
+  <code>note</code>) would 200-ignore every system event a registrar channel exists to handle.</li>
+<li>The project/system kinds (<code>push</code>, <code>project_*</code>, <code>repository_update</code>) are <code>webhook-script</code>-only.
+  On an engine-backed <code>type: webhook</code> they would spend a billed model turn per <code>git push</code> with a
+  <code>delivery_context</code> naming no MR or issue to reply to.</li>
+</ul>
+<p><code>script.timeoutSeconds</code> (like <code>prepare.timeoutSeconds</code>) must not exceed
+<code>limits.maxInvocationSeconds</code>: the hook runs inside the lane deadline, so a larger value can
+never fire — the lane cancels first and counts an engine watchdog kill instead.</p>
 <p>The endpoint remains asynchronous: it returns <code>202</code> after admission, so later script failures
 are surfaced through structured logs and <code>ach_agent_webhook_script_failures_total</code>, not by
-changing the HTTP response. The output tail follows the same bounded debug logging and secret
-redaction as prepare/cleanup.</p>
+changing the HTTP response. Because the channel writes no <code>ach:sessions</code> entry (there is no
+engine turn to describe), <code>ach_agent_webhook_script_runs_total{channel,status}</code> is the only
+per-run evidence the channel is live — alert on the absence of <code>status="ok"</code>, not only on
+failures. The output tail follows the same bounded debug logging and secret redaction as
+prepare/cleanup; the stderr tail folded into the failure exception is redacted at the source,
+since a traceback is rendered after the log processors have run.</p>
 <p>The agent acts by calling <strong>external MCP tool servers</strong> (e.g. <code>gitlab-mcp</code>). opencode is a
 config-driven MCP client — <strong>but it points only at the harness's localhost proxy.</strong> The proxy
 fronts the ACH-fronted MCP servers, stripping any client-supplied <code>x-ach-agent</code> and <code>x-ach-environment</code>
@@ -1286,7 +1315,9 @@ read <code>/proc/&lt;pid&gt;/environ</code>. "We do not hand it over" ≠ "it ca
   safe — there is no injection surface, only environment variables.</li>
 <li>It runs as <code>sh -eu</code> fed on <strong>stdin</strong> (never written to disk, so the co-resident agent cannot
   rewrite a script the harness will execute with its own secrets in env; nothing appears in
-  <code>/proc/&lt;pid&gt;/cmdline</code> either). First failing command aborts; an unset var aborts.</li>
+  <code>/proc/&lt;pid&gt;/cmdline</code> either — <code>webhook-script</code>, whose stdin carries the payload, passes the
+  script through <code>ACH_SCRIPT</code> + trampoline for the same reason). First failing command aborts;
+  an unset var aborts.</li>
 <li><strong>Prepare must be idempotent.</strong> The workspace is keyed by <code>session_key</code> and survives across events
   (that is the cache), so the second comment on an MR re-runs the script against a populated
   directory: clone-or-fetch, not clone.</li>

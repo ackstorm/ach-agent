@@ -859,7 +859,7 @@ env. <strong>Never list the <code>ek_</code></strong> (<code>ACH_TOKEN</code>/<c
 </tr>
 <tr>
 <td><code>webhook-script</code></td>
-<td><code>webhook</code> + <code>script</code> + <code>source</code></td>
+<td><code>webhook</code> (+ <code>gitlabEvents</code>) + <code>script</code> + <code>source: gitlab</code></td>
 <td>Authenticated asynchronous webhook that runs a static <code>/bin/sh</code> script and never invokes the model.</td>
 </tr>
 <tr>
@@ -894,13 +894,24 @@ channel adapts per event:</p>
 <p>Use <code>webhook-script</code> for deterministic webhook automation that does not need an agent. It
 shares webhook authentication, event filtering, deduplication, backpressure, lanes, and
 <code>concurrency</code>, but executes only <code>script.script</code>. The normalized JSON payload is supplied on
-stdin, validated event fields are available as <code>ACH_EVENT_*</code>, and <code>ACH_WORKSPACE</code> is temporary.
-The script runs asynchronously after the endpoint returns <code>202</code>; failures appear in logs and
+stdin <strong>with a trailing newline</strong> (so <code>read -r line</code> and <code>while read</code> both work), validated
+event fields are available as <code>ACH_EVENT_*</code>, and <code>ACH_WORKSPACE</code> is temporary. The script runs
+asynchronously after the endpoint returns <code>202</code>; every run is counted by
+<code>ach_agent_webhook_script_runs_total{channel,status}</code> and failures also appear in logs and
 <code>ach_agent_webhook_script_failures_total</code>.</p>
+<p>It requires <code>source: gitlab</code> and an explicit <code>webhook.gitlabEvents</code> — there is no default,
+because the conversational one would silently ignore every system event. <code>timeoutSeconds</code> must
+not exceed <code>limits.maxInvocationSeconds</code> (the lane deadline pre-empts anything larger).</p>
+<p>Set <code>limits.maxConcurrentScripts</code> when a script channel shares the process with a model
+channel: script events are admitted like any other event, so with a single pool a 120 s
+registrar handler blocks every MR review behind it. <code>maxConcurrentInvocations: 1</code> plus
+<code>maxConcurrentScripts: 4</code> reads "one model turn at a time, four handlers in parallel". Left
+unset, handlers draw on <code>maxConcurrentInvocations</code> as they always have.</p>
 <p>For GitLab System Hooks, useful registrar events are <code>project_create</code>, <code>project_rename</code>,
-<code>project_transfer</code>, <code>project_update</code>, <code>repository_update</code>, <code>push</code>, and <code>merge_request</code>.
-Project events use one lane per project and channel, preventing concurrent reconciliation of
-the same project.</p>
+<code>project_transfer</code>, <code>project_update</code>, <code>repository_update</code>, <code>push</code>, and <code>merge_request</code>. The
+project/system kinds are accepted ONLY on <code>webhook-script</code>; an engine-backed <code>webhook</code> channel
+that lists one is rejected at load. Project events use one lane per project and channel,
+preventing concurrent reconciliation of the same project.</p>
 <h2 id="full-example">Full example</h2>
 <p>A complete, schema-valid contract showing every block lives at
 <a href="https://github.com/ackstorm/ach-agent/blob/main/example.yaml"><code>example.yaml</code></a> in the repo root:</p>

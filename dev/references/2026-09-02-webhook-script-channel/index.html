@@ -398,8 +398,9 @@ static shell script, and never starts or calls an agent engine.</p>
 <span class="w">      </span><span class="nt">GITLAB_TOKEN</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">env</span><span class="p">:</span><span class="w"> </span><span class="nv">ACH_SECRET_GITLAB_REGISTER_SCRIPT_GITLAB_TOKEN</span><span class="p p-Indicator">}</span>
 <span class="w">    </span><span class="nt">timeoutSeconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">120</span>
 </code></pre></div>
-<p><code>webhook-script</code> requires <code>source</code>, <code>webhook</code>, and <code>script</code>. It forbids <code>prompt</code>,
-<code>prepare</code>, <code>cleanup</code>, <code>cron</code>, <code>queue</code>, and <code>a2a</code>. The script block has the same static
+<p><code>webhook-script</code> requires <code>source: gitlab</code>, <code>webhook.gitlabEvents</code>, and <code>script</code>. It forbids
+<code>prompt</code>, <code>prepare</code>, <code>cleanup</code>, <code>cron</code>, <code>queue</code>, and <code>a2a</code>, and its <code>timeoutSeconds</code> may not
+exceed <code>limits.maxInvocationSeconds</code>. The project/system kinds are exclusive to it. The script block has the same static
 script, environment allowlist, secret handling, timeout, bounded debug-output, and
 process-group kill guarantees as lifecycle hooks.</p>
 <p>The HTTP request returns <code>202</code> after admission. Execution remains asynchronous. A script
@@ -412,7 +413,8 @@ backpressure, the runner:</p>
 <ol>
 <li>creates a temporary workspace under <code>engine.workDir</code>;</li>
 <li>exposes the validated <code>ACH_EVENT_*</code> values and configured environment;</li>
-<li>runs <code>/bin/sh -eu -c &lt;script&gt;</code> with normalized webhook JSON on stdin;</li>
+<li>runs the script under <code>/bin/sh -eu</code> with newline-terminated normalized webhook JSON on
+   stdin (the script arrives in <code>ACH_SCRIPT</code>, never in argv);</li>
 <li>captures only the bounded output tail and logs it at debug level;</li>
 <li>removes the temporary workspace; and</li>
 <li>returns without probing memory, acquiring the pool, or invoking a model.</li>

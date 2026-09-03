@@ -397,6 +397,12 @@ decision, prefixed <code>YYYY-MM-DD-</code> so <code>ls</code> sorts chronologic
 <td>Shipped (v0.13.0)</td>
 <td>Harness prepares the repo per event: credentials + origin on the channel, executed on the lane (post-dedup), workspace as the engine cwd. Landed as the generic <code>channel.prepare</code> script hook, not a typed clone block.</td>
 </tr>
+<tr>
+<td>2026-09-02</td>
+<td><a href="2026-09-02-webhook-script-channel/">webhook-script-channel</a></td>
+<td>Shipped (v0.13.4)</td>
+<td><code>webhook-script</code>: authenticated GitLab ingress that runs a static <code>/bin/sh</code> handler on a project-scoped lane and never starts an engine. Requires <code>source: gitlab</code> + explicit <code>gitlabEvents</code>; project/system kinds are exclusive to it.</td>
+</tr>
 </tbody>
 </table>
 

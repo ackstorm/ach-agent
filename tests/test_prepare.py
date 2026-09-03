@@ -202,6 +202,60 @@ async def test_webhook_script_nonzero_fails_without_an_engine(tmp_path: Path) ->
         await run_webhook_script(_block("exit 9"), _event(), str(tmp_path / "work"))
 
 
+async def test_webhook_script_payload_is_newline_terminated(tmp_path: Path) -> None:
+    """`read` returns 1 at EOF-without-newline, and `sh -e` then aborts the whole script."""
+    out = tmp_path / "line.json"
+    event = _event()
+    event.payload = {"event_name": "push", "project_id": 42}
+    cfg = _block('read -r line; printf "%s" "$line" > "$OUT"', env={"OUT": str(out)})
+
+    await run_webhook_script(cfg, event, str(tmp_path / "work"))
+
+    assert json.loads(out.read_text()) == event.payload
+
+
+async def test_webhook_script_survives_an_unpaired_surrogate(tmp_path: Path) -> None:
+    """json.loads accepts a lone surrogate (a truncated emoji); encoding one as UTF-8 raises.
+
+    That raise used to happen after mkdtemp, leaking one workspace per delivery.
+    """
+    work = tmp_path / "work"
+    event = _event()
+    event.payload = json.loads(r'{"title": "\ud83d truncated"}')
+
+    await run_webhook_script(_block("cat > /dev/null"), event, str(work))
+
+    assert list(work.iterdir()) == []
+
+
+async def test_webhook_script_text_is_not_in_proc_cmdline(tmp_path: Path) -> None:
+    """/proc/<pid>/cmdline is world-readable; the co-resident agent must not read the script."""
+    out = tmp_path / "cmdline"
+    marker = "SECRET_MARKER_IN_SCRIPT_TEXT"
+    cfg = _block(f'# {marker}\ncat /proc/$$/cmdline > "$OUT"', env={"OUT": str(out)})
+
+    await run_webhook_script(cfg, _event(), str(tmp_path / "work"))
+
+    cmdline = out.read_bytes().replace(b"\0", b" ").decode()
+    assert marker not in cmdline
+    assert "ACH_SCRIPT" in cmdline  # the trampoline, not the script
+
+
+async def test_webhook_script_failure_message_redacts_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tail is embedded in the exception, and log.exception renders it AFTER redaction."""
+    token = "glpat-not-for-tracebacks"
+    monkeypatch.setenv("GITLAB_TOKEN", token)
+    cfg = _block(f'printf "clone failed: {token}" >&2; exit 1')  # as a script would echo it
+
+    with pytest.raises(WebhookScriptFailed) as exc:
+        await run_webhook_script(cfg, _event(), str(tmp_path / "work"))
+
+    assert token not in str(exc.value)
+    assert "[REDACTED]" in str(exc.value)
+
+
 async def test_payload_text_cannot_escape_into_the_shell(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """The injection test: a payload field that looks like shell stays inert, because it is
     only ever an env VALUE — the script text itself is static config."""
@@ -322,36 +376,38 @@ async def test_cleanup_debug_log_contains_bounded_script_output(tmp_path: Path) 
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
     script = "printf stdout; printf stderr >&2; exit 10"
 
-    with patch("ach_agent.boot.prepare.log.debug") as debug:
+    with capture_logs() as logs:
         await run_cleanup(_block(script), _event(), ws)
 
-    assert debug.call_args.args == ("cleanup: script output",)
-    assert debug.call_args.kwargs["stdout"] == "stdout"
-    assert debug.call_args.kwargs["stderr"] == "stderr"
-    assert debug.call_args.kwargs["truncated"] is False
+    output = next(e for e in logs if e["event"] == "cleanup: script output")
+    assert output["log_level"] == "debug"
+    assert output["stdout"] == "stdout"
+    assert output["stderr"] == "stderr"
+    assert output["truncated"] is False
 
 
 async def test_prepare_debug_log_contains_script_output(tmp_path: Path) -> None:
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
 
-    with patch("ach_agent.boot.prepare.log.debug") as debug:
+    with capture_logs() as logs:
         await run_prepare(_block("printf ready; printf warning >&2"), _event(), ws)
 
-    assert debug.call_args.args == ("prepare: script output",)
-    assert debug.call_args.kwargs["stdout"] == "ready"
-    assert debug.call_args.kwargs["stderr"] == "warning"
+    output = next(e for e in logs if e["event"] == "prepare: script output")
+    assert output["log_level"] == "debug"
+    assert output["stdout"] == "ready"
+    assert output["stderr"] == "warning"
 
 
 async def test_cleanup_debug_output_keeps_only_the_tail(tmp_path: Path) -> None:
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
     script = 'i=0; while [ "$i" -lt 5000 ]; do printf x; i=$((i + 1)); done'
 
-    with patch("ach_agent.boot.prepare.log.debug") as debug:
+    with capture_logs() as logs:
         await run_cleanup(_block(script), _event(), ws)
 
-    assert debug.call_args.args == ("cleanup: script output",)
-    assert debug.call_args.kwargs["stdout"] == "x" * 4096
-    assert debug.call_args.kwargs["truncated"] is True
+    output = next(e for e in logs if e["event"] == "cleanup: script output")
+    assert output["stdout"] == "x" * 4096
+    assert output["truncated"] is True
 
 
 async def test_cleanup_timeout_is_best_effort(tmp_path: Path) -> None:

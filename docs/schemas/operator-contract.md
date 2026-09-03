@@ -674,15 +674,38 @@ class ConsentRequest(BaseModel):  action: Literal["consent"]    # RESERVED, v1.1
 
 `webhook-script` is the no-model sibling of `webhook`. Authentication, GitLab event
 filtering, deduplication, backpressure, project-scoped lanes, and concurrency happen before
-the script. The admitted event then runs as `/bin/sh -eu -c <static-script>` with normalized
-webhook JSON on stdin, a temporary `ACH_WORKSPACE`, validated `ACH_EVENT_*` environment, and
-only explicitly configured `env`/`secretEnv`. Its workspace is removed after every event.
-It never probes memory, acquires the engine pool, builds a prompt, or invokes a model.
+the script. The admitted event then runs under `/bin/sh -eu` with **newline-terminated**
+normalized webhook JSON on stdin, a temporary `ACH_WORKSPACE`, validated `ACH_EVENT_*`
+environment, and only explicitly configured `env`/`secretEnv`. Its workspace is removed after
+every event. It never probes memory, acquires the engine pool, builds a prompt, or invokes a
+model.
+
+Because stdin carries the payload, the script text travels in `ACH_SCRIPT` and is `eval`ed by a
+fixed trampoline that unsets it first — the same invariant as every other hook: never on disk,
+never in world-readable `/proc/<pid>/cmdline` (§9.x).
+
+Three rules the loader enforces, all of them cross-field:
+
+- `source` must be `gitlab`. The project-scoped lane key is derived from the GitLab project id;
+  github/generic have none, so their lane would degrade to one per delivery.
+- `webhook.gitlabEvents` is REQUIRED. The conversational default (`merge_request`, `issue`,
+  `note`) would 200-ignore every system event a registrar channel exists to handle.
+- The project/system kinds (`push`, `project_*`, `repository_update`) are `webhook-script`-only.
+  On an engine-backed `type: webhook` they would spend a billed model turn per `git push` with a
+  `delivery_context` naming no MR or issue to reply to.
+
+`script.timeoutSeconds` (like `prepare.timeoutSeconds`) must not exceed
+`limits.maxInvocationSeconds`: the hook runs inside the lane deadline, so a larger value can
+never fire — the lane cancels first and counts an engine watchdog kill instead.
 
 The endpoint remains asynchronous: it returns `202` after admission, so later script failures
 are surfaced through structured logs and `ach_agent_webhook_script_failures_total`, not by
-changing the HTTP response. The output tail follows the same bounded debug logging and secret
-redaction as prepare/cleanup.
+changing the HTTP response. Because the channel writes no `ach:sessions` entry (there is no
+engine turn to describe), `ach_agent_webhook_script_runs_total{channel,status}` is the only
+per-run evidence the channel is live — alert on the absence of `status="ok"`, not only on
+failures. The output tail follows the same bounded debug logging and secret redaction as
+prepare/cleanup; the stderr tail folded into the failure exception is redacted at the source,
+since a traceback is rendered after the log processors have run.
 
 The agent acts by calling **external MCP tool servers** (e.g. `gitlab-mcp`). opencode is a
 config-driven MCP client — **but it points only at the harness's localhost proxy.** The proxy
@@ -797,7 +820,9 @@ read `/proc/<pid>/environ`. "We do not hand it over" ≠ "it cannot be obtained"
   safe — there is no injection surface, only environment variables.
 - It runs as `sh -eu` fed on **stdin** (never written to disk, so the co-resident agent cannot
   rewrite a script the harness will execute with its own secrets in env; nothing appears in
-  `/proc/<pid>/cmdline` either). First failing command aborts; an unset var aborts.
+  `/proc/<pid>/cmdline` either — `webhook-script`, whose stdin carries the payload, passes the
+  script through `ACH_SCRIPT` + trampoline for the same reason). First failing command aborts;
+  an unset var aborts.
 - **Prepare must be idempotent.** The workspace is keyed by `session_key` and survives across events
   (that is the cache), so the second comment on an MR re-runs the script against a populated
   directory: clone-or-fetch, not clone.

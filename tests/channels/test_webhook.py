@@ -611,6 +611,18 @@ async def test_webhook_script_routes_system_push_per_project(
 
 
 @pytest.mark.asyncio
+async def test_non_dict_project_block_is_422_not_500(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AttributeError used to escape the handler: repeated 5xx makes GitLab disable the hook."""
+    monkeypatch.setenv(SECRET_ENV, "s")
+    payload = {"event_name": "push", "project": "oops", "project_id": 42}
+
+    result, handler = await _post(payload, _make_script_cfg(["push"]), "s")
+
+    assert result.status_code == 422
+    assert handler.events == []
+
+
+@pytest.mark.asyncio
 async def test_mr_hook_default_routes_with_kind(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(SECRET_ENV, "s")
     cfg = _make_cfg_events()

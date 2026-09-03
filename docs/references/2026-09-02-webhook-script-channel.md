@@ -34,8 +34,9 @@ static shell script, and never starts or calls an agent engine.
     timeoutSeconds: 120
 ```
 
-`webhook-script` requires `source`, `webhook`, and `script`. It forbids `prompt`,
-`prepare`, `cleanup`, `cron`, `queue`, and `a2a`. The script block has the same static
+`webhook-script` requires `source: gitlab`, `webhook.gitlabEvents`, and `script`. It forbids
+`prompt`, `prepare`, `cleanup`, `cron`, `queue`, and `a2a`, and its `timeoutSeconds` may not
+exceed `limits.maxInvocationSeconds`. The project/system kinds are exclusive to it. The script block has the same static
 script, environment allowlist, secret handling, timeout, bounded debug-output, and
 process-group kill guarantees as lifecycle hooks.
 
@@ -51,7 +52,8 @@ backpressure, the runner:
 
 1. creates a temporary workspace under `engine.workDir`;
 2. exposes the validated `ACH_EVENT_*` values and configured environment;
-3. runs `/bin/sh -eu -c <script>` with normalized webhook JSON on stdin;
+3. runs the script under `/bin/sh -eu` with newline-terminated normalized webhook JSON on
+   stdin (the script arrives in `ACH_SCRIPT`, never in argv);
 4. captures only the bounded output tail and logs it at debug level;
 5. removes the temporary workspace; and
 6. returns without probing memory, acquiring the pool, or invoking a model.

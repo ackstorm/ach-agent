@@ -392,6 +392,93 @@ def test_webhook_script_channel_rejects_agent_lifecycle_blocks() -> None:
         )
 
 
+def test_webhook_script_channel_requires_explicit_gitlab_events() -> None:
+    """The conversational default would 200-ignore every system event the channel exists for."""
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import ChannelConfig
+
+    with pytest.raises(ValidationError, match="requires webhook.gitlabEvents"):
+        ChannelConfig.model_validate(
+            {
+                "name": "gitlab-register",
+                "type": "webhook-script",
+                "source": "gitlab",
+                "webhook": {"auth": {"type": "none"}},
+                "script": {"script": "true"},
+            }
+        )
+
+
+def test_webhook_script_channel_requires_gitlab_source() -> None:
+    """github/generic carry no project id, so the project-scoped lane cannot be derived."""
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import ChannelConfig
+
+    with pytest.raises(ValidationError, match="requires gitlab"):
+        ChannelConfig.model_validate(
+            {
+                "name": "gitlab-register",
+                "type": "webhook-script",
+                "source": "generic",
+                "webhook": {"auth": {"type": "none"}, "gitlabEvents": ["push"]},
+                "script": {"script": "true"},
+            }
+        )
+
+
+def test_engine_webhook_channel_cannot_route_project_events() -> None:
+    """A push on an engine-backed channel is a billed model turn with no target to reply to."""
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import ChannelConfig
+
+    with pytest.raises(ValidationError, match="webhook-script"):
+        ChannelConfig.model_validate(
+            {
+                "name": "mr-review",
+                "type": "webhook",
+                "source": "gitlab",
+                "prompt": "review it",
+                "webhook": {"auth": {"type": "none"}, "gitlabEvents": ["merge_request", "push"]},
+            }
+        )
+
+
+def test_hook_timeout_above_max_invocation_seconds_rejected() -> None:
+    """A hook timeout the lane deadline pre-empts can never fire (its metric stays at zero)."""
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import AgentConfig
+
+    base = {
+        "schemaVersion": "1",
+        "agent": {"name": "a"},
+        "model": {"name": "m", "type": "openai"},
+        "capability": {"type": "ach", "ach": {"baseUrl": "https://ach.example.com"}},
+        "limits": {"maxInvocationSeconds": 600},
+        "channels": [
+            {
+                "name": "gitlab-register",
+                "type": "webhook-script",
+                "source": "gitlab",
+                "webhook": {"auth": {"type": "none"}, "gitlabEvents": ["push"]},
+                "script": {"script": "true", "timeoutSeconds": 900},
+            }
+        ],
+    }
+    with pytest.raises(ValidationError, match="exceeds limits.maxInvocationSeconds"):
+        AgentConfig.model_validate(base)
+
+    base["limits"] = {"maxInvocationSeconds": 900}
+    assert AgentConfig.model_validate(base).channels[0].script is not None
+
+
 def test_channel_session_and_expire_rejected() -> None:
     import pytest
     from pydantic import ValidationError

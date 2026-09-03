@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `ach_agent_webhook_script_runs_total{channel,status}` — a `webhook-script` channel writes no
   `ach:sessions` entry, so this is the only per-run evidence it is running.
+- `limits.maxConcurrentScripts` — a separate finite invocation pool for `webhook-script`
+  channels, which never acquire an engine and otherwise starve every model channel for up to
+  `timeoutSeconds`. Unset (default) keeps the single shared pool, so no config changes
+  behaviour.
 
 ### Changed
 

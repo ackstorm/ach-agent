@@ -173,6 +173,12 @@ It requires `source: gitlab` and an explicit `webhook.gitlabEvents` — there is
 because the conversational one would silently ignore every system event. `timeoutSeconds` must
 not exceed `limits.maxInvocationSeconds` (the lane deadline pre-empts anything larger).
 
+Set `limits.maxConcurrentScripts` when a script channel shares the process with a model
+channel: script events are admitted like any other event, so with a single pool a 120 s
+registrar handler blocks every MR review behind it. `maxConcurrentInvocations: 1` plus
+`maxConcurrentScripts: 4` reads "one model turn at a time, four handlers in parallel". Left
+unset, handlers draw on `maxConcurrentInvocations` as they always have.
+
 For GitLab System Hooks, useful registrar events are `project_create`, `project_rename`,
 `project_transfer`, `project_update`, `repository_update`, `push`, and `merge_request`. The
 project/system kinds are accepted ONLY on `webhook-script`; an engine-backed `webhook` channel

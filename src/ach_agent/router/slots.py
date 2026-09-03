@@ -21,7 +21,7 @@ from collections.abc import Callable
 
 
 class SlotManager:
-    """Global concurrency semaphore (maxConcurrentInvocations) + per-channel semaphores.
+    """Invocation-slot semaphores (engine + script pools) + per-channel semaphores.
 
     Each channel name gets its own asyncio.Semaphore sized to that channel's `concurrency`,
     so a single channel can be sub-capped below the global ceiling (e.g. cron=1 while a
@@ -34,8 +34,18 @@ class SlotManager:
         self,
         max_concurrent_invocations: int,
         channel_concurrency: dict[str, int] | None = None,
+        max_concurrent_scripts: int | None = None,
     ) -> None:
         self.global_sem: asyncio.Semaphore = asyncio.Semaphore(max_concurrent_invocations)
+        # Second finite pool for channels that are admitted but never acquire an engine
+        # (webhook-script). None → the SAME semaphore object, so an unset config behaves
+        # exactly as before. The bound is never absent: every admitted event holds one slot
+        # from one of these two pools (CONTRACT §6.3).
+        self.script_sem: asyncio.Semaphore = (
+            self.global_sem
+            if max_concurrent_scripts is None
+            else asyncio.Semaphore(max_concurrent_scripts)
+        )
         self._max = max_concurrent_invocations
         self._channel_sems: dict[str, asyncio.Semaphore] = {
             name: asyncio.Semaphore(cap) for name, cap in (channel_concurrency or {}).items()

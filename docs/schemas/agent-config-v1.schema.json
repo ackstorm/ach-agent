@@ -598,6 +598,19 @@
           "title": "Maxconcurrentinvocations",
           "type": "integer"
         },
+        "maxConcurrentScripts": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Maxconcurrentscripts"
+        },
         "maxInvocationSeconds": {
           "default": 600,
           "title": "Maxinvocationseconds",

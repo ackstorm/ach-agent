@@ -77,3 +77,95 @@ async def test_inv03_finite_bounds(fake_engine: FakeEngine) -> None:
     )
 
     cap_engine.release()
+
+
+@pytest.mark.asyncio
+async def test_inv03_script_channels_hold_their_own_finite_bound() -> None:
+    """§6.3: a webhook-script event never spends an engine slot, and is itself bounded.
+
+    Two pools, both finite: the deterministic handler runs no model turn, so holding an
+    engine slot for `timeoutSeconds` would starve every model channel behind it. Unset
+    maxConcurrentScripts keeps the single shared pool (no behaviour change).
+    """
+    from ach_agent.router.dedup import InMemoryDedupStore
+    from ach_agent.router.router import Router
+
+    engine = FakeEngine()
+    engine.hold()
+    router = Router(
+        max_concurrent_invocations=1,
+        max_queued_total=20,
+        idempotency_window_seconds=60,
+        dedup_store=InMemoryDedupStore(),
+        engine_runner=engine.run,
+        max_invocation_seconds=600.0,
+        channel_concurrency={"gitlab-register": 10, "mr-review": 10},
+        max_concurrent_scripts=2,
+        script_channels={"gitlab-register"},
+    )
+
+    # Three script events on distinct project lanes + one model event.
+    for i in range(3):
+        await router.handle(
+            make_event(
+                idempotency_key=f"script-{i}",
+                session_key=f"{i}:webhook-script:gitlab-register",
+                channel_name="gitlab-register",
+            )
+        )
+    await router.handle(
+        make_event(idempotency_key="mr-1", session_key="42:7", channel_name="mr-review")
+    )
+    for _ in range(4):
+        await asyncio.sleep(0)
+
+    channels = [e.channel_name for e in engine.invocations]
+    assert channels.count("gitlab-register") == 2, (
+        "§6.3: maxConcurrentScripts must bound script channels — expected 2 in flight, "
+        f"got {channels.count('gitlab-register')}"
+    )
+    assert channels.count("mr-review") == 1, (
+        "§6.3: a script must not consume the engine pool — the model event must run "
+        "while scripts are saturated"
+    )
+
+    engine.release()
+
+
+@pytest.mark.asyncio
+async def test_inv03_unset_script_bound_shares_the_engine_pool() -> None:
+    """Back-compat: maxConcurrentScripts unset → one pool, exactly as before."""
+    from ach_agent.router.dedup import InMemoryDedupStore
+    from ach_agent.router.router import Router
+
+    engine = FakeEngine()
+    engine.hold()
+    router = Router(
+        max_concurrent_invocations=1,
+        max_queued_total=20,
+        idempotency_window_seconds=60,
+        dedup_store=InMemoryDedupStore(),
+        engine_runner=engine.run,
+        max_invocation_seconds=600.0,
+        channel_concurrency={"gitlab-register": 10, "mr-review": 10},
+        script_channels={"gitlab-register"},
+    )
+
+    await router.handle(
+        make_event(
+            idempotency_key="script-1",
+            session_key="1:webhook-script:gitlab-register",
+            channel_name="gitlab-register",
+        )
+    )
+    await router.handle(
+        make_event(idempotency_key="mr-1", session_key="42:7", channel_name="mr-review")
+    )
+    for _ in range(4):
+        await asyncio.sleep(0)
+
+    assert len(engine.invocations) == 1, (
+        "§6.3: with maxConcurrentScripts unset both channels share maxConcurrentInvocations"
+    )
+
+    engine.release()

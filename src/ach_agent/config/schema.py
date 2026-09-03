@@ -82,6 +82,11 @@ class LimitsBlock(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     max_concurrent_invocations: int = Field(default=1, alias="maxConcurrentInvocations")
+    # Separate finite bound for webhook-script channels, which are admitted like any other
+    # event but never acquire an engine. None → they draw on maxConcurrentInvocations exactly
+    # as before (no behaviour change); set it to express "one model turn at a time, N
+    # deterministic handlers in parallel", which a single shared number cannot say.
+    max_concurrent_scripts: int | None = Field(default=None, alias="maxConcurrentScripts", gt=0)
     max_invocation_seconds: int = Field(default=600, alias="maxInvocationSeconds")
     max_queued_total: int = Field(default=100, alias="maxQueuedTotal")
     idempotency_window_seconds: int = Field(default=3600, alias="idempotencyWindowSeconds")

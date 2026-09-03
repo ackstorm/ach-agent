@@ -392,6 +392,19 @@ def test_webhook_script_channel_rejects_agent_lifecycle_blocks() -> None:
         )
 
 
+def test_max_concurrent_scripts_is_optional_and_positive() -> None:
+    """Unset → script channels share maxConcurrentInvocations (no behaviour change)."""
+    import pytest
+    from pydantic import ValidationError
+
+    from ach_agent.config.schema import LimitsBlock
+
+    assert LimitsBlock().max_concurrent_scripts is None
+    assert LimitsBlock.model_validate({"maxConcurrentScripts": 4}).max_concurrent_scripts == 4
+    with pytest.raises(ValidationError):
+        LimitsBlock.model_validate({"maxConcurrentScripts": 0})
+
+
 def test_webhook_script_channel_requires_explicit_gitlab_events() -> None:
     """The conversational default would 200-ignore every system event the channel exists for."""
     import pytest

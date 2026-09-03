@@ -53,7 +53,8 @@ class Router:
     Core invariants (CONTRACT §6):
       RTR-01: dedup precedes backpressure (ORDER IS NORMATIVE, §6.2)
       RTR-02: per-session FIFO serialization (one Lane per session_key)
-      RTR-03: maxConcurrentInvocations enforced via asyncio.Semaphore
+      RTR-03: maxConcurrentInvocations enforced via asyncio.Semaphore (webhook-script
+              channels draw on the separate, equally finite maxConcurrentScripts pool)
       RTR-04: maxQueuedTotal enforced via a plain int counter
       RTR-05: full queue is NEVER silent (FULL_QUEUE / drop+log+metric)
 
@@ -69,6 +70,8 @@ class Router:
         engine_runner: Callable[..., Any],
         max_invocation_seconds: float,
         channel_concurrency: dict[str, int] | None = None,
+        max_concurrent_scripts: int | None = None,
+        script_channels: set[str] | None = None,
     ) -> None:
         self._max_queued_total = max_queued_total
         self._idempotency_window_seconds = idempotency_window_seconds
@@ -76,11 +79,17 @@ class Router:
         self._engine_runner = engine_runner
         self._max_invocation_seconds = max_invocation_seconds
 
-        # Slot manager: global semaphore (maxConcurrentInvocations) + per-channel slot
+        # Slot manager: invocation semaphores (engine + script pools) + per-channel slot
         self._slot_manager = SlotManager(
             max_concurrent_invocations=max_concurrent_invocations,
             channel_concurrency=channel_concurrency,
+            max_concurrent_scripts=max_concurrent_scripts,
         )
+        # Channels whose events never acquire an engine (webhook-script), so their slot comes
+        # from the script pool. Their session_key embeds the channel name
+        # (`<project>:webhook-script:<channel>`), so a lane is never shared with an engine
+        # channel and the pool choice at lane creation stays correct for its whole life.
+        self._script_channels = script_channels or set()
 
         # queued_total: count of events waiting in lane queues OR being processed
         # Plain int is safe in single-threaded asyncio (no locks needed): inc/dec
@@ -147,10 +156,15 @@ class Router:
         from ach_agent.router.lane import Lane
 
         if session_key not in self._lanes:
+            in_script_pool = channel_name in self._script_channels
             self._lanes[session_key] = Lane(
                 session_key=session_key,
                 router_ref=weakref.ref(self),
-                global_sem=self._slot_manager.global_sem,
+                global_sem=(
+                    self._slot_manager.script_sem
+                    if in_script_pool
+                    else self._slot_manager.global_sem
+                ),
                 channel_sem=self._slot_manager.channel_sem(channel_name),
                 engine_runner=self._engine_runner,
                 max_invocation_seconds=self._max_invocation_seconds,

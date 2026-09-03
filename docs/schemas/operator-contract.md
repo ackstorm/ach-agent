@@ -249,6 +249,8 @@ mismatch.
   },
   "limits": {
     "maxConcurrentInvocations": 8,
+    "maxConcurrentScripts": 4,                // optional; webhook-script pool (default: unset
+                                              // = share maxConcurrentInvocations)
     "maxInvocationSeconds": 1800,
     "maxQueuedTotal": 100,
     "idempotencyWindowSeconds": 3600,
@@ -590,6 +592,12 @@ The harness populates **none**. Post-start / per-invocation failures are **telem
      identical comments minutes apart. `None` for every non-gitlab channel (unchanged behaviour).
 2. **Pre-lane order: dedup → backpressure (maxQueuedTotal) → lane.**
 3. **Three finite bounds always enforced:** maxConcurrentInvocations, maxInvocationSeconds, maxQueuedTotal.
+   Every admitted event holds exactly ONE invocation slot for its whole processing (prepare +
+   engine turn, or the deterministic script). `webhook-script` channels take that slot from
+   `maxConcurrentScripts` instead — a separate, equally finite pool, because they never acquire
+   an agente and would otherwise starve every model channel behind them for `timeoutSeconds`.
+   Unset (the default) → they draw on `maxConcurrentInvocations`, exactly as before.
+   `maxQueuedTotal` stays shared: it bounds process memory, which is one resource.
 4. **`expire` exhaustion / full queue is never silent:** 503 sync / NACK-redelivery / drop-log.
 5. **Memory is fail-open:** backend down → run without memory context, log it, never fail.
 6. **Startup deadline:** engine/hydration not ready within startupTimeoutSeconds → exit.

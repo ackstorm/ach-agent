@@ -694,6 +694,8 @@ async def main(
         engine_runner=engine_runner,
         max_invocation_seconds=float(cfg.limits.max_invocation_seconds),
         channel_concurrency={ch.name: ch.concurrency for ch in cfg.channels},
+        max_concurrent_scripts=cfg.limits.max_concurrent_scripts,
+        script_channels={ch.name for ch in cfg.channels if ch.type == "webhook-script"},
     )
 
     # --tui / --prompt launch modifiers: ignore the configured channels and drive the

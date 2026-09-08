@@ -185,6 +185,11 @@ async def fetch_mental_model_summaries(
     Routes through the single ``call_hindsight`` seam (admin-authed, corrected tool name).
     Partial failures (single model unreachable): log warning + skip that model, never raise.
     Returns '## Memory\\n\\nUnavailable' if all fetches fail or mental_model_ids is empty.
+
+    ``detail="content"`` is REQUIRED: Hindsight defaults to ``"full"``, which appends the whole
+    ``reflect_response`` (every cited fact's text under ``based_on``, plus the refresh trace) to
+    each model. Only ``content`` is bounded by the model's ``max_tokens`` — the ``full`` envelope
+    is unbounded, and this section is re-fetched and injected on EVERY invocation.
     """
     sections: list[str] = []
     for mid in mental_model_ids:
@@ -193,7 +198,7 @@ async def fetch_mental_model_summaries(
                 endpoint,
                 secret,
                 HINDSIGHT_GET_MENTAL_MODEL,
-                {"bank_id": bank_id, "mental_model_id": mid},
+                {"bank_id": bank_id, "mental_model_id": mid, "detail": "content"},
             )
             if text:
                 sections.append(f"### {mid}\n{text}")

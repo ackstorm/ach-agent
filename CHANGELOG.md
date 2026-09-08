@@ -109,6 +109,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `example.yaml` used the long-removed `secretPath:` key for webhook and a2a auth, so the
   published example no longer loaded. It now uses `secret: {env: NAME}`.
+- The mental-model section of the system prompt now fetches Hindsight with `detail="content"`.
+  Hindsight's `get_mental_model` defaults to `detail="full"`, which appends the entire
+  `reflect_response` — every cited fact's full text under `based_on`, plus the refresh trace —
+  to each model. Only `content` is bounded by the model's `max_tokens`; the `full` envelope is
+  unbounded and this section is re-fetched and injected on every invocation, so the default
+  silently inflated the context.
 
 ## [0.12.1] - 2026-08-14
 

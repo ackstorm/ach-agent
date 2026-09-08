@@ -303,3 +303,34 @@ async def test_engine_runner_degraded_path() -> None:
     assert invocation_called, (
         "run_contract_turn was not called — invocation must complete even in degraded mode"
     )
+
+
+async def test_fetch_requests_content_detail_only() -> None:
+    """The mental-model fetch must ask for detail='content'.
+
+    Hindsight's get_mental_model defaults to detail='full', which returns the whole row —
+    including reflect_response.based_on (every cited fact's full text) and the refresh trace.
+    Only 'content' is bounded by the model's max_tokens, and this section is injected into the
+    system prompt on every invocation, so 'full' silently blows up the context.
+    """
+    from ach_agent.memory.hindsight import fetch_mental_model_summaries
+
+    calls: list[dict[str, object]] = []
+
+    async def fake_call(endpoint, secret, tool, args):  # noqa: ANN001, ANN202
+        calls.append(args)
+        return "Uses hexagonal architecture."
+
+    with patch("ach_agent.memory.hindsight.call_hindsight", new=fake_call):
+        section = await fetch_mental_model_summaries(
+            endpoint="http://hindsight.svc:8080",
+            secret=None,
+            bank_id="test-scope",
+            mental_model_ids=["architecture"],
+        )
+
+    assert len(calls) == 1, f"expected one fetch per model, got {calls!r}"
+    assert calls[0]["detail"] == "content", (
+        f"fetch must request detail='content', got: {calls[0]!r}"
+    )
+    assert section == "## Memory\n\n### architecture\nUses hexagonal architecture."

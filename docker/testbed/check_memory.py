@@ -29,9 +29,18 @@ from ach_agent.memory.ach_memory import (  # noqa: E402
 )
 from ach_agent.memory.ach_memory_facade import AchMemoryFacade  # noqa: E402
 
-# The COMPLETE MCP endpoint — the harness appends nothing. REST calls use the root below.
+# Two routes, and the second is the one production will use:
+#
+#   direct  (default)  ENDPOINT=http://127.0.0.1:8000/mcp/  + a minted Bearer user key
+#   via ACH            MEMORY_ENDPOINT=https://api.ackstorm.ai/mcp/ach-memory
+#                      ACH_TOKEN=ek-...   → sent as `x-ach-key`, principal resolved by
+#                      ACH/LiteLLM. No user key, no ./.env needed.
+#
+# The COMPLETE MCP endpoint either way — the harness appends nothing. ROOT is only for the
+# REST calls (bootstrap, foreign-project probe) that the direct route uses.
 ROOT = os.environ.get("MEMORY_URL", "http://127.0.0.1:8000")
-ENDPOINT = f"{ROOT}/mcp/"
+ENDPOINT = os.environ.get("MEMORY_ENDPOINT", f"{ROOT}/mcp/")
+VIA_ACH = bool(os.environ.get("ACH_TOKEN")) and "MEMORY_ENDPOINT" in os.environ
 PROJECT = "testbed-memory-probe"  # what resolve_project() derives in the container
 FOREIGN = "someone-else"
 
@@ -65,8 +74,12 @@ def _secret() -> str:
 
 
 async def main() -> int:
-    secret = _secret()
-    headers = {"Authorization": f"Bearer {secret}"}
+    if VIA_ACH:
+        headers = {"x-ach-key": os.environ["ACH_TOKEN"]}
+        print(f"route: via ACH — {ENDPOINT}, credential is the ek_ as x-ach-key\n")
+    else:
+        headers = {"Authorization": f"Bearer {_secret()}"}
+        print(f"route: direct — {ENDPOINT}, credential is a minted ach-memory user key\n")
     facade = AchMemoryFacade(ENDPOINT, headers, PROJECT)
 
     # 1. reachability, via the call the boot path actually makes. There is no health probe

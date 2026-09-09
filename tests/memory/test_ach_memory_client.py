@@ -1,0 +1,155 @@
+# SPDX-License-Identifier: Apache-2.0
+"""ach-memory client: project resolution, standing context, the typed-retain spec."""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+import ach_agent.memory.ach_memory as am
+from ach_agent.config.schema import AchMemoryMemory, AchMemoryParams
+
+
+def _cfg(**kw: object) -> AchMemoryMemory:
+    return AchMemoryMemory.model_validate(
+        {"type": "ach-memory", "achMemory": {"endpoint": "http://m", **kw}}
+    )
+
+
+# ---------------------------------------------------------------------------
+# resolve_project — one bank per AGENT
+# ---------------------------------------------------------------------------
+
+
+def test_project_is_namespace_and_agent_name(monkeypatch) -> None:
+    monkeypatch.setenv(am.NAMESPACE_ENV, "ach")
+    assert am.resolve_project(AchMemoryParams(endpoint="http://m"), "gitlab-pr") == "ach-gitlab-pr"
+
+
+def test_project_falls_back_to_the_agent_name_without_a_namespace(monkeypatch) -> None:
+    monkeypatch.delenv(am.NAMESPACE_ENV, raising=False)
+    assert am.resolve_project(AchMemoryParams(endpoint="http://m"), "gitlab-pr") == "gitlab-pr"
+
+
+def test_an_explicit_project_overrides_the_derived_one(monkeypatch) -> None:
+    monkeypatch.setenv(am.NAMESPACE_ENV, "ach")
+    params = AchMemoryParams(endpoint="http://m", project="Shared Bank")
+    assert am.resolve_project(params, "gitlab-pr") == "shared-bank"
+
+
+def test_the_slug_is_pre_normalized_the_way_the_server_would(monkeypatch) -> None:
+    """ach-memory's normalize_slug collapses '/' to '-' and lowercases. Pre-normalising
+    means both ends agree on ONE string instead of the server silently rewriting ours."""
+    monkeypatch.setenv(am.NAMESPACE_ENV, "ACH/Prod")
+    assert am.resolve_project(AchMemoryParams(endpoint="http://m"), "GitLab_PR") == (
+        "ach-prod-gitlab-pr"
+    )
+
+
+# ---------------------------------------------------------------------------
+# fetch_context — server-assembled text, taken verbatim
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_load_context_text_is_wrapped_and_never_re_rendered(monkeypatch) -> None:
+    """ContextPayload.text is already ordered, budgeted and heading-safe."""
+    captured: dict[str, object] = {}
+
+    async def fake_call(endpoint, secret, tool, args):
+        captured["tool"], captured["args"] = tool, args
+        return json.dumps(
+            {
+                "text": "User · user-context\nPrefers uv.",
+                "total_tokens": 5,
+                "omissions": [],
+                "overages": [],
+            }
+        )
+
+    monkeypatch.setattr(am, "call_ach_memory", fake_call)
+    section = await am.fetch_context("http://m", "k", "ach-gitlab-pr")
+
+    assert section == "## Memory\n\nUser · user-context\nPrefers uv."
+    assert captured["tool"] == am.ACH_MEMORY_LOAD_CONTEXT
+    assert captured["args"] == {"project_slug": "ach-gitlab-pr"}
+
+
+@pytest.mark.asyncio
+async def test_load_context_failure_degrades_to_a_note(monkeypatch) -> None:
+    async def boom(*a, **k):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(am, "call_ach_memory", boom)
+    section = await am.fetch_context("http://m", "k", "ach-gitlab-pr")
+    assert section.startswith("## Memory") and "Unavailable" in section
+
+
+@pytest.mark.asyncio
+async def test_empty_context_is_not_an_error(monkeypatch) -> None:
+    async def empty(*a, **k):
+        return json.dumps({"text": "", "total_tokens": 0})
+
+    monkeypatch.setattr(am, "call_ach_memory", empty)
+    assert "No standing context" in await am.fetch_context("http://m", "k", "p")
+
+
+# ---------------------------------------------------------------------------
+# prepare_ach_memory — every branch fail-open
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_unreachable_backend_is_fail_open(monkeypatch) -> None:
+    async def unreachable(endpoint, timeout=2.0):
+        return False
+
+    monkeypatch.setattr(am, "probe_memory_endpoint", unreachable)
+    ok, section = await am.prepare_ach_memory(_cfg(), "ach-gitlab-pr")
+    assert ok is False
+    assert "Unavailable" in section
+
+
+@pytest.mark.asyncio
+async def test_auth_configured_but_env_unset_degrades(monkeypatch) -> None:
+    monkeypatch.delenv("ACH_MEMORY_API_KEY", raising=False)
+    ok, section = await am.prepare_ach_memory(_cfg(auth={"env": "ACH_MEMORY_API_KEY"}), "p")
+    assert ok is False
+    assert "auth unset" in section
+
+
+@pytest.mark.asyncio
+async def test_reachable_backend_returns_the_context_section(monkeypatch) -> None:
+    async def reachable(endpoint, timeout=2.0):
+        return True
+
+    async def fake_fetch(endpoint, secret, project):
+        return "## Memory\n\nok"
+
+    monkeypatch.setattr(am, "probe_memory_endpoint", reachable)
+    monkeypatch.setattr(am, "fetch_context", fake_fetch)
+    assert await am.prepare_ach_memory(_cfg(), "p") == (True, "## Memory\n\nok")
+
+
+# ---------------------------------------------------------------------------
+# TOOLS_SPEC — the typed-retain contract
+# ---------------------------------------------------------------------------
+
+
+def test_tools_spec_states_the_retain_contract() -> None:
+    """ach-memory REJECTS a retain missing any of these, so a spec that omits them
+    produces an agent whose every retain bounces on validation."""
+    spec = am.TOOLS_SPEC
+    for required in ("memory_type", "basis", "trigger", "evidence"):
+        assert required in spec
+    for literal in ("convention", "gotcha", "human_explicit", "agent_proactive", "user_quote"):
+        assert literal in spec
+    assert "English" in spec
+    assert "4 KiB" in spec
+
+
+def test_tools_spec_never_mentions_scope_or_project_slug() -> None:
+    """The agent does not pass them, so naming them only invites an attempt."""
+    assert "project_slug" not in am.TOOLS_SPEC
+    assert "scope=" not in am.TOOLS_SPEC

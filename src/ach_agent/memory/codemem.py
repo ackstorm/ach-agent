@@ -52,10 +52,10 @@ def resolve_codemem_wiring(cfg: Any) -> tuple[str, str]:
     import shutil
 
     if shutil.which("codemem") is None:
-        from ach_agent.memory.hindsight import _inc_memory_degraded
+        from ach_agent.memory.common import inc_memory_degraded
 
         log.warning("codemem binary not on PATH — running degraded (MEM-02, D-02)")
-        _inc_memory_degraded()
+        inc_memory_degraded()
         return "", ""
 
     cm = cfg.memory.codemem

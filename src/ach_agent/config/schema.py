@@ -344,9 +344,51 @@ class CodememMemory(BaseModel):
     codemem: CodememParams = Field(default_factory=CodememParams)
 
 
+class AchMemoryParams(BaseModel):
+    """ach-memory backend params — the ``memory.achMemory`` sub-block (CONTRACT §2)."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    endpoint: str
+    # ach-memory USER key (Bearer). NOT the ek_, and NOT a bank-wide admin secret — it is
+    # scoped to one ach-memory user and the projects that user is authorized for. env-only;
+    # resolved at use time; never logged, never forwarded to opencode.
+    auth: SecretSource | None = None
+    # Project slug OVERRIDE. Empty (the norm) → derived at boot from the agent's own identity,
+    # `{namespace}-{agent.name}` (memory.ach_memory.resolve_project). One bank per agent.
+    #
+    # Static, like hindsight.bank and unlike codemem.project: this value selects a memory bank
+    # through projects.resolve, so a payload-derived one would let an inbound event choose
+    # which bank the agent reads and writes. The agent differentiates repositories with tags
+    # INSIDE its own bank, never by switching banks.
+    project: str = ""
+
+    @model_validator(mode="after")
+    def _project_static(self) -> AchMemoryParams:
+        if "{{" in self.project:
+            raise ValueError(
+                "memory.achMemory.project must be static — templating ({{ }}) is not allowed"
+            )
+        return self
+
+
+class AchMemoryMemory(BaseModel):
+    """CONTRACT §2 memory block — ach-memory backend (fail-open §31).
+
+    Strict nested form: ``{type: ach-memory, achMemory: {endpoint: ...}}``. Scope is not
+    configurable (the harness pins ``project``) and the exposed tool set is fixed in code —
+    a memory tool the operator did not ask for is a tool nobody reviewed.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["ach-memory"]
+    ach_memory: AchMemoryParams = Field(alias="achMemory")
+
+
 # Strict discriminated union on `type` — `type` is REQUIRED (no default, no backward-compat
 # coercion). An unknown/missing `type`, a flat block, or a mismatched sub-block hard-fails.
-Memory = Annotated[HindsightMemory | CodememMemory, Field(discriminator="type")]
+Memory = Annotated[HindsightMemory | CodememMemory | AchMemoryMemory, Field(discriminator="type")]
 
 
 # ---------------------------------------------------------------------------

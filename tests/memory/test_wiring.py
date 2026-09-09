@@ -63,3 +63,58 @@ def test_memory_no_auth_collects_nothing():
     )
     cfg = types.SimpleNamespace(channels=[], memory=mem)
     assert collect_secret_env_names(cfg) == []
+
+
+# ---------------------------------------------------------------------------
+# ach-memory arm
+# ---------------------------------------------------------------------------
+
+
+def _ach_cfg(**kw):
+    from ach_agent.config.schema import AchMemoryMemory
+
+    return AchMemoryMemory.model_validate(
+        {
+            "type": "ach-memory",
+            "achMemory": {"endpoint": "http://ach-memory:8000", "auth": {"env": "AM_TOK"}, **kw},
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_ach_memory_wiring_returns_facade_url_not_endpoint(monkeypatch):
+    seen = {}
+
+    async def fake_prepare(cfg, project):
+        seen["project"] = project
+        return True, "## Memory\n\nok"
+
+    monkeypatch.setattr(engine_runner_mod, "prepare_ach_memory", fake_prepare)
+    servers, prompt = await engine_runner_mod.select_memory_wiring_async(
+        _ach_cfg(), "http://127.0.0.1:9/mcp", "ach-gitlab-pr"
+    )
+    assert servers == ["http://127.0.0.1:9/mcp"]  # facade URL, NOT the ach-memory endpoint
+    assert prompt == "## Memory\n\nok"
+    assert seen["project"] == "ach-gitlab-pr"  # boot-static, not derived from the event
+
+
+@pytest.mark.asyncio
+async def test_ach_memory_wiring_empty_when_unavailable(monkeypatch):
+    """D-02 fail-open, unchanged for the new backend."""
+
+    async def fake_prepare(cfg, project):
+        return False, "## Memory\n\nUnavailable"
+
+    monkeypatch.setattr(engine_runner_mod, "prepare_ach_memory", fake_prepare)
+    servers, prompt = await engine_runner_mod.select_memory_wiring_async(
+        _ach_cfg(), "http://127.0.0.1:9/mcp", "ach-gitlab-pr"
+    )
+    assert servers == []
+    assert "Unavailable" in prompt
+
+
+def test_ach_memory_auth_env_collected_for_forward_env_strip():
+    """SECURITY: the ach-memory user key env NAME must be collected so it is stripped from
+    engine.forwardEnv and redacted from logs — same path as the hindsight admin secret."""
+    cfg = types.SimpleNamespace(channels=[], memory=_ach_cfg())
+    assert "AM_TOK" in collect_secret_env_names(cfg)

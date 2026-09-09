@@ -58,6 +58,7 @@ from ach_agent.channels.queue import QueueConsumer
 from ach_agent.channels.tui import run_one_shot, run_tui_console
 from ach_agent.config import load_config
 from ach_agent.config.schema import (
+    AchMemoryMemory,
     CodememMemory,
     HindsightMemory,
     LocalMcpServer,
@@ -80,6 +81,7 @@ from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_p
 from ach_agent.engine.metrics import DRAIN_COMPLETED
 from ach_agent.engine.sanitized_env import add_secret_redaction, configure_logging
 from ach_agent.http.app import create_app
+from ach_agent.memory.ach_memory_facade import AchMemoryFacade
 from ach_agent.memory.facade import MemoryFacade
 from ach_agent.memory.hindsight import prepare_memory, provision_memory
 from ach_agent.router import Router
@@ -428,8 +430,11 @@ async def main(
     # Harness-hosted memory facade: the agent reaches Hindsight ONLY through this localhost
     # MCP server (bank_id + admin auth injected). Started beside the proxies below; None when
     # memory is not a Hindsight config or its auth env is unset (fail-open, run without memory).
-    memory_facade: MemoryFacade | None = None
+    memory_facade: MemoryFacade | AchMemoryFacade | None = None
     memory_facade_url: str | None = None
+    # ach-memory only: the agent's own bank, `{namespace}-{agent.name}`. Boot-static —
+    # resolved once here, never from an event payload (it selects a bank).
+    memory_project: str = ""
     # Harness-hosted repo-checkout facade: exposes `checkout_repo`, reading gitlab-mcp's archive
     # resource harness-side (ek as x-ach-key, never seen by the agent). None when disabled or the
     # gitlab endpoint/ek is missing (fail-open, run without the tool). Declared here so shutdown
@@ -473,12 +478,33 @@ async def main(
         # Start the memory facade beside the proxies. The agent points at THIS url, never at
         # Hindsight. Uses the admin secret (NOT the ek_); secret may be None (internal URL).
         if isinstance(cfg.memory, HindsightMemory):
-            from ach_agent.memory.hindsight import resolve_memory_secret
+            from ach_agent.memory.common import resolve_memory_secret
 
-            _ok, _mem_secret = resolve_memory_secret(cfg.memory.hindsight)
+            _ok, _mem_secret = resolve_memory_secret(cfg.memory.hindsight.auth)
             if _ok:
                 memory_facade = MemoryFacade(
                     cfg.memory.hindsight.endpoint, _mem_secret, cfg.memory.hindsight.bank
+                )
+                memory_facade_url = await memory_facade.start()
+            else:
+                log.warning(
+                    "memory: auth configured but env unset — facade not started; "
+                    "running without memory"
+                )
+        # Same shape for ach-memory: the agent points at the loopback facade, never at the
+        # service, and never sees the user key or the project. One bank per agent — the
+        # project slug is derived from THIS agent's identity, not from any event's payload.
+        elif isinstance(cfg.memory, AchMemoryMemory):
+            from ach_agent.memory.ach_memory import resolve_project
+            from ach_agent.memory.common import (
+                resolve_memory_secret as resolve_neutral_secret,
+            )
+
+            _ok, _mem_secret = resolve_neutral_secret(cfg.memory.ach_memory.auth)
+            if _ok:
+                memory_project = resolve_project(cfg.memory.ach_memory, cfg.agent.name)
+                memory_facade = AchMemoryFacade(
+                    cfg.memory.ach_memory.endpoint, _mem_secret, memory_project
                 )
                 memory_facade_url = await memory_facade.start()
             else:
@@ -676,6 +702,7 @@ async def main(
         channels_by_name=channels_by_name,
         agent_name=cfg.agent.name,
         memory_bank=memory_bank,
+        memory_project=memory_project,
         stats_sink=stats_sink,
         tool_sink=tool_sink,
         memory_facade_url=memory_facade_url,
@@ -724,6 +751,12 @@ async def main(
                 warm_mcp_servers: list[str] = []
                 if isinstance(cfg.memory, HindsightMemory):
                     _mem_ok, _ = await prepare_memory(cfg.memory)
+                    if _mem_ok and memory_facade_url:
+                        warm_mcp_servers = [memory_facade_url]
+                elif isinstance(cfg.memory, AchMemoryMemory):
+                    from ach_agent.memory.ach_memory import prepare_ach_memory
+
+                    _mem_ok, _ = await prepare_ach_memory(cfg.memory, memory_project)
                     if _mem_ok and memory_facade_url:
                         warm_mcp_servers = [memory_facade_url]
                 # The repo-checkout facade is static (no probe) — include it in the pre-warmed

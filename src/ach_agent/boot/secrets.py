@@ -13,7 +13,7 @@ import os
 
 import structlog
 
-from ach_agent.config.schema import AgentConfig, HindsightMemory
+from ach_agent.config.schema import AchMemoryMemory, AgentConfig, HindsightMemory
 from ach_agent.security.preflight import DEGRADED_ENV
 
 log = structlog.get_logger(__name__)
@@ -39,6 +39,8 @@ def collect_secret_env_names(cfg: AgentConfig) -> list[str]:
     mem = cfg.memory
     if isinstance(mem, HindsightMemory) and mem.hindsight.auth is not None:
         names.append(mem.hindsight.auth.env)
+    elif isinstance(mem, AchMemoryMemory) and mem.ach_memory.auth is not None:
+        names.append(mem.ach_memory.auth.env)
     return names
 
 

@@ -145,3 +145,54 @@ def test_legacy_block_without_type_raises(tmp_path: Path) -> None:
     }
     with pytest.raises(SystemExit):
         _load_raw(tmp_path, raw)
+
+
+# ---------------------------------------------------------------------------
+# AchMemoryMemory sub-model (direct)
+# ---------------------------------------------------------------------------
+
+
+def test_ach_memory_strict_nested_form() -> None:
+    """AchMemoryMemory validates the nested form; project defaults to derived-at-boot."""
+    from ach_agent.config.schema import AchMemoryMemory
+
+    m = AchMemoryMemory.model_validate(
+        {
+            "type": "ach-memory",
+            "achMemory": {
+                "endpoint": "http://ach-memory.ach.svc:8000",
+                "auth": {"env": "ACH_MEMORY_API_KEY"},
+            },
+        }
+    )
+    assert m.type == "ach-memory"
+    assert m.ach_memory.endpoint == "http://ach-memory.ach.svc:8000"
+    assert m.ach_memory.project == ""  # empty → derived from agent identity at boot
+
+
+def test_ach_memory_rejects_a_flat_block() -> None:
+    """extra='forbid': a flat endpoint without the achMemory: sub-block is rejected."""
+    from ach_agent.config.schema import AchMemoryMemory
+
+    with pytest.raises(ValidationError):
+        AchMemoryMemory.model_validate({"type": "ach-memory", "endpoint": "http://x"})
+
+
+def test_ach_memory_rejects_a_templated_project() -> None:
+    """A project slug selects a BANK through projects.resolve. Templating it would let an
+    inbound payload choose which bank the agent reads and writes — same rule as
+    hindsight.bank, and the reason repo differentiation is tags-inside-one-bank."""
+    from ach_agent.config.schema import AchMemoryParams
+
+    with pytest.raises(ValidationError, match="static"):
+        AchMemoryParams(endpoint="http://x", project="{{ payload.project.path }}")
+
+
+def test_ach_memory_rejects_a_scope_or_tools_knob() -> None:
+    """Neither is configurable: the harness pins scope=project and the tool set is code."""
+    from ach_agent.config.schema import AchMemoryParams
+
+    with pytest.raises(ValidationError):
+        AchMemoryParams.model_validate({"endpoint": "http://x", "scope": "both"})
+    with pytest.raises(ValidationError):
+        AchMemoryParams.model_validate({"endpoint": "http://x", "tools": ["recall"]})

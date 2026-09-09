@@ -31,10 +31,17 @@ from ach_agent.boot.prompt import (
 )
 from ach_agent.boot.tooling import log_engine_tool, make_tool_recorder
 from ach_agent.channels.message_event import MessageEvent
-from ach_agent.config.schema import ChannelConfig, CodememMemory, HindsightMemory, Memory
+from ach_agent.config.schema import (
+    AchMemoryMemory,
+    ChannelConfig,
+    CodememMemory,
+    HindsightMemory,
+    Memory,
+)
 from ach_agent.engine import trace
 from ach_agent.engine.cost import CostAccountant
 from ach_agent.engine.metrics import ENGINE_LAUNCH_FAILURES
+from ach_agent.memory.ach_memory import prepare_ach_memory
 from ach_agent.memory.hindsight import prepare_memory
 from ach_agent.stats.sink import StatsSink
 from ach_agent.templating import build_template_context, render_template
@@ -49,18 +56,25 @@ log = structlog.get_logger(__name__)
 async def select_memory_wiring_async(
     memory_cfg: Memory | None,
     facade_url: str | None,
+    memory_project: str = "",
 ) -> tuple[list[str], str]:
     """Probe memory + build the prompt section; return the FACADE url (not the raw endpoint).
 
-    The agent only ever reaches Hindsight through the harness facade, so the mcp_servers list
-    carries the facade URL. Gated by prepare_memory's probe (D-02 fail-open) AND by the facade
-    actually being up. codemem is NOT handled here — it is static per-agent and resolved once
-    at boot (resolve_codemem_wiring → engine_cfg).
+    The agent only ever reaches the memory service through the harness facade, so the
+    mcp_servers list carries the facade URL. Gated by the backend's probe (D-02 fail-open)
+    AND by the facade actually being up. codemem is NOT handled here — it is static per-agent
+    and resolved once at boot (resolve_codemem_wiring → engine_cfg).
+
+    ``memory_project`` (ach-memory) is boot-static: one bank per agent, resolved from the
+    agent's identity in main(), never from this event's payload.
     """
-    if not isinstance(memory_cfg, HindsightMemory):
+    if isinstance(memory_cfg, AchMemoryMemory):
+        mem_available, memory_prompt = await prepare_ach_memory(memory_cfg, memory_project)
+    elif isinstance(memory_cfg, HindsightMemory):
+        mem_available, memory_prompt = await prepare_memory(memory_cfg)
+    else:
         return [], ""
 
-    mem_available, memory_prompt = await prepare_memory(memory_cfg)
     mcp_servers = [facade_url] if (mem_available and facade_url) else []
     return mcp_servers, memory_prompt
 
@@ -77,6 +91,7 @@ def make_engine_runner(
     channels_by_name: dict[str, ChannelConfig] | None = None,
     agent_name: str = "",
     memory_bank: str = "",
+    memory_project: str = "",
     stats_sink: StatsSink | None = None,
     tool_sink: StatsSink | None = None,
     memory_facade_url: str | None = None,
@@ -148,7 +163,9 @@ def make_engine_runner(
         # bank is static (T-04-03, schema-enforced: no {{ }}) — the mental-model fetch, the
         # boot-started facade, and the prompt's {{ memory.bank }} all use the SAME value, so
         # there is no per-event bank rendering to keep them in sync.
-        mcp_servers, memory_prompt = await select_memory_wiring_async(memory_cfg, memory_facade_url)
+        mcp_servers, memory_prompt = await select_memory_wiring_async(
+            memory_cfg, memory_facade_url, memory_project
+        )
         # The repo-checkout facade (if enabled) is a static localhost MCP server; append it to
         # every invocation alongside the (dynamic) memory facade — the agent reaches gitlab-mcp's
         # archive resource ONLY through it (ek injected harness-side).

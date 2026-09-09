@@ -14,15 +14,19 @@ RTR-06: no router.* imports used here (only MEMORY_DEGRADED metric is imported a
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING
 
 import structlog
 
 from ach_agent.engine.mcp_session import mcp_session
+from ach_agent.memory.common import (
+    inc_memory_degraded,
+    probe_memory_endpoint,
+    resolve_memory_secret,
+)
 
 if TYPE_CHECKING:
-    from ach_agent.config.schema import HindsightMemory, HindsightParams
+    from ach_agent.config.schema import HindsightMemory
 
 log = structlog.get_logger(__name__)
 
@@ -138,42 +142,6 @@ async def call_hindsight(
         return text
 
 
-def resolve_memory_secret(params: HindsightParams) -> tuple[bool, str | None]:
-    """(ok, secret) gate reused by prepare/provision/main.
-
-    (True, None)  → no auth configured (internal URL) — proceed unauthenticated.
-    (False, None) → auth configured but env unset (misconfig) — caller degrades.
-    (True, secret)→ auth resolved — proceed with Bearer.
-    """
-    from ach_agent.config.schema import resolve_secret
-
-    if params.auth is None:
-        return True, None
-    secret = resolve_secret(params.auth)
-    return (False, None) if secret is None else (True, secret)
-
-
-async def probe_memory_endpoint(endpoint: str, timeout: float = 2.0) -> bool:
-    """Return True if the Hindsight memory endpoint is reachable within timeout.
-
-    Uses aiohttp (direct dependency in pyproject.toml).
-    Any exception (network error, timeout, non-2xx/3xx) → returns False, never raises.
-
-    ASSUMPTION A2 (RESEARCH.md): endpoint exposes /health for probing.
-    T-04-02/T-04-04: bounded 2s timeout; probe targets only the operator-rendered config URL,
-    never user input (SSRF mitigation).
-    """
-    import aiohttp  # direct dependency
-
-    try:
-        async with asyncio.timeout(timeout):
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{endpoint}/health") as resp:
-                    return resp.status < 500
-    except Exception:
-        return False
-
-
 async def fetch_mental_model_summaries(
     endpoint: str,
     secret: str | None,
@@ -233,10 +201,10 @@ async def prepare_memory(
         params = memory_cfg.hindsight
         bank_id = params.bank
 
-        ok, secret = resolve_memory_secret(params)
+        ok, secret = resolve_memory_secret(params.auth)
         if not ok:
             log.warning("memory: auth configured but env unset — running degraded", bank_id=bank_id)
-            _inc_memory_degraded()
+            inc_memory_degraded()
             return False, "## Memory\n\nUnavailable (auth unset)."
 
         available = await probe_memory_endpoint(params.endpoint)
@@ -246,7 +214,7 @@ async def prepare_memory(
                 endpoint=params.endpoint,
                 bank_id=bank_id,
             )
-            _inc_memory_degraded()
+            inc_memory_degraded()
             return False, "## Memory\n\nUnavailable (backend unreachable)."
 
         log.info("memory: hindsight backend active", endpoint=params.endpoint, bank_id=bank_id)
@@ -264,25 +232,8 @@ async def prepare_memory(
             "memory: prepare_memory failed unexpectedly — running degraded",
             error=str(exc),
         )
-        _inc_memory_degraded()
+        inc_memory_degraded()
         return False, "## Memory\n\nUnavailable (unexpected error)."
-
-
-def _inc_memory_degraded() -> None:
-    """Increment the MEMORY_DEGRADED counter via lazy import (RTR-06 compliance).
-
-    The counter is declared in router/metrics.py. This function performs a
-    deferred import inside the function body — not at module top level — so
-    memory/hindsight.py has no top-level 'from ach_agent.router' dependency.
-    Silently suppressed on any error (fail-open).
-    """
-    try:
-        # Deferred import: acceptable per RTR-06 (no top-level router.* at module level)
-        from ach_agent.router.metrics import MEMORY_DEGRADED
-
-        MEMORY_DEGRADED.inc()
-    except Exception:
-        pass
 
 
 async def provision_memory(memory_cfg: object) -> None:
@@ -297,7 +248,7 @@ async def provision_memory(memory_cfg: object) -> None:
     if not isinstance(memory_cfg, HindsightMemory):
         return
     params = memory_cfg.hindsight
-    ok, secret = resolve_memory_secret(params)  # secret may be None (internal URL)
+    ok, secret = resolve_memory_secret(params.auth)  # secret may be None (internal URL)
     if not ok:
         log.warning(
             "memory: auth configured but env unset — skipping provisioning", bank_id=params.bank

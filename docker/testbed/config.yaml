@@ -1,0 +1,56 @@
+# ach-agent testbed contract — the harness wired to a REAL ach-memory service.
+#
+# Differs from docker/sample-config.yaml in exactly one way: the `memory` block is
+# populated, so this exercises the ach-memory path end to end (probe → load_context →
+# facade → retain/recall) instead of skipping it.
+
+schemaVersion: "1"
+
+agent:
+  # The memory project slug is derived from this: `{POD_NAMESPACE}-{agent.name}`
+  # (memory.ach_memory.resolve_project). POD_NAMESPACE=testbed is set in the compose file,
+  # so this agent's bank is `testbed-memory-probe`.
+  name: memory-probe
+
+model:
+  name: gemini.gemini-flash-latest   # an ACH-served model id
+  type: openai                       # the ACH compat WIRE (gemini.* is served on /v1)
+
+capability:
+  type: ach
+  ach: {}   # baseUrl comes from ACH_BASE_URL at runtime
+
+prompt:
+  system:
+    type: text
+    text: >-
+      You are a test agent for the ach-agent memory harness. When asked to remember
+      something, call memory_retain. When asked what you know, call memory_recall.
+      Report the raw tool result verbatim, including any error.
+  compose: append
+
+# The whole point of this testbed. `endpoint` is the COMPLETE MCP endpoint, used verbatim —
+# the harness appends nothing, so the trailing slash matters and is yours to get right.
+# `auth.type: bearer` talks to ach-memory DIRECTLY with a minted user key; through ACH's
+# gateway it would instead be `endpoint: https://api.ackstorm.ai/mcp/ach-memory` with
+# `auth: {type: ach}`, which sends the harness's own ek_ as `x-ach-key`. No `project`: the
+# override is deliberately unset so the derived `{namespace}-{name}` path is what gets tested.
+memory:
+  type: ach-memory
+  achMemory:
+    endpoint: http://api:8000/mcp/
+    auth:
+      type: bearer
+      env: ACH_SECRET_MEMORY_ACHMEMORY
+
+engine:
+  home: /tmp/ach-home
+  workDir: /tmp/ach-home/workspace
+  startupTimeoutSeconds: 60
+
+persistence:
+  enabled: false
+  mountPath: /tmp/ach-state
+
+# No channels under --tui: the typed line IS the prompt.
+channels: []

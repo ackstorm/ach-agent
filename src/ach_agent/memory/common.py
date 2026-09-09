@@ -1,18 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """Backend-neutral memory helpers.
 
-The pieces every memory backend needs and none of them owns: resolving a configured secret,
-probing a backend's health, and recording that memory went degraded. They live here so no
-backend has to import another backend's module to get them — a backend module holds ONE
-backend's protocol and nothing shared.
+The pieces every memory backend needs and none of them owns: resolving a configured secret
+and recording that memory went degraded. They live here so no backend has to import another
+backend's module to get them — a backend module holds ONE backend's protocol and nothing
+shared.
 
 Nothing here knows which backend is calling. Anything that does belongs in that backend's
 own module.
 """
 
 from __future__ import annotations
-
-import asyncio
 
 import structlog
 
@@ -39,26 +37,6 @@ def resolve_memory_secret(auth: SecretSource | None) -> tuple[bool, str | None]:
         return True, None
     secret = resolve_secret(auth)
     return (False, None) if secret is None else (True, secret)
-
-
-async def probe_memory_endpoint(endpoint: str, timeout: float = 2.0) -> bool:
-    """True if the memory backend answers on /health within ``timeout``.
-
-    Any exception (network error, timeout, non-2xx/3xx) → False, never raises: the caller's
-    fail-open contract (D-02) turns a False into a degraded note, not an aborted event.
-
-    T-04-02/T-04-04: bounded 2s timeout; the probe targets only the operator-rendered config
-    URL, never user input (SSRF mitigation).
-    """
-    import aiohttp  # direct dependency
-
-    try:
-        async with asyncio.timeout(timeout):
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{endpoint.rstrip('/')}/health") as resp:
-                    return resp.status < 500
-    except Exception:
-        return False
 
 
 def inc_memory_degraded() -> None:

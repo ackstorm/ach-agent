@@ -45,7 +45,7 @@ async def test_ach_memory_type_uses_probe(monkeypatch: pytest.MonkeyPatch) -> No
     """
     import ach_agent.boot.engine_runner as engine_runner_mod
 
-    async def _ok(_cfg: object, _project: str) -> tuple[bool, str]:
+    async def _ok(_cfg: object, _project: str, _headers: dict[str, str]) -> tuple[bool, str]:
         return (True, "## Memory\nx")
 
     monkeypatch.setattr(engine_runner_mod, "prepare_ach_memory", _ok)

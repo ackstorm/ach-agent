@@ -23,14 +23,16 @@ async def test_inv05_memory_fail_open() -> None:
         {"type": "ach-memory", "achMemory": {"endpoint": "http://ach-memory.svc:8000"}}
     )
 
-    # Simulate backend unreachable: probe returns False.
+    # Simulate backend unreachable at the seam every memory call goes through. There is no
+    # health probe to stub any more: `load_context` IS the reachability test, so this fails
+    # exactly the way a real outage does rather than the way a proxy for one did.
     with patch(
-        "ach_agent.memory.ach_memory.probe_memory_endpoint",
-        new=AsyncMock(return_value=False),
+        "ach_agent.memory.ach_memory.call_ach_memory",
+        new=AsyncMock(side_effect=OSError("connection refused")),
     ):
         # Must not raise — fail-open invariant (§6.5 / §31)
         try:
-            available, section = await prepare_ach_memory(cfg, "test-project")
+            available, section = await prepare_ach_memory(cfg, "test-project", {})
         except Exception as exc:  # noqa: BLE001
             raise AssertionError(
                 f"§6.5: prepare must not raise when backend is down, "

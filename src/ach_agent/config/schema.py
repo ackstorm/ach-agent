@@ -289,16 +289,54 @@ class CodememMemory(BaseModel):
     codemem: CodememParams = Field(default_factory=CodememParams)
 
 
+class AchMemoryAuthAch(BaseModel):
+    """Reach ach-memory THROUGH ACH: the harness's own ek_, sent as ACH's ``x-ach-key``.
+
+    Carries no ``env`` on purpose — there is no second credential to configure. ACH forwards
+    to LiteLLM, which resolves the principal from the key, so the memory identity is the
+    agent's ACH identity. ``Authorization: Bearer`` is NOT interchangeable here: ACH's auth
+    scheme is the header, and a Bearer 401s (engine/context.py).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["ach"]
+
+
+class AchMemoryAuthBearer(BaseModel):
+    """Reach ach-memory DIRECTLY: an ach-memory user key, sent as ``Authorization: Bearer``.
+
+    Scoped to one ach-memory user and the projects that user owns — NOT the ek_, and not a
+    bank-wide admin secret. env-only, resolved at use time, never logged, never forwarded to
+    opencode. Note the key that first bootstraps a project OWNS it: rotating this to a
+    different user orphans the bank.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    type: Literal["bearer"]
+    env: str = Field(default="")
+
+
+# Two ways in, and they are not the same credential — hence a discriminated union rather
+# than a secret plus a mode flag beside it, which would make the mismatched pair
+# representable.
+AchMemoryAuth = Annotated[AchMemoryAuthAch | AchMemoryAuthBearer, Field(discriminator="type")]
+
+
 class AchMemoryParams(BaseModel):
     """ach-memory backend params — the ``memory.achMemory`` sub-block (CONTRACT §2)."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
+    # The COMPLETE MCP endpoint, used verbatim — the harness appends nothing, not `/mcp`,
+    # not a trailing slash. Whether the service lives at a root (`https://memory.internal/mcp/`)
+    # or behind ACH's gateway (`https://api.ackstorm.ai/mcp/ach-memory`) is the operator's
+    # call, and appending a path here is how a client ends up POSTing to `/mcp/mcp/`.
     endpoint: str
-    # ach-memory USER key (Bearer). NOT the ek_, and NOT a bank-wide admin secret — it is
-    # scoped to one ach-memory user and the projects that user is authorized for. env-only;
-    # resolved at use time; never logged, never forwarded to opencode.
-    auth: SecretSource | None = None
+    # How to authenticate — see the two arms. Omitted → no auth header at all (an internal
+    # URL that requires none).
+    auth: AchMemoryAuth | None = None
     # Project slug OVERRIDE. Empty (the norm) → derived at boot from the agent's own identity,
     # `{namespace}-{agent.name}` (memory.ach_memory.resolve_project). One bank per agent.
     #

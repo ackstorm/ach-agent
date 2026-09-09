@@ -182,13 +182,27 @@ mismatch.
     // Params live NESTED under memory.<type>.*.
     "type": "ach-memory",                   // ach-memory | codemem  (future: mem0, …)
     "achMemory": {
-      "endpoint": "http://ach-memory.ach.svc:8000",
-      "auth": { "env": "ACH_SECRET_MEMORY_ACH_MEMORY" }, // OPTIONAL (omit for internal/no-auth
-                                            //   URL). Bearer USER key, NOT a bank-wide admin
-                                            //   secret and NOT the ek_. env-only. The OPERATOR
-                                            //   generates the ACH_SECRET_* name (like
-                                            //   ACH_SECRET_GITLAB_WEBHOOK); the author only picks
-                                            //   the Secret + key. Unset-at-runtime → degrade.
+      "endpoint": "http://ach-memory.ach.svc:8000/mcp/", // The COMPLETE MCP endpoint, used
+                                            //   VERBATIM — the harness appends nothing, not
+                                            //   "/mcp" and not a trailing slash. Behind ACH's
+                                            //   gateway this is e.g.
+                                            //   "https://api.ackstorm.ai/mcp/ach-memory".
+      "auth": { "type": "bearer",           // OPTIONAL (omit for internal/no-auth URL).
+                "env": "ACH_SECRET_MEMORY_ACH_MEMORY" },
+                                            //   TWO ARMS, two different credentials:
+                                            //   {"type":"ach"} → reach ach-memory THROUGH ACH;
+                                            //     the harness sends its own ek_ as `x-ach-key`
+                                            //     and ACH/LiteLLM resolves the principal. No env
+                                            //     name — there is no second secret to configure.
+                                            //   {"type":"bearer","env":NAME} → talk to ach-memory
+                                            //     DIRECTLY with a USER key. NOT a bank-wide admin
+                                            //     secret and NOT the ek_. env-only. The OPERATOR
+                                            //     generates the ACH_SECRET_* name (like
+                                            //     ACH_SECRET_GITLAB_WEBHOOK); the author picks the
+                                            //     Secret + key. Unset-at-runtime → degrade.
+                                            //     The key that first bootstraps a project OWNS it:
+                                            //     rotating to a different ach-memory user orphans
+                                            //     the bank.
       "project": ""                         // OPTIONAL override. Empty (the norm) → the harness
                                             //   derives {POD_NAMESPACE}-{agent.name} at boot:
                                             //   ONE BANK PER AGENT. STATIC — templating ({{ }})

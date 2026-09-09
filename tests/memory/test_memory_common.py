@@ -7,14 +7,8 @@ The import-hygiene test at the bottom is the one that keeps it that way.
 
 from __future__ import annotations
 
-import pytest
-
 from ach_agent.config.schema import SecretSource
-from ach_agent.memory.common import (
-    inc_memory_degraded,
-    probe_memory_endpoint,
-    resolve_memory_secret,
-)
+from ach_agent.memory.common import inc_memory_degraded, resolve_memory_secret
 
 
 def test_no_auth_configured_proceeds_unauthenticated() -> None:
@@ -31,12 +25,6 @@ def test_auth_configured_but_unset_degrades_rather_than_proceeding(monkeypatch) 
     silently turn a misconfigured secret into an anonymous call against a real backend."""
     monkeypatch.delenv("MEM_TOK", raising=False)
     assert resolve_memory_secret(SecretSource(env="MEM_TOK")) == (False, None)
-
-
-@pytest.mark.asyncio
-async def test_probe_returns_false_and_never_raises_on_a_dead_endpoint() -> None:
-    """Fail-open (D-02): an unreachable backend is a degraded note, never an aborted event."""
-    assert await probe_memory_endpoint("http://127.0.0.1:1", timeout=0.5) is False
 
 
 def test_inc_memory_degraded_is_silent_when_metrics_are_unavailable() -> None:

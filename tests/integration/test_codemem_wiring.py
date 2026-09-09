@@ -137,7 +137,7 @@ async def test_ach_memory_path_produces_no_codemem_entry(
     (opencode 1.16 schema, verified in lifecycle.py line ~239).
     """
 
-    async def _ok(_cfg: object, _project: str) -> tuple[bool, str]:
+    async def _ok(_cfg: object, _project: str, _headers: dict[str, str]) -> tuple[bool, str]:
         return (True, "## Memory\nx")
 
     import ach_agent.boot.engine_runner as engine_runner_mod

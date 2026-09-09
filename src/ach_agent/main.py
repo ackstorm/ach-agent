@@ -429,6 +429,9 @@ async def main(
     # ach-memory only: the agent's own bank, `{namespace}-{agent.name}`. Boot-static —
     # resolved once here, never from an event payload (it selects a bank).
     memory_project: str = ""
+    # Outbound credential for ach-memory, resolved ONCE here where the ek_ is in scope. The
+    # facade keeps it; engine_runner needs it for the per-invocation load_context.
+    memory_auth_headers: dict[str, str] = {}
     # Harness-hosted repo-checkout facade: exposes `checkout_repo`, reading gitlab-mcp's archive
     # resource harness-side (ek as x-ach-key, never seen by the agent). None when disabled or the
     # gitlab endpoint/ek is missing (fail-open, run without the tool). Declared here so shutdown
@@ -473,21 +476,17 @@ async def main(
         # ach-memory, and never sees the user key or the project. One bank per agent — the
         # project slug is derived from THIS agent's identity, not from any event's payload.
         if isinstance(cfg.memory, AchMemoryMemory):
-            from ach_agent.memory.ach_memory import resolve_project
-            from ach_agent.memory.common import resolve_memory_secret
+            from ach_agent.memory.ach_memory import resolve_ach_memory_auth, resolve_project
 
-            _ok, _mem_secret = resolve_memory_secret(cfg.memory.ach_memory.auth)
+            _ok, memory_auth_headers = resolve_ach_memory_auth(cfg.memory.ach_memory.auth, ek)
             if _ok:
                 memory_project = resolve_project(cfg.memory.ach_memory, cfg.agent.name)
                 memory_facade = AchMemoryFacade(
-                    cfg.memory.ach_memory.endpoint, _mem_secret, memory_project
+                    cfg.memory.ach_memory.endpoint, memory_auth_headers, memory_project
                 )
                 memory_facade_url = await memory_facade.start()
             else:
-                log.warning(
-                    "memory: auth configured but env unset — facade not started; "
-                    "running without memory"
-                )
+                log.warning("memory: auth unresolved — facade not started; running without memory")
         # Start the repo-checkout facade beside the proxies (mcpServers type=repoCheckout).
         # It fronts gitlab-mcp's archive resource with the ek_ (x-ach-key), so the agent gets a
         # local checkout without ever seeing the ek_ or the raw endpoint.
@@ -681,6 +680,7 @@ async def main(
         agent_name=cfg.agent.name,
         memory_bank=memory_bank,
         memory_project=memory_project,
+        memory_auth_headers=memory_auth_headers,
         stats_sink=stats_sink,
         tool_sink=tool_sink,
         memory_facade_url=memory_facade_url,
@@ -730,7 +730,9 @@ async def main(
                 if isinstance(cfg.memory, AchMemoryMemory):
                     from ach_agent.memory.ach_memory import prepare_ach_memory
 
-                    _mem_ok, _ = await prepare_ach_memory(cfg.memory, memory_project)
+                    _mem_ok, _ = await prepare_ach_memory(
+                        cfg.memory, memory_project, memory_auth_headers
+                    )
                     if _mem_ok and memory_facade_url:
                         warm_mcp_servers = [memory_facade_url]
                 # The repo-checkout facade is static (no probe) — include it in the pre-warmed

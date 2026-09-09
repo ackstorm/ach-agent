@@ -135,7 +135,7 @@ def test_ach_memory_strict_nested_form() -> None:
             "type": "ach-memory",
             "achMemory": {
                 "endpoint": "http://ach-memory.ach.svc:8000",
-                "auth": {"env": "ACH_MEMORY_API_KEY"},
+                "auth": {"type": "bearer", "env": "ACH_MEMORY_API_KEY"},
             },
         }
     )

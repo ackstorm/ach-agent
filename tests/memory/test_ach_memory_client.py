@@ -57,7 +57,7 @@ async def test_load_context_text_is_wrapped_and_never_re_rendered(monkeypatch) -
     """ContextPayload.text is already ordered, budgeted and heading-safe."""
     captured: dict[str, object] = {}
 
-    async def fake_call(endpoint, secret, tool, args):
+    async def fake_call(endpoint, headers, tool, args):
         captured["tool"], captured["args"] = tool, args
         return json.dumps(
             {
@@ -69,7 +69,7 @@ async def test_load_context_text_is_wrapped_and_never_re_rendered(monkeypatch) -
         )
 
     monkeypatch.setattr(am, "call_ach_memory", fake_call)
-    section = await am.fetch_context("http://m", "k", "ach-gitlab-pr")
+    section = await am.fetch_context("http://m", {}, "ach-gitlab-pr")
 
     assert section == "## Memory\n\nUser · user-context\nPrefers uv."
     assert captured["tool"] == am.ACH_MEMORY_LOAD_CONTEXT
@@ -82,7 +82,7 @@ async def test_load_context_failure_degrades_to_a_note(monkeypatch) -> None:
         raise RuntimeError("down")
 
     monkeypatch.setattr(am, "call_ach_memory", boom)
-    section = await am.fetch_context("http://m", "k", "ach-gitlab-pr")
+    section = await am.fetch_context("http://m", {}, "ach-gitlab-pr")
     assert section.startswith("## Memory") and "Unavailable" in section
 
 
@@ -92,7 +92,7 @@ async def test_empty_context_is_not_an_error(monkeypatch) -> None:
         return json.dumps({"text": "", "total_tokens": 0})
 
     monkeypatch.setattr(am, "call_ach_memory", empty)
-    assert "No standing context" in await am.fetch_context("http://m", "k", "p")
+    assert "No standing context" in await am.fetch_context("http://m", {}, "p")
 
 
 # ---------------------------------------------------------------------------
@@ -102,34 +102,64 @@ async def test_empty_context_is_not_an_error(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_unreachable_backend_is_fail_open(monkeypatch) -> None:
-    async def unreachable(endpoint, timeout=2.0):
-        return False
+    """No probe to stub: load_context IS the reachability test, so an outage looks like this."""
 
-    monkeypatch.setattr(am, "probe_memory_endpoint", unreachable)
-    ok, section = await am.prepare_ach_memory(_cfg(), "ach-gitlab-pr")
+    async def boom(endpoint, headers, tool, args):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(am, "call_ach_memory", boom)
+    ok, section = await am.prepare_ach_memory(_cfg(), "ach-gitlab-pr", {})
     assert ok is False
     assert "Unavailable" in section
 
 
 @pytest.mark.asyncio
-async def test_auth_configured_but_env_unset_degrades(monkeypatch) -> None:
-    monkeypatch.delenv("ACH_MEMORY_API_KEY", raising=False)
-    ok, section = await am.prepare_ach_memory(_cfg(auth={"env": "ACH_MEMORY_API_KEY"}), "p")
-    assert ok is False
-    assert "auth unset" in section
-
-
-@pytest.mark.asyncio
 async def test_reachable_backend_returns_the_context_section(monkeypatch) -> None:
-    async def reachable(endpoint, timeout=2.0):
-        return True
-
-    async def fake_fetch(endpoint, secret, project):
+    async def fake_fetch(endpoint, headers, project):
         return "## Memory\n\nok"
 
-    monkeypatch.setattr(am, "probe_memory_endpoint", reachable)
     monkeypatch.setattr(am, "fetch_context", fake_fetch)
-    assert await am.prepare_ach_memory(_cfg(), "p") == (True, "## Memory\n\nok")
+    assert await am.prepare_ach_memory(_cfg(), "p", {}) == (True, "## Memory\n\nok")
+
+
+# ---------------------------------------------------------------------------
+# resolve_ach_memory_auth — two ways in, and they are not the same credential
+# ---------------------------------------------------------------------------
+
+
+def test_auth_absent_sends_no_header() -> None:
+    assert am.resolve_ach_memory_auth(None, "ek_x") == (True, {})
+
+
+def test_auth_ach_uses_the_ek_as_x_ach_key() -> None:
+    """ACH's auth scheme IS the header — an Authorization: Bearer 401s there."""
+    from ach_agent.config.schema import AchMemoryAuthAch
+
+    ok, headers = am.resolve_ach_memory_auth(AchMemoryAuthAch(type="ach"), "ek_x")
+    assert (ok, headers) == (True, {"x-ach-key": "ek_x"})
+
+
+def test_auth_ach_without_an_ek_degrades_rather_than_calling_anonymously() -> None:
+    from ach_agent.config.schema import AchMemoryAuthAch
+
+    assert am.resolve_ach_memory_auth(AchMemoryAuthAch(type="ach"), None) == (False, {})
+
+
+def test_auth_bearer_uses_the_configured_user_key(monkeypatch) -> None:
+    from ach_agent.config.schema import AchMemoryAuthBearer
+
+    monkeypatch.setenv("MEM_TOK", "sekret")
+    auth = AchMemoryAuthBearer(type="bearer", env="MEM_TOK")
+    assert am.resolve_ach_memory_auth(auth, "ek_x") == (True, {"Authorization": "Bearer sekret"})
+
+
+def test_auth_bearer_with_an_unset_env_degrades(monkeypatch) -> None:
+    """Configured-but-unset must never collapse into an anonymous call to a real backend."""
+    from ach_agent.config.schema import AchMemoryAuthBearer
+
+    monkeypatch.delenv("MEM_TOK", raising=False)
+    auth = AchMemoryAuthBearer(type="bearer", env="MEM_TOK")
+    assert am.resolve_ach_memory_auth(auth, "ek_x") == (False, {})
 
 
 # ---------------------------------------------------------------------------
@@ -153,3 +183,68 @@ def test_tools_spec_never_mentions_scope_or_project_slug() -> None:
     """The agent does not pass them, so naming them only invites an attempt."""
     assert "project_slug" not in am.TOOLS_SPEC
     assert "scope=" not in am.TOOLS_SPEC
+
+
+# ---------------------------------------------------------------------------
+# the endpoint is the operator's, verbatim
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_configured_endpoint_is_used_verbatim(monkeypatch) -> None:
+    """The operator configures the COMPLETE MCP endpoint. Appending `/mcp` here is how a
+    gateway URL like `.../mcp/ach-memory` becomes `.../mcp/ach-memory/mcp/` and 404s — the
+    same scar ach-memory's own cli.py carries. Trailing slash is the operator's call too."""
+    seen: dict[str, object] = {}
+
+    class _Result:
+        content = ()
+        isError = False
+
+    class _Session:
+        async def call_tool(self, tool, args):
+            return _Result()
+
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def fake_session(endpoint, headers):
+        seen["endpoint"], seen["headers"] = endpoint, headers
+        yield _Session()
+
+    monkeypatch.setattr(am, "mcp_session", fake_session)
+    for configured in (
+        "https://api.ackstorm.ai/mcp/ach-memory",
+        "https://api.ackstorm.ai/mcp/ach-memory/",
+        "http://ach-memory.svc:8000/mcp/",
+    ):
+        await am.call_ach_memory(configured, {"x-ach-key": "ek_x"}, "recall", {})
+        assert seen["endpoint"] == configured
+
+
+@pytest.mark.asyncio
+async def test_every_call_carries_the_credential_and_an_identity(monkeypatch) -> None:
+    """Same attribution as every other ACH hop (mcp_proxy, hydrate, a2a egress)."""
+    seen: dict[str, object] = {}
+
+    class _Result:
+        content = ()
+        isError = False
+
+    class _Session:
+        async def call_tool(self, tool, args):
+            return _Result()
+
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def fake_session(endpoint, headers):
+        seen["headers"] = headers
+        yield _Session()
+
+    monkeypatch.setattr(am, "mcp_session", fake_session)
+    await am.call_ach_memory("http://m/mcp/", {"x-ach-key": "ek_x"}, "recall", {})
+
+    headers = seen["headers"]
+    assert headers["x-ach-key"] == "ek_x"
+    assert "x-ach-agent" in headers and "x-ach-environment" in headers

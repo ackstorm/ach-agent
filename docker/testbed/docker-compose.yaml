@@ -1,0 +1,40 @@
+# ach-agent testbed — the harness against a REAL ach-memory service.
+#
+#   ./bootstrap.sh                                  # mints the memory user key into ./.env
+#   ACH_TOKEN=ek-... docker compose run --rm agent   # TUI; the typed line is the prompt
+#
+# The memory stack itself is ach-memory's own compose (see README.md); this file adds only
+# the harness and joins it to that stack's network, so `http://api:8000` resolves.
+
+services:
+  agent:
+    build:
+      context: ../..          # repo root (has the Dockerfile + src/)
+      dockerfile: Dockerfile
+    command: ["--tui"]        # launch modifier appended to the image ENTRYPOINT
+    environment:
+      # The ek_ — from your shell, never baked into the image.
+      - ACH_TOKEN=${ACH_TOKEN:?set ACH_TOKEN=ek-... in your shell}
+      - ACH_BASE_URL=${ACH_BASE_URL:-https://ach.ackstorm.ai}
+      - ACH_CONFIG_PATH=/etc/ach-agent/config.yaml
+      # Downward-API stand-in. In k8s this is injected from metadata.namespace; locally it
+      # is the other half of the derived memory project slug `{namespace}-{agent.name}`.
+      - POD_NAMESPACE=testbed
+      # The ach-memory USER key minted by ./bootstrap.sh into ./.env (gitignored). Read by
+      # the harness at use time and never forwarded to opencode.
+      - ACH_SECRET_MEMORY_ACHMEMORY=${ACH_SECRET_MEMORY_ACHMEMORY:?run ./bootstrap.sh first}
+    volumes:
+      - ./config.yaml:/etc/ach-agent/config.yaml:ro
+    cap_drop:
+      - ALL
+    stdin_open: true
+    tty: true
+    networks:
+      - memory
+
+networks:
+  # ach-memory's compose network, created by `docker compose up -d` in that repo. External
+  # on purpose: this testbed never owns the memory stack's lifecycle.
+  memory:
+    external: true
+    name: ${MEMORY_NETWORK:-ach-memory_default}

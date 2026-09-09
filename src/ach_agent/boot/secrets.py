@@ -35,10 +35,13 @@ def collect_secret_env_names(cfg: AgentConfig) -> list[str]:
             if hook is not None:
                 names.extend(src.env for src in hook.secret_env.values() if src.env)
     # memory.achMemory.auth: the user key joins the same forwardEnv-strip + log-redaction
-    # path as channel secrets. No-auth memory config → nothing appended.
+    # path as channel secrets. Only the `bearer` arm names an env var — `ach` carries the
+    # harness's own ek_, which is already excluded from opencode's env by the base allowlist.
     mem = cfg.memory
-    if isinstance(mem, AchMemoryMemory) and mem.ach_memory.auth is not None:
-        names.append(mem.ach_memory.auth.env)
+    if isinstance(mem, AchMemoryMemory):
+        auth = mem.ach_memory.auth
+        if auth is not None and auth.type == "bearer" and auth.env:
+            names.append(auth.env)
     return names
 
 

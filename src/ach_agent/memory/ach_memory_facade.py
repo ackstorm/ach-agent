@@ -26,6 +26,7 @@ from ach_agent.memory.ach_memory import (
     ACH_MEMORY_RECALL,
     ACH_MEMORY_REFLECT,
     ACH_MEMORY_RETAIN,
+    Headers,
     call_ach_memory,
 )
 
@@ -63,9 +64,12 @@ class RetainEvidence(BaseModel):
 class AchMemoryFacade:
     """FastMCP server exposing 5 memory tools; proxies to ach-memory with scope + project."""
 
-    def __init__(self, endpoint: str, secret: str | None, project: str) -> None:
+    def __init__(self, endpoint: str, headers: Headers, project: str) -> None:
         self._endpoint = endpoint
-        self._secret = secret  # closure-only, never logged; None → internal/no-auth URL
+        # The credential, already resolved for whichever auth mode the operator chose
+        # (`x-ach-key` through ACH, or a Bearer user key direct). Instance-local and never
+        # logged; it reaches no config file the agent can read.
+        self._headers = headers
         self._project = project
         self._mcp = FastMCP("ach-memory")
         self._host = LocalMcpHost(self._mcp, "ach-memory facade")
@@ -82,7 +86,7 @@ class AchMemoryFacade:
         payload["scope"] = "project"
         payload["project_slug"] = self._project
         try:
-            return await call_ach_memory(self._endpoint, self._secret, tool, payload)
+            return await call_ach_memory(self._endpoint, self._headers, tool, payload)
         except Exception as exc:
             log.warning("ach-memory facade: call failed", tool=tool, error=str(exc))
             return "Memory temporarily unavailable."

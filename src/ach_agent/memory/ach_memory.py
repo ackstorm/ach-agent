@@ -21,15 +21,16 @@ import re
 
 import structlog
 
-from ach_agent.config.schema import AchMemoryMemory
+from ach_agent import identity
+from ach_agent.config.schema import AchMemoryAuth, AchMemoryMemory, SecretSource
 from ach_agent.engine.mcp_session import mcp_session
-from ach_agent.memory.common import (
-    inc_memory_degraded,
-    probe_memory_endpoint,
-    resolve_memory_secret,
-)
+from ach_agent.memory.common import inc_memory_degraded, resolve_memory_secret
 
 log = structlog.get_logger(__name__)
+
+# Outbound credential + identity headers for one ach-memory request. Built once at boot by
+# resolve_ach_memory_auth and carried in a closure — never written to any file.
+Headers = dict[str, str]
 
 # memory.type discriminator — the key this module is registered under in MEMORY_BACKENDS,
 # which is how tools_spec_for() finds this backend's TOOLS_SPEC for the system prompt.
@@ -89,20 +90,50 @@ def resolve_project(params: object, agent_name: str) -> str:
     return normalize_slug(f"{namespace}-{agent_name}" if namespace else agent_name)
 
 
-def ach_memory_auth_headers(secret: str | None) -> dict[str, str]:
-    """Bearer header for the ach-memory user key. Empty when no secret (internal URL)."""
-    return {"Authorization": f"Bearer {secret}"} if secret else {}
+def resolve_ach_memory_auth(auth: AchMemoryAuth | None, ek: str | None) -> tuple[bool, Headers]:
+    """(ok, headers) for the configured auth mode. Resolved ONCE at boot, in main().
+
+    Three outcomes, same shape as every other credential gate in the harness:
+
+    None      → (True, {})   no auth configured — an internal URL that requires none.
+    type=ach  → (True, {"x-ach-key": ek}) — reach ach-memory through ACH's MCP gateway, which
+                forwards to LiteLLM; the principal is resolved from the ek_. No ek_ in the
+                process is a misconfiguration, not "run anonymously" → (False, {}).
+    type=bearer → (True, {"Authorization": "Bearer …"}) — talk to ach-memory directly with its
+                own user key. Env var configured but unset → (False, {}), the caller DEGRADES
+                rather than calling a real backend anonymously.
+
+    Never logs the credential. The returned dict lives in a closure (facade) or a boot-local
+    (prepare), never in config the agent can read — CLAUDE.md, THE INVARIANT.
+    """
+    if auth is None:
+        return True, {}
+    if auth.type == "ach":
+        if not ek:
+            log.warning("memory: auth.type=ach but no ek_ (ACH_TOKEN) in the process")
+            return False, {}
+        return True, {"x-ach-key": ek}
+    ok, secret = resolve_memory_secret(SecretSource(env=auth.env))
+    return (True, {"Authorization": f"Bearer {secret}"}) if ok and secret else (ok, {})
 
 
 async def call_ach_memory(
-    endpoint: str, secret: str | None, tool: str, args: dict[str, object]
+    endpoint: str, headers: Headers, tool: str, args: dict[str, object]
 ) -> str:
     """Call one ach-memory MCP tool; return the first text content ('' if none).
 
-    The single harness→ach-memory seam (probe/context/facade all route here, so tests
-    monkeypatch one function). ``secret`` builds headers and is never logged.
+    The single harness→ach-memory seam (context/facade both route here, so tests monkeypatch
+    one function). ``headers`` carry the credential and are never logged.
+
+    ``endpoint`` is used VERBATIM. Nothing is appended: the operator configures the complete
+    MCP endpoint, because only they know whether the service sits at a root or behind ACH's
+    gateway. A client that appends its own `/mcp` is how requests end up at `/mcp/mcp/`
+    (ach-memory's own cli.py carries the scar).
+
+    Identity headers are stamped here rather than by each caller, so every harness→ach-memory
+    request is attributable the same way as every other ACH hop (mcp_proxy, hydrate, a2a).
     """
-    async with mcp_session(f"{endpoint.rstrip('/')}/mcp", ach_memory_auth_headers(secret)) as s:
+    async with mcp_session(endpoint, identity.with_identity_headers(headers)) as s:
         result = await s.call_tool(tool, args)
         text: str = getattr(result.content[0], "text", "") if result.content else ""
         # A tool-level error arrives as a NORMAL result with isError=True, not an exception.
@@ -113,7 +144,7 @@ async def call_ach_memory(
         return text
 
 
-async def fetch_context(endpoint: str, secret: str | None, project: str) -> str:
+async def fetch_context(endpoint: str, headers: Headers, project: str) -> str:
     """The ``## Memory`` prompt section, from one ``load_context`` call.
 
     ``ContextPayload.text`` is taken VERBATIM. The service has already ordered the sections,
@@ -127,7 +158,7 @@ async def fetch_context(endpoint: str, secret: str | None, project: str) -> str:
 
     try:
         raw = await call_ach_memory(
-            endpoint, secret, ACH_MEMORY_LOAD_CONTEXT, {"project_slug": project}
+            endpoint, headers, ACH_MEMORY_LOAD_CONTEXT, {"project_slug": project}
         )
         payload = json.loads(raw) if raw else {}
         text = payload.get("text", "") if isinstance(payload, dict) else ""
@@ -147,31 +178,28 @@ async def fetch_context(endpoint: str, secret: str | None, project: str) -> str:
         return "## Memory\n\nUnavailable (context load failed)."
 
 
-async def prepare_ach_memory(memory_cfg: AchMemoryMemory, project: str) -> tuple[bool, str]:
-    """Probe the backend and build the prompt section. Returns (available, prompt_section).
+async def prepare_ach_memory(
+    memory_cfg: AchMemoryMemory, project: str, headers: Headers
+) -> tuple[bool, str]:
+    """Load standing context and build the prompt section. Returns (available, section).
 
     Called BEFORE pool.acquire in engine_runner so the opencode.json written for that server
     includes or excludes the memory MCP server. Never raises (MEM-02 / D-02 fail-open).
+
+    There is deliberately NO health probe in front of this. `load_context` IS the reachability
+    test — it is the call the invocation actually depends on, it runs at the same point in the
+    sequence, and it cannot lie. A `GET {endpoint}/health` could not: the endpoint is now a
+    complete MCP URL that may sit behind a gateway, where `/health` is not a route, and a 404
+    reads as healthy under any `status < 500` check (CLAUDE.md, "assume a probe endpoint
+    exists"). One less round-trip and one less way to be wrong.
     """
     try:
         params = memory_cfg.ach_memory
-        ok, secret = resolve_memory_secret(params.auth)
-        if not ok:
-            log.warning("memory: auth configured but env unset — running degraded")
-            inc_memory_degraded()
-            return False, "## Memory\n\nUnavailable (auth unset)."
-
-        if not await probe_memory_endpoint(params.endpoint):
-            log.warning(
-                "memory backend unreachable — running degraded (MEM-02, D-02)",
-                endpoint=params.endpoint,
-                project=project,
-            )
-            inc_memory_degraded()
-            return False, "## Memory\n\nUnavailable (backend unreachable)."
-
+        section = await fetch_context(params.endpoint, headers, project)
+        if section.startswith("## Memory\n\nUnavailable"):
+            return False, section
         log.info("memory: ach-memory backend active", endpoint=params.endpoint, project=project)
-        return True, await fetch_context(params.endpoint, secret, project)
+        return True, section
 
     except Exception as exc:
         log.warning("memory: prepare_ach_memory failed unexpectedly", error=str(exc))

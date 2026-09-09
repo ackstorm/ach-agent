@@ -55,21 +55,26 @@ async def select_memory_wiring_async(
     memory_cfg: Memory | None,
     facade_url: str | None,
     memory_project: str = "",
+    memory_auth_headers: dict[str, str] | None = None,
 ) -> tuple[list[str], str]:
-    """Probe memory + build the prompt section; return the FACADE url (not the raw endpoint).
+    """Load standing context + build the prompt section; return the FACADE url (not the raw
+    endpoint).
 
     The agent only ever reaches the memory service through the harness facade, so the
-    mcp_servers list carries the facade URL. Gated by the backend's probe (D-02 fail-open)
-    AND by the facade actually being up. codemem is NOT handled here — it is static per-agent
-    and resolved once at boot (resolve_codemem_wiring → engine_cfg).
+    mcp_servers list carries the facade URL. Gated by whether the context load succeeded
+    (D-02 fail-open) AND by the facade actually being up. codemem is NOT handled here — it is
+    static per-agent and resolved once at boot (resolve_codemem_wiring → engine_cfg).
 
-    ``memory_project`` (ach-memory) is boot-static: one bank per agent, resolved from the
-    agent's identity in main(), never from this event's payload.
+    ``memory_project`` and ``memory_auth_headers`` are both boot-static: one bank per agent
+    and one credential, resolved from the agent's identity and the ek_ in main(), never from
+    this event's payload.
     """
     if not isinstance(memory_cfg, AchMemoryMemory):
         return [], ""
 
-    mem_available, memory_prompt = await prepare_ach_memory(memory_cfg, memory_project)
+    mem_available, memory_prompt = await prepare_ach_memory(
+        memory_cfg, memory_project, memory_auth_headers or {}
+    )
 
     mcp_servers = [facade_url] if (mem_available and facade_url) else []
     return mcp_servers, memory_prompt
@@ -88,6 +93,7 @@ def make_engine_runner(
     agent_name: str = "",
     memory_bank: str = "",
     memory_project: str = "",
+    memory_auth_headers: dict[str, str] | None = None,
     stats_sink: StatsSink | None = None,
     tool_sink: StatsSink | None = None,
     memory_facade_url: str | None = None,
@@ -153,14 +159,13 @@ def make_engine_runner(
             session_key=event.session_key,
         )
 
-        # MEM-01/MEM-02/D-02: probe memory backend BEFORE pool.acquire (Pitfall 3).
-        # prepare_memory never raises (fail-open contract).
-        # When unavailable: MEMORY_DEGRADED incremented + WARN logged inside prepare_memory.
-        # bank is static (T-04-03, schema-enforced: no {{ }}) — the mental-model fetch, the
-        # boot-started facade, and the prompt's {{ memory.bank }} all use the SAME value, so
-        # there is no per-event bank rendering to keep them in sync.
+        # MEM-01/MEM-02/D-02: load standing context BEFORE pool.acquire (Pitfall 3), because
+        # its outcome decides whether the memory MCP server is written into the opencode.json
+        # for that server. prepare_memory never raises (fail-open contract); when memory is
+        # unavailable it increments MEMORY_DEGRADED and WARNs internally. project and the auth
+        # headers are both boot-static, so there is no per-event rendering to keep in sync.
         mcp_servers, memory_prompt = await select_memory_wiring_async(
-            memory_cfg, memory_facade_url, memory_project
+            memory_cfg, memory_facade_url, memory_project, memory_auth_headers
         )
         # The repo-checkout facade (if enabled) is a static localhost MCP server; append it to
         # every invocation alongside the (dynamic) memory facade — the agent reaches gitlab-mcp's

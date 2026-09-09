@@ -41,6 +41,43 @@
       "title": "A2ABlock",
       "type": "object"
     },
+    "AchMemoryAuthAch": {
+      "additionalProperties": false,
+      "description": "Reach ach-memory THROUGH ACH: the harness's own ek_, sent as ACH's ``x-ach-key``.\n\nCarries no ``env`` on purpose — there is no second credential to configure. ACH forwards\nto LiteLLM, which resolves the principal from the key, so the memory identity is the\nagent's ACH identity. ``Authorization: Bearer`` is NOT interchangeable here: ACH's auth\nscheme is the header, and a Bearer 401s (engine/context.py).",
+      "properties": {
+        "type": {
+          "const": "ach",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "AchMemoryAuthAch",
+      "type": "object"
+    },
+    "AchMemoryAuthBearer": {
+      "additionalProperties": false,
+      "description": "Reach ach-memory DIRECTLY: an ach-memory user key, sent as ``Authorization: Bearer``.\n\nScoped to one ach-memory user and the projects that user owns — NOT the ek_, and not a\nbank-wide admin secret. env-only, resolved at use time, never logged, never forwarded to\nopencode. Note the key that first bootstraps a project OWNS it: rotating this to a\ndifferent user orphans the bank.",
+      "properties": {
+        "env": {
+          "default": "",
+          "title": "Env",
+          "type": "string"
+        },
+        "type": {
+          "const": "bearer",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "AchMemoryAuthBearer",
+      "type": "object"
+    },
     "AchMemoryMemory": {
       "additionalProperties": false,
       "description": "CONTRACT §2 memory block — ach-memory backend (fail-open §31).\n\nStrict nested form: ``{type: ach-memory, achMemory: {endpoint: ...}}``. Scope is not\nconfigurable (the harness pins ``project``) and the exposed tool set is fixed in code —\na memory tool the operator did not ask for is a tool nobody reviewed.",
@@ -68,13 +105,28 @@
         "auth": {
           "anyOf": [
             {
-              "$ref": "#/$defs/SecretSource"
+              "discriminator": {
+                "mapping": {
+                  "ach": "#/$defs/AchMemoryAuthAch",
+                  "bearer": "#/$defs/AchMemoryAuthBearer"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/AchMemoryAuthAch"
+                },
+                {
+                  "$ref": "#/$defs/AchMemoryAuthBearer"
+                }
+              ]
             },
             {
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "title": "Auth"
         },
         "endpoint": {
           "title": "Endpoint",

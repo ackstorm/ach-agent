@@ -7,7 +7,7 @@ also applies the SDK's recommended MCP timeouts. We own that client's lifecycle 
 transport only closes clients it created), hence the nested ``async with``. Centralised here
 so an SDK upgrade is a one-line fix rather than one per call site.
 
-Headers carry credentials (the ek_, the Hindsight bearer) — never log them (SEC-01).
+Headers carry credentials (the ek_, the memory-service bearer) — never log them (SEC-01).
 """
 
 from __future__ import annotations

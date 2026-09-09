@@ -60,7 +60,6 @@ from ach_agent.config import load_config
 from ach_agent.config.schema import (
     AchMemoryMemory,
     CodememMemory,
-    HindsightMemory,
     LocalMcpServer,
     McpServerConfig,
     RemoteMcpServer,
@@ -82,8 +81,6 @@ from ach_agent.engine.metrics import DRAIN_COMPLETED
 from ach_agent.engine.sanitized_env import add_secret_redaction, configure_logging
 from ach_agent.http.app import create_app
 from ach_agent.memory.ach_memory_facade import AchMemoryFacade
-from ach_agent.memory.facade import MemoryFacade
-from ach_agent.memory.hindsight import prepare_memory, provision_memory
 from ach_agent.router import Router
 from ach_agent.security.preflight import run_preflight
 from ach_agent.templating import build_template_context, render_template
@@ -397,9 +394,6 @@ async def main(
     engine_home, engine_work_dir = resolve_engine_paths(cfg)
     state_dir = link_ach_state(engine_home, engine_work_dir)
 
-    # Boot-once memory provisioning (ensure bank + mental models). Fail-open (never raises).
-    await provision_memory(cfg.memory)
-
     # Step 3: D-02 gate — reject unwired channel types before serving.
     # Skipped under --tui/--prompt: configured channels are ignored in console mode.
     for channel in cfg.channels if not console_mode else []:
@@ -427,10 +421,10 @@ async def main(
     model_base_url: str = ""
     mcp_local_urls: dict[str, str] = {}
     mcp_proxy: McpProxy | None = None
-    # Harness-hosted memory facade: the agent reaches Hindsight ONLY through this localhost
-    # MCP server (bank_id + admin auth injected). Started beside the proxies below; None when
-    # memory is not a Hindsight config or its auth env is unset (fail-open, run without memory).
-    memory_facade: MemoryFacade | AchMemoryFacade | None = None
+    # Harness-hosted memory facade: the agent reaches ach-memory ONLY through this localhost
+    # MCP server (scope + project injected). Started beside the proxies below; None when
+    # memory is not an ach-memory config or its auth env is unset (fail-open, run without it).
+    memory_facade: AchMemoryFacade | None = None
     memory_facade_url: str | None = None
     # ach-memory only: the agent's own bank, `{namespace}-{agent.name}`. Boot-static —
     # resolved once here, never from an event payload (it selects a bank).
@@ -476,31 +470,13 @@ async def main(
         if _exclude_servers:
             log.info("filter: mcp servers excluded", excluded=sorted(_exclude_servers))
         # Start the memory facade beside the proxies. The agent points at THIS url, never at
-        # Hindsight. Uses the admin secret (NOT the ek_); secret may be None (internal URL).
-        if isinstance(cfg.memory, HindsightMemory):
+        # ach-memory, and never sees the user key or the project. One bank per agent — the
+        # project slug is derived from THIS agent's identity, not from any event's payload.
+        if isinstance(cfg.memory, AchMemoryMemory):
+            from ach_agent.memory.ach_memory import resolve_project
             from ach_agent.memory.common import resolve_memory_secret
 
-            _ok, _mem_secret = resolve_memory_secret(cfg.memory.hindsight.auth)
-            if _ok:
-                memory_facade = MemoryFacade(
-                    cfg.memory.hindsight.endpoint, _mem_secret, cfg.memory.hindsight.bank
-                )
-                memory_facade_url = await memory_facade.start()
-            else:
-                log.warning(
-                    "memory: auth configured but env unset — facade not started; "
-                    "running without memory"
-                )
-        # Same shape for ach-memory: the agent points at the loopback facade, never at the
-        # service, and never sees the user key or the project. One bank per agent — the
-        # project slug is derived from THIS agent's identity, not from any event's payload.
-        elif isinstance(cfg.memory, AchMemoryMemory):
-            from ach_agent.memory.ach_memory import resolve_project
-            from ach_agent.memory.common import (
-                resolve_memory_secret as resolve_neutral_secret,
-            )
-
-            _ok, _mem_secret = resolve_neutral_secret(cfg.memory.ach_memory.auth)
+            _ok, _mem_secret = resolve_memory_secret(cfg.memory.ach_memory.auth)
             if _ok:
                 memory_project = resolve_project(cfg.memory.ach_memory, cfg.agent.name)
                 memory_facade = AchMemoryFacade(
@@ -689,7 +665,9 @@ async def main(
     # held ref for the whole REPL, so this TTL never stops it mid-session.
     channel_ttl = {ch.name: cfg.engine.idle_ttl_seconds for ch in cfg.channels}
     channels_by_name = {c.name: c for c in cfg.channels}
-    memory_bank = cfg.memory.hindsight.bank if isinstance(cfg.memory, HindsightMemory) else ""
+    # `{{ memory.bank }}` survives as a documented operator template surface (contract §2),
+    # now always empty: ach-memory resolves the bank server-side from the project slug.
+    memory_bank = ""
     engine_runner = make_engine_runner(
         pool=pool,
         driver=driver,
@@ -746,14 +724,10 @@ async def main(
                 # opencode.json wires the memory MCP exactly as engine_runner would.
                 import dataclasses
 
-                # codemem is already on engine_cfg from boot (static); only hindsight's
-                # remote MCP server is resolved here so the pre-warmed opencode.json matches.
+                # codemem is already on engine_cfg from boot (static); only the memory
+                # facade is resolved here so the pre-warmed opencode.json matches.
                 warm_mcp_servers: list[str] = []
-                if isinstance(cfg.memory, HindsightMemory):
-                    _mem_ok, _ = await prepare_memory(cfg.memory)
-                    if _mem_ok and memory_facade_url:
-                        warm_mcp_servers = [memory_facade_url]
-                elif isinstance(cfg.memory, AchMemoryMemory):
+                if isinstance(cfg.memory, AchMemoryMemory):
                     from ach_agent.memory.ach_memory import prepare_ach_memory
 
                     _mem_ok, _ = await prepare_ach_memory(cfg.memory, memory_project)

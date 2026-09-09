@@ -13,7 +13,7 @@ import os
 
 import structlog
 
-from ach_agent.config.schema import AchMemoryMemory, AgentConfig, HindsightMemory
+from ach_agent.config.schema import AchMemoryMemory, AgentConfig
 from ach_agent.security.preflight import DEGRADED_ENV
 
 log = structlog.get_logger(__name__)
@@ -34,12 +34,10 @@ def collect_secret_env_names(cfg: AgentConfig) -> list[str]:
         for hook in (ch.prepare, ch.cleanup, ch.script):
             if hook is not None:
                 names.extend(src.env for src in hook.secret_env.values() if src.env)
-    # memory.hindsight.auth: the admin secret joins the same forwardEnv-strip + log-redaction
+    # memory.achMemory.auth: the user key joins the same forwardEnv-strip + log-redaction
     # path as channel secrets. No-auth memory config → nothing appended.
     mem = cfg.memory
-    if isinstance(mem, HindsightMemory) and mem.hindsight.auth is not None:
-        names.append(mem.hindsight.auth.env)
-    elif isinstance(mem, AchMemoryMemory) and mem.ach_memory.auth is not None:
+    if isinstance(mem, AchMemoryMemory) and mem.ach_memory.auth is not None:
         names.append(mem.ach_memory.auth.env)
     return names
 

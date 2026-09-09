@@ -180,29 +180,32 @@ mismatch.
   "memory": {                               // null if not configured; fail-open (§6.5).
     // STRICT discriminated union on "type" — "type" REQUIRED, no legacy/no-type default.
     // Params live NESTED under memory.<type>.*.
-    "type": "hindsight",                    // hindsight | codemem  (future: mem0, …)
-    "hindsight": {
-      "endpoint": "http://hindsight.engineering.svc:8080/mcp",
-      "bank": "gitlab-pr-review",           // static bank_id, harness-owned; the agent NEVER
-                                            //   sees or sets it. Per-repo split = tags, NOT
-                                            //   templating (T-04-03).
-      "auth": { "env": "ACH_SECRET_MEMORY_HINDSIGHT" }, // OPTIONAL (omit for internal/no-auth
-                                            //   URL). Bearer admin secret, NOT the ek_. env-only.
-                                            //   The OPERATOR generates the ACH_SECRET_* name
-                                            //   (like ACH_SECRET_GITLAB_WEBHOOK); the author only
-                                            //   picks the Secret + key. Unset-at-runtime → degrade.
-      "mission": "AI code reviewer",        // optional; passed to create_bank at boot.
-      "mentalModels": [                     // rich specs the harness PROVISIONS + reads at boot
-        { "id": "architecture", "name": "Architecture",
-          "sourceQuery": "What is the architecture?", "autoRefresh": true, "maxTokens": 2048 }
-      ]
+    "type": "ach-memory",                   // ach-memory | codemem  (future: mem0, …)
+    "achMemory": {
+      "endpoint": "http://ach-memory.ach.svc:8000",
+      "auth": { "env": "ACH_SECRET_MEMORY_ACH_MEMORY" }, // OPTIONAL (omit for internal/no-auth
+                                            //   URL). Bearer USER key, NOT a bank-wide admin
+                                            //   secret and NOT the ek_. env-only. The OPERATOR
+                                            //   generates the ACH_SECRET_* name (like
+                                            //   ACH_SECRET_GITLAB_WEBHOOK); the author only picks
+                                            //   the Secret + key. Unset-at-runtime → degrade.
+      "project": ""                         // OPTIONAL override. Empty (the norm) → the harness
+                                            //   derives {POD_NAMESPACE}-{agent.name} at boot:
+                                            //   ONE BANK PER AGENT. STATIC — templating ({{ }})
+                                            //   is REJECTED, because the slug selects a bank and
+                                            //   inbound payload is untrusted. An agent spanning
+                                            //   several repositories separates them with TAGS
+                                            //   inside its one bank, never by switching banks.
     }
-    // FACADE: the agent reaches Hindsight ONLY through a harness-hosted localhost MCP server
-    // exposing exactly four tools — memory_recall(query,tags?), memory_reflect(query,tags?),
-    // memory_get_mental_model(id), memory_retain(content,tags?). No bank_id parameter, no
-    // admin/destructive tools. The harness injects bank_id + the admin Bearer per call; the
-    // raw Hindsight endpoint and the admin secret never reach opencode. Provisioning
-    // (create_bank + create/refresh mental_model) runs boot-once, fail-open.
+    // FACADE: the agent reaches ach-memory ONLY through a harness-hosted localhost MCP server
+    // exposing exactly five tools — memory_recall(query,tags?), memory_reflect(query),
+    // memory_get_mental_model(model_key), memory_list_mental_models(),
+    // memory_retain(content,memory_type,basis,trigger,evidence,tags?). No `scope` and no
+    // `project_slug` parameter on any of them: the harness INJECTS both per call (overriding,
+    // not filling), so the agent cannot choose — or be argued into choosing — another bank.
+    // The endpoint and the user key never reach opencode. Standing context is assembled,
+    // ordered and token-budgeted SERVER-side; the harness wraps the returned text verbatim.
+    // Provisioning is automatic server-side — the harness performs no bootstrap.
     // codemem variant: { "type": "codemem", "codemem": { "dbPath": "…", "project": "…" } }
     //   dbPath: absolute, no ".." (a local stdio MCP, model-managed); omit → derived from
     //           persistence (<mountPath>/codemem/codemem.db, else /tmp/ach-home/…).
@@ -212,8 +215,8 @@ mismatch.
     // TEMPLATING of memory.codemem.project: same {{ }} engine and namespaces as channel.prompt
     // (payload.*, internal.*). Rendered by the HARNESS in engine_runner with the FULL triggering
     // event context, then baked into opencode.json when the agente launches.
-    // (memory.hindsight.bank is STATIC — the facade captures it once at boot; use tags for
-    //  per-repo partitioning, never a templated bank.)
+    // (memory.achMemory.project is STATIC — the facade captures it once at boot; use tags for
+    //  per-repo partitioning, never a templated project.)
     // Because the agente is 1:1 with session_key and is REUSED across that key's events, the value is
     // captured from the FIRST event that launched the agente and fixed for its lifetime — so a
     // templated bank/project MUST be invariant per session_key (e.g. "{{ internal.session.key }}",
@@ -285,7 +288,7 @@ mismatch.
       // channel.prompt is rendered with {{ }} substitution. Namespaces: payload.* (the
       // inbound JSON body), internal.* (channel.name|type|source, agent.name, memory.bank,
       // event.id, session.key). One filter: | default("x"). No env namespace (ek-hygiene).
-      // The SAME engine + namespaces render memory.hindsight.bank / memory.codemem.project (§2 memory).
+      // The SAME engine + namespaces render memory.codemem.project (§2 memory).
       "prompt": "Review this merge request: {{ payload.object_attributes.url }}",
       // prepare: OPTIONAL per-invocation workspace hook (§9.1). A /bin/sh script run on the
       //   LANE (after dedup + backpressure, before the session engine is acquired or reused)
@@ -515,12 +518,13 @@ One materialization path for all forms: the resolved bytes are written to
 
 **Memory tools spec (harness-appended).** When `memory` is configured, the harness appends a
 per-backend `## Memory Tools` section to the resolved system prompt — a short, static description of
-how to use that backend's tools (hindsight's `memory_recall/reflect/retain/get_mental_model`;
-codemem's `memory_search/timeline/pack/remember/forget/get_observations`). It is **boot-static**
+how to use that backend's tools (ach-memory's `memory_recall/reflect/retain/get_mental_model/
+list_mental_models`; codemem's `memory_search/timeline/pack/remember/forget/get_observations`). It is **boot-static**
 (the backend is known at boot; keeps the system-prompt prefix stable → prompt-cache friendly) and
 lives with the backend (each `memory.type` owns its own `TOOLS_SPEC`). This is distinct from the
-per-invocation `## Memory` content block hindsight appends to the event prompt (mental-model
-summaries + their ids). The hindsight tools take **no `bank_id`** — the harness facade injects it.
+per-invocation `## Memory` content block the backend appends to the event prompt (for ach-memory,
+the server-assembled standing context, taken verbatim). The ach-memory tools take **no `scope`
+and no `project_slug`** — the harness facade injects both, overriding anything the agent sends.
 
 For `{ "type": "file", "file": F }`:
 1. Resolve `F` relative to `ACH_STATE`.
@@ -920,7 +924,8 @@ memory (fail-open), tool egress is not fail-open — surface it as a per-invocat
    resolve under `.ach-state` with load-time + read-time traversal rejection and missing-file
    hard-fail. (2026-06-30)
 10. **`memory` discriminated union** — `type: hindsight` (default) | `codemem`; a legacy no-`type`
-    block defaults to hindsight. (2026-07-01)
+    block defaults to hindsight. (2026-07-01) — SUPERSEDED: `type` is REQUIRED and the arms are
+    `codemem | ach-memory`; the Hindsight backend was removed. (2026-09-09)
 11. **schemaVersion = "1"** — both repos. (2026-06-25)
 12. **Webhook acceptance decoupled from engine readiness** — the A′ cold-start gate (§6.7) is
     retired; acceptance depends only on harness readiness + `draining`. `202` accept (+ optional

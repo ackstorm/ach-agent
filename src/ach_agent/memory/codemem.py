@@ -3,7 +3,7 @@
 
 codemem is a stdio MCP server (model-managed, project-scoped). Its wiring is resolved
 once at boot in resolve_codemem_wiring — codemem is static per-agent, so it does not
-belong in the per-invocation hindsight adapter.
+belong in the per-invocation ach-memory adapter.
 """
 
 from __future__ import annotations

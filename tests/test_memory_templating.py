@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Task 3: template codemem.project + hindsight.bank from the triggering event.
+"""Task 3: template codemem.project from the triggering event.
 
 Tests that engine_runner renders {{ internal.session.key }} into codemem_project
 on the EngineConfig passed to pool.acquire, and that a literal project passes through.

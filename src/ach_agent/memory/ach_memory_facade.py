@@ -6,7 +6,7 @@ gets ``scope="project"`` and the harness-owned ``project_slug`` injected on the 
 neither appears on any exposed signature, so the agent cannot choose — or be argued into
 choosing — another bank. The agent never sees the user key or the real endpoint.
 
-Same shape as ``MemoryFacade`` (Hindsight) and ``RepoCheckoutFacade``: a FastMCP app on an
+Same shape as ``RepoCheckoutFacade`` and the a2a egress facade: a FastMCP app on an
 ephemeral loopback port via ``LocalMcpHost``. opencode's ``memory-0`` MCP server points here.
 See CLAUDE.md, THE INVARIANT.
 """

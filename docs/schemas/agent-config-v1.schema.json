@@ -572,69 +572,6 @@
       "title": "HealthBlock",
       "type": "object"
     },
-    "HindsightMemory": {
-      "additionalProperties": false,
-      "description": "CONTRACT §2 memory block — Hindsight backend (fail-open §31).\n\nStrict nested form: ``{type: hindsight, hindsight: {...}}``. There is NO backward-compat\nfor a flat block or a missing ``type`` — the schema hard-fails (extra='forbid').",
-      "properties": {
-        "hindsight": {
-          "$ref": "#/$defs/HindsightParams"
-        },
-        "type": {
-          "const": "hindsight",
-          "title": "Type",
-          "type": "string"
-        }
-      },
-      "required": [
-        "type",
-        "hindsight"
-      ],
-      "title": "HindsightMemory",
-      "type": "object"
-    },
-    "HindsightParams": {
-      "additionalProperties": false,
-      "description": "Hindsight backend params — the ``memory.hindsight`` sub-block (CONTRACT §2).",
-      "properties": {
-        "auth": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SecretSource"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "bank": {
-          "default": "",
-          "title": "Bank",
-          "type": "string"
-        },
-        "endpoint": {
-          "title": "Endpoint",
-          "type": "string"
-        },
-        "mentalModels": {
-          "items": {
-            "$ref": "#/$defs/MentalModelSpec"
-          },
-          "title": "Mentalmodels",
-          "type": "array"
-        },
-        "mission": {
-          "default": "",
-          "title": "Mission",
-          "type": "string"
-        }
-      },
-      "required": [
-        "endpoint"
-      ],
-      "title": "HindsightParams",
-      "type": "object"
-    },
     "LimitsBlock": {
       "additionalProperties": false,
       "description": "CONTRACT §2 limits block (§18.6 — all finite, always enforced).",
@@ -719,41 +656,6 @@
         "command"
       ],
       "title": "LocalMcpServer",
-      "type": "object"
-    },
-    "MentalModelSpec": {
-      "additionalProperties": false,
-      "description": "A pinned reflection the harness provisions into Hindsight at boot (CONTRACT §2).",
-      "properties": {
-        "autoRefresh": {
-          "default": false,
-          "title": "Autorefresh",
-          "type": "boolean"
-        },
-        "id": {
-          "title": "Id",
-          "type": "string"
-        },
-        "maxTokens": {
-          "default": 2048,
-          "title": "Maxtokens",
-          "type": "integer"
-        },
-        "name": {
-          "title": "Name",
-          "type": "string"
-        },
-        "sourceQuery": {
-          "title": "Sourcequery",
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "name",
-        "sourceQuery"
-      ],
-      "title": "MentalModelSpec",
       "type": "object"
     },
     "ModelBlock": {
@@ -1335,15 +1237,11 @@
           "discriminator": {
             "mapping": {
               "ach-memory": "#/$defs/AchMemoryMemory",
-              "codemem": "#/$defs/CodememMemory",
-              "hindsight": "#/$defs/HindsightMemory"
+              "codemem": "#/$defs/CodememMemory"
             },
             "propertyName": "type"
           },
           "oneOf": [
-            {
-              "$ref": "#/$defs/HindsightMemory"
-            },
             {
               "$ref": "#/$defs/CodememMemory"
             },

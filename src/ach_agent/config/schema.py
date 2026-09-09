@@ -247,61 +247,6 @@ class PromptBlock(BaseModel):
     compose: Literal["append", "replace"] = "append"
 
 
-class MentalModelSpec(BaseModel):
-    """A pinned reflection the harness provisions into Hindsight at boot (CONTRACT §2)."""
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    id: str
-    name: str
-    source_query: str = Field(alias="sourceQuery")
-    auto_refresh: bool = Field(default=False, alias="autoRefresh")
-    max_tokens: int = Field(default=2048, alias="maxTokens")
-
-
-class HindsightParams(BaseModel):
-    """Hindsight backend params — the ``memory.hindsight`` sub-block (CONTRACT §2)."""
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    endpoint: str
-    # Static memory bank_id (harness-owned; the agent never sees or sets it). Per-repo
-    # partitioning is via tags, NEVER by templating bank from inbound payload (T-04-03).
-    bank: str = ""
-    # Admin secret for the harness→Hindsight path (Bearer). NOT the ek_. env-only; resolved
-    # at use time; never logged / forwarded to opencode. OPTIONAL — omit when Hindsight is on
-    # an internal/no-auth URL. If set but the env var is unset at runtime → fail-open degrade.
-    auth: SecretSource | None = None
-    # Optional mission string passed to create_bank at provisioning.
-    mission: str = ""
-    # Rich specs the harness provisions (create_mental_model) + reads (get_mental_model).
-    mental_models: list[MentalModelSpec] = Field(default_factory=list, alias="mentalModels")
-
-    @model_validator(mode="after")
-    def _bank_static(self) -> HindsightParams:
-        # T-04-03: bank is harness-owned + static — NEVER templated. Payload is untrusted (a
-        # templated bank could select another tenant's memory), and the boot-started facade uses
-        # the static bank, so a {{ }} bank would silently diverge from the mental-model fetch.
-        if "{{" in self.bank:
-            raise ValueError(
-                "memory.hindsight.bank must be static — templating ({{ }}) is not allowed"
-            )
-        return self
-
-
-class HindsightMemory(BaseModel):
-    """CONTRACT §2 memory block — Hindsight backend (fail-open §31).
-
-    Strict nested form: ``{type: hindsight, hindsight: {...}}``. There is NO backward-compat
-    for a flat block or a missing ``type`` — the schema hard-fails (extra='forbid').
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["hindsight"]
-    hindsight: HindsightParams
-
-
 class CodememParams(BaseModel):
     """codemem backend params — the ``memory.codemem`` sub-block (CONTRACT §2)."""
 
@@ -357,7 +302,7 @@ class AchMemoryParams(BaseModel):
     # Project slug OVERRIDE. Empty (the norm) → derived at boot from the agent's own identity,
     # `{namespace}-{agent.name}` (memory.ach_memory.resolve_project). One bank per agent.
     #
-    # Static, like hindsight.bank and unlike codemem.project: this value selects a memory bank
+    # Static, unlike codemem.project: this value selects a memory bank
     # through projects.resolve, so a payload-derived one would let an inbound event choose
     # which bank the agent reads and writes. The agent differentiates repositories with tags
     # INSIDE its own bank, never by switching banks.
@@ -388,7 +333,7 @@ class AchMemoryMemory(BaseModel):
 
 # Strict discriminated union on `type` — `type` is REQUIRED (no default, no backward-compat
 # coercion). An unknown/missing `type`, a flat block, or a mismatched sub-block hard-fails.
-Memory = Annotated[HindsightMemory | CodememMemory | AchMemoryMemory, Field(discriminator="type")]
+Memory = Annotated[CodememMemory | AchMemoryMemory, Field(discriminator="type")]
 
 
 # ---------------------------------------------------------------------------

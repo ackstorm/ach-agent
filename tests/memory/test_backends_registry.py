@@ -3,17 +3,6 @@
 from __future__ import annotations
 
 
-def test_tools_spec_for_hindsight() -> None:
-    from ach_agent.config.schema import HindsightMemory
-    from ach_agent.memory import tools_spec_for
-
-    cfg = HindsightMemory.model_validate(
-        {"type": "hindsight", "hindsight": {"endpoint": "http://m:8080", "bank": "b"}}
-    )
-    spec = tools_spec_for(cfg)
-    assert "memory_recall" in spec and "memory_retain" in spec
-
-
 def test_tools_spec_for_codemem() -> None:
     from ach_agent.config.schema import CodememMemory
     from ach_agent.memory import tools_spec_for

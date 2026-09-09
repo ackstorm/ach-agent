@@ -5,7 +5,7 @@ Covers the five resolution cases per the boot-helper contract:
   (a) persistence-enabled derivation of db_path
   (b) persistence-disabled derivation → /tmp/ach-home/state/codemem.db
   (c) explicit dbPath + project override
-  (d) hindsight memory → ("", "")  — not codemem, pass-through
+  (d) ach-memory memory → ("", "")  — not codemem, pass-through
   (e) codemem config but binary not on PATH → ("", "") fail-open
 """
 
@@ -102,20 +102,20 @@ def test_resolve_respects_explicit_db_path_and_project(monkeypatch: pytest.Monke
 
 
 # ---------------------------------------------------------------------------
-# (d) hindsight memory → ("", "")
+# (d) ach-memory memory → ("", "")
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_returns_empty_for_hindsight(monkeypatch: pytest.MonkeyPatch) -> None:
-    """HindsightMemory is not codemem → resolve_codemem_wiring returns ('', '')."""
+def test_resolve_returns_empty_for_ach_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AchMemoryMemory is not codemem → resolve_codemem_wiring returns ('', '')."""
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/codemem")
 
     from ach_agent.main import resolve_codemem_wiring
 
     cfg = _cfg(
         memory={
-            "type": "hindsight",
-            "hindsight": {"endpoint": "http://hindsight:8080"},
+            "type": "ach-memory",
+            "achMemory": {"endpoint": "http://ach-memory:8000"},
         }
     )
     db_path, project = resolve_codemem_wiring(cfg)

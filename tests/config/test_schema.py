@@ -1208,31 +1208,6 @@ def test_capability_type_direct_hard_fails(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_memory_block_uses_bank_not_scope():
-    import pytest
-    from pydantic import ValidationError
-
-    from ach_agent.config.schema import HindsightMemory, HindsightParams
-
-    m = HindsightMemory(
-        type="hindsight",
-        hindsight=HindsightParams(endpoint="http://mem:8080", bank="gitlab-pr-review"),
-    )
-    assert m.hindsight.bank == "gitlab-pr-review"
-
-    # the old key is gone — extra='forbid' must reject it on HindsightParams
-    with pytest.raises(ValidationError):
-        HindsightMemory(
-            type="hindsight",
-            hindsight=HindsightParams(endpoint="http://mem:8080", scope="x"),  # type: ignore[call-arg]
-        )
-
-
-# ---------------------------------------------------------------------------
-# prompt.system discriminated union (SystemText | SystemFile | None)
-# ---------------------------------------------------------------------------
-
-
 def test_prompt_system_text_form():
     from ach_agent.config.schema import PromptBlock, SystemText
 

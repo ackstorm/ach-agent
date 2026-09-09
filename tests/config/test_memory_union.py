@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for memory.type discriminated union (hindsight|codemem).
+"""Tests for the memory.type discriminated union (codemem|ach-memory).
 
-TDD tests for Task 1: HindsightMemory, CodememMemory strict nested schema.
+CodememMemory and AchMemoryMemory strict nested schema.
 All sub-model cases test the concrete classes directly (no helpers.py needed);
 the legacy-rejection case uses the fixture + _load_raw round-trip to exercise
 the full load_config path.
@@ -31,31 +31,6 @@ def _load_raw(tmp_path: Path, raw: dict):
     config_file = tmp_path / "config.json"
     config_file.write_text(json.dumps(raw), encoding="utf-8")
     return load_config(str(config_file))
-
-
-# ---------------------------------------------------------------------------
-# HindsightMemory sub-model (direct)
-# ---------------------------------------------------------------------------
-
-
-def test_hindsight_memory_direct() -> None:
-    """HindsightMemory validates with type, hindsight sub-block, endpoint, bank, mentalModels."""
-    from ach_agent.config.schema import HindsightMemory
-
-    m = HindsightMemory.model_validate(
-        {
-            "type": "hindsight",
-            "hindsight": {
-                "endpoint": "http://mem:8080",
-                "bank": "gitlab-pr-review",
-                "mentalModels": [{"id": "m1", "name": "M1", "sourceQuery": "q?"}],
-            },
-        }
-    )
-    assert m.type == "hindsight"
-    assert m.hindsight.endpoint == "http://mem:8080"
-    assert m.hindsight.bank == "gitlab-pr-review"
-    assert m.hindsight.mental_models[0].id == "m1"
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +92,7 @@ def test_codemem_rejects_dotdot_in_db_path() -> None:
         )
 
 
-def test_codemem_rejects_hindsight_only_fields() -> None:
+def test_codemem_rejects_a_flat_db_path() -> None:
     """extra='forbid': flat dbPath without the codemem: sub-block is rejected by CodememMemory."""
     from ach_agent.config.schema import CodememMemory
 
@@ -141,7 +116,6 @@ def test_legacy_block_without_type_raises(tmp_path: Path) -> None:
     raw["memory"] = {
         "endpoint": "http://mem:8080",
         "bank": "gitlab-pr-review",
-        "mentalModels": ["m1"],
     }
     with pytest.raises(SystemExit):
         _load_raw(tmp_path, raw)
@@ -181,7 +155,7 @@ def test_ach_memory_rejects_a_flat_block() -> None:
 def test_ach_memory_rejects_a_templated_project() -> None:
     """A project slug selects a BANK through projects.resolve. Templating it would let an
     inbound payload choose which bank the agent reads and writes — same rule as
-    hindsight.bank, and the reason repo differentiation is tags-inside-one-bank."""
+    the reason repo differentiation is tags-inside-one-bank."""
     from ach_agent.config.schema import AchMemoryParams
 
     with pytest.raises(ValidationError, match="static"):

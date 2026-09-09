@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from ach_agent.boot.engine_runner import select_memory_wiring_async
-from ach_agent.config.schema import AgentConfig, HindsightMemory, HindsightParams
+from ach_agent.config.schema import AchMemoryMemory, AgentConfig
 from ach_agent.engine.lifecycle import EngineConfig, write_opencode_config
 from ach_agent.main import resolve_codemem_wiring
 
@@ -128,29 +128,29 @@ async def test_codemem_absent_from_path_degrades(
     assert "codemem" not in _opencode_json(cfg_path).get("mcp", {})
 
 
-async def test_hindsight_path_produces_no_codemem_entry(
+async def test_ach_memory_path_produces_no_codemem_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """hindsight config → remote mcp server + prompt, and NO codemem entry in opencode.json.
+    """ach-memory config → remote mcp server + prompt, and NO codemem entry in opencode.json.
 
     Remote MCP entries are keyed memory-{i} with shape {type:remote, url:..., enabled:True}
     (opencode 1.16 schema, verified in lifecycle.py line ~239).
     """
 
-    async def _ok(_cfg: object) -> tuple[bool, str]:
+    async def _ok(_cfg: object, _project: str) -> tuple[bool, str]:
         return (True, "## Memory\nx")
 
     import ach_agent.boot.engine_runner as engine_runner_mod
 
-    monkeypatch.setattr(engine_runner_mod, "prepare_memory", _ok)
+    monkeypatch.setattr(engine_runner_mod, "prepare_ach_memory", _ok)
 
     facade_url = "http://127.0.0.1:7/mcp"
-    cfg_mem = HindsightMemory(
-        type="hindsight", hindsight=HindsightParams(endpoint="http://mem:8080")
+    cfg_mem = AchMemoryMemory.model_validate(
+        {"type": "ach-memory", "achMemory": {"endpoint": "http://mem:8000"}}
     )
     mcp_servers, memory_prompt = await select_memory_wiring_async(cfg_mem, facade_url)
 
-    # mcp_servers carries the harness FACADE url, never the raw hindsight endpoint.
+    # mcp_servers carries the harness FACADE url, never the raw ach-memory endpoint.
     assert mcp_servers == [facade_url]
     assert memory_prompt == "## Memory\nx"
 
@@ -164,7 +164,7 @@ async def test_hindsight_path_produces_no_codemem_entry(
 
     oc_mcp = _opencode_json(cfg_path).get("mcp", {})
 
-    # No codemem entry for hindsight path
+    # No codemem entry for the ach-memory path
     assert "codemem" not in oc_mcp
 
     # Facade url registered as memory-0 with the correct remote shape

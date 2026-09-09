@@ -3,10 +3,9 @@
 
 from __future__ import annotations
 
-from ach_agent.memory import ach_memory, codemem, hindsight
+from ach_agent.memory import ach_memory, codemem
 
 MEMORY_BACKENDS = {
-    hindsight.TYPE: hindsight,
     codemem.TYPE: codemem,
     ach_memory.TYPE: ach_memory,
 }

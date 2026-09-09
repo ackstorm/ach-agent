@@ -35,14 +35,12 @@ from ach_agent.config.schema import (
     AchMemoryMemory,
     ChannelConfig,
     CodememMemory,
-    HindsightMemory,
     Memory,
 )
 from ach_agent.engine import trace
 from ach_agent.engine.cost import CostAccountant
 from ach_agent.engine.metrics import ENGINE_LAUNCH_FAILURES
 from ach_agent.memory.ach_memory import prepare_ach_memory
-from ach_agent.memory.hindsight import prepare_memory
 from ach_agent.stats.sink import StatsSink
 from ach_agent.templating import build_template_context, render_template
 
@@ -68,12 +66,10 @@ async def select_memory_wiring_async(
     ``memory_project`` (ach-memory) is boot-static: one bank per agent, resolved from the
     agent's identity in main(), never from this event's payload.
     """
-    if isinstance(memory_cfg, AchMemoryMemory):
-        mem_available, memory_prompt = await prepare_ach_memory(memory_cfg, memory_project)
-    elif isinstance(memory_cfg, HindsightMemory):
-        mem_available, memory_prompt = await prepare_memory(memory_cfg)
-    else:
+    if not isinstance(memory_cfg, AchMemoryMemory):
         return [], ""
+
+    mem_available, memory_prompt = await prepare_ach_memory(memory_cfg, memory_project)
 
     mcp_servers = [facade_url] if (mem_available and facade_url) else []
     return mcp_servers, memory_prompt
@@ -176,7 +172,7 @@ def make_engine_runner(
         if a2a_facade_url:
             mcp_servers = [*mcp_servers, a2a_facade_url]
 
-        # Build per-invocation engine config with the (dynamic) hindsight MCP server iff
+        # Build per-invocation engine config with the (dynamic) memory MCP server iff
         # reachable (D-02). codemem fields are static per-agent and already on engine_cfg from
         # boot — dataclasses.replace preserves them. Original engine_cfg is not mutated.
         import dataclasses

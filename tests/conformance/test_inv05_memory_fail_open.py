@@ -11,32 +11,29 @@ from unittest.mock import AsyncMock, patch
 async def test_inv05_memory_fail_open() -> None:
     """§6.5: memory fail-open — backend down never fails the invocation — authoritative conformance.
 
-    CONTRACT perspective: when the memory backend is unreachable,
-    prepare_memory returns (False, <unavailable section>) and does NOT raise
-    an exception. The invocation must continue (fail-open semantics per §31).
+    CONTRACT perspective: when the memory backend is unreachable, the backend's prepare
+    returns (False, <unavailable section>) and does NOT raise. The invocation continues
+    (fail-open semantics per §31). The invariant is backend-independent: it was first proved
+    against Hindsight and now holds for ach-memory unchanged.
     """
-    from ach_agent.config.schema import HindsightMemory, HindsightParams
-    from ach_agent.memory.hindsight import prepare_memory
+    from ach_agent.config.schema import AchMemoryMemory
+    from ach_agent.memory.ach_memory import prepare_ach_memory
 
-    cfg = HindsightMemory(
-        type="hindsight",
-        hindsight=HindsightParams(
-            endpoint="http://hindsight.svc:8080",
-            bank="test-scope",
-        ),
+    cfg = AchMemoryMemory.model_validate(
+        {"type": "ach-memory", "achMemory": {"endpoint": "http://ach-memory.svc:8000"}}
     )
 
     # Simulate backend unreachable: probe returns False.
     with patch(
-        "ach_agent.memory.hindsight.probe_memory_endpoint",
+        "ach_agent.memory.ach_memory.probe_memory_endpoint",
         new=AsyncMock(return_value=False),
     ):
         # Must not raise — fail-open invariant (§6.5 / §31)
         try:
-            available, section = await prepare_memory(cfg)
+            available, section = await prepare_ach_memory(cfg, "test-project")
         except Exception as exc:  # noqa: BLE001
             raise AssertionError(
-                f"§6.5: prepare_memory must not raise when backend is down, "
+                f"§6.5: prepare must not raise when backend is down, "
                 f"got {type(exc).__name__}: {exc}"
             ) from exc
 

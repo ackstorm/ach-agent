@@ -44,8 +44,8 @@ labeling.
 | `model` | ✓ | `name` (ACH-served model id, verbatim), `type` (`openai`\|`gemini`\|`anthropic` — picks the compat wire), `params` (open dict, splatted to the client). |
 | `capability` | ✓ | `type: ach`; `ach.baseUrl` / `ach.environment`; `filter.exclude` withholds `tools` / `mcpServers` / `skills` **before** the model sees them. |
 | `prompt` | | `system` is a typed source: `{type: text, text: "…"}` inline; `{type: ach, ach: "<prompt-name>"}` for a hydrated prompt addressed by name (harness resolves its sole file, or a given `file:` subpath) — the preferred form; or `{type: file, file: "prompts/<name>/<file>.md"}` addressed by path. `file`/`ach` resolve under `<home>/.ach-state` (absolute or `..` rejected; missing = hard boot failure). The bare-string form is rejected. `compose` is contract-reserved (accepted; prompt-layering not yet executed by the harness). |
-| `memory` | | Fail-open — backend down → run without it. Discriminated on `type`. `hindsight`: `endpoint`, `bank` (static memory bank_id), `mentalModels`; `mission` is contract-reserved (accepted; not yet consumed). `codemem`: local stdio MCP, `dbPath` / `project` both derived by default. `ach-memory`: `endpoint`, `auth` (a **user** key, not a bank-wide admin secret), optional `project`. Standing context is assembled and budgeted server-side; the harness injects scope and project below the agent, so neither is configurable and neither appears on any exposed tool. |
-| ↳ `memory.achMemory.project` | | **One bank per agent.** Empty (the norm) → derived at boot as `{POD_NAMESPACE}-{agent.name}`. Static, like `hindsight.bank`: the slug selects a bank, so templating it is rejected. An agent spanning several repositories separates them with **tags inside its one bank**, never by switching banks. Not the pod name — that changes on every restart and would silently hand the agent an empty bank after each rollout. |
+| `memory` | | Fail-open — backend down → run without it. Discriminated on `type`. `codemem`: local stdio MCP, `dbPath` / `project` both derived by default. `ach-memory`: `endpoint`, `auth` (a **user** key, not a bank-wide admin secret), optional `project`. Standing context is assembled and budgeted server-side; the harness injects scope and project below the agent, so neither is configurable and neither appears on any exposed tool. |
+| ↳ `memory.achMemory.project` | | **One bank per agent.** Empty (the norm) → derived at boot as `{POD_NAMESPACE}-{agent.name}`. Static: the slug selects a bank, so templating it is rejected. An agent spanning several repositories separates them with **tags inside its one bank**, never by switching banks. Not the pod name — that changes on every restart and would silently hand the agent an empty bank after each rollout. |
 | `limits` | | `maxConcurrentInvocations`, `maxInvocationSeconds`, `maxQueuedTotal`, `idempotencyWindowSeconds`, `maxSteps`, `terminalOutputRetries`. |
 | `engine` | | Harness-local. `home`, `workDir`, `startupTimeoutSeconds`, `forwardEnv` (default-deny env allowlist — see below). |
 | `cost` | | `source`: `engine` (default), `litellm_usage`, `litellm_headers`, or `none`. Controls the source of the per-invocation cost figure. |
@@ -234,10 +234,11 @@ prompt:
   compose: append
 
 memory:
-  endpoint: http://hindsight.engineering.svc:8080
-  mission: "AI code reviewer for the platform team"
-  bank: gitlab-pr-review
-  mentalModels: [architecture, conventions, recurring-issues]
+  type: ach-memory
+  achMemory:
+    endpoint: http://ach-memory.ach.svc:8000
+    auth:
+      env: ACH_SECRET_MEMORY_ACH_MEMORY
 
 limits:
   maxConcurrentInvocations: 2

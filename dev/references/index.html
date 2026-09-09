@@ -403,6 +403,12 @@ decision, prefixed <code>YYYY-MM-DD-</code> so <code>ls</code> sorts chronologic
 <td>Shipped (v0.13.4)</td>
 <td><code>webhook-script</code>: authenticated GitLab ingress that runs a static <code>/bin/sh</code> handler on a project-scoped lane and never starts an engine. Requires <code>source: gitlab</code> + explicit <code>gitlabEvents</code>; project/system kinds are exclusive to it.</td>
 </tr>
+<tr>
+<td>2026-09-09</td>
+<td><a href="2026-09-09-ach-memory-backend/">ach-memory-backend</a></td>
+<td>Spec (settled)</td>
+<td><code>ach-memory</code> replaces direct-Hindsight as the memory backend: per-repo scope resolved server-side through authz instead of a tag convention, budgeted <code>load_context</code> instead of four unbounded mental-model injections, <code>POST /v1/bootstrap</code> for provisioning. <strong>Supersedes <a href="2026-07-05-hindsight-memory-facade/">hindsight-memory-facade</a> for new agents.</strong></td>
+</tr>
 </tbody>
 </table>
 

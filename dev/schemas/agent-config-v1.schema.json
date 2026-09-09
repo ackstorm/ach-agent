@@ -41,6 +41,109 @@
       "title": "A2ABlock",
       "type": "object"
     },
+    "AchMemoryAuthAch": {
+      "additionalProperties": false,
+      "description": "Reach ach-memory THROUGH ACH: the harness's own ek_, sent as ACH's ``x-ach-key``.\n\nCarries no ``env`` on purpose — there is no second credential to configure. ACH forwards\nto LiteLLM, which resolves the principal from the key, so the memory identity is the\nagent's ACH identity. ``Authorization: Bearer`` is NOT interchangeable here: ACH's auth\nscheme is the header, and a Bearer 401s (engine/context.py).",
+      "properties": {
+        "type": {
+          "const": "ach",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "AchMemoryAuthAch",
+      "type": "object"
+    },
+    "AchMemoryAuthBearer": {
+      "additionalProperties": false,
+      "description": "Reach ach-memory DIRECTLY: an ach-memory user key, sent as ``Authorization: Bearer``.\n\nScoped to one ach-memory user and the projects that user owns — NOT the ek_, and not a\nbank-wide admin secret. env-only, resolved at use time, never logged, never forwarded to\nopencode. Note the key that first bootstraps a project OWNS it: rotating this to a\ndifferent user orphans the bank.",
+      "properties": {
+        "env": {
+          "default": "",
+          "title": "Env",
+          "type": "string"
+        },
+        "type": {
+          "const": "bearer",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "AchMemoryAuthBearer",
+      "type": "object"
+    },
+    "AchMemoryMemory": {
+      "additionalProperties": false,
+      "description": "CONTRACT §2 memory block — ach-memory backend (fail-open §31).\n\nStrict nested form: ``{type: ach-memory, achMemory: {endpoint: ...}}``. Scope is not\nconfigurable (the harness pins ``project``) and the exposed tool set is fixed in code —\na memory tool the operator did not ask for is a tool nobody reviewed.",
+      "properties": {
+        "achMemory": {
+          "$ref": "#/$defs/AchMemoryParams"
+        },
+        "type": {
+          "const": "ach-memory",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "achMemory"
+      ],
+      "title": "AchMemoryMemory",
+      "type": "object"
+    },
+    "AchMemoryParams": {
+      "additionalProperties": false,
+      "description": "ach-memory backend params — the ``memory.achMemory`` sub-block (CONTRACT §2).",
+      "properties": {
+        "auth": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "ach": "#/$defs/AchMemoryAuthAch",
+                  "bearer": "#/$defs/AchMemoryAuthBearer"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/AchMemoryAuthAch"
+                },
+                {
+                  "$ref": "#/$defs/AchMemoryAuthBearer"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Auth"
+        },
+        "endpoint": {
+          "title": "Endpoint",
+          "type": "string"
+        },
+        "project": {
+          "default": "",
+          "title": "Project",
+          "type": "string"
+        }
+      },
+      "required": [
+        "endpoint"
+      ],
+      "title": "AchMemoryParams",
+      "type": "object"
+    },
     "AgentBlock": {
       "additionalProperties": false,
       "description": "CONTRACT §2 agent block.",
@@ -521,69 +624,6 @@
       "title": "HealthBlock",
       "type": "object"
     },
-    "HindsightMemory": {
-      "additionalProperties": false,
-      "description": "CONTRACT §2 memory block — Hindsight backend (fail-open §31).\n\nStrict nested form: ``{type: hindsight, hindsight: {...}}``. There is NO backward-compat\nfor a flat block or a missing ``type`` — the schema hard-fails (extra='forbid').",
-      "properties": {
-        "hindsight": {
-          "$ref": "#/$defs/HindsightParams"
-        },
-        "type": {
-          "const": "hindsight",
-          "title": "Type",
-          "type": "string"
-        }
-      },
-      "required": [
-        "type",
-        "hindsight"
-      ],
-      "title": "HindsightMemory",
-      "type": "object"
-    },
-    "HindsightParams": {
-      "additionalProperties": false,
-      "description": "Hindsight backend params — the ``memory.hindsight`` sub-block (CONTRACT §2).",
-      "properties": {
-        "auth": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SecretSource"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "bank": {
-          "default": "",
-          "title": "Bank",
-          "type": "string"
-        },
-        "endpoint": {
-          "title": "Endpoint",
-          "type": "string"
-        },
-        "mentalModels": {
-          "items": {
-            "$ref": "#/$defs/MentalModelSpec"
-          },
-          "title": "Mentalmodels",
-          "type": "array"
-        },
-        "mission": {
-          "default": "",
-          "title": "Mission",
-          "type": "string"
-        }
-      },
-      "required": [
-        "endpoint"
-      ],
-      "title": "HindsightParams",
-      "type": "object"
-    },
     "LimitsBlock": {
       "additionalProperties": false,
       "description": "CONTRACT §2 limits block (§18.6 — all finite, always enforced).",
@@ -668,41 +708,6 @@
         "command"
       ],
       "title": "LocalMcpServer",
-      "type": "object"
-    },
-    "MentalModelSpec": {
-      "additionalProperties": false,
-      "description": "A pinned reflection the harness provisions into Hindsight at boot (CONTRACT §2).",
-      "properties": {
-        "autoRefresh": {
-          "default": false,
-          "title": "Autorefresh",
-          "type": "boolean"
-        },
-        "id": {
-          "title": "Id",
-          "type": "string"
-        },
-        "maxTokens": {
-          "default": 2048,
-          "title": "Maxtokens",
-          "type": "integer"
-        },
-        "name": {
-          "title": "Name",
-          "type": "string"
-        },
-        "sourceQuery": {
-          "title": "Sourcequery",
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "name",
-        "sourceQuery"
-      ],
-      "title": "MentalModelSpec",
       "type": "object"
     },
     "ModelBlock": {
@@ -1283,17 +1288,17 @@
         {
           "discriminator": {
             "mapping": {
-              "codemem": "#/$defs/CodememMemory",
-              "hindsight": "#/$defs/HindsightMemory"
+              "ach-memory": "#/$defs/AchMemoryMemory",
+              "codemem": "#/$defs/CodememMemory"
             },
             "propertyName": "type"
           },
           "oneOf": [
             {
-              "$ref": "#/$defs/HindsightMemory"
+              "$ref": "#/$defs/CodememMemory"
             },
             {
-              "$ref": "#/$defs/CodememMemory"
+              "$ref": "#/$defs/AchMemoryMemory"
             }
           ]
         },

@@ -683,7 +683,12 @@ labeling.</p>
 <tr>
 <td><code>memory</code></td>
 <td></td>
-<td>Fail-open. <code>endpoint</code>, <code>bank</code> (static memory bank_id), <code>mentalModels</code>. <code>mission</code> is contract-reserved (accepted; not yet consumed). Backend down → run without it.</td>
+<td>Fail-open — backend down → run without it. Discriminated on <code>type</code>. <code>codemem</code>: local stdio MCP, <code>dbPath</code> / <code>project</code> both derived by default. <code>ach-memory</code>: <code>endpoint</code> (the <strong>complete</strong> MCP endpoint, used verbatim — the harness appends nothing), <code>auth</code> (<code>{type: ach}</code> → the harness's own ek_ as <code>x-ach-key</code>, for reaching ach-memory through ACH's gateway; <code>{type: bearer, env: …}</code> → an ach-memory <strong>user</strong> key direct, not a bank-wide admin secret; omit for a no-auth internal URL), optional <code>project</code>. Standing context is assembled and budgeted server-side; the harness injects scope and project below the agent, so neither is configurable and neither appears on any exposed tool.</td>
+</tr>
+<tr>
+<td>↳ <code>memory.achMemory.project</code></td>
+<td></td>
+<td><strong>One bank per agent.</strong> Empty (the norm) → derived at boot as <code>{POD_NAMESPACE}-{agent.name}</code>. Static: the slug selects a bank, so templating it is rejected. An agent spanning several repositories separates them with <strong>tags inside its one bank</strong>, never by switching banks. Not the pod name — that changes on every restart and would silently hand the agent an empty bank after each rollout.</td>
 </tr>
 <tr>
 <td><code>limits</code></td>
@@ -957,10 +962,15 @@ preventing concurrent reconciliation of the same project.</p>
 <span class="w">  </span><span class="nt">compose</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">append</span>
 
 <span class="nt">memory</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">endpoint</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://hindsight.engineering.svc:8080</span>
-<span class="w">  </span><span class="nt">mission</span><span class="p">:</span><span class="w"> </span><span class="s">"AI</span><span class="nv"> </span><span class="s">code</span><span class="nv"> </span><span class="s">reviewer</span><span class="nv"> </span><span class="s">for</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">platform</span><span class="nv"> </span><span class="s">team"</span>
-<span class="w">  </span><span class="nt">bank</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gitlab-pr-review</span>
-<span class="w">  </span><span class="nt">mentalModels</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">architecture</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">conventions</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">recurring-issues</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ach-memory</span>
+<span class="w">  </span><span class="nt">achMemory</span><span class="p">:</span>
+<span class="w">    </span><span class="c1"># Through ACH's MCP gateway — the credential is the harness ek_, no second secret:</span>
+<span class="w">    </span><span class="c1">#   endpoint: https://api.ackstorm.ai/mcp/ach-memory</span>
+<span class="w">    </span><span class="c1">#   auth: {type: ach}</span>
+<span class="w">    </span><span class="nt">endpoint</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://ach-memory.ach.svc:8000/mcp/</span>
+<span class="w">    </span><span class="nt">auth</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bearer</span>
+<span class="w">      </span><span class="nt">env</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ACH_SECRET_MEMORY_ACH_MEMORY</span>
 
 <span class="nt">limits</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">maxConcurrentInvocations</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>

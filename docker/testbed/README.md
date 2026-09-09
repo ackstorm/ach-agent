@@ -50,6 +50,19 @@ by the memory service itself. The *agent* still needs a real `ACH_TOKEN`.
    the event completes with `"## Memory\n\nUnavailable…"` and `MEMORY_DEGRADED` increments —
    it does not abort.
 
+## The three real endpoints (measured 2026-09-09 against pro-ack-ai-platform)
+
+`api.ackstorm.ai` and `ach.ackstorm.ai` are different gateways, and only one of them is ACH.
+
+| URL | Routes to | Credential | Status |
+|---|---|---|---|
+| `https://ach.ackstorm.ai/mcp/<server-id>` | ACH's MCP gateway | `x-ach-key: <ek_>` → `auth: {type: ach}` | **works** — proved with `mcp-slack` (200). `ach-memory` is 403 `unauthorized_resource`: not registered for the bound environment yet |
+| `https://api.ackstorm.ai/memory/mcp/` | ach-memory direct (HTTPRoute `ach-memory`, PathPrefix `/memory`, stripped) | `Authorization: Bearer <mem_ key>` → `auth: {type: bearer}` | **works** — this is the route in production use |
+| `https://api.ackstorm.ai/mcp/<anything>` | **LiteLLM**, via `api.ackstorm.ai`'s catch-all `/` route — never touches ACH | a LiteLLM virtual key (`sk-…`) | rejects an ek_: *"LiteLLM Virtual Key expected. Received=ek-…, expected to start with 'sk-'"* |
+
+The middle row is why `endpoint` is taken verbatim: `/memory/mcp/` is exactly the shape that
+breaks a client which appends its own `/mcp`.
+
 ## Gotchas — all four of these were found by running this, not by reading code
 
 **The project must be bootstrapped, and nothing in the harness does it.** `retain` and

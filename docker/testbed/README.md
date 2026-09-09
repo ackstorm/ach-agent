@@ -56,12 +56,25 @@ by the memory service itself. The *agent* still needs a real `ACH_TOKEN`.
 
 | URL | Routes to | Credential | Status |
 |---|---|---|---|
-| `https://ach.ackstorm.ai/mcp/<server-id>` | ACH's MCP gateway | `x-ach-key: <ek_>` → `auth: {type: ach}` | **works** — proved with `mcp-slack` (200). `ach-memory` is 403 `unauthorized_resource`: not registered for the bound environment yet |
+| `https://ach.ackstorm.ai/mcp/<server-id>` | ACH's MCP gateway → LiteLLM → the server | `x-ach-key: <ek_>` → `auth: {type: ach}` | **works end to end** — validated against production with `ach-memory`: tools execute, `load_context` returns a real payload. Requires the ACH environment's access group (`ach-env-<name>`) to be listed on the LiteLLM MCP server, else every tool returns `"User not allowed to call this tool"` while `initialize` still answers 200 |
 | `https://api.ackstorm.ai/memory/mcp/` | ach-memory direct (HTTPRoute `ach-memory`, PathPrefix `/memory`, stripped) | `Authorization: Bearer <mem_ key>` → `auth: {type: bearer}` | **works** — this is the route in production use |
 | `https://api.ackstorm.ai/mcp/<anything>` | **LiteLLM**, via `api.ackstorm.ai`'s catch-all `/` route — never touches ACH | a LiteLLM virtual key (`sk-…`) | rejects an ek_: *"LiteLLM Virtual Key expected. Received=ek-…, expected to start with 'sk-'"* |
 
 The middle row is why `endpoint` is taken verbatim: `/memory/mcp/` is exactly the shape that
 breaks a client which appends its own `/mcp`.
+
+**Identity differs by route, and that is the point.** Through ACH the principal comes from
+LiteLLM's `/v2/user/info` (`MEMORY_AUTH_PLATFORM_USER_FIELD=user_id`) — an ACH service
+account, so every agent under it shares one memory *user*. One bank per agent still holds,
+but it holds because the facade pins `scope="project"` and injects `{namespace}-{agent.name}`
+on every call: the agent cannot name another slug, and never reads or writes the shared user
+bank. There is no service-side boundary between agents in one ACH account — the harness is
+the boundary.
+
+**Nothing provisions the project on this route.** `retain`/`load_context` resolve with
+`create=False`, and `POST /v1/bootstrap` is REST, unreachable through the MCP gateway. Until
+ach-memory provisions on first use, an agent reaching memory through ACH gets
+`PROJECT_NOT_FOUND` forever — and fail-open turns that into memory silently never working.
 
 ## Gotchas — all four of these were found by running this, not by reading code
 

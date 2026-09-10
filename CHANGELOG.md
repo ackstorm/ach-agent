@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.16.0] - 2026-09-10
+
+### Added
+
+- `memory.achMemory.mcpServerId`: name the hydrated `runtime.mcpServers[].id` that serves
+  ach-memory instead of writing its URL. Exactly one of `endpoint` or `mcpServerId`. The
+  address is read from the manifest that granted the server, and — the point of the field —
+  that server is **excluded from the MCP proxy**. Without it an environment granting
+  `ach-memory` handed the agent one service by two paths: the facade, which pins `scope` and
+  injects `project_slug` beneath it, and the proxied copy, where `project_slug` is an
+  ordinary argument and the ek_ is attached. The exclusion derives from config alone and is
+  applied before auth or the endpoint resolve, so a degraded memory leaves nothing reachable
+  rather than the raw unscoped surface. With no `memory` block, a hydrated ach-memory is
+  proxied like any other granted server: exclude it iff the harness fronts it.
+
+### Fixed
+
+- Name the harness MCP facades (`memory`, `repo`, `a2a`) instead of enumerating them
+  (`memory-0`/`memory-1`, `facade-0`/`facade-1`). The ids reach the model, and a positional
+  name is a claim about the server behind it — the a2a facade in slot 1 read as a second
+  memory server. Harness facades are now written last and win any id collision with a
+  proxied ACH server, with a WARN either way: losing a third-party server to a clash is
+  recoverable and visible; serving an unpinned server under the facade's name is neither.
+- Give the invocation path the resolved ach-memory endpoint. `prepare_ach_memory` still read
+  `memory_cfg.ach_memory.endpoint`, which is empty by construction under `mcpServerId`, so
+  every invocation loaded standing context from `""` and degraded — memory dead on the
+  recommended configuration while boot logged a healthy facade. The endpoint now travels like
+  `memory_project` and `memory_auth_headers`: resolved once in `main()`, passed down.
+- Unwrap `ExceptionGroup`s in the memory warnings. An MCP call runs inside a TaskGroup whose
+  `str()` is "unhandled errors in a TaskGroup (1 sub-exception)" — the count of hidden
+  failures and not one of them, which is why the above read as an outage across two runs.
+
 ## [0.15.0] - 2026-09-10
 
 ### Added

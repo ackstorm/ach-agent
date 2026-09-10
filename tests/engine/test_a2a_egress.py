@@ -289,3 +289,39 @@ async def test_real_a2a_client_receives_process_identity_headers(
     assert captured["streaming"] is False
     assert captured["closed"] is True
     identity.reset_for_testing()
+
+
+# ---------------------------------------------------------------------------
+# send_task_async — immediate-return request flag (finding 10)
+# ---------------------------------------------------------------------------
+
+
+async def test_send_task_async_requests_immediate_return(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """finding 10: send_task_async must ask the peer to return_immediately, so a
+    blocking-by-default peer hands back the task_id right away instead of
+    holding the connection open until the peer's own turn completes. Exercises
+    the real A2AAgentClient.send_task_async against a capturing fake SDK client
+    (only create_client is replaced — the harness client is untouched)."""
+    from a2a.types.a2a_pb2 import StreamResponse
+
+    captured: dict[str, object] = {}
+
+    class FakeSdkClient:
+        async def send_message(self, request: object) -> Any:
+            captured["return_immediately"] = request.configuration.return_immediately  # type: ignore[attr-defined]
+            response = StreamResponse()
+            response.task.id = "peer-task-1"
+            yield response
+
+    async def fake_create_client(*, agent: str, client_config: object) -> object:
+        return FakeSdkClient()
+
+    monkeypatch.setattr(a2a.client, "create_client", fake_create_client)
+
+    client = A2AAgentClient("https://peer.example/a2a")
+    task_id = await client.send_task_async("go")
+
+    assert task_id == "peer-task-1"
+    assert captured["return_immediately"] is True

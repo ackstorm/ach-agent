@@ -160,6 +160,10 @@ class A2AAgentClient:
 
         client = await self._ensure_client()
         request = SendMessageRequest(message=self._build_message(prompt, context_id))
+        # finding 10: without this, a peer that defaults to blocking holds the
+        # request open until ITS turn completes — this method is meant to fire
+        # and hand back the task_id right away (status/result come via polling).
+        request.configuration.return_immediately = True
         async for response in client.send_message(request):
             if response.HasField("task") and response.task.id:
                 return cast(str, response.task.id)

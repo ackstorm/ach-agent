@@ -27,6 +27,7 @@ from ach_agent.memory.ach_memory import (
     ACH_MEMORY_REFLECT,
     ACH_MEMORY_RETAIN,
     Headers,
+    _describe,
     call_ach_memory,
 )
 
@@ -88,7 +89,7 @@ class AchMemoryFacade:
         try:
             return await call_ach_memory(self._endpoint, self._headers, tool, payload)
         except Exception as exc:
-            log.warning("ach-memory facade: call failed", tool=tool, error=str(exc))
+            log.warning("ach-memory facade: call failed", tool=tool, error=_describe(exc))
             return "Memory temporarily unavailable."
 
     def _register_tools(self) -> None:

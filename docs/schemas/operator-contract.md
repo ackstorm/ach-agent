@@ -194,15 +194,30 @@ mismatch.
                                             //     the harness sends its own ek_ as `x-ach-key`
                                             //     and ACH/LiteLLM resolves the principal. No env
                                             //     name — there is no second secret to configure.
-                                            //   {"type":"bearer","env":NAME} → talk to ach-memory
-                                            //     DIRECTLY with a USER key. NOT a bank-wide admin
+                                            //   {"type":"bearer","env":NAME,"header":NAME} → talk
+                                            //     to ach-memory DIRECTLY. NOT a bank-wide admin
                                             //     secret and NOT the ek_. env-only. The OPERATOR
                                             //     generates the ACH_SECRET_* name (like
                                             //     ACH_SECRET_GITLAB_WEBHOOK); the author picks the
                                             //     Secret + key. Unset-at-runtime → degrade.
-                                            //     The key that first bootstraps a project OWNS it:
-                                            //     rotating to a different ach-memory user orphans
-                                            //     the bank.
+                                            //     ach-memory MINTS NO CREDENTIALS, and resolves a
+                                            //     caller through TWO providers reading DIFFERENT
+                                            //     headers — so `header` picks which one you are
+                                            //     talking to, and therefore what the token must BE:
+                                            //       "Authorization" (default) → the JWT provider;
+                                            //         the token must be a JWT its issuer signed.
+                                            //         Sent as `Bearer <token>`.
+                                            //       anything else, e.g. "x-litellm-api-key" → the
+                                            //         platform provider, whose header name that
+                                            //         deployment sets; the token is whatever its
+                                            //         resolver can name. Sent RAW — the `Bearer`
+                                            //         scheme word belongs to `Authorization`, and a
+                                            //         resolver forwarding the value verbatim would
+                                            //         otherwise be handed it as part of the key.
+                                            //     Constrained to an RFC 9110 field-name token, so a
+                                            //     CRLF injection is refused at boot.
+                                            //     Whoever first WRITES to a project owns it:
+                                            //     rotating to a different identity orphans the bank.
       "project": ""                         // OPTIONAL override. Empty (the norm) → the harness
                                             //   derives {POD_NAMESPACE}-{agent.name} at boot:
                                             //   ONE BANK PER AGENT. STATIC — templating ({{ }})

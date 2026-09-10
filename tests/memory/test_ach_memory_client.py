@@ -162,6 +162,27 @@ def test_auth_bearer_with_an_unset_env_degrades(monkeypatch) -> None:
     assert am.resolve_ach_memory_auth(auth, "ek_x") == (False, {})
 
 
+def test_auth_bearer_on_a_named_header_sends_the_raw_secret(monkeypatch) -> None:
+    """ach-memory's platform provider reads whatever MEMORY_AUTH_PLATFORM_INCOMING_HEADER
+    names, and forwards that value to its resolver. `Bearer ` belongs to `Authorization`
+    alone — prepending it here would hand LiteLLM `Bearer sk-…` as if it were the key."""
+    from ach_agent.config.schema import AchMemoryAuthBearer
+
+    monkeypatch.setenv("MEM_TOK", "sk-abc")
+    auth = AchMemoryAuthBearer(type="bearer", env="MEM_TOK", header="x-litellm-api-key")
+    assert am.resolve_ach_memory_auth(auth, "ek_x") == (True, {"x-litellm-api-key": "sk-abc"})
+
+
+def test_auth_bearer_header_rejects_header_injection() -> None:
+    """Boot is the place to refuse CRLF in a header name, not the HTTP client."""
+    import pydantic
+
+    from ach_agent.config.schema import AchMemoryAuthBearer
+
+    with pytest.raises(pydantic.ValidationError):
+        AchMemoryAuthBearer(type="bearer", env="MEM_TOK", header="X-Bad\r\nInjected: 1")
+
+
 # ---------------------------------------------------------------------------
 # TOOLS_SPEC — the typed-retain contract
 # ---------------------------------------------------------------------------

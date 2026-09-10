@@ -59,11 +59,17 @@
     },
     "AchMemoryAuthBearer": {
       "additionalProperties": false,
-      "description": "Reach ach-memory DIRECTLY: an ach-memory user key, sent as ``Authorization: Bearer``.\n\nScoped to one ach-memory user and the projects that user owns — NOT the ek_, and not a\nbank-wide admin secret. env-only, resolved at use time, never logged, never forwarded to\nopencode. Note the key that first bootstraps a project OWNS it: rotating this to a\ndifferent user orphans the bank.",
+      "description": "Reach ach-memory DIRECTLY, with a token on a header the operator names.\n\nScoped to one ach-memory identity and the projects it owns — NOT the ek_, and not a\nbank-wide admin secret. env-only, resolved at use time, never logged, never forwarded to\nopencode. Note that whoever first WRITES to a project owns it: rotating this to a\ndifferent identity orphans the bank.\n\n``header`` exists because ach-memory mints no credentials and resolves a caller through\ntwo providers that read DIFFERENT inputs: its JWT provider reads ``Authorization``, while\nits platform provider reads whatever ``MEMORY_AUTH_PLATFORM_INCOMING_HEADER`` names —\n``x-litellm-api-key`` in a deployment behind LiteLLM. A client that can only write\n``Authorization`` cannot reach that second one at all, and the refusal arrives as a flat\n401 that fail-open turns into memory silently never working.",
       "properties": {
         "env": {
           "default": "",
           "title": "Env",
+          "type": "string"
+        },
+        "header": {
+          "default": "Authorization",
+          "pattern": "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$",
+          "title": "Header",
           "type": "string"
         },
         "type": {

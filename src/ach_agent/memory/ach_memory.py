@@ -99,9 +99,14 @@ def resolve_ach_memory_auth(auth: AchMemoryAuth | None, ek: str | None) -> tuple
     type=ach  → (True, {"x-ach-key": ek}) — reach ach-memory through ACH's MCP gateway, which
                 forwards to LiteLLM; the principal is resolved from the ek_. No ek_ in the
                 process is a misconfiguration, not "run anonymously" → (False, {}).
-    type=bearer → (True, {"Authorization": "Bearer …"}) — talk to ach-memory directly with its
-                own user key. Env var configured but unset → (False, {}), the caller DEGRADES
-                rather than calling a real backend anonymously.
+    type=bearer → (True, {auth.header: …}) — talk to ach-memory directly. The header defaults
+                to `Authorization`, which is where ach-memory's JWT provider looks; a
+                deployment behind LiteLLM resolves identity from `x-litellm-api-key` instead
+                and is named explicitly. `Bearer ` is prepended ONLY on `Authorization`: the
+                scheme word belongs to that header, and a platform resolver that forwards the
+                value verbatim would otherwise receive it as part of the key. Env var
+                configured but unset → (False, {}), the caller DEGRADES rather than calling a
+                real backend anonymously.
 
     Never logs the credential. The returned dict lives in a closure (facade) or a boot-local
     (prepare), never in config the agent can read — CLAUDE.md, THE INVARIANT.
@@ -114,7 +119,10 @@ def resolve_ach_memory_auth(auth: AchMemoryAuth | None, ek: str | None) -> tuple
             return False, {}
         return True, {"x-ach-key": ek}
     ok, secret = resolve_memory_secret(SecretSource(env=auth.env))
-    return (True, {"Authorization": f"Bearer {secret}"}) if ok and secret else (ok, {})
+    if not (ok and secret):
+        return ok, {}
+    value = f"Bearer {secret}" if auth.header.lower() == "authorization" else secret
+    return True, {auth.header: value}
 
 
 async def call_ach_memory(

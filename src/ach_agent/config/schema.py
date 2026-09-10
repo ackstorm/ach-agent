@@ -304,18 +304,33 @@ class AchMemoryAuthAch(BaseModel):
 
 
 class AchMemoryAuthBearer(BaseModel):
-    """Reach ach-memory DIRECTLY: an ach-memory user key, sent as ``Authorization: Bearer``.
+    """Reach ach-memory DIRECTLY, with a token on a header the operator names.
 
-    Scoped to one ach-memory user and the projects that user owns — NOT the ek_, and not a
+    Scoped to one ach-memory identity and the projects it owns — NOT the ek_, and not a
     bank-wide admin secret. env-only, resolved at use time, never logged, never forwarded to
-    opencode. Note the key that first bootstraps a project OWNS it: rotating this to a
-    different user orphans the bank.
+    opencode. Note that whoever first WRITES to a project owns it: rotating this to a
+    different identity orphans the bank.
+
+    ``header`` exists because ach-memory mints no credentials and resolves a caller through
+    two providers that read DIFFERENT inputs: its JWT provider reads ``Authorization``, while
+    its platform provider reads whatever ``MEMORY_AUTH_PLATFORM_INCOMING_HEADER`` names —
+    ``x-litellm-api-key`` in a deployment behind LiteLLM. A client that can only write
+    ``Authorization`` cannot reach that second one at all, and the refusal arrives as a flat
+    401 that fail-open turns into memory silently never working.
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     type: Literal["bearer"]
     env: str = Field(default="")
+    # The header the token rides. Default `Authorization`, which is the ONLY header that
+    # carries the `Bearer ` scheme — on any other name the raw secret is sent, because the
+    # scheme word belongs to `Authorization` and a resolver that forwards the value verbatim
+    # would otherwise be handed `Bearer sk-…` as if it were the key.
+    #
+    # Constrained to an RFC 9110 field-name token: a value with CR/LF in it is header
+    # injection, and boot is the right place to refuse it rather than the HTTP client.
+    header: str = Field(default="Authorization", pattern=r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
 
 
 # Two ways in, and they are not the same credential — hence a discriminated union rather

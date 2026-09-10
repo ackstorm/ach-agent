@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.15.0] - 2026-09-10
+
+### Added
+
+- `memory.achMemory.auth.header` on the `bearer` arm: the header the token rides, default
+  `Authorization`. ach-memory mints no credentials and resolves a caller through two
+  providers reading different headers — its JWT provider on `Authorization`, its platform
+  provider on whatever `MEMORY_AUTH_PLATFORM_INCOMING_HEADER` names — so a client that can
+  only write `Authorization` cannot reach a deployment behind LiteLLM at all. `Bearer ` is
+  prepended only on `Authorization`; every other header carries the raw secret, because the
+  platform provider forwards its header's value to the resolver verbatim. Additive with a
+  default, so existing configs are unchanged.
+
+### Fixed
+
+- Send recall's tag filter as `tags_filter`, the name ach-memory renamed it to. The facade
+  still sent `tags`, which is dropped rather than rejected — a tag-narrowed recall silently
+  became an unfiltered one. The agent-facing parameter stays `tags` on both recall and
+  retain.
+
 ## [0.14.0] - 2026-09-08
 
 ### Fixed

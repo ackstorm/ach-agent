@@ -29,11 +29,12 @@ class _FakeRouter:
 
 
 def _make_lane(engine_runner, max_invocation_seconds: float, router: _FakeRouter) -> Lane:
+    pool_sem = asyncio.Semaphore(4)
+    channel_sem = asyncio.Semaphore(4)
     return Lane(
         session_key="k",
         router_ref=weakref.ref(router),
-        global_sem=asyncio.Semaphore(4),
-        channel_sem=asyncio.Semaphore(4),
+        invocation_semaphores=lambda _channel_name: (pool_sem, channel_sem),
         engine_runner=engine_runner,
         max_invocation_seconds=max_invocation_seconds,
     )

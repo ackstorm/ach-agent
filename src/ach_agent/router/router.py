@@ -10,6 +10,7 @@ Engine is injected as the `engine_runner` callable — no module-level import.
 
 from __future__ import annotations
 
+import asyncio
 import weakref
 from collections.abc import Callable
 from enum import Enum, auto
@@ -143,11 +144,28 @@ class Router:
         self._queued_total += 1
 
         # 4. LANE — enqueue into per-session FIFO
-        lane = self._get_or_create_lane(event.session_key, event.channel_name)
+        lane = self._get_or_create_lane(event.session_key)
         await lane.put(event)
         return RouterAdmitResult.ACCEPTED
 
-    def _get_or_create_lane(self, session_key: str, channel_name: str) -> Lane:
+    def invocation_semaphores(
+        self, channel_name: str
+    ) -> tuple[asyncio.Semaphore, asyncio.Semaphore]:
+        """Resolve the (engine-or-script pool, channel) semaphores for one channel_name.
+
+        finding 9: a lane is keyed by session_key, not channel_name, so it can
+        process events from more than one channel over its life — the lane calls
+        this PER DEQUEUED EVENT (its own channel_name), never once at creation,
+        so an event always acquires its own channel's permits rather than
+        whichever channel's happened to create the lane first.
+        """
+        in_script_pool = channel_name in self._script_channels
+        pool_sem = (
+            self._slot_manager.script_sem if in_script_pool else self._slot_manager.global_sem
+        )
+        return pool_sem, self._slot_manager.channel_sem(channel_name)
+
+    def _get_or_create_lane(self, session_key: str) -> Lane:
         """Get the existing lane for session_key or create a new one.
 
         Deferred import of Lane to avoid circular imports (lane.py imports
@@ -156,16 +174,10 @@ class Router:
         from ach_agent.router.lane import Lane
 
         if session_key not in self._lanes:
-            in_script_pool = channel_name in self._script_channels
             self._lanes[session_key] = Lane(
                 session_key=session_key,
                 router_ref=weakref.ref(self),
-                global_sem=(
-                    self._slot_manager.script_sem
-                    if in_script_pool
-                    else self._slot_manager.global_sem
-                ),
-                channel_sem=self._slot_manager.channel_sem(channel_name),
+                invocation_semaphores=self.invocation_semaphores,
                 engine_runner=self._engine_runner,
                 max_invocation_seconds=self._max_invocation_seconds,
             )

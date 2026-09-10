@@ -182,6 +182,106 @@ async def test_timeout_path_does_not_over_release() -> None:
 
 
 @pytest.mark.asyncio
+async def test_lane_applies_each_events_own_channel_permits() -> None:
+    """finding 9: a lane is keyed by session_key and can process events from more
+    than one channel over its life — the channel that happened to CREATE the
+    lane must not bind a LATER event's permits. Two session lanes are each
+    created by a channel-A event (cap=2), with a channel-B event (cap=1)
+    enqueued behind it in the same lane; channel B's own cap, not channel A's,
+    must limit B's peak concurrency."""
+    from ach_agent.router.dedup import InMemoryDedupStore
+    from ach_agent.router.router import Router, RouterAdmitResult
+
+    class _ChannelControlledEngine:
+        """Records per-channel in-flight/peak counts; hold/release per channel."""
+
+        def __init__(self) -> None:
+            self.in_flight = {"A": 0, "B": 0}
+            self.peak = {"A": 0, "B": 0}
+            self.completed: list[str] = []
+            self._gates = {"A": asyncio.Event(), "B": asyncio.Event()}
+
+        def hold(self, channel: str) -> None:
+            self._gates[channel].clear()
+
+        def release(self, channel: str) -> None:
+            self._gates[channel].set()
+
+        async def run(self, event, on_kill) -> None:  # noqa: ANN001
+            ch = event.channel_name
+            self.in_flight[ch] += 1
+            self.peak[ch] = max(self.peak[ch], self.in_flight[ch])
+            await self._gates[ch].wait()
+            self.in_flight[ch] -= 1
+            self.completed.append(f"{event.session_key}:{ch}")
+            on_kill()
+
+    engine = _ChannelControlledEngine()
+    engine.hold("A")
+    engine.hold("B")
+
+    router = Router(
+        max_concurrent_invocations=10,  # not the bottleneck under test
+        max_queued_total=10,
+        idempotency_window_seconds=60,
+        dedup_store=InMemoryDedupStore(),
+        engine_runner=engine.run,
+        max_invocation_seconds=600.0,
+        channel_concurrency={"A": 2, "B": 1},
+    )
+
+    for session_key in ("s1", "s2"):
+        r_a = await router.handle(
+            make_event(
+                idempotency_key=f"a-{session_key}", session_key=session_key, channel_name="A"
+            )
+        )
+        r_b = await router.handle(
+            make_event(
+                idempotency_key=f"b-{session_key}", session_key=session_key, channel_name="B"
+            )
+        )
+        assert r_a == RouterAdmitResult.ACCEPTED
+        assert r_b == RouterAdmitResult.ACCEPTED
+
+    deadline = asyncio.get_event_loop().time() + 2.0
+    while engine.in_flight["A"] < 2:
+        if asyncio.get_event_loop().time() > deadline:
+            pytest.fail(f"both channel-A events never started: {engine.in_flight}")
+        await asyncio.sleep(0.02)
+    assert engine.in_flight["A"] == 2, "channel A's own cap (2) allows both to run concurrently"
+
+    engine.release("A")
+
+    deadline = asyncio.get_event_loop().time() + 2.0
+    while engine.in_flight["B"] < 1:
+        if asyncio.get_event_loop().time() > deadline:
+            pytest.fail(f"no channel-B event ever started: {engine.in_flight}")
+        await asyncio.sleep(0.02)
+    # Give a wrongly-permitted second B a chance to start too before asserting the cap.
+    await asyncio.sleep(0.1)
+    assert engine.in_flight["B"] == 1, (
+        f"channel B's own cap (1) must bind, got {engine.in_flight['B']} in flight "
+        "(a lane using its creator channel's permits would let 2 through)"
+    )
+    assert engine.peak["B"] == 1
+
+    engine.release("B")
+
+    deadline = asyncio.get_event_loop().time() + 2.0
+    while len(engine.completed) < 4:
+        if asyncio.get_event_loop().time() > deadline:
+            pytest.fail(f"not all work completed: {engine.completed}")
+        await asyncio.sleep(0.02)
+
+    for session_key in ("s1", "s2"):
+        assert engine.completed.index(f"{session_key}:A") < engine.completed.index(
+            f"{session_key}:B"
+        ), "per-session FIFO order must be preserved"
+    assert router._queued_total == 0, "queued_total must return to zero"
+
+
+@pytest.mark.asyncio
 async def test_metrics_emitted(router) -> None:
     """OBS-02: DEDUP_DISCARDS, BACKPRESSURE_REJECTS, EXPIRE_DROPS counters emit.
 

@@ -133,5 +133,5 @@ async def test_empty_lane_is_evicted() -> None:
 async def test_lane_reports_emptiness_through_its_own_api(router):
     # Router must never need to reach into lane._queue to know if a lane is drainable.
     session = "sess-is-empty"
-    lane = router._get_or_create_lane(session, "webhook")
+    lane = router._get_or_create_lane(session)
     assert lane.is_empty() is True

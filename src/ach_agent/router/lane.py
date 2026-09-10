@@ -52,15 +52,16 @@ class Lane:
         self,
         session_key: str,
         router_ref: weakref.ref[Router],
-        global_sem: asyncio.Semaphore,
-        channel_sem: asyncio.Semaphore,
+        invocation_semaphores: Callable[[str], tuple[asyncio.Semaphore, asyncio.Semaphore]],
         engine_runner: EngineRunner,
         max_invocation_seconds: float,
     ) -> None:
         self._session_key = session_key
         self._router_ref = router_ref
-        self._global_sem = global_sem
-        self._channel_sem = channel_sem
+        # finding 9: resolved PER DEQUEUED EVENT (by its own channel_name) inside
+        # _consume — a lane can process events from more than one channel over its
+        # life (same session_key), so the permits must never be captured once here.
+        self._invocation_semaphores = invocation_semaphores
         self._engine_runner = engine_runner
         self._max_invocation_seconds = max_invocation_seconds
         self._queue: asyncio.Queue[MessageEvent] = asyncio.Queue()
@@ -74,9 +75,10 @@ class Lane:
         """Consumer loop: drain the queue one event at a time (FIFO, RTR-02).
 
         For each event:
-          1. Acquire global_sem + channel_sem via `async with` (Pitfall 4 / RTR-03).
-             The `async with` blocks are the SOLE owner of the semaphores — they
-             release exactly once on every path (success, timeout, error, cancel).
+          1. Resolve THIS event's pool + channel semaphores (finding 9) and acquire
+             both via `async with` (Pitfall 4 / RTR-03). The `async with` blocks are
+             the SOLE owner of the semaphores — they release exactly once on every
+             path (success, timeout, error, cancel).
           2. Dispatch through engine_runner with asyncio.timeout (maxInvocationSeconds).
           3. on_kill (idempotent, queued_total only) fires once in `finally`, so the
              lane is the authoritative release point and does NOT depend on the engine
@@ -89,13 +91,17 @@ class Lane:
             except asyncio.CancelledError:
                 return
 
+            # finding 9: this event's OWN channel_name selects its permits — never
+            # the channel that happened to create this lane.
+            pool_sem, channel_sem = self._invocation_semaphores(event.channel_name)
+
             # on_kill decrements queued_total only — semaphores are released by the
             # `async with` blocks below. Idempotent, so the engine watchdog may also
             # call it on a timeout kill without double-counting.
             on_kill = make_on_kill(queued_total_dec_fn=self._queued_total_dec)
             try:
-                async with self._global_sem:
-                    async with self._channel_sem:
+                async with pool_sem:
+                    async with channel_sem:
                         try:
                             async with asyncio.timeout(self._max_invocation_seconds):
                                 await self._engine_runner(event, on_kill)

@@ -44,6 +44,84 @@ log = structlog.get_logger(__name__)
 # RTR-06: a2a imports are ONLY inside functions/methods below — never at module level.
 # Verified by: grep -nE "^import a2a|^from a2a" src/ach_agent/channels/a2a.py → zero results.
 
+_CARD_PATHS = frozenset(
+    {
+        "/.well-known/agent-card.json",
+        "/.well-known/agent.json",
+    }
+)
+
+
+def _is_authorized(channel_cfg: ChannelConfig, headers: dict[str, str]) -> bool:
+    """Constant-time channel-credential check (spec §14.6).
+
+    Shared by the HTTP boundary guard (`_AuthGuardMiddleware`, covers every
+    JSON-RPC method and REST route the SDK registers — GetTask/ListTasks read
+    task_store directly and never reach execute()) and the direct-executor path
+    inside `execute()`. `headers` must be lowercase-keyed: Starlette normalises
+    header names to lowercase, and both call sites build this dict from a
+    Starlette `Headers` mapping (`dict(request.headers)` /
+    `DefaultServerCallContextBuilder`'s `state['headers']`).
+    """
+    a2a_cfg = channel_cfg.a2a
+    if a2a_cfg is None:
+        return False
+    auth = a2a_cfg.auth
+    expected = resolve_secret(auth.secret) if auth.secret is not None else None
+    if not expected:
+        return False
+    presented = headers.get(auth.header.lower(), "")
+    return hmac.compare_digest(presented.encode(), expected.encode())
+
+
+class _AuthGuardMiddleware:
+    """Pure-ASGI boundary guard in front of the A2A sub-app.
+
+    Rejects every request except the two agent-card discovery routes (GET/HEAD)
+    unless it carries the configured channel credential. Runs before Starlette
+    routing, so — unlike the AgentExecutor.execute()/cancel() header check —
+    it also covers ListTasks/GetTask (read task_store directly) and CancelTask
+    (reaches AgentExecutor.cancel(), which has no auth check of its own).
+    Rejection is HTTP 401 with a generic body; never logs the credential.
+    """
+
+    def __init__(self, app: Any, channel_cfg: ChannelConfig) -> None:
+        self._app = app
+        self._channel_cfg = channel_cfg
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+
+        from starlette.requests import Request
+        from starlette.responses import JSONResponse
+
+        request = Request(scope, receive)
+        # scope["path"] is the FULL request path — Mount does not rewrite it, only
+        # root_path records how much of it the mount consumed (Starlette's own
+        # Request.url reads scope["path"] verbatim). So "relative to the mounted
+        # sub-app" means root_path + the route's own path, compared for EXACT
+        # equality — never substring/endswith, which an attacker could game with
+        # an unrelated path that merely ends in one of these two suffixes.
+        root_path = scope.get("root_path", "")
+        exempt_paths = {root_path + p for p in _CARD_PATHS}
+        if request.method in ("GET", "HEAD") and request.url.path in exempt_paths:
+            await self._app(scope, receive, send)
+            return
+
+        if not _is_authorized(self._channel_cfg, dict(request.headers)):
+            log.warning(
+                "a2a: HTTP request rejected — missing or invalid credential",
+                channel=self._channel_cfg.name,
+                path=request.url.path,
+            )
+            response = JSONResponse({"error": "Unauthorized"}, status_code=401)
+            await response(scope, receive, send)
+            return
+
+        await self._app(scope, receive, send)
+
 
 def _status_event(
     state: str, text: str | None = None, task_id: str = "", context_id: str = ""
@@ -106,6 +184,10 @@ class A2AAgentExecutorBridge:
         # rejects a mismatch).
         self._pending: dict[str, tuple[Any, asyncio.Event, str, str]] = {}
 
+    @property
+    def channel_cfg(self) -> ChannelConfig:
+        return self._channel_cfg
+
     async def execute(self, context: Any, event_queue: Any) -> None:
         """AgentExecutor.execute implementation.
 
@@ -120,46 +202,17 @@ class A2AAgentExecutorBridge:
         task_id: str = getattr(context, "task_id", None) or ""
         context_id: str = getattr(context, "context_id", None) or ""
 
-        # (1) HEADER AUTH — spec §14.6 / T-04-13
-        # Fail-closed (CR-01): if no a2a sub-block or no secret configured,
-        # reject the request rather than admitting unauthenticated callers.
-        a2a_cfg = self._channel_cfg.a2a
-        if a2a_cfg is None or a2a_cfg.auth.secret is None:
-            log.warning(
-                "a2a: request rejected — no auth secret configured (fail-closed §14.6)",
-                channel=self._channel_cfg.name,
-            )
-            await event_queue.enqueue_event(
-                _status_event("failed", "Unauthorized", task_id, context_id)
-            )
-            return
-
-        expected_header = a2a_cfg.auth.header  # e.g. "x-a2a-custom-api-key"
-        expected_value = resolve_secret(a2a_cfg.auth.secret)
-        if not expected_value:
-            # CR-02: unresolvable/empty secret — never admit (empty-vs-empty must fail)
-            log.error(
-                "a2a: secret unresolvable — rejecting all requests",
-                channel=self._channel_cfg.name,
-            )
-            await event_queue.enqueue_event(
-                _status_event("failed", "Unauthorized", task_id, context_id)
-            )
-            return
-
-        # Retrieve presented header from call_context.state['headers'] (dict from
-        # DefaultServerCallContextBuilder). Key is lowercase (HTTP headers are
-        # case-insensitive; Starlette normalises to lowercase).
+        # (1) HEADER AUTH — spec §14.6 / T-04-13. Fail-closed (CR-01/CR-02): no
+        # a2a sub-block, no/unresolvable secret, or a missing/wrong header all
+        # reject the same way. Shared with the HTTP boundary guard
+        # (_AuthGuardMiddleware) so the two checks cannot diverge.
         headers: dict[str, str] = {}
         if hasattr(context, "call_context") and context.call_context is not None:
             headers = context.call_context.state.get("headers", {})
-        presented = headers.get(expected_header.lower(), "")
-        # Constant-time compare; NEVER log expected or presented value (SEC / T-04-13).
-        if not hmac.compare_digest(presented.encode(), expected_value.encode()):
+        if not _is_authorized(self._channel_cfg, headers):
             log.warning(
-                "a2a: request rejected — missing or invalid auth header",
+                "a2a: request rejected — missing or invalid credential (fail-closed §14.6)",
                 channel=self._channel_cfg.name,
-                header=expected_header,
             )
             await event_queue.enqueue_event(
                 _status_event("failed", "Unauthorized", task_id, context_id)
@@ -366,6 +419,10 @@ def build_a2a_app(
     )
 
     sub_app = FastAPI(title="a2a-sub")
+    # HTTP boundary guard (finding 1): covers the entire task-API surface,
+    # not just the AgentExecutor.execute()/cancel() path — see
+    # _AuthGuardMiddleware's docstring.
+    sub_app.add_middleware(_AuthGuardMiddleware, channel_cfg=executor.channel_cfg)
 
     # Cross-version-compatible card. The 1.x AgentCard drops top-level `url` (advertises
     # endpoints via supported_interfaces) and omits empty `skills`; a2a-sdk 0.3.x consumers

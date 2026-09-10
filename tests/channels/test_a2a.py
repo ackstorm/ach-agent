@@ -684,6 +684,129 @@ def test_agent_card_advertises_1x_jsonrpc_interface(monkeypatch: pytest.MonkeyPa
 
 
 # ---------------------------------------------------------------------------
+# HTTP boundary guard — the entire task-API surface requires the channel
+# credential (finding 1). GetTask/ListTasks read task_store directly and
+# CancelTask reaches AgentExecutor.cancel(); neither went through execute()'s
+# header check, so an anonymous caller could enumerate, read, and cancel any
+# task. Routes below are read from the installed SDK
+# (a2a/server/routes/rest_routes.py `create_rest_routes`), not guessed.
+# ---------------------------------------------------------------------------
+
+
+async def _seed_working_task(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, dict[str, str], str]:
+    """Build the real sub-app, admit one authenticated non-blocking SendMessage,
+    and return (asgi client, correct-auth headers, the SDK-assigned task_id).
+
+    return_immediately=True lets SendMessage return as soon as the bridge's
+    interim WORKING event lands, without needing signal_completion — the task
+    sits in task_store in a non-terminal (WORKING) state, exactly what
+    GetTask/ListTasks/CancelTask need to have something real to guard.
+    """
+    import httpx
+    from a2a.types.a2a_pb2 import ROLE_USER, Message, SendMessageRequest
+    from fastapi import FastAPI
+    from google.protobuf.json_format import MessageToDict
+
+    from ach_agent.channels.a2a import build_a2a_app, make_a2a_agent_card
+
+    channel_cfg = _make_authed_channel_cfg(monkeypatch)
+    bridge = A2AAgentExecutorBridge(handler=_make_accepted_handler(), channel_cfg=channel_cfg)
+    sub_app = build_a2a_app(make_a2a_agent_card(channel_cfg.name), bridge)
+    parent = FastAPI()
+    parent.mount("/a2a/review", sub_app)
+
+    client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=parent), base_url="http://testserver"
+    )
+    headers = {_UNIT_TEST_HEADER: _UNIT_TEST_SECRET, "A2A-Version": "1.0"}
+
+    msg = Message(message_id="seed", role=ROLE_USER, context_id="ctx-seed")
+    msg.parts.add().text = "hello"
+    send_request = SendMessageRequest(message=msg)
+    send_request.configuration.return_immediately = True
+    params = MessageToDict(send_request, preserving_proto_field_name=False)
+
+    resp = await client.post(
+        "/a2a/review/",
+        json={"jsonrpc": "2.0", "id": "seed", "method": "SendMessage", "params": params},
+        headers=headers,
+    )
+    task_id = str(resp.json()["result"]["task"]["id"])
+    return client, headers, task_id
+
+
+def _credential_headers(credential: str) -> dict[str, str]:
+    if credential == "missing":
+        return {"A2A-Version": "1.0"}
+    if credential == "wrong":
+        return {_UNIT_TEST_HEADER: "not-the-secret", "A2A-Version": "1.0"}
+    assert credential == "correct"
+    return {_UNIT_TEST_HEADER: _UNIT_TEST_SECRET, "A2A-Version": "1.0"}
+
+
+async def _dispatch_task_op(client: Any, op: str, headers: dict[str, str], task_id: str) -> Any:
+    if op == "jsonrpc_get_task":
+        body = {"jsonrpc": "2.0", "id": "x", "method": "GetTask", "params": {"id": task_id}}
+        return await client.post("/a2a/review/", json=body, headers=headers)
+    if op == "jsonrpc_list_tasks":
+        body = {"jsonrpc": "2.0", "id": "x", "method": "ListTasks", "params": {}}
+        return await client.post("/a2a/review/", json=body, headers=headers)
+    if op == "jsonrpc_cancel_task":
+        body = {"jsonrpc": "2.0", "id": "x", "method": "CancelTask", "params": {"id": task_id}}
+        return await client.post("/a2a/review/", json=body, headers=headers)
+    if op == "rest_get_task":
+        return await client.get(f"/a2a/review/tasks/{task_id}", headers=headers)
+    if op == "rest_list_tasks":
+        return await client.get("/a2a/review/tasks", headers=headers)
+    if op == "rest_cancel_task":
+        return await client.post(f"/a2a/review/tasks/{task_id}:cancel", headers=headers)
+    raise ValueError(op)  # pragma: no cover — parametrize ids are exhaustive
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("credential", ["missing", "wrong", "correct"])
+@pytest.mark.parametrize(
+    "op",
+    [
+        "jsonrpc_get_task",
+        "jsonrpc_list_tasks",
+        "jsonrpc_cancel_task",
+        "rest_get_task",
+        "rest_list_tasks",
+        "rest_cancel_task",
+    ],
+)
+async def test_a2a_task_apis_require_channel_credential(
+    monkeypatch: pytest.MonkeyPatch, op: str, credential: str
+) -> None:
+    """finding 1: every task API (JSON-RPC + REST; get/list/cancel) requires the
+    configured channel credential. Missing/wrong credentials never disclose task
+    content or mutate task state; the correct credential keeps normal SDK
+    behavior. Public agent-card discovery stays open regardless (checked in this
+    same scenario, not a separate one)."""
+    client, _correct_headers, task_id = await _seed_working_task(monkeypatch)
+    try:
+        resp = await _dispatch_task_op(client, op, _credential_headers(credential), task_id)
+
+        if credential == "correct":
+            assert resp.status_code == 200, resp.text
+            assert task_id in resp.text
+        else:
+            assert resp.status_code == 401
+            assert task_id not in resp.text
+            assert "hello" not in resp.text
+
+        # Card discovery is exempt from the guard no matter what credential this
+        # request carried — public discovery must not regress.
+        card_resp = await client.get(
+            "/a2a/review/.well-known/agent-card.json", headers=_credential_headers(credential)
+        )
+        assert card_resp.status_code == 200
+    finally:
+        await client.aclose()
+
+
+# ---------------------------------------------------------------------------
 # signal_failure — FAILED callback on invalid terminal output
 # ---------------------------------------------------------------------------
 

@@ -290,16 +290,29 @@ def write_opencode_config(ephemeral_home: Path, config: EngineConfig, session_ke
     # Register MCP servers in opencode.json pre-launch (no runtime tool-registration API).
     # opencode 1.16 schema (verified live): `mcp.<id> = {type:"remote", url, enabled:true}`
     # — NOT nested under a `servers` key, and the type is "remote" (not "streamable-http").
-    # Two sources, never colliding on key:
-    #   - memory server(s) from mcp_servers (MEM-02; present iff the backend was reachable)
-    #   - proxied external MCP servers from mcp_local_urls (Plan 2; localhost URLs only)
+    # Two sources:
+    #   - proxied external MCP servers from mcp_local_urls (Plan 2; localhost URLs only),
+    #     keyed by the ACH server id, which the operator of that environment chose
+    #   - harness-hosted facades from mcp_servers (memory/repo/a2a), keyed by what they ARE
     # SEC (T-04-22 / §6.10): only URLs are written — the ek_ bearer is never in config files.
+    #
+    # The facades are written LAST and win. The two key spaces are not guaranteed disjoint —
+    # an ACH environment is free to list a server called `memory` — and of the two, the facade
+    # is the one carrying a containment boundary (scope + project_slug injected below the
+    # agent). Losing a third-party server to a name clash is recoverable; silently serving an
+    # unpinned server under the name the prompt tells the agent to use is not. Warn either way.
     mcp_block: dict[str, dict[str, object]] = {
-        f"memory-{i}": {"type": "remote", "url": url, "enabled": True}
-        for i, url in enumerate(config.mcp_servers)
+        sid: {"type": "remote", "url": url, "enabled": True}
+        for sid, url in config.mcp_local_urls.items()
     }
-    for sid, url in config.mcp_local_urls.items():
-        mcp_block[sid] = {"type": "remote", "url": url, "enabled": True}
+    for name, url in config.mcp_servers.items():
+        if name in mcp_block:
+            log.warning(
+                "MCP id collision: a proxied server shares a harness facade's name — the "
+                "facade wins and the proxied server is not exposed",
+                mcp_id=name,
+            )
+        mcp_block[name] = {"type": "remote", "url": url, "enabled": True}
     if config.codemem_db_path:
         # MCP type=local: opencode owns the codemem stdio child (1:1 with this opencode process).
         # SEC: no ek_; codemem is local. Viewer disabled (headless, N sessions).

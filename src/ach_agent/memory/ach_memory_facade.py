@@ -7,7 +7,7 @@ neither appears on any exposed signature, so the agent cannot choose — or be a
 choosing — another bank. The agent never sees the user key or the real endpoint.
 
 Same shape as ``RepoCheckoutFacade`` and the a2a egress facade: a FastMCP app on an
-ephemeral loopback port via ``LocalMcpHost``. opencode's ``memory-0`` MCP server points here.
+ephemeral loopback port via ``LocalMcpHost``. opencode's ``memory`` MCP server points here.
 See CLAUDE.md, THE INVARIANT.
 """
 

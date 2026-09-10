@@ -736,7 +736,7 @@ async def main(
 
                 # codemem is already on engine_cfg from boot (static); only the memory
                 # facade is resolved here so the pre-warmed opencode.json matches.
-                warm_mcp_servers: list[str] = []
+                warm_mcp_servers: dict[str, str] = {}
                 if isinstance(cfg.memory, AchMemoryMemory):
                     from ach_agent.memory.ach_memory import prepare_ach_memory
 
@@ -744,13 +744,13 @@ async def main(
                         cfg.memory, memory_project, memory_auth_headers
                     )
                     if _mem_ok and memory_facade_url:
-                        warm_mcp_servers = [memory_facade_url]
+                        warm_mcp_servers = {"memory": memory_facade_url}
                 # The repo-checkout facade is static (no probe) — include it in the pre-warmed
                 # opencode.json so the console session sees checkout_repo from the first prompt.
                 if repo_facade_url:
-                    warm_mcp_servers = [*warm_mcp_servers, repo_facade_url]
+                    warm_mcp_servers = {**warm_mcp_servers, "repo": repo_facade_url}
                 if a2a_facade_url:
-                    warm_mcp_servers = [*warm_mcp_servers, a2a_facade_url]
+                    warm_mcp_servers = {**warm_mcp_servers, "a2a": a2a_facade_url}
                 from ach_agent.channels.tui import _CONSOLE_SESSION_KEY
 
                 warm_codemem_project = engine_cfg.codemem_project

@@ -12,7 +12,7 @@ from ach_agent.engine.pi.mcp_json import build_mcp_json
 def test_facades_and_proxy_are_remote_loopback_entries(monkeypatch) -> None:
     monkeypatch.setenv("ACH_TOKEN", "ek_secret")
     cfg = EngineConfig(
-        mcp_servers=["http://127.0.0.1:7001/mcp", "http://127.0.0.1:7002/mcp"],
+        mcp_servers={"memory": "http://127.0.0.1:7001/mcp", "a2a": "http://127.0.0.1:7002/mcp"},
         mcp_local_urls={"gitlab": "http://127.0.0.1:7003/mcp/gitlab"},
         exclude_tools=["dangerous_tool"],
     )
@@ -20,7 +20,8 @@ def test_facades_and_proxy_are_remote_loopback_entries(monkeypatch) -> None:
     blob = json.dumps(doc)
     assert "ek_secret" not in blob
     servers = doc["mcpServers"]
-    assert servers["facade-0"] == {"url": "http://127.0.0.1:7001/mcp"}
+    assert servers["memory"] == {"url": "http://127.0.0.1:7001/mcp"}
+    assert servers["a2a"] == {"url": "http://127.0.0.1:7002/mcp"}
     assert servers["gitlab"] == {"url": "http://127.0.0.1:7003/mcp/gitlab"}
     assert doc["settings"]["directTools"] is True
     assert doc["settings"]["excludeTools"] == ["dangerous_tool"]

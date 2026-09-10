@@ -133,8 +133,8 @@ async def test_ach_memory_path_produces_no_codemem_entry(
 ) -> None:
     """ach-memory config → remote mcp server + prompt, and NO codemem entry in opencode.json.
 
-    Remote MCP entries are keyed memory-{i} with shape {type:remote, url:..., enabled:True}
-    (opencode 1.16 schema, verified in lifecycle.py line ~239).
+    Remote MCP entries are keyed by what the server IS, with shape
+    {type:remote, url:..., enabled:True} (opencode 1.16 schema, verified in lifecycle.py).
     """
 
     async def _ok(_cfg: object, _project: str, _headers: dict[str, str]) -> tuple[bool, str]:
@@ -151,7 +151,7 @@ async def test_ach_memory_path_produces_no_codemem_entry(
     mcp_servers, memory_prompt = await select_memory_wiring_async(cfg_mem, facade_url)
 
     # mcp_servers carries the harness FACADE url, never the raw ach-memory endpoint.
-    assert mcp_servers == [facade_url]
+    assert mcp_servers == {"memory": facade_url}
     assert memory_prompt == "## Memory\nx"
 
     engine_cfg = EngineConfig(
@@ -167,9 +167,28 @@ async def test_ach_memory_path_produces_no_codemem_entry(
     # No codemem entry for the ach-memory path
     assert "codemem" not in oc_mcp
 
-    # Facade url registered as memory-0 with the correct remote shape
-    assert oc_mcp.get("memory-0") == {
+    # Facade url registered as `memory` with the correct remote shape. Named, not
+    # enumerated: the id reaches the model, so it has to say what the server IS.
+    assert oc_mcp.get("memory") == {
         "type": "remote",
         "url": facade_url,
         "enabled": True,
     }
+
+
+def test_a_proxied_server_cannot_take_the_memory_facades_name(tmp_path: Path) -> None:
+    """The two MCP key spaces are not disjoint: an ACH environment may list a server called
+    `memory`, and one of the two is a containment boundary. Losing a third-party server to a
+    name clash is recoverable; serving an UNPINNED ach-memory under the name the system prompt
+    tells the agent to use is not — it would hand the model a `retain` that takes project_slug.
+    """
+    engine_cfg = EngineConfig(
+        model_base_url="http://127.0.0.1:9/v1",
+        mcp_servers={"memory": "http://127.0.0.1:7/mcp"},
+        mcp_local_urls={"memory": "http://127.0.0.1:8/proxied"},
+        codemem_db_path="",
+        codemem_project="",
+    )
+    oc_mcp = _opencode_json(write_opencode_config(tmp_path, engine_cfg, "k1")).get("mcp", {})
+
+    assert oc_mcp["memory"]["url"] == "http://127.0.0.1:7/mcp"

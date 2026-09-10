@@ -33,7 +33,7 @@ async def test_codemem_type_returns_empty_2tuple(monkeypatch: pytest.MonkeyPatch
         cfg, "http://facade/mcp"
     )
 
-    assert mcp_servers == []
+    assert mcp_servers == {}
     assert memory_prompt == ""
     assert called["prepare"] is False
 
@@ -57,7 +57,7 @@ async def test_ach_memory_type_uses_probe(monkeypatch: pytest.MonkeyPatch) -> No
         cfg, "http://facade/mcp"
     )
 
-    assert mcp_servers == ["http://facade/mcp"]
+    assert mcp_servers == {"memory": "http://facade/mcp"}
     assert memory_prompt == "## Memory\nx"
 
 
@@ -67,5 +67,5 @@ async def test_none_memory_cfg() -> None:
 
     mcp_servers, memory_prompt = await engine_runner_mod.select_memory_wiring_async(None, None)
 
-    assert mcp_servers == []
+    assert mcp_servers == {}
     assert memory_prompt == ""

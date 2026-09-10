@@ -56,27 +56,28 @@ async def select_memory_wiring_async(
     facade_url: str | None,
     memory_project: str = "",
     memory_auth_headers: dict[str, str] | None = None,
-) -> tuple[list[str], str]:
+) -> tuple[dict[str, str], str]:
     """Load standing context + build the prompt section; return the FACADE url (not the raw
     endpoint).
 
     The agent only ever reaches the memory service through the harness facade, so the
-    mcp_servers list carries the facade URL. Gated by whether the context load succeeded
-    (D-02 fail-open) AND by the facade actually being up. codemem is NOT handled here — it is
-    static per-agent and resolved once at boot (resolve_codemem_wiring → engine_cfg).
+    mcp_servers map carries the facade URL under "memory". Gated by whether the context
+    load succeeded (D-02 fail-open) AND by the facade actually being up. codemem is NOT
+    handled here — it is static per-agent and resolved once at boot (resolve_codemem_wiring
+    → engine_cfg).
 
     ``memory_project`` and ``memory_auth_headers`` are both boot-static: one bank per agent
     and one credential, resolved from the agent's identity and the ek_ in main(), never from
     this event's payload.
     """
     if not isinstance(memory_cfg, AchMemoryMemory):
-        return [], ""
+        return {}, ""
 
     mem_available, memory_prompt = await prepare_ach_memory(
         memory_cfg, memory_project, memory_auth_headers or {}
     )
 
-    mcp_servers = [facade_url] if (mem_available and facade_url) else []
+    mcp_servers = {"memory": facade_url} if (mem_available and facade_url) else {}
     return mcp_servers, memory_prompt
 
 
@@ -171,11 +172,11 @@ def make_engine_runner(
         # every invocation alongside the (dynamic) memory facade — the agent reaches gitlab-mcp's
         # archive resource ONLY through it (ek injected harness-side).
         if repo_facade_url:
-            mcp_servers = [*mcp_servers, repo_facade_url]
+            mcp_servers = {**mcp_servers, "repo": repo_facade_url}
         # a2a egress facade (SP1 §6): a static localhost MCP server carried on every invocation,
         # so the agent can call peer agents. Same wiring as the memory/repo facades.
         if a2a_facade_url:
-            mcp_servers = [*mcp_servers, a2a_facade_url]
+            mcp_servers = {**mcp_servers, "a2a": a2a_facade_url}
 
         # Build per-invocation engine config with the (dynamic) memory MCP server iff
         # reachable (D-02). codemem fields are static per-agent and already on engine_cfg from

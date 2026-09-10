@@ -45,10 +45,12 @@ def _passthrough_to_pi(entry: dict[str, Any]) -> dict[str, Any]:
 
 def build_mcp_json(cfg: EngineConfig) -> dict[str, Any]:
     servers: dict[str, dict[str, Any]] = {}
-    for index, url in enumerate(cfg.mcp_servers):
-        servers[f"facade-{index}"] = {"url": url}
     for server_id, url in cfg.mcp_local_urls.items():
         servers[server_id] = {"url": url}
+    # Facades last and they win, for the same reason as the opencode driver: the key spaces
+    # are not disjoint, and the facade is the one enforcing containment.
+    for name, url in cfg.mcp_servers.items():
+        servers[name] = {"url": url}
     for name, entry in cfg.extra_mcp_servers.items():
         servers[name] = _passthrough_to_pi(entry)
     if cfg.codemem_db_path:

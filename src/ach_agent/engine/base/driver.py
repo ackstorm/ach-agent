@@ -45,7 +45,10 @@ class EngineConfig:
     # MEM-01/D-02: optional MCP server URL for memory tools (present iff backend reachable).
     # Written to opencode.json before subprocess launch so the model either has memory tools
     # or does not — no runtime tool-registration API exists.
-    mcp_servers: list[str] = field(default_factory=list)
+    # Harness-hosted loopback facades, {opencode MCP id: url}. NAMED, not enumerated: the
+    # ids reach the model, and a positional `memory-0`/`memory-1` told it the a2a facade in
+    # slot 1 was a second memory server.
+    mcp_servers: dict[str, str] = field(default_factory=dict)
     # Plan 2 (localhost-proxy / ek-hygiene): opencode.json points the model at this localhost
     # model-proxy baseURL (no ek_; the proxy injects it). Always set in a real boot — the
     # harness hard-fails without it (no direct-gateway fallback). Empty only in unit tests

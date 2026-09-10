@@ -38,7 +38,7 @@ async def test_ach_memory_wiring_returns_facade_url_not_endpoint(monkeypatch):
     servers, prompt = await engine_runner_mod.select_memory_wiring_async(
         _ach_cfg(), "http://127.0.0.1:9/mcp", "ach-gitlab-pr", {"x-ach-key": "ek_x"}
     )
-    assert servers == ["http://127.0.0.1:9/mcp"]  # facade URL, NOT the ach-memory endpoint
+    assert servers == {"memory": "http://127.0.0.1:9/mcp"}  # facade URL, NOT the endpoint
     assert prompt == "## Memory\n\nok"
     assert seen["project"] == "ach-gitlab-pr"  # boot-static, not derived from the event
     assert seen["headers"] == {"x-ach-key": "ek_x"}  # boot-static too, never per-event
@@ -55,7 +55,7 @@ async def test_ach_memory_wiring_empty_when_unavailable(monkeypatch):
     servers, prompt = await engine_runner_mod.select_memory_wiring_async(
         _ach_cfg(), "http://127.0.0.1:9/mcp", "ach-gitlab-pr"
     )
-    assert servers == []
+    assert servers == {}
     assert "Unavailable" in prompt
 
 

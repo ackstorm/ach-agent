@@ -113,6 +113,7 @@ def _day_key(ts_ms: int, tz: str) -> str:
 def build_contract(
     *,
     window_rows: list[dict[str, Any]],
+    month_rows: list[dict[str, Any]],
     recent_rows: list[dict[str, Any]],
     coverage_start_ms: int | None,
     now_ms: int,
@@ -133,9 +134,10 @@ def build_contract(
         avg = _safe_div(row["spend"], row["sessions"])
         cps.append({"model": row["model"], "avg": avg})
 
-    # calendar month-to-date, in tz.
+    # calendar month-to-date, in tz. month_rows is supplied independently of
+    # window_rows (finding 12) — the caller fetches the full month even when
+    # the selected range is narrower than "days since month start".
     m_start = month_start_ms(now_ms, tz)
-    month_rows = [r for r in window_rows if r["ts_ms"] >= m_start]
     month_counts: dict[str, int] = defaultdict(int)
     for r in month_rows:
         month_counts[r["model"]] += 1

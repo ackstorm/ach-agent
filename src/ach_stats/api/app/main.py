@@ -11,7 +11,7 @@ from typing import Any, cast
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
-from app.aggregate import build_contract, to_recent_row
+from app.aggregate import build_contract, month_start_ms, to_recent_row
 from app.reader import read_coverage_start, read_recent, read_window
 
 
@@ -44,15 +44,26 @@ def create_app() -> FastAPI:
         client = _redis(request)
         now = int(time.time() * 1000)
         start = now - days * 86_400_000
+        tz = _tz(request)
         window = await read_window(client, start, now)
+        # finding 12: month-to-date must reflect the WHOLE month regardless of
+        # the selected range. Reuse window when it already covers the month
+        # start (no extra read); otherwise fetch the month independently.
+        m_start = month_start_ms(now, tz)
+        month_rows = (
+            [row for row in window if row["ts_ms"] >= m_start]
+            if start <= m_start
+            else await read_window(client, m_start, now)
+        )
         recent = await read_recent(client, 12)
         coverage = await read_coverage_start(client)
         contract = build_contract(
             window_rows=window,
+            month_rows=month_rows,
             recent_rows=recent,
             coverage_start_ms=coverage,
             now_ms=now,
-            tz=_tz(request),
+            tz=tz,
             range_start_ms=start,
             range_end_ms=now,
         )

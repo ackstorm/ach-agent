@@ -87,6 +87,7 @@ def test_contract_partial_flags_when_coverage_after_window_start():
     now = 2_000_000_000_000
     contract = build_contract(
         window_rows=[_row(cost=0.1)],
+        month_rows=[],
         recent_rows=[_row(cost=0.1)],
         coverage_start_ms=1_999_999_999_999,  # later than range_start -> partial
         now_ms=now,
@@ -103,6 +104,7 @@ def test_contract_not_partial_when_full_coverage():
     now = 2_000_000_000_000
     contract = build_contract(
         window_rows=[_row(cost=0.1)],
+        month_rows=[],
         recent_rows=[_row(cost=0.1)],
         coverage_start_ms=500_000_000_000,  # earlier than range_start -> complete
         now_ms=now,
@@ -117,6 +119,7 @@ def test_contract_recent_shape():
     now = 2_000_000_000_000
     contract = build_contract(
         window_rows=[],
+        month_rows=[],
         recent_rows=[_row(task="Review !7", status="aborted", retry=True)],
         coverage_start_ms=None,
         now_ms=now,

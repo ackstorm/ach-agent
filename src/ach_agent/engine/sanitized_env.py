@@ -99,8 +99,8 @@ def make_redact_secret_env_processor(env_names: list[str]) -> structlog.typing.P
         for key, val in list(event_dict.items()):
             if isinstance(val, str):
                 for secret in values:
-                    if secret in val:
-                        event_dict[key] = val.replace(secret, "[REDACTED]")
+                    val = val.replace(secret, "[REDACTED]")
+                event_dict[key] = val
         return event_dict
 
     return _proc

@@ -56,6 +56,7 @@ async def select_memory_wiring_async(
     facade_url: str | None,
     memory_project: str = "",
     memory_auth_headers: dict[str, str] | None = None,
+    memory_endpoint: str = "",
 ) -> tuple[dict[str, str], str]:
     """Load standing context + build the prompt section; return the FACADE url (not the raw
     endpoint).
@@ -66,15 +67,18 @@ async def select_memory_wiring_async(
     handled here — it is static per-agent and resolved once at boot (resolve_codemem_wiring
     → engine_cfg).
 
-    ``memory_project`` and ``memory_auth_headers`` are both boot-static: one bank per agent
-    and one credential, resolved from the agent's identity and the ek_ in main(), never from
-    this event's payload.
+    ``memory_endpoint``, ``memory_project`` and ``memory_auth_headers`` are all boot-static:
+    one address, one bank per agent and one credential, resolved from the manifest, the
+    agent's identity and the ek_ in main(), never from this event's payload. The endpoint is
+    passed rather than read off ``memory_cfg`` because the config may name the service by
+    ``mcpServerId``, in which case its ``endpoint`` field is empty and only main() — which
+    holds the hydration manifest — can resolve the real one.
     """
     if not isinstance(memory_cfg, AchMemoryMemory):
         return {}, ""
 
     mem_available, memory_prompt = await prepare_ach_memory(
-        memory_cfg, memory_project, memory_auth_headers or {}
+        memory_endpoint, memory_project, memory_auth_headers or {}
     )
 
     mcp_servers = {"memory": facade_url} if (mem_available and facade_url) else {}
@@ -95,6 +99,7 @@ def make_engine_runner(
     memory_bank: str = "",
     memory_project: str = "",
     memory_auth_headers: dict[str, str] | None = None,
+    memory_endpoint: str = "",
     stats_sink: StatsSink | None = None,
     tool_sink: StatsSink | None = None,
     memory_facade_url: str | None = None,
@@ -166,7 +171,11 @@ def make_engine_runner(
         # unavailable it increments MEMORY_DEGRADED and WARNs internally. project and the auth
         # headers are both boot-static, so there is no per-event rendering to keep in sync.
         mcp_servers, memory_prompt = await select_memory_wiring_async(
-            memory_cfg, memory_facade_url, memory_project, memory_auth_headers
+            memory_cfg,
+            memory_facade_url,
+            memory_project,
+            memory_auth_headers,
+            memory_endpoint,
         )
         # The repo-checkout facade (if enabled) is a static localhost MCP server; append it to
         # every invocation alongside the (dynamic) memory facade — the agent reaches gitlab-mcp's

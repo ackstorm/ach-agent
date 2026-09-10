@@ -187,6 +187,19 @@ async def call_ach_memory(
         return text
 
 
+def _describe(exc: BaseException) -> str:
+    """`str(exc)` for a normal exception; the leaf causes for an ExceptionGroup.
+
+    An MCP call runs inside a TaskGroup, whose str() is "unhandled errors in a TaskGroup
+    (1 sub-exception)" — it names how many failures it is hiding and not one of them, which
+    is a degraded-memory warning that cannot be acted on.
+    """
+    subs = getattr(exc, "exceptions", None)
+    if not subs:
+        return f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+    return "; ".join(_describe(sub) for sub in subs)
+
+
 async def fetch_context(endpoint: str, headers: Headers, project: str) -> str:
     """The ``## Memory`` prompt section, from one ``load_context`` call.
 
@@ -216,14 +229,12 @@ async def fetch_context(endpoint: str, headers: Headers, project: str) -> str:
         )
         return f"## Memory\n\n{text}"
     except Exception as exc:
-        log.warning("memory: load_context failed — running degraded", error=str(exc))
+        log.warning("memory: load_context failed — running degraded", error=_describe(exc))
         inc_memory_degraded()
         return "## Memory\n\nUnavailable (context load failed)."
 
 
-async def prepare_ach_memory(
-    memory_cfg: AchMemoryMemory, project: str, headers: Headers
-) -> tuple[bool, str]:
+async def prepare_ach_memory(endpoint: str, project: str, headers: Headers) -> tuple[bool, str]:
     """Load standing context and build the prompt section. Returns (available, section).
 
     Called BEFORE pool.acquire in engine_runner so the opencode.json written for that server
@@ -236,16 +247,19 @@ async def prepare_ach_memory(
     reads as healthy under any `status < 500` check (CLAUDE.md, "assume a probe endpoint
     exists"). One less round-trip and one less way to be wrong.
     """
+    if not endpoint:
+        # `mcpServerId` named a server this environment does not hydrate (main() already
+        # warned). Nothing to call — say so instead of failing a request to "".
+        return False, "## Memory\n\nUnavailable (no endpoint)."
     try:
-        params = memory_cfg.ach_memory
-        section = await fetch_context(params.endpoint, headers, project)
+        section = await fetch_context(endpoint, headers, project)
         if section.startswith("## Memory\n\nUnavailable"):
             return False, section
-        log.info("memory: ach-memory backend active", endpoint=params.endpoint, project=project)
+        log.info("memory: ach-memory backend active", endpoint=endpoint, project=project)
         return True, section
 
     except Exception as exc:
-        log.warning("memory: prepare_ach_memory failed unexpectedly", error=str(exc))
+        log.warning("memory: prepare_ach_memory failed unexpectedly", error=_describe(exc))
         inc_memory_degraded()
         return False, "## Memory\n\nUnavailable (unexpected error)."
 

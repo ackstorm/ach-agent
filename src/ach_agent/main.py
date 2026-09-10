@@ -440,6 +440,10 @@ async def main(
     # ach-memory only: the agent's own bank, `{namespace}-{agent.name}`. Boot-static —
     # resolved once here, never from an event payload (it selects a bank).
     memory_project: str = ""
+    # The RESOLVED ach-memory address. Boot-static for the same reason as the two below, and
+    # resolved HERE because `mcpServerId` reads it out of the hydration manifest, which only
+    # main() holds. Every later caller takes this value — the raw config field has one reader.
+    memory_endpoint: str = ""
     # Outbound credential for ach-memory, resolved ONCE here where the ek_ is in scope. The
     # facade keeps it; engine_runner needs it for the per-invocation load_context.
     memory_auth_headers: dict[str, str] = {}
@@ -507,8 +511,8 @@ async def main(
             )
 
             _ok, memory_auth_headers = resolve_ach_memory_auth(cfg.memory.ach_memory.auth, ek)
-            _memory_endpoint = resolve_endpoint(cfg.memory.ach_memory, manifest.mcp_servers)
-            if not _memory_endpoint:
+            memory_endpoint = resolve_endpoint(cfg.memory.ach_memory, manifest.mcp_servers)
+            if not memory_endpoint:
                 log.warning(
                     "memory: mcpServerId absent from the hydrated manifest — facade not "
                     "started; running without memory",
@@ -519,7 +523,7 @@ async def main(
             else:
                 memory_project = resolve_project(cfg.memory.ach_memory, cfg.agent.name)
                 memory_facade = AchMemoryFacade(
-                    _memory_endpoint, memory_auth_headers, memory_project
+                    memory_endpoint, memory_auth_headers, memory_project
                 )
                 memory_facade_url = await memory_facade.start()
         # Start the repo-checkout facade beside the proxies (mcpServers type=repoCheckout).
@@ -716,6 +720,7 @@ async def main(
         memory_bank=memory_bank,
         memory_project=memory_project,
         memory_auth_headers=memory_auth_headers,
+        memory_endpoint=memory_endpoint,
         stats_sink=stats_sink,
         tool_sink=tool_sink,
         memory_facade_url=memory_facade_url,
@@ -766,7 +771,7 @@ async def main(
                     from ach_agent.memory.ach_memory import prepare_ach_memory
 
                     _mem_ok, _ = await prepare_ach_memory(
-                        cfg.memory, memory_project, memory_auth_headers
+                        memory_endpoint, memory_project, memory_auth_headers
                     )
                     if _mem_ok and memory_facade_url:
                         warm_mcp_servers = {"memory": memory_facade_url}

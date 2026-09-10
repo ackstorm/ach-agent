@@ -320,3 +320,12 @@ def test_an_explicit_endpoint_excludes_nothing() -> None:
     proxied like any other server the operator granted. Exclude it iff we front it."""
     assert am.excluded_mcp_server(_cfg()) == ""
     assert am.excluded_mcp_server(None) == ""
+
+
+def test_a_task_group_failure_names_its_cause() -> None:
+    """`str()` on an ExceptionGroup reports how many failures it hides and not one of them,
+    so a degraded-memory warning carried nothing to act on. MCP calls run inside a TaskGroup,
+    so this is the shape every real memory failure arrives in."""
+    group = ExceptionGroup("unhandled errors in a TaskGroup", [ConnectionRefusedError("port 0")])
+    assert am._describe(group) == "ConnectionRefusedError: port 0"
+    assert am._describe(ValueError("plain")) == "ValueError: plain"

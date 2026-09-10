@@ -30,7 +30,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from ach_agent.config.schema import (  # noqa: E402
     AchMemoryAuthAch,
     AchMemoryAuthBearer,
-    AchMemoryMemory,
 )
 from ach_agent.memory.ach_memory import (  # noqa: E402
     call_ach_memory,
@@ -68,10 +67,6 @@ def check(name: str, ok: bool, detail: str = "") -> None:
     print(f"{'PASS' if ok else 'FAIL'}  {name}{f' — {detail}' if detail else ''}")
     if not ok:
         failures.append(name)
-
-
-def _cfg(endpoint: str) -> AchMemoryMemory:
-    return AchMemoryMemory.model_validate({"type": "ach-memory", "achMemory": {"endpoint": endpoint}})
 
 
 def _leaves(exc: BaseException) -> list[str]:
@@ -168,9 +163,7 @@ async def main() -> int:
 
     # 1. reachability, via the call the boot path actually makes. There is no health probe
     # any more: load_context IS the test, so a dead endpoint degrades exactly like an outage.
-    dead = await prepare_ach_memory(
-        _cfg("http://127.0.0.1:1/mcp/"), PROJECT, {}
-    )
+    dead = await prepare_ach_memory("http://127.0.0.1:1/mcp/", PROJECT, {})
     check("a dead endpoint is fail-open, not an exception", dead[0] is False and "Unavailable" in dead[1])
 
     # 2. project derivation — the container sets POD_NAMESPACE=testbed
@@ -228,7 +221,7 @@ async def main() -> int:
     check("live recall returns the retained claim (within 20s)", "EdDSA" in got, got[:80].replace("\n", " "))
 
     # 7. the boot path end to end
-    ok, note = await prepare_ach_memory(_cfg(ENDPOINT), PROJECT, headers)
+    ok, note = await prepare_ach_memory(ENDPOINT, PROJECT, headers)
     check("prepare_ach_memory loads context without a probe", ok is True, note[:80].replace("\n", " "))
     ctx = await fetch_context(ENDPOINT, headers, PROJECT)
     check("load_context returns a ## Memory block", ctx.startswith("## Memory"), ctx[:120].replace("\n", " "))

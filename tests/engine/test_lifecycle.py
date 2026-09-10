@@ -229,12 +229,12 @@ async def test_consume_streams_suffix_separates_parts_and_emits_tools() -> None:
     # grows, a tool runs (twice → deduped), part B begins.
     scripted = [
         OpenCodeStreamReady(),
-        OpenCodeTextUpdate("s", "prtA", "msgA", "Hola"),
-        OpenCodeTextUpdate("s", "prtA", "msgA", "Hola mundo"),
-        OpenCodeToolUpdate("s", "prtT", "msgA", "mcp-x_auth_wait", "cid", ToolStateRunning()),
-        OpenCodeToolUpdate("s", "prtT", "msgA", "mcp-x_auth_wait", "cid", ToolStateRunning()),
-        OpenCodeTextUpdate("s", "prtB", "msgA", "Adios"),
-        OpenCodeSessionIdle("s"),
+        OpenCodeTextUpdate("ses", "prtA", "msgA", "Hola"),
+        OpenCodeTextUpdate("ses", "prtA", "msgA", "Hola mundo"),
+        OpenCodeToolUpdate("ses", "prtT", "msgA", "mcp-x_auth_wait", "cid", ToolStateRunning()),
+        OpenCodeToolUpdate("ses", "prtT", "msgA", "mcp-x_auth_wait", "cid", ToolStateRunning()),
+        OpenCodeTextUpdate("ses", "prtB", "msgA", "Adios"),
+        OpenCodeSessionIdle("ses"),
     ]
 
     async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
@@ -257,6 +257,60 @@ async def test_consume_streams_suffix_separates_parts_and_emits_tools() -> None:
     assert "".join(streamed) == "Hola mundo\n\nAdios"
     assert len(tools) == 1, "tool running fired once (deduped per part_id+status)"
     assert tools[0].tool_name == "mcp-x_auth_wait"
+
+
+async def test_consume_filters_events_from_other_sessions() -> None:
+    """finding 4: a shared opencode server multiplexes several sessions' SSE
+    traffic onto one stream. A child session's full event lifecycle — text,
+    tool, usage, error, AND idle — must never count toward or terminate the
+    requested (parent) session's turn; only the parent's own events do, and
+    the prompt is still sent exactly once."""
+    from ach_agent.engine import events as ev
+    from ach_agent.engine.client import OpenCodeClient
+    from ach_agent.engine.events import (
+        OpenCodeSessionError,
+        OpenCodeSessionIdle,
+        OpenCodeStreamReady,
+        OpenCodeTextUpdate,
+        OpenCodeToolUpdate,
+        OpenCodeUsage,
+        ToolStateRunning,
+    )
+    from ach_agent.engine.lifecycle import consume_sse_after_send
+
+    scripted = [
+        OpenCodeStreamReady(),
+        # Child session's full lifecycle, including its own terminal events —
+        # none of this may finish or pollute the parent's turn.
+        OpenCodeTextUpdate("child", "cp", "cm", "child text"),
+        OpenCodeToolUpdate("child", "ct", "cm", "child-tool", "ccid", ToolStateRunning()),
+        OpenCodeUsage("child", "cm", 1, 1, 0, 0, 0.0, 1),
+        OpenCodeSessionError("child", "boom", "child blew up"),
+        OpenCodeSessionIdle("child"),
+        # The requested (parent) session's real turn.
+        OpenCodeTextUpdate("ses", "pp", "pm", "parent text"),
+        OpenCodeSessionIdle("ses"),
+    ]
+
+    async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
+        for e in scripted:
+            await queue.put(e)
+
+    client = OpenCodeClient("http://127.0.0.1:0")
+    client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
+    client.send_message = AsyncMock()  # type: ignore[method-assign]
+
+    tools: list[OpenCodeToolUpdate] = []
+    with patch.object(ev, "_consume_events_from_response", new=fake_consume):
+        text = await consume_sse_after_send(client, "ses", "hi", on_tool=tools.append)
+
+    assert text == "parent text", "only the requested session's text is accumulated"
+    assert tools == [], "child session's tool update must not count toward the parent's turn"
+    # call_count (not await_count): the send is fired via asyncio.create_task and this
+    # test's queue is pre-filled, so the loop can reach the parent's idle and return
+    # before the event loop happens to schedule that task to completion — the dispatch
+    # itself (the mock call, recorded synchronously) is what "sent once" asserts.
+    assert client.send_message.call_count == 1, "prompt sent exactly once"
 
 
 async def test_consume_releases_resp_on_early_sse_error() -> None:
@@ -301,10 +355,10 @@ async def test_consume_filters_user_message_echo() -> None:
 
     scripted = [
         OpenCodeStreamReady(),
-        OpenCodeUserMessage("s", "msg_user"),
-        OpenCodeTextUpdate("s", "prtU", "msg_user", "echoed user prompt"),  # filtered
-        OpenCodeTextUpdate("s", "prtA", "msg_asst", '{"actions":[]}'),  # kept
-        OpenCodeSessionIdle("s"),
+        OpenCodeUserMessage("ses", "msg_user"),
+        OpenCodeTextUpdate("ses", "prtU", "msg_user", "echoed user prompt"),  # filtered
+        OpenCodeTextUpdate("ses", "prtA", "msg_asst", '{"actions":[]}'),  # kept
+        OpenCodeSessionIdle("ses"),
     ]
 
     async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
@@ -345,14 +399,14 @@ async def test_live_sse_reconnects_after_transient_drop() -> None:
     scripts = [
         [
             OpenCodeStreamReady(),
-            OpenCodeTextUpdate("s", "prtA", "msgA", "Hola"),
-            OpenCodeTextUpdate("s", "prtA", "msgA", "Hola mundo"),
+            OpenCodeTextUpdate("ses", "prtA", "msgA", "Hola"),
+            OpenCodeTextUpdate("ses", "prtA", "msgA", "Hola mundo"),
             aiohttp.ClientError("connection reset"),
         ],
         [
             OpenCodeStreamReady(),
-            OpenCodeTextUpdate("s", "prtA", "msgA", "Hola mundo"),  # resent snapshot
-            OpenCodeSessionIdle("s"),
+            OpenCodeTextUpdate("ses", "prtA", "msgA", "Hola mundo"),  # resent snapshot
+            OpenCodeSessionIdle("ses"),
         ],
     ]
     calls = {"n": 0}
@@ -501,8 +555,8 @@ async def test_alive_engine_slow_but_not_dead_waits() -> None:
     async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
         await queue.put(OpenCodeStreamReady())
         await asyncio.sleep(0.15)  # spans a couple of poll intervals (0.05)
-        await queue.put(OpenCodeTextUpdate("s", "prtA", "msgA", "later"))
-        await queue.put(OpenCodeSessionIdle("s"))
+        await queue.put(OpenCodeTextUpdate("ses", "prtA", "msgA", "later"))
+        await queue.put(OpenCodeSessionIdle("ses"))
 
     client = OpenCodeClient("http://127.0.0.1:0")
     client.subscribe_events = AsyncMock(return_value=MagicMock(release=AsyncMock()))  # type: ignore[method-assign]
@@ -1219,12 +1273,12 @@ async def test_step_budget_aborts_after_threshold() -> None:
 
     scripted = [
         OpenCodeStreamReady(),
-        OpenCodeToolUpdate("s", "p1", "m", "tool", "c1", ToolStateRunning()),
-        OpenCodeToolUpdate("s", "p1", "m", "tool", "c1", ToolStateCompleted()),
-        OpenCodeToolUpdate("s", "p2", "m", "tool", "c2", ToolStateRunning()),
-        OpenCodeToolUpdate("s", "p3", "m", "tool", "c3", ToolStateRunning()),
-        OpenCodeTextUpdate("s", "pA", "m", "partial reply"),
-        OpenCodeSessionIdle("s"),
+        OpenCodeToolUpdate("ses", "p1", "m", "tool", "c1", ToolStateRunning()),
+        OpenCodeToolUpdate("ses", "p1", "m", "tool", "c1", ToolStateCompleted()),
+        OpenCodeToolUpdate("ses", "p2", "m", "tool", "c2", ToolStateRunning()),
+        OpenCodeToolUpdate("ses", "p3", "m", "tool", "c3", ToolStateRunning()),
+        OpenCodeTextUpdate("ses", "pA", "m", "partial reply"),
+        OpenCodeSessionIdle("ses"),
     ]
 
     async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
@@ -1256,9 +1310,9 @@ async def test_step_budget_counts_distinct_calls_not_updates() -> None:
 
     scripted = [
         OpenCodeStreamReady(),
-        OpenCodeToolUpdate("s", "p1", "m", "tool", "c1", ToolStateRunning()),
-        OpenCodeToolUpdate("s", "p1", "m", "tool", "c1", ToolStateCompleted()),
-        OpenCodeSessionIdle("s"),
+        OpenCodeToolUpdate("ses", "p1", "m", "tool", "c1", ToolStateRunning()),
+        OpenCodeToolUpdate("ses", "p1", "m", "tool", "c1", ToolStateCompleted()),
+        OpenCodeSessionIdle("ses"),
     ]
 
     async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:
@@ -1289,10 +1343,10 @@ async def test_step_budget_disabled_never_aborts() -> None:
     scripted = [
         OpenCodeStreamReady(),
         *[
-            OpenCodeToolUpdate("s", f"p{i}", "m", "tool", f"c{i}", ToolStateRunning())
+            OpenCodeToolUpdate("ses", f"p{i}", "m", "tool", f"c{i}", ToolStateRunning())
             for i in range(10)
         ],
-        OpenCodeSessionIdle("s"),
+        OpenCodeSessionIdle("ses"),
     ]
 
     async def fake_consume(_client: Any, _resp: Any, queue: asyncio.Queue) -> None:

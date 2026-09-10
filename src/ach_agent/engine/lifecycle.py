@@ -719,8 +719,6 @@ async def consume_sse_after_send(
                         if loop.time() >= stall_deadline:
                             raise EngineError("sse_timeout", "SSE stream stalled for 300s")
                         continue
-                    # A real item arrived — reset the wedged-but-alive backstop.
-                    stall_deadline = loop.time() + _SSE_STALL_S
 
                     if isinstance(item, _SendFailed):
                         raise item.original
@@ -747,6 +745,38 @@ async def consume_sse_after_send(
                         raise item
 
                     event = item
+                    # finding 4: a shared opencode server multiplexes several sessions'
+                    # SSE traffic onto one stream. Session-scoped events must be
+                    # dropped here — before accumulation or terminal handling —
+                    # when they belong to a DIFFERENT session, or one session's
+                    # progress/idle would finish or pollute another's turn. A
+                    # MISSING id (session_id == "", the parser's default when
+                    # opencode omits sessionID) also fails this check, so an
+                    # unscoped idle is never interpreted as the requested
+                    # session ending. Unrelated-session traffic is dropped
+                    # before the reset below, so it never resets this session's
+                    # stall backstop either.
+                    if (
+                        isinstance(
+                            event,
+                            (
+                                OpenCodeUserMessage,
+                                OpenCodeTextUpdate,
+                                OpenCodeToolUpdate,
+                                OpenCodeUsage,
+                                OpenCodeSessionIdle,
+                                OpenCodeSessionError,
+                            ),
+                        )
+                        and event.session_id != session_id
+                    ):
+                        continue
+
+                    # A real item scoped to this session (or one of the transport
+                    # signals already handled above) — reset the wedged-but-alive
+                    # backstop.
+                    stall_deadline = loop.time() + _SSE_STALL_S
+
                     if isinstance(event, OpenCodeUserMessage):
                         user_message_ids.add(event.message_id)
                     elif isinstance(event, OpenCodeTextUpdate):

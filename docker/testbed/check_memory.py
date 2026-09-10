@@ -8,30 +8,42 @@ retain shape, whether the facade's project override actually reaches storage.
     ./bootstrap.sh && uv run python check_memory.py
 
 Reads the endpoint from the host side (127.0.0.1:8000 is in ach-memory's default Host
-allowlist), and the minted user key from ./.env.
+allowlist), and the identity token from ./.env.
+
+ach-memory mints no credentials: identity is delegated. On the compose stack the
+dev-identity sidecar echoes the bearer token back as the user id, so the token IS the
+identity and any name is a person with their own bank. In production the same shape is
+answered by LiteLLM, or the token is a JWT the service verifies offline.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from ach_agent.config.schema import AchMemoryMemory  # noqa: E402
+from ach_agent.config.schema import (  # noqa: E402
+    AchMemoryAuthAch,
+    AchMemoryAuthBearer,
+    AchMemoryMemory,
+)
 from ach_agent.memory.ach_memory import (  # noqa: E402
     call_ach_memory,
     fetch_context,
     prepare_ach_memory,
+    resolve_ach_memory_auth,
     resolve_project,
 )
 from ach_agent.memory.ach_memory_facade import AchMemoryFacade  # noqa: E402
 
 # Two routes, and the second is the one production will use:
 #
-#   direct  (default)  ENDPOINT=http://127.0.0.1:8000/mcp/  + a minted Bearer user key
+#   direct  (default)  ENDPOINT=http://127.0.0.1:8000/mcp/  + a Bearer identity token
 #   via ACH            MEMORY_ENDPOINT=https://api.ackstorm.ai/mcp/ach-memory
 #                      ACH_TOKEN=ek-...   → sent as `x-ach-key`, principal resolved by
 #                      ACH/LiteLLM. No user key, no ./.env needed.
@@ -41,6 +53,11 @@ from ach_agent.memory.ach_memory_facade import AchMemoryFacade  # noqa: E402
 ROOT = os.environ.get("MEMORY_URL", "http://127.0.0.1:8000")
 ENDPOINT = os.environ.get("MEMORY_ENDPOINT", f"{ROOT}/mcp/")
 VIA_ACH = bool(os.environ.get("ACH_TOKEN")) and "MEMORY_ENDPOINT" in os.environ
+# Which header the token rides — the `auth.header` arm. `Authorization` reaches ach-memory's
+# JWT provider, and is also what this compose stack reads because it points its platform
+# provider at `authorization`. Set MEMORY_AUTH_HEADER=x-litellm-api-key to drive the other
+# arm (and restart the api with MEMORY_AUTH_PLATFORM_INCOMING_HEADER to match).
+AUTH_HEADER = os.environ.get("MEMORY_AUTH_HEADER", "Authorization")
 PROJECT = "testbed-memory-probe"  # what resolve_project() derives in the container
 FOREIGN = "someone-else"
 
@@ -73,14 +90,81 @@ def _secret() -> str:
     raise SystemExit("no ACH_SECRET_MEMORY_ACHMEMORY in ./.env — run ./bootstrap.sh")
 
 
+async def _project_status(headers: dict[str, str], project: str) -> object:
+    """`load_context`'s project_status: None (no slug), 'ready', or 'absent'.
+
+    'absent' deliberately collapses "never existed" with "belongs to someone else" — that
+    collapse is what makes the field safe to expose at all, so it is the strongest thing a
+    facade can learn and still not be an existence oracle.
+    """
+    raw = await call_ach_memory(ENDPOINT, headers, "load_context", {"project_slug": project})
+    return json.loads(raw).get("project_status") if raw else None
+
+
 async def main() -> int:
+    # Through resolve_ach_memory_auth, not hand-built: the header a deployment needs is
+    # exactly what the config arm decides, so a check that builds its own would pass while
+    # the harness sent something else.
     if VIA_ACH:
-        headers = {"x-ach-key": os.environ["ACH_TOKEN"]}
+        auth: object = AchMemoryAuthAch(type="ach")
         print(f"route: via ACH — {ENDPOINT}, credential is the ek_ as x-ach-key\n")
     else:
-        headers = {"Authorization": f"Bearer {_secret()}"}
-        print(f"route: direct — {ENDPOINT}, credential is a minted ach-memory user key\n")
+        os.environ["ACH_SECRET_MEMORY_ACHMEMORY"] = _secret()
+        auth = AchMemoryAuthBearer(
+            type="bearer", env="ACH_SECRET_MEMORY_ACHMEMORY", header=AUTH_HEADER
+        )
+        print(f"route: direct — {ENDPOINT}, identity token on {AUTH_HEADER}\n")
+    ok_auth, headers = resolve_ach_memory_auth(auth, os.environ.get("ACH_TOKEN"))
+    check(f"auth resolves to exactly one header ({AUTH_HEADER if not VIA_ACH else 'x-ach-key'})",
+          ok_auth and len(headers) == 1, ", ".join(headers))
+
+    # Before anything else: is this credential accepted ON THIS HEADER? Naming the wrong one
+    # is the whole failure mode `auth.header` exists for, and ach-memory answers it with a
+    # flat refusal that says nothing about which header it was looking at. Everything below
+    # would then fail for a reason none of it is testing, so stop here and say it once.
+    try:
+        await _project_status(headers, PROJECT)
+        check("the credential is accepted on this header", True)
+    except BaseException as exc:
+        check("the credential is accepted on this header", False, " | ".join(_leaves(exc))[:200])
+        print(f"\n{len(failures)} failed")
+        return 1
     facade = AchMemoryFacade(ENDPOINT, headers, PROJECT)
+
+    # 0. COLD START — the acceptance test for the whole backend, and the one check that
+    # must never be made to pass by a setup step. Nothing bootstraps this project: an agent
+    # with an identity nobody has seen, naming a slug nobody has ever named, must end up
+    # with working memory on its own. `retain` is the one place allowed to mint a project;
+    # every read reports an absent one as empty so the agent's FIRST call (always a read,
+    # never a write) does not teach it that memory is broken.
+    #
+    # A fresh identity per run on the direct route, so the per-user hourly project-creation
+    # ceiling (10) is never the reason a rerun fails. Through ACH the principal is the ek_,
+    # so reruns do spend that budget.
+    stamp = f"{int(time.time())}-{os.getpid()}"
+    cold_project = f"testbed-cold-{stamp}"
+    cold_token = f"testbed-cold-{stamp}"
+    cold_headers = headers if VIA_ACH else {
+        AUTH_HEADER: f"Bearer {cold_token}" if AUTH_HEADER.lower() == "authorization" else cold_token
+    }
+
+    check("cold start: an unknown project reads as absent, not as an error",
+          await _project_status(cold_headers, cold_project) == "absent")
+    cold_section = await fetch_context(ENDPOINT, cold_headers, cold_project)
+    check("cold start: the harness still gets a usable ## Memory section",
+          cold_section.startswith("## Memory") and "Unavailable" not in cold_section,
+          cold_section[:70].replace("\n", " "))
+    cold_written = await AchMemoryFacade(ENDPOINT, cold_headers, cold_project)._invoke("retain", {
+        "content": "The testbed provisions nothing: the first retain is what creates the bank.",
+        "memory_type": "fact",
+        "basis": "agent_verified",
+        "trigger": "agent_proactive",
+        "evidence": [{"kind": "artifact_excerpt", "raw": "cold start", "source_ref": "testbed"}],
+    })
+    check("cold start: the first retain is accepted", "unavailable" not in cold_written.lower(),
+          cold_written[:120])
+    check("cold start: the project is ready afterwards, with no manual step",
+          await _project_status(cold_headers, cold_project) == "ready")
 
     # 1. reachability, via the call the boot path actually makes. There is no health probe
     # any more: load_context IS the test, so a dead endpoint degrades exactly like an outage.
@@ -122,14 +206,16 @@ async def main() -> int:
         "scope": "user",
     })
     check("override survives a hostile project_slug", "unavailable" not in stolen.lower(), stolen[:160])
+    # A read against a foreign or absent project no longer raises — it returns the tool's
+    # own empty shape, deliberately identical in both cases so no read is an existence
+    # oracle. So the proof is the ABSENCE of the probe text, not an error code.
     try:
         foreign = await call_ach_memory(ENDPOINT, headers, "recall",
                                         {"scope": "project", "project_slug": FOREIGN, "query": "containment probe"})
-    except BaseException as exc:  # PROJECT_NOT_FOUND is the strongest possible proof
+    except BaseException as exc:
         foreign = " | ".join(_leaves(exc))
     check("nothing landed in the foreign project",
-          "containment probe" not in foreign or "PROJECT_NOT_FOUND" in foreign,
-          "PROJECT_NOT_FOUND" if "PROJECT_NOT_FOUND" in foreign else foreign[:120])
+          "containment probe" not in foreign, foreign[:120].replace("\n", " "))
 
     # 6. recall reads back what retain wrote — bounded, because retain is NOT read-your-writes:
     # the service extracts facts asynchronously, so an immediate recall legitimately misses.

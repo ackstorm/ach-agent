@@ -31,10 +31,19 @@ prompt:
 
 # The whole point of this testbed. `endpoint` is the COMPLETE MCP endpoint, used verbatim —
 # the harness appends nothing, so the trailing slash matters and is yours to get right.
-# `auth.type: bearer` talks to ach-memory DIRECTLY with a minted user key; through ACH's
-# gateway it would instead be `endpoint: https://api.ackstorm.ai/mcp/ach-memory` with
-# `auth: {type: ach}`, which sends the harness's own ek_ as `x-ach-key`. No `project`: the
-# override is deliberately unset so the derived `{namespace}-{name}` path is what gets tested.
+#
+# `auth.type: bearer` talks to ach-memory DIRECTLY. ach-memory mints nothing and resolves a
+# caller through two providers that read different headers, so `auth.header` picks which one
+# — and therefore what the token must be. Default `Authorization` reaches the JWT provider
+# (a JWT), and it is also what this compose stack reads, because it points its platform
+# provider at `authorization` and answers through the dev-identity sidecar: there the token
+# is simply the user id. A deployment behind LiteLLM instead wants
+# `header: x-litellm-api-key` with a key that resolver can name.
+#
+# Through ACH's gateway this block would instead be
+# `endpoint: https://ach.ackstorm.ai/mcp/ach-memory` with `auth: {type: ach}`, which sends
+# the harness's own ek_ as `x-ach-key`. No `project`: the override is deliberately unset so
+# the derived `{namespace}-{name}` path is what gets tested.
 memory:
   type: ach-memory
   achMemory:

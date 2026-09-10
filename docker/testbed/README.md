@@ -10,20 +10,23 @@ Everything else in `docker/` mocks or skips memory.
 |---|---|
 | memory stack | `ach-memory`'s own `docker-compose.yml` (postgres + hindsight + api) — **not owned here** |
 | harness | `docker-compose.yaml` here, built from the repo root, joined to that stack's network |
-| contract | `config.yaml` — the only in-repo config with a populated `memory:` block. Uses `auth.type: bearer` (direct); through ACH's gateway it would be `endpoint: https://api.ackstorm.ai/mcp/ach-memory` + `auth: {type: ach}` |
-| key | `bootstrap.sh` mints an ach-memory user key into `./.env` (gitignored) |
+| contract | `config.yaml` — the only in-repo config with a populated `memory:` block. Uses `auth.type: bearer` (direct); through ACH's gateway it would be `endpoint: https://ach.ackstorm.ai/mcp/ach-memory` + `auth: {type: ach}` |
+| identity | `bootstrap.sh` verifies the stack and writes the agent's identity into `./.env` (gitignored). Nothing is minted — see below |
 
 ## Run it
 
 ```bash
-# 1. memory stack — note the Host allowlist, see "421" below
+# 1. memory stack. The Host allowlist is the one thing you must not omit (see "421" below);
+#    the shipped default covers loopback only, and the harness arrives as `api:8000`.
 cd ../../../ach-memory
-cp .env.example .env       # set MEMORY_MASTER_KEY + MEMORY_MASTER_KEY_HASH (sha256 of it)
-MEMORY_MCP_ALLOWED_HOSTS=127.0.0.1,127.0.0.1:8000,localhost,localhost:8000,api:8000 docker compose up -d --build
+MEMORY_MCP_ALLOWED_HOSTS='127.0.0.1,localhost,127.0.0.1:*,localhost:*,api:8000' \
+HINDSIGHT_LLM_PROVIDER=mock HINDSIGHT_LLM_MODEL=mock-model \
+HINDSIGHT_LLM_BASE_URL=http://127.0.0.1:9 HINDSIGHT_LLM_API_KEY=dummy \
+docker compose up -d --build
 
-# 2. mint the key (verifies the stack, the network and the allowlist first)
+# 2. verify the stack, the network and the allowlist; write ./.env
 cd -
-./bootstrap.sh                 # verifies the stack, mints a key, bootstraps the project
+./bootstrap.sh                 # MEMORY_IDENTITY=<name> to be somebody else
 
 # 3. the checks (no ACH_TOKEN needed — drives the harness code, not a model)
 uv run python check_memory.py
@@ -32,16 +35,35 @@ uv run python check_memory.py
 ACH_TOKEN=ek-... docker compose run --rm agent
 ```
 
-The shipped `.env.example` sets `HINDSIGHT_LLM_PROVIDER=mock`, so no real LLM call is made
-by the memory service itself. The *agent* still needs a real `ACH_TOKEN`.
+`HINDSIGHT_LLM_PROVIDER=mock` means the memory service makes no real LLM call. The *agent*
+still needs a real `ACH_TOKEN`.
+
+## Identity is delegated — there is nothing to mint
+
+ach-memory issues no credentials and stores none. Two providers resolve a caller, and they
+read **different inputs**:
+
+| Provider | Reads | Accepts |
+|---|---|---|
+| JWT | `Authorization: Bearer …` — but only when the token *looks like* a JWT, and that decision is final | a token the configured issuer signed |
+| platform | whatever `MEMORY_AUTH_PLATFORM_INCOMING_HEADER` names (`x-litellm-api-key` in production, `authorization` on this stack) | anything its resolver can name |
+
+On this compose stack the resolver is `deploy/dev-identity/whoami.py`, a sidecar that echoes
+the bearer token back as the user id. **The token IS the identity**: `Bearer alice` is alice,
+`Bearer alice+sre` is alice in the group `sre`, and two names are two people with two banks.
+It authenticates everybody, on purpose, and must never run anywhere real.
+
+That is why `bootstrap.sh` mints nothing: it writes the name you chose into `./.env`.
 
 ## What this catches that unit tests cannot
 
-1. **Boot probe + context.** `/health` answers → no degraded note, and `load_context`'s text
-   arrives as a `## Memory` block in the system prompt.
+0. **Cold start.** An identity nobody has seen, naming a slug nobody has named, ends up with
+   working memory unaided. The one check that must never be made to pass by a setup step.
+1. **Boot context.** There is no probe: `load_context` answering IS reachability, and its
+   text arrives as a `## Memory` block in the system prompt.
 2. **Project derivation.** `POD_NAMESPACE=testbed` + `agent.name: memory-probe` ⇒ everything
-   lands in bank `testbed-memory-probe`. Verify with the master key:
-   `curl -H "Authorization: Bearer $MEMORY_MASTER_KEY" localhost:8000/v1/projects`
+   lands in bank `testbed-memory-probe`. Verify as that identity:
+   `curl -H "Authorization: Bearer $(sed -n 's/^ACH_SECRET_MEMORY_ACHMEMORY=//p' .env)" localhost:8000/v1/projects`
 3. **Containment.** Ask the agent to retain "into project `someone-else`". The facade
    *overrides* rather than fills, so it must still land in `testbed-memory-probe`.
 4. **Tool surface.** The agent sees exactly five memory tools; `create_mental_model`,
@@ -57,7 +79,7 @@ by the memory service itself. The *agent* still needs a real `ACH_TOKEN`.
 | URL | Routes to | Credential | Status |
 |---|---|---|---|
 | `https://ach.ackstorm.ai/mcp/<server-id>` | ACH's MCP gateway → LiteLLM → the server | `x-ach-key: <ek_>` → `auth: {type: ach}` | **works end to end** — validated against production with `ach-memory`: tools execute, `load_context` returns a real payload. Requires the ACH environment's access group (`ach-env-<name>`) to be listed on the LiteLLM MCP server, else every tool returns `"User not allowed to call this tool"` while `initialize` still answers 200 |
-| `https://api.ackstorm.ai/memory/mcp/` | ach-memory direct (HTTPRoute `ach-memory`, PathPrefix `/memory`, stripped) | `Authorization: Bearer <mem_ key>` → `auth: {type: bearer}` | **works** — this is the route in production use |
+| `https://api.ackstorm.ai/memory/mcp/` | ach-memory direct (HTTPRoute `ach-memory`, PathPrefix `/memory`, stripped) | `auth: {type: bearer}` — production reads `x-litellm-api-key` (measured), so `header: x-litellm-api-key` + a LiteLLM key; the default `Authorization` needs the JWT provider, which is off there. The `mem_` keys this row was measured with no longer exist | route works; the credential shape changed under it |
 | `https://api.ackstorm.ai/mcp/<anything>` | **LiteLLM**, via `api.ackstorm.ai`'s catch-all `/` route — never touches ACH | a LiteLLM virtual key (`sk-…`) | rejects an ek_: *"LiteLLM Virtual Key expected. Received=ek-…, expected to start with 'sk-'"* |
 
 The middle row is why `endpoint` is taken verbatim: `/memory/mcp/` is exactly the shape that
@@ -71,35 +93,34 @@ on every call: the agent cannot name another slug, and never reads or writes the
 bank. There is no service-side boundary between agents in one ACH account — the harness is
 the boundary.
 
-**Nothing provisions the project on this route.** `retain`/`load_context` resolve with
-`create=False`, and `POST /v1/bootstrap` is REST, unreachable through the MCP gateway. Until
-ach-memory provisions on first use, an agent reaching memory through ACH gets
-`PROJECT_NOT_FOUND` forever — and fail-open turns that into memory silently never working.
+**Provisioning is ach-memory's job, and it does it.** `retain` is the one place allowed to
+mint an unknown project, and it provisions the calling user's bank at the same time; every
+read tool reports an absent project as its own empty shape rather than an error, so an
+agent's first call — always a read — does not teach it that memory is broken. No bootstrap
+step, on either route. `check_memory.py`'s check 0 is exactly this and must never be made to
+pass by a setup step.
 
 ## Gotchas — all four of these were found by running this, not by reading code
 
-**The project must be bootstrapped, and nothing in the harness does it.** `retain` and
-`load_context` resolve the project with `create=False` (ach-memory `retention.py:59`,
-`read_context.py:113`); only `POST /v1/bootstrap` creates one. Against an un-bootstrapped
-project every memory call returns `PROJECT_NOT_FOUND` — and because the harness is fail-open,
-that surfaces as *memory silently never working*, not as an error. `bootstrap.sh` calls it.
-**Open question for production:** ach-memory intends to make this internal/automatic; until
-it does, someone (the harness at boot, or the operator) has to make that call.
+**A project belongs to whoever first wrote to it.** A second identity naming the same slug
+gets the absent-project empty shape, not a share — indistinguishable from never having
+existed, which is deliberate: no read may be an existence oracle. So the agent's identity
+must be *stable for the life of the agent*. Changing `MEMORY_IDENTITY` orphans the bank.
 
-**A project is owned by the user whose key bootstrapped it.** A second user asking for the
-same slug gets `PROJECT_NOT_FOUND`, not a share. So the agent's ach-memory key must be
-*stable for the life of the agent* — re-minting it orphans the whole bank. `bootstrap.sh`
-therefore reuses the key already in `./.env`; pass `FRESH=1` to deliberately start over.
+**Project creation is metered.** Ten per user per hour (`project_creation_limit`). That is
+the guard that replaced `create=False`, and it is per *user* — `check_memory.py` uses a fresh
+identity per run so a rerun never runs into it. Through ACH the principal is the ek_, so
+reruns there do spend that budget.
 
-**The master key needs the `mem_` prefix.** `keys.KEY_PREFIX` is a total discriminator: a
-key without it is rejected before the hash is ever compared, with
-`"not a mem_ key and no external provider is enabled"` — which reads like a provider
-misconfiguration rather than a malformed key.
+**`recall` and `reflect` take `tags_filter`, not `tags`.** Renamed upstream while `retain`
+kept `tags`. The facade maps the agent-facing `tags` onto the wire name in one place
+(`ach_memory_facade.py`); a rename that slipped through would silently turn a narrowed
+recall into an unfiltered one rather than erroring.
 
 **421 on every MCP call.** The DNS-rebinding guard matches the `Host` header *including the
-port*, and the shipped allowlist has `localhost:8000` but not `127.0.0.1:8000` — so
-`http://127.0.0.1:8000` fails while `http://localhost:8000` works, for the same service.
-`bootstrap.sh` checks the running container's env and refuses to proceed.
+port*, and the shipped allowlist covers loopback only — the harness arrives as `api:8000` and
+is refused. `bootstrap.sh` reads the running container's env and refuses to proceed without
+it.
 
 **There is no health probe, deliberately.** `load_context` is the reachability test: it is the
 call the invocation depends on, it runs at the same point in the sequence, and it cannot lie.

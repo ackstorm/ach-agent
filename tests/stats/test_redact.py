@@ -1,4 +1,13 @@
-from ach_agent.stats.models import redact_task
+from ach_agent.stats.models import redact, redact_task
+
+
+def test_redact_scrubs_both_ach_key_prefixes():
+    """finding 11: real ACH keys use `ek-` (dash); `ek_` (underscore) is legacy.
+    Both must be scrubbed, in the truncated task field and the untruncated
+    tool-error redactor."""
+    for secret in ("ek-synthetic123", "ek_synthetic123"):
+        assert secret not in redact_task(f"reply {secret}")
+        assert secret not in redact(f"Authorization failed: {secret}")
 
 
 def test_redact_truncates_to_80_chars():

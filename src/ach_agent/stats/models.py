@@ -13,13 +13,14 @@ from dataclasses import dataclass
 
 # Truncate + redact the inbound task text before it is persisted to redis.
 #
-# The bearer `ek_` and provider keys must never leave the process in a stored record. We scrub
-# FIRST (so a secret beyond the truncation boundary is still removed), then truncate to a bounded
-# length for the recent-sessions table. Keep the scrub patterns aligned with the structlog `ek_`
-# redaction processor (grep: `rg -n 'ek_' src/ach_agent | rg -i 'redact|scrub|processor'`).
+# The bearer `ek-`/`ek_` and provider keys must never leave the process in a stored record. We
+# scrub FIRST (so a secret beyond the truncation boundary is still removed), then truncate to a
+# bounded length for the recent-sessions table. Keep the scrub pattern aligned with the structlog
+# `ek[-_]` redaction processor (grep: `rg -n 'ek\[-_\]' src/ach_agent`).
 _MAX = 80
-# ek_… bearer, sk-… provider keys, generic long token after "bearer".
-_SECRET = re.compile(r"(ek_[A-Za-z0-9_\-]+|sk-[A-Za-z0-9_\-]+)")
+# ek-/ek_… bearer (real ACH keys use `ek-`; `ek_` is legacy), sk-… provider keys, generic long
+# token after "bearer".
+_SECRET = re.compile(r"(ek[-_][A-Za-z0-9_\-]+|sk-[A-Za-z0-9_\-]+)")
 
 
 def redact(text: str) -> str:

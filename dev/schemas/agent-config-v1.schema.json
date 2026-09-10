@@ -135,7 +135,13 @@
           "title": "Auth"
         },
         "endpoint": {
+          "default": "",
           "title": "Endpoint",
+          "type": "string"
+        },
+        "mcpServerId": {
+          "default": "",
+          "title": "Mcpserverid",
           "type": "string"
         },
         "project": {
@@ -144,9 +150,6 @@
           "type": "string"
         }
       },
-      "required": [
-        "endpoint"
-      ],
       "title": "AchMemoryParams",
       "type": "object"
     },

@@ -102,7 +102,10 @@ class AchMemoryFacade:
             ),
         )
         async def memory_recall(query: str, tags: Tags = None) -> str:
-            return await self._invoke(ACH_MEMORY_RECALL, {"query": query, "tags": tags})
+            # `tags_filter` on the wire, `tags` to the agent: ach-memory renamed recall's
+            # parameter (and added tags_filter_mode beside it) while retain kept `tags`.
+            # Exposing that split would make the agent's two calls disagree for no reason.
+            return await self._invoke(ACH_MEMORY_RECALL, {"query": query, "tags_filter": tags})
 
         @self._mcp.tool(
             name="memory_reflect",

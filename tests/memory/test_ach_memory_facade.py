@@ -128,3 +128,21 @@ async def test_start_returns_a_loopback_url_and_stop_tears_down() -> None:
     with socket.create_connection(("127.0.0.1", port), timeout=2):
         pass  # connect succeeds → listening
     await f.stop()
+
+
+@pytest.mark.asyncio
+async def test_recall_sends_tags_as_the_service_names_them(monkeypatch) -> None:
+    """ach-memory renamed recall's tag parameter to `tags_filter` (retain kept `tags`).
+    The agent sees one name; the split lives here, so a rename upstream cannot silently
+    turn a narrowed recall into an unfiltered one."""
+    seen: dict[str, object] = {}
+
+    async def fake_call(endpoint, secret, tool, args):
+        seen.update({"tool": tool, **args})
+        return "RESULT"
+
+    monkeypatch.setattr("ach_agent.memory.ach_memory_facade.call_ach_memory", fake_call)
+    await _facade()._mcp.call_tool("memory_recall", {"query": "q", "tags": ["repo:a/b"]})
+
+    assert seen["tags_filter"] == ["repo:a/b"]
+    assert "tags" not in seen

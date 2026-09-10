@@ -271,9 +271,7 @@ class _A2AHandler:
 
     async def handle(self, event: MessageEvent) -> Any:
         task_id = str(event.payload["task_id"])
-        event.delivery_context["on_complete"] = lambda _session_key, text: self._fn(
-            task_id, text
-        )
+        event.delivery_context["on_complete"] = lambda _session_key, text: self._fn(task_id, text)
         event.delivery_context["on_fail"] = lambda _session_key, reason: self._fn_fail(
             task_id, reason
         )

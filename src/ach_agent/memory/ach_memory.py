@@ -18,11 +18,18 @@ ach-memory only through the loopback facade (CLAUDE.md, THE INVARIANT).
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
 import structlog
 
 from ach_agent import identity
-from ach_agent.config.schema import AchMemoryAuth, AchMemoryMemory, SecretSource
+from ach_agent.config.schema import (
+    AchMemoryAuth,
+    AchMemoryMemory,
+    AchMemoryParams,
+    SecretSource,
+)
+from ach_agent.engine.hydrate import McpServer
 from ach_agent.engine.mcp_session import mcp_session
 from ach_agent.memory.common import inc_memory_degraded, resolve_memory_secret
 
@@ -88,6 +95,34 @@ def resolve_project(params: object, agent_name: str) -> str:
         return normalize_slug(override)
     namespace = os.environ.get(NAMESPACE_ENV, "").strip()
     return normalize_slug(f"{namespace}-{agent_name}" if namespace else agent_name)
+
+
+def resolve_endpoint(params: AchMemoryParams, mcp_servers: Sequence[McpServer]) -> str:
+    """The ach-memory MCP endpoint: the explicit one, else the hydrated server's. '' if absent.
+
+    `mcpServerId` names a server ACH granted this agent, so the address comes from the same
+    manifest that granted it and cannot drift from it. '' means the operator named a server
+    this environment does not hydrate — memory then degrades (fail-open, D-02), because a
+    backend that is not in the manifest is not reachable and guessing a URL for it would be.
+    """
+    if params.endpoint:
+        return params.endpoint
+    for server in mcp_servers:
+        if server.id == params.mcp_server_id:
+            return server.endpoint
+    return ""
+
+
+def excluded_mcp_server(memory: object) -> str:
+    """The MCP server id the facade fronts — the one that must NOT also be proxied. '' if none.
+
+    A pure function of config, deliberately: main() applies it BEFORE resolving auth or the
+    endpoint, so the exclusion holds even when the facade never starts. A memory degrade means
+    no memory, never raw ach-memory with the ek_ attached.
+    """
+    if isinstance(memory, AchMemoryMemory):
+        return memory.ach_memory.mcp_server_id
+    return ""
 
 
 def resolve_ach_memory_auth(auth: AchMemoryAuth | None, ek: str | None) -> tuple[bool, Headers]:

@@ -182,11 +182,34 @@ mismatch.
     // Params live NESTED under memory.<type>.*.
     "type": "ach-memory",                   // ach-memory | codemem  (future: mem0, …)
     "achMemory": {
-      "endpoint": "http://ach-memory.ach.svc:8000/mcp/", // The COMPLETE MCP endpoint, used
-                                            //   VERBATIM — the harness appends nothing, not
-                                            //   "/mcp" and not a trailing slash. Behind ACH's
-                                            //   gateway this is e.g.
+      "endpoint": "http://ach-memory.ach.svc:8000/mcp/", // WHERE ach-memory is. EXACTLY ONE of
+                                            //   `endpoint` or `mcpServerId` — neither or both is
+                                            //   a hard config error.
+                                            //   The COMPLETE MCP endpoint, used VERBATIM — the
+                                            //   harness appends nothing, not "/mcp" and not a
+                                            //   trailing slash. Behind ACH's gateway this is e.g.
                                             //   "https://api.ackstorm.ai/mcp/ach-memory".
+      "mcpServerId": "ach-memory",          // ALTERNATIVE to `endpoint`: the hydrated
+                                            //   runtime.mcpServers[].id serving ach-memory. The
+                                            //   endpoint is read from the manifest, so it cannot
+                                            //   drift from the one ACH granted.
+                                            //   IT ALSO EXCLUDES THAT SERVER FROM THE MCP PROXY.
+                                            //   That is the point: with `endpoint`, an environment
+                                            //   that ALSO grants ach-memory gives the agent the
+                                            //   same service by two paths — the facade, which pins
+                                            //   scope and injects project_slug beneath it, and the
+                                            //   proxied server, where project_slug is an ordinary
+                                            //   argument and the ek_ is attached. Naming the id is
+                                            //   what lets the harness close the second path.
+                                            //   The exclusion is derived from CONFIG ALONE and
+                                            //   applied BEFORE auth or the endpoint resolve, so a
+                                            //   degraded memory leaves NOTHING reachable rather
+                                            //   than the raw unscoped surface.
+                                            //   Not hydrated in this environment → no memory
+                                            //   (fail-open §6.5), never a guessed URL.
+                                            //   With NO `memory` block at all, a hydrated
+                                            //   ach-memory is proxied like any other granted
+                                            //   server: exclude it iff the harness fronts it.
       "auth": { "type": "bearer",           // OPTIONAL (omit for internal/no-auth URL).
                 "env": "ACH_SECRET_MEMORY_ACH_MEMORY" },
                                             //   TWO ARMS, two different credentials:

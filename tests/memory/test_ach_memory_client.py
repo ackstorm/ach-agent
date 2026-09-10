@@ -6,9 +6,11 @@ from __future__ import annotations
 import json
 
 import pytest
+from pydantic import ValidationError
 
 import ach_agent.memory.ach_memory as am
 from ach_agent.config.schema import AchMemoryMemory, AchMemoryParams
+from ach_agent.engine.hydrate import McpServer
 
 
 def _cfg(**kw: object) -> AchMemoryMemory:
@@ -269,3 +271,52 @@ async def test_every_call_carries_the_credential_and_an_identity(monkeypatch) ->
     headers = seen["headers"]
     assert headers["x-ach-key"] == "ek_x"
     assert "x-ach-agent" in headers and "x-ach-environment" in headers
+
+
+# ---------------------------------------------------------------------------
+# resolve_endpoint / excluded_mcp_server — one service, ONE path
+# ---------------------------------------------------------------------------
+
+
+def test_endpoint_comes_from_the_hydrated_server_when_named_by_id() -> None:
+    """`mcpServerId` reads the address out of the same manifest that granted the server, so
+    the facade cannot end up pointed somewhere ACH never handed this agent."""
+    servers = [
+        McpServer(id="gitlab", endpoint="https://api.ackstorm.ai/mcp/gitlab"),
+        McpServer(id="ach-memory", endpoint="https://api.ackstorm.ai/mcp/ach-memory"),
+    ]
+    params = AchMemoryParams.model_validate({"mcpServerId": "ach-memory"})
+    assert am.resolve_endpoint(params, servers) == "https://api.ackstorm.ai/mcp/ach-memory"
+
+
+def test_an_unhydrated_server_id_yields_no_endpoint() -> None:
+    """Absent from the manifest means not reachable. '' degrades memory (fail-open, D-02)
+    rather than guessing a URL for a backend this environment did not grant."""
+    params = AchMemoryParams.model_validate({"mcpServerId": "ach-memory"})
+    assert am.resolve_endpoint(params, [McpServer(id="gitlab", endpoint="https://g")]) == ""
+
+
+def test_endpoint_and_mcp_server_id_are_mutually_exclusive() -> None:
+    """Two sources of truth for one address: the facade could front the URL while the
+    exclusion aimed at a different server, leaving exactly the hole mcpServerId closes."""
+    with pytest.raises(ValidationError):
+        AchMemoryParams.model_validate({"endpoint": "http://m", "mcpServerId": "ach-memory"})
+    with pytest.raises(ValidationError):
+        AchMemoryParams.model_validate({})
+
+
+def test_the_fronted_server_is_excluded_regardless_of_auth_or_endpoint() -> None:
+    """THE point of the field. main() applies this BEFORE resolving auth or the endpoint, so
+    a facade that never starts still removes the raw server: a memory degrade must mean no
+    memory, never ach-memory's full unscoped surface with the ek_ attached."""
+    cfg = AchMemoryMemory.model_validate(
+        {"type": "ach-memory", "achMemory": {"mcpServerId": "ach-memory"}}
+    )
+    assert am.excluded_mcp_server(cfg) == "ach-memory"
+
+
+def test_an_explicit_endpoint_excludes_nothing() -> None:
+    """No id, nothing to exclude — and with no `memory` block at all, a hydrated ach-memory is
+    proxied like any other server the operator granted. Exclude it iff we front it."""
+    assert am.excluded_mcp_server(_cfg()) == ""
+    assert am.excluded_mcp_server(None) == ""

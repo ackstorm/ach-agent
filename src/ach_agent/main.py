@@ -80,6 +80,7 @@ from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_p
 from ach_agent.engine.metrics import DRAIN_COMPLETED
 from ach_agent.engine.sanitized_env import add_secret_redaction, configure_logging
 from ach_agent.http.app import create_app
+from ach_agent.memory.ach_memory import excluded_mcp_server
 from ach_agent.memory.ach_memory_facade import AchMemoryFacade
 from ach_agent.router import Router
 from ach_agent.security.preflight import run_preflight
@@ -479,24 +480,48 @@ async def main(
         )
         mcp_proxy = McpProxy()
         _exclude_servers = set(_exclude.mcp_servers)
-        mcp_local_urls = await mcp_proxy.start(manifest.mcp_servers, ek, exclude=_exclude_servers)
+        # The server backing memory is fronted by the facade below, so it must NOT also be
+        # proxied raw. One service by two paths is a bypass: the facade pins scope and injects
+        # project_slug beneath the agent, while the proxied copy takes project_slug as an
+        # ordinary argument and carries the ek_. Derived from config alone and applied BEFORE
+        # the facade is built — if auth or the endpoint fails to resolve, memory degrades to
+        # nothing, and a degrade must never leave MORE reachable than the working path.
+        _memory_server_id = excluded_mcp_server(cfg.memory)
+        _proxy_exclude = set(_exclude_servers)
+        if _memory_server_id:
+            _proxy_exclude.add(_memory_server_id)
+            log.info(
+                "memory: mcp server fronted by the facade, not proxied", mcp_id=_memory_server_id
+            )
+        mcp_local_urls = await mcp_proxy.start(manifest.mcp_servers, ek, exclude=_proxy_exclude)
         if _exclude_servers:
             log.info("filter: mcp servers excluded", excluded=sorted(_exclude_servers))
         # Start the memory facade beside the proxies. The agent points at THIS url, never at
         # ach-memory, and never sees the user key or the project. One bank per agent — the
         # project slug is derived from THIS agent's identity, not from any event's payload.
         if isinstance(cfg.memory, AchMemoryMemory):
-            from ach_agent.memory.ach_memory import resolve_ach_memory_auth, resolve_project
+            from ach_agent.memory.ach_memory import (
+                resolve_ach_memory_auth,
+                resolve_endpoint,
+                resolve_project,
+            )
 
             _ok, memory_auth_headers = resolve_ach_memory_auth(cfg.memory.ach_memory.auth, ek)
-            if _ok:
+            _memory_endpoint = resolve_endpoint(cfg.memory.ach_memory, manifest.mcp_servers)
+            if not _memory_endpoint:
+                log.warning(
+                    "memory: mcpServerId absent from the hydrated manifest — facade not "
+                    "started; running without memory",
+                    mcp_id=_memory_server_id,
+                )
+            elif not _ok:
+                log.warning("memory: auth unresolved — facade not started; running without memory")
+            else:
                 memory_project = resolve_project(cfg.memory.ach_memory, cfg.agent.name)
                 memory_facade = AchMemoryFacade(
-                    cfg.memory.ach_memory.endpoint, memory_auth_headers, memory_project
+                    _memory_endpoint, memory_auth_headers, memory_project
                 )
                 memory_facade_url = await memory_facade.start()
-            else:
-                log.warning("memory: auth unresolved — facade not started; running without memory")
         # Start the repo-checkout facade beside the proxies (mcpServers type=repoCheckout).
         # It fronts gitlab-mcp's archive resource with the ek_ (x-ach-key), so the agent gets a
         # local checkout without ever seeing the ek_ or the raw endpoint.

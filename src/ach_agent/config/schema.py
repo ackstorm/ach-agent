@@ -344,11 +344,21 @@ class AchMemoryParams(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    # The COMPLETE MCP endpoint, used verbatim — the harness appends nothing, not `/mcp`,
-    # not a trailing slash. Whether the service lives at a root (`https://memory.internal/mcp/`)
-    # or behind ACH's gateway (`https://api.ackstorm.ai/mcp/ach-memory`) is the operator's
-    # call, and appending a path here is how a client ends up POSTing to `/mcp/mcp/`.
-    endpoint: str
+    # WHERE ach-memory is, named one of two ways — exactly one of them, enforced below.
+    #
+    # `endpoint`: the COMPLETE MCP endpoint, used verbatim — the harness appends nothing, not
+    # `/mcp`, not a trailing slash. Whether the service lives at a root
+    # (`https://memory.internal/mcp/`) or behind ACH's gateway
+    # (`https://api.ackstorm.ai/mcp/ach-memory`) is the operator's call, and appending a path
+    # here is how a client ends up POSTing to `/mcp/mcp/`.
+    endpoint: str = ""
+    # `mcpServerId`: the hydrated runtime.mcpServers[].id that serves ach-memory. The endpoint
+    # is read from the manifest, so it cannot drift from the one ACH actually granted — and,
+    # because the harness now knows WHICH server backs memory, that server is dropped from the
+    # MCP proxy (main.py). Without that, the agent reaches one service by two paths: the
+    # facade, which pins scope and project_slug, and the proxy, where project_slug is an
+    # ordinary argument the agent sets to whatever it likes.
+    mcp_server_id: str = Field(default="", alias="mcpServerId")
     # How to authenticate — see the two arms. Omitted → no auth header at all (an internal
     # URL that requires none).
     auth: AchMemoryAuth | None = None
@@ -360,6 +370,14 @@ class AchMemoryParams(BaseModel):
     # which bank the agent reads and writes. The agent differentiates repositories with tags
     # INSIDE its own bank, never by switching banks.
     project: str = ""
+
+    @model_validator(mode="after")
+    def _one_location(self) -> AchMemoryParams:
+        # Both would be two sources of truth for one address: the facade could front the URL
+        # while the exclusion aimed at a different server, leaving the hole this field closes.
+        if bool(self.endpoint) == bool(self.mcp_server_id):
+            raise ValueError("memory.achMemory needs exactly one of `endpoint` or `mcpServerId`")
+        return self
 
     @model_validator(mode="after")
     def _project_static(self) -> AchMemoryParams:

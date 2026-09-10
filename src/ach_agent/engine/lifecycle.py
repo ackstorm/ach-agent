@@ -467,7 +467,14 @@ async def launch(
 
     base_url = f"http://127.0.0.1:{port}"
     client = OpenCodeClient(base_url)
-    await client.open()
+    try:
+        await client.open()
+    except BaseException:
+        # finding 8: the subprocess is already spawned at this point but this
+        # function hasn't returned a ManagedServer yet — the caller has no handle
+        # to clean it up, so ownership of this failure is here.
+        await server.stop()
+        raise
     server._client = client
 
     log.info("opencode subprocess started", pid=proc.pid, port=port)

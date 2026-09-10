@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import asyncio
 import inspect
+from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -116,6 +118,73 @@ async def test_session_is_correlated_before_the_prompt_is_sent() -> None:
         "x-litellm-session-id": "ses_8a1b2c3d",
     }
     trace.reset_for_testing()
+
+
+async def test_launch_cancellation_releases_subprocess_client_and_port(
+    tmp_path: Path,
+) -> None:
+    """finding 8: cancelling driver.launch() while poll_ready is still blocked (readiness
+    never confirms) must stop the already-spawned subprocess, close its HTTP client, and
+    release the allocated port — launch() must not leak all three by only ever cleaning
+    up on the happy path."""
+    import ach_agent.engine.lifecycle as oc_lifecycle
+    from ach_agent.engine.lifecycle import EngineConfig
+    from ach_agent.engine.opencode.client import _reserved_ports
+
+    fake_binary = tmp_path / "opencode"
+    fake_binary.write_text("#!/bin/sh\nsleep 30\n")
+    fake_binary.chmod(0o755)
+
+    config = EngineConfig()
+    config.binary_path = str(fake_binary)
+    config.work_dir = str(tmp_path)
+    config.home = str(tmp_path)
+
+    # Spy on the real oc.launch so the test can see the ManagedServer + port it
+    # allocated, without changing driver.launch()'s own resolution of `oc`.
+    captured: dict[str, Any] = {}
+    real_launch = oc_lifecycle.launch
+
+    async def spy_launch(port: int, home: Path, cfg: EngineConfig, session_key: str) -> Any:
+        server = await real_launch(port, home, cfg, session_key)
+        captured["server"] = server
+        captured["port"] = port
+        return server
+
+    driver = OpencodeDriver()
+    try:
+        with (
+            patch.object(oc_lifecycle, "launch", side_effect=spy_launch),
+            patch(
+                "ach_agent.engine.client.OpenCodeClient.check_health",
+                new_callable=AsyncMock,
+                return_value=False,  # readiness never confirms — poll_ready stays blocked
+            ),
+        ):
+            task = asyncio.create_task(driver.launch(config, "k-cancel"))
+            for _ in range(100):
+                if "server" in captured:
+                    break
+                await asyncio.sleep(0.05)
+            else:
+                pytest.fail("driver.launch() never reached poll_ready")
+
+            assert not task.done(), "poll_ready must still be blocked (health never True)"
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=5.0)
+
+        server = captured["server"]
+        port = captured["port"]
+        assert not server.is_alive(), "subprocess must have exited"
+        assert server._client._session is None, "HTTP client must be closed"
+        assert port not in _reserved_ports, "allocated port must be released"
+    finally:
+        # Belt-and-braces: if the assertions above ever fail, don't leak the real
+        # subprocess/port into later tests.
+        server = captured.get("server")
+        if server is not None and server.is_alive():
+            await server.stop()
 
 
 def test_signature_canonical_matches_protocol() -> None:

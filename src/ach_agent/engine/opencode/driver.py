@@ -33,14 +33,27 @@ class OpencodeDriver:
 
     async def launch(self, cfg: EngineConfig, session_key: str) -> ManagedServer:
         import ach_agent.engine.lifecycle as oc
-        from ach_agent.engine.opencode.client import find_free_port
+        from ach_agent.engine.opencode.client import find_free_port, release_port
 
         home = Path(cfg.home)
         home.mkdir(parents=True, exist_ok=True)
         port = find_free_port()
-        server = await oc.launch(port, home, cfg, session_key)
-        await oc.poll_ready(server, cfg.startup_timeout_seconds)
-        return server
+        server: ManagedServer | None = None
+        try:
+            server = await oc.launch(port, home, cfg, session_key)
+            await oc.poll_ready(server, cfg.startup_timeout_seconds)
+            return server
+        except BaseException:
+            # finding 8: a cancellation (or poll_ready's own startup-deadline
+            # sys.exit(1), also a BaseException) while this call was in flight must
+            # not leak the subprocess/HTTP client/reserved port. server.stop()
+            # covers all three once oc.launch() returned one; before that, only the
+            # port was ever reserved.
+            if server is not None:
+                await server.stop()
+            else:
+                release_port(port)
+            raise
 
     async def health(self, server: ManagedServer) -> bool:
         client = server._client

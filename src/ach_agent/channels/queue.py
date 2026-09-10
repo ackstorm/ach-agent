@@ -6,6 +6,13 @@ Locked decisions:
     The consumer group gives us at-least-once delivery + message-id idempotency:
     each message id is unique and stable across redeliveries, so it is the
     natural idempotency_key (CONTRACT §6.1) and feeds the router's dedup directly.
+  - Recovery (finding 6): this harness runs one replica, always as the same
+    stable consumer identity ("c1") — never renamed, never claiming another
+    consumer's entries (no XCLAIM/XAUTOCLAIM). A crash/restart between
+    XREADGROUP and XACK leaves a message in "c1"'s own pending-entries list
+    (PEL); _consume_pending_once() re-reads that PEL (an explicit id cursor,
+    not ">") so it is revisited on the next start, interleaved one batch at a
+    time with new-message reads so neither can starve the other.
   - ackMode:onComplete — XACK is called ONLY AFTER handler.handle() returns
     (ACCEPTED or DUPLICATE = processed). If handle() raises, the message is NOT
     acked and stays pending for redelivery. On FULL_QUEUE (async_no_retry source
@@ -82,6 +89,19 @@ class QueueConsumer:
         self._stream: str = channel_cfg.queue.key
         self._group: str = f"ach-{channel_cfg.name}"
 
+        # finding 6: recovery cursor over THIS consumer's ("c1", the one stable
+        # identity this harness ever uses) own pending-entries list (PEL) — entries
+        # already delivered to us but never acked (a crash/restart before the
+        # ack). "0" means "from the start of my PEL". Reset to "0" once a sweep
+        # catches up to empty, so a later-stuck entry is still found by the next
+        # sweep rather than left behind a cursor that only ever advances.
+        self._pending_cursor: str = "0"
+        # Event-loop-monotonic deadline for the next full pending sweep once one
+        # has caught up to empty — bounds poison-message retries even under
+        # constant new traffic (a fresh "0" sweep every iteration would otherwise
+        # busy-loop reading an empty PEL).
+        self._next_pending_sweep: float = 0.0
+
     async def start(self) -> None:
         """Connect (if needed), ensure the consumer group exists, start the loop."""
         if self._client is None:
@@ -138,21 +158,31 @@ class QueueConsumer:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
-                # Never let a single iteration error kill the loop; log + continue.
-                # Unacked messages stay pending and will be redelivered.
+                # Never let a single iteration error kill the loop; log + continue,
+                # but bounded — a redis outage must not spin this into a hot retry
+                # loop. Unacked messages stay pending and will be redelivered.
                 log.warning(
                     "queue: consume iteration error — continuing",
                     channel=self._cfg.name,
                     error=str(exc),
                 )
+                await asyncio.sleep(_BLOCK_MS / 1000)
 
     async def _consume_once(self) -> None:
-        """One XREADGROUP → dispatch → XACK cycle for the channel's stream.
+        """One recovery pass + one new-message pass (finding 6).
 
-        Reads up to _READ_COUNT new messages (">"), dispatches each through the
-        handler, and acks per onComplete semantics. Exposed for deterministic
-        testing — _run() loops over it.
+        Single-consumer recovery: this harness always reads/acks as the one
+        stable identity "c1" (no consumer renaming, no XCLAIM/XAUTOCLAIM of
+        other consumers' entries — see module docstring). A crash or restart
+        between XREADGROUP and XACK leaves a message in "c1"'s own
+        pending-entries list (PEL); the OLD code only ever read new (">")
+        messages, so a pending entry was never revisited. Each call here does
+        AT MOST one pending-recovery batch, then one new-message batch, so a
+        large backlog of either kind can't starve the other. Exposed for
+        deterministic testing — _run() loops over it.
         """
+        await self._consume_pending_once()
+
         response = await self._client.xreadgroup(
             groupname=self._group,
             consumername=_CONSUMER_NAME,
@@ -166,6 +196,59 @@ class QueueConsumer:
         for _stream_key, entries in response:
             for message_id, fields in entries:
                 await self._handle_message(message_id, fields)
+
+    async def _consume_pending_once(self) -> None:
+        """Read up to _READ_COUNT of "c1"'s own already-delivered-but-unacked
+        entries, starting at the current pending cursor. Never BLOCKs — a
+        pending (non-">") XREADGROUP read never blocks in redis regardless.
+
+        Advances the cursor past every returned id, including ones whose
+        stream entry no longer exists (deleted/trimmed while still pending —
+        redis returns a null/empty payload for those): there is nothing to
+        process, so they are acked directly without invoking the engine,
+        clearing the stale pending id rather than looping on it forever.
+
+        On reaching the end of the current PEL (an empty read), the cursor
+        resets to "0" and the next sweep is deferred by _BLOCK_MS/1000 — this
+        bounds a poison entry's retry rate to the same cadence as new-message
+        polling instead of a fresh "0" sweep re-scanning an empty PEL on
+        every single iteration.
+        """
+        loop = asyncio.get_running_loop()
+        if loop.time() < self._next_pending_sweep:
+            return
+
+        response = await self._client.xreadgroup(
+            groupname=self._group,
+            consumername=_CONSUMER_NAME,
+            streams={self._stream: self._pending_cursor},
+            count=_READ_COUNT,
+        )
+        if not response:
+            self._pending_cursor = "0"
+            self._next_pending_sweep = loop.time() + _BLOCK_MS / 1000
+            return
+
+        for _stream_key, entries in response:
+            for message_id, fields in entries:
+                self._pending_cursor = str(message_id)
+                if not fields:
+                    await self._ack_stale_pending(message_id)
+                    continue
+                await self._handle_message(message_id, fields)
+
+    async def _ack_stale_pending(self, message_id: Any) -> None:
+        """Ack a pending id whose stream entry was deleted/trimmed — nothing to
+        process, so this clears it without dispatching to the handler."""
+        try:
+            await self._client.xack(self._stream, self._group, message_id)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "queue: xack failed for a deleted pending entry — retried on next sweep",
+                channel=self._cfg.name,
+                message_id=str(message_id),
+                error=str(exc),
+            )
 
     async def _handle_message(self, message_id: Any, fields: Any) -> None:
         """Dispatch one stream message; ack per onComplete semantics.

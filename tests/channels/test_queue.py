@@ -48,18 +48,31 @@ class FakeHandler:
 
 
 class FakeRedis:
-    """Minimal in-memory fake of redis.asyncio client for stream consumption.
+    """In-memory fake of redis.asyncio's consumer-group stream API.
 
-    Exposes async xgroup_create, xreadgroup, xack. xreadgroup returns the queued
-    messages once, then empty lists thereafter (so the loop would block/idle).
+    Models exactly what QueueConsumer relies on: an ordered stream history
+    (id, fields — fields=None/{} models a deleted/trimmed entry), one consumer
+    group with a single implicit consumer (this harness always reads/acks as
+    "c1"), and that consumer's pending-entries list (PEL) — entries move into
+    the PEL on delivery via ">" (new) OR when re-read via an explicit id
+    cursor (recovery), and out of it via xack. A fresh QueueConsumer built
+    against the SAME FakeRedis instance models a restart: stream history and
+    the PEL persist across it, exactly like a real redis server would.
     """
 
-    def __init__(self, messages: list[tuple[str, dict[str, str]]], order: list[str]) -> None:
-        self._messages = messages
+    def __init__(self, messages: list[tuple[str, dict[str, str] | None]], order: list[str]) -> None:
+        self._stream: list[tuple[str, dict[str, str] | None]] = list(messages)
         self._order = order
+        self._next_new_idx = 0
+        # id -> fields, insertion-ordered (== id order, since ids only ever
+        # arrive in increasing order in these tests) — this consumer's PEL.
+        self._pending: dict[str, dict[str, str] | None] = {}
         self.groups_created: list[tuple[str, str]] = []
         self.acked: list[str] = []
-        self._drained = False
+
+    def add_message(self, message_id: str, fields: dict[str, str] | None) -> None:
+        """Append a new entry to the stream (simulates traffic arriving later)."""
+        self._stream.append((message_id, fields))
 
     async def xgroup_create(
         self, name: str, groupname: str, id: str = "0", mkstream: bool = False
@@ -75,14 +88,26 @@ class FakeRedis:
         count: int | None = None,
         block: int | None = None,
     ) -> list[Any]:
-        if self._drained:
-            return []
-        self._drained = True
         stream = next(iter(streams))
-        return [(stream, list(self._messages))]
+        cursor = streams[stream]
+        limit = count if count is not None else len(self._stream) + len(self._pending)
+
+        if cursor == ">":
+            batch = self._stream[self._next_new_idx : self._next_new_idx + limit]
+            self._next_new_idx += len(batch)
+            for message_id, fields in batch:
+                self._pending[message_id] = fields
+            return [(stream, batch)] if batch else []
+
+        # Recovery read: entries in MY OWN pel with id > cursor, in id order.
+        ids = [mid for mid in self._pending if mid > cursor][:limit]
+        batch = [(mid, self._pending[mid]) for mid in ids]
+        return [(stream, batch)] if batch else []
 
     async def xack(self, name: str, groupname: str, *ids: str) -> int:
         self._order.append("xack")
+        for message_id in ids:
+            self._pending.pop(message_id, None)
         self.acked.extend(ids)
         return len(ids)
 
@@ -193,6 +218,47 @@ async def test_queue_full_queue_acks_and_drops() -> None:
     assert fake_redis.acked == ["1700000000000-0"], (
         "FULL_QUEUE on async_no_retry must ack+drop (cron parity)"
     )
+
+
+@pytest.mark.asyncio
+async def test_queue_recovers_pending_entry_after_restart() -> None:
+    """finding 6: a message left pending by a failed dispatch (handler raised,
+    never acked) is recovered by the next consumer instance sharing the same
+    redis group/consumer identity — not stuck forever because the old code
+    only ever read new (">") messages. The recovered entry's id is preserved,
+    a new message arriving in the same pass is still processed, and a further
+    pass does not replay anything already acknowledged."""
+    from ach_agent.channels.queue import QueueConsumer
+
+    order: list[str] = []
+    fake_redis = FakeRedis([("1700000000000-0", {"n": "a"})], order)
+    channel_cfg = _make_channel_cfg()
+
+    # First "process": handler raises, so message A is delivered but never acked
+    # — it stays in the consumer's pending-entries list (PEL).
+    failing_handler = FakeHandler(order, raises=True)
+    consumer1 = QueueConsumer(channel_cfg, handler=failing_handler, redis_client=fake_redis)
+    await consumer1._consume_once()
+    assert fake_redis.acked == [], "A must stay pending after the failed dispatch"
+
+    # "Restart": a fresh QueueConsumer against the SAME fake redis (same group +
+    # consumer identity persists there); a new message B arrives meanwhile.
+    fake_redis.add_message("1700000000001-0", {"n": "b"})
+    ok_handler = FakeHandler(order, RouterAdmitResult.ACCEPTED)
+    consumer2 = QueueConsumer(channel_cfg, handler=ok_handler, redis_client=fake_redis)
+    await consumer2._consume_once()
+
+    ids = [e.idempotency_key for e in ok_handler.events]
+    assert "1700000000000-0" in ids, (
+        "the recovered (previously-pending) message must be reprocessed"
+    )
+    assert "1700000000001-0" in ids, "a new message must still be processed in the same pass"
+    assert sorted(fake_redis.acked) == ["1700000000000-0", "1700000000001-0"]
+
+    # A further pass must not replay anything already acknowledged.
+    ok_handler.events.clear()
+    await consumer2._consume_once()
+    assert ok_handler.events == [], "already-acknowledged entries must not be replayed"
 
 
 @pytest.mark.asyncio

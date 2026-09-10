@@ -683,7 +683,7 @@ labeling.</p>
 <tr>
 <td><code>memory</code></td>
 <td></td>
-<td>Fail-open — backend down → run without it. Discriminated on <code>type</code>. <code>codemem</code>: local stdio MCP, <code>dbPath</code> / <code>project</code> both derived by default. <code>ach-memory</code>: <code>endpoint</code> (the <strong>complete</strong> MCP endpoint, used verbatim — the harness appends nothing), <code>auth</code> (<code>{type: ach}</code> → the harness's own ek_ as <code>x-ach-key</code>, for reaching ach-memory through ACH's gateway; <code>{type: bearer, env: …}</code> → an ach-memory <strong>user</strong> key direct, not a bank-wide admin secret; omit for a no-auth internal URL), optional <code>project</code>. Standing context is assembled and budgeted server-side; the harness injects scope and project below the agent, so neither is configurable and neither appears on any exposed tool.</td>
+<td>Fail-open — backend down → run without it. Discriminated on <code>type</code>. <code>codemem</code>: local stdio MCP, <code>dbPath</code> / <code>project</code> both derived by default. <code>ach-memory</code>: <code>endpoint</code> (the <strong>complete</strong> MCP endpoint, used verbatim — the harness appends nothing), <code>auth</code> (<code>{type: ach}</code> → the harness's own ek_ as <code>x-ach-key</code>, for reaching ach-memory through ACH's gateway; <code>{type: bearer, env: …, header: …}</code> → a token sent direct, not a bank-wide admin secret. ach-memory mints no credentials, so what that token must <em>be</em> follows from the header it rides: <code>header: Authorization</code> (the default) reaches the <strong>JWT</strong> provider and needs a JWT its configured issuer signed; <code>header: x-litellm-api-key</code> — or whatever that deployment sets as <code>MEMORY_AUTH_PLATFORM_INCOMING_HEADER</code> — reaches the <strong>platform</strong> provider and needs a key its resolver can name. <code>Bearer</code> is prepended only on <code>Authorization</code>; every other header carries the raw secret. Omitting <code>auth</code> sends no credential, which no current ach-memory accepts), optional <code>project</code>. Standing context is assembled and budgeted server-side; the harness injects scope and project below the agent, so neither is configurable and neither appears on any exposed tool.</td>
 </tr>
 <tr>
 <td>↳ <code>memory.achMemory.project</code></td>
@@ -965,7 +965,7 @@ preventing concurrent reconciliation of the same project.</p>
 <span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ach-memory</span>
 <span class="w">  </span><span class="nt">achMemory</span><span class="p">:</span>
 <span class="w">    </span><span class="c1"># Through ACH's MCP gateway — the credential is the harness ek_, no second secret:</span>
-<span class="w">    </span><span class="c1">#   endpoint: https://api.ackstorm.ai/mcp/ach-memory</span>
+<span class="w">    </span><span class="c1">#   endpoint: https://ach.ackstorm.ai/mcp/ach-memory</span>
 <span class="w">    </span><span class="c1">#   auth: {type: ach}</span>
 <span class="w">    </span><span class="nt">endpoint</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://ach-memory.ach.svc:8000/mcp/</span>
 <span class="w">    </span><span class="nt">auth</span><span class="p">:</span>

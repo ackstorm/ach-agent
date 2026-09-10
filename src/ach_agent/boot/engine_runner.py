@@ -103,7 +103,6 @@ def make_engine_runner(
     stats_sink: StatsSink | None = None,
     tool_sink: StatsSink | None = None,
     memory_facade_url: str | None = None,
-    repo_facade_url: str | None = None,
     a2a_facade_url: str | None = None,
     accountant: CostAccountant | None = None,
     cost_source: str = "engine",
@@ -177,13 +176,8 @@ def make_engine_runner(
             memory_auth_headers,
             memory_endpoint,
         )
-        # The repo-checkout facade (if enabled) is a static localhost MCP server; append it to
-        # every invocation alongside the (dynamic) memory facade — the agent reaches gitlab-mcp's
-        # archive resource ONLY through it (ek injected harness-side).
-        if repo_facade_url:
-            mcp_servers = {**mcp_servers, "repo": repo_facade_url}
         # a2a egress facade (SP1 §6): a static localhost MCP server carried on every invocation,
-        # so the agent can call peer agents. Same wiring as the memory/repo facades.
+        # so the agent can call peer agents. Same wiring as the memory facade.
         if a2a_facade_url:
             mcp_servers = {**mcp_servers, "a2a": a2a_facade_url}
 
@@ -267,9 +261,6 @@ def make_engine_runner(
                 channel_cfg=ch_cfg,
                 agent_name=agent_name,
                 memory_bank=memory_bank,
-                # Advertise checkout_repo only when the facade is actually wired (started),
-                # not merely config-enabled — else we'd hint a tool the agent can't call.
-                repo_checkout_enabled=repo_facade_url is not None,
             )
             full_prompt = f"{base_prompt}\n\n{memory_prompt}" if memory_prompt else base_prompt
             # Free-form channels (--tui console) carry no terminal contract: return

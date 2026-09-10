@@ -34,7 +34,6 @@ import uvicorn
 
 if TYPE_CHECKING:
     from ach_agent.engine.base.driver import EngineDriver
-    from ach_agent.engine.hydrate import McpServer
 
 from ach_agent.boot.engine_runner import make_engine_runner
 from ach_agent.boot.health import HealthState
@@ -63,8 +62,6 @@ from ach_agent.config.schema import (
     LocalMcpServer,
     McpServerConfig,
     RemoteMcpServer,
-    RepoCheckoutParams,
-    RepoCheckoutServer,
 )
 from ach_agent.engine import trace
 from ach_agent.engine.context import fetch_context
@@ -122,42 +119,12 @@ from ach_agent.memory.codemem import resolve_codemem_wiring as resolve_codemem_w
 def collect_passthrough_mcp(
     mcp_servers: dict[str, McpServerConfig],
 ) -> dict[str, dict[str, object]]:
-    """Normalize every local/remote entry to an opencode.json mcp.<name> value.
-
-    repoCheckout entries are skipped — the harness hosts those itself (facade), they are not
-    passed through to opencode.
-    """
+    """Normalize every local/remote entry to an opencode.json mcp.<name> value."""
     out: dict[str, dict[str, object]] = {}
     for name, spec in mcp_servers.items():
         if isinstance(spec, (LocalMcpServer, RemoteMcpServer)):
             out[name] = to_engine_entry(spec)
     return out
-
-
-def find_repo_checkout(
-    mcp_servers: dict[str, McpServerConfig],
-) -> tuple[str, RepoCheckoutParams] | None:
-    """The (name, params) of the repoCheckout entry, or None.
-
-    ponytail: one repoCheckout facade per agent (the only real case). If several are declared,
-    take the first and WARN — supporting N facades is unneeded plumbing until asked.
-    """
-    found: tuple[str, RepoCheckoutParams] | None = None
-    for name, spec in mcp_servers.items():
-        if isinstance(spec, RepoCheckoutServer):
-            if found is not None:
-                log.warning("multiple repoCheckout mcpServers — using first", ignored=name)
-                continue
-            found = (name, spec.repo_checkout)
-    return found
-
-
-def resolve_repo_archive_endpoint(mcp_servers: list[McpServer], server_id: str) -> str | None:
-    """The endpoint of the hydrated McpServer whose id == server_id, or None."""
-    for s in mcp_servers:
-        if s.id == server_id:
-            return s.endpoint
-    return None
 
 
 async def _build_cost_accounting(
@@ -447,12 +414,6 @@ async def main(
     # Outbound credential for ach-memory, resolved ONCE here where the ek_ is in scope. The
     # facade keeps it; engine_runner needs it for the per-invocation load_context.
     memory_auth_headers: dict[str, str] = {}
-    # Harness-hosted repo-checkout facade: exposes `checkout_repo`, reading gitlab-mcp's archive
-    # resource harness-side (ek as x-ach-key, never seen by the agent). None when disabled or the
-    # gitlab endpoint/ek is missing (fail-open, run without the tool). Declared here so shutdown
-    # can stop it even though it is constructed inside the `if ek:` block below.
-    repo_facade: Any = None
-    repo_facade_url: str | None = None
     a2a_facade: Any = None
     a2a_facade_url: str | None = None
     price_table: PriceTable | None = None
@@ -526,27 +487,6 @@ async def main(
                     memory_endpoint, memory_auth_headers, memory_project
                 )
                 memory_facade_url = await memory_facade.start()
-        # Start the repo-checkout facade beside the proxies (mcpServers type=repoCheckout).
-        # It fronts gitlab-mcp's archive resource with the ek_ (x-ach-key), so the agent gets a
-        # local checkout without ever seeing the ek_ or the raw endpoint.
-        _rc = find_repo_checkout(cfg.mcp_servers)
-        if _rc is not None:
-            _rc_name, _rc_params = _rc
-            gl_endpoint = resolve_repo_archive_endpoint(
-                manifest.mcp_servers, _rc_params.source_mcp_server_id
-            )
-            if gl_endpoint:
-                from ach_agent.engine.repo_facade import RepoCheckoutFacade
-
-                repo_facade = RepoCheckoutFacade(
-                    gl_endpoint, ek, _rc_params.tmp_base, _rc_params.ttl_seconds
-                )
-                repo_facade_url = await repo_facade.start()
-            else:
-                log.warning(
-                    "repoCheckout: source mcp server not in manifest — tool not wired",
-                    source_mcp_server_id=_rc_params.source_mcp_server_id,
-                )
         # Model-proxy upstream override (dev/test only — A/B a different model backend,
         # e.g. litellm direct, to isolate forwarder buffering). MODEL-ONLY: hydration + MCP
         # stay on the ACH coords above; only the model proxy's upstream + auth swap. The
@@ -724,7 +664,6 @@ async def main(
         stats_sink=stats_sink,
         tool_sink=tool_sink,
         memory_facade_url=memory_facade_url,
-        repo_facade_url=repo_facade_url,
         a2a_facade_url=a2a_facade_url,
         accountant=accountant,
         cost_source=cfg.cost.source,
@@ -775,10 +714,6 @@ async def main(
                     )
                     if _mem_ok and memory_facade_url:
                         warm_mcp_servers = {"memory": memory_facade_url}
-                # The repo-checkout facade is static (no probe) — include it in the pre-warmed
-                # opencode.json so the console session sees checkout_repo from the first prompt.
-                if repo_facade_url:
-                    warm_mcp_servers = {**warm_mcp_servers, "repo": repo_facade_url}
                 if a2a_facade_url:
                     warm_mcp_servers = {**warm_mcp_servers, "a2a": a2a_facade_url}
                 from ach_agent.channels.tui import _CONSOLE_SESSION_KEY
@@ -850,8 +785,6 @@ async def main(
                 await mcp_proxy.stop()
             if memory_facade is not None:
                 await memory_facade.stop()
-            if repo_facade is not None:
-                await repo_facade.stop()
             if a2a_facade is not None:
                 await a2a_facade.stop()
             if hasattr(dedup_store, "close"):
@@ -1016,8 +949,6 @@ async def main(
             await mcp_proxy.stop()
         if memory_facade is not None:
             await memory_facade.stop()
-        if repo_facade is not None:
-            await repo_facade.stop()
         if a2a_facade is not None:
             await a2a_facade.stop()
         await stats_sink.stop()

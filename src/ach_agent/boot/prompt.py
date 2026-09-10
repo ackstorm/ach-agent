@@ -21,20 +21,11 @@ from ach_agent.templating import build_template_context, render_template
 log = structlog.get_logger(__name__)
 
 
-def checkout_hint(project_id: str | int, head_sha: str) -> str:
-    return (
-        f" You can copy the repo locally for deep analysis: "
-        f"checkout_repo(project={project_id}, ref={head_sha}) — returns a path with the full "
-        f"tree for rg/tests/build (read-only snapshot, no .git)."
-    )
-
-
 def build_engine_prompt(
     event: MessageEvent,
     channel_cfg: ChannelConfig | None = None,
     agent_name: str = "",
     memory_bank: str = "",
-    repo_checkout_enabled: bool = False,
 ) -> str:
     """Build a meaningful engine prompt from a MessageEvent.
 
@@ -97,9 +88,6 @@ def build_engine_prompt(
         parts = [header]
         if note:
             parts.append(str(note))
-        head_sha = dc.get("head_sha", "")
-        if repo_checkout_enabled and head_sha and target_type != "issue":
-            parts.append(checkout_hint(project_id, str(head_sha)))
         return " ".join(parts)
 
     title = obj_attrs.get("title", "")
@@ -116,9 +104,6 @@ def build_engine_prompt(
     if description:
         parts.append(f"Description: {description}")
 
-    head_sha = dc.get("head_sha", "")
-    if repo_checkout_enabled and head_sha and kind != "issue":
-        parts.append(checkout_hint(project_id, str(head_sha)))
     return " ".join(parts)
 
 

@@ -926,52 +926,6 @@
       "title": "RemoteMcpServer",
       "type": "object"
     },
-    "RepoCheckoutParams": {
-      "additionalProperties": false,
-      "description": "Params for the harness-hosted repoCheckout facade (the `checkout_repo` tool).",
-      "properties": {
-        "sourceMcpServerId": {
-          "title": "Sourcemcpserverid",
-          "type": "string"
-        },
-        "tmpBase": {
-          "default": "/tmp/gitlab",
-          "title": "Tmpbase",
-          "type": "string"
-        },
-        "ttlSeconds": {
-          "default": 3600.0,
-          "minimum": 0,
-          "title": "Ttlseconds",
-          "type": "number"
-        }
-      },
-      "required": [
-        "sourceMcpServerId"
-      ],
-      "title": "RepoCheckoutParams",
-      "type": "object"
-    },
-    "RepoCheckoutServer": {
-      "additionalProperties": false,
-      "description": "INTERNAL: the harness HOSTS this MCP (FastMCP facade), injecting the ek_.",
-      "properties": {
-        "repoCheckout": {
-          "$ref": "#/$defs/RepoCheckoutParams"
-        },
-        "type": {
-          "const": "repoCheckout",
-          "title": "Type",
-          "type": "string"
-        }
-      },
-      "required": [
-        "type",
-        "repoCheckout"
-      ],
-      "title": "RepoCheckoutServer",
-      "type": "object"
-    },
     "SecretSource": {
       "additionalProperties": false,
       "description": "Operator contract §2 secret source — env-only (no disk secrets).\n\nenv → the harness reads the value from os.environ[NAME] at use time (hardened default:\n      dumpable=0 hides it from the co-resident agent; the NAME must NOT be in\n      engine.forwardEnv — the harness strips it from the forwarded set + WARNs).",
@@ -1272,15 +1226,11 @@
         "discriminator": {
           "mapping": {
             "local": "#/$defs/LocalMcpServer",
-            "remote": "#/$defs/RemoteMcpServer",
-            "repoCheckout": "#/$defs/RepoCheckoutServer"
+            "remote": "#/$defs/RemoteMcpServer"
           },
           "propertyName": "type"
         },
         "oneOf": [
-          {
-            "$ref": "#/$defs/RepoCheckoutServer"
-          },
           {
             "$ref": "#/$defs/LocalMcpServer"
           },

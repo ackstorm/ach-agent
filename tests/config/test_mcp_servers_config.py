@@ -9,26 +9,9 @@ from ach_agent.config.schema import (
     LocalMcpServer,
     McpServerConfig,
     RemoteMcpServer,
-    RepoCheckoutServer,
 )
 
 _ADAPTER = TypeAdapter(dict[str, McpServerConfig])
-
-
-def test_repo_checkout_parses() -> None:
-    m = _ADAPTER.validate_python(
-        {
-            "repo-checkout": {
-                "type": "repoCheckout",
-                "repoCheckout": {"sourceMcpServerId": "mcp-gitlab-ro"},
-            }
-        }
-    )
-    e = m["repo-checkout"]
-    assert isinstance(e, RepoCheckoutServer)
-    assert e.repo_checkout.source_mcp_server_id == "mcp-gitlab-ro"
-    assert e.repo_checkout.tmp_base == "/tmp/gitlab"
-    assert e.repo_checkout.ttl_seconds == 3600.0
 
 
 def test_local_parses() -> None:
@@ -58,9 +41,14 @@ def test_remote_parses() -> None:
     assert e.headers == {"Authorization": "Bearer ${env:T}"}
 
 
-def test_repo_checkout_requires_source_id() -> None:
+def test_repo_checkout_is_rejected() -> None:
+    """Removed: the repo now arrives through the channel-owned workspace, not an MCP
+    resource the harness fronts. A config still carrying the block must fail loudly rather
+    than parse into a server nothing hosts."""
     with pytest.raises(ValidationError):
-        _ADAPTER.validate_python({"x": {"type": "repoCheckout", "repoCheckout": {}}})
+        _ADAPTER.validate_python(
+            {"x": {"type": "repoCheckout", "repoCheckout": {"sourceMcpServerId": "g"}}}
+        )
 
 
 def test_local_requires_command() -> None:

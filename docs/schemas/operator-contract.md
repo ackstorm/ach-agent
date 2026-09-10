@@ -278,16 +278,6 @@ mismatch.
   "mcpServers": {                           // harness-managed MCP servers (map keyed by name),
     // STRICT discriminated union on "type". Distinct namespace from runtime.mcpServers (hydrate's
     // ACH-fronted {id,endpoint} externals) — no collision. Empty/omitted → no extra MCP wiring.
-    "repo-checkout": {                      // INTERNAL: the harness HOSTS it (FastMCP facade + ek_)
-      "type": "repoCheckout",               //   exposes checkout_repo(project,ref,subpath?); see §9.
-      "repoCheckout": {                     //   params nested (built-in "special" wiring)
-        "sourceMcpServerId": "mcp-gitlab-ro",  // which hydrated runtime.mcpServers[].id serves the
-        //                                        gitlab://{project}/archive/{ref} resource the
-        //                                        harness reads (with the ek_, harness-side).
-        "tmpBase": "/tmp/gitlab",           //   parent dir for per-checkout mkdtemp dirs (default)
-        "ttlSeconds": 3600                  //   stale-checkout sweep TTL, >= 0 (repoCheckout-only)
-      }
-    },
     "filesystem": {                         // PASSTHROUGH local: opencode LAUNCHES it (stdio subprocess).
       "type": "local",                      //   opencode is the MCP client — connects DIRECTLY (no proxy).
       "command": "docker",
@@ -812,35 +802,19 @@ tool call at the proxy (complementing provisioning) and emit per-invocation egre
 model as MCP tools `a2a_{name}` / `a2a_{name}_async` / `a2a_{name}_status` (ported from ackbot
 `handlers/a2a/{tools,client,notification_store}.py`, a2a-sdk client). Outbound requests from the
 harness-owned A2A `httpx.AsyncClient` carry `x-ach-key`, `x-ach-agent`, and `x-ach-environment` headers.
-It is one of the harness's **hosted** MCP servers (the others: the memory facade §6.5, and the `checkout_repo`
-tool below); everything else is a proxied remote server. (Distinct from the inbound `a2a` **channel**,
+It is one of the harness's **hosted** MCP servers (the other being the memory facade, §6.5);
+everything else is a proxied remote server. (Distinct from the inbound `a2a` **channel**,
 which receives calls — `channels/a2a.py`.)
-
-**Repo checkout = harness-hosted MCP tool (opt-in, `mcpServers[].type=repoCheckout`).** When
-declared, the harness hosts a localhost MCP server exposing one tool, `checkout_repo(project, ref, subpath?)`,
-so the agent can get an **on-disk** repo tree (full-tree `rg`, run tests, build) — things a
-per-file MCP call can't give. The harness reads gitlab-mcp's `gitlab://{project}/archive/{ref}
-[/{subpath}]` **resource** itself (opencode is an MCP client but discards resource blobs),
-authenticating with the `ek_` as `x-ach-key` alongside canonical `x-ach-agent` and `x-ach-environment`
-headers harness-side, base64-decodes the gzip tar, and
-extracts it under `repoCheckout.tmpBase` (path-traversal-safe via `tarfile` `filter="data"`),
-returning the on-disk path. `sourceMcpServerId` names which hydrated `runtime.mcpServers[].id` serves the
-archive resource — so this rides the existing gitlab MCP provisioning, no new egress surface. It is
-**fail-soft**: a failed checkout (over-cap / GitLab 403/404) returns an error string, never raises.
-Cleanup is TTL-swept on the NEXT call (`ttlSeconds`), not session-close (Option A — `/tmp` is
-ephemeral). The gitlab MR/note channel stamps `head_sha` into the delivery context, and the engine
-prompt gets a one-line `checkout_repo(project=…, ref=…)` hint only when the facade is wired AND a
-head SHA is present. Requires gitlab-mcp to actually serve the archive resource (behind
-`GITLAB_REPO_ARCHIVE=1`); until then, leave the `repoCheckout` entry out of `mcpServers`.
 
 ### 9.1 `channel.prepare` / `channel.cleanup` — session workspace hooks
 
-The **preferred** way to give an agent a real repo, and the intended successor to
-`repoCheckout` (which stays supported for now — it has live users). A `/bin/sh` script,
+The way to give an agent a real repo. (It replaced `repoCheckout`, a harness-hosted
+`checkout_repo` MCP tool that read gitlab-mcp's archive resource and unpacked a tarball;
+that block was removed in v0.17.0 and a config still carrying it is rejected.) A `/bin/sh` script,
 declared per channel, that the harness runs **on the lane** — after `dedup → backpressure`
 admitted each event, before `pool.acquire` acquires or reuses the session engine — with cwd
 set to that session's workspace. That workspace is also the **engine's cwd**, so the repo is
-on disk before the first token: no tool call, no `checkout_hint`, no base64 tarball, and a
+on disk before the first token: no tool call, no base64 tarball, and a
 real `.git` (blame, log, local `merge-base`, `diff base...head`). Prepare is fail-closed.
 
 `cleanup` is an optional singular sibling of `prepare` and is valid only when
@@ -1003,5 +977,15 @@ hard-fail for that source. Price lookup uses the paginated
 semantics, A.5 failure table, and the reserved P0-v2/B.7 evidence record are documented
 in [`docs/configuration.md`](../configuration.md) and
 [`docs/references/2026-07-25-cost-source.md`](../references/2026-07-25-cost-source.md).
+
+## `mcpServers[].type=repoCheckout` — REMOVED (2026-09-10, v0.17.0)
+
+The harness no longer hosts a `checkout_repo` MCP tool, and no longer reads gitlab-mcp's
+`gitlab://{project}/archive/{ref}` resource. `mcpServers` now holds passthrough servers only
+(`local` | `remote`); a config still declaring `repoCheckout` is REJECTED at load, not ignored.
+
+The repo reaches the agent through `channel.prepare` (§9.1), which puts a real working tree —
+with a real `.git` — at the engine's cwd before the first token. That removes the tool call,
+the base64 tarball, the TTL sweep and the prompt hint that advertised the tool.
 
 Implementation-level gates live in the implementation plans, not here.

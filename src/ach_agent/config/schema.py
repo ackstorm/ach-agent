@@ -412,27 +412,6 @@ Memory = Annotated[CodememMemory | AchMemoryMemory, Field(discriminator="type")]
 # ---------------------------------------------------------------------------
 
 
-class RepoCheckoutParams(BaseModel):
-    """Params for the harness-hosted repoCheckout facade (the `checkout_repo` tool)."""
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    # The hydrated runtime.mcpServers[].id whose endpoint serves the
-    # gitlab://{project}/archive/{ref} resource the harness reads (harness-side, with the ek_).
-    source_mcp_server_id: str = Field(alias="sourceMcpServerId")
-    tmp_base: str = Field(default="/tmp/gitlab", alias="tmpBase")
-    ttl_seconds: float = Field(default=3600.0, ge=0, alias="ttlSeconds")
-
-
-class RepoCheckoutServer(BaseModel):
-    """INTERNAL: the harness HOSTS this MCP (FastMCP facade), injecting the ek_."""
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    type: Literal["repoCheckout"]
-    repo_checkout: RepoCheckoutParams = Field(alias="repoCheckout")
-
-
 class LocalMcpServer(BaseModel):
     """PASSTHROUGH: opencode LAUNCHES this as a stdio subprocess."""
 
@@ -456,9 +435,7 @@ class RemoteMcpServer(BaseModel):
 
 # Strict discriminated union on `type` (mirror of the Memory union). Named *Config to avoid
 # clashing with engine.hydrate.McpServer (the hydrated {id,endpoint} external server).
-McpServerConfig = Annotated[
-    RepoCheckoutServer | LocalMcpServer | RemoteMcpServer, Field(discriminator="type")
-]
+McpServerConfig = Annotated[LocalMcpServer | RemoteMcpServer, Field(discriminator="type")]
 
 
 # ---------------------------------------------------------------------------

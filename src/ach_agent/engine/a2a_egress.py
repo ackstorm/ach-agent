@@ -352,7 +352,7 @@ def build_a2a_mcp_server(tools: list[ToolSpec]) -> Any:
 class A2AEgressFacade:
     """Hosts the a2a-egress FastMCP server on an ephemeral loopback port (SP1 §6).
 
-    Mirrors RepoCheckoutFacade: opencode / pi-mcp-adapter point at this loopback URL; the
+    Mirrors the ach-memory facade: opencode / pi-mcp-adapter point at this loopback URL; the
     ek_ stays in the tool handlers (build_a2a_tools(ek=...)) and never reaches any engine
     config. Retires the "built but not hosted" VERIFICATION DEBT (main.py Plan 3/4)."""
 

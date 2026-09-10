@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Removed
+
+- **BREAKING** `mcpServers[].type=repoCheckout`, the harness-hosted `checkout_repo` tool.
+  The harness no longer reads gitlab-mcp's `gitlab://{project}/archive/{ref}` resource, and
+  `mcpServers` now holds passthrough servers only (`local` | `remote`). A config still
+  declaring `repoCheckout` is rejected at load rather than silently ignored, so a stale block
+  surfaces at boot instead of at the first tool call the agent tries to make.
+  `channel.prepare` replaced it: the repo is a real working tree with a real `.git` at the
+  engine's cwd before the first token, which removes the tool call, the base64 tarball, the
+  TTL sweep and the prompt hint that advertised the tool. Gone with it:
+  `engine/repo_facade.py`, `find_repo_checkout`, `resolve_repo_archive_endpoint`,
+  `checkout_hint` and the `repo` MCP facade id.
+
 ## [0.16.0] - 2026-09-10
 
 ### Added

@@ -1,11 +1,20 @@
 # ── opencode binary stage ────────────────────────────────────────────────────
 # The harness shells out to `opencode serve`, so the runtime image must carry the
-# opencode binary. Fetch the pinned release (anomalyco/opencode, glibc linux-x64).
+# opencode binary. Fetch the pinned release (anomalyco/opencode, glibc linux),
+# selecting the architecture-specific artifact so an arm64 build doesn't ship (and
+# fail to exec) an x64 binary (finding 7). TARGETARCH is a buildx-populated
+# platform arg — automatic with `docker buildx build --platform ...`.
 FROM debian:13-slim AS opencode-bin
+ARG TARGETARCH
 ARG OPENCODE_VERSION=1.17.11
 RUN apt-get update -qq \
  && apt-get install -y --no-install-recommends curl ca-certificates \
- && curl -fsSL "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-x64.tar.gz" -o /tmp/oc.tgz \
+ && case "$TARGETARCH" in \
+      amd64) oc_arch=x64 ;; \
+      arm64) oc_arch=arm64 ;; \
+      *) echo "unsupported OpenCode architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-${oc_arch}.tar.gz" -o /tmp/oc.tgz \
  && tar -xzf /tmp/oc.tgz -C /usr/local/bin opencode \
  && chmod 755 /usr/local/bin/opencode \
  && rm -rf /tmp/oc.tgz /var/lib/apt/lists/*
@@ -82,6 +91,12 @@ RUN apt-get update -qq \
 
 COPY --from=builder /app/deps /app/deps
 COPY --from=opencode-bin /usr/local/bin/opencode /usr/local/bin/opencode
+# Runtime smoke (finding 7): prove the architecture-selected binary actually
+# EXECUTES in the final image — closes the "wrong-arch binary present but
+# un-runnable" gap a copy-only check would miss. No network call or credential
+# needed to exercise it.
+RUN opencode --version
+
 # codemem (Node) runtime: the node binary + the isolated codemem prefix. PATH prepend
 # puts `codemem` on PATH; its shebang resolves `node` from /usr/local/bin (also on PATH).
 COPY --from=codemem-bin /usr/local/bin/node /usr/local/bin/node

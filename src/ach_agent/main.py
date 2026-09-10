@@ -255,7 +255,14 @@ async def _drain(
 
 
 class _A2AHandler:
-    """Router wrapper injecting on_complete/on_fail into delivery_context (W9 pattern)."""
+    """Router wrapper injecting on_complete/on_fail into delivery_context (W9 pattern).
+
+    finding 5: the bridge's signal_completion/signal_failure are keyed by task_id,
+    not the router's session_key (context_id, shared across a conversation's
+    tasks) — so the closures bind THIS event's task_id and ignore the session_key
+    argument engine_runner calls them with, preserving the (session_key, text)
+    callback signature the engine tier is built around.
+    """
 
     def __init__(self, rtr: Any, fn: Any, fn_fail: Any) -> None:
         self._rtr = rtr
@@ -263,8 +270,13 @@ class _A2AHandler:
         self._fn_fail = fn_fail
 
     async def handle(self, event: MessageEvent) -> Any:
-        event.delivery_context["on_complete"] = self._fn
-        event.delivery_context["on_fail"] = self._fn_fail
+        task_id = str(event.payload["task_id"])
+        event.delivery_context["on_complete"] = lambda _session_key, text: self._fn(
+            task_id, text
+        )
+        event.delivery_context["on_fail"] = lambda _session_key, reason: self._fn_fail(
+            task_id, reason
+        )
         return await self._rtr.handle(event)
 
 

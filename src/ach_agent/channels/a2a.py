@@ -10,7 +10,10 @@ Locked decisions:
   - Acceptance is decoupled from engine readiness: no engine-readiness gate here — the
     engine starts lazily per session_key inside the lane (pool.acquire in engine_runner).
   - FULL_QUEUE (D-05/RTR-05): failed TaskStatusUpdateEvent, not silent drop.
-  - source_trait = "async_no_retry": delivery bridge via signal_completion(session_key, text).
+  - source_trait = "async_no_retry": delivery bridge via signal_completion(task_id, text).
+    Completion is keyed by task_id, not session_key: a context_id (session_key's
+    primary source) is shared across every task in a conversation, so keying by
+    session_key would let one task's registration overwrite another's (finding 5).
   - Secret resolved LAZILY (SecretSource: env) at use time, NEVER cached or logged
     (CONTRACT §3).
   - build_a2a_app(agent_card, executor): creates InMemoryTaskStore +
@@ -25,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -161,6 +165,23 @@ def _status_event(
     return TaskStatusUpdateEvent(task_id=task_id, context_id=context_id, status=status)
 
 
+@dataclass
+class _PendingTask:
+    """One in-flight task's completion state (finding 5).
+
+    Keyed by task_id, not session_key: a context_id is shared across every task
+    in a conversation (that's what gives them router FIFO), so keying pending
+    completion state by session_key let a second task's registration silently
+    overwrite the first's — the first task's real completion would then be
+    delivered to the second task's caller. `queues` fans a shared task_id's
+    terminal result out to every coalesced waiter (finding 5 / "repeat active").
+    """
+
+    completion: asyncio.Event
+    context_id: str
+    queues: list[Any] = field(default_factory=list)
+
+
 class A2AAgentExecutorBridge:
     """Bridges the a2a-sdk AgentExecutor interface to the ach_agent router seam.
 
@@ -178,11 +199,9 @@ class A2AAgentExecutorBridge:
     ) -> None:
         self._handler: MessageHandler | None = handler
         self._channel_cfg = channel_cfg
-        # Maps session_key → (event_queue, completion_event, task_id, context_id).
-        # task_id/context_id are kept so the terminal event enqueued out-of-band by
-        # signal_completion/signal_failure matches the TaskManager's ids (save_task_event
-        # rejects a mismatch).
-        self._pending: dict[str, tuple[Any, asyncio.Event, str, str]] = {}
+        # Maps task_id → _PendingTask (finding 5). See _PendingTask's docstring for
+        # why this is keyed by task_id and not session_key.
+        self._pending: dict[str, _PendingTask] = {}
 
     @property
     def channel_cfg(self) -> ChannelConfig:
@@ -222,18 +241,20 @@ class A2AAgentExecutorBridge:
         # (2) Build MessageEvent and dispatch to router seam. Decoupled from engine
         # readiness (no gate here) — the engine starts lazily per session_key.
         session_key = context_id or task_id
-        # CR-04: reject when both identifiers are empty — prevents _pending[""] collision
-        # where a second concurrent call overwrites the first coroutine's Event.
-        if not session_key:
+        # task_id backs _pending's key (finding 5); reject before registering it,
+        # same as the old both-empty session_key guard did for CR-04. SDK requests
+        # always carry a task_id — this only fires for hand-built test contexts.
+        if not task_id:
             log.warning(
-                "a2a: request rejected — both context_id and task_id are empty",
+                "a2a: request rejected — missing task identifier",
                 channel=self._channel_cfg.name,
             )
             await event_queue.enqueue_event(
-                _status_event("failed", "Missing task/context identifier", task_id, context_id)
+                _status_event("failed", "Missing task identifier", task_id, context_id)
             )
             return
-        idempotency_key = derive_a2a_idempotency_key(task_id)
+
+        CHANNEL_INBOUND.labels(channel=self._channel_cfg.name, type="a2a").inc()
 
         # Extract text from RequestContext (get_user_input is available if SDK is present)
         if hasattr(context, "get_user_input"):
@@ -241,12 +262,23 @@ class A2AAgentExecutorBridge:
         else:
             text = ""
 
-        CHANNEL_INBOUND.labels(channel=self._channel_cfg.name, type="a2a").inc()
+        # "repeat active" (finding 5): a second call for a task_id already pending
+        # (e.g. a client retry) coalesces onto the existing completion instead of
+        # registering a second one or dispatching to the router again — fan the
+        # eventual terminal result out to this queue too.
+        existing = self._pending.get(task_id)
+        if existing is not None:
+            existing.queues.append(event_queue)
+            await event_queue.enqueue_event(_status_event("working", None, task_id, context_id))
+            await existing.completion.wait()
+            return
 
-        # Register pending BEFORE dispatch so signal_completion can find it
-        completion = asyncio.Event()
-        self._pending[session_key] = (event_queue, completion, task_id, context_id)
+        # Register pending BEFORE dispatch so signal_completion can find it.
+        pending = _PendingTask(completion=asyncio.Event(), context_id=context_id)
+        pending.queues.append(event_queue)
+        self._pending[task_id] = pending
 
+        idempotency_key = derive_a2a_idempotency_key(task_id)
         event = MessageEvent(
             idempotency_key=idempotency_key,
             session_key=session_key,
@@ -262,14 +294,14 @@ class A2AAgentExecutorBridge:
                 "a2a: request rejected — queue full (D-05/RTR-05)",
                 channel=self._channel_cfg.name,
             )
-            self._pending.pop(session_key, None)
+            self._pending.pop(task_id, None)
             await event_queue.enqueue_event(
                 _status_event("failed", "Queue full", task_id, context_id)
             )
             return
         if result == RouterAdmitResult.DUPLICATE:
             log.info("a2a: duplicate task_id — deduplicated", channel=self._channel_cfg.name)
-            self._pending.pop(session_key, None)
+            self._pending.pop(task_id, None)
             return
 
         # Emit ONE interim WORKING event so the a2a-sdk non-blocking path has a
@@ -283,70 +315,58 @@ class A2AAgentExecutorBridge:
         await event_queue.enqueue_event(_status_event("working", None, task_id, context_id))
 
         # (3) Await out-of-band completion from engine via signal_completion
-        await completion.wait()
+        await pending.completion.wait()
 
     async def cancel(self, context: Any, event_queue: Any) -> None:
-        """AgentExecutor.cancel — enqueue a canceled event."""
+        """AgentExecutor.cancel — enqueue a canceled event, wake every waiter on this task."""
         task_id: str = getattr(context, "task_id", None) or ""
         context_id: str = getattr(context, "context_id", None) or ""
-        session_key = context_id or task_id or ""
-        # Remove from pending if present
-        self._pending.pop(session_key, None)
+        pending = self._pending.pop(task_id, None)
         await event_queue.enqueue_event(_status_event("canceled", None, task_id, context_id))
-        log.info("a2a: task canceled", channel=self._channel_cfg.name, session_key=session_key)
+        if pending is not None:
+            # finding 5: wake every coalesced waiter (fan out), not just this call's
+            # own event_queue — cancellation must not orphan another caller's
+            # completion event (Pitfall 5).
+            pending.completion.set()
+        log.info("a2a: task canceled", channel=self._channel_cfg.name, task_id=task_id)
 
-    def signal_completion(self, session_key: str, reply_text: str) -> None:
+    def signal_completion(self, task_id: str, reply_text: str) -> None:
         """Called by the on_complete closure (boot module) after engine_runner delivers.
 
-        Pops pending, enqueues completed event, sets the asyncio.Event so execute() unblocks.
-        This is the delivery seam callback (Pitfall 5 — executor must not hang forever).
+        Pops the task's pending entry, enqueues a completed event into every
+        coalesced waiter's queue (fan out — finding 5), and sets the shared
+        asyncio.Event so every execute() call for this task_id unblocks. This is
+        the delivery seam callback (Pitfall 5 — executor must not hang forever).
         """
-        entry = self._pending.pop(session_key, None)
+        entry = self._pending.pop(task_id, None)
         if entry is None:
-            log.warning(
-                "a2a: signal_completion called for unknown session_key",
-                session_key=session_key,
-            )
+            log.warning("a2a: signal_completion called for unknown task_id", task_id=task_id)
             return
-        event_queue, completion, task_id, context_id = entry
-        # Schedule completed event enqueue + Event.set() as an async task.
-        # signal_completion is called from a synchronous context (on_complete closure).
+        # Schedule the fan-out as an async task — signal_completion is called from
+        # a synchronous context (on_complete closure).
         loop = asyncio.get_running_loop()
-        loop.create_task(
-            _signal_async("completed", reply_text, event_queue, completion, task_id, context_id)
-        )
+        loop.create_task(_signal_async("completed", reply_text, entry, task_id))
 
-    def signal_failure(self, session_key: str, reason: str) -> None:
+    def signal_failure(self, task_id: str, reason: str) -> None:
         """Called by the on_fail closure (boot) when the terminal output is unusable.
 
-        Pops pending, enqueues a FAILED TaskStatusUpdateEvent, sets the Event so execute()
-        unblocks (mirror of signal_completion — the executor must never hang, Pitfall 5).
+        Mirrors signal_completion (fan out to every coalesced waiter, then wake
+        them all — the executor must never hang, Pitfall 5).
         """
-        entry = self._pending.pop(session_key, None)
+        entry = self._pending.pop(task_id, None)
         if entry is None:
-            log.warning(
-                "a2a: signal_failure called for unknown session_key",
-                session_key=session_key,
-            )
+            log.warning("a2a: signal_failure called for unknown task_id", task_id=task_id)
             return
-        event_queue, completion, task_id, context_id = entry
         loop = asyncio.get_running_loop()
-        loop.create_task(
-            _signal_async("failed", reason, event_queue, completion, task_id, context_id)
-        )
+        loop.create_task(_signal_async("failed", reason, entry, task_id))
 
 
-async def _signal_async(
-    state: str,
-    text: str,
-    event_queue: Any,
-    completion: asyncio.Event,
-    task_id: str = "",
-    context_id: str = "",
-) -> None:
-    """Schedule a terminal status event and set the completion event from an async context."""
-    await event_queue.enqueue_event(_status_event(state, text, task_id, context_id))
-    completion.set()
+async def _signal_async(state: str, text: str, entry: _PendingTask, task_id: str) -> None:
+    """Enqueue a terminal status event into every coalesced waiter's queue, then
+    set the shared completion event from an async context (finding 5 fan-out)."""
+    for queue in entry.queues:
+        await queue.enqueue_event(_status_event(state, text, task_id, entry.context_id))
+    entry.completion.set()
 
 
 def make_a2a_agent_card(channel_name: str) -> Any:

@@ -819,7 +819,8 @@ async def test_a2a_signal_failure_enqueues_failed_event_and_unblocks(
 
     Mirrors signal_completion: the executor blocked on completion.wait() must unblock
     (Pitfall 5 — never hang), the peer must receive a FAILED TaskStatusUpdateEvent (not a
-    COMPLETED one), and the session_key must no longer be pending.
+    COMPLETED one), and the task_id must no longer be pending (finding 5: keyed by
+    task_id, not session_key/context_id).
     """
     from a2a.types.a2a_pb2 import TASK_STATE_FAILED
 
@@ -827,32 +828,28 @@ async def test_a2a_signal_failure_enqueues_failed_event_and_unblocks(
     channel_cfg = _make_authed_channel_cfg(monkeypatch)
     bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
 
-    # Populate _pending exactly the way execute() would (mirror signal_completion setup).
-    session_key = "ctx-fail"
+    ctx = _authed_ctx(task_id="task-fail", context_id="ctx-fail")
     eq = MockEventQueue()
-    completion = asyncio.Event()
-    bridge._pending[session_key] = (eq, completion, "task-fail", session_key)
+    task = asyncio.create_task(bridge.execute(ctx, eq))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
 
-    bridge.signal_failure(session_key, "bad terminal")
+    bridge.signal_failure("task-fail", "bad terminal")
+    await asyncio.wait_for(task, timeout=2.0)
 
-    # The async task scheduled by signal_failure runs on the next loop tick.
-    await asyncio.wait_for(completion.wait(), timeout=2.0)
-
-    assert completion.is_set()
-    assert len(eq.events) == 1
-    assert eq.events[0].status.state == TASK_STATE_FAILED
+    assert eq.events[-1].status.state == TASK_STATE_FAILED
     # ids must be stamped so TaskManager.save_task_event accepts the event
-    assert eq.events[0].task_id == "task-fail"
-    assert eq.events[0].context_id == session_key
-    # session_key must be popped from pending
-    assert session_key not in bridge._pending
+    assert eq.events[-1].task_id == "task-fail"
+    assert eq.events[-1].context_id == "ctx-fail"
+    # task_id must be popped from pending
+    assert "task-fail" not in bridge._pending
 
 
 @pytest.mark.asyncio
-async def test_a2a_signal_failure_unknown_session_key_is_noop(
+async def test_a2a_signal_failure_unknown_task_id_is_noop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """signal_failure for an unknown session_key must not raise (mirror signal_completion)."""
+    """signal_failure for an unknown task_id must not raise (mirror signal_completion)."""
     channel_cfg = _make_authed_channel_cfg(monkeypatch)
     bridge = A2AAgentExecutorBridge(handler=_make_accepted_handler(), channel_cfg=channel_cfg)
 
@@ -886,7 +883,7 @@ async def test_a2a_terminal_sequence_is_working_then_completed(
     await asyncio.sleep(0)
 
     # Interim WORKING is in flight; now the engine delivers.
-    bridge.signal_completion("ctx-seq", "done")
+    bridge.signal_completion("task-seq", "done")
     await asyncio.wait_for(task, timeout=2.0)  # signal_completion sets the Event → execute returns
 
     states = [e.status.state for e in eq.events]
@@ -895,3 +892,66 @@ async def test_a2a_terminal_sequence_is_working_then_completed(
     for e in eq.events:
         assert e.task_id == "task-seq"
         assert e.context_id == "ctx-seq"
+
+
+# ---------------------------------------------------------------------------
+# Shared-context task lifecycle (finding 5) — completion keyed by task_id
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a2a_shared_context_tasks_have_independent_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """finding 5: two tasks sharing one context_id (legitimate — router FIFO is
+    per session, not per task) must not share a completion destination. A repeat
+    of an already-active task (e.g. a client retry) coalesces onto the existing
+    completion instead of registering a second one or dispatching to the router
+    again; its terminal result fans out to every coalesced waiter."""
+    from a2a.types.a2a_pb2 import TASK_STATE_COMPLETED
+
+    handler = _make_accepted_handler()
+    channel_cfg = _make_authed_channel_cfg(monkeypatch)
+    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+
+    ctx_a = _authed_ctx(task_id="task-a", context_id="ctx-shared")
+    ctx_b = _authed_ctx(task_id="task-b", context_id="ctx-shared")
+    eq_a = MockEventQueue()
+    eq_b = MockEventQueue()
+
+    task_a = asyncio.create_task(bridge.execute(ctx_a, eq_a))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    task_b = asyncio.create_task(bridge.execute(ctx_b, eq_b))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    # Both admitted and pending, before either completes.
+    assert handler.handle.call_count == 2
+    assert set(bridge._pending) == {"task-a", "task-b"}
+
+    # Repeat active A: a fresh call for the same task_id must coalesce, not
+    # dispatch a second invocation.
+    eq_a_retry = MockEventQueue()
+    ctx_a_retry = _authed_ctx(task_id="task-a", context_id="ctx-shared")
+    task_a_retry = asyncio.create_task(bridge.execute(ctx_a_retry, eq_a_retry))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert handler.handle.call_count == 2
+
+    # Complete A then B.
+    bridge.signal_completion("task-a", "answer-a")
+    bridge.signal_completion("task-b", "answer-b")
+
+    await asyncio.wait_for(asyncio.gather(task_a, task_a_retry, task_b), timeout=2.0)
+
+    # A receives only A's answer (both the original call and the coalesced retry).
+    assert eq_a.events[-1].status.state == TASK_STATE_COMPLETED
+    assert eq_a.events[-1].status.message.parts[0].text == "answer-a"
+    assert eq_a_retry.events[-1].status.state == TASK_STATE_COMPLETED
+    assert eq_a_retry.events[-1].status.message.parts[0].text == "answer-a"
+    # B receives only B's answer.
+    assert eq_b.events[-1].status.state == TASK_STATE_COMPLETED
+    assert eq_b.events[-1].status.message.parts[0].text == "answer-b"
+
+    assert bridge._pending == {}

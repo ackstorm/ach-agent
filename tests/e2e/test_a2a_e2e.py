@@ -92,17 +92,22 @@ def _build_bridge_with_router(
     """Build a bridge + handler wrapper that injects on_complete into delivery_context.
 
     Returns (bridge, handler_wrapper).
-    The engine_runner must call event.delivery_context['on_complete'](session_key, reply_text)
-    to signal completion back to the bridge.
+    The engine_runner calls event.delivery_context['on_complete'](session_key, reply_text)
+    to signal completion back to the bridge. Mirrors main.py's _A2AHandler
+    (finding 5): the bridge's signal_completion is keyed by task_id, not
+    session_key (context_id, shared across a conversation's tasks) — so the
+    closure binds THIS event's task_id and ignores the session_key argument.
     """
     bridge: A2AAgentExecutorBridge | None = None
 
     class _HandlerWithOnComplete:
         async def handle(self, event: MessageEvent) -> RouterAdmitResult:
             # Inject on_complete closure (mirrors main.py boot seam: captures bridge)
-            def on_complete(session_key: str, reply_text: str) -> None:
+            task_id = str(event.payload["task_id"])
+
+            def on_complete(_session_key: str, reply_text: str) -> None:
                 if bridge is not None:
-                    bridge.signal_completion(session_key, reply_text)
+                    bridge.signal_completion(task_id, reply_text)
 
             event.delivery_context["on_complete"] = on_complete
             return await router.handle(event)

@@ -34,6 +34,7 @@ log = structlog.get_logger(__name__)
 
 # engine_runner callable type: async (event, on_kill) -> Any
 EngineRunner = Callable[[MessageEvent, Callable[[], None]], Any]
+CompletionNotifier = Callable[[MessageEvent, str], Any]
 
 
 class Lane:
@@ -55,6 +56,7 @@ class Lane:
         invocation_semaphores: Callable[[str], tuple[asyncio.Semaphore, asyncio.Semaphore]],
         engine_runner: EngineRunner,
         max_invocation_seconds: float,
+        completion_notifier: CompletionNotifier | None = None,
     ) -> None:
         self._session_key = session_key
         self._router_ref = router_ref
@@ -64,6 +66,7 @@ class Lane:
         self._invocation_semaphores = invocation_semaphores
         self._engine_runner = engine_runner
         self._max_invocation_seconds = max_invocation_seconds
+        self._completion_notifier = completion_notifier
         self._queue: asyncio.Queue[MessageEvent] = asyncio.Queue()
         self._task = asyncio.create_task(self._consume())
 
@@ -89,6 +92,16 @@ class Lane:
             try:
                 event = await self._queue.get()
             except asyncio.CancelledError:
+                if self._completion_notifier is not None:
+                    while True:
+                        try:
+                            queued = self._queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                        outcome = self._completion_notifier(queued, "cancelled before execution")
+                        if asyncio.iscoroutine(outcome):
+                            await outcome
+                        self._queue.task_done()
                 return
 
             # finding 9: this event's OWN channel_name selects its permits — never
@@ -125,6 +138,10 @@ class Lane:
                                 idempotency_key=event.idempotency_key,
                             )
             except asyncio.CancelledError:
+                if self._completion_notifier is not None:
+                    outcome = self._completion_notifier(event, "cancelled during execution")
+                    if asyncio.iscoroutine(outcome):
+                        await outcome
                 return
             finally:
                 # Single, idempotent queued_total release for this event — fires on

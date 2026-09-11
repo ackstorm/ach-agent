@@ -73,6 +73,7 @@ class Router:
         channel_concurrency: dict[str, int] | None = None,
         max_concurrent_scripts: int | None = None,
         script_channels: set[str] | None = None,
+        completion_notifier: Callable[[MessageEvent, str], Any] | None = None,
     ) -> None:
         self._max_queued_total = max_queued_total
         self._idempotency_window_seconds = idempotency_window_seconds
@@ -91,6 +92,7 @@ class Router:
         # (`<project>:webhook-script:<channel>`), so a lane is never shared with an engine
         # channel and the pool choice at lane creation stays correct for its whole life.
         self._script_channels = script_channels or set()
+        self._completion_notifier = completion_notifier
 
         # queued_total: count of events waiting in lane queues OR being processed
         # Plain int is safe in single-threaded asyncio (no locks needed): inc/dec
@@ -180,6 +182,7 @@ class Router:
                 invocation_semaphores=self.invocation_semaphores,
                 engine_runner=self._engine_runner,
                 max_invocation_seconds=self._max_invocation_seconds,
+                completion_notifier=self._completion_notifier,
             )
         return self._lanes[session_key]
 

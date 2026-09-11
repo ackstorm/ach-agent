@@ -106,6 +106,7 @@ def make_engine_runner(
     a2a_facade_url: str | None = None,
     accountant: CostAccountant | None = None,
     cost_source: str = "engine",
+    completion_registry: Any | None = None,
 ) -> Callable[..., Any]:
     """Build the engine_runner callable injected into the Router.
 
@@ -147,11 +148,16 @@ def make_engine_runner(
     channels_by_name = channels_by_name or {}
 
     async def engine_runner(event: MessageEvent, on_kill: Callable[[], None]) -> None:
+        ref = completion_registry.ref_for(event) if completion_registry is not None else None
+        if completion_registry is not None and ref is not None:
+            await completion_registry.mark_running(ref)
         # Resolve channel cfg early so ctx can be built before the memory probe.
         ch_cfg: ChannelConfig | None = channels_by_name.get(event.channel_name)
         if ch_cfg is not None and ch_cfg.type == "webhook-script":
             assert ch_cfg.script is not None
             await run_webhook_script(ch_cfg.script, event, engine_cfg.work_dir)
+            if completion_registry is not None and ref is not None:
+                await completion_registry.finish(ref, {"status": "completed"})
             return
         ctx = build_template_context(
             event.payload,
@@ -207,14 +213,8 @@ def make_engine_runner(
                 invocation_engine_cfg, codemem_project=rendered_project
             )
 
-        # CR-01: in reply mode the future MUST always be resolved (set_result or
-        # set_exception), otherwise the awaiting route hangs forever. The except branches
-        # below resolve it on every failure path.
+        # Completion state is updated at each terminal path below.
         future = event.reply_future
-        # on_fail (a2a) MUST be signalled on every failure path too — otherwise the a2a
-        # executor's completion.wait() (no timeout) hangs forever. Read it here so the
-        # success branch AND the except branches below all resolve it.
-        on_fail = event.delivery_context.get("on_fail")
         server = None
         timed_out = False
         acquired = False
@@ -276,10 +276,12 @@ def make_engine_runner(
                 full_prompt = f"{full_prompt}\n\n{_output_instructions}"
             # Optional live-text sink (the --debug console sets this to stream the reply
             # as it's produced, so a slow trailing tool call doesn't hide the text).
-            on_text = event.delivery_context.get("on_text")
+            on_text = None
             # Optional tool-lifecycle sink (the --debug console shows "⚙ running <tool>"
             # so a long-blocking tool call isn't dead air).
-            on_tool = event.delivery_context.get("on_tool")
+            on_tool = None
+            if completion_registry is not None and ref is not None:
+                on_text, on_tool = completion_registry.sinks(ref)
             # Default observability sink: channels wire no on_tool (only --debug does), so
             # without this a channel turn shows nothing about the tools it ran.
             if on_tool is None:
@@ -399,42 +401,30 @@ def make_engine_runner(
                     )
                 )
 
-            if future is not None:
-                # Reply mode: resolve the future the route is awaiting.
-                if not future.done():
-                    future.set_result(text)
-                return
-
-            # A2A completion path (W9 — engine_runner does NOT import channels.a2a):
-            # The on_complete callable is injected by the A2A wiring closure in main.py
-            # into event.delivery_context['on_complete'] before handler.handle() is called.
-            on_complete = event.delivery_context.get("on_complete")
-            if on_complete is not None or on_fail is not None:
-                action = obj.get("action")
-                if action == "a2a_reply" and text.strip():
-                    if on_complete is not None:
-                        on_complete(event.session_key, text)
-                else:
-                    reason = (
-                        f"invalid terminal output (action={action!r}, "
-                        f"empty_text={not text.strip()})"
-                    )
-                    if on_fail is not None:
-                        on_fail(event.session_key, reason)
-                return
-
-            # Async mode: nothing to deliver. Egress already happened via the agent's
-            # external MCP tool calls — the harness never posts on the model's behalf.
-            return
+            if completion_registry is not None and ref is not None:
+                await completion_registry.finish(ref, {"text": text, "action": obj.get("action")})
+            elif future is not None and not future.done():
+                future.set_result(text)
+            elif completion_registry is None:
+                on_complete = event.delivery_context.get("on_complete")
+                if on_complete is not None and obj.get("action") == "a2a_reply" and text.strip():
+                    on_complete(event.session_key, text)
+            return {"text": text, "action": obj.get("action")}
         except asyncio.CancelledError:
             # The lane's maxInvocationSeconds deadline (or a shutdown) cancelled us.
             # Force-kill the runaway (finally releases with ttl=0) so a warm TTL is never
             # armed on a timed-out server, and release the awaiting caller so it can't hang.
             timed_out = True
-            if future is not None and not future.done():
+            if completion_registry is not None and ref is not None:
+                await completion_registry.finish(
+                    ref, error=f"invocation timed out after {max_invocation_seconds}s"
+                )
+            elif future is not None and not future.done():
                 future.set_exception(InvocationTimeout(max_invocation_seconds))
-            if on_fail is not None:
-                on_fail(event.session_key, f"invocation timed out after {max_invocation_seconds}s")
+            elif completion_registry is None:
+                on_fail = event.delivery_context.get("on_fail")
+                if on_fail is not None:
+                    on_fail(event.session_key, f"invocation timed out after {max_invocation_seconds}s")
             raise
         except Exception as exc:
             if not acquired and not isinstance(exc, PrepareFailed):
@@ -457,10 +447,14 @@ def make_engine_runner(
                     task_id=event.task_id,
                     error=str(exc),
                 )
-            if future is not None and not future.done():
+            if completion_registry is not None and ref is not None:
+                await completion_registry.finish(ref, error=f"engine failure: {exc}")
+            elif future is not None and not future.done():
                 future.set_exception(exc)
-            if on_fail is not None:
-                on_fail(event.session_key, f"engine failure: {exc}")
+            elif completion_registry is None:
+                on_fail = event.delivery_context.get("on_fail")
+                if on_fail is not None:
+                    on_fail(event.session_key, f"engine failure: {exc}")
             raise
         finally:
             # Return the engine server to the pool. Slot release is owned by the lane:

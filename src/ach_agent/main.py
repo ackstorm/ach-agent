@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from ach_agent.engine.base.driver import EngineDriver
 
 from ach_agent.boot.engine_runner import make_engine_runner
+from ach_agent.boot.completions import CompletionHandler, CompletionRegistry
 from ach_agent.boot.health import HealthState
 from ach_agent.boot.paths import (
     harness_log_dir,
@@ -220,30 +221,6 @@ async def _drain(
         dedup_store.close()
     DRAIN_COMPLETED.inc()
     log.info("drain: complete")
-
-
-class _A2AHandler:
-    """Router wrapper injecting on_complete/on_fail into delivery_context (W9 pattern).
-
-    finding 5: the bridge's signal_completion/signal_failure are keyed by task_id,
-    not the router's session_key (context_id, shared across a conversation's
-    tasks) — so the closures bind THIS event's task_id and ignore the session_key
-    argument engine_runner calls them with, preserving the (session_key, text)
-    callback signature the engine tier is built around.
-    """
-
-    def __init__(self, rtr: Any, fn: Any, fn_fail: Any) -> None:
-        self._rtr = rtr
-        self._fn = fn
-        self._fn_fail = fn_fail
-
-    async def handle(self, event: MessageEvent) -> Any:
-        task_id = str(event.payload["task_id"])
-        event.delivery_context["on_complete"] = lambda _session_key, text: self._fn(task_id, text)
-        event.delivery_context["on_fail"] = lambda _session_key, reason: self._fn_fail(
-            task_id, reason
-        )
-        return await self._rtr.handle(event)
 
 
 async def _run_opencode_attach(
@@ -646,6 +623,17 @@ async def main(
     # `{{ memory.bank }}` survives as a documented operator template surface (contract §2),
     # now always empty: ach-memory resolves the bank server-side from the project slug.
     memory_bank = ""
+    router_ref: dict[str, Any] = {}
+
+    async def admit(event: MessageEvent) -> Any:
+        return await router_ref["router"].handle(event)
+
+    completion_registry = CompletionRegistry(
+        admit,
+        agent=cfg.agent.name,
+        max_active_entries=cfg.limits.max_queued_total,
+    )
+    channel_handler = CompletionHandler(completion_registry)
     engine_runner = make_engine_runner(
         pool=pool,
         driver=driver,
@@ -667,6 +655,7 @@ async def main(
         a2a_facade_url=a2a_facade_url,
         accountant=accountant,
         cost_source=cfg.cost.source,
+        completion_registry=completion_registry,
     )
 
     # Step 6 (cont.): construct Router with all limits from config (RTR-03/04)
@@ -680,7 +669,9 @@ async def main(
         channel_concurrency={ch.name: ch.concurrency for ch in cfg.channels},
         max_concurrent_scripts=cfg.limits.max_concurrent_scripts,
         script_channels={ch.name for ch in cfg.channels if ch.type == "webhook-script"},
+        completion_notifier=completion_registry.finish_event,
     )
+    router_ref["router"] = router
 
     # --tui / --prompt launch modifiers: ignore the configured channels and drive the
     # engine directly. The engine + proxies + hydration are already wired above; the
@@ -694,7 +685,7 @@ async def main(
             log.info("ach-agent: --tui console mode (configured channels ignored)")
         try:
             if one_shot_prompt is not None:
-                await run_one_shot(router, one_shot_prompt)
+                await run_one_shot(channel_handler, one_shot_prompt)
             else:
                 # --tui/--debug: launch opencode at boot (not lazily on the first prompt) + hold a
                 # ref for the whole REPL, so per-invocation release(0) never stops it between
@@ -739,7 +730,7 @@ async def main(
                 # --debug and non-TTY use the harness REPL. Pi's real-TTY --tui is its
                 # native CLI, configured by the harness but not launched in RPC mode.
                 if debug_mode or not sys.stdout.isatty():
-                    await run_tui_console(router)
+                    await run_tui_console(channel_handler)
                 elif cfg.engine.type == "pi":
                     from ach_agent.engine.pi.driver import PiDriver
 
@@ -811,17 +802,12 @@ async def main(
             continue
 
         # The bridge is created here (boot module) — engine_runner never imports it.
-        bridge = A2AAgentExecutorBridge(handler=None, channel_cfg=channel)
+        bridge = A2AAgentExecutorBridge(handler=channel_handler, channel_cfg=channel,
+                                         completion_registry=completion_registry)
 
         # on_complete/on_fail (W9: bound here in the boot module, engine tier stays
         # unaware of A2A type). on_fail mirrors on_complete: emits a FAILED event when
         # the terminal output is unusable (action != a2a_reply, or empty reply text).
-        _on_complete = bridge.signal_completion
-        _on_fail = bridge.signal_failure
-
-        # Wrap the router to inject on_complete + on_fail into delivery_context (W9 pattern).
-        bridge._handler = _A2AHandler(router, _on_complete, _on_fail)
-
         # Build the A2A AgentCard from channel config (minimal — receiver-only v1, spec §14.6).
         # make_a2a_agent_card keeps a2a.* imports inside channels/a2a.py (RTR-06 fence).
         agent_card = make_a2a_agent_card(channel.name)
@@ -835,7 +821,7 @@ async def main(
     # a2a_mounts threads the A2A sub-apps under the same socket (topology A).
     app = create_app(
         channels=webhook_channels,
-        handler=router,
+        handler=channel_handler,
         a2a_mounts=a2a_mounts,
     )
     # Expose state so _drain can flip draining/ready (same ref as app.extra['state'])
@@ -850,7 +836,7 @@ async def main(
     cron_channels = [ch for ch in cfg.channels if ch.type == "cron"]
     cron_scheduler: CronScheduler | None = None
     if cron_channels:
-        cron_scheduler = CronScheduler(cron_channels, handler=router)
+        cron_scheduler = CronScheduler(cron_channels, handler=channel_handler)
         await cron_scheduler.start()
         log.info(
             "cron scheduler started",
@@ -863,7 +849,7 @@ async def main(
     queue_channels = [ch for ch in cfg.channels if ch.type == "queue"]
     queue_consumers: list[QueueConsumer] = []
     for channel in queue_channels:
-        consumer = QueueConsumer(channel, handler=router)
+        consumer = QueueConsumer(channel, handler=channel_handler)
         await consumer.start()
         queue_consumers.append(consumer)
         log.info("queue consumer started", channel_name=channel.name, stream=channel.queue.key)  # type: ignore[union-attr]

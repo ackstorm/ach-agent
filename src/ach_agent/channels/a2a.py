@@ -196,9 +196,11 @@ class A2AAgentExecutorBridge:
         self,
         handler: MessageHandler | None,
         channel_cfg: ChannelConfig,
+        completion_registry: Any | None = None,
     ) -> None:
         self._handler: MessageHandler | None = handler
         self._channel_cfg = channel_cfg
+        self._completion_registry = completion_registry
         # Maps task_id → _PendingTask (finding 5). See _PendingTask's docstring for
         # why this is keyed by task_id and not session_key.
         self._pending: dict[str, _PendingTask] = {}
@@ -273,11 +275,6 @@ class A2AAgentExecutorBridge:
             await existing.completion.wait()
             return
 
-        # Register pending BEFORE dispatch so signal_completion can find it.
-        pending = _PendingTask(completion=asyncio.Event(), context_id=context_id)
-        pending.queues.append(event_queue)
-        self._pending[task_id] = pending
-
         idempotency_key = derive_a2a_idempotency_key(task_id)
         event = MessageEvent(
             idempotency_key=idempotency_key,
@@ -286,9 +283,16 @@ class A2AAgentExecutorBridge:
             payload={"text": text, "task_id": task_id, "context_id": context_id},
             source_trait="async_no_retry",  # HTTP-delivered, but completion is out-of-band
         )
+        pending = _PendingTask(completion=asyncio.Event(), context_id=context_id)
+        pending.queues.append(event_queue)
+        self._pending[task_id] = pending
 
         assert self._handler is not None, "_handler not wired before execute()"
-        result = await self._handler.handle(event)
+        try:
+            result = await self._handler.handle(event)
+        except Exception:
+            self._pending.pop(task_id, None)
+            raise
         if result == RouterAdmitResult.FULL_QUEUE:
             log.warning(
                 "a2a: request rejected — queue full (D-05/RTR-05)",
@@ -314,8 +318,36 @@ class A2AAgentExecutorBridge:
         # via its own flag — no branch here.
         await event_queue.enqueue_event(_status_event("working", None, task_id, context_id))
 
-        # (3) Await out-of-band completion from engine via signal_completion
-        await pending.completion.wait()
+        # (3) Await the ID-keyed completion. Cancelling this waiter does not cancel
+        # the admitted lane work, so a lost A2A response can be retried safely.
+        if self._completion_registry is None:
+            await pending.completion.wait()
+            return
+        ref = self._completion_registry.ref_for(event)
+        completion_wait = asyncio.create_task(self._completion_registry.wait(ref))
+        canceled_wait = asyncio.create_task(pending.completion.wait())
+        done, _ = await asyncio.wait(
+            (completion_wait, canceled_wait), return_when=asyncio.FIRST_COMPLETED
+        )
+        if canceled_wait in done:
+            completion_wait.cancel()
+            await asyncio.gather(completion_wait, return_exceptions=True)
+            return
+        canceled_wait.cancel()
+        await asyncio.gather(canceled_wait, return_exceptions=True)
+        completion = completion_wait.result()
+        self._pending.pop(task_id, None)
+        if completion.state == "completed":
+            result_text = str((completion.result or {}).get("text", ""))
+            await event_queue.enqueue_event(_status_event("completed", result_text, task_id, context_id))
+        elif completion.state == "outcome_unavailable":
+            await event_queue.enqueue_event(
+                _status_event("failed", "Outcome unavailable", task_id, context_id)
+            )
+        else:
+            await event_queue.enqueue_event(
+                _status_event("failed", completion.error or "Invocation failed", task_id, context_id)
+            )
 
     async def cancel(self, context: Any, event_queue: Any) -> None:
         """AgentExecutor.cancel — enqueue a canceled event, wake every waiter on this task."""

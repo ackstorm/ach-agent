@@ -7,9 +7,8 @@ channels and opens a console REPL instead. Each line you type/paste IS the promp
 sent straight to the agent — so you can simulate a cron tick by pasting its prompt,
 a webhook/hook by pasting that instruction, etc.
 
-Each line becomes a MessageEvent (source_trait="sync") with a fresh reply_future on a
-single stable session (conversational continuity), routed through the bounded lane;
-engine_runner resolves the future with the engine's free-form text, which is printed
+Each line becomes an ID-keyed completion on a single stable session (conversational
+continuity), routed through the bounded lane; the completed free-form text is printed
 verbatim — there is NO terminal contract.
 
 Testability: run_tui_console accepts optional reader/writer. The default reader wraps
@@ -155,8 +154,8 @@ async def _handle_line(
     then NOT re-written (only a closing newline). When unset, the full reply is written
     once via ``writer`` (the non-streaming path used by tests).
     """
-    reply_future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
     delivery_context: dict[str, object] = {"free_form": True}
+    reply_future: asyncio.Future[str] | None = None
     streamed = False
     if stream_sink is not None:
 
@@ -165,9 +164,7 @@ async def _handle_line(
             streamed = True
             stream_sink(delta)
 
-        delivery_context["on_text"] = _on_text
-    if tool_sink is not None:
-        delivery_context["on_tool"] = tool_sink
+        # Sinks are registered in the process-local completion registry below.
     event = MessageEvent(
         idempotency_key=str(int(time.time() * 1000)),
         session_key=session_key,
@@ -175,11 +172,39 @@ async def _handle_line(
         payload={"text": line},
         delivery_context=delivery_context,
         source_trait="sync",
-        reply_future=reply_future,
     )
     CHANNEL_INBOUND.labels(channel="tui-console", type="tui").inc()
-    await handler.handle(event)
-    text = await reply_future
+    registry = getattr(handler, "registry", None)
+    if registry is None:
+        reply_future = asyncio.get_running_loop().create_future()
+        event.reply_future = reply_future
+        if stream_sink is not None:
+            delivery_context["on_text"] = _on_text
+        if tool_sink is not None:
+            delivery_context["on_tool"] = tool_sink
+    else:
+        ref = registry.ref_for(event)
+        if stream_sink is not None or tool_sink is not None:
+            registry.register_sinks(ref, on_text=_on_text if stream_sink is not None else None,
+                                    on_tool=tool_sink)
+    try:
+        result = await handler.handle(event)
+    except Exception:
+        if registry is not None:
+            registry.discard_sinks(ref)
+        raise
+    if getattr(result, "name", "") == "FULL_QUEUE":
+        if registry is not None:
+            registry.discard_sinks(ref)
+        raise RuntimeError("queue full")
+    if registry is None:
+        text = await reply_future
+    else:
+        completion = await registry.wait(ref)
+        if completion.state != "completed":
+            raise RuntimeError(completion.error or "invocation failed")
+        raw = completion.result
+        text = str(raw.get("text", "")) if isinstance(raw, dict) else str(raw or "")
     if stream_sink is not None and streamed:
         stream_sink("\n\n")  # close the streamed line + a blank line between turns
     else:

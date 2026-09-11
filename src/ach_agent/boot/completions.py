@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, JsonValue, field_validator
 
@@ -74,6 +74,8 @@ class _Record:
 
 
 RouterHandle = Callable[[MessageEvent], Awaitable[RouterAdmitResult]]
+TextSink = Callable[[str], None]
+ToolSink = Callable[[Any], None]
 
 
 class CompletionRegistry:
@@ -118,13 +120,31 @@ class CompletionRegistry:
         self._clock = clock
         self._records: dict[tuple[str, str, str], _Record] = {}
         self._completed: dict[tuple[str, str, str], _Record] = {}
+        self._sinks: dict[
+            tuple[str, str, str], tuple[TextSink | None, ToolSink | None]
+        ] = {}
 
-    async def submit(self, event: MessageEvent) -> Submission:
-        ref = EventRef(
+    def ref_for(self, event: MessageEvent) -> EventRef:
+        return EventRef(
             agent=self._agent,
             channel_name=event.channel_name,
             idempotency_key=event.idempotency_key,
         )
+
+    def register_sinks(
+        self, ref: EventRef, *, on_text: TextSink | None = None, on_tool: ToolSink | None = None
+    ) -> None:
+        """Keep local streaming callbacks outside the serializable event."""
+        self._sinks[self._key(ref)] = (on_text, on_tool)
+
+    def sinks(self, ref: EventRef) -> tuple[TextSink | None, ToolSink | None]:
+        return self._sinks.get(self._key(ref), (None, None))
+
+    def discard_sinks(self, ref: EventRef) -> None:
+        self._sinks.pop(self._key(ref), None)
+
+    async def submit(self, event: MessageEvent) -> Submission:
+        ref = self.ref_for(event)
         self._purge_expired()
         key = self._key(ref)
         existing = self._records.get(key) or self._completed.get(key)
@@ -228,7 +248,11 @@ class CompletionRegistry:
         self._completed[key] = record
         self._completed_bytes += record.retained_bytes
         record.changed.set()
+        self._sinks.pop(key, None)
         self._trim_completed()
+
+    async def finish_event(self, event: MessageEvent, error: str) -> None:
+        await self.finish(self.ref_for(event), error=error)
 
     async def mark_running(self, ref: EventRef) -> None:
         """Record that admitted execution has started."""
@@ -280,3 +304,18 @@ class CompletionRegistry:
     @staticmethod
     def _key(ref: EventRef) -> tuple[str, str, str]:
         return (ref.agent, ref.channel_name, ref.idempotency_key)
+
+
+class CompletionHandler:
+    """Channel-facing adapter that preserves the router admission enum."""
+
+    def __init__(self, registry: CompletionRegistry) -> None:
+        self.registry = registry
+
+    async def handle(self, event: MessageEvent) -> RouterAdmitResult:
+        submission = await self.registry.submit(event)
+        return {
+            Admission.ACCEPTED: RouterAdmitResult.ACCEPTED,
+            Admission.DUPLICATE: RouterAdmitResult.DUPLICATE,
+            Admission.FULL_QUEUE: RouterAdmitResult.FULL_QUEUE,
+        }[submission.admission]

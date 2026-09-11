@@ -50,7 +50,9 @@ class MessageEvent:
     delivery_context: dict[str, Any] = field(default_factory=dict)
     source_trait: Literal["sync", "async_no_retry"] = "async_no_retry"
     received_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    reply_future: asyncio.Future[str] | None = field(default=None, compare=False, repr=False)
     # Correlation id (uuid4 hex) echoed to the caller on the webhook 202 accept and logged
     # by engine_runner for log/trace correlation ONLY — not persisted, not queryable.
     task_id: str = ""
+    # Compatibility-only local attribute. Channel wiring never uses it and envelopes
+    # reject it; retained so old callers fail at the serialization boundary.
+    reply_future: asyncio.Future[str] | None = field(default=None, compare=False, repr=False)

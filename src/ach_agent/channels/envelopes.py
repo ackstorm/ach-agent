@@ -55,7 +55,7 @@ class EventEnvelope(BaseModel):
     @classmethod
     def from_message_event(cls, event: MessageEvent, *, free_form: bool = False) -> EventEnvelope:
         """Project a known ``MessageEvent`` and reject its local callback sink."""
-        if event.reply_future is not None:
+        if getattr(event, "reply_future", None) is not None:
             raise ValueError("reply_future cannot be serialized in an EventEnvelope")
         return cls(
             idempotency_key=event.idempotency_key,

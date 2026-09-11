@@ -131,14 +131,11 @@ async def test_output_overflow_does_not_block_another_execution(fake_driver):
     fake_driver.text_chunks_by_conversation["slow"] = ["x" * 700_000] * 8
     service = ExecutionService(fake_driver, {})
     slow = await service.acquire(
-        _acquire().model_copy(
-            update={"invocation_id": "slow-inv", "conversation_key": "slow"}
-        )
+        _acquire().model_copy(update={"invocation_id": "slow-inv", "conversation_key": "slow"})
     )
+
     fast = await service.acquire(
-        _acquire().model_copy(
-            update={"invocation_id": "fast-inv", "conversation_key": "fast"}
-        )
+        _acquire().model_copy(update={"invocation_id": "fast-inv", "conversation_key": "fast"})
     )
 
     async def collect(handle, invocation_id, conversation_key):
@@ -167,6 +164,38 @@ async def test_output_overflow_does_not_block_another_execution(fake_driver):
             controller_id="controller",
             execution_id=fast.execution_id,
             invocation_id="fast-inv",
+            idle_ttl_seconds=0,
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_fast_reader_can_drain_more_than_256_small_records(fake_driver):
+    fake_driver.text_chunks = ["x"] * 300
+    fake_driver.yield_between_text_chunks = True
+    service = ExecutionService(fake_driver, {})
+    handle = await service.acquire(_acquire())
+    events = [
+        event
+        async for event in service.turn(
+            TurnRequest(
+                controller_id="controller",
+                execution_id=handle.execution_id,
+                invocation_id="inv",
+                turn_id="main",
+                prompt="p",
+                max_tool_calls=0,
+            )
+        )
+    ]
+
+    assert len([event for event in events if event.kind == "text"]) == 300
+    assert events[-1].kind == "turn_done"
+    await service.release(
+        ReleaseRequest(
+            controller_id="controller",
+            execution_id=handle.execution_id,
+            invocation_id="inv",
             idle_ttl_seconds=0,
         )
     )
@@ -578,3 +607,26 @@ async def test_warm_expiry_failure_marks_service_unhealthy(fake_driver):
     await asyncio.sleep(0.05)
     assert service._unhealthy
     assert service.shutdown_requested
+
+
+@pytest.mark.asyncio
+async def test_cleanup_timeout_closes_admission_when_stop_suppresses_cancel(
+    fake_driver, monkeypatch
+):
+    monkeypatch.setattr("ach_agent.execution.service.CLEANUP_DEADLINE_SECONDS", 0.03)
+    service = ExecutionService(fake_driver, {})
+    await service.acquire(_acquire())
+    fake_driver.stop_barrier = asyncio.Event()
+    fake_driver.suppress_stop_cancellation = True
+    deadline = asyncio.create_task(service.cancel("controller", "inv"))
+    await asyncio.wait_for(fake_driver.stop_started.wait(), timeout=1)
+    await asyncio.sleep(0.08)
+
+    assert service.shutdown_requested
+    assert service._unhealthy
+    assert not service.can_accept_controller
+    with pytest.raises(RuntimeError, match="unhealthy"):
+        await service.claim_controller("new-controller")
+    with pytest.raises(RuntimeError, match="cleanup deadline"):
+        await deadline
+    fake_driver.stop_barrier.set()

@@ -50,11 +50,13 @@ class _Invocation:
     maintenance_task: asyncio.Task[Any] | None = None
     cleanup_task: asyncio.Task[None] | None = None
     turn_ids: set[str] = dataclasses.field(default_factory=set)
-    stream_events: int = 0
-    stream_bytes: int = 0
+    buffered_events: int = 0
+    buffered_bytes: int = 0
+    leased_bytes: int = 0
     queued_bytes: int = 0
     output_error: Exception | None = None
     event_queue: asyncio.Queue[Any] | None = None
+    cleanup_deadline: float | None = None
 
 
 class OutputLimitExceeded(RuntimeError):
@@ -65,6 +67,7 @@ MAX_NDJSON_RECORD_BYTES = 1 * 1024 * 1024
 MAX_STREAM_EVENTS = 256
 MAX_INVOCATION_STREAM_BYTES = 4 * 1024 * 1024
 MAX_AGGREGATE_QUEUED_BYTES = 32 * 1024 * 1024
+CLEANUP_DEADLINE_SECONDS = 10.0
 
 
 def _engine_config(public: Any) -> EngineConfig:
@@ -122,6 +125,7 @@ class ExecutionService:
         self.shutdown_requested = False
         self.controller_cleanup_error: str | None = None
         self._ttl_watchers: set[asyncio.Task[None]] = set()
+        self._controller_cleanup_task: asyncio.Task[None] | None = None
 
     @property
     def can_accept_controller(self) -> bool:
@@ -140,10 +144,24 @@ class ExecutionService:
         self._admission_open = True
 
     def _assert_controller(self, controller_id: str) -> None:
+        if self._unhealthy:
+            raise RuntimeError("native cleanup failed; execution service is unhealthy")
         if not self.controller_required and self._controller_id is None:
             return
         if not self._admission_open or self._controller_id != controller_id:
             raise ValueError("obsolete controller")
+
+    def _mark_unhealthy(self) -> None:
+        self._unhealthy = True
+        self.shutdown_requested = True
+        self._admission_open = False
+
+    @staticmethod
+    def _observe_task(task: asyncio.Task[Any]) -> None:
+        try:
+            task.result()
+        except BaseException:
+            pass
 
     async def release_controller(self, controller_id: str) -> None:
         """Close admission and finish all owned cleanup before another controller."""
@@ -165,13 +183,18 @@ class ExecutionService:
                 await asyncio.gather(*operations, return_exceptions=False)
             await self.pool.stop_all()
 
+        cleanup_task = asyncio.create_task(cleanup_all())
+        self._controller_cleanup_task = cleanup_task
         try:
-            await asyncio.wait_for(asyncio.shield(cleanup_all()), timeout=10.0)
+            await asyncio.wait_for(asyncio.shield(cleanup_task), timeout=10.0)
         except BaseException as exc:
-            self._unhealthy = True
-            self.shutdown_requested = True
+            self._mark_unhealthy()
             self.controller_cleanup_error = repr(exc)
+            cleanup_task.add_done_callback(self._observe_task)
             raise
+        finally:
+            if cleanup_task.done() and self._controller_cleanup_task is cleanup_task:
+                self._controller_cleanup_task = None
         self._controller_id = None
 
     async def acquire(self, request: AcquireRequest) -> ExecutionHandle:
@@ -180,6 +203,7 @@ class ExecutionService:
             raise RuntimeError("native cleanup failed; execution service is unhealthy")
         if request.invocation_id in self._invocations or request.invocation_id in self._acquiring:
             raise ValueError(f"invocation already acquired: {request.invocation_id}")
+        cfg = _engine_config(request.config)
         self._acquiring.add(request.invocation_id)
         current_task = asyncio.current_task()
         if current_task is not None:
@@ -187,7 +211,6 @@ class ExecutionService:
         try:
             loop = asyncio.get_running_loop()
             deadline = loop.time() + request.remaining_seconds
-            cfg = _engine_config(request.config)
             remaining = max(0.001, deadline - loop.time())
             server = await asyncio.wait_for(self.pool.acquire(request.lane_key, cfg), remaining)
         except NativeLaunchFailed:
@@ -195,11 +218,19 @@ class ExecutionService:
             # adapter can serialize LaunchFailed without treating it as controller death.
             raise
         except Exception:
-            self._unhealthy = True
+            self._mark_unhealthy()
             raise
         finally:
             self._acquiring.discard(request.invocation_id)
             self._acquire_tasks.pop(request.invocation_id, None)
+        try:
+            self._assert_controller(request.controller_id)
+        except Exception:
+            try:
+                await self.pool.discard(request.lane_key)
+            except Exception:
+                self._mark_unhealthy()
+            raise
         handle = ExecutionHandle(
             instance_id=self.instance_id,
             controller_id=request.controller_id,
@@ -238,12 +269,32 @@ class ExecutionService:
         if inv.cleanup_task is not None:
             return inv.cleanup_task
         inv.terminal = True
+        if inv.cleanup_deadline is None:
+            inv.cleanup_deadline = asyncio.get_running_loop().time() + CLEANUP_DEADLINE_SECONDS
         inv.cleanup_task = asyncio.create_task(
-            self._cleanup_invocation(
-                inv, release=release, idle_ttl_seconds=idle_ttl_seconds
-            )
+            self._cleanup_invocation(inv, release=release, idle_ttl_seconds=idle_ttl_seconds)
         )
         return inv.cleanup_task
+
+    def _reserve_output(self, inv: _Invocation, event: ExecutionEvent) -> int:
+        size = len(_event_bytes(event))
+        if size > MAX_NDJSON_RECORD_BYTES:
+            raise OutputLimitExceeded("NDJSON record exceeds 1 MiB")
+        if inv.buffered_events >= MAX_STREAM_EVENTS:
+            raise OutputLimitExceeded("invocation stream exceeds 256 buffered events")
+        if inv.buffered_bytes + size > MAX_INVOCATION_STREAM_BYTES:
+            raise OutputLimitExceeded("invocation stream exceeds 4 MiB buffered output")
+        if self._queued_stream_bytes + size > MAX_AGGREGATE_QUEUED_BYTES:
+            raise OutputLimitExceeded("aggregate output queue exceeds 32 MiB")
+        inv.buffered_events += 1
+        inv.buffered_bytes += size
+        self._queued_stream_bytes += size
+        return size
+
+    def _release_output(self, inv: _Invocation, size: int) -> None:
+        inv.buffered_events = max(0, inv.buffered_events - 1)
+        inv.buffered_bytes = max(0, inv.buffered_bytes - size)
+        self._queued_stream_bytes = max(0, self._queued_stream_bytes - size)
 
     async def _cleanup_invocation(
         self, inv: _Invocation, *, release: bool, idle_ttl_seconds: float
@@ -279,13 +330,17 @@ class ExecutionService:
                     break
                 if queued is not None:
                     _event, size = queued
-                    self._queued_stream_bytes = max(0, self._queued_stream_bytes - size)
+                    inv.queued_bytes = max(0, inv.queued_bytes - size)
+                    self._release_output(inv, size)
             inv.queued_bytes = 0
             # The consumer may already be blocked in ``queue.get`` after its
             # run task was cancelled; preserve the wake-up sentinel after the
             # discarded buffered records.
             queue.put_nowait(None)
             inv.event_queue = None
+        if inv.leased_bytes:
+            self._release_output(inv, inv.leased_bytes)
+            inv.leased_bytes = 0
 
         try:
             if release:
@@ -299,13 +354,11 @@ class ExecutionService:
             else:
                 await self.pool.discard(inv.session_key)
         except asyncio.CancelledError:
-            self._unhealthy = True
-            self.shutdown_requested = True
+            self._mark_unhealthy()
             inv.cleanup_error = "native cleanup cancelled"
             raise
         except Exception as exc:
-            self._unhealthy = True
-            self.shutdown_requested = True
+            self._mark_unhealthy()
             inv.cleanup_error = str(exc)
             raise
         else:
@@ -318,23 +371,31 @@ class ExecutionService:
         except asyncio.CancelledError:
             return
         except BaseException:
-            self._unhealthy = True
-            self.shutdown_requested = True
+            self._mark_unhealthy()
 
-    async def _await_cleanup(self, task: asyncio.Task[None]) -> None:
-        """Wait for cleanup despite caller cancellation, without false confirmation."""
+    async def _await_cleanup(self, task: asyncio.Task[None], inv: _Invocation) -> None:
+        """Wait for the one cleanup deadline despite caller cancellation."""
+        deadline = inv.cleanup_deadline
+        if deadline is None:
+            deadline = asyncio.get_running_loop().time() + CLEANUP_DEADLINE_SECONDS
+            inv.cleanup_deadline = deadline
+
+        async def wait_remaining() -> None:
+            remaining = max(0.001, deadline - asyncio.get_running_loop().time())
+            await asyncio.wait_for(asyncio.shield(task), timeout=remaining)
+
         try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=10.0)
+            await wait_remaining()
         except TimeoutError:
-            self._unhealthy = True
-            self.shutdown_requested = True
+            self._mark_unhealthy()
+            task.add_done_callback(self._observe_task)
             raise RuntimeError("native cleanup deadline expired")
         except asyncio.CancelledError:
             try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=10.0)
+                await wait_remaining()
             except TimeoutError:
-                self._unhealthy = True
-                self.shutdown_requested = True
+                self._mark_unhealthy()
+                task.add_done_callback(self._observe_task)
             except BaseException:
                 pass
             raise
@@ -348,10 +409,12 @@ class ExecutionService:
             return
         cleanup = self._start_cleanup(inv, release=False)
         try:
-            await asyncio.wait_for(asyncio.shield(cleanup), timeout=10.0)
+            deadline = inv.cleanup_deadline or asyncio.get_running_loop().time()
+            remaining = max(0.001, deadline - asyncio.get_running_loop().time())
+            await asyncio.wait_for(asyncio.shield(cleanup), timeout=remaining)
         except TimeoutError:
-            self._unhealthy = True
-            self.shutdown_requested = True
+            self._mark_unhealthy()
+            cleanup.add_done_callback(self._observe_task)
         except BaseException:
             # _cleanup_invocation records the failure and leaves the invocation tracked.
             pass
@@ -398,7 +461,7 @@ class ExecutionService:
                 inv.turn_active = False
                 cleanup = self._start_cleanup(inv, release=False)
                 try:
-                    await self._await_cleanup(cleanup)
+                    await self._await_cleanup(cleanup, inv)
                 except Exception:
                     pass
 
@@ -443,45 +506,32 @@ class ExecutionService:
                 turn_id=request.turn_id,
                 payload={"session_ref": inv.current_ref},
             )
-            # ``reserve`` is defined below for queued events; this direct event is
-            # validated by the HTTP adapter before it is written.
+            size = self._reserve_output(inv, session_event)
+            inv.leased_bytes = size
             yield session_event
+            if inv.leased_bytes:
+                self._release_output(inv, inv.leased_bytes)
+                inv.leased_bytes = 0
             if inv.terminal or inv.released:
                 raise ValueError("invocation is terminal")
 
         queue: asyncio.Queue[tuple[ExecutionEvent, int] | None] = asyncio.Queue()
         inv.event_queue = queue
 
-        def reserve(event: ExecutionEvent) -> int:
-            size = len(_event_bytes(event))
-            if size > MAX_NDJSON_RECORD_BYTES:
-                raise OutputLimitExceeded("NDJSON record exceeds 1 MiB")
-            if inv.stream_events >= MAX_STREAM_EVENTS:
-                raise OutputLimitExceeded("invocation stream exceeds 256 events")
-            if inv.stream_bytes + size > MAX_INVOCATION_STREAM_BYTES:
-                raise OutputLimitExceeded("invocation stream exceeds 4 MiB")
-            inv.stream_events += 1
-            inv.stream_bytes += size
-            return size
-
         def enqueue(event: ExecutionEvent) -> None:
+            if inv.output_error is not None:
+                return
             try:
-                size = reserve(event)
+                size = self._reserve_output(inv, event)
             except OutputLimitExceeded as exc:
                 inv.output_error = exc
                 if inv.task is not None and not inv.task.done():
                     inv.task.cancel()
                 queue.put_nowait(None)
                 return
-            if self._queued_stream_bytes + size > MAX_AGGREGATE_QUEUED_BYTES:
-                inv.output_error = OutputLimitExceeded("aggregate output queue exceeds 32 MiB")
-                if inv.task is not None and not inv.task.done():
-                    inv.task.cancel()
-                queue.put_nowait(None)
-                return
-            self._queued_stream_bytes += size
             inv.queued_bytes += size
             queue.put_nowait((event, size))
+
         stats = {"_cached_session": inv.cached_ref_pending}
 
         async def on_session_resolved(session_ref: str) -> None:
@@ -547,19 +597,26 @@ class ExecutionService:
             except BaseException:
                 pass
             finally:
-                queue.put_nowait(None)
+                if inv.output_error is None:
+                    queue.put_nowait(None)
 
         inv.wake_task = asyncio.create_task(wake())
         while True:
+            if inv.leased_bytes:
+                self._release_output(inv, inv.leased_bytes)
+                inv.leased_bytes = 0
             event = await queue.get()
             if event is None:
                 if inv.output_error is not None:
                     raise inv.output_error
                 break
             output, size = event
-            self._queued_stream_bytes = max(0, self._queued_stream_bytes - size)
             inv.queued_bytes = max(0, inv.queued_bytes - size)
+            inv.leased_bytes = size
             yield output
+            if inv.leased_bytes:
+                self._release_output(inv, inv.leased_bytes)
+                inv.leased_bytes = 0
         if inv.wake_task is not None:
             await inv.wake_task
         try:
@@ -575,8 +632,12 @@ class ExecutionService:
                     turn_id=request.turn_id,
                     payload=_json_value(stats["usage"]),
                 )
-                reserve(usage_event)
+                size = self._reserve_output(inv, usage_event)
+                inv.leased_bytes = size
                 yield usage_event
+                if inv.leased_bytes:
+                    self._release_output(inv, inv.leased_bytes)
+                    inv.leased_bytes = 0
             done_event = ExecutionEvent(
                 kind="turn_done",
                 execution_id=inv.handle.execution_id,
@@ -589,18 +650,25 @@ class ExecutionService:
                     "stats": _json_value(stats),
                 },
             )
-            reserve(done_event)
+            size = self._reserve_output(inv, done_event)
+            inv.leased_bytes = size
             yield done_event
+        except OutputLimitExceeded as exc:
+            inv.output_error = exc
+            raise
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # a failed turn is a serializable engine result
-            yield ExecutionEvent(
+            error_event = ExecutionEvent(
                 kind="error",
                 execution_id=inv.handle.execution_id,
                 invocation_id=inv.handle.invocation_id,
                 turn_id=request.turn_id,
                 payload={"type": type(exc).__name__, "message": str(exc)},
             )
+            size = self._reserve_output(inv, error_event)
+            inv.leased_bytes = size
+            yield error_event
         inv.turn_active = False
 
     async def session_op(self, request: SessionOperation) -> None:
@@ -643,16 +711,17 @@ class ExecutionService:
         if inv.released:
             return
         if inv.terminal and inv.cleanup_task is not None:
-            await self._await_cleanup(inv.cleanup_task)
+            await self._await_cleanup(inv.cleanup_task, inv)
             return
-        if inv.terminal or inv.turn_active or inv.maintenance_active or (
-            inv.task is not None and not inv.task.done()
+        if (
+            inv.terminal
+            or inv.turn_active
+            or inv.maintenance_active
+            or (inv.task is not None and not inv.task.done())
         ):
             raise ValueError("cannot release an active invocation")
-        cleanup = self._start_cleanup(
-            inv, release=True, idle_ttl_seconds=request.idle_ttl_seconds
-        )
-        await self._await_cleanup(cleanup)
+        cleanup = self._start_cleanup(inv, release=True, idle_ttl_seconds=request.idle_ttl_seconds)
+        await self._await_cleanup(cleanup, inv)
 
     async def cancel(self, controller_id: str, invocation_id: str) -> None:
         self._assert_controller(controller_id)
@@ -661,8 +730,8 @@ class ExecutionService:
             raise ValueError("unknown invocation")
         if inv.terminal:
             if inv.cleanup_task is not None:
-                await self._await_cleanup(inv.cleanup_task)
+                await self._await_cleanup(inv.cleanup_task, inv)
                 return
             raise ValueError("invocation is terminal")
         cleanup = self._start_cleanup(inv, release=False)
-        await self._await_cleanup(cleanup)
+        await self._await_cleanup(cleanup, inv)

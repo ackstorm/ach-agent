@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 import anyio
@@ -41,25 +41,41 @@ WRITE_TIMEOUT_SECONDS = 30.0
 class _BoundedStreamingResponse(StreamingResponse):
     """Apply a finite deadline to each network write."""
 
+    def __init__(
+        self,
+        content: Any,
+        *,
+        on_close: Callable[[], Awaitable[None]] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(content, **kwargs)
+        self._on_close = on_close
+
     async def stream_response(self, send: Send) -> None:
-        await send(
-            {
-                "type": "http.response.start",
-                "status": self.status_code,
-                "headers": self.raw_headers,
-            }
-        )
         try:
+            with anyio.fail_after(WRITE_TIMEOUT_SECONDS):
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": self.status_code,
+                        "headers": self.raw_headers,
+                    }
+                )
             async for chunk in self.body_iterator:
                 with anyio.fail_after(WRITE_TIMEOUT_SECONDS):
-                    await send(
-                        {"type": "http.response.body", "body": chunk, "more_body": True}
-                    )
-            await send({"type": "http.response.body", "body": b""})
+                    await send({"type": "http.response.body", "body": chunk, "more_body": True})
+            with anyio.fail_after(WRITE_TIMEOUT_SECONDS):
+                await send({"type": "http.response.body", "body": b""})
         finally:
-            close = getattr(self.body_iterator, "aclose", None)
-            if close is not None:
-                await close()
+            try:
+                close = getattr(self.body_iterator, "aclose", None)
+                if close is not None:
+                    await close()
+            finally:
+                if self._on_close is not None:
+                    with anyio.CancelScope(shield=True):
+                        with contextlib.suppress(BaseException):
+                            await self._on_close()
 
 
 def _json_line(value: Any) -> bytes:
@@ -101,9 +117,7 @@ def _invalid(message: str) -> JSONResponse:
 
 def _error_response(exc: Exception) -> JSONResponse:
     if isinstance(exc, NativeLaunchFailed):
-        return JSONResponse(
-            {"type": "LaunchFailed", "message": str(exc)}, status_code=502
-        )
+        return JSONResponse({"type": "LaunchFailed", "message": str(exc)}, status_code=502)
     if isinstance(exc, OutputLimitExceeded):
         return JSONResponse({"type": "OutputLimitExceeded", "message": str(exc)}, status_code=507)
     if isinstance(exc, ValueError):
@@ -165,7 +179,11 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
                 if service.shutdown_requested:
                     app.state.shutdown_requested = True
 
-        return _BoundedStreamingResponse(held(), media_type="application/x-ndjson")
+        return _BoundedStreamingResponse(
+            held(),
+            media_type="application/x-ndjson",
+            on_close=lambda: service.release_controller(hello.controller_id),
+        )
 
     @app.post("/execution/v1/acquire")
     async def acquire(request: Request) -> JSONResponse:
@@ -194,14 +212,17 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
         except Exception as exc:
             return service_error(exc)
 
+        stream_finished = False
+
+        async def cancel_invocation() -> None:
+            with anyio.CancelScope(shield=True):
+                with contextlib.suppress(BaseException):
+                    await service.cancel(body.controller_id, body.invocation_id)
+
         async def output() -> AsyncIterator[bytes]:
+            nonlocal stream_finished
             cancelled = False
             finished = False
-
-            async def cancel_invocation() -> None:
-                with anyio.CancelScope(shield=True):
-                    with contextlib.suppress(BaseException):
-                        await service.cancel(body.controller_id, body.invocation_id)
 
             try:
                 async for event in service.turn(body):
@@ -212,12 +233,14 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
                         raise OutputLimitExceeded("NDJSON record exceeds 1 MiB")
                     yield record
                 finished = True
+                stream_finished = True
             except asyncio.CancelledError:
                 cancelled = True
                 raise
             except OutputLimitExceeded as exc:
                 await cancel_invocation()
                 finished = True
+                stream_finished = True
                 yield _json_line(
                     ExecutionEvent(
                         kind="error",
@@ -231,6 +254,7 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
             except Exception as exc:
                 await cancel_invocation()
                 finished = True
+                stream_finished = True
                 yield _json_line(
                     ExecutionEvent(
                         kind="error",
@@ -245,7 +269,13 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
                 if cancelled or not finished:
                     await cancel_invocation()
 
-        return _BoundedStreamingResponse(output(), media_type="application/x-ndjson")
+        async def cancel_if_incomplete() -> None:
+            if not stream_finished:
+                await cancel_invocation()
+
+        return _BoundedStreamingResponse(
+            output(), media_type="application/x-ndjson", on_close=cancel_if_incomplete
+        )
 
     @app.post("/execution/v1/session-op")
     async def session_op(request: Request) -> JSONResponse:

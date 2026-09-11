@@ -25,6 +25,7 @@ class FakeDriver:
         self.resolved_conversations: list[tuple[str, bool]] = []
         self.turn_session_refs: list[str | None] = []
         self.turn_barrier = None
+        self.turn_barriers_by_conversation: dict[str, asyncio.Event] = {}
         self.resolve_barrier = None
         self.compact_barrier = None
         self.compact_started = asyncio.Event()
@@ -33,10 +34,12 @@ class FakeDriver:
         self.stop_error = None
         self.stop_started = asyncio.Event()
         self.stop_barrier = None
+        self.suppress_stop_cancellation = False
         self.stopped = False
         self.usage = None
         self.text_chunks: list[str] = []
         self.text_chunks_by_conversation: dict[str, list[str]] = {}
+        self.yield_between_text_chunks = False
 
     def skills_dir(self, home):
         return home
@@ -60,7 +63,7 @@ class FakeDriver:
         self.turn_session_refs.append(kwargs["session_ref"])
         if self.usage is not None:
             kwargs["stats"]["usage"] = self.usage
-        barrier = self.turn_barrier
+        barrier = self.turn_barriers_by_conversation.get(kwargs["conv_key"], self.turn_barrier)
         if barrier is not None:
             await barrier.wait()
         if self.run_error is not None:
@@ -68,6 +71,8 @@ class FakeDriver:
         chunks = self.text_chunks_by_conversation.get(kwargs["conv_key"], self.text_chunks)
         for text in chunks or ["reply"]:
             kwargs["on_text"](text)
+            if self.yield_between_text_chunks:
+                await asyncio.sleep(0)
         return TurnResult(
             text='{"action":"none","text":"reply"}', session_ref=kwargs["session_ref"]
         )
@@ -90,7 +95,14 @@ class FakeDriver:
         if self.stop_error is not None:
             raise self.stop_error
         if self.stop_barrier is not None:
-            await self.stop_barrier.wait()
+            if self.suppress_stop_cancellation:
+                while not self.stop_barrier.is_set():
+                    try:
+                        await self.stop_barrier.wait()
+                    except asyncio.CancelledError:
+                        continue
+            else:
+                await self.stop_barrier.wait()
         server.stopped = True
         self.stopped = True
 

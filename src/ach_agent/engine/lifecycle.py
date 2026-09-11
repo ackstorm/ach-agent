@@ -23,7 +23,6 @@ import os
 import re
 import shutil
 import signal
-import sys
 from collections.abc import Callable, MutableMapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,8 +36,11 @@ if TYPE_CHECKING:
 
 # EngineConfig now lives in engine/base/driver.py (SP1 seam). Re-exported here so every
 # existing `from ach_agent.engine.lifecycle import EngineConfig` keeps resolving unchanged.
+from ach_agent.engine.base.driver import (  # noqa: E402  (kept beside other engine imports)
+    EngineConfig as EngineConfig,
+)
 from ach_agent.engine.base.driver import (
-    EngineConfig as EngineConfig,  # noqa: E402  (kept beside other engine imports)
+    TurnResult as TurnResult,
 )
 
 log = structlog.get_logger(__name__)
@@ -647,11 +649,9 @@ async def launch(
         "--print-logs",
         "--pure",  # disable external plugins (Pitfall isolation)
     ]
-    launch_args = (
-        [sys.executable, "-m", "ach_agent.engine.process_supervisor", "--", *native_args]
-        if Path("/proc").is_dir()
-        else native_args
-    )
+    from ach_agent.engine.process_supervisor import command as _supervisor_command
+
+    launch_args = _supervisor_command(native_args) if Path("/proc").is_dir() else native_args
     proc = await asyncio.create_subprocess_exec(
         *launch_args,
         stdin=asyncio.subprocess.DEVNULL,
@@ -799,13 +799,36 @@ async def run_invocation(
 
     sessions = oc_sessions if oc_sessions is not None else server._sessions
     stats = stats if stats is not None else {}
+    driver = OpencodeDriver()
+    native_session_ref: str | None = None
+
+    async def run_turn_for_terminal(
+        *,
+        prompt: str,
+        max_tool_calls: int,
+        on_text: Callable[[str], None] | None,
+        on_tool: Callable[[OpenCodeToolUpdate], None] | None,
+        stats: dict[str, Any],
+    ) -> TurnResult:
+        nonlocal native_session_ref
+        result = await driver.run_turn(
+            server,
+            conv_key=session_id,
+            prompt=prompt,
+            reuse=reuse,
+            sessions=sessions,
+            session_ref=native_session_ref,
+            on_text=on_text,
+            on_tool=on_tool,
+            max_tool_calls=max_tool_calls,
+            stats=stats,
+        )
+        native_session_ref = result.session_ref
+        return result
+
     return await run_contract_turn(
-        OpencodeDriver(),
-        server,
-        conv_key=session_id,
+        run_turn_for_terminal,
         prompt=prompt,
-        reuse=reuse,
-        sessions=sessions,
         free_form=free_form,
         terminal_action=terminal_action,
         terminal_retries=terminal_retries,

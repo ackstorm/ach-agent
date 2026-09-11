@@ -196,6 +196,16 @@ def mint_token() -> str:
     return token
 
 
+def adopt(token: str) -> None:
+    """Register a public mini-harness token in the harness correlation registry.
+
+    EnginePool remains the issuer.  The harness only adopts the opaque public route
+    token after acquire so it can open its own trace/cost window before the first turn.
+    """
+    if token:
+        _registry.setdefault(token, _Entry())
+
+
 def set_session(token: str, session_ref: str) -> None:
     """Record the engine's own session id for ``token``'s server.
 

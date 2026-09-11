@@ -5,15 +5,15 @@ harness-validated" constraint). free_form channels (--tui) skip extraction."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, MutableMapping
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
 if TYPE_CHECKING:
-    from ach_agent.engine.base.driver import EngineDriver
     from ach_agent.engine.base.events import OpenCodeToolUpdate
-    from ach_agent.engine.lifecycle import ManagedServer
+
+RunTurn = Callable[..., Awaitable[Any]]
 
 log = structlog.get_logger(__name__)
 
@@ -29,13 +29,9 @@ def _terminal_object_hint(action: str) -> str:
 
 
 async def run_contract_turn(
-    driver: EngineDriver,
-    server: ManagedServer,
+    run_turn: RunTurn,
     *,
-    conv_key: str,
     prompt: str,
-    reuse: bool,
-    sessions: MutableMapping[str, str],
     free_form: bool,
     terminal_action: str,
     terminal_retries: int,
@@ -46,13 +42,8 @@ async def run_contract_turn(
 ) -> dict[str, Any]:
     from ach_agent.engine.validator import extract_terminal, validate_terminal
 
-    result = await driver.run_turn(
-        server,
-        conv_key=conv_key,
+    result = await run_turn(
         prompt=prompt,
-        reuse=reuse,
-        sessions=sessions,
-        session_ref=None,
         on_text=on_text,
         on_tool=on_tool,
         max_tool_calls=max_tool_calls,
@@ -65,20 +56,15 @@ async def run_contract_turn(
         # Run ONE wrap-up turn (budget OFF, SAME session) so the model emits a clean terminal
         # object. Throwaway stats so recorded usage/session reflect the first turn (matches old
         # run_invocation, which passed no stats to the wrap-up consume).
-        log.warning("step-budget abort — running wrap-up turn", session_id=conv_key)
+        log.warning("step-budget abort — running wrap-up turn")
         hint = _terminal_object_hint(terminal_action)
         wrap = (
             "You have reached your tool-call budget for this turn. Do NOT call any more tools. "
             f"Reply now with ONLY the terminal JSON object ({hint}) "
             "summarizing what you found and did."
         )
-        result = await driver.run_turn(
-            server,
-            conv_key=conv_key,
+        result = await run_turn(
             prompt=wrap,
-            reuse=reuse,
-            sessions=sessions,
-            session_ref=result.session_ref,
             on_text=on_text,
             on_tool=on_tool,
             max_tool_calls=0,
@@ -94,13 +80,8 @@ async def run_contract_turn(
     if obj is None and terminal_retries > 0:
         hint = _terminal_object_hint(terminal_action)
         repair = f"Reply with ONLY a terminal JSON object: {hint}."
-        result = await driver.run_turn(
-            server,
-            conv_key=conv_key,
+        result = await run_turn(
             prompt=repair,
-            reuse=reuse,
-            sessions=sessions,
-            session_ref=result.session_ref,
             on_text=None,
             on_tool=None,
             max_tool_calls=0,
@@ -115,7 +96,6 @@ async def run_contract_turn(
         retry_note = "after retries" if terminal_retries > 0 else "no retries configured"
         log.warning(
             f"no valid terminal object ({retry_note}) — falling back to none",
-            session_id=conv_key,
             expected_action=terminal_action,
         )
         return {"action": "none", "text": text}

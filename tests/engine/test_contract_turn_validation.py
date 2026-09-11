@@ -3,6 +3,7 @@
 promote an unvalidated blob to a terminal result (CONTRACT §8)."""
 
 from dataclasses import dataclass
+from typing import Any
 
 from ach_agent.engine.base.terminal import run_contract_turn
 
@@ -27,13 +28,12 @@ class _FakeDriver:
 
 
 async def _run(driver, action="none"):
+    async def run_turn(**kwargs: Any):
+        return await driver.run_turn(object(), **kwargs)
+
     return await run_contract_turn(
-        driver,
-        server=object(),
-        conv_key="k",
+        run_turn,
         prompt="do the thing",
-        reuse=False,
-        sessions={},
         free_form=False,
         terminal_action=action,
         terminal_retries=1,
@@ -51,9 +51,7 @@ async def test_valid_object_is_returned_normalized():
 
 
 async def test_unknown_action_triggers_exactly_one_repair():
-    driver = _FakeDriver(
-        ['{"action":"nuke","text":"x"}', '{"action":"none","text":"repaired"}']
-    )
+    driver = _FakeDriver(['{"action":"nuke","text":"x"}', '{"action":"none","text":"repaired"}'])
     assert await _run(driver) == {"action": "none", "text": "repaired", "thoughts": ""}
     assert len(driver.prompts) == 2
     assert "terminal JSON object" in driver.prompts[1]
@@ -70,12 +68,8 @@ async def test_invalid_after_retry_falls_back_to_none_with_raw_text():
 async def test_free_form_skips_validation_entirely():
     driver = _FakeDriver(["just prose, no object"])
     out = await run_contract_turn(
-        driver,
-        server=object(),
-        conv_key="k",
+        lambda **kwargs: driver.run_turn(object(), **kwargs),
         prompt="p",
-        reuse=False,
-        sessions={},
         free_form=True,
         terminal_action="none",
         terminal_retries=1,

@@ -120,16 +120,13 @@ async def test_runner_holds_custom_conversation_through_release(tmp_path) -> Non
                 release_started.set()
                 await allow_release.wait()
 
-    driver = SimpleNamespace(
-        engine_type="opencode", discard_session=AsyncMock(), compact_session=AsyncMock()
-    )
     first_turn = asyncio.Event()
     finish_first = asyncio.Event()
     active: set[str] = set()
     overlap = False
     turn_count = 0
 
-    async def run_turn(*_args, **_kwargs):
+    async def run_turn(_server, **_kwargs):
         nonlocal overlap, turn_count
         turn_count += 1
         key = _kwargs["conv_key"]
@@ -140,7 +137,16 @@ async def test_runner_holds_custom_conversation_through_release(tmp_path) -> Non
             first_turn.set()
             await finish_first.wait()
         active.remove(key)
-        return {"action": "none", "text": "ok"}
+        from ach_agent.engine.base.driver import TurnResult
+
+        return TurnResult(text='{"action":"none","text":"ok"}', session_ref=key)
+
+    driver = SimpleNamespace(
+        engine_type="opencode",
+        discard_session=AsyncMock(),
+        compact_session=AsyncMock(),
+        run_turn=run_turn,
+    )
 
     def event(name: str, conversation: str) -> MessageEvent:
         return MessageEvent(
@@ -150,27 +156,26 @@ async def test_runner_holds_custom_conversation_through_release(tmp_path) -> Non
             payload={"conversation": conversation},
         )
 
-    with patch("ach_agent.engine.base.terminal.run_contract_turn", new=run_turn):
-        runner = make_engine_runner(
-            pool=Pool(),
-            driver=driver,
-            engine_cfg=EngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
-            max_invocation_seconds=30,
-            channels_by_name={"chat": channel},
-        )
-        first = asyncio.create_task(runner(event("one", "shared"), lambda: None))
-        await first_turn.wait()
-        second = asyncio.create_task(runner(event("two", "shared"), lambda: None))
-        third = asyncio.create_task(runner(event("three", "other"), lambda: None))
-        await asyncio.sleep(0)
-        assert not second.done()
-        await asyncio.wait_for(third, timeout=1)
-        finish_first.set()
-        await release_started.wait()
-        assert not second.done()
-        allow_release.set()
-        await asyncio.wait_for(first, timeout=1)
-        await asyncio.wait_for(second, timeout=1)
+    runner = make_engine_runner(
+        pool=Pool(),
+        driver=driver,
+        engine_cfg=EngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
+        max_invocation_seconds=30,
+        channels_by_name={"chat": channel},
+    )
+    first = asyncio.create_task(runner(event("one", "shared"), lambda: None))
+    await first_turn.wait()
+    second = asyncio.create_task(runner(event("two", "shared"), lambda: None))
+    third = asyncio.create_task(runner(event("three", "other"), lambda: None))
+    await asyncio.sleep(0)
+    assert not second.done()
+    await asyncio.wait_for(third, timeout=1)
+    finish_first.set()
+    await release_started.wait()
+    assert not second.done()
+    allow_release.set()
+    await asyncio.wait_for(first, timeout=1)
+    await asyncio.wait_for(second, timeout=1)
 
     assert not overlap
     assert pool_calls == ["acquire", "acquire", "release", "release", "acquire", "release"]

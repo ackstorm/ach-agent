@@ -96,6 +96,20 @@ class TurnRequest(_WireModel):
     max_tool_calls: int = Field(ge=0)
 
 
+class SessionReadyRequest(_WireModel):
+    """A harness acknowledgement for one resolved native session.
+
+    The native reference is deliberately carried only in the preceding event.  The
+    acknowledgement is scoped to the pending invocation/turn and cannot select an
+    arbitrary harness session.
+    """
+
+    controller_id: str
+    execution_id: str
+    invocation_id: str
+    turn_id: str
+
+
 class SessionOperation(_WireModel):
     controller_id: str
     execution_id: str

@@ -7,7 +7,6 @@ import asyncio
 import contextlib
 import json
 import shutil
-import sys
 from collections.abc import Awaitable, Callable, MutableMapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -122,11 +121,9 @@ class PiDriver:
         work_dir = Path(cfg.work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
         args = [binary, "--mode", "rpc", *self._common_args(cfg, binary, provider, agent_dir)[1:]]
-        launch_args = (
-            [sys.executable, "-m", "ach_agent.engine.process_supervisor", "--", *args]
-            if Path("/proc").is_dir()
-            else args
-        )
+        from ach_agent.engine.process_supervisor import command as _supervisor_command
+
+        launch_args = _supervisor_command(args) if Path("/proc").is_dir() else args
         proc = await asyncio.create_subprocess_exec(
             *launch_args,
             cwd=str(work_dir),

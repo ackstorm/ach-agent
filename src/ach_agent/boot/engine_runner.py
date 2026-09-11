@@ -317,13 +317,35 @@ def make_engine_runner(
                 prompt=full_prompt,
             )
             turn_stats: dict[str, Any] = {}
+            native_session_ref: str | None = None
+
+            async def run_turn_for_terminal(
+                *,
+                prompt: str,
+                max_tool_calls: int,
+                on_text: Callable[[str], None] | None,
+                on_tool: Callable[[Any], None] | None,
+                stats: dict[str, Any],
+            ) -> Any:
+                nonlocal native_session_ref
+                result = await driver.run_turn(
+                    server,
+                    conv_key=conv_key,
+                    prompt=prompt,
+                    reuse=reuse,
+                    sessions=pool.sessions,
+                    session_ref=native_session_ref,
+                    on_text=on_text,
+                    on_tool=on_tool,
+                    max_tool_calls=max_tool_calls,
+                    stats=stats,
+                )
+                native_session_ref = result.session_ref
+                return result
+
             obj = await run_contract_turn(
-                driver,
-                server,
-                conv_key=conv_key,
+                run_turn_for_terminal,
                 prompt=full_prompt,
-                reuse=reuse,
-                sessions=pool.sessions,
                 free_form=free_form,
                 terminal_action=_terminal_action,
                 terminal_retries=terminal_output_retries,

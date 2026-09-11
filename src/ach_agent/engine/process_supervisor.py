@@ -16,6 +16,12 @@ import sys
 import time
 from pathlib import Path
 
+
+def command(argv: list[str]) -> list[str]:
+    """Build a launch command that does not depend on ambient ``PYTHONPATH``."""
+    return [sys.executable, str(Path(__file__).resolve()), "--", *argv]
+
+
 _PR_SET_CHILD_SUBREAPER = 36
 _DESCENDANT_CLEANUP_TIMEOUT_S = 10.0
 

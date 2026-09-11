@@ -43,7 +43,6 @@ async def _running_server(app):
 async def test_controller_hello_is_versioned_and_owns_service(fake_driver):
     service = ExecutionService(fake_driver, {})
     app = create_execution_app(service)
-
     async with _running_server(app) as base_url:
         async with httpx.AsyncClient(base_url=base_url, timeout=2) as client:
             async with client.stream(
@@ -243,10 +242,36 @@ async def test_http_cancel_of_stalled_execution_leaves_other_execution_responsiv
 
             slow_response = await operations.send(turn_request("slow", "slow"), stream=True)
             slow_lines = slow_response.aiter_lines()
-            assert await slow_lines.__anext__()
-            fast = await operations.send(turn_request("fast", "fast"))
+            slow_event = httpx.Response(200, content=await slow_lines.__anext__()).json()
+            assert slow_event["kind"] == "session_resolved"
+            acknowledged = await operations.post(
+                "/execution/v1/session-ready",
+                json={
+                    "controller_id": "controller-a",
+                    "execution_id": handles["slow"]["execution_id"],
+                    "invocation_id": "slow",
+                    "turn_id": "main",
+                },
+            )
+            assert acknowledged.status_code == 200
+            fast = await operations.send(turn_request("fast", "fast"), stream=True)
+            fast_lines = fast.aiter_lines()
+            fast_event = httpx.Response(200, content=await fast_lines.__anext__()).json()
+            assert fast_event["kind"] == "session_resolved"
+            acknowledged = await operations.post(
+                "/execution/v1/session-ready",
+                json={
+                    "controller_id": "controller-a",
+                    "execution_id": handles["fast"]["execution_id"],
+                    "invocation_id": "fast",
+                    "turn_id": "main",
+                },
+            )
+            assert acknowledged.status_code == 200
+            fast_tail = "\n".join([line async for line in fast_lines])
+            await fast.aclose()
             assert fast.status_code == 200
-            assert b"turn_done" in fast.content
+            assert "turn_done" in fast_tail
 
             canceled = await operations.post(
                 "/execution/v1/cancel",
@@ -272,6 +297,9 @@ async def test_http_cancel_of_stalled_execution_leaves_other_execution_responsiv
 async def test_duplicate_turn_id_is_rejected_without_poisoning_service(fake_driver):
     service = ExecutionService(fake_driver, {})
     app = create_execution_app(service)
+    # ASGITransport buffers streaming responses; this legacy duplicate-ID test does not
+    # exercise the held-stream session gate (the dedicated client test covers that path).
+    service.controller_required = False
     # This test exercises the route's validation after a controller is attached by
     # directly claiming it; the held-controller transport test covers disconnect.
     await service.claim_controller("controller")

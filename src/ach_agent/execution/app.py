@@ -30,6 +30,7 @@ from ach_agent.execution.wire import (
     ExecutionEvent,
     ReleaseRequest,
     SessionOperation,
+    SessionReadyRequest,
     TurnRequest,
 )
 
@@ -287,6 +288,20 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
             return _invalid(str(exc))
         try:
             await service.session_op(body)
+        except Exception as exc:
+            return service_error(exc)
+        return JSONResponse({"status": "ok"})
+
+    @app.post("/execution/v1/session-ready")
+    async def session_ready(request: Request) -> JSONResponse:
+        try:
+            body = SessionReadyRequest.model_validate(await _request_json(request))
+        except _BodyTooLarge:
+            return JSONResponse({"detail": "request body too large"}, status_code=413)
+        except (_InvalidBody, ValidationError) as exc:
+            return _invalid(str(exc))
+        try:
+            await service.session_ready(body)
         except Exception as exc:
             return service_error(exc)
         return JSONResponse({"status": "ok"})

@@ -1,0 +1,497 @@
+"""Concrete HTTP client for the native execution mini-harness.
+
+The client keeps the controller ownership stream separate from invocation streams and
+uses a small control pool for acknowledgements, cancellation and cleanup.  A long turn
+therefore cannot consume the connection needed to stop it or to release the session-ready
+gate.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import itertools
+import json
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any
+
+import httpx
+
+from ach_agent.engine import trace
+from ach_agent.engine.base.driver import TurnResult
+from ach_agent.engine.base.events import (
+    OpenCodeToolUpdate,
+    OpenCodeUsage,
+    ToolState,
+    ToolStateCompleted,
+    ToolStateError,
+    ToolStateRunning,
+)
+from ach_agent.execution.service import MAX_NDJSON_RECORD_BYTES
+from ach_agent.execution.wire import (
+    AcquireRequest,
+    ControllerHello,
+    ExecutionEvent,
+    ExecutionHandle,
+    ReleaseRequest,
+    SessionOperation,
+    SessionReadyRequest,
+    TurnRequest,
+)
+
+
+class ExecutionClientError(RuntimeError):
+    """An HTTP or malformed execution response."""
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+async def _bounded_lines(chunks: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+    """Split NDJSON incrementally without allowing an unterminated record to grow."""
+    buffer = bytearray()
+    async for chunk in chunks:
+        start = 0
+        while True:
+            newline = chunk.find(b"\n", start)
+            part = chunk[start:] if newline < 0 else chunk[start:newline]
+            if len(buffer) + len(part) > MAX_NDJSON_RECORD_BYTES:
+                raise ExecutionClientError("NDJSON record exceeds 1 MiB")
+            buffer.extend(part)
+            if newline < 0:
+                break
+            yield bytes(buffer).rstrip(b"\r")
+            buffer.clear()
+            start = newline + 1
+    if buffer:
+        yield bytes(buffer).rstrip(b"\r")
+
+
+def _json_record(line: bytes) -> ExecutionEvent:
+    if len(line) > MAX_NDJSON_RECORD_BYTES:
+        raise ExecutionClientError("NDJSON record exceeds 1 MiB")
+    try:
+        value = json.loads(line)
+    except (TypeError, ValueError) as exc:
+        raise ExecutionClientError("invalid execution NDJSON record") from exc
+    try:
+        return ExecutionEvent.model_validate(value)
+    except Exception as exc:  # pydantic's ValidationError is deliberately a wire detail
+        raise ExecutionClientError("invalid execution event") from exc
+
+
+def _usage_from_wire(value: Any) -> OpenCodeUsage | None:
+    if isinstance(value, OpenCodeUsage):
+        return value
+    if not isinstance(value, dict):
+        return None
+    try:
+        return OpenCodeUsage(
+            session_id=str(value.get("session_id", "")),
+            message_id=str(value.get("message_id", "")),
+            input_tokens=int(value.get("input_tokens", 0) or 0),
+            output_tokens=int(value.get("output_tokens", 0) or 0),
+            cache_read=int(value.get("cache_read", 0) or 0),
+            cache_write=int(value.get("cache_write", 0) or 0),
+            cost=float(value.get("cost", 0.0) or 0.0),
+            duration_ms=int(value.get("duration_ms", 0) or 0),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _tool_from_wire(value: Any) -> OpenCodeToolUpdate | None:
+    if isinstance(value, OpenCodeToolUpdate):
+        return value
+    if not isinstance(value, dict):
+        return None
+    state_value = value.get("state")
+    if not isinstance(state_value, dict):
+        return None
+    status = state_value.get("status")
+    if status == "running":
+        state: ToolState = ToolStateRunning(
+            input=state_value.get("input"), title=str(state_value.get("title", ""))
+        )
+    elif status == "completed":
+        state = ToolStateCompleted(
+            output=str(state_value.get("output", "")),
+            input=state_value.get("input"),
+            title=str(state_value.get("title", "")),
+        )
+    elif status == "error":
+        state = ToolStateError(
+            error=str(state_value.get("error", "")), input=state_value.get("input")
+        )
+    else:
+        return None
+    return OpenCodeToolUpdate(
+        session_id=str(value.get("session_id", "")),
+        part_id=str(value.get("part_id", "")),
+        message_id=str(value.get("message_id", "")),
+        tool_name=str(value.get("tool_name", "")),
+        call_id=str(value.get("call_id", "")),
+        state=state,
+    )
+
+
+class ExecutionClient:
+    """HTTP implementation of the execution service's operation contract."""
+
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        controller_id: str,
+        instance_id: str | None = None,
+        timeout: float | None = 30.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        limits = httpx.Limits(max_connections=8, max_keepalive_connections=8)
+        control_limits = httpx.Limits(max_connections=2, max_keepalive_connections=2)
+        controller_limits = httpx.Limits(max_connections=1, max_keepalive_connections=1)
+        self.controller_id = controller_id
+        self.instance_id = instance_id
+        self.timeout = timeout or 30.0
+        self.base_url = base_url.rstrip("/")
+        self.controller_client = httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=None,
+            limits=controller_limits,
+            transport=transport,
+        )
+        self.control_client = httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=timeout,
+            limits=control_limits,
+            transport=transport,
+        )
+        # Acquisition can wait for a cold native launch.  Keep it out of the two
+        # connections reserved for session-ready/cancel/release control traffic.
+        self.acquire_client = httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=timeout,
+            limits=httpx.Limits(max_connections=4, max_keepalive_connections=4),
+            transport=transport,
+        )
+        self.stream_client = httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=timeout,
+            limits=limits,
+            transport=transport,
+        )
+        self._controller_response: httpx.Response | None = None
+        self._controller_iterator: AsyncIterator[bytes] | None = None
+        self._controller_monitor: asyncio.Task[None] | None = None
+        self._controller_lost = False
+        self._handles: dict[str, ExecutionHandle] = {}
+        self._turn_ids: dict[str, itertools.count[int]] = {}
+        self._turn_tasks: dict[str, asyncio.Task[Any]] = {}
+        self._closed = False
+
+    async def connect(self) -> ControllerHello:
+        """Claim the mini-harness and retain its held controller connection."""
+        if self._controller_response is not None:
+            raise ExecutionClientError("controller is already connected")
+        if self.instance_id is None:
+            response = await self.control_client.send(
+                self.control_client.build_request("GET", "/execution/v1/health"), stream=True
+            )
+            body = await self._bounded_response(response)
+            if response.status_code != 200:
+                raise ExecutionClientError(
+                    "execution health check failed", status_code=response.status_code
+                )
+            try:
+                self.instance_id = str(json.loads(body)["instance_id"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ExecutionClientError("invalid execution health response") from exc
+        request = self.controller_client.build_request(
+            "POST",
+            "/execution/v1/controller",
+            json={
+                "version": 1,
+                "instance_id": self.instance_id,
+                "controller_id": self.controller_id,
+            },
+        )
+        try:
+            response = await asyncio.wait_for(
+                self.controller_client.send(request, stream=True), timeout=self.timeout
+            )
+        except TimeoutError as exc:
+            raise ExecutionClientError("execution controller claim timed out") from exc
+        if response.status_code != 200:
+            await response.aclose()
+            raise ExecutionClientError(
+                "execution controller claim failed", status_code=response.status_code
+            )
+        try:
+            iterator = _bounded_lines(response.aiter_bytes())
+            line = await asyncio.wait_for(iterator.__anext__(), timeout=self.timeout)
+            hello = ControllerHello.model_validate(json.loads(line))
+        except ExecutionClientError:
+            await response.aclose()
+            raise
+        except (StopAsyncIteration, TypeError, ValueError) as exc:
+            await response.aclose()
+            raise ExecutionClientError("invalid execution controller hello") from exc
+        except TimeoutError as exc:
+            await response.aclose()
+            raise ExecutionClientError("execution controller hello timed out") from exc
+        if (
+            hello.version != 1
+            or hello.instance_id != self.instance_id
+            or hello.controller_id != self.controller_id
+        ):
+            await response.aclose()
+            raise ExecutionClientError("execution controller hello identity mismatch")
+        self._controller_response = response
+        self._controller_iterator = iterator
+        self._controller_monitor = asyncio.create_task(self._monitor_controller(iterator))
+        return hello
+
+    async def _monitor_controller(self, iterator: AsyncIterator[bytes]) -> None:
+        try:
+            async for _line in iterator:
+                pass
+        except asyncio.CancelledError:
+            return
+        except BaseException:
+            self._controller_lost = True
+        else:
+            self._controller_lost = True
+        if self._controller_lost:
+            for task in tuple(self._turn_tasks.values()):
+                if task is not asyncio.current_task() and not task.done():
+                    task.cancel()
+
+    async def claim_controller(self) -> ControllerHello:
+        """Compatibility spelling matching ``ExecutionService.claim_controller``."""
+        return await self.connect()
+
+    async def _json_request(self, method: str, path: str, body: Any) -> Any:
+        response = await self.control_client.send(
+            self.control_client.build_request(method, path, json=body), stream=True
+        )
+        content = await self._bounded_response(response)
+        if response.status_code < 200 or response.status_code >= 300:
+            detail = content[:512].decode("utf-8", "replace")
+            raise ExecutionClientError(
+                f"execution {method} {path} failed: {detail}",
+                status_code=response.status_code,
+            )
+        if not content:
+            return None
+        try:
+            return json.loads(content)
+        except ValueError as exc:
+            raise ExecutionClientError("invalid execution JSON response") from exc
+
+    def _assert_controller_live(self) -> None:
+        if self._controller_lost:
+            raise ExecutionClientError("execution controller connection is lost")
+
+    async def acquire(self, request: AcquireRequest) -> ExecutionHandle:
+        self._assert_controller_live()
+        response = await self.acquire_client.send(
+            self.acquire_client.build_request(
+                "POST", "/execution/v1/acquire", json=request.model_dump(mode="json")
+            ),
+            stream=True,
+        )
+        content = await self._bounded_response(response)
+        if response.status_code < 200 or response.status_code >= 300:
+            raise ExecutionClientError(
+                f"execution acquire failed: {content[:512].decode('utf-8', 'replace')}",
+                status_code=response.status_code,
+            )
+        try:
+            value = json.loads(content)
+        except ValueError as exc:
+            raise ExecutionClientError("invalid execution JSON response") from exc
+        try:
+            handle = ExecutionHandle.model_validate(value)
+        except Exception as exc:
+            raise ExecutionClientError("invalid execution handle") from exc
+        trace.adopt(handle.proxy_route)
+        self._handles[handle.invocation_id] = handle
+        self._turn_ids.setdefault(handle.invocation_id, itertools.count(1))
+        return handle
+
+    async def _ack_session(self, request: TurnRequest, event: ExecutionEvent) -> None:
+        handle = self._handles.get(request.invocation_id)
+        if handle is None or handle.execution_id != request.execution_id:
+            raise ExecutionClientError("session event is for an unknown execution")
+        payload = event.payload
+        session_ref = payload.get("session_ref") if isinstance(payload, dict) else None
+        if not isinstance(session_ref, str) or not session_ref:
+            raise ExecutionClientError("session event omitted its native reference")
+        # This is the harness-side trace registry.  The native ref is diagnostic state,
+        # never a caller-selected turn target.
+        trace.set_session(handle.proxy_route, session_ref)
+        await self._json_request(
+            "POST",
+            "/execution/v1/session-ready",
+            SessionReadyRequest(
+                controller_id=request.controller_id,
+                execution_id=request.execution_id,
+                invocation_id=request.invocation_id,
+                turn_id=request.turn_id,
+            ).model_dump(mode="json"),
+        )
+
+    async def turn(self, request: TurnRequest) -> AsyncIterator[ExecutionEvent]:
+        """Stream one bounded turn, acknowledging every resolved native session."""
+        self._assert_controller_live()
+        response = await self.stream_client.send(
+            self.stream_client.build_request(
+                "POST", "/execution/v1/turn", json=request.model_dump(mode="json")
+            ),
+            stream=True,
+        )
+        if response.status_code < 200 or response.status_code >= 300:
+            detail = (await self._bounded_response(response))[:512].decode("utf-8", "replace")
+            raise ExecutionClientError(
+                f"execution turn failed: {detail}", status_code=response.status_code
+            )
+        finished = False
+        task = asyncio.current_task()
+        if task is not None:
+            self._turn_tasks[request.invocation_id] = task
+        try:
+            async for line in _bounded_lines(response.aiter_bytes()):
+                if not line:
+                    continue
+                event = _json_record(line)
+                if (
+                    event.execution_id != request.execution_id
+                    or event.invocation_id != request.invocation_id
+                    or event.turn_id != request.turn_id
+                ):
+                    raise ExecutionClientError("execution event identity mismatch")
+                if event.kind == "session_resolved":
+                    await self._ack_session(request, event)
+                if event.kind == "error":
+                    payload = event.payload if isinstance(event.payload, dict) else {}
+                    raise ExecutionClientError(str(payload.get("message", "native turn failed")))
+                yield event
+            finished = True
+        except asyncio.CancelledError:
+            with contextlib.suppress(BaseException):
+                await asyncio.shield(self.cancel(request.controller_id, request.invocation_id))
+            raise
+        finally:
+            if self._turn_tasks.get(request.invocation_id) is task:
+                self._turn_tasks.pop(request.invocation_id, None)
+            await response.aclose()
+            if not finished and not self._closed:
+                with contextlib.suppress(BaseException):
+                    await asyncio.shield(self.cancel(request.controller_id, request.invocation_id))
+
+    def turn_callable(self, handle: ExecutionHandle) -> Callable[..., Awaitable[TurnResult]]:
+        """Bind execution identity and expose the terminal policy's run-turn vocabulary."""
+        sequence = self._turn_ids.setdefault(handle.invocation_id, itertools.count(1))
+
+        async def run_turn(
+            *,
+            prompt: str,
+            max_tool_calls: int,
+            on_text: Callable[[str], None] | None,
+            on_tool: Callable[[OpenCodeToolUpdate], None] | None,
+            stats: dict[str, Any],
+        ) -> TurnResult:
+            turn_id = f"turn-{next(sequence)}"
+            request = TurnRequest(
+                controller_id=handle.controller_id,
+                execution_id=handle.execution_id,
+                invocation_id=handle.invocation_id,
+                turn_id=turn_id,
+                prompt=prompt,
+                max_tool_calls=max_tool_calls,
+            )
+            result: TurnResult | None = None
+            async for event in self.turn(request):
+                if event.kind == "text":
+                    if on_text is not None and isinstance(event.payload, str):
+                        on_text(event.payload)
+                elif event.kind == "tool":
+                    tool = _tool_from_wire(event.payload)
+                    if tool is not None and on_tool is not None:
+                        on_tool(tool)
+                elif event.kind == "usage":
+                    usage = _usage_from_wire(event.payload)
+                    if usage is not None:
+                        stats["usage"] = usage
+                elif event.kind == "turn_done":
+                    payload = event.payload if isinstance(event.payload, dict) else {}
+                    wire_stats = payload.get("stats")
+                    if isinstance(wire_stats, dict):
+                        stats.update(wire_stats)
+                        if isinstance(wire_stats.get("usage"), dict):
+                            usage = _usage_from_wire(wire_stats["usage"])
+                            if usage is not None:
+                                stats["usage"] = usage
+                    session_ref = payload.get("session_ref")
+                    if not isinstance(session_ref, str):
+                        session_ref = ""
+                    result = TurnResult(
+                        text=str(payload.get("text", "")),
+                        session_ref=session_ref,
+                        aborted=bool(payload.get("aborted", False)),
+                    )
+            if result is None:
+                raise ExecutionClientError("execution turn ended without a result")
+            return result
+
+        return run_turn
+
+    async def session_op(self, request: SessionOperation) -> None:
+        self._assert_controller_live()
+        await self._json_request(
+            "POST", "/execution/v1/session-op", request.model_dump(mode="json")
+        )
+
+    async def release(self, request: ReleaseRequest) -> None:
+        self._assert_controller_live()
+        await self._json_request("POST", "/execution/v1/release", request.model_dump(mode="json"))
+        handle = self._handles.pop(request.invocation_id, None)
+        if handle is not None:
+            trace.drop(handle.proxy_route)
+        self._turn_ids.pop(request.invocation_id, None)
+
+    async def cancel(self, controller_id: str, invocation_id: str) -> None:
+        await self._json_request(
+            "POST",
+            "/execution/v1/cancel",
+            {"controller_id": controller_id, "invocation_id": invocation_id},
+        )
+        handle = self._handles.pop(invocation_id, None)
+        if handle is not None:
+            trace.drop(handle.proxy_route)
+        self._turn_ids.pop(invocation_id, None)
+
+    async def close(self) -> None:
+        self._closed = True
+        if self._controller_response is not None:
+            await self._controller_response.aclose()
+            self._controller_response = None
+        await self.stream_client.aclose()
+        await self.acquire_client.aclose()
+        await self.control_client.aclose()
+        await self.controller_client.aclose()
+
+    @staticmethod
+    async def _bounded_response(response: httpx.Response) -> bytes:
+        chunks: list[bytes] = []
+        size = 0
+        try:
+            async for chunk in response.aiter_bytes():
+                size += len(chunk)
+                if size > MAX_NDJSON_RECORD_BYTES:
+                    raise ExecutionClientError("execution response exceeds 1 MiB")
+                chunks.append(chunk)
+            return b"".join(chunks)
+        finally:
+            await response.aclose()

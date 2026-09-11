@@ -25,6 +25,7 @@ from ach_agent.execution.wire import (
     ExecutionHandle,
     ReleaseRequest,
     SessionOperation,
+    SessionReadyRequest,
     TurnRequest,
 )
 
@@ -57,6 +58,7 @@ class _Invocation:
     output_error: Exception | None = None
     event_queue: asyncio.Queue[Any] | None = None
     cleanup_deadline: float | None = None
+    session_ready: tuple[str, str, asyncio.Event] | None = None
 
 
 class OutputLimitExceeded(RuntimeError):
@@ -445,6 +447,15 @@ class ExecutionService:
             message = "maintenance active" if inv.maintenance_active else "turn already running"
             raise ValueError(message)
 
+    async def session_ready(self, request: SessionReadyRequest) -> None:
+        """Release the pending native send after the harness records its correlation."""
+        self._assert_controller(request.controller_id)
+        inv = self._get(request.controller_id, request.execution_id, request.invocation_id)
+        pending = inv.session_ready
+        if pending is None or pending[0] != request.turn_id:
+            raise ValueError("no pending session acknowledgement")
+        pending[2].set()
+
     async def turn(self, request: TurnRequest) -> AsyncIterator[ExecutionEvent]:
         self._assert_controller(request.controller_id)
         inv = self._get(request.controller_id, request.execution_id, request.invocation_id)
@@ -512,12 +523,24 @@ class ExecutionService:
             )
             size = self._reserve_output(inv, session_event)
             inv.leased_bytes = size
+            ready = asyncio.Event()
+            if self.controller_required:
+                current_ref = inv.current_ref
+                if current_ref is None:
+                    raise RuntimeError("session resolution returned no native reference")
+                inv.session_ready = (request.turn_id, current_ref, ready)
             yield session_event
             if inv.leased_bytes:
                 self._release_output(inv, inv.leased_bytes)
                 inv.leased_bytes = 0
             if inv.terminal or inv.released:
                 raise ValueError("invocation is terminal")
+            if self.controller_required:
+                try:
+                    await ready.wait()
+                finally:
+                    if inv.session_ready is not None and inv.session_ready[2] is ready:
+                        inv.session_ready = None
 
         queue: asyncio.Queue[tuple[ExecutionEvent, int] | None] = asyncio.Queue()
         inv.event_queue = queue
@@ -540,6 +563,9 @@ class ExecutionService:
 
         async def on_session_resolved(session_ref: str) -> None:
             inv.current_ref = session_ref
+            ready = asyncio.Event()
+            if self.controller_required:
+                inv.session_ready = (request.turn_id, session_ref, ready)
             enqueue(
                 ExecutionEvent(
                     kind="session_resolved",
@@ -549,6 +575,12 @@ class ExecutionService:
                     payload={"session_ref": session_ref},
                 )
             )
+            if self.controller_required:
+                try:
+                    await ready.wait()
+                finally:
+                    if inv.session_ready is not None and inv.session_ready[2] is ready:
+                        inv.session_ready = None
 
         def on_text(text: str) -> None:
             enqueue(

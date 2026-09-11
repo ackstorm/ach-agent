@@ -662,8 +662,8 @@ def test_channel_idle_ttl_from_config() -> None:
     assert EngineBlock.model_validate({"idleTtlSeconds": 0}).idle_ttl_seconds == 0.0
 
 
-async def test_engine_runner_passes_pool_oc_sessions_to_run_invocation() -> None:
-    """engine_runner threads the pool-owned session map into run_contract_turn."""
+async def test_engine_runner_passes_a_bound_run_turn_callable() -> None:
+    """engine_runner passes terminal policy a callable bound to the pool session map."""
 
     import ach_agent.engine.base.terminal as terminal
     from ach_agent.boot.engine_runner import make_engine_runner
@@ -684,7 +684,8 @@ async def test_engine_runner_passes_pool_oc_sessions_to_run_invocation() -> None
     pool = _Pool()
     captured: dict[str, Any] = {}
 
-    async def _fake_run(*_args: Any, **kw: Any) -> dict[str, Any]:
+    async def _fake_run(*args: Any, **kw: Any) -> dict[str, Any]:
+        captured["run_turn"] = args[0]
         captured.update(kw)
         return {"action": "none", "text": ""}
 
@@ -706,7 +707,7 @@ async def test_engine_runner_passes_pool_oc_sessions_to_run_invocation() -> None
         )
         await runner(event, lambda: None)
 
-    assert captured["sessions"] is pool.sessions
+    assert callable(captured["run_turn"])
 
 
 # ---------------------------------------------------------------------------
@@ -787,11 +788,26 @@ async def _run_sess_case(
     captured: dict[str, Any] = {}
     driver = _FakeDriver()
 
-    async def _fake_run(*_args: Any, **kw: Any) -> dict[str, Any]:
+    async def _native_run(_server: Any, **kw: Any) -> Any:
         captured.update(kw)
         kw["stats"]["session_ref"] = oc_session_id
         kw["stats"]["usage"] = SimpleNamespace(
             input_tokens=input_tokens, output_tokens=1, cost=0.0, duration_ms=1
+        )
+        from ach_agent.engine.base.driver import TurnResult
+
+        return TurnResult(text='{"action":"none","text":""}', session_ref=oc_session_id)
+
+    driver.run_turn = _native_run  # type: ignore[method-assign]
+
+    async def _fake_run(run_turn: Any, **kw: Any) -> dict[str, Any]:
+        captured["terminal"] = kw
+        await run_turn(
+            prompt="prompt",
+            max_tool_calls=0,
+            on_text=None,
+            on_tool=None,
+            stats=kw["stats"],
         )
         return {"action": "none", "text": ""}
 

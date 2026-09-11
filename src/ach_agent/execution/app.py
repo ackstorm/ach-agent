@@ -32,6 +32,8 @@ from ach_agent.execution.wire import (
     SessionOperation,
     SessionReadyRequest,
     TurnRequest,
+    WorkspaceHandoffRequest,
+    WorkspacePrepareRequest,
 )
 
 EXECUTION_API_VERSION = 1
@@ -169,8 +171,16 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
         async def held() -> AsyncIterator[bytes]:
             try:
                 yield _json_line(response_hello.model_dump(mode="json"))
+                events = service.controller_events()
                 while not await request.is_disconnected():
-                    await asyncio.sleep(0.05)
+                    if events is None:
+                        await asyncio.sleep(0.05)
+                        continue
+                    try:
+                        event = await asyncio.wait_for(events.get(), timeout=0.05)
+                    except TimeoutError:
+                        continue
+                    yield _json_line(event)
             except asyncio.CancelledError:
                 raise
             finally:
@@ -199,6 +209,34 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
         except Exception as exc:
             return service_error(exc)
         return JSONResponse(handle.model_dump(mode="json"))
+
+    @app.post("/execution/v1/workspace/prepare")
+    async def workspace_prepare(request: Request) -> JSONResponse:
+        try:
+            body = WorkspacePrepareRequest.model_validate(await _request_json(request))
+        except _BodyTooLarge:
+            return JSONResponse({"detail": "request body too large"}, status_code=413)
+        except (_InvalidBody, ValidationError) as exc:
+            return _invalid(str(exc))
+        try:
+            result = await service.prepare_workspace(body)
+        except Exception as exc:
+            return service_error(exc)
+        return JSONResponse(result)
+
+    @app.post("/execution/v1/workspace/handoff")
+    async def workspace_handoff(request: Request) -> JSONResponse:
+        try:
+            body = WorkspaceHandoffRequest.model_validate(await _request_json(request))
+        except _BodyTooLarge:
+            return JSONResponse({"detail": "request body too large"}, status_code=413)
+        except (_InvalidBody, ValidationError) as exc:
+            return _invalid(str(exc))
+        try:
+            result = await service.handoff_workspace(body)
+        except Exception as exc:
+            return service_error(exc)
+        return JSONResponse(result)
 
     @app.post("/execution/v1/turn", response_model=None)
     async def turn(request: Request) -> StreamingResponse | JSONResponse:

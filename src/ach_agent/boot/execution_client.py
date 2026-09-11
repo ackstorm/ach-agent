@@ -37,6 +37,8 @@ from ach_agent.execution.wire import (
     SessionOperation,
     SessionReadyRequest,
     TurnRequest,
+    WorkspaceHandoffRequest,
+    WorkspacePrepareRequest,
 )
 
 
@@ -203,6 +205,7 @@ class ExecutionClient:
         self._owned_responses: set[httpx.Response] = set()
         self._cancelled_invocations: set[str] = set()
         self._active_turns: set[str] = set()
+        self._controller_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=64)
         self._handles: dict[str, ExecutionHandle] = {}
         self._turn_ids: dict[str, itertools.count[int]] = {}
         self._closed = False
@@ -271,8 +274,19 @@ class ExecutionClient:
 
     async def _monitor_controller(self, iterator: AsyncIterator[bytes]) -> None:
         try:
-            async for _line in iterator:
-                pass
+            async for line in iterator:
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except (TypeError, ValueError) as exc:
+                    raise ExecutionClientError("invalid controller event") from exc
+                if not isinstance(event, dict) or event.get("kind") != "workspace_stopped":
+                    raise ExecutionClientError("invalid controller event")
+                try:
+                    self._controller_events.put_nowait(event)
+                except asyncio.QueueFull as exc:
+                    raise ExecutionClientError("controller event buffer is full") from exc
         except asyncio.CancelledError:
             return
         except BaseException:
@@ -301,6 +315,11 @@ class ExecutionClient:
     async def claim_controller(self) -> ControllerHello:
         """Compatibility spelling matching ``ExecutionService.claim_controller``."""
         return await self.connect()
+
+    async def next_controller_event(self) -> dict[str, Any]:
+        """Wait for a correlated engine lifecycle event from the held controller stream."""
+        self._assert_controller_live()
+        return await self._controller_events.get()
 
     async def _json_request(
         self,
@@ -442,6 +461,32 @@ class ExecutionClient:
         self._handles[handle.invocation_id] = handle
         self._turn_ids.setdefault(handle.invocation_id, itertools.count(1))
         return handle
+
+    async def prepare_workspace(self, request: WorkspacePrepareRequest) -> dict[str, str]:
+        """Prepare a public workspace before native acquisition."""
+        self._assert_controller_live()
+        self._validate_controller(request.controller_id)
+        result = await self._json_request(
+            "POST", "/execution/v1/workspace/prepare", request.model_dump(mode="json")
+        )
+        if not isinstance(result, dict) or result.get("status") != "ok":
+            error = ExecutionClientError("invalid workspace prepare response")
+            await self._fail_admission(error)
+            raise error
+        return {str(key): str(value) for key, value in result.items()}
+
+    async def handoff_workspace(self, request: WorkspaceHandoffRequest) -> dict[str, str]:
+        """Import a credential-free shared-workspace bundle before native acquisition."""
+        self._assert_controller_live()
+        self._validate_controller(request.controller_id)
+        result = await self._json_request(
+            "POST", "/execution/v1/workspace/handoff", request.model_dump(mode="json")
+        )
+        if not isinstance(result, dict) or result.get("status") != "ok":
+            error = ExecutionClientError("invalid workspace handoff response")
+            await self._fail_admission(error)
+            raise error
+        return {str(key): str(value) for key, value in result.items()}
 
     async def _ack_session(self, request: TurnRequest, event: ExecutionEvent) -> None:
         handle = self._validate_handle(
@@ -713,6 +758,9 @@ class ExecutionClient:
         self._turn_ids.clear()
         self._cancelled_invocations.clear()
         self._active_turns.clear()
+        while not self._controller_events.empty():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                self._controller_events.get_nowait()
         await self.stream_client.aclose()
         await self.acquire_client.aclose()
         await self.priority_client.aclose()

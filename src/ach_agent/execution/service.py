@@ -19,6 +19,14 @@ from ach_agent.engine.base.driver import EngineConfig, EngineDriver, TurnResult
 from ach_agent.engine.base.pool import EnginePool
 from ach_agent.engine.lifecycle import NativeLaunchFailed
 from ach_agent.engine.mcp_passthrough import to_engine_entry
+from ach_agent.engine.workspace import (
+    WorkspaceHookExitFailed,
+    build_public_env,
+    handoff_bundle,
+    prepare_workspace,
+    run_public_hook,
+    workspace_dir,
+)
 from ach_agent.execution.wire import (
     AcquireRequest,
     ExecutionEvent,
@@ -27,6 +35,8 @@ from ach_agent.execution.wire import (
     SessionOperation,
     SessionReadyRequest,
     TurnRequest,
+    WorkspaceHandoffRequest,
+    WorkspacePrepareRequest,
 )
 
 
@@ -128,6 +138,8 @@ class ExecutionService:
         self.controller_cleanup_error: str | None = None
         self._ttl_watchers: set[asyncio.Task[None]] = set()
         self._controller_cleanup_task: asyncio.Task[None] | None = None
+        self._workspace_tasks: dict[str, asyncio.Task[Any]] = {}
+        self._controller_events: asyncio.Queue[dict[str, str]] | None = None
 
     @property
     def can_accept_controller(self) -> bool:
@@ -144,6 +156,7 @@ class ExecutionService:
             raise RuntimeError("execution service already has a controller")
         self._controller_id = controller_id
         self._admission_open = True
+        self._controller_events = asyncio.Queue(maxsize=64)
 
     def _assert_controller(self, controller_id: str) -> None:
         if self._unhealthy:
@@ -171,8 +184,12 @@ class ExecutionService:
             return
         self._admission_open = False
         acquisition_tasks = list(self._acquire_tasks.values())
+        workspace_tasks = list(self._workspace_tasks.values())
         operations: list[asyncio.Future[Any] | asyncio.Task[Any]] = []
         for task in acquisition_tasks:
+            if task is not asyncio.current_task():
+                task.cancel()
+        for task in workspace_tasks:
             if task is not asyncio.current_task():
                 task.cancel()
         for inv in list(self._invocations.values()):
@@ -181,6 +198,8 @@ class ExecutionService:
         async def cleanup_all() -> None:
             if acquisition_tasks:
                 await asyncio.gather(*acquisition_tasks, return_exceptions=True)
+            if workspace_tasks:
+                await asyncio.gather(*workspace_tasks, return_exceptions=True)
             if operations:
                 await asyncio.gather(*operations, return_exceptions=False)
             await self.pool.stop_all()
@@ -198,6 +217,125 @@ class ExecutionService:
             if cleanup_task.done() and self._controller_cleanup_task is cleanup_task:
                 self._controller_cleanup_task = None
         self._controller_id = None
+        self._workspace_tasks.clear()
+        self._controller_events = None
+
+    def controller_events(self) -> asyncio.Queue[dict[str, str]] | None:
+        """Return the finite event queue held by the current controller stream."""
+        return self._controller_events
+
+    def _emit_controller_event(self, event: dict[str, str]) -> None:
+        queue = self._controller_events
+        if queue is None:
+            return
+        try:
+            queue.put_nowait(event)
+        except asyncio.QueueFull as exc:
+            self._mark_unhealthy()
+            raise RuntimeError("controller event buffer is full") from exc
+
+    def _track_workspace_task(self, invocation_id: str) -> asyncio.Task[Any]:
+        current = asyncio.current_task()
+        if current is None:
+            raise RuntimeError("workspace operation requires an asyncio task")
+        if invocation_id in self._workspace_tasks:
+            raise ValueError(f"workspace operation already active: {invocation_id}")
+        self._workspace_tasks[invocation_id] = current
+        return current
+
+    async def prepare_workspace(self, request: WorkspacePrepareRequest) -> dict[str, str]:
+        """Run the public hook and register its latest cleanup before native acquire."""
+        self._assert_controller(request.controller_id)
+        self._track_workspace_task(request.invocation_id)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + request.remaining_seconds
+        workspace = workspace_dir(request.work_dir, request.session_key)
+
+        async def cleanup() -> None:
+            if request.cleanup is not None:
+                remaining = request.cleanup.timeout_seconds
+                env = build_public_env(
+                    request.cleanup,
+                    session_key=request.session_key,
+                    event_id=request.event_id,
+                    channel_name=request.channel_name,
+                    delivery_context=request.delivery_context,
+                    workspace=workspace,
+                )
+                try:
+                    await run_public_hook(
+                        request.cleanup,
+                        cwd=workspace.parent,
+                        env=env,
+                        remaining_seconds=remaining,
+                    )
+                except WorkspaceHookExitFailed:
+                    pass
+                except BaseException:
+                    self._mark_unhealthy()
+                    raise
+            if request.notify_on_stop:
+                self._emit_controller_event(
+                    {
+                        "kind": "workspace_stopped",
+                        "session_key": request.session_key,
+                        "event_id": request.event_id,
+                        "invocation_id": request.invocation_id,
+                        "workspace": str(workspace),
+                    }
+                )
+
+        try:
+            await self.pool.begin_session(
+                request.session_key,
+                cleanup if (request.cleanup or request.notify_on_stop) else None,
+            )
+            workspace = prepare_workspace(request.home, request.work_dir, request.session_key)
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError("workspace preparation deadline expired")
+            if request.prepare is not None:
+                env = build_public_env(
+                    request.prepare,
+                    session_key=request.session_key,
+                    event_id=request.event_id,
+                    channel_name=request.channel_name,
+                    delivery_context=request.delivery_context,
+                    workspace=workspace,
+                )
+                await run_public_hook(
+                    request.prepare,
+                    cwd=workspace,
+                    env=env,
+                    remaining_seconds=remaining,
+                )
+            return {"status": "ok", "workspace": str(workspace)}
+        except BaseException:
+            try:
+                await asyncio.shield(self.pool.discard(request.session_key))
+            except BaseException:
+                self._mark_unhealthy()
+            raise
+        finally:
+            self._workspace_tasks.pop(request.invocation_id, None)
+
+    async def handoff_workspace(self, request: WorkspaceHandoffRequest) -> dict[str, str]:
+        """Import a credential-free bundle artifact into the public session workspace."""
+        self._assert_controller(request.controller_id)
+        self._track_workspace_task(request.invocation_id)
+        try:
+            workspace = await handoff_bundle(
+                home=request.home,
+                work_dir=request.work_dir,
+                session_key=request.session_key,
+                bundle_path=request.bundle_path,
+                head=request.head,
+                origin=request.origin,
+                remaining_seconds=request.remaining_seconds,
+            )
+            return {"status": "ok", "workspace": str(workspace)}
+        finally:
+            self._workspace_tasks.pop(request.invocation_id, None)
 
     async def acquire(self, request: AcquireRequest) -> ExecutionHandle:
         self._assert_controller(request.controller_id)

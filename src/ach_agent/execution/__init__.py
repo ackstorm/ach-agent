@@ -10,6 +10,7 @@ from ach_agent.execution.wire import (
     SessionOperation,
     TurnRequest,
 )
+from ach_agent.execution.service import ExecutionService
 
 __all__ = [
     "AcquireRequest",
@@ -20,4 +21,5 @@ __all__ = [
     "ReleaseRequest",
     "SessionOperation",
     "TurnRequest",
+    "ExecutionService",
 ]

@@ -8,7 +8,7 @@ terminal contract (extract/repair/wrap-up) lives once in engine/base/terminal.py
 
 from __future__ import annotations
 
-from collections.abc import Callable, MutableMapping
+from collections.abc import Awaitable, Callable, MutableMapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -43,6 +43,12 @@ class OpencodeDriver:
             server = await oc.launch(port, home, cfg, session_key)
             await oc.poll_ready(server, cfg.startup_timeout_seconds)
             return server
+        except FileNotFoundError as exc:
+            if server is not None:
+                await server.stop()
+            else:
+                release_port(port)
+            raise oc.NativeLaunchFailed(f"opencode binary not found: {cfg.binary_path!r}") from exc
         except BaseException:
             # finding 8: a cancellation (or poll_ready's own startup-deadline
             # sys.exit(1), also a BaseException) while this call was in flight must
@@ -64,6 +70,40 @@ class OpencodeDriver:
                 return server.is_alive()
         return server.is_alive()
 
+    async def resolve_session(
+        self,
+        server: ManagedServer,
+        *,
+        conv_key: str,
+        reuse: bool,
+        sessions: MutableMapping[str, str],
+        stats: dict[str, Any],
+    ) -> str:
+        client = server._client
+        if not isinstance(client, OpenCodeClient):
+            raise RuntimeError("ManagedServer has no client")
+        reused = False
+        if reuse:
+            cached = sessions.get(conv_key)
+            if cached is not None:
+                oc_session_id, reused = cached, True
+            else:
+                oc_session_id = await self._create_session(client)
+                sessions[conv_key] = oc_session_id
+        else:
+            oc_session_id = await self._create_session(client)
+        stats["session_ref"] = oc_session_id
+        stats["oc_session_id"] = oc_session_id
+        stats["_cached_session"] = reused
+        trace.set_session(server.proxy_token, oc_session_id)
+        return oc_session_id
+
+    @staticmethod
+    async def _create_session(client: OpenCodeClient) -> str:
+        import ach_agent.engine.lifecycle as oc
+
+        return await oc._create_oc_session(client)
+
     async def run_turn(
         self,
         server: ManagedServer,
@@ -75,6 +115,7 @@ class OpencodeDriver:
         session_ref: str | None = None,
         on_text: Callable[[str], None] | None,
         on_tool: Callable[[OpenCodeToolUpdate], None] | None,
+        on_session_resolved: Callable[[str], Awaitable[None]] | None = None,
         max_tool_calls: int,
         stats: dict[str, Any],
     ) -> TurnResult:
@@ -101,21 +142,28 @@ class OpencodeDriver:
             stats["session_ref"] = session_ref
             stats["oc_session_id"] = session_ref
             trace.set_session(server.proxy_token, session_ref)
-            text = await _consume(session_ref)
+            try:
+                text = await _consume(session_ref)
+            except aiohttp.ClientResponseError as exc:
+                if exc.status != 404 or not reuse or not stats.get("_cached_session", False):
+                    raise
+                session_ref = await self._create_session(client)
+                sessions[conv_key] = session_ref
+                stats["_cached_session"] = False
+                stats["session_ref"] = session_ref
+                stats["oc_session_id"] = session_ref
+                trace.set_session(server.proxy_token, session_ref)
+                if on_session_resolved is not None:
+                    await on_session_resolved(session_ref)
+                text = await _consume(session_ref)
             aborted = bool(stats.get("aborted"))
             return TurnResult(text=text, session_ref=session_ref, aborted=aborted)
 
         # First send: resolve conv_key → oc session id (create/reuse), 404-recreate retry.
-        reused = False
-        if reuse:
-            cached = sessions.get(conv_key)
-            if cached is None:
-                oc_session_id = await oc._create_oc_session(client)
-                sessions[conv_key] = oc_session_id
-            else:
-                oc_session_id, reused = cached, True
-        else:
-            oc_session_id = await oc._create_oc_session(client)
+        oc_session_id = await self.resolve_session(
+            server, conv_key=conv_key, reuse=reuse, sessions=sessions, stats=stats
+        )
+        reused = bool(stats.pop("_cached_session", False))
         structlog.get_logger(__name__).info(
             "engine: opencode session",
             session_key=conv_key,
@@ -135,6 +183,8 @@ class OpencodeDriver:
             stats["session_ref"] = oc_session_id
             stats["oc_session_id"] = oc_session_id
             trace.set_session(server.proxy_token, oc_session_id)
+            if on_session_resolved is not None:
+                await on_session_resolved(oc_session_id)
             text = await _consume(oc_session_id)
         aborted = bool(stats.get("aborted"))
         return TurnResult(text=text, session_ref=oc_session_id, aborted=aborted)

@@ -7,7 +7,7 @@ imports anything here (D-08 / RTR-06). All engine specifics live behind `EngineD
 
 from __future__ import annotations
 
-from collections.abc import Callable, MutableMapping
+from collections.abc import Awaitable, Callable, MutableMapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -126,6 +126,16 @@ class EngineDriver(Protocol):
 
     async def health(self, server: ManagedServer) -> bool: ...
 
+    async def resolve_session(
+        self,
+        server: ManagedServer,
+        *,
+        conv_key: str,
+        reuse: bool,
+        sessions: MutableMapping[str, str],
+        stats: dict[str, Any],
+    ) -> str: ...
+
     async def run_turn(
         self,
         server: ManagedServer,
@@ -137,6 +147,7 @@ class EngineDriver(Protocol):
         session_ref: str | None = None,
         on_text: Callable[[str], None] | None,
         on_tool: Callable[[OpenCodeToolUpdate], None] | None,
+        on_session_resolved: Callable[[str], Awaitable[None]] | None = None,
         max_tool_calls: int,
         stats: dict[str, Any],
     ) -> TurnResult:

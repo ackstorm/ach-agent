@@ -10,7 +10,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from ach_agent.engine import trace
-from ach_agent.engine.base.driver import TurnResult
+from ach_agent.engine.base.driver import EngineConfig, TurnResult
+from ach_agent.engine.lifecycle import NativeLaunchFailed
 from ach_agent.engine.opencode.driver import OpencodeDriver
 
 
@@ -61,6 +62,17 @@ async def test_run_turn_reuse_creates_and_records_session() -> None:
     cs.assert_awaited_once()
 
 
+async def test_launch_missing_binary_is_typed_failure() -> None:
+    with (
+        patch("ach_agent.engine.opencode.client.find_free_port", return_value=29999),
+        patch("ach_agent.engine.opencode.client.release_port") as release,
+        patch("ach_agent.engine.lifecycle.launch", side_effect=FileNotFoundError("missing")),
+    ):
+        with pytest.raises(NativeLaunchFailed):
+            await OpencodeDriver().launch(EngineConfig(home="/tmp/ach-test"), "lane")
+    release.assert_called_once_with(29999)
+
+
 async def test_run_turn_with_session_ref_bypasses_map() -> None:
     sessions: dict[str, str] = {}
     with (
@@ -81,8 +93,8 @@ async def test_run_turn_with_session_ref_bypasses_map() -> None:
         )
     assert result.session_ref == "ses_fixed"
     assert result.text == "wrapped"
-    assert sessions == {}          # map never touched on the session_ref path
-    mk.assert_not_awaited()        # no create on the continue path
+    assert sessions == {}  # map never touched on the session_ref path
+    mk.assert_not_awaited()  # no create on the continue path
 
 
 async def test_session_is_correlated_before_the_prompt_is_sent() -> None:
@@ -189,7 +201,9 @@ async def test_launch_cancellation_releases_subprocess_client_and_port(
 
 def test_signature_canonical_matches_protocol() -> None:
     sig = inspect.signature(OpencodeDriver.run_turn)
-    kw_only_names = [p.name for p in sig.parameters.values() if p.kind == inspect.Parameter.KEYWORD_ONLY]
+    kw_only_names = [
+        p.name for p in sig.parameters.values() if p.kind == inspect.Parameter.KEYWORD_ONLY
+    ]
     expected_kw_only = [
         "conv_key",
         "prompt",
@@ -198,6 +212,7 @@ def test_signature_canonical_matches_protocol() -> None:
         "session_ref",
         "on_text",
         "on_tool",
+        "on_session_resolved",
         "max_tool_calls",
         "stats",
     ]

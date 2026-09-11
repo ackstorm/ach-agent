@@ -9,7 +9,7 @@ Hardening implemented in 00-02:
     (consume_sse_after_send below; reuses events.py's shared reader/accumulator helpers)
   - H-03: Process-group kill (SIGTERM → 10s → SIGKILL) via _process_group_kill
   - H-05: stdout/stderr drain tasks (_drain_logs with 50-line tail, started at launch)
-  - ENG-06: Startup deadline calls sys.exit(1), NOT raises
+  - ENG-06: Startup deadline raises NativeLaunchFailed for the supervisor to handle
   - maxInvocationSeconds: owned by the lane (router), NOT run_invocation (Plan 1)
 """
 
@@ -23,7 +23,6 @@ import os
 import re
 import shutil
 import signal
-import sys
 from collections.abc import Callable, MutableMapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -133,6 +132,10 @@ class ManagedServer:
         from ach_agent.engine.client import release_port
 
         release_port(self.port)
+
+
+class NativeLaunchFailed(Exception):
+    """The native process could not become ready."""
 
 
 # ---------------------------------------------------------------------------
@@ -500,9 +503,8 @@ async def poll_ready(
 ) -> None:
     """Poll GET /app until HTTP 200 or deadline.
 
-    ENG-06 / Pitfall 2: On deadline exceeded this calls sys.exit(1) — NOT raises.
-    Raising would leave the process running; sys.exit(1) causes the substrate to
-    mark the pod NotReady and restart it per spec §8.5.
+    ENG-06: startup failure is typed so the mini-harness can clean the process and
+    report LaunchFailed without terminating unrelated native executions.
     """
     from ach_agent.engine.client import OpenCodeClient
 
@@ -522,20 +524,19 @@ async def poll_ready(
                 code=getattr(proc, "returncode", None),
                 port=server.port,
             )
-            sys.exit(1)
+            raise NativeLaunchFailed("opencode exited during startup")
         if await client.check_health():
             log.info("opencode ready", port=server.port)
             return
         await asyncio.sleep(0.5)
 
-    # ENG-06 / Pitfall 2: startup deadline exceeded — must sys.exit(1)
-    # NOT raise: the process must die so the substrate marks it NotReady.
+    # ENG-06: typed failure lets the owning service perform bounded cleanup.
     log.error(
         "opencode not ready within deadline — exiting",
         startup_timeout_seconds=startup_timeout_seconds,
         port=server.port,
     )
-    sys.exit(1)
+    raise NativeLaunchFailed(f"opencode not ready within {startup_timeout_seconds}s")
 
 
 async def _create_oc_session(client: OpenCodeClient) -> str:

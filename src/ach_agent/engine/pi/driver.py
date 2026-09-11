@@ -7,7 +7,7 @@ import asyncio
 import contextlib
 import json
 import shutil
-from collections.abc import Callable, MutableMapping
+from collections.abc import Awaitable, Callable, MutableMapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -54,7 +54,7 @@ class PiDriver:
 
     def _prepare_agent_dir(self, cfg: EngineConfig, session_key: str) -> tuple[Path, str, str]:
         """Write Pi's generated configuration and return its launch prerequisites."""
-        from ach_agent.engine.lifecycle import _key_suffix
+        from ach_agent.engine.lifecycle import NativeLaunchFailed, _key_suffix
 
         agent_dir = Path(cfg.home) / "pi" / _key_suffix(session_key)
         agent_dir.mkdir(parents=True, exist_ok=True)
@@ -72,7 +72,7 @@ class PiDriver:
 
         binary = shutil.which(cfg.binary_path)
         if not binary:
-            raise RuntimeError(f"pi binary not found: {cfg.binary_path!r}")
+            raise NativeLaunchFailed(f"pi binary not found: {cfg.binary_path!r}")
         return agent_dir, binary, provider
 
     @staticmethod
@@ -115,7 +115,7 @@ class PiDriver:
         await proc.wait()
 
     async def launch(self, cfg: EngineConfig, session_key: str) -> ManagedServer:
-        from ach_agent.engine.lifecycle import ManagedServer
+        from ach_agent.engine.lifecycle import ManagedServer, NativeLaunchFailed
 
         agent_dir, binary, provider = self._prepare_agent_dir(cfg, session_key)
         work_dir = Path(cfg.work_dir)
@@ -136,7 +136,7 @@ class PiDriver:
         asyncio.create_task(self._drain_stderr(proc, server))
         await asyncio.sleep(0)
         if proc.returncode is not None:
-            raise RuntimeError(f"pi exited immediately (rc={proc.returncode})")
+            raise NativeLaunchFailed(f"pi exited immediately (rc={proc.returncode})")
         return server
 
     @staticmethod
@@ -224,6 +224,7 @@ class PiDriver:
         session_ref: str | None = None,
         on_text: Callable[[str], None] | None,
         on_tool: Callable[[OpenCodeToolUpdate], None] | None,
+        on_session_resolved: Callable[[str], Awaitable[None]] | None = None,
         max_tool_calls: int,
         stats: dict[str, Any],
     ) -> TurnResult:
@@ -292,6 +293,30 @@ class PiDriver:
 
         stats["aborted"] = aborted
         return TurnResult(text="".join(text_parts), session_ref=ref, aborted=aborted)
+
+    async def resolve_session(
+        self,
+        server: ManagedServer,
+        *,
+        conv_key: str,
+        reuse: bool,
+        sessions: MutableMapping[str, str],
+        stats: dict[str, Any],
+    ) -> str:
+        client: Any = server._client
+        if reuse:
+            cached = sessions.get(conv_key)
+            if cached is not None:
+                await self._switch_session(client, cached)
+                ref = cached
+            else:
+                ref = await self._new_session(client)
+                sessions[conv_key] = ref
+        else:
+            ref = await self._new_session(client)
+        stats["session_ref"] = ref
+        trace.set_session(server.proxy_token, ref)
+        return ref
 
     async def discard_session(self, server: ManagedServer, session_ref: str) -> None:
         try:

@@ -86,17 +86,17 @@ async def test_poll_ready() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ENG-06: Startup deadline — process exits with code != 0 on timeout
+# ENG-06: Startup deadline — typed native failure on timeout
 # ---------------------------------------------------------------------------
 
 
-async def test_startup_deadline_exits() -> None:
-    """ENG-06: poll_ready() calls sys.exit(1) when startup_timeout_seconds elapsed.
+async def test_startup_deadline_raises_typed_failure() -> None:
+    """A native startup timeout does not terminate the supervising harness.
 
     Points at a closed port (health always False) with sub-second timeout.
     """
     from ach_agent.engine.client import OpenCodeClient
-    from ach_agent.engine.lifecycle import ManagedServer, poll_ready
+    from ach_agent.engine.lifecycle import ManagedServer, NativeLaunchFailed, poll_ready
 
     server = ManagedServer(port=19878)
     mock_client = AsyncMock(spec=OpenCodeClient)
@@ -104,11 +104,9 @@ async def test_startup_deadline_exits() -> None:
     mock_client.check_health = AsyncMock(return_value=False)
     server._client = mock_client
 
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(NativeLaunchFailed):
         # Use a very short timeout so the test runs fast
         await poll_ready(server, startup_timeout_seconds=1)
-
-    assert exc_info.value.code != 0, "sys.exit code must be non-zero on timeout"
 
 
 # ---------------------------------------------------------------------------

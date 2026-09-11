@@ -254,6 +254,7 @@ class EnginePool:
         sessions_map: MutableMapping[str, str] | None = None,
         *,
         accountant: CostAccountant | None = None,
+        strict_cleanup: bool = False,
     ) -> None:
         from ach_agent.engine.opencode.driver import OpencodeDriver
 
@@ -264,6 +265,7 @@ class EnginePool:
         self._locks: dict[str, asyncio.Lock] = {}
         self._driver: EngineDriver = driver if driver is not None else OpencodeDriver()
         self._accountant = accountant
+        self._strict_cleanup = strict_cleanup
 
         # Pool-owned session store, wrapped in a per-engine-type namespaced view (SP1 §5.4).
         # `sessions_map` is the raw backing store (SQLite when persistence.enabled, else the
@@ -351,6 +353,8 @@ class EnginePool:
                     await self._driver.stop(existing)
                 except Exception:  # noqa: BLE001
                     log.debug("EnginePool.acquire: dead-server stop failed", exc_info=True)
+                    if self._strict_cleanup:
+                        raise
                 self._drop_token(existing)
                 self._servers.pop(session_key, None)
                 self._ref_counts.pop(session_key, None)
@@ -490,6 +494,8 @@ class EnginePool:
                     log.warning(
                         "EnginePool: error stopping server", session_key=session_key, exc_info=True
                     )
+                    if self._strict_cleanup:
+                        raise
 
             if cleanup is not None:
                 try:

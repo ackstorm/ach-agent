@@ -41,6 +41,17 @@ def test_stub_satisfies_engine_driver_protocol() -> None:
         async def health(self, server: Any) -> bool:
             return True
 
+        async def resolve_session(
+            self,
+            server: Any,
+            *,
+            conv_key: str,
+            reuse: bool,
+            sessions: MutableMapping[str, str],
+            stats: dict[str, Any],
+        ) -> str:
+            return "ses_1"
+
         async def run_turn(
             self,
             server: Any,

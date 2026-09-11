@@ -8,15 +8,12 @@ that may emit a log line):
   3. D-02 gate: reject unwired channel types (hard-fail, non-zero exit)
   4. Write PID file             <- Pitfall 11: single-replica guard
   5. Construct Router
-  6b. Build engine_runner (CR-01: branches on event.reply_future for reply mode;
-      relays the terminal text — egress is the agent's via external MCP tools)
+  6b. Build engine_runner and the ID-keyed completion registry
   6c. Create FastAPI app via create_app(channels, router)
   7. asyncio.run(main()) — starts uvicorn + cron tasks on the SAME event loop
 
 RTR-06: router must not import from hermes_agent.*; engine injected as callable.
-D-08: deliver.type: reply → event.reply_future resolved by engine_runner on the lane,
-      awaited by the route (CR-01: exactly one engine execution per event).
-      async channels → engine_runner relays nothing; the agent already acted via MCP.
+D-08: channels receive admission immediately and correlate terminal outcomes by event ID.
 """
 
 from __future__ import annotations
@@ -35,8 +32,8 @@ import uvicorn
 if TYPE_CHECKING:
     from ach_agent.engine.base.driver import EngineDriver
 
-from ach_agent.boot.engine_runner import make_engine_runner
 from ach_agent.boot.completions import CompletionHandler, CompletionRegistry
+from ach_agent.boot.engine_runner import make_engine_runner
 from ach_agent.boot.health import HealthState
 from ach_agent.boot.paths import (
     harness_log_dir,
@@ -790,10 +787,8 @@ async def main(
 
     # Build A2A bridges and sub-apps (topology A: mounted under the same FastAPI/uvicorn socket).
     # W9: engine_runner must NOT import channels.a2a or hold a bridge reference.
-    # Wiring: for each A2A channel, construct an A2AAgentExecutorBridge, then wrap the router
-    # in a thin handler that injects an on_complete closure into event.delivery_context before
-    # routing. engine_runner reads event.delivery_context['on_complete'] and calls it — no
-    # channel-type-specific logic in engine_runner (dependency arrow: channels→engine only).
+    # Wiring: each A2A bridge consumes the typed completion port; engine_runner remains
+    # channel-neutral and publishes only ID-keyed terminal outcomes.
     a2a_bridges: list[A2AAgentExecutorBridge] = []
     a2a_mounts: list[tuple[str, Any]] = []
 
@@ -802,12 +797,12 @@ async def main(
             continue
 
         # The bridge is created here (boot module) — engine_runner never imports it.
-        bridge = A2AAgentExecutorBridge(handler=channel_handler, channel_cfg=channel,
-                                         completion_registry=completion_registry)
+        bridge = A2AAgentExecutorBridge(
+            handler=channel_handler,
+            channel_cfg=channel,
+            completion_port=completion_registry,
+        )
 
-        # on_complete/on_fail (W9: bound here in the boot module, engine tier stays
-        # unaware of A2A type). on_fail mirrors on_complete: emits a FAILED event when
-        # the terminal output is unusable (action != a2a_reply, or empty reply text).
         # Build the A2A AgentCard from channel config (minimal — receiver-only v1, spec §14.6).
         # make_a2a_agent_card keeps a2a.* imports inside channels/a2a.py (RTR-06 fence).
         agent_card = make_a2a_agent_card(channel.name)

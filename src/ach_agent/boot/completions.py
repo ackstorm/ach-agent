@@ -120,9 +120,8 @@ class CompletionRegistry:
         self._clock = clock
         self._records: dict[tuple[str, str, str], _Record] = {}
         self._completed: dict[tuple[str, str, str], _Record] = {}
-        self._sinks: dict[
-            tuple[str, str, str], tuple[TextSink | None, ToolSink | None]
-        ] = {}
+        self._sinks: dict[tuple[str, str, str], tuple[TextSink | None, ToolSink | None]] = {}
+        self._max_sinks = max_active_entries
 
     def ref_for(self, event: MessageEvent) -> EventRef:
         return EventRef(
@@ -135,7 +134,10 @@ class CompletionRegistry:
         self, ref: EventRef, *, on_text: TextSink | None = None, on_tool: ToolSink | None = None
     ) -> None:
         """Keep local streaming callbacks outside the serializable event."""
-        self._sinks[self._key(ref)] = (on_text, on_tool)
+        key = self._key(ref)
+        if key not in self._sinks and len(self._sinks) >= self._max_sinks:
+            raise RegistryBusy("completion registry sink limit reached")
+        self._sinks[key] = (on_text, on_tool)
 
     def sinks(self, ref: EventRef) -> tuple[TextSink | None, ToolSink | None]:
         return self._sinks.get(self._key(ref), (None, None))
@@ -311,6 +313,7 @@ class CompletionHandler:
 
     def __init__(self, registry: CompletionRegistry) -> None:
         self.registry = registry
+        self.completion_port = registry
 
     async def handle(self, event: MessageEvent) -> RouterAdmitResult:
         submission = await self.registry.submit(event)

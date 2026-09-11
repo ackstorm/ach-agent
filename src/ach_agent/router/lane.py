@@ -92,16 +92,19 @@ class Lane:
             try:
                 event = await self._queue.get()
             except asyncio.CancelledError:
-                if self._completion_notifier is not None:
-                    while True:
-                        try:
-                            queued = self._queue.get_nowait()
-                        except asyncio.QueueEmpty:
-                            break
+                while True:
+                    try:
+                        queued = self._queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                    if self._completion_notifier is not None:
                         outcome = self._completion_notifier(queued, "cancelled before execution")
                         if asyncio.iscoroutine(outcome):
                             await outcome
-                        self._queue.task_done()
+                    self._queue.task_done()
+                    router = self._router_ref()
+                    if router is not None:
+                        router.release_queued_slot()
                 return
 
             # finding 9: this event's OWN channel_name selects its permits — never
@@ -131,17 +134,16 @@ class Lane:
                                 idempotency_key=event.idempotency_key,
                                 max_invocation_seconds=self._max_invocation_seconds,
                             )
+                            await self._notify(event, "invocation timed out")
                         except Exception:
                             log.exception(
                                 "lane: invocation failed",
                                 session_key=self._session_key,
                                 idempotency_key=event.idempotency_key,
                             )
+                            await self._notify(event, "invocation failed")
             except asyncio.CancelledError:
-                if self._completion_notifier is not None:
-                    outcome = self._completion_notifier(event, "cancelled during execution")
-                    if asyncio.iscoroutine(outcome):
-                        await outcome
+                await self._notify(event, "cancelled during execution")
                 return
             finally:
                 # Single, idempotent queued_total release for this event — fires on
@@ -163,6 +165,12 @@ class Lane:
         router = self._router_ref()
         if router is not None:
             router.release_queued_slot()
+
+    async def _notify(self, event: MessageEvent, error: str) -> None:
+        if self._completion_notifier is not None:
+            outcome = self._completion_notifier(event, error)
+            if asyncio.iscoroutine(outcome):
+                await outcome
 
     def is_empty(self) -> bool:
         """True when no events are pending in this lane's queue.

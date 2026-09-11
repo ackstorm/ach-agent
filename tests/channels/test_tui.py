@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from prometheus_client import REGISTRY
 
+from ach_agent.boot.completions import CompletionRegistry
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.tui import run_one_shot, run_tui_console
 from ach_agent.router.router import RouterAdmitResult
@@ -35,11 +36,17 @@ class FakeHandler:
     def __init__(self, reply: str = "ENGINE REPLY") -> None:
         self._reply = reply
         self.events: list[MessageEvent] = []
+        self.completion_port = CompletionRegistry(self._admit)
+
+    async def _admit(self, event: MessageEvent) -> RouterAdmitResult:
+        return RouterAdmitResult.ACCEPTED
 
     async def handle(self, event: MessageEvent) -> RouterAdmitResult:
         self.events.append(event)
-        assert event.reply_future is not None
-        event.reply_future.set_result(self._reply)
+        await self.completion_port.submit(event)
+        await self.completion_port.finish(
+            self.completion_port.ref_for(event), {"text": self._reply}
+        )
         return RouterAdmitResult.ACCEPTED
 
 
@@ -80,7 +87,7 @@ async def test_blank_lines_skipped_and_event_fields() -> None:
     assert event.idempotency_key != ""
     assert event.channel_name == "tui-console"
     assert event.session_key == "tui-console"
-    assert event.reply_future is not None
+    assert event.free_form is True
     assert event.payload == {"text": "hi"}
 
 
@@ -91,15 +98,21 @@ class StreamingHandler:
         self._deltas = deltas
         self._reply = reply
         self.events: list[MessageEvent] = []
+        self.completion_port = CompletionRegistry(self._admit)
+
+    async def _admit(self, event: MessageEvent) -> RouterAdmitResult:
+        return RouterAdmitResult.ACCEPTED
 
     async def handle(self, event: MessageEvent) -> RouterAdmitResult:
         self.events.append(event)
-        on_text = event.delivery_context.get("on_text")
-        if callable(on_text):
+        await self.completion_port.submit(event)
+        on_text, _ = self.completion_port.sinks(self.completion_port.ref_for(event))
+        if on_text is not None:
             for d in self._deltas:
                 on_text(d)
-        assert event.reply_future is not None
-        event.reply_future.set_result(self._reply)
+        await self.completion_port.finish(
+            self.completion_port.ref_for(event), {"text": self._reply}
+        )
         return RouterAdmitResult.ACCEPTED
 
 
@@ -132,15 +145,21 @@ class ToolingHandler:
         self._tools = tools
         self._reply = reply
         self.events: list[MessageEvent] = []
+        self.completion_port = CompletionRegistry(self._admit)
+
+    async def _admit(self, event: MessageEvent) -> RouterAdmitResult:
+        return RouterAdmitResult.ACCEPTED
 
     async def handle(self, event: MessageEvent) -> RouterAdmitResult:
         self.events.append(event)
-        on_tool = event.delivery_context.get("on_tool")
-        if callable(on_tool):
+        await self.completion_port.submit(event)
+        _, on_tool = self.completion_port.sinks(self.completion_port.ref_for(event))
+        if on_tool is not None:
             for t in self._tools:
                 on_tool(t)
-        assert event.reply_future is not None
-        event.reply_future.set_result(self._reply)
+        await self.completion_port.finish(
+            self.completion_port.ref_for(event), {"text": self._reply}
+        )
         return RouterAdmitResult.ACCEPTED
 
 
@@ -153,7 +172,11 @@ async def test_handle_line_renders_tool_via_tool_sink() -> None:
     seen: list = []
 
     await _handle_line(
-        handler, "hi", lambda _s: None, "tui-console", stream_sink=lambda _d: None,
+        handler,
+        "hi",
+        lambda _s: None,
+        "tui-console",
+        stream_sink=lambda _d: None,
         tool_sink=seen.append,
     )
 
@@ -180,4 +203,4 @@ async def test_one_shot_writes_engine_reply_and_event_fields() -> None:
     assert event.source_trait == "sync"
     assert event.payload == {"text": "review this"}
     # free_form marker → engine_runner skips terminal extraction / repair turn
-    assert event.delivery_context.get("free_form") is True
+    assert event.free_form is True

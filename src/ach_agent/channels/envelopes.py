@@ -53,10 +53,10 @@ class EventEnvelope(BaseModel):
     _payload_finite = field_validator("payload", "delivery_context", "free_form")(_finite_json)
 
     @classmethod
-    def from_message_event(cls, event: MessageEvent, *, free_form: bool = False) -> EventEnvelope:
-        """Project a known ``MessageEvent`` and reject its local callback sink."""
-        if getattr(event, "reply_future", None) is not None:
-            raise ValueError("reply_future cannot be serialized in an EventEnvelope")
+    def from_message_event(
+        cls, event: MessageEvent, *, free_form: bool | None = None
+    ) -> EventEnvelope:
+        """Project a known ``MessageEvent`` into a serializable envelope."""
         return cls(
             idempotency_key=event.idempotency_key,
             session_key=event.session_key,
@@ -67,7 +67,7 @@ class EventEnvelope(BaseModel):
             source_trait=event.source_trait,
             received_at=event.received_at,
             task_id=event.task_id,
-            free_form=free_form,
+            free_form=event.free_form if free_form is None else free_form,
         )
 
     def event_ref(self, agent: str) -> EventRef:

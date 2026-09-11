@@ -88,8 +88,8 @@ _SCRIPT_TRAMPOLINE = 's="$ACH_SCRIPT"; unset ACH_SCRIPT; eval "$s"'
 class PrepareFailed(RuntimeError):
     """The prepare script exited non-zero, timed out, or could not be started.
 
-    Raised inside engine_runner's try, so it takes the ordinary failure path: the reply
-    future gets the exception, a2a's on_fail fires, and nothing is posted. Deliberately
+    Raised inside engine_runner's try, so it takes the ordinary failure path: the
+    completion registry records the failure and nothing is posted. Deliberately
     fail-CLOSED (unlike memory's fail-open probe): a review posted after a failed clone
     is a review of a repo that is not there, which is worse than no review at all.
     """
@@ -169,8 +169,8 @@ def prepare_workspace(home: str, work_dir: str, session_key: str) -> Path:
 def _event_value(key: str, value: Any) -> str | None:
     """Coerce one delivery_context value to a safe env string, or None to drop it.
 
-    delivery_context is not a pure data bag — it also carries the on_complete/on_fail/
-    on_text callables — so anything non-scalar is dropped rather than stringified.
+    delivery_context carries channel metadata; anything non-scalar is dropped rather
+    than stringified.
     """
     if isinstance(value, bool):
         text = "true" if value else "false"

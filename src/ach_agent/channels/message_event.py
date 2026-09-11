@@ -9,7 +9,6 @@ Constraint: NEVER import from hermes_agent.* or engine.* here (RTR-06).
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -30,11 +29,6 @@ class MessageEvent:
         source_trait:     "sync" (can return 503) or "async_no_retry"
                           (cron/fire-and-forget: drop+log on full queue, RTR-05).
         received_at:      UTC timestamp when event entered the harness.
-        reply_future:     Future set by engine_runner with the reply text for
-                          deliver.type=="reply" channels (CR-01 / ACT-01).
-                          None = async/gitlab_comment mode (default, unchanged path).
-                          When not None, engine_runner MUST call set_result or
-                          set_exception so the route never hangs.
         task_id:          Correlation id echoed to the caller on 202; empty for channels
                           that don't set one.
     """
@@ -50,9 +44,7 @@ class MessageEvent:
     delivery_context: dict[str, Any] = field(default_factory=dict)
     source_trait: Literal["sync", "async_no_retry"] = "async_no_retry"
     received_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    free_form: bool = False
     # Correlation id (uuid4 hex) echoed to the caller on the webhook 202 accept and logged
     # by engine_runner for log/trace correlation ONLY — not persisted, not queryable.
     task_id: str = ""
-    # Compatibility-only local attribute. Channel wiring never uses it and envelopes
-    # reject it; retained so old callers fail at the serialization boundary.
-    reply_future: asyncio.Future[str] | None = field(default=None, compare=False, repr=False)

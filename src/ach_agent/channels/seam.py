@@ -9,9 +9,12 @@ Constraint: NEVER import from hermes_agent.* or engine.* here (RTR-06).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
+    from ach_agent.boot.completions import Completion
+    from ach_agent.channels.envelopes import EventRef
     from ach_agent.channels.message_event import MessageEvent
     from ach_agent.router import RouterAdmitResult
 
@@ -23,5 +26,33 @@ class MessageHandler(Protocol):
     Keeping this a Protocol means mypy enforces the seam from both sides
     without creating an import cycle (RTR-06).
     """
+
+    async def handle(self, event: MessageEvent) -> RouterAdmitResult: ...
+
+
+class CompletionPort(Protocol):
+    """Minimal channel-facing completion capability, suitable for a remote client."""
+
+    def ref_for(self, event: MessageEvent) -> EventRef: ...
+
+    async def wait(self, ref: EventRef) -> Completion: ...
+
+    def sinks(
+        self, ref: EventRef
+    ) -> tuple[Callable[[str], None] | None, Callable[[Any], None] | None]: ...
+
+    def register_sinks(
+        self,
+        ref: EventRef,
+        *,
+        on_text: Callable[[str], None] | None = None,
+        on_tool: Callable[[object], None] | None = None,
+    ) -> None: ...
+
+    def discard_sinks(self, ref: EventRef) -> None: ...
+
+
+class CompletionHandler(Protocol):
+    completion_port: CompletionPort
 
     async def handle(self, event: MessageEvent) -> RouterAdmitResult: ...

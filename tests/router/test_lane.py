@@ -4,15 +4,13 @@
 The lane owns the single authoritative maxInvocationSeconds bound (RTR-04). When it
 fires it must:
   - increment ENGINE_WATCHDOG_KILLS (metric moved off run_invocation), and
-  - (via the cancelled engine_runner) always resolve a pending reply_future with
-    InvocationTimeout and force-kill the runaway server (release ttl=0, never the warm TTL).
+  - (via the cancelled engine_runner) always finish the ID-keyed completion with a
+    timeout error and force-kill the runaway server (release ttl=0, never the warm TTL).
 """
 from __future__ import annotations
 
 import asyncio
 import weakref
-
-import pytest
 
 from ach_agent.router.lane import Lane
 from tests.router.conftest import make_event
@@ -67,6 +65,10 @@ async def test_lane_timeout_increments_watchdog_metric() -> None:
 
 
 async def _build_runner(fake_pool, channel_ttl: dict[str, float]):
+    return await _build_runner_with_registry(fake_pool, channel_ttl, None)
+
+
+async def _build_runner_with_registry(fake_pool, channel_ttl, registry):
     from ach_agent.boot.engine_runner import make_engine_runner
     from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.engine.opencode.driver import OpencodeDriver
@@ -79,14 +81,16 @@ async def _build_runner(fake_pool, channel_ttl: dict[str, float]):
         channel_ttl=channel_ttl,
         channels_by_name={},
         memory_cfg=None,
+        completion_registry=registry,
     )
 
 
-async def test_reply_future_resolved_on_timeout() -> None:
-    """A lane timeout resolves the awaiting reply_future with InvocationTimeout (B3, no hang)."""
+async def test_completion_resolved_on_timeout() -> None:
+    """A lane timeout finishes the ID-keyed completion (B3, no hang)."""
     from unittest.mock import AsyncMock, MagicMock
 
-    from ach_agent.engine.events import InvocationTimeout
+    from ach_agent.boot.completions import CompletionRegistry
+    from ach_agent.router.router import RouterAdmitResult
 
     fake_pool = MagicMock()
     fake_pool.acquire = AsyncMock(return_value=MagicMock())
@@ -99,15 +103,21 @@ async def test_reply_future_resolved_on_timeout() -> None:
 
     from unittest.mock import patch
 
+    registry = CompletionRegistry(lambda _event: _accepted())
+
+    async def _accepted():
+        return RouterAdmitResult.ACCEPTED
+
     with patch("ach_agent.engine.base.terminal.run_contract_turn", slow_run_contract_turn):
-        runner = await _build_runner(fake_pool, {"test-channel": 60.0})
+        runner = await _build_runner_with_registry(fake_pool, {"test-channel": 60.0}, registry)
         lane = _make_lane(runner, 0.05, router)
         event = make_event(channel_name="test-channel")
-        event.reply_future = asyncio.get_event_loop().create_future()
+        submission = await registry.submit(event)
         await lane.put(event)
-
-        with pytest.raises(InvocationTimeout):
-            await asyncio.wait_for(event.reply_future, 1.0)
+        assert submission.completion is not None
+        completion = await asyncio.wait_for(registry.wait(submission.completion.ref), 1.0)
+        assert completion.state == "failed"
+        assert "timed out" in (completion.error or "")
 
     lane.cancel()
     await lane.wait_closed()
@@ -147,14 +157,16 @@ async def test_timeout_force_kills_regardless_of_ttl() -> None:
     assert recorded == [0.0], f"timeout release must force-kill (ttl=0), got {recorded}"
 
 
-async def test_engine_launch_failure_increments_metric_and_resolves_future() -> None:
+async def test_engine_launch_failure_increments_metric_and_finishes_completion() -> None:
     """pool.acquire raising is an explicit launch failure (Step 5, decoupled acceptance):
     ENGINE_LAUNCH_FAILURES.inc() + WARN, and the awaiting reply_future receives the
-    exception — no hang, no silent drop. server stays None, so release is never called.
+    completion — no hang, no silent drop. server stays None, so release is never called.
     """
     from unittest.mock import AsyncMock, MagicMock
 
+    from ach_agent.boot.completions import CompletionRegistry
     from ach_agent.engine.metrics import ENGINE_LAUNCH_FAILURES
+    from ach_agent.router.router import RouterAdmitResult
 
     class _LaunchError(RuntimeError):
         pass
@@ -166,14 +178,19 @@ async def test_engine_launch_failure_increments_metric_and_resolves_future() -> 
 
     before = ENGINE_LAUNCH_FAILURES._value.get()
 
-    runner = await _build_runner(fake_pool, {"test-channel": 60.0})
+    async def _accepted(_event):
+        return RouterAdmitResult.ACCEPTED
+
+    registry = CompletionRegistry(_accepted)
+    runner = await _build_runner_with_registry(fake_pool, {"test-channel": 60.0}, registry)
     lane = _make_lane(runner, 5.0, router)
     event = make_event(channel_name="test-channel")
-    event.reply_future = asyncio.get_event_loop().create_future()
+    submission = await registry.submit(event)
     await lane.put(event)
-
-    with pytest.raises(_LaunchError):
-        await asyncio.wait_for(event.reply_future, 1.0)
+    assert submission.completion is not None
+    completion = await asyncio.wait_for(registry.wait(submission.completion.ref), 1.0)
+    assert completion.state == "failed"
+    assert "opencode failed" in (completion.error or "")
 
     after = ENGINE_LAUNCH_FAILURES._value.get()
     lane.cancel()

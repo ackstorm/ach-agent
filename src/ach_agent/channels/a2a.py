@@ -10,7 +10,7 @@ Locked decisions:
   - Acceptance is decoupled from engine readiness: no engine-readiness gate here — the
     engine starts lazily per session_key inside the lane (pool.acquire in engine_runner).
   - FULL_QUEUE (D-05/RTR-05): failed TaskStatusUpdateEvent, not silent drop.
-  - source_trait = "async_no_retry": delivery bridge via signal_completion(task_id, text).
+  - source_trait = "async_no_retry": delivery bridge via the typed completion port.
     Completion is keyed by task_id, not session_key: a context_id (session_key's
     primary source) is shared across every task in a conversation, so keying by
     session_key would let one task's registration overwrite another's (finding 5).
@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from ach_agent.channels.message_event import MessageEvent
+from ach_agent.channels.seam import CompletionPort
 from ach_agent.config.schema import resolve_secret
 from ach_agent.router.dedup import derive_a2a_idempotency_key
 from ach_agent.router.metrics import CHANNEL_INBOUND
@@ -180,6 +181,7 @@ class _PendingTask:
     completion: asyncio.Event
     context_id: str
     queues: list[Any] = field(default_factory=list)
+    watch: asyncio.Task[None] | None = None
 
 
 class A2AAgentExecutorBridge:
@@ -196,11 +198,11 @@ class A2AAgentExecutorBridge:
         self,
         handler: MessageHandler | None,
         channel_cfg: ChannelConfig,
-        completion_registry: Any | None = None,
+        completion_port: CompletionPort,
     ) -> None:
         self._handler: MessageHandler | None = handler
         self._channel_cfg = channel_cfg
-        self._completion_registry = completion_registry
+        self._completion_port = completion_port
         # Maps task_id → _PendingTask (finding 5). See _PendingTask's docstring for
         # why this is keyed by task_id and not session_key.
         self._pending: dict[str, _PendingTask] = {}
@@ -209,6 +211,27 @@ class A2AAgentExecutorBridge:
     def channel_cfg(self) -> ChannelConfig:
         return self._channel_cfg
 
+    async def _watch_completion(self, task_id: str, pending: _PendingTask, ref: Any) -> None:
+        completion = await self._completion_port.wait(ref)
+        if self._pending.get(task_id) is not pending:
+            return
+        if completion.state == "completed":
+            result = completion.result if isinstance(completion.result, dict) else {}
+            action = result.get("action")
+            text = str(result.get("text", ""))
+            if action == "a2a_reply" and text.strip():
+                state, message = "completed", text
+            else:
+                state, message = "failed", "invalid terminal output"
+        elif completion.state == "outcome_unavailable":
+            state, message = "failed", "Outcome unavailable"
+        else:
+            state, message = "failed", completion.error or "Invocation failed"
+        self._pending.pop(task_id, None)
+        for queue in pending.queues:
+            await queue.enqueue_event(_status_event(state, message, task_id, pending.context_id))
+        pending.completion.set()
+
     async def execute(self, context: Any, event_queue: Any) -> None:
         """AgentExecutor.execute implementation.
 
@@ -216,7 +239,7 @@ class A2AAgentExecutorBridge:
           (1) Header auth (spec §14.6) — BEFORE any dispatch.
           (2) Route to handler (decoupled from engine readiness); on FULL_QUEUE →
               failed event (D-05/RTR-05).
-          (3) Await completion signal (set by signal_completion via on_complete callback).
+          (3) Await the ID-keyed completion and fan it out to coalesced callers.
         """
         # Extract task/context ids up front so EVERY terminal event we enqueue (including
         # the early auth-reject paths) carries ids matching the TaskManager.
@@ -272,7 +295,17 @@ class A2AAgentExecutorBridge:
         if existing is not None:
             existing.queues.append(event_queue)
             await event_queue.enqueue_event(_status_event("working", None, task_id, context_id))
-            await existing.completion.wait()
+            try:
+                await asyncio.shield(existing.completion.wait())
+            except asyncio.CancelledError:
+                if event_queue in existing.queues:
+                    existing.queues.remove(event_queue)
+                if not existing.queues:
+                    self._pending.pop(task_id, None)
+                    if existing.watch is not None:
+                        existing.watch.cancel()
+                        await asyncio.gather(existing.watch, return_exceptions=True)
+                raise
             return
 
         idempotency_key = derive_a2a_idempotency_key(task_id)
@@ -305,7 +338,11 @@ class A2AAgentExecutorBridge:
             return
         if result == RouterAdmitResult.DUPLICATE:
             log.info("a2a: duplicate task_id — deduplicated", channel=self._channel_cfg.name)
-            self._pending.pop(task_id, None)
+            await event_queue.enqueue_event(_status_event("working", None, task_id, context_id))
+            pending.watch = asyncio.create_task(
+                self._watch_completion(task_id, pending, self._completion_port.ref_for(event))
+            )
+            await asyncio.shield(pending.completion.wait())
             return
 
         # Emit ONE interim WORKING event so the a2a-sdk non-blocking path has a
@@ -318,36 +355,18 @@ class A2AAgentExecutorBridge:
         # via its own flag — no branch here.
         await event_queue.enqueue_event(_status_event("working", None, task_id, context_id))
 
-        # (3) Await the ID-keyed completion. Cancelling this waiter does not cancel
-        # the admitted lane work, so a lost A2A response can be retried safely.
-        if self._completion_registry is None:
-            await pending.completion.wait()
-            return
-        ref = self._completion_registry.ref_for(event)
-        completion_wait = asyncio.create_task(self._completion_registry.wait(ref))
-        canceled_wait = asyncio.create_task(pending.completion.wait())
-        done, _ = await asyncio.wait(
-            (completion_wait, canceled_wait), return_when=asyncio.FIRST_COMPLETED
-        )
-        if canceled_wait in done:
-            completion_wait.cancel()
-            await asyncio.gather(completion_wait, return_exceptions=True)
-            return
-        canceled_wait.cancel()
-        await asyncio.gather(canceled_wait, return_exceptions=True)
-        completion = completion_wait.result()
-        self._pending.pop(task_id, None)
-        if completion.state == "completed":
-            result_text = str((completion.result or {}).get("text", ""))
-            await event_queue.enqueue_event(_status_event("completed", result_text, task_id, context_id))
-        elif completion.state == "outcome_unavailable":
-            await event_queue.enqueue_event(
-                _status_event("failed", "Outcome unavailable", task_id, context_id)
-            )
-        else:
-            await event_queue.enqueue_event(
-                _status_event("failed", completion.error or "Invocation failed", task_id, context_id)
-            )
+        ref = self._completion_port.ref_for(event)
+        pending.watch = asyncio.create_task(self._watch_completion(task_id, pending, ref))
+        try:
+            await asyncio.shield(pending.completion.wait())
+        except asyncio.CancelledError:
+            if event_queue in pending.queues:
+                pending.queues.remove(event_queue)
+            if not pending.queues:
+                self._pending.pop(task_id, None)
+                pending.watch.cancel()
+                await asyncio.gather(pending.watch, return_exceptions=True)
+            raise
 
     async def cancel(self, context: Any, event_queue: Any) -> None:
         """AgentExecutor.cancel — enqueue a canceled event, wake every waiter on this task."""
@@ -356,49 +375,11 @@ class A2AAgentExecutorBridge:
         pending = self._pending.pop(task_id, None)
         await event_queue.enqueue_event(_status_event("canceled", None, task_id, context_id))
         if pending is not None:
-            # finding 5: wake every coalesced waiter (fan out), not just this call's
-            # own event_queue — cancellation must not orphan another caller's
-            # completion event (Pitfall 5).
+            if pending.watch is not None:
+                pending.watch.cancel()
+                await asyncio.gather(pending.watch, return_exceptions=True)
             pending.completion.set()
         log.info("a2a: task canceled", channel=self._channel_cfg.name, task_id=task_id)
-
-    def signal_completion(self, task_id: str, reply_text: str) -> None:
-        """Called by the on_complete closure (boot module) after engine_runner delivers.
-
-        Pops the task's pending entry, enqueues a completed event into every
-        coalesced waiter's queue (fan out — finding 5), and sets the shared
-        asyncio.Event so every execute() call for this task_id unblocks. This is
-        the delivery seam callback (Pitfall 5 — executor must not hang forever).
-        """
-        entry = self._pending.pop(task_id, None)
-        if entry is None:
-            log.warning("a2a: signal_completion called for unknown task_id", task_id=task_id)
-            return
-        # Schedule the fan-out as an async task — signal_completion is called from
-        # a synchronous context (on_complete closure).
-        loop = asyncio.get_running_loop()
-        loop.create_task(_signal_async("completed", reply_text, entry, task_id))
-
-    def signal_failure(self, task_id: str, reason: str) -> None:
-        """Called by the on_fail closure (boot) when the terminal output is unusable.
-
-        Mirrors signal_completion (fan out to every coalesced waiter, then wake
-        them all — the executor must never hang, Pitfall 5).
-        """
-        entry = self._pending.pop(task_id, None)
-        if entry is None:
-            log.warning("a2a: signal_failure called for unknown task_id", task_id=task_id)
-            return
-        loop = asyncio.get_running_loop()
-        loop.create_task(_signal_async("failed", reason, entry, task_id))
-
-
-async def _signal_async(state: str, text: str, entry: _PendingTask, task_id: str) -> None:
-    """Enqueue a terminal status event into every coalesced waiter's queue, then
-    set the shared completion event from an async context (finding 5 fan-out)."""
-    for queue in entry.queues:
-        await queue.enqueue_event(_status_event(state, text, task_id, entry.context_id))
-    entry.completion.set()
 
 
 def make_a2a_agent_card(channel_name: str) -> Any:

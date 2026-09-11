@@ -25,15 +25,13 @@ import re
 import sys
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
 
 from ach_agent.channels.message_event import MessageEvent
+from ach_agent.channels.seam import CompletionHandler
 from ach_agent.router.metrics import CHANNEL_INBOUND
-
-if TYPE_CHECKING:
-    from ach_agent.channels.seam import MessageHandler
 
 log = structlog.get_logger(__name__)
 
@@ -135,7 +133,7 @@ class _StdinReader:
 
 
 async def _handle_line(
-    handler: MessageHandler,
+    handler: CompletionHandler,
     line: str,
     writer: Callable[[str], None],
     session_key: str,
@@ -144,8 +142,8 @@ async def _handle_line(
 ) -> None:
     """Dispatch one console line to the router and write the engine reply.
 
-    Builds a MessageEvent (source_trait="sync") with a fresh reply_future, routes it,
-    then awaits the future for the engine's free-form text. The line IS the prompt
+    Builds a free-form MessageEvent (source_trait="sync"), routes it,
+    then awaits its completion for the engine's text. The line IS the prompt
     (payload['text']); build_engine_prompt returns it verbatim. idempotency_key is a
     ms-timestamp string (unique per line, never empty).
 
@@ -154,8 +152,7 @@ async def _handle_line(
     then NOT re-written (only a closing newline). When unset, the full reply is written
     once via ``writer`` (the non-streaming path used by tests).
     """
-    delivery_context: dict[str, object] = {"free_form": True}
-    reply_future: asyncio.Future[str] | None = None
+    delivery_context: dict[str, object] = {}
     streamed = False
     if stream_sink is not None:
 
@@ -172,39 +169,33 @@ async def _handle_line(
         payload={"text": line},
         delivery_context=delivery_context,
         source_trait="sync",
+        free_form=True,
     )
     CHANNEL_INBOUND.labels(channel="tui-console", type="tui").inc()
-    registry = getattr(handler, "registry", None)
-    if registry is None:
-        reply_future = asyncio.get_running_loop().create_future()
-        event.reply_future = reply_future
-        if stream_sink is not None:
-            delivery_context["on_text"] = _on_text
-        if tool_sink is not None:
-            delivery_context["on_tool"] = tool_sink
-    else:
-        ref = registry.ref_for(event)
-        if stream_sink is not None or tool_sink is not None:
-            registry.register_sinks(ref, on_text=_on_text if stream_sink is not None else None,
-                                    on_tool=tool_sink)
+    port = handler.completion_port
+    ref = port.ref_for(event)
+    if stream_sink is not None or tool_sink is not None:
+        port.register_sinks(
+            ref, on_text=_on_text if stream_sink is not None else None, on_tool=tool_sink
+        )
     try:
         result = await handler.handle(event)
     except Exception:
-        if registry is not None:
-            registry.discard_sinks(ref)
+        port.discard_sinks(ref)
         raise
     if getattr(result, "name", "") == "FULL_QUEUE":
-        if registry is not None:
-            registry.discard_sinks(ref)
+        port.discard_sinks(ref)
         raise RuntimeError("queue full")
-    if registry is None:
-        text = await reply_future
-    else:
-        completion = await registry.wait(ref)
-        if completion.state != "completed":
-            raise RuntimeError(completion.error or "invocation failed")
-        raw = completion.result
-        text = str(raw.get("text", "")) if isinstance(raw, dict) else str(raw or "")
+    try:
+        completion = await port.wait(ref)
+    except asyncio.CancelledError:
+        port.discard_sinks(ref)
+        raise
+    if completion.state != "completed":
+        port.discard_sinks(ref)
+        raise RuntimeError(completion.error or "invocation failed")
+    raw = completion.result
+    text = str(raw.get("text", "")) if isinstance(raw, dict) else str(raw or "")
     if stream_sink is not None and streamed:
         stream_sink("\n\n")  # close the streamed line + a blank line between turns
     else:
@@ -212,7 +203,7 @@ async def _handle_line(
 
 
 async def run_one_shot(
-    handler: MessageHandler,
+    handler: CompletionHandler,
     prompt: str,
     *,
     writer: Callable[[str], None] | None = None,
@@ -234,7 +225,7 @@ async def run_one_shot(
 
 
 async def run_tui_console(
-    handler: MessageHandler,
+    handler: CompletionHandler,
     *,
     reader: Any = None,
     writer: Callable[[str], None] | None = None,

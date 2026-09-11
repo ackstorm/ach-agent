@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 
 import pytest
@@ -36,12 +35,6 @@ def test_event_envelope_round_trips_as_strict_json_projection() -> None:
 
 
 def test_event_envelope_rejects_callbacks_unknown_fields_and_nonfinite_values() -> None:
-    loop = asyncio.new_event_loop()
-    future = loop.create_future()
-    with pytest.raises((ValueError, ValidationError)):
-        EventEnvelope.from_message_event(make_event(reply_future=future))
-    loop.close()
-
     with pytest.raises(ValidationError):
         EventEnvelope.model_validate(
             {**EventEnvelope.from_message_event(make_event()).model_dump(), "extra": 1}

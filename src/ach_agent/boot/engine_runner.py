@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from ach_agent.boot.completions import CompletionRegistry
 from ach_agent.boot.prepare import (
     PrepareFailed,
     prepare_workspace,
@@ -106,26 +107,14 @@ def make_engine_runner(
     a2a_facade_url: str | None = None,
     accountant: CostAccountant | None = None,
     cost_source: str = "engine",
-    completion_registry: Any | None = None,
+    completion_registry: CompletionRegistry | None = None,
 ) -> Callable[..., Any]:
     """Build the engine_runner callable injected into the Router.
 
     The runner is called by Lane as: engine_runner(event, on_kill).
     It acquires a ManagedServer from the pool, calls run_contract_turn(driver, ...)
-    (which returns the single terminal object), then relays the terminal `text`:
-
-    - reply mode (event.reply_future is not None):
-        set_result(text) on the future. The route is awaiting this future to return
-        200 + body to the client.
-        CRITICAL: the future MUST always be resolved (set_result or set_exception)
-        even on error, otherwise the route hangs indefinitely. A try/except sets the
-        exception on error before re-raising.
-
-    - on_complete mode (event.delivery_context['on_complete'] present, e.g. a2a):
-        call on_complete(session_key, text) — the channel wiring relays the reply.
-
-    - async mode (neither): nothing to deliver. Egress already happened via the
-        agent's external MCP tool calls — the harness never posts on the model's behalf.
+    (which returns the single terminal object), then publishes its terminal JSON through
+    the injected ID-keyed completion port.
 
     The subprocess launch env is built by build_opencode_env (SEC-01): the
     engine_cfg carries paths, never ek_ values.
@@ -141,13 +130,14 @@ def make_engine_runner(
     held ref so 0 never actually stops it mid-session (see the console-mode pre-warm).
     """
     from ach_agent.engine.base.terminal import run_contract_turn
-    from ach_agent.engine.events import InvocationTimeout
     from ach_agent.stats.sink import build_session_stat
 
     ttl_by_channel = channel_ttl or {}
     channels_by_name = channels_by_name or {}
 
-    async def engine_runner(event: MessageEvent, on_kill: Callable[[], None]) -> None:
+    async def engine_runner(
+        event: MessageEvent, on_kill: Callable[[], None]
+    ) -> dict[str, object] | None:
         ref = completion_registry.ref_for(event) if completion_registry is not None else None
         if completion_registry is not None and ref is not None:
             await completion_registry.mark_running(ref)
@@ -158,7 +148,7 @@ def make_engine_runner(
             await run_webhook_script(ch_cfg.script, event, engine_cfg.work_dir)
             if completion_registry is not None and ref is not None:
                 await completion_registry.finish(ref, {"status": "completed"})
-            return
+            return {"status": "completed"}
         ctx = build_template_context(
             event.payload,
             channel_name=event.channel_name,
@@ -214,7 +204,6 @@ def make_engine_runner(
             )
 
         # Completion state is updated at each terminal path below.
-        future = event.reply_future
         server = None
         timed_out = False
         acquired = False
@@ -265,7 +254,7 @@ def make_engine_runner(
             full_prompt = f"{base_prompt}\n\n{memory_prompt}" if memory_prompt else base_prompt
             # Free-form channels (--tui console) carry no terminal contract: return
             # the raw reply, no terminal extraction/repair (delivery_context marker).
-            free_form = bool(event.delivery_context.get("free_form"))
+            free_form = event.free_form
             # Harness-owned terminal-contract directive, per channel class. Appended LAST
             # (after the message + any memory block) so it wins on recency; tui gets none.
             # The same action drives the lifecycle repair/wrap turns (terminal_action below)
@@ -403,12 +392,6 @@ def make_engine_runner(
 
             if completion_registry is not None and ref is not None:
                 await completion_registry.finish(ref, {"text": text, "action": obj.get("action")})
-            elif future is not None and not future.done():
-                future.set_result(text)
-            elif completion_registry is None:
-                on_complete = event.delivery_context.get("on_complete")
-                if on_complete is not None and obj.get("action") == "a2a_reply" and text.strip():
-                    on_complete(event.session_key, text)
             return {"text": text, "action": obj.get("action")}
         except asyncio.CancelledError:
             # The lane's maxInvocationSeconds deadline (or a shutdown) cancelled us.
@@ -419,12 +402,6 @@ def make_engine_runner(
                 await completion_registry.finish(
                     ref, error=f"invocation timed out after {max_invocation_seconds}s"
                 )
-            elif future is not None and not future.done():
-                future.set_exception(InvocationTimeout(max_invocation_seconds))
-            elif completion_registry is None:
-                on_fail = event.delivery_context.get("on_fail")
-                if on_fail is not None:
-                    on_fail(event.session_key, f"invocation timed out after {max_invocation_seconds}s")
             raise
         except Exception as exc:
             if not acquired and not isinstance(exc, PrepareFailed):
@@ -449,12 +426,6 @@ def make_engine_runner(
                 )
             if completion_registry is not None and ref is not None:
                 await completion_registry.finish(ref, error=f"engine failure: {exc}")
-            elif future is not None and not future.done():
-                future.set_exception(exc)
-            elif completion_registry is None:
-                on_fail = event.delivery_context.get("on_fail")
-                if on_fail is not None:
-                    on_fail(event.session_key, f"engine failure: {exc}")
             raise
         finally:
             # Return the engine server to the pool. Slot release is owned by the lane:

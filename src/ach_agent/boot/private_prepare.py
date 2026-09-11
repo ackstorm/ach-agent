@@ -149,10 +149,23 @@ async def _scan_git_objects(
     """Scan every object with one bounded streaming Git process."""
     if not secret_values:
         return
-    command = ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
-               "-C", str(source), "cat-file", "--batch-all-objects", "--batch"]
+    command = [
+        "git",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-C",
+        str(source),
+        "cat-file",
+        "--batch-all-objects",
+        "--batch",
+    ]
     proc = await asyncio.create_subprocess_exec(
-        *command, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        *command,
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
         start_new_session=True,
     )
     assert proc.stdout is not None
@@ -204,9 +217,7 @@ def _safe_origin(origin: str, secret_values: tuple[str, ...]) -> str:
     return origin
 
 
-async def _run_private_hook(
-    cfg: PrepareBlock, event: MessageEvent, cwd: Path, home: Path
-) -> None:
+async def _run_private_hook(cfg: PrepareBlock, event: MessageEvent, cwd: Path, home: Path) -> None:
     from ach_agent.boot.prepare import (
         _execute_hook,
         _HookSpawnFailed,
@@ -321,8 +332,16 @@ async def _handoff(
             env=env,
             secret_values=secret_values,
         )
-        await _git(repo, "checkout", "-q", "--force", "--detach", head, env=env,
-                   secret_values=secret_values)
+        await _git(
+            repo,
+            "checkout",
+            "-q",
+            "--force",
+            "--detach",
+            head,
+            env=env,
+            secret_values=secret_values,
+        )
     finally:
         with contextlib.suppress(OSError):
             bundle.unlink()
@@ -342,9 +361,7 @@ async def private_prepare(
         checkout.mkdir(mode=0o700)
         await _run_private_hook(cfg, event, checkout, home)
         secret_values = tuple(
-            value
-            for src in cfg.secret_env.values()
-            if (value := resolve_secret(src)) is not None
+            value for src in cfg.secret_env.values() if (value := resolve_secret(src)) is not None
         )
         await _handoff(checkout / "repo", workspace, home, secret_values)
 

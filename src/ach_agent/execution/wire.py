@@ -201,6 +201,18 @@ class WorkspaceHandoffRequest(_WireModel):
         return value
 
 
+class WorkspaceStoppedEvent(_WireModel):
+    """Correlated notification that native/public workspace cleanup has completed."""
+
+    kind: Literal["workspace_stopped"] = "workspace_stopped"
+    controller_id: str
+    instance_id: str
+    session_key: str
+    event_id: str
+    invocation_id: str
+    workspace: str
+
+
 class ExecutionEvent(_WireModel):
     kind: Literal["text", "tool", "usage", "session_resolved", "turn_done", "error"]
     execution_id: str

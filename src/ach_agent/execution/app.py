@@ -180,7 +180,7 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
                         event = await asyncio.wait_for(events.get(), timeout=0.05)
                     except TimeoutError:
                         continue
-                    yield _json_line(event)
+                    yield _json_line(event.model_dump(mode="json"))
             except asyncio.CancelledError:
                 raise
             finally:

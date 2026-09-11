@@ -27,6 +27,7 @@ from ach_agent.engine.base.events import (
     ToolStateError,
     ToolStateRunning,
 )
+from ach_agent.engine.workspace import workspace_dir
 from ach_agent.execution.service import MAX_NDJSON_RECORD_BYTES
 from ach_agent.execution.wire import (
     AcquireRequest,
@@ -39,6 +40,7 @@ from ach_agent.execution.wire import (
     TurnRequest,
     WorkspaceHandoffRequest,
     WorkspacePrepareRequest,
+    WorkspaceStoppedEvent,
 )
 
 
@@ -48,6 +50,10 @@ class ExecutionClientError(RuntimeError):
     def __init__(self, message: str, *, status_code: int | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+class WorkspaceOperationFailed(ExecutionClientError):
+    """A completed workspace operation failed without invalidating controller admission."""
 
 
 class ExecutionClientLaunchFailed(ExecutionClientError):
@@ -205,7 +211,8 @@ class ExecutionClient:
         self._owned_responses: set[httpx.Response] = set()
         self._cancelled_invocations: set[str] = set()
         self._active_turns: set[str] = set()
-        self._controller_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=64)
+        self._controller_events: asyncio.Queue[WorkspaceStoppedEvent] = asyncio.Queue(maxsize=64)
+        self._controller_event_waiters: set[asyncio.Future[WorkspaceStoppedEvent]] = set()
         self._handles: dict[str, ExecutionHandle] = {}
         self._turn_ids: dict[str, itertools.count[int]] = {}
         self._closed = False
@@ -278,48 +285,55 @@ class ExecutionClient:
                 if not line:
                     continue
                 try:
-                    event = json.loads(line)
+                    event = WorkspaceStoppedEvent.model_validate(json.loads(line))
                 except (TypeError, ValueError) as exc:
                     raise ExecutionClientError("invalid controller event") from exc
-                if not isinstance(event, dict) or event.get("kind") != "workspace_stopped":
-                    raise ExecutionClientError("invalid controller event")
+                if (
+                    event.controller_id != self.controller_id
+                    or event.instance_id != self.instance_id
+                ):
+                    raise ExecutionClientError("controller event identity mismatch")
+                waiter = next(iter(self._controller_event_waiters), None)
+                if waiter is not None:
+                    self._controller_event_waiters.remove(waiter)
+                    if not waiter.done():
+                        waiter.set_result(event)
+                    continue
                 try:
                     self._controller_events.put_nowait(event)
                 except asyncio.QueueFull as exc:
                     raise ExecutionClientError("controller event buffer is full") from exc
         except asyncio.CancelledError:
             return
-        except BaseException:
+        except BaseException as exc:
             self._controller_lost = True
+            await self._fail_admission(exc)
+            await self._close_owned_transport()
+            return
         else:
             self._controller_lost = True
-        if self._closed:
+            await self._fail_admission("execution controller connection is lost")
+            await self._close_owned_transport()
             return
-        self._failed = True
-        self._failure_reason = "execution controller connection is lost"
-        if self._controller_response is not None:
-            with contextlib.suppress(BaseException):
-                await self._controller_response.aclose()
-        responses = tuple(self._owned_responses)
-        for response in responses:
-            with contextlib.suppress(BaseException):
-                await response.aclose()
-        self._owned_responses.clear()
-        pending = tuple(self._owned_tasks)
-        for task in pending:
-            if task is not asyncio.current_task() and not task.done():
-                task.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
 
     async def claim_controller(self) -> ControllerHello:
         """Compatibility spelling matching ``ExecutionService.claim_controller``."""
         return await self.connect()
 
-    async def next_controller_event(self) -> dict[str, Any]:
+    async def next_controller_event(self) -> WorkspaceStoppedEvent:
         """Wait for a correlated engine lifecycle event from the held controller stream."""
         self._assert_controller_live()
-        return await self._controller_events.get()
+        try:
+            return self._controller_events.get_nowait()
+        except asyncio.QueueEmpty:
+            waiter: asyncio.Future[WorkspaceStoppedEvent] = (
+                asyncio.get_running_loop().create_future()
+            )
+            self._controller_event_waiters.add(waiter)
+            try:
+                return await waiter
+            finally:
+                self._controller_event_waiters.discard(waiter)
 
     async def _json_request(
         self,
@@ -381,6 +395,77 @@ class ExecutionClient:
                 with contextlib.suppress(BaseException):
                     await task
 
+    async def _confirm_workspace_cancel(self, controller_id: str, invocation_id: str) -> None:
+        self._assert_controller_live()
+        self._validate_controller(controller_id)
+        try:
+            response, content = await self._owned_request(
+                self.priority_client,
+                self.priority_client.build_request(
+                    "POST",
+                    "/execution/v1/cancel",
+                    json={"controller_id": controller_id, "invocation_id": invocation_id},
+                ),
+            )
+            if response.status_code < 200 or response.status_code >= 300:
+                raise ExecutionClientError(
+                    f"workspace cancellation failed: {content[:512].decode('utf-8', 'replace')}",
+                    status_code=response.status_code,
+                )
+            try:
+                result = json.loads(content)
+            except ValueError as exc:
+                raise ExecutionClientError("invalid workspace cancellation response") from exc
+            if result != {"status": "ok"}:
+                raise ExecutionClientError("invalid workspace cancellation acknowledgement")
+        except BaseException as exc:
+            await self._fail_admission(exc)
+            raise
+
+    async def _workspace_json_request(
+        self,
+        path: str,
+        body: WorkspacePrepareRequest | WorkspaceHandoffRequest,
+    ) -> Any:
+        self._assert_controller_live()
+        self._validate_controller(body.controller_id)
+        remaining = body.remaining_seconds
+        try:
+            response, content = await asyncio.wait_for(
+                self._owned_request(
+                    self.acquire_client,
+                    self.acquire_client.build_request(
+                        "POST", path, json=body.model_dump(mode="json")
+                    ),
+                ),
+                timeout=remaining,
+            )
+        except asyncio.CancelledError:
+            with contextlib.suppress(BaseException):
+                await asyncio.shield(
+                    self._confirm_workspace_cancel(body.controller_id, body.invocation_id)
+                )
+            raise
+        except TimeoutError as exc:
+            await self._confirm_workspace_cancel(body.controller_id, body.invocation_id)
+            raise WorkspaceOperationFailed(
+                f"workspace operation timed out after {remaining}s"
+            ) from exc
+        except WorkspaceOperationFailed:
+            raise
+        except BaseException as exc:
+            await self._confirm_workspace_cancel(body.controller_id, body.invocation_id)
+            raise WorkspaceOperationFailed("workspace operation response was ambiguous") from exc
+        if response.status_code < 200 or response.status_code >= 300:
+            detail = content[:512].decode("utf-8", "replace")
+            raise WorkspaceOperationFailed(
+                f"execution {path} failed: {detail}", status_code=response.status_code
+            )
+        try:
+            return json.loads(content)
+        except ValueError as exc:
+            raise WorkspaceOperationFailed("invalid workspace operation response") from exc
+
     def _validate_controller(self, controller_id: str) -> None:
         if controller_id != self.controller_id:
             raise ExecutionClientError("execution request has the wrong controller")
@@ -403,9 +488,31 @@ class ExecutionClient:
         self._failed = True
         self._controller_lost = True
         self._failure_reason = str(reason)
+        error = reason if isinstance(reason, BaseException) else ExecutionClientError(str(reason))
+        self._wake_controller_waiters(error)
         if self._controller_response is not None:
             with contextlib.suppress(BaseException):
                 await self._controller_response.aclose()
+
+    def _wake_controller_waiters(self, error: BaseException) -> None:
+        waiters = tuple(self._controller_event_waiters)
+        self._controller_event_waiters.clear()
+        for waiter in waiters:
+            if not waiter.done():
+                waiter.set_exception(error)
+
+    async def _close_owned_transport(self) -> None:
+        responses = tuple(self._owned_responses)
+        for response in responses:
+            with contextlib.suppress(BaseException):
+                await response.aclose()
+        self._owned_responses.clear()
+        pending = tuple(self._owned_tasks)
+        for task in pending:
+            if task is not asyncio.current_task() and not task.done():
+                task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     async def acquire(self, request: AcquireRequest) -> ExecutionHandle:
         self._assert_controller_live()
@@ -464,29 +571,29 @@ class ExecutionClient:
 
     async def prepare_workspace(self, request: WorkspacePrepareRequest) -> dict[str, str]:
         """Prepare a public workspace before native acquisition."""
-        self._assert_controller_live()
-        self._validate_controller(request.controller_id)
-        result = await self._json_request(
-            "POST", "/execution/v1/workspace/prepare", request.model_dump(mode="json")
-        )
-        if not isinstance(result, dict) or result.get("status") != "ok":
-            error = ExecutionClientError("invalid workspace prepare response")
-            await self._fail_admission(error)
-            raise error
-        return {str(key): str(value) for key, value in result.items()}
+        result = await self._workspace_json_request("/execution/v1/workspace/prepare", request)
+        expected = str(workspace_dir(request.work_dir, request.session_key))
+        if (
+            not isinstance(result, dict)
+            or result.get("status") != "ok"
+            or not isinstance(result.get("workspace"), str)
+            or result["workspace"] != expected
+        ):
+            raise WorkspaceOperationFailed("invalid workspace prepare response")
+        return {"status": "ok", "workspace": expected}
 
     async def handoff_workspace(self, request: WorkspaceHandoffRequest) -> dict[str, str]:
         """Import a credential-free shared-workspace bundle before native acquisition."""
-        self._assert_controller_live()
-        self._validate_controller(request.controller_id)
-        result = await self._json_request(
-            "POST", "/execution/v1/workspace/handoff", request.model_dump(mode="json")
-        )
-        if not isinstance(result, dict) or result.get("status") != "ok":
-            error = ExecutionClientError("invalid workspace handoff response")
-            await self._fail_admission(error)
-            raise error
-        return {str(key): str(value) for key, value in result.items()}
+        result = await self._workspace_json_request("/execution/v1/workspace/handoff", request)
+        expected = str(workspace_dir(request.work_dir, request.session_key))
+        if (
+            not isinstance(result, dict)
+            or result.get("status") != "ok"
+            or not isinstance(result.get("workspace"), str)
+            or result["workspace"] != expected
+        ):
+            raise WorkspaceOperationFailed("invalid workspace handoff response")
+        return {"status": "ok", "workspace": expected}
 
     async def _ack_session(self, request: TurnRequest, event: ExecutionEvent) -> None:
         handle = self._validate_handle(
@@ -732,6 +839,7 @@ class ExecutionClient:
 
     async def close(self) -> None:
         self._closed = True
+        self._wake_controller_waiters(ExecutionClientError("execution client is closed"))
         monitor = self._controller_monitor
         self._controller_monitor = None
         if monitor is not None:

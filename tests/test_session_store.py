@@ -60,3 +60,13 @@ def test_open_session_store_shares_state_db_with_dedup(tmp_path: Path) -> None:
     assert sess2.get("lane-1") == "ses-a"
     sess2.close()
     dedup2.close()
+
+
+def test_engine_session_store_is_separate_from_harness_state_db(tmp_path: Path) -> None:
+    from ach_agent.boot.stores import open_engine_session_store
+
+    store = open_engine_session_store(tmp_path / "engine-home")
+    store["opencode:conversation"] = "ses-native"
+    store.close()
+    assert (tmp_path / "engine-home" / ".ach-execution" / "sessions.db").exists()
+    assert not (tmp_path / "state" / "state.db").exists()

@@ -116,3 +116,14 @@ def open_session_store(cfg: AgentConfig) -> MutableMapping[str, str]:
         )
         PERSISTENCE_DEGRADED.inc()
         return _LRUSessionMap()
+
+
+def open_engine_session_store(engine_home: str | Path) -> MutableMapping[str, str]:
+    """Open the engine-owned native map; it never shares harness ``state.db``.
+
+    ``open_session_store`` remains the legacy harness map so boot can export its bounded
+    ``oc_sessions`` rows during admission. New split execution uses this explicit owner.
+    """
+    from ach_agent.execution.state import NativeSessionStore
+
+    return NativeSessionStore(engine_home)

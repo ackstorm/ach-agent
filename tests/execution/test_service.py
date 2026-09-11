@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -15,6 +17,53 @@ from ach_agent.execution.wire import (
 )
 
 
+class _RealProcessDriver:
+    """Execution driver whose server is a real owned process for cleanup acceptance."""
+
+    engine_type = "opencode"
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.process = None
+
+    def skills_dir(self, home: Path) -> Path:
+        return home
+
+    async def launch(self, cfg, session_key):
+        from ach_agent.engine.lifecycle import ManagedServer
+
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            "import time; time.sleep(30)",
+            start_new_session=True,
+        )
+        server = ManagedServer(port=0)
+        server.register_process(process)
+        self.process = process
+        return server
+
+    async def health(self, server) -> bool:
+        return server.is_alive()
+
+    async def resolve_session(self, server, **kwargs) -> str:
+        return "real-session"
+
+    async def run_turn(self, server, **kwargs):
+        self.started.set()
+        await asyncio.sleep(3600)
+        raise AssertionError("turn unexpectedly returned")
+
+    async def discard_session(self, server, session_ref) -> None:
+        return None
+
+    async def compact_session(self, server, session_ref) -> None:
+        return None
+
+    async def stop(self, server) -> None:
+        await server.stop()
+
+
 def _acquire() -> AcquireRequest:
     return AcquireRequest(
         controller_id="controller",
@@ -25,6 +74,36 @@ def _acquire() -> AcquireRequest:
         remaining_seconds=5,
         config=PublicEngineConfig(),
     )
+
+
+@pytest.mark.asyncio
+async def test_controller_release_joins_real_process_before_new_controller() -> None:
+    """Controller loss cancels a real turn and reaps its native process before reclaim."""
+    driver = _RealProcessDriver()
+    service = ExecutionService(driver, {})
+    await service.claim_controller("controller")
+    request = _acquire().model_copy(update={"controller_id": "controller"})
+    handle = await service.acquire(request)
+    stream = service.turn(
+        TurnRequest(
+            controller_id="controller",
+            execution_id=handle.execution_id,
+            invocation_id="inv",
+            turn_id="turn",
+            prompt="p",
+            max_tool_calls=0,
+        )
+    )
+    await stream.__anext__()
+    turn_task = asyncio.create_task(stream.__anext__())
+    try:
+        await asyncio.wait_for(driver.started.wait(), timeout=1.0)
+        await service.release_controller("controller")
+        assert driver.process is not None and driver.process.returncode is not None
+        await service.claim_controller("new-controller")
+    finally:
+        turn_task.cancel()
+        await asyncio.gather(turn_task, return_exceptions=True)
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import json
 import shutil
+import sys
 from collections.abc import Awaitable, Callable, MutableMapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -121,8 +122,13 @@ class PiDriver:
         work_dir = Path(cfg.work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
         args = [binary, "--mode", "rpc", *self._common_args(cfg, binary, provider, agent_dir)[1:]]
+        launch_args = (
+            [sys.executable, "-m", "ach_agent.engine.process_supervisor", "--", *args]
+            if Path("/proc").is_dir()
+            else args
+        )
         proc = await asyncio.create_subprocess_exec(
-            *args,
+            *launch_args,
             cwd=str(work_dir),
             env=build_pi_env(agent_dir, cfg),
             stdin=asyncio.subprocess.PIPE,
@@ -131,11 +137,12 @@ class PiDriver:
             start_new_session=True,
         )
         server = ManagedServer(port=0, ephemeral_home=agent_dir)
-        server._process = proc
+        server.register_process(proc)
         server._client = PiRpcClient(proc)
         asyncio.create_task(self._drain_stderr(proc, server))
         await asyncio.sleep(0)
         if proc.returncode is not None:
+            await server.stop()
             raise NativeLaunchFailed(f"pi exited immediately (rc={proc.returncode})")
         return server
 

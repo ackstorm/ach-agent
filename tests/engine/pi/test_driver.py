@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -82,6 +83,32 @@ class _LaunchProcess:
 
     async def wait(self) -> int:
         return 0
+
+
+async def test_launch_immediate_exit_joins_server_cleanup(tmp_path: Path) -> None:
+    """A Pi process that exits during launch still has its owned cleanup joined."""
+    from ach_agent.engine.lifecycle import NativeLaunchFailed
+
+    proc = _LaunchProcess()
+    proc.returncode = 1
+    with (
+        patch.object(
+            PiDriver,
+            "_prepare_agent_dir",
+            return_value=(tmp_path, "/bin/pi", "openai"),
+        ),
+        patch(
+            "ach_agent.engine.pi.driver.asyncio.create_subprocess_exec",
+            new_callable=AsyncMock,
+            return_value=proc,
+        ),
+        patch("ach_agent.engine.lifecycle.ManagedServer.stop", new_callable=AsyncMock) as stop,
+    ):
+        with pytest.raises(NativeLaunchFailed, match="exited immediately"):
+            await PiDriver().launch(
+                EngineConfig(home=str(tmp_path), work_dir=str(tmp_path)), "launch-failure"
+            )
+    stop.assert_awaited_once()
 
 
 async def test_new_session_then_prompt_accumulates_text() -> None:

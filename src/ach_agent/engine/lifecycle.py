@@ -7,7 +7,7 @@ Hardening implemented in 00-02:
   - H-01: 1MB SSE read buffer (in client.py)
   - H-02: bounded health-gated SSE reconnect + mid-invocation liveness on the live path
     (consume_sse_after_send below; reuses events.py's shared reader/accumulator helpers)
-  - H-03: Process-group kill (SIGTERM → 10s → SIGKILL) via _process_group_kill
+  - H-03: PID/start-time guarded owned-process cleanup (SIGTERM → 10s → SIGKILL)
   - H-05: stdout/stderr drain tasks (_drain_logs with 50-line tail, started at launch)
   - ENG-06: Startup deadline raises NativeLaunchFailed for the supervisor to handle
   - maxInvocationSeconds: owned by the lane (router), NOT run_invocation (Plan 1)
@@ -23,6 +23,7 @@ import os
 import re
 import shutil
 import signal
+import sys
 from collections.abc import Callable, MutableMapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,6 +48,8 @@ log = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 SHUTDOWN_TIMEOUT = 10  # seconds between SIGTERM and SIGKILL (H-03)
+_OWNERSHIP_POLL_S = 0.05
+_FORCE_CLEANUP_TIMEOUT_S = 2.0
 _LOG_TAIL_SIZE = 50  # lines kept in stdout/stderr tail for diagnostics (H-05)
 # Mid-invocation liveness poll: how often the SSE consume loop wakes to check the engine is
 # still alive (B5) instead of blocking a flat 300s on a single queue.get(). The cumulative
@@ -67,6 +70,75 @@ _PROVIDER_BY_TYPE: dict[str, tuple[str, str]] = {
 # ---------------------------------------------------------------------------
 # Public types
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _ProcessIdentity:
+    """PID plus Linux start time, which prevents signalling a recycled PID."""
+
+    pid: int
+    start_time: int
+
+
+def _linux_process_info(pid: int) -> tuple[_ProcessIdentity, int, str] | None:
+    """Read one process's identity and parent from procfs.
+
+    ``/proc/<pid>/stat`` is used instead of a process library so the engine image has no
+    additional runtime dependency.  The comm field can contain spaces, hence parsing starts
+    after the final closing parenthesis.
+    """
+    if os.name != "posix" or not Path("/proc").is_dir():
+        return None
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_bytes()
+        tail = raw[raw.rfind(b")") + 2 :].split()
+        if len(tail) < 20:
+            return None
+        state = tail[0].decode("ascii")
+        ppid = int(tail[1])
+        start_time = int(tail[19])
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    return _ProcessIdentity(pid, start_time), ppid, state
+
+
+def _linux_descendants(
+    roots: dict[int, _ProcessIdentity],
+) -> dict[int, tuple[_ProcessIdentity, str]]:
+    """Return the current descendants of roots, including process state."""
+    if not roots or not Path("/proc").is_dir():
+        return {}
+    children: dict[int, list[tuple[int, _ProcessIdentity, str]]] = {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        info = _linux_process_info(int(entry.name))
+        if info is None:
+            continue
+        identity, ppid, state = info
+        children.setdefault(ppid, []).append((identity.pid, identity, state))
+    found: dict[int, tuple[_ProcessIdentity, str]] = {}
+    # A tracked PID is a root only while its start time still matches.  This prevents a
+    # recycled PID from becoming an ownership root and pulling an unrelated subtree in.
+    active_roots = {
+        pid for pid, identity in roots.items()
+        if (info := _linux_process_info(pid)) is not None and info[0] == identity
+    }
+    pending = list(active_roots)
+    seen = set(active_roots)
+    while pending:
+        parent = pending.pop()
+        for pid, identity, state in children.get(parent, []):
+            if pid in seen:
+                continue
+            seen.add(pid)
+            found[pid] = (identity, state)
+            pending.append(pid)
+    return found
+
+
+class OwnedProcessCleanupError(RuntimeError):
+    """Owned native processes remained live after bounded cleanup."""
 
 
 @dataclass
@@ -98,6 +170,9 @@ class ManagedServer:
     _stderr_tail: collections.deque[str] = field(
         default_factory=lambda: collections.deque(maxlen=_LOG_TAIL_SIZE), repr=False
     )
+    _owned_processes: dict[int, _ProcessIdentity] = field(default_factory=dict, repr=False)
+    _ownership_task: asyncio.Task[None] | None = field(default=None, repr=False)
+    _stop_task: asyncio.Task[None] | None = field(default=None, repr=False)
 
     def is_alive(self) -> bool:
         """Return True if the subprocess is still running."""
@@ -107,31 +182,130 @@ class ManagedServer:
         # asyncio.subprocess.Process has .returncode (None = still running)
         return getattr(proc, "returncode", None) is None
 
-    async def stop(self) -> None:
-        """Gracefully terminate the subprocess (SIGTERM → wait → SIGKILL).
+    def register_process(self, proc: object) -> None:
+        """Register the native process and begin observing its descendants.
 
-        Idempotent (CR-01): sets self._process = None after kill so a second
-        call is a no-op regardless of PID reuse.
+        The observer runs while the leader is alive so a detached child is retained by PID
+        and start time even after it is reparented.  It is intentionally scoped to this
+        server's process tree; no process-group-wide or host-wide kill is used on Linux.
         """
-        proc = self._process
-        if proc is None:
+        self._process = proc
+        pid = getattr(proc, "pid", None)
+        if not isinstance(pid, int) or pid <= 0:
             return
-        self._process = None  # CR-01: clear before kill so second stop() is no-op
-        await _process_group_kill(proc)  # type: ignore[arg-type]
+        info = _linux_process_info(pid)
+        if info is not None:
+            identity, _ppid, _state = info
+            self._owned_processes[pid] = identity
+            if self._ownership_task is None:
+                self._ownership_task = asyncio.create_task(self._observe_owned_processes())
 
-        # Close the aiohttp client session
-        client = self._client
-        if client is not None and hasattr(client, "close"):
+    async def _observe_owned_processes(self) -> None:
+        try:
+            while True:
+                self._refresh_owned_processes()
+                await asyncio.sleep(_OWNERSHIP_POLL_S)
+        except asyncio.CancelledError:
+            return
+
+    def _refresh_owned_processes(self) -> None:
+        if not self._owned_processes:
+            return
+        descendants = _linux_descendants(self._owned_processes)
+        for pid, (identity, _state) in descendants.items():
+            self._owned_processes.setdefault(pid, identity)
+
+    def _live_owned_processes(self) -> list[_ProcessIdentity]:
+        live: list[_ProcessIdentity] = []
+        for identity in tuple(self._owned_processes.values()):
+            info = _linux_process_info(identity.pid)
+            if info is not None and info[0] == identity and info[2] != "Z":
+                live.append(identity)
+        return live
+
+    async def _stop_owned_processes(self, proc: object) -> None:
+        """Signal and join every observed owned process with PID-reuse guards."""
+        pid = getattr(proc, "pid", None)
+        if not isinstance(pid, int) or pid <= 0 or not self._owned_processes:
+            await _process_group_kill(proc)  # type: ignore[arg-type]
+            return
+        self._refresh_owned_processes()
+        # Linux procfs gives us individual ownership proof.  The portable fallback below
+        # retains the established process-group behavior for native macOS development mode.
+        if Path("/proc").is_dir():
+            deadline = asyncio.get_running_loop().time() + SHUTDOWN_TIMEOUT
+            self._signal_owned(signal.SIGTERM)
+            while asyncio.get_running_loop().time() < deadline:
+                self._refresh_owned_processes()
+                if not self._live_owned_processes():
+                    await _wait_native_process(proc)
+                    return
+                self._signal_owned(signal.SIGTERM)
+                await asyncio.sleep(_OWNERSHIP_POLL_S)
+
+            # Give the subreaper launch helper a chance to terminate/reap descendants before
+            # its own root is killed; otherwise an orphan could escape to the container init.
+            self._signal_owned(signal.SIGKILL, exclude={pid})
+            force_deadline = asyncio.get_running_loop().time() + _FORCE_CLEANUP_TIMEOUT_S
+            while asyncio.get_running_loop().time() < force_deadline:
+                self._refresh_owned_processes()
+                if not self._live_owned_processes():
+                    await _wait_native_process(proc)
+                    return
+                await asyncio.sleep(_OWNERSHIP_POLL_S)
+            remaining = [item.pid for item in self._live_owned_processes()]
+            if remaining:
+                self._signal_owned(signal.SIGKILL)
+                await _wait_native_process(proc)
+                remaining = [item.pid for item in self._live_owned_processes()]
+            if remaining:
+                raise OwnedProcessCleanupError(f"owned native processes remained live: {remaining}")
+
+        await _portable_process_group_kill(proc)
+
+    def _signal_owned(self, sig: signal.Signals, *, exclude: set[int] | None = None) -> None:
+        excluded = exclude or set()
+        for identity in tuple(self._owned_processes.values()):
+            if identity.pid in excluded:
+                continue
+            info = _linux_process_info(identity.pid)
+            if info is None or info[0] != identity or info[2] == "Z":
+                continue
             try:
-                await client.close()
-            except Exception:  # noqa: BLE001
-                pass
+                os.kill(identity.pid, sig)
+            except ProcessLookupError:
+                continue
+            except PermissionError as exc:
+                raise OwnedProcessCleanupError(
+                    f"cannot signal owned native process {identity.pid}"
+                ) from exc
 
-        # B7: free the reserved port so a later server can reuse it. release_port
-        # uses set.discard, so a double-stop (port already released) is a safe no-op.
-        from ach_agent.engine.client import release_port
+    async def stop(self) -> None:
+        """Join one owned stop operation, retaining observations until confirmation."""
+        if self._stop_task is None:
+            proc = self._process
+            if proc is None:
+                return
+            self._stop_task = asyncio.create_task(self._stop_impl(proc))
+        await asyncio.shield(self._stop_task)
 
-        release_port(self.port)
+    async def _stop_impl(self, proc: object) -> None:
+        try:
+            await self._stop_owned_processes(proc)
+        finally:
+            if self._ownership_task is not None:
+                self._ownership_task.cancel()
+                await asyncio.gather(self._ownership_task, return_exceptions=True)
+                self._ownership_task = None
+            client = self._client
+            if client is not None and hasattr(client, "close"):
+                try:
+                    await client.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            from ach_agent.engine.client import release_port
+
+            release_port(self.port)
 
 
 class NativeLaunchFailed(Exception):
@@ -455,7 +629,7 @@ async def launch(
         ephemeral_home=str(ephemeral_home),
     )
 
-    proc = await asyncio.create_subprocess_exec(
+    native_args = [
         binary,
         "serve",
         "--port",
@@ -464,6 +638,14 @@ async def launch(
         "127.0.0.1",  # loopback only — the harness client + opencode attach are co-located
         "--print-logs",
         "--pure",  # disable external plugins (Pitfall isolation)
+    ]
+    launch_args = (
+        [sys.executable, "-m", "ach_agent.engine.process_supervisor", "--", *native_args]
+        if Path("/proc").is_dir()
+        else native_args
+    )
+    proc = await asyncio.create_subprocess_exec(
+        *launch_args,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -473,7 +655,7 @@ async def launch(
     )
 
     server = ManagedServer(port=port, ephemeral_home=ephemeral_home, config_path=config_path)
-    server._process = proc
+    server.register_process(proc)
 
     # H-05: Start drain tasks immediately after subprocess creation.
     # Two tasks drain stdout and stderr to prevent OS PIPE buffer (64KB) from
@@ -920,6 +1102,45 @@ async def _await_subscription_ready(result_queue: asyncio.Queue, session_id: str
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+async def _wait_native_process(proc: object) -> None:
+    wait = getattr(proc, "wait", None)
+    if wait is None or not isinstance(proc, asyncio.subprocess.Process):
+        return
+    try:
+        await wait()
+    except ProcessLookupError:
+        return
+
+
+async def _portable_process_group_kill(proc: object) -> None:
+    """macOS/native fallback for the verified process group created at launch."""
+    if not isinstance(proc, asyncio.subprocess.Process):
+        return
+    if proc.returncode is not None:
+        await _wait_native_process(proc)
+        return
+    pid = proc.pid
+    try:
+        pgid = os.getpgid(pid)
+    except ProcessLookupError:
+        await _wait_native_process(proc)
+        return
+    if pgid != pid:
+        raise OwnedProcessCleanupError("native process group ownership could not be verified")
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=SHUTDOWN_TIMEOUT)
+    except TimeoutError:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await proc.wait()
 
 
 async def _drain_logs(

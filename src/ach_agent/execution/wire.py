@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from ach_agent.config.schema import LocalMcpServer, RemoteMcpServer
 
@@ -160,6 +160,8 @@ class WorkspacePrepareRequest(_WireModel):
     prepare: WorkspaceHook | None = None
     cleanup: WorkspaceHook | None = None
     notify_on_stop: bool = True
+    cleanup_ack_required: bool = False
+    cleanup_timeout_seconds: float = Field(default=120.0, gt=0, le=3600)
     remaining_seconds: float = Field(gt=0)
 
     @field_validator("remaining_seconds")
@@ -168,6 +170,36 @@ class WorkspacePrepareRequest(_WireModel):
         if not math.isfinite(value):
             raise ValueError("remaining_seconds must be finite")
         return value
+
+    @field_validator("cleanup_timeout_seconds")
+    @classmethod
+    def finite_cleanup_timeout_seconds(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("cleanup_timeout_seconds must be finite")
+        return value
+
+    @model_validator(mode="after")
+    def ack_requires_notification(self) -> WorkspacePrepareRequest:
+        if self.cleanup_ack_required and not self.notify_on_stop:
+            raise ValueError("cleanup_ack_required requires notify_on_stop")
+        return self
+
+    @property
+    def cleanup_budget_seconds(self) -> float:
+        """Known public plus private hook allowance for the outer cleanup response."""
+        public = self.cleanup.timeout_seconds if self.cleanup is not None else 0.0
+        private = self.cleanup_timeout_seconds if self.cleanup_ack_required else 0.0
+        return public + private
+
+
+class WorkspaceCleanupAckRequest(_WireModel):
+    """Correlated acknowledgement after harness-private cleanup has completed."""
+
+    controller_id: str
+    instance_id: str
+    session_key: str
+    event_id: str
+    invocation_id: str
 
 
 class WorkspaceHandoffRequest(_WireModel):

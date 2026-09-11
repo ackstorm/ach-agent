@@ -416,7 +416,9 @@ async def test_invocation_deadline_marks_stalled_cleanup_unhealthy(fake_driver, 
         fake_driver.stop_barrier.set()
         cleanup = service._invocations.get("inv")
         if cleanup is not None and cleanup.cleanup_task is not None:
-            await asyncio.wait_for(asyncio.shield(cleanup.cleanup_task), timeout=1)
+            await asyncio.wait_for(
+                asyncio.gather(cleanup.cleanup_task, return_exceptions=True), timeout=1
+            )
 
 
 @pytest.mark.asyncio

@@ -39,6 +39,7 @@ from ach_agent.execution.wire import (
     SessionOperation,
     SessionReadyRequest,
     TurnRequest,
+    WorkspaceCleanupAckRequest,
     WorkspaceHandoffRequest,
     WorkspacePrepareRequest,
     WorkspaceStoppedEvent,
@@ -76,6 +77,7 @@ class _Invocation:
     event_queue: asyncio.Queue[Any] | None = None
     cleanup_deadline: float | None = None
     session_ready: tuple[str, str, asyncio.Event] | None = None
+    workspace_cleanup_timeout_seconds: float = 0.0
 
 
 @dataclass
@@ -90,6 +92,13 @@ class _WorkspaceReservation:
     skip_operation: asyncio.Task[Any] | None = None
 
 
+@dataclass
+class _WorkspaceCleanupBarrier:
+    event: WorkspaceStoppedEvent
+    acknowledged: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)
+    failed: bool = False
+
+
 class OutputLimitExceeded(RuntimeError):
     """The client stream exceeded one of the bounded NDJSON output limits."""
 
@@ -99,6 +108,7 @@ MAX_STREAM_EVENTS = 256
 MAX_INVOCATION_STREAM_BYTES = 4 * 1024 * 1024
 MAX_AGGREGATE_QUEUED_BYTES = 32 * 1024 * 1024
 CLEANUP_DEADLINE_SECONDS = 10.0
+CLEANUP_PROCESS_MARGIN_SECONDS = 5.0
 
 
 def _engine_config(public: Any) -> EngineConfig:
@@ -163,6 +173,7 @@ class ExecutionService:
         self._workspace_cancelled: set[str] = set()
         self.workspace_cleanup_errors: list[str] = []
         self._controller_events: asyncio.Queue[WorkspaceStoppedEvent] | None = None
+        self._workspace_barriers: dict[str, _WorkspaceCleanupBarrier] = {}
 
     @property
     def can_accept_controller(self) -> bool:
@@ -193,6 +204,9 @@ class ExecutionService:
         self._unhealthy = True
         self.shutdown_requested = True
         self._admission_open = False
+        for barrier in self._workspace_barriers.values():
+            barrier.failed = True
+            barrier.acknowledged.set()
 
     @staticmethod
     def _observe_task(task: asyncio.Task[Any]) -> None:
@@ -206,6 +220,9 @@ class ExecutionService:
         if self._controller_id != controller_id:
             return
         self._admission_open = False
+        for barrier in self._workspace_barriers.values():
+            barrier.failed = True
+            barrier.acknowledged.set()
         reserved_acquisitions = {
             invocation_id
             for invocation_id, reservation in self._workspace_reservations.items()
@@ -241,8 +258,21 @@ class ExecutionService:
 
         cleanup_task = asyncio.create_task(cleanup_all())
         self._controller_cleanup_task = cleanup_task
+        cleanup_budget = max(
+            [
+                reservation.request.cleanup_budget_seconds
+                for reservation in self._workspace_reservations.values()
+            ]
+            + [inv.workspace_cleanup_timeout_seconds for inv in self._invocations.values()]
+            + [0.0]
+        )
         try:
-            await asyncio.wait_for(asyncio.shield(cleanup_task), timeout=10.0)
+            await asyncio.wait_for(
+                asyncio.shield(cleanup_task),
+                timeout=CLEANUP_DEADLINE_SECONDS
+                + cleanup_budget
+                + CLEANUP_PROCESS_MARGIN_SECONDS,
+            )
         except BaseException as exc:
             self._mark_unhealthy()
             self.controller_cleanup_error = repr(exc)
@@ -256,6 +286,7 @@ class ExecutionService:
         self._workspace_reservations.clear()
         self._workspace_cancelled.clear()
         self._controller_events = None
+        self._workspace_barriers.clear()
 
     def controller_events(self) -> asyncio.Queue[WorkspaceStoppedEvent] | None:
         """Return the finite event queue held by the current controller stream."""
@@ -270,6 +301,22 @@ class ExecutionService:
         except asyncio.QueueFull as exc:
             self._mark_unhealthy()
             raise RuntimeError("controller event buffer is full") from exc
+
+    async def ack_workspace_cleanup(self, request: WorkspaceCleanupAckRequest) -> None:
+        """Release one callback only after its correlated private cleanup completed."""
+        self._assert_controller(request.controller_id)
+        barrier = self._workspace_barriers.get(request.invocation_id)
+        if barrier is None:
+            raise ValueError("unknown workspace cleanup event")
+        event = barrier.event
+        if (
+            request.instance_id != event.instance_id
+            or request.session_key != event.session_key
+            or request.event_id != event.event_id
+            or request.controller_id != event.controller_id
+        ):
+            raise ValueError("workspace cleanup acknowledgement mismatch")
+        barrier.acknowledged.set()
 
     def _record_workspace_failure(
         self, *, phase: str, invocation_id: str, error: BaseException
@@ -319,7 +366,9 @@ class ExecutionService:
     async def _finish_workspace_reservation(
         self, invocation_id: str, reservation: _WorkspaceReservation
     ) -> None:
-        deadline = asyncio.get_running_loop().time() + CLEANUP_DEADLINE_SECONDS
+        native_deadline = asyncio.get_running_loop().time() + CLEANUP_DEADLINE_SECONDS
+        deadline = native_deadline
+        deadline += reservation.request.cleanup_budget_seconds + CLEANUP_PROCESS_MARGIN_SECONDS
         operation = self._workspace_tasks.get(invocation_id)
         if operation is None:
             operation = self._acquire_tasks.get(invocation_id)
@@ -330,7 +379,7 @@ class ExecutionService:
         ):
             operation.cancel()
             try:
-                remaining = max(0.001, deadline - asyncio.get_running_loop().time())
+                remaining = max(0.001, native_deadline - asyncio.get_running_loop().time())
                 await asyncio.wait_for(asyncio.shield(operation), remaining)
             except asyncio.CancelledError:
                 pass
@@ -344,7 +393,14 @@ class ExecutionService:
                     self._mark_unhealthy()
         try:
             remaining = max(0.001, deadline - asyncio.get_running_loop().time())
-            discard_task = asyncio.create_task(self.pool.discard(reservation.request.session_key))
+            discard_task = asyncio.create_task(
+                self.pool.discard(
+                    reservation.request.session_key,
+                    native_timeout_seconds=max(
+                        0.001, native_deadline - asyncio.get_running_loop().time()
+                    ),
+                )
+            )
             try:
                 await asyncio.wait_for(asyncio.shield(discard_task), remaining)
                 if self._unhealthy and operation_error is None:
@@ -420,16 +476,43 @@ class ExecutionService:
                     self._mark_unhealthy()
                     raise
             if request.notify_on_stop:
-                self._emit_controller_event(
-                    WorkspaceStoppedEvent(
-                        controller_id=request.controller_id,
-                        instance_id=self.instance_id,
-                        session_key=request.session_key,
-                        event_id=request.event_id,
-                        invocation_id=request.invocation_id,
-                        workspace=str(workspace),
-                    )
+                event = WorkspaceStoppedEvent(
+                    controller_id=request.controller_id,
+                    instance_id=self.instance_id,
+                    session_key=request.session_key,
+                    event_id=request.event_id,
+                    invocation_id=request.invocation_id,
+                    workspace=str(workspace),
                 )
+                barrier = _WorkspaceCleanupBarrier(event)
+                if request.cleanup_ack_required:
+                    if not self._admission_open or self._controller_id != request.controller_id:
+                        barrier.failed = True
+                        raise RuntimeError("workspace cleanup controller is unavailable")
+                    self._workspace_barriers[request.invocation_id] = barrier
+                try:
+                    self._emit_controller_event(event)
+                    if request.cleanup_ack_required:
+                        ack_wait = asyncio.create_task(barrier.acknowledged.wait())
+                        try:
+                            await asyncio.wait_for(
+                                ack_wait,
+                                request.cleanup_timeout_seconds + CLEANUP_PROCESS_MARGIN_SECONDS,
+                            )
+                        except TimeoutError as exc:
+                            barrier.failed = True
+                            raise RuntimeError(
+                                "workspace cleanup acknowledgement timed out"
+                            ) from exc
+                        finally:
+                            if not ack_wait.done():
+                                ack_wait.cancel()
+                            await asyncio.gather(ack_wait, return_exceptions=True)
+                        if barrier.failed:
+                            raise RuntimeError("workspace cleanup acknowledgement unavailable")
+                finally:
+                    if request.cleanup_ack_required:
+                        self._workspace_barriers.pop(request.invocation_id, None)
 
         try:
             await self.pool.begin_session(
@@ -476,14 +559,24 @@ class ExecutionService:
             self._mark_unhealthy()
             if not reservation.cancel_requested:
                 try:
-                    await asyncio.shield(self.pool.discard(request.session_key))
+                    await asyncio.shield(
+                        self.pool.discard(
+                            request.session_key,
+                            native_timeout_seconds=CLEANUP_DEADLINE_SECONDS,
+                        )
+                    )
                 except BaseException:
                     self._mark_unhealthy()
             raise
         except BaseException:
             if not reservation.cancel_requested:
                 try:
-                    await asyncio.shield(self.pool.discard(request.session_key))
+                    await asyncio.shield(
+                        self.pool.discard(
+                            request.session_key,
+                            native_timeout_seconds=CLEANUP_DEADLINE_SECONDS,
+                        )
+                    )
                 except BaseException:
                     self._mark_unhealthy()
             raise
@@ -606,7 +699,10 @@ class ExecutionService:
             self._assert_controller(request.controller_id)
         except Exception:
             try:
-                await self.pool.discard(request.lane_key)
+                await self.pool.discard(
+                    request.lane_key,
+                    native_timeout_seconds=CLEANUP_DEADLINE_SECONDS,
+                )
             except Exception:
                 self._mark_unhealthy()
             if reservation is not None:
@@ -626,6 +722,9 @@ class ExecutionService:
             reuse=request.reuse,
             server=server,
             deadline=deadline,
+            workspace_cleanup_timeout_seconds=(
+                reservation.request.cleanup_budget_seconds if reservation is not None else 0.0
+            ),
         )
         self._invocations[request.invocation_id] = inv
         if reservation is not None:
@@ -634,16 +733,22 @@ class ExecutionService:
         return handle
 
     @staticmethod
-    async def _cancel_and_join(task: asyncio.Task[Any] | None) -> None:
+    async def _cancel_and_join(
+        task: asyncio.Task[Any] | None, *, timeout_seconds: float = CLEANUP_DEADLINE_SECONDS
+    ) -> bool:
         """Cancel an owned task and consume its result, including cancellation."""
         if task is None or task is asyncio.current_task():
-            return
+            return True
         if not task.done():
             task.cancel()
         try:
-            await task
+            await asyncio.wait_for(asyncio.shield(task), max(0.001, timeout_seconds))
+            return True
+        except TimeoutError:
+            task.add_done_callback(ExecutionService._observe_task)
+            return False
         except BaseException:
-            pass
+            return True
 
     def _start_cleanup(
         self, inv: _Invocation, *, release: bool, idle_ttl_seconds: float = 0.0
@@ -653,7 +758,12 @@ class ExecutionService:
             return inv.cleanup_task
         inv.terminal = True
         if inv.cleanup_deadline is None:
-            inv.cleanup_deadline = asyncio.get_running_loop().time() + CLEANUP_DEADLINE_SECONDS
+            inv.cleanup_deadline = (
+                asyncio.get_running_loop().time()
+                + CLEANUP_DEADLINE_SECONDS
+                + inv.workspace_cleanup_timeout_seconds
+                + CLEANUP_PROCESS_MARGIN_SECONDS
+            )
         inv.cleanup_task = asyncio.create_task(
             self._cleanup_invocation(inv, release=release, idle_ttl_seconds=idle_ttl_seconds)
         )
@@ -683,6 +793,8 @@ class ExecutionService:
         self, inv: _Invocation, *, release: bool, idle_ttl_seconds: float
     ) -> None:
         """Join invocation work, then release or discard its pool reference once."""
+        native_deadline = asyncio.get_running_loop().time() + CLEANUP_DEADLINE_SECONDS
+        native_uncertain = False
         current = asyncio.current_task()
         deadline_task = inv.deadline_task
         if deadline_task is not current:
@@ -696,11 +808,21 @@ class ExecutionService:
                 # been cancelled so a consumer waiting in __anext__ observes
                 # the run's CancelledError.
                 try:
-                    await task
+                    await asyncio.wait_for(
+                        asyncio.shield(task),
+                        max(0.001, native_deadline - asyncio.get_running_loop().time()),
+                    )
+                except TimeoutError:
+                    task.add_done_callback(self._observe_task)
+                    native_uncertain = True
                 except BaseException:
                     pass
             elif task is not current:
-                await self._cancel_and_join(task)
+                joined = await self._cancel_and_join(
+                    task,
+                    timeout_seconds=max(0.001, native_deadline - asyncio.get_running_loop().time()),
+                )
+                native_uncertain = native_uncertain or not joined
             if attr == "maintenance_task" and getattr(inv, attr) is task:
                 setattr(inv, attr, None)
 
@@ -725,9 +847,19 @@ class ExecutionService:
             self._release_output(inv, inv.leased_bytes)
             inv.leased_bytes = 0
 
+        if native_uncertain:
+            self._mark_unhealthy()
+            release = False
+            idle_ttl_seconds = 0.0
+        native_remaining = max(0.001, native_deadline - asyncio.get_running_loop().time())
+
         try:
             if release:
-                await self.pool.release(inv.session_key, idle_ttl_seconds)
+                await self.pool.release(
+                    inv.session_key,
+                    idle_ttl_seconds,
+                    native_timeout_seconds=native_remaining,
+                )
                 inv.released = True
                 ttl_task = getattr(self.pool, "_ttl_tasks", {}).get(inv.session_key)
                 if ttl_task is not None:
@@ -735,7 +867,10 @@ class ExecutionService:
                     self._ttl_watchers.add(watcher)
                     watcher.add_done_callback(self._ttl_watchers.discard)
             else:
-                await self.pool.discard(inv.session_key)
+                await self.pool.discard(
+                    inv.session_key,
+                    native_timeout_seconds=native_remaining,
+                )
         except asyncio.CancelledError:
             self._mark_unhealthy()
             inv.cleanup_error = "native cleanup cancelled"
@@ -761,6 +896,8 @@ class ExecutionService:
         deadline = inv.cleanup_deadline
         if deadline is None:
             deadline = asyncio.get_running_loop().time() + CLEANUP_DEADLINE_SECONDS
+            deadline += inv.workspace_cleanup_timeout_seconds
+            deadline += CLEANUP_PROCESS_MARGIN_SECONDS
             inv.cleanup_deadline = deadline
 
         async def wait_remaining() -> None:
@@ -1135,6 +1272,8 @@ class ExecutionService:
             return
         if inv.terminal and inv.cleanup_task is not None:
             await self._await_cleanup(inv.cleanup_task, inv)
+            if inv.cleanup_error is not None:
+                raise RuntimeError(inv.cleanup_error)
             return
         if (
             inv.terminal
@@ -1145,6 +1284,8 @@ class ExecutionService:
             raise ValueError("cannot release an active invocation")
         cleanup = self._start_cleanup(inv, release=True, idle_ttl_seconds=request.idle_ttl_seconds)
         await self._await_cleanup(cleanup, inv)
+        if inv.cleanup_error is not None:
+            raise RuntimeError(inv.cleanup_error)
 
     async def cancel(self, controller_id: str, invocation_id: str) -> None:
         self._assert_controller(controller_id)
@@ -1160,7 +1301,11 @@ class ExecutionService:
         if inv.terminal:
             if inv.cleanup_task is not None:
                 await self._await_cleanup(inv.cleanup_task, inv)
+                if inv.cleanup_error is not None:
+                    raise RuntimeError(inv.cleanup_error)
                 return
             raise ValueError("invocation is terminal")
         cleanup = self._start_cleanup(inv, release=False)
         await self._await_cleanup(cleanup, inv)
+        if inv.cleanup_error is not None:
+            raise RuntimeError(inv.cleanup_error)

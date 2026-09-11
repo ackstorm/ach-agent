@@ -30,6 +30,8 @@ from ach_agent.execution.wire import (
     AcquireRequest,
     PublicEngineConfig,
     ReleaseRequest,
+    TurnRequest,
+    WorkspaceCleanupAckRequest,
     WorkspaceHandoffRequest,
     WorkspaceHook,
     WorkspacePrepareRequest,
@@ -115,6 +117,98 @@ async def test_private_only_prepare_still_notifies_harness_on_stop(
     event = await asyncio.wait_for(events.get(), timeout=1)
     assert event.kind == "workspace_stopped"
     assert event.event_id == "event-1"
+    await service.release_controller("controller")
+
+
+@pytest.mark.asyncio
+async def test_private_cleanup_ack_is_completion_barrier(fake_driver, tmp_path: Path) -> None:
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+    request = _prepare(
+        tmp_path,
+        prepare=None,
+        cleanup=None,
+        cleanup_ack_required=True,
+        cleanup_timeout_seconds=2,
+    )
+    await service.prepare_workspace(request)
+    stopping = asyncio.create_task(service.pool.discard(request.session_key))
+    events = service.controller_events()
+    assert events is not None
+    event = await asyncio.wait_for(events.get(), timeout=1)
+    await asyncio.sleep(0)
+    assert not stopping.done()
+    await service.ack_workspace_cleanup(
+        WorkspaceCleanupAckRequest(
+            controller_id=event.controller_id,
+            instance_id=event.instance_id,
+            session_key=event.session_key,
+            event_id=event.event_id,
+            invocation_id=event.invocation_id,
+        )
+    )
+    result = await asyncio.wait_for(asyncio.gather(stopping, return_exceptions=True), timeout=1)
+    assert result[0] is None
+    await service.release_controller("controller")
+
+
+@pytest.mark.asyncio
+async def test_private_cleanup_ack_controller_loss_wakes_native_cleanup(
+    fake_driver, tmp_path: Path
+) -> None:
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+    request = _prepare(
+        tmp_path,
+        prepare=None,
+        cleanup=None,
+        cleanup_ack_required=True,
+        cleanup_timeout_seconds=120,
+    )
+    await service.prepare_workspace(request)
+    stopping = asyncio.create_task(service.pool.discard(request.session_key))
+    events = service.controller_events()
+    assert events is not None
+    await asyncio.wait_for(events.get(), timeout=1)
+
+    with pytest.raises(Exception):
+        await asyncio.wait_for(service.release_controller("controller"), timeout=2)
+    result = await asyncio.wait_for(asyncio.gather(stopping, return_exceptions=True), timeout=1)
+    assert isinstance(result[0], Exception)
+    assert service.shutdown_requested
+
+
+@pytest.mark.asyncio
+async def test_private_cleanup_ack_delivery_margin_covers_near_budget_hook(
+    fake_driver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("ach_agent.execution.service.CLEANUP_DEADLINE_SECONDS", 0.05)
+    monkeypatch.setattr("ach_agent.execution.service.CLEANUP_PROCESS_MARGIN_SECONDS", 0.1)
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+    request = _prepare(
+        tmp_path,
+        prepare=None,
+        cleanup=None,
+        cleanup_ack_required=True,
+        cleanup_timeout_seconds=0.05,
+    )
+    await service.prepare_workspace(request)
+    stopping = asyncio.create_task(service.pool.discard(request.session_key))
+    events = service.controller_events()
+    assert events is not None
+    event = await asyncio.wait_for(events.get(), timeout=1)
+    await asyncio.sleep(0.08)
+    await service.ack_workspace_cleanup(
+        WorkspaceCleanupAckRequest(
+            controller_id=event.controller_id,
+            instance_id=event.instance_id,
+            session_key=event.session_key,
+            event_id=event.event_id,
+            invocation_id=event.invocation_id,
+        )
+    )
+    await asyncio.wait_for(stopping, timeout=1)
     await service.release_controller("controller")
 
 
@@ -370,6 +464,25 @@ async def test_public_cleanup_failure_is_recorded_but_confirmed_stop_stays_healt
 
 
 @pytest.mark.asyncio
+async def test_public_hook_keeps_bounded_diagnostics_in_engine_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    records: list[dict[str, object]] = []
+
+    def record(_message: str, **fields: object) -> None:
+        records.append(fields)
+
+    monkeypatch.setattr("ach_agent.engine.workspace.log.debug", record)
+    await run_public_hook(
+        WorkspaceHook(script="printf PREPARE-END", timeout_seconds=2),
+        cwd=tmp_path,
+        env={"PATH": os.environ["PATH"]},
+        remaining_seconds=2,
+    )
+    assert any("PREPARE-END" in str(record.get("stdout")) for record in records)
+
+
+@pytest.mark.asyncio
 async def test_public_cleanup_timeout_is_best_effort_after_confirmed_stop(
     fake_driver, tmp_path: Path
 ) -> None:
@@ -386,6 +499,93 @@ async def test_public_cleanup_timeout_is_best_effort_after_confirmed_stop(
     assert "WorkspaceHookTimedOut" in service.workspace_cleanup_errors[-1]
     assert not service._unhealthy
     await service.release_controller("controller")
+
+
+@pytest.mark.asyncio
+async def test_public_cleanup_budget_is_separate_from_native_stop_bound(
+    fake_driver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("ach_agent.execution.service.CLEANUP_DEADLINE_SECONDS", 0.05)
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+    request = _prepare(
+        tmp_path,
+        prepare=None,
+        cleanup={"script": "sleep 0.15", "timeout_seconds": 0.4},
+    )
+    await service.prepare_workspace(request)
+    handle = await service.acquire(
+        AcquireRequest(
+            controller_id="controller",
+            invocation_id=request.invocation_id,
+            lane_key=request.session_key,
+            conversation_key=request.session_key,
+            reuse=True,
+            remaining_seconds=5,
+            config=PublicEngineConfig(),
+        )
+    )
+    await service.release(
+        ReleaseRequest(
+            controller_id="controller",
+            execution_id=handle.execution_id,
+            invocation_id=request.invocation_id,
+            idle_ttl_seconds=0,
+        )
+    )
+    assert not service._unhealthy
+    await service.release_controller("controller")
+
+
+@pytest.mark.asyncio
+async def test_native_stop_deadline_is_not_extended_by_public_hook_budget(
+    fake_driver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("ach_agent.execution.service.CLEANUP_DEADLINE_SECONDS", 0.05)
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+    request = _prepare(
+        tmp_path,
+        prepare=None,
+        cleanup={"script": "sleep 30", "timeout_seconds": 30},
+    )
+    await service.prepare_workspace(request)
+    handle = await service.acquire(
+        AcquireRequest(
+            controller_id="controller",
+            invocation_id=request.invocation_id,
+            lane_key=request.session_key,
+            conversation_key=request.session_key,
+            reuse=True,
+            remaining_seconds=5,
+            config=PublicEngineConfig(),
+        )
+    )
+    fake_driver.stop_barrier = asyncio.Event()
+    fake_driver.suppress_stop_cancellation = True
+    started = asyncio.get_running_loop().time()
+    release = asyncio.create_task(
+        service.release(
+            ReleaseRequest(
+                controller_id="controller",
+                execution_id=handle.execution_id,
+                invocation_id=request.invocation_id,
+                idle_ttl_seconds=0,
+            )
+        )
+    )
+    await asyncio.wait_for(fake_driver.stop_started.wait(), timeout=1)
+    with pytest.raises(RuntimeError, match="cleanup deadline"):
+        await asyncio.wait_for(release, timeout=1)
+    assert asyncio.get_running_loop().time() - started < 1
+    assert service._unhealthy
+    fake_driver.stop_barrier.set()
+    cleanup = service._invocations.get(request.invocation_id)
+    if cleanup is not None and cleanup.cleanup_task is not None:
+        await asyncio.wait_for(
+            asyncio.gather(cleanup.cleanup_task, return_exceptions=True), timeout=1
+        )
+    service._invocations.pop(request.invocation_id, None)
 
 
 @pytest.mark.asyncio
@@ -609,6 +809,100 @@ async def test_real_http_long_prepare_uses_deadline_and_failed_prepare_is_invoca
             assert peer["status"] == "ok"
             await client.cancel("controller", "slow")
             await client.cancel("controller", "peer")
+        finally:
+            await client.close()
+
+
+@pytest.mark.asyncio
+async def test_real_http_cleanup_ack_releases_existing_pool_callback(
+    fake_driver, tmp_path: Path
+) -> None:
+    service = ExecutionService(fake_driver, {})
+    app = create_execution_app(service)
+    async with _running_server(app) as base_url:
+        client = ExecutionClient(base_url, controller_id="controller", timeout=0.5)
+        try:
+            await client.connect()
+            request = _prepare(
+                tmp_path,
+                cleanup_ack_required=True,
+                cleanup_timeout_seconds=2,
+                prepare=None,
+            )
+            await client.prepare_workspace(request)
+            stopping = asyncio.create_task(service.pool.discard(request.session_key))
+            event = await asyncio.wait_for(client.next_controller_event(), timeout=1)
+            await asyncio.sleep(0)
+            assert not stopping.done()
+            await client.ack_workspace_cleanup(event)
+            await asyncio.wait_for(stopping, timeout=1)
+        finally:
+            await client.close()
+
+
+@pytest.mark.asyncio
+async def test_real_http_long_cleanup_pool_keeps_priority_ack_responsive(
+    fake_driver, tmp_path: Path
+) -> None:
+    service = ExecutionService(fake_driver, {})
+    app = create_execution_app(service)
+    async with _running_server(app) as base_url:
+        client = ExecutionClient(base_url, controller_id="controller", timeout=1)
+        try:
+            await client.connect()
+            private_requests = [
+                _prepare(
+                    tmp_path,
+                    invocation_id=invocation_id,
+                    session_key=invocation_id,
+                    prepare=None,
+                    cleanup_ack_required=True,
+                    cleanup_timeout_seconds=2,
+                )
+                for invocation_id in ("private-one", "private-two")
+            ]
+            for request in private_requests:
+                await client.prepare_workspace(request)
+            stopping = [
+                asyncio.create_task(client.cancel("controller", request.invocation_id))
+                for request in private_requests
+            ]
+            events = [
+                await asyncio.wait_for(client.next_controller_event(), timeout=1)
+                for _ in private_requests
+            ]
+            assert all(not task.done() for task in stopping)
+
+            peer = await client.acquire(
+                AcquireRequest(
+                    controller_id="controller",
+                    invocation_id="peer",
+                    lane_key="peer",
+                    conversation_key="peer",
+                    reuse=True,
+                    remaining_seconds=5,
+                    config=PublicEngineConfig(),
+                )
+            )
+            streamed = [
+                event
+                async for event in client.turn(
+                    TurnRequest(
+                        controller_id="controller",
+                        execution_id=peer.execution_id,
+                        invocation_id=peer.invocation_id,
+                        turn_id="peer-turn",
+                        prompt="peer",
+                        max_tool_calls=0,
+                    )
+                )
+            ]
+            assert any(event.kind == "turn_done" for event in streamed)
+            await client.cancel("controller", peer.invocation_id)
+
+            for event in events:
+                await client.ack_workspace_cleanup(event)
+            await asyncio.wait_for(asyncio.gather(*stopping), timeout=1)
         finally:
             await client.close()
 

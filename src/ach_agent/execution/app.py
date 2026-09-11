@@ -33,6 +33,7 @@ from ach_agent.execution.wire import (
     SessionOperation,
     SessionReadyRequest,
     TurnRequest,
+    WorkspaceCleanupAckRequest,
     WorkspaceHandoffRequest,
     WorkspaceOperationFailure,
     WorkspacePrepareRequest,
@@ -246,6 +247,20 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
         except Exception as exc:
             return service_error(exc)
         return JSONResponse(result)
+
+    @app.post("/execution/v1/workspace/cleanup-ack")
+    async def workspace_cleanup_ack(request: Request) -> JSONResponse:
+        try:
+            body = WorkspaceCleanupAckRequest.model_validate(await _request_json(request))
+        except _BodyTooLarge:
+            return JSONResponse({"detail": "request body too large"}, status_code=413)
+        except (_InvalidBody, ValidationError) as exc:
+            return _invalid(str(exc))
+        try:
+            await service.ack_workspace_cleanup(body)
+        except Exception as exc:
+            return service_error(exc)
+        return JSONResponse({"status": "ok"})
 
     @app.post("/execution/v1/turn", response_model=None)
     async def turn(request: Request) -> StreamingResponse | JSONResponse:

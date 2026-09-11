@@ -15,8 +15,11 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
+import structlog
+
 from ach_agent.engine.lifecycle import ManagedServer
 from ach_agent.engine.process_supervisor import command as supervised_command
+from ach_agent.engine.sanitized_env import redact_text
 
 if TYPE_CHECKING:
     from ach_agent.execution.wire import WorkspaceHook
@@ -27,6 +30,7 @@ _REPO_PATH = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._-]*(?:/[A-Za-z0-9._][A-Za-z0-
 _REPO_PATH_KEYS = frozenset({"project_path", "repo"})
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 _HOOK_OUTPUT_TAIL_BYTES = 4096
+log = structlog.get_logger(__name__)
 
 
 class WorkspaceHookFailed(RuntimeError):
@@ -174,7 +178,7 @@ async def run_public_hook(
             return await stdout_task, await stderr_task
 
         try:
-            _stdout, stderr = await asyncio.wait_for(communicate(), timeout)
+            stdout, stderr = await asyncio.wait_for(communicate(), timeout)
         except TimeoutError:
             await supervisor.stop()
             raise WorkspaceHookTimedOut(f"public hook timed out after {hook.timeout_seconds}s")
@@ -182,6 +186,13 @@ async def run_public_hook(
             await asyncio.shield(supervisor.stop())
             raise
         await supervisor.stop()
+        log.debug(
+            "workspace hook output",
+            stdout=redact_text(stdout[0].decode("utf-8", "replace")),
+            stderr=redact_text(stderr[0].decode("utf-8", "replace")),
+            truncated=stdout[1] or stderr[1],
+            returncode=proc.returncode,
+        )
         if proc.returncode:
             detail = stderr[0].decode("utf-8", "replace").strip()
             raise WorkspaceHookExitFailed(f"public hook exited {proc.returncode}: {detail}")

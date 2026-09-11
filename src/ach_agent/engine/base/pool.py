@@ -31,7 +31,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Iterator, MutableMapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -43,6 +43,8 @@ if TYPE_CHECKING:
     from ach_agent.engine.lifecycle import ManagedServer
 
 log = structlog.get_logger(__name__)
+
+NATIVE_CLEANUP_TIMEOUT_SECONDS = 10.0
 
 CleanupCallback = Callable[[], Awaitable[None]]
 
@@ -322,6 +324,29 @@ class EnginePool:
         if self._accountant is not None:
             self._accountant.drop_token(server.proxy_token)
 
+    @staticmethod
+    def _observe_stop(task: asyncio.Task[Any]) -> None:
+        """Consume a late cancellation-resistant stop result without leaking errors."""
+        try:
+            task.result()
+        except BaseException:
+            pass
+
+    async def _stop_native(
+        self, server: ManagedServer, native_timeout_seconds: float | None
+    ) -> None:
+        timeout = (
+            NATIVE_CLEANUP_TIMEOUT_SECONDS
+            if native_timeout_seconds is None
+            else max(0.001, native_timeout_seconds)
+        )
+        task = asyncio.create_task(self._driver.stop(server))
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout)
+        except TimeoutError:
+            task.add_done_callback(self._observe_stop)
+            raise TimeoutError("native cleanup deadline expired") from None
+
     async def acquire(self, session_key: str, config: EngineConfig) -> ManagedServer:
         """Acquire the server for session_key, reusing an alive one or starting new.
 
@@ -350,7 +375,7 @@ class EnginePool:
                 # Dead server — stop and replace.
                 log.warning("EnginePool.acquire: server dead, replacing", session_key=session_key)
                 try:
-                    await self._driver.stop(existing)
+                    await self._stop_native(existing, NATIVE_CLEANUP_TIMEOUT_SECONDS)
                 except Exception:  # noqa: BLE001
                     log.debug("EnginePool.acquire: dead-server stop failed", exc_info=True)
                     if self._strict_cleanup:
@@ -398,7 +423,13 @@ class EnginePool:
             self._ref_counts[session_key] = 1
             return server
 
-    async def release(self, session_key: str, ttl_seconds: float) -> None:
+    async def release(
+        self,
+        session_key: str,
+        ttl_seconds: float,
+        *,
+        native_timeout_seconds: float | None = None,
+    ) -> None:
         """Release one reference to session_key's server.
 
         Under the key's lock:
@@ -429,7 +460,7 @@ class EnginePool:
                 return
             self._ref_counts.pop(session_key, None)
             if ttl_seconds == 0:
-                await self._stop_locked(session_key)
+                await self._stop_locked(session_key, native_timeout_seconds)
                 return
             # Schedule the TTL task under the lock so _ttl_tasks mutations are
             # always lock-protected (consistent with acquire()).
@@ -469,15 +500,19 @@ class EnginePool:
                 return
             await self._stop_locked(session_key)
 
-    async def discard(self, session_key: str) -> None:
-        await self._stop(session_key)
+    async def discard(
+        self, session_key: str, *, native_timeout_seconds: float | None = None
+    ) -> None:
+        await self._stop(session_key, native_timeout_seconds)
 
-    async def _stop(self, session_key: str) -> None:
+    async def _stop(self, session_key: str, native_timeout_seconds: float | None = None) -> None:
         """Stop and drop the server for one key (idempotent)."""
         async with self._get_lock(session_key):
-            await self._stop_locked(session_key)
+            await self._stop_locked(session_key, native_timeout_seconds)
 
-    async def _stop_locked(self, session_key: str) -> None:
+    async def _stop_locked(
+        self, session_key: str, native_timeout_seconds: float | None = None
+    ) -> None:
         ttl_task = self._ttl_tasks.pop(session_key, None)
         if ttl_task is not None and ttl_task is not asyncio.current_task() and not ttl_task.done():
             ttl_task.cancel()
@@ -490,7 +525,7 @@ class EnginePool:
             if server is not None:
                 self._drop_token(server)
                 try:
-                    await self._driver.stop(server)
+                    await self._stop_native(server, native_timeout_seconds)
                 except Exception:  # noqa: BLE001
                     log.warning(
                         "EnginePool: error stopping server", session_key=session_key, exc_info=True

@@ -38,6 +38,7 @@ from ach_agent.execution.wire import (
     SessionOperation,
     SessionReadyRequest,
     TurnRequest,
+    WorkspaceCleanupAckRequest,
     WorkspaceHandoffRequest,
     WorkspaceOperationFailure,
     WorkspacePrepareRequest,
@@ -48,6 +49,8 @@ from ach_agent.execution.wire import (
 # even when the caller did not provide an operation deadline.  The service owns a
 # ten-second native cleanup bound; this small margin covers HTTP response delivery.
 WORKSPACE_CANCEL_TIMEOUT_SECONDS = 15.0
+NATIVE_CLEANUP_TIMEOUT_SECONDS = 10.0
+HOOK_CLEANUP_MARGIN_SECONDS = 5.0
 
 
 class ExecutionClientError(RuntimeError):
@@ -197,6 +200,14 @@ class ExecutionClient:
             limits=control_limits,
             transport=transport,
         )
+        # Long release/cancel responses may wait for native and hook cleanup. Keep
+        # them away from both the short priority ACKs and ordinary control calls.
+        self.cleanup_client = httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=None,
+            limits=httpx.Limits(max_connections=8, max_keepalive_connections=8),
+            transport=transport,
+        )
         # Keep acknowledgement/cancellation capacity independent of session
         # operations and release calls, which may wait on native cleanup.
         self.priority_client = httpx.AsyncClient(
@@ -232,6 +243,7 @@ class ExecutionClient:
         self._controller_events: asyncio.Queue[WorkspaceStoppedEvent] = asyncio.Queue(maxsize=64)
         self._controller_event_waiters: set[asyncio.Future[WorkspaceStoppedEvent]] = set()
         self._handles: dict[str, ExecutionHandle] = {}
+        self._cleanup_budgets: dict[str, float] = {}
         self._turn_ids: dict[str, itertools.count[int]] = {}
         self._closed = False
 
@@ -418,17 +430,27 @@ class ExecutionClient:
                 with contextlib.suppress(BaseException):
                     await task
 
-    async def _confirm_workspace_cancel(self, controller_id: str, invocation_id: str) -> None:
+    async def _confirm_workspace_cancel(
+        self, controller_id: str, invocation_id: str, *, timeout: float | None = None
+    ) -> None:
         self._assert_controller_live()
         self._validate_controller(controller_id)
         try:
             response, content = await self._owned_request(
-                self.priority_client,
-                self.priority_client.build_request(
+                self.cleanup_client,
+                self.cleanup_client.build_request(
                     "POST",
                     "/execution/v1/cancel",
                     json={"controller_id": controller_id, "invocation_id": invocation_id},
-                    timeout=WORKSPACE_CANCEL_TIMEOUT_SECONDS,
+                    timeout=max(
+                        WORKSPACE_CANCEL_TIMEOUT_SECONDS,
+                        timeout
+                        or (
+                            NATIVE_CLEANUP_TIMEOUT_SECONDS
+                            + self._cleanup_budgets.get(invocation_id, 0.0)
+                            + HOOK_CLEANUP_MARGIN_SECONDS
+                        ),
+                    ),
                 ),
             )
             if response.status_code < 200 or response.status_code >= 300:
@@ -627,7 +649,12 @@ class ExecutionClient:
 
     async def prepare_workspace(self, request: WorkspacePrepareRequest) -> dict[str, str]:
         """Prepare a public workspace before native acquisition."""
-        result = await self._workspace_json_request("/execution/v1/workspace/prepare", request)
+        self._cleanup_budgets[request.invocation_id] = request.cleanup_budget_seconds
+        try:
+            result = await self._workspace_json_request("/execution/v1/workspace/prepare", request)
+        except BaseException:
+            self._cleanup_budgets.pop(request.invocation_id, None)
+            raise
         expected = str(workspace_dir(request.work_dir, request.session_key))
         if (
             not isinstance(result, dict)
@@ -636,6 +663,7 @@ class ExecutionClient:
             or result["workspace"] != expected
         ):
             await self._confirm_workspace_cancel(request.controller_id, request.invocation_id)
+            self._cleanup_budgets.pop(request.invocation_id, None)
             raise WorkspaceOperationFailed(
                 "invalid workspace prepare response; reservation canceled", confirmed=True
             )
@@ -656,6 +684,25 @@ class ExecutionClient:
                 "invalid workspace handoff response; reservation canceled", confirmed=True
             )
         return {"status": "ok", "workspace": expected}
+
+    async def ack_workspace_cleanup(self, event: WorkspaceStoppedEvent) -> None:
+        """Acknowledge private cleanup after the correlated controller event completes."""
+        self._assert_controller_live()
+        result = await self._json_request(
+            "POST",
+            "/execution/v1/workspace/cleanup-ack",
+            WorkspaceCleanupAckRequest(
+                controller_id=event.controller_id,
+                instance_id=event.instance_id,
+                session_key=event.session_key,
+                event_id=event.event_id,
+                invocation_id=event.invocation_id,
+            ).model_dump(mode="json"),
+            # ACKs stay on the small priority pool so long release/cancel responses
+            # cannot consume both short control slots while waiting for this barrier.
+            client=self.priority_client,
+        )
+        await self._require_ok(result, "workspace cleanup")
 
     async def _ack_session(self, request: TurnRequest, event: ExecutionEvent) -> None:
         handle = self._validate_handle(
@@ -861,9 +908,20 @@ class ExecutionClient:
     async def release(self, request: ReleaseRequest) -> None:
         self._assert_controller_live()
         self._validate_handle(request.controller_id, request.execution_id, request.invocation_id)
+        timeout = (
+            NATIVE_CLEANUP_TIMEOUT_SECONDS
+            + self._cleanup_budgets.get(request.invocation_id, 0.0)
+            + HOOK_CLEANUP_MARGIN_SECONDS
+        )
         try:
-            result = await self._json_request(
-                "POST", "/execution/v1/release", request.model_dump(mode="json")
+            result = await asyncio.wait_for(
+                self._json_request(
+                    "POST",
+                    "/execution/v1/release",
+                    request.model_dump(mode="json"),
+                    client=self.cleanup_client,
+                ),
+                timeout=max(WORKSPACE_CANCEL_TIMEOUT_SECONDS, timeout),
             )
             await self._require_ok(result, "release")
         except BaseException as exc:
@@ -873,6 +931,7 @@ class ExecutionClient:
         if handle is not None:
             trace.drop(handle.proxy_route)
         self._turn_ids.pop(request.invocation_id, None)
+        self._cleanup_budgets.pop(request.invocation_id, None)
 
     async def cancel(self, controller_id: str, invocation_id: str) -> None:
         self._validate_controller(controller_id)
@@ -890,6 +949,7 @@ class ExecutionClient:
         if handle is not None:
             trace.drop(handle.proxy_route)
         self._turn_ids.pop(invocation_id, None)
+        self._cleanup_budgets.pop(invocation_id, None)
         if not active:
             self._cancelled_invocations.discard(invocation_id)
 
@@ -920,6 +980,7 @@ class ExecutionClient:
             trace.drop(handle.proxy_route)
         self._handles.clear()
         self._turn_ids.clear()
+        self._cleanup_budgets.clear()
         self._cancelled_invocations.clear()
         self._active_turns.clear()
         while not self._controller_events.empty():
@@ -927,6 +988,7 @@ class ExecutionClient:
                 self._controller_events.get_nowait()
         await self.stream_client.aclose()
         await self.acquire_client.aclose()
+        await self.cleanup_client.aclose()
         await self.priority_client.aclose()
         await self.control_client.aclose()
         await self.controller_client.aclose()

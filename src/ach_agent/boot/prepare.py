@@ -312,10 +312,10 @@ async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
     the first failing command fail the invocation; `-u` makes a missing credential loud.
     """
     if cfg.secret_env:
-        from ach_agent.boot.private_prepare import PrivatePrepareFailed, private_prepare
+        from ach_agent.boot.private_prepare import PrivatePrepareFailed, private_prepare_compat
 
         try:
-            await private_prepare(cfg, event, workspace, private_scratch_dir())
+            await private_prepare_compat(cfg, event, workspace, private_scratch_dir())
         except PrivatePrepareFailed as exc:
             PREPARE_FAILURES.labels(reason="exit").inc()
             raise PrepareFailed(str(exc)) from exc

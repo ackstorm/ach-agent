@@ -137,7 +137,7 @@ class PiDriver:
             start_new_session=True,
         )
         server = ManagedServer(port=0, ephemeral_home=agent_dir)
-        server.register_process(proc)
+        server.register_process(proc, protect_root=Path("/proc").is_dir())
         server._client = PiRpcClient(proc)
         asyncio.create_task(self._drain_stderr(proc, server))
         await asyncio.sleep(0)

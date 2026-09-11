@@ -23,8 +23,11 @@ It verifies that the process group ID equals the launched leader PID, then signa
 Because native macOS mode has no procfs ancestry table, a detached descendant that is already
 reparented cannot be attributed safely; that is an explicit native-mode containment limit. Linux
 isolated engine containers rely on the container PID namespace and the mini-harness-owned tree;
-this change does not add a subreaper or kernel hardening mechanism. `tini` installation and role
-entrypoint wiring remain Task 9/Task 8 work.
+the per-launch helper is the only new subreaper call and it is process-local. No kernel hardening
+is added. `tini` installation and role entrypoint wiring remain Task 9/Task 8 work.
+When the native leader exits, the helper performs its own bounded descendant TERM/KILL/reap
+cycle and exits only after no adopted children remain; it therefore cannot hold Pi stdio open or
+present a dead native leader as a healthy execution.
 
 Pi immediate startup exit now joins `ManagedServer.stop()` before reporting `NativeLaunchFailed`.
 

@@ -171,6 +171,7 @@ class ManagedServer:
         default_factory=lambda: collections.deque(maxlen=_LOG_TAIL_SIZE), repr=False
     )
     _owned_processes: dict[int, _ProcessIdentity] = field(default_factory=dict, repr=False)
+    _protect_cleanup_root: bool = field(default=False, repr=False)
     _ownership_task: asyncio.Task[None] | None = field(default=None, repr=False)
     _stop_task: asyncio.Task[None] | None = field(default=None, repr=False)
 
@@ -182,7 +183,7 @@ class ManagedServer:
         # asyncio.subprocess.Process has .returncode (None = still running)
         return getattr(proc, "returncode", None) is None
 
-    def register_process(self, proc: object) -> None:
+    def register_process(self, proc: object, *, protect_root: bool = False) -> None:
         """Register the native process and begin observing its descendants.
 
         The observer runs while the leader is alive so a detached child is retained by PID
@@ -190,6 +191,7 @@ class ManagedServer:
         server's process tree; no process-group-wide or host-wide kill is used on Linux.
         """
         self._process = proc
+        self._protect_cleanup_root = protect_root
         pid = getattr(proc, "pid", None)
         if not isinstance(pid, int) or pid <= 0:
             return
@@ -245,7 +247,8 @@ class ManagedServer:
 
             # Give the subreaper launch helper a chance to terminate/reap descendants before
             # its own root is killed; otherwise an orphan could escape to the container init.
-            self._signal_owned(signal.SIGKILL, exclude={pid})
+            excluded = {pid} if self._protect_cleanup_root else set()
+            self._signal_owned(signal.SIGKILL, exclude=excluded)
             force_deadline = asyncio.get_running_loop().time() + _FORCE_CLEANUP_TIMEOUT_S
             while asyncio.get_running_loop().time() < force_deadline:
                 self._refresh_owned_processes()
@@ -255,9 +258,10 @@ class ManagedServer:
                 await asyncio.sleep(_OWNERSHIP_POLL_S)
             remaining = [item.pid for item in self._live_owned_processes()]
             if remaining:
-                self._signal_owned(signal.SIGKILL)
-                await _wait_native_process(proc)
-                remaining = [item.pid for item in self._live_owned_processes()]
+                if not self._protect_cleanup_root:
+                    self._signal_owned(signal.SIGKILL)
+                    await _wait_native_process(proc)
+                    remaining = [item.pid for item in self._live_owned_processes()]
             if remaining:
                 raise OwnedProcessCleanupError(f"owned native processes remained live: {remaining}")
 
@@ -655,7 +659,7 @@ async def launch(
     )
 
     server = ManagedServer(port=port, ephemeral_home=ephemeral_home, config_path=config_path)
-    server.register_process(proc)
+    server.register_process(proc, protect_root=Path("/proc").is_dir())
 
     # H-05: Start drain tasks immediately after subprocess creation.
     # Two tasks drain stdout and stderr to prevent OS PIPE buffer (64KB) from

@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 _PR_SET_CHILD_SUBREAPER = 36
+_DESCENDANT_CLEANUP_TIMEOUT_S = 10.0
 
 
 def _set_child_subreaper() -> None:
@@ -28,7 +29,7 @@ def _set_child_subreaper() -> None:
         raise OSError(error, os.strerror(error))
 
 
-def _children_of(pid: int) -> list[int]:
+def _children_of(pid: int, *, include_zombies: bool = False) -> list[int]:
     if not Path("/proc").is_dir():
         return []
     children: list[int] = []
@@ -42,19 +43,21 @@ def _children_of(pid: int) -> list[int]:
             parent = int(fields[1])
         except (OSError, ValueError, IndexError, UnicodeDecodeError):
             continue
-        if parent == pid and state != b"Z":
+        if parent == pid and (include_zombies or state != b"Z"):
             children.append(int(entry.name))
     return children
 
 
-def _reap_children() -> None:
-    while True:
+def _reap_children(exclude_pid: int) -> None:
+    # Reap adopted descendants by PID.  waitpid(-1) could accidentally reap the native
+    # leader between child.poll() and this call, losing Popen's authoritative exit status.
+    for pid in _children_of(os.getpid(), include_zombies=True):
+        if pid == exclude_pid:
+            continue
         try:
-            pid, _status = os.waitpid(-1, os.WNOHANG)
+            os.waitpid(pid, os.WNOHANG)
         except ChildProcessError:
-            return
-        if pid == 0:
-            return
+            continue
 
 
 def _signal_children(sig: signal.Signals) -> None:
@@ -85,6 +88,7 @@ def run(argv: list[str]) -> int:
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
     child = subprocess.Popen(argv)
+    leader_exited_at: float | None = None
     while True:
         if stop_requested:
             _signal_children(signal.SIGTERM)
@@ -94,7 +98,16 @@ def run(argv: list[str]) -> int:
                 except ProcessLookupError:
                     pass
         child_rc = child.poll()
-        _reap_children()
+        if child_rc is not None and leader_exited_at is None:
+            leader_exited_at = time.monotonic()
+            _signal_children(signal.SIGTERM)
+        if (
+            leader_exited_at is not None
+            and time.monotonic() - leader_exited_at >= _DESCENDANT_CLEANUP_TIMEOUT_S
+            and _children_of(os.getpid())
+        ):
+            _signal_children(signal.SIGKILL)
+        _reap_children(child.pid)
         if child_rc is not None and not _children_of(os.getpid()):
             return child_rc
         # Keep the supervisor alive after the engine leader exits so adopted descendants

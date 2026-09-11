@@ -48,6 +48,7 @@ log = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 SHUTDOWN_TIMEOUT = 10  # seconds between SIGTERM and SIGKILL (H-03)
+SUPERVISED_SHUTDOWN_TIMEOUT = 5  # leave room for ExecutionService's 10s cleanup deadline
 _OWNERSHIP_POLL_S = 0.05
 _FORCE_CLEANUP_TIMEOUT_S = 2.0
 _LOG_TAIL_SIZE = 50  # lines kept in stdout/stderr tail for diagnostics (H-05)
@@ -74,7 +75,7 @@ _PROVIDER_BY_TYPE: dict[str, tuple[str, str]] = {
 
 @dataclass(frozen=True)
 class _ProcessIdentity:
-    """PID plus Linux start time, which prevents signalling a recycled PID."""
+    """PID plus Linux start time for an observation-time PID-reuse guard."""
 
     pid: int
     start_time: int
@@ -121,7 +122,8 @@ def _linux_descendants(
     # A tracked PID is a root only while its start time still matches.  This prevents a
     # recycled PID from becoming an ownership root and pulling an unrelated subtree in.
     active_roots = {
-        pid for pid, identity in roots.items()
+        pid
+        for pid, identity in roots.items()
         if (info := _linux_process_info(pid)) is not None and info[0] == identity
     }
     pending = list(active_roots)
@@ -172,6 +174,7 @@ class ManagedServer:
     )
     _owned_processes: dict[int, _ProcessIdentity] = field(default_factory=dict, repr=False)
     _protect_cleanup_root: bool = field(default=False, repr=False)
+    _shutdown_timeout: float = field(default=SHUTDOWN_TIMEOUT, repr=False)
     _ownership_task: asyncio.Task[None] | None = field(default=None, repr=False)
     _stop_task: asyncio.Task[None] | None = field(default=None, repr=False)
 
@@ -192,6 +195,7 @@ class ManagedServer:
         """
         self._process = proc
         self._protect_cleanup_root = protect_root
+        self._shutdown_timeout = SUPERVISED_SHUTDOWN_TIMEOUT if protect_root else SHUTDOWN_TIMEOUT
         pid = getattr(proc, "pid", None)
         if not isinstance(pid, int) or pid <= 0:
             return
@@ -235,7 +239,7 @@ class ManagedServer:
         # Linux procfs gives us individual ownership proof.  The portable fallback below
         # retains the established process-group behavior for native macOS development mode.
         if Path("/proc").is_dir():
-            deadline = asyncio.get_running_loop().time() + SHUTDOWN_TIMEOUT
+            deadline = asyncio.get_running_loop().time() + self._shutdown_timeout
             self._signal_owned(signal.SIGTERM)
             while asyncio.get_running_loop().time() < deadline:
                 self._refresh_owned_processes()

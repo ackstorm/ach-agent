@@ -108,7 +108,10 @@ async def test_fast_orphan_is_not_reported_clean_before_death(tmp_path: Path) ->
     pid_file = tmp_path / "child.pid"
     binary = tmp_path / "opencode"
     binary.write_text(
-        "#!" + sys.executable + "\n" + _FAST_ORPHAN_PROGRAM.format(
+        "#!"
+        + sys.executable
+        + "\n"
+        + _FAST_ORPHAN_PROGRAM.format(
             ready=str(ready), go=str(go), status=str(status), pid_file=str(pid_file)
         ),
         encoding="utf-8",
@@ -128,9 +131,8 @@ async def test_fast_orphan_is_not_reported_clean_before_death(tmp_path: Path) ->
         go.write_text("go", encoding="ascii")
         deadline = asyncio.get_running_loop().time() + 3.0
         while (
-            (not pid_file.exists() or not pid_file.read_text(encoding="ascii"))
-            and asyncio.get_running_loop().time() < deadline
-        ):
+            not pid_file.exists() or not pid_file.read_text(encoding="ascii")
+        ) and asyncio.get_running_loop().time() < deadline:
             await asyncio.sleep(0.01)
         assert pid_file.exists()
         child_pid = int(pid_file.read_text(encoding="ascii"))

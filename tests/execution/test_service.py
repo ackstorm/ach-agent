@@ -25,6 +25,7 @@ class _RealProcessDriver:
     def __init__(self) -> None:
         self.started = asyncio.Event()
         self.process = None
+        self.processes = []
 
     def skills_dir(self, home: Path) -> Path:
         return home
@@ -34,13 +35,18 @@ class _RealProcessDriver:
 
         process = await asyncio.create_subprocess_exec(
             sys.executable,
+            "-m",
+            "ach_agent.engine.process_supervisor",
+            "--",
+            sys.executable,
             "-c",
-            "import time; time.sleep(30)",
+            "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)",
             start_new_session=True,
         )
         server = ManagedServer(port=0)
-        server.register_process(process)
+        server.register_process(process, protect_root=True)
         self.process = process
+        self.processes.append(process)
         return server
 
     async def health(self, server) -> bool:
@@ -100,6 +106,51 @@ async def test_controller_release_joins_real_process_before_new_controller() -> 
         await asyncio.wait_for(driver.started.wait(), timeout=1.0)
         await service.release_controller("controller")
         assert driver.process is not None and driver.process.returncode is not None
+        await service.claim_controller("new-controller")
+    finally:
+        turn_task.cancel()
+        await asyncio.gather(turn_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_cancel_supervised_term_resistant_process_keeps_other_execution_healthy() -> None:
+    """Cancellation escalates within the service deadline without cross-killing a peer."""
+    driver = _RealProcessDriver()
+    service = ExecutionService(driver, {})
+    await service.claim_controller("controller")
+    first = await service.acquire(_acquire())
+    _second = await service.acquire(
+        _acquire().model_copy(
+            update={
+                "invocation_id": "inv-two",
+                "lane_key": "lane-two",
+                "controller_id": "controller",
+            }
+        )
+    )
+    stream = service.turn(
+        TurnRequest(
+            controller_id="controller",
+            execution_id=first.execution_id,
+            invocation_id="inv",
+            turn_id="turn",
+            prompt="p",
+            max_tool_calls=0,
+        )
+    )
+    await stream.__anext__()
+    turn_task = asyncio.create_task(stream.__anext__())
+    try:
+        await asyncio.wait_for(driver.started.wait(), timeout=1.0)
+        started = asyncio.get_running_loop().time()
+        await service.cancel("controller", "inv")
+        elapsed = asyncio.get_running_loop().time() - started
+        assert elapsed < 9.0
+        assert driver.processes[0].returncode is not None
+        assert driver.processes[1].returncode is None
+        assert not service._unhealthy
+        await service.cancel("controller", "inv-two")
+        await service.release_controller("controller")
         await service.claim_controller("new-controller")
     finally:
         turn_task.cancel()

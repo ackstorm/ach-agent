@@ -65,6 +65,20 @@ async def test_launch_subprocess(tmp_path: Path) -> None:
         await server.stop()
 
 
+async def test_launch_missing_binary_is_typed_failure(tmp_path: Path) -> None:
+    """A real missing executable is a native launch failure, not a generic runtime error."""
+    from ach_agent.engine.lifecycle import EngineConfig, NativeLaunchFailed, launch
+
+    config = EngineConfig(
+        binary_path=str(tmp_path / "does-not-exist"),
+        home=str(tmp_path),
+        work_dir=str(tmp_path),
+    )
+
+    with pytest.raises(NativeLaunchFailed, match="binary not found"):
+        await launch(19880, tmp_path, config, "missing")
+
+
 # ---------------------------------------------------------------------------
 # ENG-02: Readiness poll returns when /app responds 200
 # ---------------------------------------------------------------------------

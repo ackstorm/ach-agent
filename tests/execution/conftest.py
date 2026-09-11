@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 import pytest
@@ -26,8 +27,12 @@ class FakeDriver:
         self.turn_barrier = None
         self.resolve_barrier = None
         self.compact_barrier = None
+        self.compact_started = asyncio.Event()
+        self.compact_cancelled = asyncio.Event()
         self.run_error = None
         self.stop_error = None
+        self.stop_started = asyncio.Event()
+        self.stop_barrier = None
         self.stopped = False
 
     def skills_dir(self, home):
@@ -64,13 +69,21 @@ class FakeDriver:
         self.discarded = session_ref
 
     async def compact_session(self, server, session_ref):
+        self.compact_started.set()
         if self.compact_barrier is not None:
-            await self.compact_barrier.wait()
+            try:
+                await self.compact_barrier.wait()
+            except asyncio.CancelledError:
+                self.compact_cancelled.set()
+                raise
         self.compacted = session_ref
 
     async def stop(self, server):
+        self.stop_started.set()
         if self.stop_error is not None:
             raise self.stop_error
+        if self.stop_barrier is not None:
+            await self.stop_barrier.wait()
         server.stopped = True
         self.stopped = True
 

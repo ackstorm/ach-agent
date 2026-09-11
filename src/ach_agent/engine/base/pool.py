@@ -485,6 +485,7 @@ class EnginePool:
         cleanup = self._cleanups.get(session_key)
         self._ref_counts.pop(session_key, None)
 
+        stop_failed = False
         try:
             if server is not None:
                 self._drop_token(server)
@@ -495,6 +496,7 @@ class EnginePool:
                         "EnginePool: error stopping server", session_key=session_key, exc_info=True
                     )
                     if self._strict_cleanup:
+                        stop_failed = True
                         raise
 
             if cleanup is not None:
@@ -509,8 +511,9 @@ class EnginePool:
                         exc_info=True,
                     )
         finally:
-            self._servers.pop(session_key, None)
-            self._cleanups.pop(session_key, None)
+            if not stop_failed:
+                self._servers.pop(session_key, None)
+                self._cleanups.pop(session_key, None)
 
     async def stop_all(self) -> None:
         """Stop every live server and clear the pool (shutdown / tui exit)."""

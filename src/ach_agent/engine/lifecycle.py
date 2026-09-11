@@ -428,7 +428,7 @@ async def launch(
 
     binary = shutil.which(config.binary_path)
     if not binary:
-        raise RuntimeError(f"opencode binary not found: {config.binary_path!r}")
+        raise NativeLaunchFailed(f"opencode binary not found: {config.binary_path!r}")
 
     config_path = write_opencode_config(ephemeral_home, config, session_key)
 

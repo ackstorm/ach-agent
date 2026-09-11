@@ -47,6 +47,7 @@ class _Invocation:
     cleanup_error: str | None = None
     maintenance_active: bool = False
     maintenance_task: asyncio.Task[Any] | None = None
+    cleanup_task: asyncio.Task[None] | None = None
 
 
 def _engine_config(public: Any) -> EngineConfig:
@@ -85,10 +86,10 @@ class ExecutionService:
         if request.invocation_id in self._invocations or request.invocation_id in self._acquiring:
             raise ValueError(f"invocation already acquired: {request.invocation_id}")
         self._acquiring.add(request.invocation_id)
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + request.remaining_seconds
-        cfg = _engine_config(request.config)
         try:
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + request.remaining_seconds
+            cfg = _engine_config(request.config)
             remaining = max(0.001, deadline - loop.time())
             server = await asyncio.wait_for(self.pool.acquire(request.lane_key, cfg), remaining)
         except NativeLaunchFailed:
@@ -119,26 +120,101 @@ class ExecutionService:
         inv.deadline_task = asyncio.create_task(self._deadline_watch(inv))
         return handle
 
-    async def _deadline_watch(self, inv: _Invocation) -> None:
-        await asyncio.sleep(max(0.0, inv.deadline - asyncio.get_running_loop().time()))
-        if inv.terminal or inv.released:
+    @staticmethod
+    async def _cancel_and_join(task: asyncio.Task[Any] | None) -> None:
+        """Cancel an owned task and consume its result, including cancellation."""
+        if task is None or task is asyncio.current_task():
             return
-        inv.terminal = True
-        if inv.task is not None and not inv.task.done():
-            inv.task.cancel()
-            try:
-                await inv.task
-            except asyncio.CancelledError:
-                pass
-        if inv.maintenance_task is not None and not inv.maintenance_task.done():
-            inv.maintenance_task.cancel()
+        if not task.done():
+            task.cancel()
         try:
-            await self.pool.discard(inv.session_key)
+            await task
+        except BaseException:
+            pass
+
+    def _start_cleanup(
+        self, inv: _Invocation, *, release: bool, idle_ttl_seconds: float = 0.0
+    ) -> asyncio.Task[None]:
+        """Create the sole cleanup operation and reserve the invocation immediately."""
+        if inv.cleanup_task is not None:
+            return inv.cleanup_task
+        inv.terminal = True
+        inv.cleanup_task = asyncio.create_task(
+            self._cleanup_invocation(
+                inv, release=release, idle_ttl_seconds=idle_ttl_seconds
+            )
+        )
+        return inv.cleanup_task
+
+    async def _cleanup_invocation(
+        self, inv: _Invocation, *, release: bool, idle_ttl_seconds: float
+    ) -> None:
+        """Join invocation work, then release or discard its pool reference once."""
+        current = asyncio.current_task()
+        deadline_task = inv.deadline_task
+        if deadline_task is not current:
+            await self._cancel_and_join(deadline_task)
+        inv.deadline_task = None
+
+        for attr in ("maintenance_task", "task", "wake_task"):
+            task = getattr(inv, attr)
+            if attr == "wake_task" and inv.turn_active and task is not None:
+                # Let the wake task publish its sentinel after the run task has
+                # been cancelled so a consumer waiting in __anext__ observes
+                # the run's CancelledError.
+                try:
+                    await task
+                except BaseException:
+                    pass
+            elif task is not current:
+                await self._cancel_and_join(task)
+            if attr == "maintenance_task" and getattr(inv, attr) is task:
+                setattr(inv, attr, None)
+
+        try:
+            if release:
+                await self.pool.release(inv.session_key, idle_ttl_seconds)
+                inv.released = True
+            else:
+                await self.pool.discard(inv.session_key)
+        except asyncio.CancelledError:
+            self._unhealthy = True
+            inv.cleanup_error = "native cleanup cancelled"
+            raise
         except Exception as exc:
             self._unhealthy = True
             inv.cleanup_error = str(exc)
+            raise
         else:
-            self._invocations.pop(inv.handle.invocation_id, None)
+            if self._invocations.get(inv.handle.invocation_id) is inv:
+                self._invocations.pop(inv.handle.invocation_id, None)
+
+    async def _await_cleanup(self, task: asyncio.Task[None]) -> None:
+        """Wait for cleanup despite caller cancellation, without false confirmation."""
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            try:
+                await task
+            except BaseException:
+                pass
+            raise
+
+    async def _deadline_watch(self, inv: _Invocation) -> None:
+        try:
+            await asyncio.sleep(max(0.0, inv.deadline - asyncio.get_running_loop().time()))
+        except asyncio.CancelledError:
+            return
+        if inv.terminal or inv.released:
+            return
+        cleanup = self._start_cleanup(inv, release=False)
+        try:
+            # The cleanup task owns this watcher; shielding avoids cancellation
+            # propagation back into cleanup when the owner joins this task.
+            await asyncio.shield(cleanup)
+        except BaseException:
+            # _cleanup_invocation records the failure and leaves the invocation tracked.
+            pass
 
     def _get(self, controller_id: str, execution_id: str, invocation_id: str) -> _Invocation:
         inv = self._invocations.get(invocation_id)
@@ -160,22 +236,18 @@ class ExecutionService:
             async for event in self._turn_impl(request):
                 yield event
         finally:
-            if inv.turn_active:
-                inv.terminal = True
+            wake = inv.wake_task
+            if wake is not None:
+                await self._cancel_and_join(wake)
+                if inv.wake_task is wake:
+                    inv.wake_task = None
+            if inv.turn_active and inv.cleanup_task is None:
                 inv.turn_active = False
-                if inv.task is not None and not inv.task.done():
-                    inv.task.cancel()
-                    try:
-                        await inv.task
-                    except (asyncio.CancelledError, Exception):
-                        pass
+                cleanup = self._start_cleanup(inv, release=False)
                 try:
-                    await self.pool.discard(inv.session_key)
-                except Exception as exc:
-                    self._unhealthy = True
-                    inv.cleanup_error = str(exc)
-                else:
-                    self._invocations.pop(inv.handle.invocation_id, None)
+                    await self._await_cleanup(cleanup)
+                except Exception:
+                    pass
 
     async def _turn_impl(self, request: TurnRequest) -> AsyncIterator[ExecutionEvent]:
         inv = self._get(request.controller_id, request.execution_id, request.invocation_id)
@@ -356,8 +428,12 @@ class ExecutionService:
         try:
             await asyncio.shield(inv.maintenance_task)
         finally:
+            maintenance_task = inv.maintenance_task
+            if maintenance_task is not None and maintenance_task is not asyncio.current_task():
+                await self._cancel_and_join(maintenance_task)
             inv.maintenance_active = False
-            inv.maintenance_task = None
+            if inv.maintenance_task is maintenance_task:
+                inv.maintenance_task = None
 
     async def release(self, request: ReleaseRequest) -> None:
         inv = self._get(request.controller_id, request.execution_id, request.invocation_id)
@@ -370,15 +446,10 @@ class ExecutionService:
             or (inv.task is not None and not inv.task.done())
         ):
             raise ValueError("cannot release an active invocation")
-        if inv.deadline_task is not None:
-            inv.deadline_task.cancel()
-        try:
-            await self.pool.release(inv.session_key, request.idle_ttl_seconds)
-        except Exception:
-            self._unhealthy = True
-            raise
-        inv.released = True
-        self._invocations.pop(request.invocation_id, None)
+        cleanup = self._start_cleanup(
+            inv, release=True, idle_ttl_seconds=request.idle_ttl_seconds
+        )
+        await self._await_cleanup(cleanup)
 
     async def cancel(self, controller_id: str, invocation_id: str) -> None:
         inv = self._invocations.get(invocation_id)
@@ -386,21 +457,5 @@ class ExecutionService:
             raise ValueError("unknown invocation")
         if inv.terminal:
             raise ValueError("invocation is terminal")
-        inv.terminal = True
-        if inv.deadline_task is not None:
-            inv.deadline_task.cancel()
-        if inv.maintenance_task is not None and not inv.maintenance_task.done():
-            inv.maintenance_task.cancel()
-        if inv.task is not None and not inv.task.done():
-            inv.task.cancel()
-            try:
-                await inv.task
-            except asyncio.CancelledError:
-                pass
-        try:
-            await self.pool.discard(inv.session_key)
-        except Exception as exc:
-            self._unhealthy = True
-            inv.cleanup_error = str(exc)
-            raise
-        self._invocations.pop(invocation_id, None)
+        cleanup = self._start_cleanup(inv, release=False)
+        await self._await_cleanup(cleanup)

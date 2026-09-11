@@ -398,6 +398,19 @@ async def test_cleanup_failure_does_not_escape_release() -> None:
     assert "k1" not in pool._cleanups
 
 
+async def test_strict_stop_failure_retains_server_tracking() -> None:
+    pool = EnginePool(strict_cleanup=True)
+    fake = _make_fake_server(alive=True)
+    fake.stop.side_effect = RuntimeError("stop failed")
+    pool._start_server = AsyncMock(return_value=fake)
+
+    await pool.acquire("k1", _real_config())
+    with pytest.raises(RuntimeError, match="stop failed"):
+        await pool.release("k1", ttl_seconds=0)
+
+    assert pool._servers["k1"] is fake
+
+
 async def test_dead_server_replacement_retains_cleanup() -> None:
     cleanup = AsyncMock()
     pool = EnginePool()

@@ -5,7 +5,7 @@ import asyncio
 import inspect
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -60,6 +60,79 @@ async def test_run_turn_reuse_creates_and_records_session() -> None:
     assert stats["session_ref"] == "ses_new" and stats["oc_session_id"] == "ses_new"
     mk.assert_awaited_once()
     cs.assert_awaited_once()
+
+
+async def test_cached_404_recreates_once_and_awaits_resolution_callback() -> None:
+    import aiohttp
+
+    sessions = {"k1": "ses_old"}
+    stats: dict[str, Any] = {}
+    callback_refs: list[str] = []
+    consume_calls = 0
+
+    async def consume(*_args: Any, **_kwargs: Any) -> str:
+        nonlocal consume_calls
+        consume_calls += 1
+        if consume_calls == 1:
+            raise aiohttp.ClientResponseError(
+                request_info=MagicMock(), history=(), status=404, message="gone"
+            )
+        return "hello"
+
+    async def on_session_resolved(ref: str) -> None:
+        callback_refs.append(ref)
+
+    with (
+        patch("ach_agent.engine.lifecycle._create_oc_session", return_value="ses_new") as mk,
+        patch("ach_agent.engine.lifecycle.consume_sse_after_send", new=consume),
+    ):
+        result = await OpencodeDriver().run_turn(
+            _FakeServer(),
+            conv_key="k1",
+            prompt="p",
+            reuse=True,
+            sessions=sessions,
+            on_text=None,
+            on_tool=None,
+            on_session_resolved=on_session_resolved,
+            max_tool_calls=0,
+            stats=stats,
+        )
+
+    assert result.session_ref == "ses_new"
+    assert consume_calls == 2
+    assert callback_refs == ["ses_new"]
+    mk.assert_awaited_once()
+
+
+async def test_non_cached_404_does_not_recreate_session() -> None:
+    import aiohttp
+
+    async def consume(*_args: Any, **_kwargs: Any) -> str:
+        raise aiohttp.ClientResponseError(
+            request_info=MagicMock(), history=(), status=404, message="gone"
+        )
+
+    with (
+        patch("ach_agent.engine.lifecycle._create_oc_session", return_value="ses_new") as mk,
+        patch("ach_agent.engine.lifecycle.consume_sse_after_send", new=consume),
+    ):
+        with pytest.raises(aiohttp.ClientResponseError) as raised:
+            await OpencodeDriver().run_turn(
+                _FakeServer(),
+                conv_key="k1",
+                prompt="p",
+                reuse=True,
+                sessions={"k1": "ses_old"},
+                session_ref="ses_old",
+                on_text=None,
+                on_tool=None,
+                max_tool_calls=0,
+                stats={"_cached_session": False},
+            )
+
+    assert raised.value.status == 404
+    mk.assert_not_awaited()
 
 
 async def test_launch_missing_binary_is_typed_failure() -> None:

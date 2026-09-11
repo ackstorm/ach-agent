@@ -47,10 +47,9 @@ prompt:
 memory:
   type: ach-memory
   achMemory:
-    endpoint: http://api:8000/mcp/
+    mcpServerId: ach-memory
     auth:
-      type: bearer
-      env: ACH_SECRET_MEMORY_ACHMEMORY
+      type: ach
 
 engine:
   home: /tmp/ach-home

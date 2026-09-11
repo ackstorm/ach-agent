@@ -30,12 +30,3 @@ services:
       - ALL
     stdin_open: true
     tty: true
-    networks:
-      - memory
-
-networks:
-  # ach-memory's compose network, created by `docker compose up -d` in that repo. External
-  # on purpose: this testbed never owns the memory stack's lifecycle.
-  memory:
-    external: true
-    name: ${MEMORY_NETWORK:-ach-memory_default}

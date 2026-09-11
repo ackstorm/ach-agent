@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Fixed
+
+- Credential-bearing `channel.prepare` and `channel.cleanup` hooks now run with fresh
+  harness-private HOME/cwd/checkouts. Preparation publishes only a credential-free local Git
+  bundle into the retained engine workspace, rejecting symlink and path traversal handoffs;
+  credential-free hooks keep their existing workspace behavior. In the current same-UID local
+  deployment, private scratch is not an OS boundary against a concurrently malicious engine;
+  split deployments must provide private mounts and namespaces.
+
 ## [0.16.1] - 2026-09-11
 
 ### Removed

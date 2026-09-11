@@ -47,7 +47,7 @@ from typing import Any
 
 import structlog
 
-from ach_agent.boot.paths import link_ach_state
+from ach_agent.boot.paths import link_ach_state, private_scratch_dir
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import PrepareBlock, resolve_secret
 from ach_agent.engine.metrics import (
@@ -311,6 +311,16 @@ async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
     agent could rewrite, and so no part of it is visible in /proc/<pid>/cmdline. `-e` makes
     the first failing command fail the invocation; `-u` makes a missing credential loud.
     """
+    if cfg.secret_env:
+        from ach_agent.boot.private_prepare import PrivatePrepareFailed, private_prepare
+
+        try:
+            await private_prepare(cfg, event, workspace, private_scratch_dir())
+        except PrivatePrepareFailed as exc:
+            PREPARE_FAILURES.labels(reason="exit").inc()
+            raise PrepareFailed(str(exc)) from exc
+        return
+
     env = build_prepare_env(cfg, event, workspace)
     started = asyncio.get_running_loop().time()
     try:
@@ -356,7 +366,7 @@ async def run_webhook_script(cfg: PrepareBlock, event: MessageEvent, work_dir: s
     # UTF-8 raises. The trailing newline is load-bearing: without it `read -r line` returns 1
     # at EOF (and `sh -e` aborts the script), while `while read` drops the payload entirely.
     payload = json.dumps(event.payload, separators=(",", ":")).encode() + b"\n"
-    base = Path(work_dir)
+    base = private_scratch_dir() if cfg.secret_env else Path(work_dir)
     base.mkdir(parents=True, exist_ok=True)
     workspace = Path(tempfile.mkdtemp(prefix="webhook-script-", dir=base))
     started = asyncio.get_running_loop().time()
@@ -409,6 +419,16 @@ async def run_webhook_script(cfg: PrepareBlock, event: MessageEvent, work_dir: s
 
 async def run_cleanup(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -> None:
     """Run the best-effort cleanup hook when a reserved session is torn down."""
+    if cfg.secret_env:
+        from ach_agent.boot.private_prepare import PrivatePrepareFailed, private_cleanup
+
+        try:
+            await private_cleanup(cfg, event, workspace, private_scratch_dir())
+        except PrivatePrepareFailed as exc:
+            CLEANUP_FAILURES.labels(reason="exit").inc()
+            log.warning("cleanup: private hook failed", error=str(exc))
+        return
+
     env = build_prepare_env(cfg, event, workspace)
     started = asyncio.get_running_loop().time()
     try:

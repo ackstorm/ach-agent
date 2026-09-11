@@ -75,6 +75,8 @@ async def test_private_fixture_characterizes_reuse_and_cleanup(
 
     await run_prepare(cfg, _event(), workspace)
     repo = workspace / "repo"
+    assert _git(repo, "rev-parse", "origin/main") == initial_head
+    assert _git(repo, "merge-base", "origin/main", "HEAD") == initial_head
     _git(repo, "config", "user.email", "agent@example.invalid")
     _git(repo, "config", "user.name", "agent")
     assert workspace.stat().st_ino == inode
@@ -117,54 +119,29 @@ async def test_private_scratch_prototype_preserves_target_retention(
     """Credentialed scratch preparation, then local Git handoff to target."""
     source, initial_head = _local_origin(tmp_path)
     monkeypatch.setenv("PRIVATE_PREPARE_TOKEN", "synthetic-token")
-    private_home = tmp_path / "private-home"
-    scratch = tmp_path / "private-scratch"
     workspace = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "scratch")
     inode = workspace.stat().st_ino
     cfg = PrepareBlock.model_validate(
         {
             "script": """
 set -eu
-export HOME="$PRIVATE_HOME"
-mkdir -p "$HOME"
-SCRATCH="$SCRATCH_PATH"
-if [ -d "$SCRATCH/.git" ]; then
-  git -C "$SCRATCH" fetch -q origin
-else
-  git clone -q "$SOURCE" "$SCRATCH"
-fi
+            git clone -q "$SOURCE" "$ACH_WORKSPACE/repo"
 """,
             "env": {
                 "SOURCE": str(source),
-                "PRIVATE_HOME": str(private_home),
-                "SCRATCH_PATH": str(scratch),
             },
             "secretEnv": {"TOKEN": {"env": "PRIVATE_PREPARE_TOKEN"}},
         }
     )
     await run_prepare(cfg, _event(), workspace)
-    assert scratch.exists()
+    assert (workspace / "repo").exists()
     sentinel = tmp_path / "handoff-token-marker"
     hook = tmp_path / "handoff-fsmonitor.sh"
     hook.write_text(f"#!/bin/sh\n[ \"${{TOKEN-}}\" = synthetic-token ] && touch {sentinel}\n")
     hook.chmod(0o700)
     (workspace / ".gitconfig").write_text(f"[core]\n\tfsmonitor = {hook}\n")
 
-    # The handoff is a separate process with a deliberately minimal environment.
-    # In particular it receives no TOKEN, HOME inherited from preparation, or Git config override.
-    transfer = PrepareBlock.model_validate(
-        {
-            "script": """
-set -eu
-REPO="$ACH_WORKSPACE/repo"
-if [ ! -d "$REPO/.git" ]; then git clone -q "$SCRATCH_PATH" "$REPO"; fi
-git -C "$REPO" fetch -q "$SCRATCH_PATH" main:refs/ach/scratch-main
-git -C "$REPO" checkout -q --force --detach refs/ach/scratch-main
-git -C "$REPO" status --short
-""",
-            "env": {"SCRATCH_PATH": str(scratch)},
-        }
-    )
+    transfer = _clone_block(source)
     await run_prepare(transfer, _event(2), workspace)
     assert not sentinel.exists()
     repo = workspace / "repo"
@@ -194,7 +171,6 @@ async def test_prepare_failure_is_fail_closed_and_retains_workspace(tmp_path: Pa
     assert workspace.exists()
 
 
-@pytest.mark.xfail(strict=True, reason="Task 0B: current HOME/.gitconfig contaminates Git")
 async def test_credentialed_git_does_not_execute_planted_global_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -224,9 +200,6 @@ async def test_credentialed_git_does_not_execute_planted_global_config(
     assert not sentinel.exists()
 
 
-@pytest.mark.xfail(
-    strict=True, reason="Task 0B: current workspace checkout follows planted .git/config"
-)
 async def test_credentialed_git_does_not_execute_planted_repo_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -246,7 +219,8 @@ async def test_credentialed_git_does_not_execute_planted_repo_config(
     )
     cfg = PrepareBlock.model_validate(
         {
-            "script": "set -eu; git -C \"$ACH_WORKSPACE/repo\" status --short",
+            "script": 'set -eu; git clone -q "$SOURCE" "$ACH_WORKSPACE/repo"',
+            "env": {"SOURCE": str(source)},
             "secretEnv": {"TOKEN": {"env": "PRIVATE_PREPARE_TOKEN"}},
         }
     )
@@ -254,20 +228,65 @@ async def test_credentialed_git_does_not_execute_planted_repo_config(
     assert not sentinel.exists()
 
 
-@pytest.mark.xfail(strict=True, reason="Task 0B: current hook can follow destination symlinks")
 async def test_prepare_rejects_destination_symlink_escape(tmp_path: Path) -> None:
     sentinel = tmp_path / "outside"
     sentinel.mkdir()
     workspace = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "symlink")
-    (workspace / "repo").mkdir()
-    (workspace / "repo" / "escape").symlink_to(sentinel, target_is_directory=True)
+    source, _ = _local_origin(tmp_path)
+    (workspace / "repo").symlink_to(sentinel, target_is_directory=True)
+    cfg = PrepareBlock.model_validate(
+        {
+            "script": 'git clone -q "$SOURCE" "$ACH_WORKSPACE/repo"',
+            "env": {"SOURCE": str(source)},
+            "secretEnv": {"TOKEN": {"env": "PRIVATE_PREPARE_TOKEN"}},
+        }
+    )
+    with pytest.raises(PrepareFailed, match="destination symlink"):
+        await run_prepare(cfg, _event(), workspace)
+    assert not (sentinel / "marker").exists()
+
+
+async def test_private_handoff_rejects_credential_in_published_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, _ = _local_origin(tmp_path)
+    monkeypatch.setenv("PRIVATE_PREPARE_TOKEN", "synthetic-token")
+    workspace = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "bundle-secret")
     cfg = PrepareBlock.model_validate(
         {
             "script": (
-                'mkdir -p "$ACH_WORKSPACE/repo/escape"; '
-                'touch "$ACH_WORKSPACE/repo/escape/marker"'
-            )
+                'set -eu; git clone -q "$SOURCE" "$ACH_WORKSPACE/repo"; '
+                'printf "%s" "$TOKEN" > "$ACH_WORKSPACE/repo/secret.txt"; '
+                'git -C "$ACH_WORKSPACE/repo" add secret.txt; '
+                'git -C "$ACH_WORKSPACE/repo" -c user.name=x -c user.email=x@example.invalid '
+                'commit -qm secret'
+            ),
+            "env": {"SOURCE": str(source)},
+            "secretEnv": {"TOKEN": {"env": "PRIVATE_PREPARE_TOKEN"}},
         }
     )
-    await run_prepare(cfg, _event(), workspace)
-    assert not (sentinel / "marker").exists()
+    with pytest.raises(PrepareFailed, match="configured credential"):
+        await run_prepare(cfg, _event(), workspace)
+    assert not (workspace / "repo").exists()
+
+
+async def test_private_handoff_rejects_source_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, _ = _local_origin(tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside\n")
+    (source / "linked.txt").symlink_to(outside)
+    _git(source, "add", "linked.txt")
+    _git(source, "commit", "-qm", "symlink")
+    monkeypatch.setenv("PRIVATE_PREPARE_TOKEN", "synthetic-token")
+    workspace = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "source-symlink")
+    cfg = PrepareBlock.model_validate(
+        {
+            "script": 'git clone -q "$SOURCE" "$ACH_WORKSPACE/repo"',
+            "env": {"SOURCE": str(source)},
+            "secretEnv": {"TOKEN": {"env": "PRIVATE_PREPARE_TOKEN"}},
+        }
+    )
+    with pytest.raises(PrepareFailed, match="symlink"):
+        await run_prepare(cfg, _event(), workspace)

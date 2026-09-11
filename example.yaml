@@ -102,10 +102,9 @@ channels:
         secret: {env: ACH_SECRET_GITLAB_WEBHOOK}   # env NAME, never a value (env-only)
       gitlabEvents: [merge_request, note]    # route MR hooks + MR/issue comments; omit → MR+issue+note.
                                              # Unlisted kinds → HTTP 200 ignored, never 422.
-    # prepare: a /bin/sh script run on the lane before the turn, cwd = $ACH_WORKSPACE, which
-    # then becomes the agent's cwd. The harness holds the clone credential; the agent never
-    # does. The script is STATIC — event data arrives only as env (no {{ }}, no injection).
-    # It re-runs on every event for this MR, so it must be idempotent. See CONTRACT §9.1.
+    # prepare: a /bin/sh script run on the lane before the turn. With secretEnv, the harness
+    # runs it in fresh private cwd/HOME/checkout, then hands off a credential-free Git bundle
+    # to the stable engine workspace. The script is STATIC — event data arrives only as env.
     prepare:
       env:
         REPO_BASE_URL: https://gitlab.example.com   # ORIGIN from config, path from the payload

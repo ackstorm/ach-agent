@@ -78,3 +78,11 @@ def harness_log_dir() -> Path:
     d = Path("/tmp/ach-harness")
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def private_scratch_dir() -> Path:
+    """Harness-private parent for credential-bearing preparation scratch trees."""
+    d = Path("/tmp/ach-private")
+    d.mkdir(mode=0o700, parents=True, exist_ok=True)
+    d.chmod(0o700)
+    return d

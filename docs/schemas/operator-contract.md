@@ -845,6 +845,15 @@ in logs, and stripped from `engine.forwardEnv` so the opencode subprocess cannot
 Honest ceiling: harness and opencode share a container and a uid, so an agent with a shell can
 read `/proc/<pid>/environ`. "We do not hand it over" ≠ "it cannot be obtained".
 
+When `secretEnv` is present, the hook runs with a fresh harness-private `HOME`, cwd and
+checkout. The supported result is a Git checkout at `$ACH_WORKSPACE/repo`; after the hook
+exits, the harness publishes a credential-free Git bundle and locally fetches it into the
+existing engine checkout. The target workspace root, `.git` directory, untracked files and
+local objects are retained. Private cleanup hooks use the same private contract and must not
+depend on reading or deleting the engine workspace. Hooks that need the legacy shared
+credential-bearing workspace contract fail closed. Hooks without `secretEnv` retain the
+ordinary workspace behavior above.
+
 **Contract for script authors:**
 
 | Env var | Meaning |
@@ -861,16 +870,17 @@ read `/proc/<pid>/environ`. "We do not hand it over" ≠ "it cannot be obtained"
   `/proc/<pid>/cmdline` either — `webhook-script`, whose stdin carries the payload, passes the
   script through `ACH_SCRIPT` + trampoline for the same reason). First failing command aborts;
   an unset var aborts.
-- **Prepare must be idempotent.** The workspace is keyed by `session_key` and survives across events
-  (that is the cache), so the second comment on an MR re-runs the script against a populated
-  directory: clone-or-fetch, not clone.
+- **Prepare must be idempotent.** The target workspace is keyed by `session_key` and survives
+  across events. Credential-bearing hooks run against fresh private checkout paths each time;
+  clone-or-fetch behavior is preserved by the local bundle handoff into the populated target.
 - Cleanup should also be idempotent so a later process can safely clean a workspace left by an
   interrupted cleanup. Its failures are best-effort: logged and counted without changing delivery.
 - For prepare, non-zero exit, timeout, or spawn failure ⇒ **fail-closed**: the invocation is abandoned,
   nothing is posted, `ach_agent_prepare_failures_total{reason}` increments. Deliberately the
   opposite of memory's fail-open probe — a review of a repo that is not there is worse than
   no review.
-- `HOME` is pinned to the workspace and `GIT_TERMINAL_PROMPT=0` is set. The base env is a small
+- For credential-free hooks, `HOME` is pinned to the workspace and `GIT_TERMINAL_PROMPT=0` is
+  set. Credential-bearing hooks receive a fresh private `HOME`; the base env is a small
   allowlist (`PATH`, `SHELL`, `LANG`, `LANGUAGE`, `TZ`) plus what `env`/`secretEnv` declare.
 
 **Two rules the reference script exists to demonstrate:**

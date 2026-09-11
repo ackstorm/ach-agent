@@ -197,6 +197,20 @@ async def test_webhook_script_receives_payload_on_stdin_and_removes_workspace(
     assert not Path(workspace_file.read_text()).exists()
 
 
+async def test_credentialed_webhook_script_uses_private_scratch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace_file = tmp_path / "workspace.txt"
+    monkeypatch.setenv("WEBHOOK_TOKEN", "synthetic-token")
+    cfg = _block(
+        'printf "%s" "$ACH_WORKSPACE" > "$WORKSPACE_FILE"',
+        env={"WORKSPACE_FILE": str(workspace_file)},
+        secretEnv={"TOKEN": {"env": "WEBHOOK_TOKEN"}},
+    )
+    await run_webhook_script(cfg, _event(), str(tmp_path / "engine-work"))
+    assert "/tmp/ach-private/" in workspace_file.read_text()
+
+
 async def test_webhook_script_nonzero_fails_without_an_engine(tmp_path: Path) -> None:
     with pytest.raises(WebhookScriptFailed, match="exited 9"):
         await run_webhook_script(_block("exit 9"), _event(), str(tmp_path / "work"))

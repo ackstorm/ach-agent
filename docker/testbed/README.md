@@ -8,12 +8,33 @@ Everything else in `docker/` mocks or skips memory.
 
 | | |
 |---|---|
-| memory stack | `ach-memory`'s own `docker-compose.yml` (postgres + hindsight + api) — **not owned here** |
-| harness | `docker-compose.yaml` here, built from the repo root, joined to that stack's network |
-| contract | `config.yaml` — the only in-repo config with a populated `memory:` block. Uses `auth.type: bearer` (direct); through ACH's gateway it would be `endpoint: https://ach.ackstorm.ai/mcp/ach-memory` + `auth: {type: ach}` |
-| identity | `bootstrap.sh` verifies the stack and writes the agent's identity into `./.env` (gitignored). Nothing is minted — see below |
+| memory stack | the cluster's `ach-memory`, reached through ACH's gateway. The direct route wants `ach-memory`'s own `docker-compose.yml` (postgres + hindsight + api) — **not owned here** |
+| harness | `docker-compose.yaml` here, built from the repo root |
+| contract | `config.yaml` — the only in-repo config with a populated `memory:` block. Names the hydrated server (`mcpServerId: ach-memory` + `auth: {type: ach}`), so the address comes from the ACH manifest that granted it. The direct route is `endpoint: http://api:8000/mcp/` + `auth.type: bearer` |
+| checks | `check_memory.py` drives the harness; `check_agent.sh` drives the *agent* |
+| identity | on the direct route, `bootstrap.sh` verifies the stack and writes the agent's identity into `./.env` (gitignored). Nothing is minted — see below. Through ACH the principal is the ek_ and there is nothing to write |
 
 ## Run it
+
+Two routes. The gateway one is what `config.yaml` ships with, and the one production uses.
+
+```bash
+export ACH_TOKEN=ek-...        # the only credential either check needs
+
+# 1. the harness checks — cold start, boot context, typed retain, containment, tool surface.
+#    Reads the endpoint from the environment, NOT from config.yaml.
+MEMORY_ENDPOINT=https://ach.ackstorm.ai/mcp/ach-memory uv run python check_memory.py
+
+# 2. the agent checks — retain and recall across two sessions, then THE INVARIANT read out
+#    of the untrusted process by the untrusted process. Costs three model turns.
+./check_agent.sh
+
+# 3. drive it by hand: the typed line is the prompt
+docker compose run --rm agent
+```
+
+Direct, against a local ach-memory — still supported, and the only way to exercise the
+`auth.type: bearer` arm:
 
 ```bash
 # 1. memory stack. The Host allowlist is the one thing you must not omit (see "421" below);
@@ -30,13 +51,11 @@ cd -
 
 # 3. the checks (no ACH_TOKEN needed — drives the harness code, not a model)
 uv run python check_memory.py
-
-# 4. the agent (needs a real ek_)
-ACH_TOKEN=ek-... docker compose run --rm agent
 ```
 
 `HINDSIGHT_LLM_PROVIDER=mock` means the memory service makes no real LLM call. The *agent*
-still needs a real `ACH_TOKEN`.
+still needs a real `ACH_TOKEN` on either route, and `config.yaml` + `docker-compose.yaml`
+need putting back on the direct route.
 
 ## Identity is delegated — there is nothing to mint
 
@@ -71,6 +90,13 @@ That is why `bootstrap.sh` mints nothing: it writes the name you chose into `./.
 5. **Fail-open (D-02).** `docker stop <api container>` mid-session, then send another turn:
    the event completes with `"## Memory\n\nUnavailable…"` and `MEMORY_DEGRADED` increments —
    it does not abort.
+6. **Durability across sessions, and THE INVARIANT.** `check_agent.sh` only: a claim retained
+   in one session is recalled by the next, and the agent is asked to `cat` its own
+   `opencode.json` and its own `/proc/self/environ` — the two files the threat model says it
+   can read — with what comes back searched for the ek_. It reports counts and prints no
+   capture: a leak test that dumps the config would put the ek_ in every log that ran it.
+   Two proof-of-read gates come first, so a model that declines the commands fails rather
+   than passing silently.
 
 ## The three real endpoints (measured 2026-09-09 against pro-ack-ai-platform)
 

@@ -47,6 +47,11 @@ async def test_turns_keep_current_native_ref_and_resolve_once(fake_driver):
             )
         ]
         assert events[-1].kind == "turn_done"
+        invocation = service._invocations["inv"]
+        assert invocation.buffered_events == 0
+        assert invocation.buffered_bytes == 0
+        assert invocation.leased_bytes == 0
+        assert service._queued_stream_bytes == 0
     assert driver.resolved_conversations == [("repo", True)]
     assert driver.turn_session_refs == ["native-ref"] * 3
     await service.release(
@@ -237,6 +242,29 @@ async def test_invocation_deadline_cleans_idle_native_server(fake_driver):
 
 
 @pytest.mark.asyncio
+async def test_invocation_deadline_marks_stalled_cleanup_unhealthy(fake_driver, monkeypatch):
+    monkeypatch.setattr("ach_agent.execution.service.CLEANUP_DEADLINE_SECONDS", 0.02)
+    service = ExecutionService(fake_driver, {})
+    await service.acquire(_acquire().model_copy(update={"remaining_seconds": 0.01}))
+    fake_driver.stop_barrier = asyncio.Event()
+    fake_driver.suppress_stop_cancellation = True
+
+    try:
+        await asyncio.wait_for(fake_driver.stop_started.wait(), timeout=1)
+        await asyncio.sleep(0.05)
+        assert service.shutdown_requested
+        assert service._unhealthy
+        assert not service.can_accept_controller
+        with pytest.raises(RuntimeError, match="unhealthy"):
+            await service.claim_controller("replacement")
+    finally:
+        fake_driver.stop_barrier.set()
+        cleanup = service._invocations.get("inv")
+        if cleanup is not None and cleanup.cleanup_task is not None:
+            await asyncio.wait_for(asyncio.shield(cleanup.cleanup_task), timeout=1)
+
+
+@pytest.mark.asyncio
 async def test_resolution_is_bounded_by_invocation_deadline(fake_driver):
     fake_driver.resolve_barrier = asyncio.Event()
     service = ExecutionService(fake_driver, {})
@@ -278,6 +306,11 @@ async def test_failed_turn_without_output_has_no_unhandled_wake_error(fake_drive
         )
     ]
     assert events[-1].kind == "error"
+    invocation = service._invocations["inv"]
+    assert invocation.buffered_events == 0
+    assert invocation.buffered_bytes == 0
+    assert invocation.leased_bytes == 0
+    assert service._queued_stream_bytes == 0
     await asyncio.sleep(0)
     assert errors == []
 

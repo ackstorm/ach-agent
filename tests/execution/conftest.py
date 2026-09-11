@@ -21,7 +21,7 @@ class FakeDriver:
     engine_type = "opencode"
 
     def __init__(self) -> None:
-        self.server = FakeServer()
+        self.servers: list[FakeServer] = []
         self.resolved_conversations: list[tuple[str, bool]] = []
         self.turn_session_refs: list[str | None] = []
         self.turn_barrier = None
@@ -36,6 +36,7 @@ class FakeDriver:
         self.stop_barrier = None
         self.suppress_stop_cancellation = False
         self.stopped = False
+        self.stopped_servers: list[FakeServer] = []
         self.usage = None
         self.text_chunks: list[str] = []
         self.text_chunks_by_conversation: dict[str, list[str]] = {}
@@ -45,7 +46,9 @@ class FakeDriver:
         return home
 
     async def launch(self, cfg, session_key):
-        return self.server
+        server = FakeServer(proxy_token=f"proxy-{len(self.servers)}")
+        self.servers.append(server)
+        return server
 
     async def health(self, server):
         return server.is_alive()
@@ -104,6 +107,7 @@ class FakeDriver:
             else:
                 await self.stop_barrier.wait()
         server.stopped = True
+        self.stopped_servers.append(server)
         self.stopped = True
 
 

@@ -407,6 +407,10 @@ class ExecutionService:
             return
         if inv.terminal or inv.released:
             return
+        # Once this watcher starts cleanup it owns the cleanup deadline wait.
+        # Clear the invocation deadline handle first so cleanup does not cancel
+        # the watcher that is enforcing its own ten second bound.
+        inv.deadline_task = None
         cleanup = self._start_cleanup(inv, release=False)
         try:
             deadline = inv.cleanup_deadline or asyncio.get_running_loop().time()
@@ -653,6 +657,9 @@ class ExecutionService:
             size = self._reserve_output(inv, done_event)
             inv.leased_bytes = size
             yield done_event
+            if inv.leased_bytes:
+                self._release_output(inv, inv.leased_bytes)
+                inv.leased_bytes = 0
         except OutputLimitExceeded as exc:
             inv.output_error = exc
             raise
@@ -669,6 +676,9 @@ class ExecutionService:
             size = self._reserve_output(inv, error_event)
             inv.leased_bytes = size
             yield error_event
+            if inv.leased_bytes:
+                self._release_output(inv, inv.leased_bytes)
+                inv.leased_bytes = 0
         inv.turn_active = False
 
     async def session_op(self, request: SessionOperation) -> None:

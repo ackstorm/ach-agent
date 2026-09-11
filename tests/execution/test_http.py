@@ -13,6 +13,7 @@ from ach_agent.execution.app import (
     create_execution_app,
 )
 from ach_agent.execution.service import ExecutionService
+from ach_agent.execution.wire import AcquireRequest, PublicEngineConfig, TurnRequest
 
 
 def _client(app):
@@ -140,6 +141,9 @@ async def test_controller_eof_cleans_active_and_warm_execution_before_reconnect(
                 },
             )
             assert warm.status_code == 200
+            assert len(fake_driver.servers) == 2
+            assert fake_driver.servers[0] is not fake_driver.servers[1]
+            assert all(not server.stopped for server in fake_driver.servers)
             released = await operations.post(
                 "/execution/v1/release",
                 json={
@@ -157,6 +161,9 @@ async def test_controller_eof_cleans_active_and_warm_execution_before_reconnect(
                 await asyncio.sleep(0.01)
             assert service.can_accept_controller
             assert fake_driver.stopped
+            assert {id(server) for server in fake_driver.stopped_servers} == {
+                id(server) for server in fake_driver.servers
+            }
 
             async with operations.stream(
                 "POST",
@@ -215,6 +222,10 @@ async def test_http_cancel_of_stalled_execution_leaves_other_execution_responsiv
                 )
                 assert acquired.status_code == 200, acquired.text
                 handles[invocation_id] = acquired.json()
+            assert len(fake_driver.servers) == 2
+            slow_server, fast_server = fake_driver.servers
+            assert slow_server is not fast_server
+            assert not slow_server.stopped and not fast_server.stopped
 
             def turn_request(invocation_id: str, conversation_key: str):
                 return operations.build_request(
@@ -242,6 +253,12 @@ async def test_http_cancel_of_stalled_execution_leaves_other_execution_responsiv
                 json={"controller_id": "controller-a", "invocation_id": "slow"},
             )
             assert canceled.status_code == 200
+            for _ in range(100):
+                if slow_server.stopped:
+                    break
+                await asyncio.sleep(0.01)
+            assert slow_server.stopped
+            assert not fast_server.stopped
         finally:
             if slow_response is not None:
                 await slow_response.aclose()
@@ -308,27 +325,65 @@ async def test_oversized_request_body_is_rejected_before_json_parse(fake_driver)
 
 
 @pytest.mark.asyncio
-async def test_stalled_write_has_finite_deadline_and_closes_iterator(monkeypatch):
+async def test_stalled_write_cleans_owned_invocation_after_native_stop(monkeypatch, fake_driver):
     monkeypatch.setattr("ach_agent.execution.app.WRITE_TIMEOUT_SECONDS", 0.01)
-    closed = False
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+    handle = await service.acquire(
+        AcquireRequest(
+            controller_id="controller",
+            invocation_id="inv",
+            lane_key="lane",
+            conversation_key="conversation",
+            reuse=True,
+            remaining_seconds=5,
+            config=PublicEngineConfig(),
+        )
+    )
+    request = TurnRequest(
+        controller_id="controller",
+        execution_id=handle.execution_id,
+        invocation_id="inv",
+        turn_id="main",
+        prompt="prompt",
+        max_tool_calls=0,
+    )
 
     async def body():
-        nonlocal closed
+        stream = service.turn(request)
         try:
-            yield b"record\n"
+            async for event in stream:
+                yield event.model_dump_json().encode() + b"\n"
         finally:
-            closed = True
+            await stream.aclose()
 
-    stalled = asyncio.Event()
+    fake_driver.stop_barrier = asyncio.Event()
+    fake_driver.suppress_stop_cancellation = True
 
     async def send(message):
         if message["type"] == "http.response.body" and message.get("more_body"):
-            await stalled.wait()
+            await asyncio.Event().wait()
 
-    response = _BoundedStreamingResponse(body(), media_type="application/x-ndjson")
-    with pytest.raises(TimeoutError):
-        await response.stream_response(send)
-    assert closed
+    response = _BoundedStreamingResponse(
+        body(),
+        media_type="application/x-ndjson",
+        on_close=lambda: service.cancel("controller", "inv"),
+    )
+    response_task = asyncio.create_task(response.stream_response(send))
+    try:
+        await asyncio.wait_for(fake_driver.stop_started.wait(), timeout=1)
+        assert not fake_driver.stopped
+        fake_driver.stop_barrier.set()
+        with pytest.raises(TimeoutError):
+            await response_task
+        assert fake_driver.stopped
+        assert "inv" not in service._invocations
+    finally:
+        fake_driver.stop_barrier.set()
+        if not response_task.done():
+            response_task.cancel()
+            with contextlib.suppress(BaseException):
+                await response_task
 
 
 @pytest.mark.asyncio

@@ -33,6 +33,7 @@ class FakeDriver:
         self.run_error = None
         self.stop_error = None
         self.launch_barrier = None
+        self.launch_started = asyncio.Event()
         self.stop_started = asyncio.Event()
         self.stop_barrier = None
         self.suppress_stop_cancellation = False
@@ -47,6 +48,7 @@ class FakeDriver:
         return home
 
     async def launch(self, cfg, session_key):
+        self.launch_started.set()
         if self.launch_barrier is not None:
             await self.launch_barrier.wait()
         server = FakeServer(proxy_token=f"proxy-{len(self.servers)}")

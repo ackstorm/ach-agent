@@ -510,6 +510,9 @@ class EnginePool:
                         session_key=session_key,
                         exc_info=True,
                     )
+                    if self._strict_cleanup:
+                        stop_failed = True
+                        raise
         finally:
             if not stop_failed:
                 self._servers.pop(session_key, None)

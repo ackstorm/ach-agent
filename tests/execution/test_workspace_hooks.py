@@ -19,7 +19,11 @@ from ach_agent.boot.execution_client import (
     WorkspaceOperationFailed,
 )
 from ach_agent.engine.lifecycle import OwnedProcessCleanupError
-from ach_agent.engine.workspace import WorkspaceHookTimedOut, run_public_hook
+from ach_agent.engine.workspace import (
+    WorkspaceHookExitFailed,
+    WorkspaceHookTimedOut,
+    run_public_hook,
+)
 from ach_agent.execution.app import create_execution_app
 from ach_agent.execution.service import ExecutionService
 from ach_agent.execution.wire import (
@@ -249,6 +253,71 @@ async def test_acquire_and_handoff_cannot_cross_pending_reservation(
 
 
 @pytest.mark.asyncio
+async def test_cancel_blocked_reserved_acquire_has_one_cleanup_owner(
+    fake_driver, tmp_path: Path
+) -> None:
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+    request = _prepare(tmp_path, prepare=None)
+    await service.prepare_workspace(request)
+    fake_driver.launch_barrier = asyncio.Event()
+    acquire_task = asyncio.create_task(
+        service.acquire(
+            AcquireRequest(
+                controller_id="controller",
+                invocation_id=request.invocation_id,
+                lane_key=request.session_key,
+                conversation_key="conversation",
+                reuse=True,
+                remaining_seconds=5,
+                config=PublicEngineConfig(),
+            )
+        )
+    )
+    await asyncio.wait_for(fake_driver.launch_started.wait(), timeout=1)
+    assert request.invocation_id in service._acquire_tasks
+
+    await asyncio.wait_for(service.cancel("controller", request.invocation_id), timeout=2)
+    with pytest.raises(asyncio.CancelledError):
+        await acquire_task
+    assert request.invocation_id not in service._workspace_reservations
+    assert not service._unhealthy
+    await service.release_controller("controller")
+
+
+@pytest.mark.asyncio
+async def test_controller_loss_cancels_blocked_reserved_acquire_once(
+    fake_driver, tmp_path: Path
+) -> None:
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+    request = _prepare(tmp_path, prepare=None)
+    await service.prepare_workspace(request)
+    fake_driver.launch_barrier = asyncio.Event()
+    acquire_task = asyncio.create_task(
+        service.acquire(
+            AcquireRequest(
+                controller_id="controller",
+                invocation_id=request.invocation_id,
+                lane_key=request.session_key,
+                conversation_key="conversation",
+                reuse=True,
+                remaining_seconds=5,
+                config=PublicEngineConfig(),
+            )
+        )
+    )
+    await asyncio.wait_for(fake_driver.launch_started.wait(), timeout=1)
+    assert request.invocation_id in service._acquire_tasks
+
+    await asyncio.wait_for(service.release_controller("controller"), timeout=2)
+    with pytest.raises(asyncio.CancelledError):
+        await acquire_task
+    assert service.can_accept_controller
+    assert not service._unhealthy
+
+
+@pytest.mark.asyncio
 async def test_reservation_rejects_duplicate_invocation_and_lane_without_mutation(
     fake_driver, tmp_path: Path
 ) -> None:
@@ -336,9 +405,78 @@ async def test_cleanup_stop_failure_does_not_acknowledge_cancel(
         cleanup={"script": "cleanup", "timeout_seconds": 2},
     )
     await service.prepare_workspace(request)
-    with pytest.raises(RuntimeError, match="unhealthy"):
+    with pytest.raises(RuntimeError, match="cleanup process ownership lost"):
         await service.cancel("controller", request.invocation_id)
     assert service._unhealthy
+
+
+@pytest.mark.asyncio
+async def test_acquired_cleanup_stop_failure_does_not_acknowledge_cancel(
+    fake_driver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+
+    async def uncertain_hook(*args: object, **kwargs: object) -> None:
+        raise OwnedProcessCleanupError("cleanup process ownership lost")
+
+    monkeypatch.setattr("ach_agent.execution.service.run_public_hook", uncertain_hook)
+    request = _prepare(
+        tmp_path,
+        prepare=None,
+        cleanup={"script": "cleanup", "timeout_seconds": 2},
+    )
+    await service.prepare_workspace(request)
+    handle = await service.acquire(
+        AcquireRequest(
+            controller_id="controller",
+            invocation_id=request.invocation_id,
+            lane_key=request.session_key,
+            conversation_key="conversation",
+            reuse=True,
+            remaining_seconds=5,
+            config=PublicEngineConfig(),
+        )
+    )
+    with pytest.raises(RuntimeError, match="cleanup process ownership lost"):
+        await service.cancel("controller", handle.invocation_id)
+    assert service._unhealthy
+    assert handle.invocation_id in service._invocations
+
+
+@pytest.mark.asyncio
+async def test_http_prepare_failure_reports_unconfirmed_cleanup_and_client_cancels(
+    fake_driver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ExecutionService(fake_driver, {})
+
+    async def failing_hooks(hook: object, **kwargs: object) -> None:
+        if getattr(hook, "script", "") == "prepare-fails":
+            raise WorkspaceHookExitFailed("prepare hook failed")
+        if getattr(hook, "script", "") == "cleanup-fails":
+            raise OwnedProcessCleanupError("cleanup process ownership lost")
+
+    monkeypatch.setattr("ach_agent.execution.service.run_public_hook", failing_hooks)
+    app = create_execution_app(service)
+    async with _running_server(app) as base_url:
+        client = ExecutionClient(base_url, controller_id="controller", timeout=0.5)
+        try:
+            await client.connect()
+            request = _prepare(
+                tmp_path,
+                prepare={"script": "prepare-fails", "timeout_seconds": 2},
+                cleanup={"script": "cleanup-fails", "timeout_seconds": 2},
+            )
+            with pytest.raises(ExecutionClientError):
+                await client.prepare_workspace(request)
+            assert service._unhealthy
+            assert client._failed
+            with pytest.raises(ExecutionClientError):
+                await client.prepare_workspace(
+                    _prepare(tmp_path, invocation_id="peer", session_key="peer", prepare=None)
+                )
+        finally:
+            await client.close()
 
 
 @pytest.mark.asyncio

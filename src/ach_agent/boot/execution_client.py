@@ -44,6 +44,11 @@ from ach_agent.execution.wire import (
     WorkspaceStoppedEvent,
 )
 
+# Cancellation is a control-plane operation and must retain a finite safety bound
+# even when the caller did not provide an operation deadline.  The service owns a
+# ten-second native cleanup bound; this small margin covers HTTP response delivery.
+WORKSPACE_CANCEL_TIMEOUT_SECONDS = 15.0
+
 
 class ExecutionClientError(RuntimeError):
     """An HTTP or malformed execution response."""
@@ -423,7 +428,7 @@ class ExecutionClient:
                     "POST",
                     "/execution/v1/cancel",
                     json={"controller_id": controller_id, "invocation_id": invocation_id},
-                    timeout=None,
+                    timeout=WORKSPACE_CANCEL_TIMEOUT_SECONDS,
                 ),
             )
             if response.status_code < 200 or response.status_code >= 300:
@@ -487,6 +492,8 @@ class ExecutionClient:
                 except ValueError:
                     failure = None
                 if failure is not None:
+                    if not failure.confirmed:
+                        await self._confirm_workspace_cancel(body.controller_id, body.invocation_id)
                     raise WorkspaceOperationFailed(
                         failure.message,
                         status_code=response.status_code,

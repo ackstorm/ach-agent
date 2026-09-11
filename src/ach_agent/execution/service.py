@@ -206,7 +206,16 @@ class ExecutionService:
         if self._controller_id != controller_id:
             return
         self._admission_open = False
-        acquisition_tasks = list(self._acquire_tasks.values())
+        reserved_acquisitions = {
+            invocation_id
+            for invocation_id, reservation in self._workspace_reservations.items()
+            if reservation.acquiring
+        }
+        acquisition_tasks = [
+            task
+            for invocation_id, task in self._acquire_tasks.items()
+            if invocation_id not in reserved_acquisitions
+        ]
         workspace_tasks = list(self._workspace_tasks.values())
         operations: list[asyncio.Future[Any] | asyncio.Task[Any]] = []
         reservation_operations = [
@@ -560,18 +569,30 @@ class ExecutionService:
             deadline = loop.time() + remaining
             remaining = max(0.001, deadline - loop.time())
             server = await asyncio.wait_for(self.pool.acquire(request.lane_key, cfg), remaining)
+        except asyncio.CancelledError:
+            if reservation is not None and reservation.cleanup_task is not None:
+                raise
+            if reservation is not None:
+                await self._cancel_workspace_reservation(request.invocation_id, reservation)
+            raise
         except NativeLaunchFailed:
             # Driver launch owns process cleanup. The typed error is retained so an HTTP
             # adapter can serialize LaunchFailed without treating it as controller death.
+            if reservation is not None and reservation.cleanup_task is not None:
+                raise
             if reservation is not None:
                 await self._cancel_workspace_reservation(request.invocation_id, reservation)
             raise
         except Exception:
+            if reservation is not None and reservation.cleanup_task is not None:
+                raise
             if reservation is not None:
                 await self._cancel_workspace_reservation(request.invocation_id, reservation)
             self._mark_unhealthy()
             raise
         except BaseException:
+            if reservation is not None and reservation.cleanup_task is not None:
+                raise
             if reservation is not None:
                 await self._cancel_workspace_reservation(request.invocation_id, reservation)
             raise

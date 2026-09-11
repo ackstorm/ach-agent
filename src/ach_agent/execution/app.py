@@ -120,11 +120,13 @@ def _invalid(message: str) -> JSONResponse:
     return JSONResponse({"detail": message}, status_code=422)
 
 
-def _error_response(exc: Exception) -> JSONResponse:
+def _error_response(exc: Exception, *, workspace_confirmed: bool = True) -> JSONResponse:
     if isinstance(exc, (WorkspaceHookFailed, WorkspaceHandoffFailed)):
         return JSONResponse(
-            WorkspaceOperationFailure(message=str(exc), confirmed=True).model_dump(mode="json"),
-            status_code=422,
+            WorkspaceOperationFailure(message=str(exc), confirmed=workspace_confirmed).model_dump(
+                mode="json"
+            ),
+            status_code=422 if workspace_confirmed else 503,
         )
     if isinstance(exc, NativeLaunchFailed):
         return JSONResponse({"type": "LaunchFailed", "message": str(exc)}, status_code=502)
@@ -150,7 +152,7 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
     def service_error(exc: Exception) -> JSONResponse:
         if service.shutdown_requested:
             app.state.shutdown_requested = True
-        return _error_response(exc)
+        return _error_response(exc, workspace_confirmed=not service._unhealthy)
 
     @app.post("/execution/v1/controller", response_model=None)
     async def controller(request: Request) -> StreamingResponse | JSONResponse:

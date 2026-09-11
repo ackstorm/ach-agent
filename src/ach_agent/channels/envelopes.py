@@ -48,16 +48,12 @@ class EventEnvelope(BaseModel):
     source_trait: Literal["sync", "async_no_retry"]
     received_at: datetime
     task_id: str = ""
-    free_form: JsonValue = None
+    free_form: bool = False
 
-    _payload_finite = field_validator("payload", "delivery_context", "free_form")(
-        _finite_json
-    )
+    _payload_finite = field_validator("payload", "delivery_context", "free_form")(_finite_json)
 
     @classmethod
-    def from_message_event(
-        cls, event: MessageEvent, *, free_form: JsonValue = None
-    ) -> EventEnvelope:
+    def from_message_event(cls, event: MessageEvent, *, free_form: bool = False) -> EventEnvelope:
         """Project a known ``MessageEvent`` and reject its local callback sink."""
         if event.reply_future is not None:
             raise ValueError("reply_future cannot be serialized in an EventEnvelope")

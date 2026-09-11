@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import math
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -10,7 +12,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue, field_validator
 
 from ach_agent.channels.envelopes import EventRef
 from ach_agent.channels.message_event import MessageEvent
@@ -25,6 +27,10 @@ class Admission(StrEnum):
     FULL_QUEUE = "full_queue"
 
 
+class RegistryBusy(RuntimeError):
+    """The local completion metadata bound is full; retry admission later."""
+
+
 class Completion(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
@@ -33,6 +39,22 @@ class Completion(BaseModel):
     state: CompletionState
     result: JsonValue = None
     error: str | None = None
+
+    @field_validator("result")
+    @classmethod
+    def finite_result(cls, value: JsonValue) -> JsonValue:
+        def check(item: JsonValue) -> None:
+            if isinstance(item, float) and not math.isfinite(item):
+                raise ValueError("JSON numbers must be finite")
+            if isinstance(item, dict):
+                for child in item.values():
+                    check(child)
+            elif isinstance(item, list):
+                for child in item:
+                    check(child)
+
+        check(value)
+        return value
 
 
 class Submission(BaseModel):
@@ -70,13 +92,16 @@ class CompletionRegistry:
         max_waiters: int = 1024,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        if min(
-            max_active_entries,
-            max_completed_entries,
-            max_result_bytes,
-            max_completed_bytes,
-            max_waiters,
-        ) < 1:
+        if (
+            min(
+                max_active_entries,
+                max_completed_entries,
+                max_result_bytes,
+                max_completed_bytes,
+                max_waiters,
+            )
+            < 1
+        ):
             raise ValueError("registry limits must be positive")
         if retention_seconds < 0:
             raise ValueError("retention_seconds must be non-negative")
@@ -117,7 +142,7 @@ class CompletionRegistry:
                 completion=existing.completion.model_copy(deep=True),
             )
         if len(self._records) >= self._max_active:
-            return Submission(admission=Admission.FULL_QUEUE)
+            raise RegistryBusy("completion registry active-entry limit reached")
 
         completion = Completion(
             ref=ref,
@@ -126,6 +151,7 @@ class CompletionRegistry:
         )
         changed = asyncio.Event()
         owner = asyncio.create_task(self._admit(event, ref))
+        owner.add_done_callback(self._retrieve_owner_exception)
         self._records[key] = _Record(completion=completion, owner=owner, changed=changed)
         return await asyncio.shield(owner)
 
@@ -135,10 +161,15 @@ class CompletionRegistry:
         try:
             result = await self._router_handle(event)
         except BaseException:
+            self._mark_unavailable(record, "router admission failed")
             self._records.pop(key, None)
             raise
         if result is RouterAdmitResult.ACCEPTED:
-            return Submission(admission=Admission.ACCEPTED, completion=record.completion)
+            return Submission(
+                admission=Admission.ACCEPTED,
+                completion=record.completion.model_copy(deep=True),
+            )
+        self._mark_unavailable(record, "router rejected admission")
         self._records.pop(key, None)
         if result is RouterAdmitResult.FULL_QUEUE:
             return Submission(admission=Admission.FULL_QUEUE)
@@ -183,7 +214,7 @@ class CompletionRegistry:
             ref=ref,
             invocation_id=record.completion.invocation_id,
             state="failed" if error is not None else "completed",
-            result=result,
+            result=copy.deepcopy(result),
             error=error,
         )
         if len(candidate.model_dump_json().encode()) > self._max_result_bytes:
@@ -216,6 +247,19 @@ class CompletionRegistry:
             state="outcome_unavailable",
             error=error,
         )
+
+    @staticmethod
+    def _retrieve_owner_exception(task: asyncio.Task[Submission]) -> None:
+        if task.cancelled():
+            return
+        task.exception()
+
+    @staticmethod
+    def _mark_unavailable(record: _Record, error: str) -> None:
+        record.completion = record.completion.model_copy(
+            update={"state": "outcome_unavailable", "error": error}
+        )
+        record.changed.set()
 
     def _purge_expired(self) -> None:
         now = self._clock()

@@ -26,13 +26,13 @@ def make_event(**changes: object) -> MessageEvent:
 
 
 def test_event_envelope_round_trips_as_strict_json_projection() -> None:
-    envelope = EventEnvelope.from_message_event(make_event(), free_form={"mode": "test"})
+    envelope = EventEnvelope.from_message_event(make_event(), free_form=True)
 
     restored = EventEnvelope.model_validate_json(envelope.model_dump_json())
 
     assert restored == envelope
     assert "reply_future" not in envelope.model_dump()
-    assert restored.free_form == {"mode": "test"}
+    assert restored.free_form is True
 
 
 def test_event_envelope_rejects_callbacks_unknown_fields_and_nonfinite_values() -> None:

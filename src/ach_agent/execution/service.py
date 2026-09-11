@@ -747,6 +747,11 @@ class ExecutionService:
         except TimeoutError:
             task.add_done_callback(ExecutionService._observe_task)
             return False
+        except asyncio.CancelledError:
+            if task.done():
+                return True
+            task.add_done_callback(ExecutionService._observe_task)
+            raise
         except BaseException:
             return True
 
@@ -798,7 +803,8 @@ class ExecutionService:
         current = asyncio.current_task()
         deadline_task = inv.deadline_task
         if deadline_task is not current:
-            await self._cancel_and_join(deadline_task)
+            joined = await self._cancel_and_join(deadline_task)
+            native_uncertain = native_uncertain or not joined
         inv.deadline_task = None
 
         for attr in ("maintenance_task", "task", "wake_task"):
@@ -849,6 +855,7 @@ class ExecutionService:
 
         if native_uncertain:
             self._mark_unhealthy()
+            inv.cleanup_error = "native cleanup uncertain"
             release = False
             idle_ttl_seconds = 0.0
         native_remaining = max(0.001, native_deadline - asyncio.get_running_loop().time())
@@ -870,6 +877,7 @@ class ExecutionService:
                 await self.pool.discard(
                     inv.session_key,
                     native_timeout_seconds=native_remaining,
+                    run_cleanup=not native_uncertain,
                 )
         except asyncio.CancelledError:
             self._mark_unhealthy()
@@ -880,6 +888,10 @@ class ExecutionService:
             inv.cleanup_error = str(exc)
             raise
         else:
+            if inv.cleanup_error is not None:
+                raise RuntimeError(inv.cleanup_error)
+            if native_uncertain:
+                raise RuntimeError(inv.cleanup_error or "native cleanup uncertain")
             if self._invocations.get(inv.handle.invocation_id) is inv:
                 self._invocations.pop(inv.handle.invocation_id, None)
 
@@ -987,7 +999,10 @@ class ExecutionService:
         finally:
             wake = inv.wake_task
             if wake is not None:
-                await self._cancel_and_join(wake)
+                joined = await self._cancel_and_join(wake)
+                if not joined:
+                    self._mark_unhealthy()
+                    inv.cleanup_error = "invocation wake task did not stop"
                 if inv.wake_task is wake:
                     inv.wake_task = None
             if inv.turn_active and inv.cleanup_task is None:
@@ -1260,7 +1275,11 @@ class ExecutionService:
         finally:
             maintenance_task = inv.maintenance_task
             if maintenance_task is not None and maintenance_task is not asyncio.current_task():
-                await self._cancel_and_join(maintenance_task)
+                joined = await self._cancel_and_join(maintenance_task)
+                if not joined:
+                    self._mark_unhealthy()
+                    inv.cleanup_error = "maintenance task did not stop"
+                    raise RuntimeError(inv.cleanup_error)
             inv.maintenance_active = False
             if inv.maintenance_task is maintenance_task:
                 inv.maintenance_task = None

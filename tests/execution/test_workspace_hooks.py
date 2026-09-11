@@ -18,6 +18,9 @@ from ach_agent.boot.execution_client import (
     ExecutionClientError,
     WorkspaceOperationFailed,
 )
+from ach_agent.boot.private_prepare import PrivateCleanupRegistry
+from ach_agent.channels.message_event import MessageEvent
+from ach_agent.config.schema import PrepareBlock
 from ach_agent.engine.lifecycle import OwnedProcessCleanupError
 from ach_agent.engine.workspace import (
     WorkspaceHookExitFailed,
@@ -680,6 +683,30 @@ async def test_http_prepare_failure_reports_unconfirmed_cleanup_and_client_cance
 
 
 @pytest.mark.asyncio
+async def test_duplicate_prepare_preserves_live_cleanup_budget(fake_driver, tmp_path: Path) -> None:
+    service = ExecutionService(fake_driver, {})
+    app = create_execution_app(service)
+    async with _running_server(app) as base_url:
+        client = ExecutionClient(base_url, controller_id="controller", timeout=0.5)
+        try:
+            await client.connect()
+            request = _prepare(
+                tmp_path,
+                prepare=None,
+                cleanup={"script": "true", "timeout_seconds": 0.4},
+            )
+            await client.prepare_workspace(request)
+            assert client._cleanup_budgets[request.invocation_id] == 0.4
+            with pytest.raises(ExecutionClientError, match="already active"):
+                await client.prepare_workspace(request)
+            assert client._cleanup_budgets[request.invocation_id] == 0.4
+            await client.cancel("controller", request.invocation_id)
+            assert request.invocation_id not in client._cleanup_budgets
+        finally:
+            await client.close()
+
+
+@pytest.mark.asyncio
 async def test_uncertain_prepare_and_handoff_cleanup_make_service_unhealthy(
     fake_driver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -837,6 +864,102 @@ async def test_real_http_cleanup_ack_releases_existing_pool_callback(
             await client.ack_workspace_cleanup(event)
             await asyncio.wait_for(stopping, timeout=1)
         finally:
+            await client.close()
+
+
+@pytest.mark.asyncio
+async def test_real_http_registry_orders_warm_expiry_before_same_lane_prepare(
+    fake_driver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ExecutionService(fake_driver, {})
+    app = create_execution_app(service)
+    async def private_cleanup(*args: object, **kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr("ach_agent.boot.private_prepare.private_cleanup", private_cleanup)
+    registry = PrivateCleanupRegistry()
+    async with _running_server(app) as base_url:
+        client = ExecutionClient(base_url, controller_id="controller", timeout=1)
+        try:
+            await client.connect()
+            old = _prepare(
+                tmp_path,
+                prepare=None,
+                cleanup=None,
+                cleanup_ack_required=True,
+                cleanup_timeout_seconds=2,
+            )
+            old_event = MessageEvent(
+                idempotency_key=old.event_id,
+                session_key=old.session_key,
+                channel_name=old.channel_name,
+                delivery_context=old.delivery_context,
+            )
+            await registry.register(
+                old.invocation_id,
+                old_event,
+                Path(old.work_dir),
+                tmp_path / "scratch",
+                PrepareBlock.model_validate({"script": "true"}),
+            )
+            await client.prepare_workspace(old)
+            old_handle = await client.acquire(
+                AcquireRequest(
+                    controller_id="controller",
+                    invocation_id=old.invocation_id,
+                    lane_key=old.session_key,
+                    conversation_key=old.session_key,
+                    reuse=True,
+                    remaining_seconds=5,
+                    config=PublicEngineConfig(),
+                )
+            )
+            await client.release(
+                ReleaseRequest(
+                    controller_id="controller",
+                    execution_id=old_handle.execution_id,
+                    invocation_id=old.invocation_id,
+                    idle_ttl_seconds=0.01,
+                )
+            )
+            for _ in range(100):
+                if old.invocation_id in service._workspace_barriers:
+                    break
+                await asyncio.sleep(0.01)
+            assert old.invocation_id in service._workspace_barriers
+
+            new = _prepare(
+                tmp_path,
+                invocation_id="replacement",
+                event_id="event-2",
+                prepare=None,
+                cleanup=None,
+                cleanup_ack_required=False,
+            )
+            new_event = MessageEvent(
+                idempotency_key=new.event_id,
+                session_key=new.session_key,
+                channel_name=new.channel_name,
+                delivery_context=new.delivery_context,
+            )
+            await registry.register(
+                new.invocation_id,
+                new_event,
+                Path(new.work_dir),
+                tmp_path / "scratch",
+                PrepareBlock.model_validate({"script": "true"}),
+            )
+            preparing = asyncio.create_task(client.prepare_workspace(new))
+            await asyncio.sleep(0.05)
+            assert not preparing.done()
+            event = await asyncio.wait_for(client.next_controller_event(), timeout=1)
+            assert await registry.handle_event(event, client.ack_workspace_cleanup)
+            await asyncio.wait_for(preparing, timeout=1)
+            registry.commit(new.invocation_id)
+            registry.retire(new.invocation_id)
+            await client.cancel("controller", new.invocation_id)
+        finally:
+            await registry.close()
             await client.close()
 
 

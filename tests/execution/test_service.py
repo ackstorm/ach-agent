@@ -800,6 +800,37 @@ async def test_warm_expiry_failure_marks_service_unhealthy(fake_driver):
 
 
 @pytest.mark.asyncio
+async def test_native_uncertain_cleanup_fails_cancel_even_if_stop_returns(
+    fake_driver, monkeypatch
+):
+    monkeypatch.setattr("ach_agent.execution.service.CLEANUP_DEADLINE_SECONDS", 0.03)
+    service = ExecutionService(fake_driver, {})
+    await service.acquire(_acquire())
+    inv = service._invocations["inv"]
+    still_running = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def cancellation_resistant() -> None:
+        still_running.set()
+        while not finish.is_set():
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                continue
+
+    inv.task = asyncio.create_task(cancellation_resistant())
+    await still_running.wait()
+    cancel = asyncio.create_task(service.cancel("controller", "inv"))
+    with pytest.raises(RuntimeError, match="native cleanup uncertain"):
+        await asyncio.wait_for(cancel, timeout=1)
+    assert service._unhealthy
+    assert not inv.task.done()
+    finish.set()
+    inv.task.cancel()
+    await asyncio.wait_for(asyncio.gather(inv.task, return_exceptions=True), timeout=1)
+
+
+@pytest.mark.asyncio
 async def test_cleanup_timeout_closes_admission_when_stop_suppresses_cancel(
     fake_driver, monkeypatch
 ):

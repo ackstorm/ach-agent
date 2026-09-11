@@ -184,7 +184,7 @@ async def test_private_cleanup_registry_correlates_and_acknowledges_event(
 ) -> None:
     event = _event()
     cfg = PrepareBlock.model_validate({"script": "true"})
-    registry = PrivateCleanupRegistry(max_contexts=2, max_concurrent=1)
+    registry = PrivateCleanupRegistry(max_contexts=2)
     await registry.register(
         "invocation",
         event,
@@ -220,60 +220,38 @@ async def test_private_cleanup_registry_correlates_and_acknowledges_event(
     await registry.close()
 
 
-async def test_private_cleanup_registry_finishes_active_lane_before_replacement(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_private_cleanup_registry_dispatches_all_bounded_callbacks(
+    tmp_path: Path,
 ) -> None:
-    event = _event()
-    replacement = _event(2)
     cfg = PrepareBlock.model_validate({"script": "true"})
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def controlled_cleanup(
-        _cfg: PrepareBlock, cleanup_event: MessageEvent, _workspace: Path, _scratch: Path
-    ) -> None:
-        if cleanup_event.idempotency_key == event.idempotency_key:
-            started.set()
-            await release.wait()
-
-    monkeypatch.setattr("ach_agent.boot.private_prepare.private_cleanup", controlled_cleanup)
-    registry = PrivateCleanupRegistry(max_contexts=4, max_concurrent=2)
-    await registry.register("old", event, tmp_path / "workspace", tmp_path / "scratch", cfg)
-    old_stopped = WorkspaceStoppedEvent(
-        controller_id="controller",
-        instance_id="instance",
-        session_key=event.session_key,
-        event_id=event.idempotency_key,
-        invocation_id="old",
-        workspace=str(tmp_path / "workspace"),
-    )
     acknowledgements: list[str] = []
-    assert await registry.handle_event(
-        old_stopped, lambda value: _record_ack(acknowledgements, value)
-    )
-    await asyncio.wait_for(started.wait(), timeout=1)
-
-    await registry.register(
-        "replacement", replacement, tmp_path / "workspace", tmp_path / "scratch", cfg
-    )
-    registry.commit("replacement")
-    replacement_stopped = old_stopped.model_copy(
-        update={
-            "event_id": replacement.idempotency_key,
-            "invocation_id": "replacement",
-        }
-    )
-    assert await registry.handle_event(
-        replacement_stopped, lambda value: _record_ack(acknowledgements, value)
-    )
-    await asyncio.sleep(0)
-    assert acknowledgements == []
-    release.set()
+    registry = PrivateCleanupRegistry(max_contexts=64)
+    stopped: list[WorkspaceStoppedEvent] = []
+    for number in range(10):
+        event = _event(number + 1)
+        invocation_id = f"invocation-{number}"
+        await registry.register(
+            invocation_id, event, tmp_path / "workspace", tmp_path / "scratch", cfg
+        )
+        stopped.append(
+            WorkspaceStoppedEvent(
+                controller_id="controller",
+                instance_id="instance",
+                session_key=event.session_key,
+                event_id=event.idempotency_key,
+                invocation_id=invocation_id,
+                workspace=str(tmp_path / "workspace"),
+            )
+        )
+    for item in stopped:
+        assert await registry.handle_event(
+            item, lambda value: _record_ack(acknowledgements, value)
+        )
     for _ in range(100):
-        if acknowledgements == ["old", "replacement"]:
+        if len(acknowledgements) == len(stopped):
             break
         await asyncio.sleep(0.01)
-    assert acknowledgements == ["old", "replacement"]
+    assert sorted(acknowledgements) == sorted(item.invocation_id for item in stopped)
     await registry.close()
 
 

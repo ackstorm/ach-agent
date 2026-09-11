@@ -649,6 +649,8 @@ class ExecutionClient:
 
     async def prepare_workspace(self, request: WorkspacePrepareRequest) -> dict[str, str]:
         """Prepare a public workspace before native acquisition."""
+        if request.invocation_id in self._cleanup_budgets:
+            raise ExecutionClientError("workspace preparation is already active")
         self._cleanup_budgets[request.invocation_id] = request.cleanup_budget_seconds
         try:
             result = await self._workspace_json_request("/execution/v1/workspace/prepare", request)

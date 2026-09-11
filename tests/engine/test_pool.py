@@ -271,6 +271,36 @@ async def test_ttl_expiry_stops_engine_before_cleanup() -> None:
     assert order == ["stop", "cleanup"]
 
 
+async def test_stop_all_joins_cancellation_resistant_ttl_stop() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    driver = MagicMock(engine_type="test")
+
+    async def stop(_server: ManagedServer) -> None:
+        started.set()
+        while not release.is_set():
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                continue
+
+    driver.stop = stop
+    server = _make_fake_server()
+    pool = EnginePool(driver=driver)
+    pool._start_server = AsyncMock(return_value=server)
+    await pool.acquire("k1", _real_config())
+    await pool.release("k1", ttl_seconds=0.01)
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    stopping = asyncio.create_task(pool.stop_all())
+    await asyncio.sleep(0.05)
+    assert not stopping.done()
+    assert "k1" in pool._servers
+    release.set()
+    await asyncio.wait_for(stopping, timeout=1)
+    assert "k1" not in pool._servers
+
+
 async def test_ttl_zero_runs_cleanup_immediately() -> None:
     cleanup = AsyncMock()
     pool = EnginePool()

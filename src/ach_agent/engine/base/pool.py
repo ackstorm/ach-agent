@@ -263,6 +263,7 @@ class EnginePool:
         self._servers: dict[str, ManagedServer] = {}
         self._ref_counts: dict[str, int] = {}
         self._ttl_tasks: dict[str, asyncio.Task[None]] = {}
+        self._native_stop_tasks: dict[int, asyncio.Task[None]] = {}
         self._cleanups: dict[str, CleanupCallback] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._driver: EngineDriver = driver if driver is not None else OpencodeDriver()
@@ -340,12 +341,22 @@ class EnginePool:
             if native_timeout_seconds is None
             else max(0.001, native_timeout_seconds)
         )
-        task = asyncio.create_task(self._driver.stop(server))
+        key = id(server)
+        task = self._native_stop_tasks.get(key)
+        if task is None or task.done():
+            task = asyncio.create_task(self._driver.stop(server))
+            self._native_stop_tasks[key] = task
         try:
             await asyncio.wait_for(asyncio.shield(task), timeout)
         except TimeoutError:
             task.add_done_callback(self._observe_stop)
             raise TimeoutError("native cleanup deadline expired") from None
+        except asyncio.CancelledError:
+            task.add_done_callback(self._observe_stop)
+            raise
+        finally:
+            if task.done() and self._native_stop_tasks.get(key) is task:
+                self._native_stop_tasks.pop(key, None)
 
     async def acquire(self, session_key: str, config: EngineConfig) -> ManagedServer:
         """Acquire the server for session_key, reusing an alive one or starting new.
@@ -501,17 +512,31 @@ class EnginePool:
             await self._stop_locked(session_key)
 
     async def discard(
-        self, session_key: str, *, native_timeout_seconds: float | None = None
+        self,
+        session_key: str,
+        *,
+        native_timeout_seconds: float | None = None,
+        run_cleanup: bool = True,
     ) -> None:
-        await self._stop(session_key, native_timeout_seconds)
+        await self._stop(session_key, native_timeout_seconds, run_cleanup=run_cleanup)
 
-    async def _stop(self, session_key: str, native_timeout_seconds: float | None = None) -> None:
+    async def _stop(
+        self,
+        session_key: str,
+        native_timeout_seconds: float | None = None,
+        *,
+        run_cleanup: bool = True,
+    ) -> None:
         """Stop and drop the server for one key (idempotent)."""
         async with self._get_lock(session_key):
-            await self._stop_locked(session_key, native_timeout_seconds)
+            await self._stop_locked(session_key, native_timeout_seconds, run_cleanup=run_cleanup)
 
     async def _stop_locked(
-        self, session_key: str, native_timeout_seconds: float | None = None
+        self,
+        session_key: str,
+        native_timeout_seconds: float | None = None,
+        *,
+        run_cleanup: bool = True,
     ) -> None:
         ttl_task = self._ttl_tasks.pop(session_key, None)
         if ttl_task is not None and ttl_task is not asyncio.current_task() and not ttl_task.done():
@@ -534,7 +559,7 @@ class EnginePool:
                         stop_failed = True
                         raise
 
-            if cleanup is not None:
+            if cleanup is not None and run_cleanup:
                 try:
                     await cleanup()
                 except asyncio.CancelledError:
@@ -548,6 +573,9 @@ class EnginePool:
                     if self._strict_cleanup:
                         stop_failed = True
                         raise
+        except asyncio.CancelledError:
+            stop_failed = True
+            raise
         finally:
             if not stop_failed:
                 self._servers.pop(session_key, None)
@@ -555,10 +583,13 @@ class EnginePool:
 
     async def stop_all(self) -> None:
         """Stop every live server and clear the pool (shutdown / tui exit)."""
-        for task in list(self._ttl_tasks.values()):
+        ttl_tasks = list(self._ttl_tasks.values())
+        for task in ttl_tasks:
             if not task.done():
                 task.cancel()
         self._ttl_tasks.clear()
+        if ttl_tasks:
+            await asyncio.gather(*ttl_tasks, return_exceptions=True)
         keys = set(self._servers) | set(self._cleanups)
         for session_key in keys:
             await self._stop(session_key)

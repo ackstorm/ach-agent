@@ -70,22 +70,19 @@ class _PrivateCleanupContext:
 class PrivateCleanupRegistry:
     """Bounded harness-private cleanup contexts for correlated engine stop events.
 
-    The runner registers context before public preparation starts.  A controller event
+    The runner registers context before public preparation starts. A controller event
     selects only its stored invocation/session/event correlation; no event supplies a
-    private path or hook.  Cleanup tasks run concurrently up to ``max_concurrent`` so
-    one slow lane cannot block ACKs for unrelated lanes.
+    private path or hook. Cleanup tasks are bounded by the stored-context limit, so one
+    slow lane cannot block ACKs for unrelated lanes.
     """
 
-    def __init__(self, *, max_contexts: int = 64, max_concurrent: int = 8) -> None:
-        if max_contexts <= 0 or max_concurrent <= 0:
+    def __init__(self, *, max_contexts: int = 64) -> None:
+        if max_contexts <= 0:
             raise ValueError("cleanup registry bounds must be positive")
         self._max_contexts = max_contexts
         self._contexts: dict[str, _PrivateCleanupContext] = {}
-        self._latest_by_session: dict[str, str] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         self._task_by_invocation: dict[str, asyncio.Task[None]] = {}
-        self._lane_tasks: dict[str, asyncio.Task[None]] = {}
-        self._max_concurrent = max_concurrent
         self._closed = False
 
     async def register(
@@ -106,7 +103,6 @@ class PrivateCleanupRegistry:
         self._contexts[invocation_id] = _PrivateCleanupContext(
             invocation_id, event, workspace, scratch_root, cfg
         )
-        self._latest_by_session[event.session_key] = invocation_id
 
     def commit(self, invocation_id: str) -> None:
         """Commit a successful new prepare and retire superseded pending contexts."""
@@ -122,12 +118,14 @@ class PrivateCleanupRegistry:
 
     def retire(self, invocation_id: str) -> None:
         """Remove an unused context after prepare cancellation or failed admission."""
-        context = self._contexts.pop(invocation_id, None)
-        if (
-            context is not None
-            and self._latest_by_session.get(context.event.session_key) == invocation_id
-        ):
-            self._latest_by_session.pop(context.event.session_key, None)
+        self._contexts.pop(invocation_id, None)
+
+    @staticmethod
+    def _observe_task(task: asyncio.Task[None]) -> None:
+        try:
+            task.result()
+        except BaseException as exc:
+            log.warning("cleanup: private callback failed", error=str(exc))
 
     async def handle_event(
         self,
@@ -142,26 +140,15 @@ class PrivateCleanupRegistry:
             context is None
             or context.event.idempotency_key != event.event_id
             or context.event.session_key != event.session_key
-            or len(self._tasks) >= self._max_concurrent
         ):
             return False
         self._contexts.pop(event.invocation_id, None)
-        if self._latest_by_session.get(event.session_key) == event.invocation_id:
-            self._latest_by_session.pop(event.session_key, None)
-        previous = self._lane_tasks.get(event.session_key)
-        task = asyncio.create_task(
-            self._cleanup_and_ack(context, event, acknowledge, previous=previous)
-        )
+        task = asyncio.create_task(self._cleanup_and_ack(context, event, acknowledge))
         self._tasks.add(task)
         self._task_by_invocation[event.invocation_id] = task
-        self._lane_tasks[event.session_key] = task
         task.add_done_callback(self._tasks.discard)
         task.add_done_callback(lambda _: self._task_by_invocation.pop(event.invocation_id, None))
-        task.add_done_callback(
-            lambda done: self._lane_tasks.pop(event.session_key, None)
-            if self._lane_tasks.get(event.session_key) is done
-            else None
-        )
+        task.add_done_callback(self._observe_task)
         return True
 
     async def _cleanup_and_ack(
@@ -169,11 +156,7 @@ class PrivateCleanupRegistry:
         context: _PrivateCleanupContext,
         event: WorkspaceStoppedEvent,
         acknowledge: Callable[[WorkspaceStoppedEvent], Awaitable[None]],
-        *,
-        previous: asyncio.Task[None] | None,
     ) -> None:
-        if previous is not None and previous is not asyncio.current_task():
-            await asyncio.shield(previous)
         try:
             await private_cleanup(
                 context.cfg,
@@ -197,7 +180,6 @@ class PrivateCleanupRegistry:
         """Retire all pending contexts and cancel owned cleanup tasks."""
         self._closed = True
         self._contexts.clear()
-        self._latest_by_session.clear()
         tasks = tuple(self._tasks)
         for task in tasks:
             if not task.done():
@@ -206,7 +188,6 @@ class PrivateCleanupRegistry:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
         self._task_by_invocation.clear()
-        self._lane_tasks.clear()
 
 
 def _reject_tree(root: Path) -> None:

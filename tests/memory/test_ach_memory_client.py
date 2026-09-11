@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -225,6 +226,9 @@ async def test_the_configured_endpoint_is_used_verbatim(monkeypatch) -> None:
         isError = False
 
     class _Session:
+        async def list_tools(self):
+            return SimpleNamespace(tools=[SimpleNamespace(name="recall")])
+
         async def call_tool(self, tool, args):
             return _Result()
 
@@ -255,6 +259,9 @@ async def test_every_call_carries_the_credential_and_an_identity(monkeypatch) ->
         isError = False
 
     class _Session:
+        async def list_tools(self):
+            return SimpleNamespace(tools=[SimpleNamespace(name="recall")])
+
         async def call_tool(self, tool, args):
             return _Result()
 
@@ -329,3 +336,127 @@ def test_a_task_group_failure_names_its_cause() -> None:
     group = ExceptionGroup("unhandled errors in a TaskGroup", [ConnectionRefusedError("port 0")])
     assert am._describe(group) == "ConnectionRefusedError: port 0"
     assert am._describe(ValueError("plain")) == "ValueError: plain"
+
+
+# ---------------------------------------------------------------------------
+# advertised_name — the same service, direct and behind a renaming gateway
+# ---------------------------------------------------------------------------
+
+# What LiteLLM actually advertises for ach-memory through ACH's gateway, measured
+# 2026-09-11 against https://ach.ackstorm.ai/mcp/ach-memory: 27 tools, every one prefixed.
+_GATEWAY = {f"ach-memory.{t}" for t in ("recall", "retain", "sync_retain", "load_context")}
+
+
+def test_an_unprefixed_server_is_answered_with_the_bare_name() -> None:
+    """A direct ach-memory endpoint renames nothing, so nothing here may rewrite it."""
+    assert am.advertised_name({"recall", "retain"}, "recall") == "recall"
+
+
+def test_a_gateway_prefix_is_resolved_to_what_the_server_advertises() -> None:
+    assert am.advertised_name(_GATEWAY, "recall") == "ach-memory.recall"
+    assert am.advertised_name(_GATEWAY, "load_context") == "ach-memory.load_context"
+
+
+@pytest.mark.parametrize("sep", [".", "-", "/"])
+def test_every_prefix_separator_resolves(sep: str) -> None:
+    assert am.advertised_name({f"gw{sep}recall"}, "recall") == f"gw{sep}recall"
+
+
+def test_underscore_is_not_a_separator_so_sync_retain_never_answers_retain() -> None:
+    """`sync_retain` writes a whole batch. Matching it for `retain` would send one claim's
+    arguments to the batch tool — the wrong call, with no error to say so."""
+    assert am.advertised_name({"ach-memory.sync_retain"}, "retain") == "retain"
+
+
+def test_an_unadvertised_tool_keeps_the_bare_name() -> None:
+    """0 matches is not proof the tool is absent — the bare name is still worth trying."""
+    assert am.advertised_name({"ach-memory.recall"}, "reflect") == "reflect"
+
+
+def test_an_ambiguous_match_refuses_to_guess() -> None:
+    """Two servers aggregated under one endpoint. Picking either would call a DIFFERENT
+    tenant's memory with this tenant's arguments; failing the call is the safe outcome."""
+    assert am.advertised_name({"a.recall", "b.recall"}, "recall") == "recall"
+
+
+@pytest.mark.asyncio
+async def test_the_call_uses_the_advertised_name_not_the_bare_one(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    class _Result:
+        content = ()
+        isError = False
+
+    class _Session:
+        async def list_tools(self):
+            return SimpleNamespace(tools=[SimpleNamespace(name=n) for n in _GATEWAY])
+
+        async def call_tool(self, tool, args):
+            seen["tool"] = tool
+            return _Result()
+
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def fake_session(endpoint, headers):
+        yield _Session()
+
+    monkeypatch.setattr(am, "mcp_session", fake_session)
+    await am.call_ach_memory("http://m/mcp/", {}, "recall", {})
+    assert seen["tool"] == "ach-memory.recall"
+
+
+@pytest.mark.asyncio
+async def test_a_server_that_will_not_enumerate_still_gets_the_call(monkeypatch) -> None:
+    """tools/list is how the name is chosen, not whether the call happens. A gateway that
+    refuses to enumerate but still dispatches must not degrade a working memory."""
+    seen: dict[str, object] = {}
+
+    class _Result:
+        content = ()
+        isError = False
+
+    class _Session:
+        async def list_tools(self):
+            raise RuntimeError("tools/list not supported")
+
+        async def call_tool(self, tool, args):
+            seen["tool"] = tool
+            return _Result()
+
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def fake_session(endpoint, headers):
+        yield _Session()
+
+    monkeypatch.setattr(am, "mcp_session", fake_session)
+    await am.call_ach_memory("http://m/mcp/", {}, "recall", {})
+    assert seen["tool"] == "recall"
+
+
+@pytest.mark.asyncio
+async def test_the_error_names_the_tool_the_caller_asked_for(monkeypatch) -> None:
+    """The wire name is an implementation detail of the hop; the harness's own name is what
+    makes a degraded-memory log searchable."""
+
+    class _Result:
+        content = (SimpleNamespace(text="boom"),)
+        isError = True
+
+    class _Session:
+        async def list_tools(self):
+            return SimpleNamespace(tools=[SimpleNamespace(name="ach-memory.recall")])
+
+        async def call_tool(self, tool, args):
+            return _Result()
+
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def fake_session(endpoint, headers):
+        yield _Session()
+
+    monkeypatch.setattr(am, "mcp_session", fake_session)
+    with pytest.raises(RuntimeError, match="'recall'"):
+        await am.call_ach_memory("http://m/mcp/", {}, "recall", {})

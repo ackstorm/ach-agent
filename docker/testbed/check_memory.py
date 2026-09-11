@@ -31,7 +31,12 @@ from ach_agent.config.schema import (  # noqa: E402
     AchMemoryAuthAch,
     AchMemoryAuthBearer,
 )
+from ach_agent.engine.mcp_session import mcp_session  # noqa: E402
+from ach_agent.identity import with_identity_headers  # noqa: E402
 from ach_agent.memory.ach_memory import (  # noqa: E402
+    ACH_MEMORY_LOAD_CONTEXT,
+    ACH_MEMORY_TOOLS,
+    advertised_name,
     call_ach_memory,
     fetch_context,
     prepare_ach_memory,
@@ -125,6 +130,25 @@ async def main() -> int:
         print(f"\n{len(failures)} failed")
         return 1
     facade = AchMemoryFacade(ENDPOINT, headers, PROJECT)
+
+    # 0a. NAMING — the harness asks for `recall`; a gateway that aggregates several servers
+    # advertises it as `ach-memory.recall`. Measured 2026-09-11 through ACH: all 27 prefixed.
+    # Bare names still dispatched then, so the only thing that catches a regression here is
+    # comparing what we send against what the server says it has.
+    async with mcp_session(ENDPOINT, with_identity_headers(headers)) as session:
+        listed = await session.list_tools()
+    advertised = {tool.name for tool in listed.tools}
+    # One page only: ClientSession.list_tools() does NOT follow nextCursor, so a paginated
+    # server would hand us a partial set and every name past page 1 would silently fall back
+    # to bare — working today, broken the day the gateway stops accepting bare names.
+    check("tools/list is a single page", listed.nextCursor is None, str(listed.nextCursor))
+    unresolved = [
+        tool
+        for tool in (*ACH_MEMORY_TOOLS, ACH_MEMORY_LOAD_CONTEXT)
+        if advertised_name(advertised, tool) not in advertised
+    ]
+    check("every tool the harness calls resolves to an advertised name",
+          not unresolved, f"unresolved: {unresolved} of {len(advertised)} advertised")
 
     # 0. COLD START — the acceptance test for the whole backend, and the one check that
     # must never be made to pass by a setup step. Nothing bootstraps this project: an agent

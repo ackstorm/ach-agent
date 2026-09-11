@@ -160,6 +160,28 @@ def resolve_ach_memory_auth(auth: AchMemoryAuth | None, ek: str | None) -> tuple
     return True, {auth.header: value}
 
 
+# A gateway that aggregates several MCP servers namespaces what it advertises: LiteLLM
+# serves ach-memory's `recall` as `ach-memory.recall`. '_' is deliberately NOT a separator
+# here — `sync_retain` ends with `_retain`, and treating it as one would silently route a
+# `retain` at the tool that writes a whole batch.
+_PREFIXED_TOOL = re.compile(r"^.+[.\-/](?P<tool>[a-z_]+)$")
+
+
+def advertised_name(advertised: set[str], tool: str) -> str:
+    """What THIS server calls ``tool``. Falls back to the bare name when unsure.
+
+    An exact match always wins, so a direct ach-memory endpoint (which prefixes nothing)
+    never pays for this. Only a single unambiguous prefixed candidate is accepted: 0 matches
+    means the server does not advertise it and the bare name is still worth trying, and 2+
+    means we cannot tell which one was meant — guessing there would call the wrong tool with
+    the right arguments, which is worse than the call failing.
+    """
+    if tool in advertised:
+        return tool
+    hits = [n for n in advertised if (m := _PREFIXED_TOOL.match(n)) and m["tool"] == tool]
+    return hits[0] if len(hits) == 1 else tool
+
+
 async def call_ach_memory(
     endpoint: str, headers: Headers, tool: str, args: dict[str, object]
 ) -> str:
@@ -173,11 +195,22 @@ async def call_ach_memory(
     gateway. A client that appends its own `/mcp` is how requests end up at `/mcp/mcp/`
     (ach-memory's own cli.py carries the scar).
 
+    The tool is named by asking the server rather than by assuming, because the same
+    ach-memory is reachable both directly and behind a gateway that renames what it proxies
+    (see :func:`advertised_name`). The lookup is free: ``call_tool`` validates its result
+    against the output schema and would fire this exact ``tools/list`` itself on the miss a
+    per-call session guarantees — doing it first only decides which name to send.
+
     Identity headers are stamped here rather than by each caller, so every harness→ach-memory
     request is attributable the same way as every other ACH hop (mcp_proxy, hydrate, a2a).
     """
     async with mcp_session(endpoint, identity.with_identity_headers(headers)) as s:
-        result = await s.call_tool(tool, args)
+        try:
+            wire_name = advertised_name({t.name for t in (await s.list_tools()).tools}, tool)
+        except Exception as exc:  # a server that will not enumerate can still dispatch
+            log.warning("ach-memory: tools/list failed — calling by bare name", error=str(exc))
+            wire_name = tool
+        result = await s.call_tool(wire_name, args)
         text: str = getattr(result.content[0], "text", "") if result.content else ""
         # A tool-level error arrives as a NORMAL result with isError=True, not an exception.
         # Raise so every caller degrades loudly instead of the error text masquerading as

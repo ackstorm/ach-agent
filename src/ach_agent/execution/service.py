@@ -84,6 +84,10 @@ class _WorkspaceReservation:
     workspace: Path
     deadline: float
     acquiring: bool = False
+    cancel_requested: bool = False
+    cleanup_task: asyncio.Task[None] | None = None
+    cleanup_owner: asyncio.Task[Any] | None = None
+    skip_operation: asyncio.Task[Any] | None = None
 
 
 class OutputLimitExceeded(RuntimeError):
@@ -156,6 +160,7 @@ class ExecutionService:
         self._controller_cleanup_task: asyncio.Task[None] | None = None
         self._workspace_tasks: dict[str, asyncio.Task[Any]] = {}
         self._workspace_reservations: dict[str, _WorkspaceReservation] = {}
+        self._workspace_cancelled: set[str] = set()
         self.workspace_cleanup_errors: list[str] = []
         self._controller_events: asyncio.Queue[WorkspaceStoppedEvent] | None = None
 
@@ -204,10 +209,11 @@ class ExecutionService:
         acquisition_tasks = list(self._acquire_tasks.values())
         workspace_tasks = list(self._workspace_tasks.values())
         operations: list[asyncio.Future[Any] | asyncio.Task[Any]] = []
+        reservation_operations = [
+            asyncio.create_task(self._cancel_workspace_reservation(invocation_id, reservation))
+            for invocation_id, reservation in tuple(self._workspace_reservations.items())
+        ]
         for task in acquisition_tasks:
-            if task is not asyncio.current_task():
-                task.cancel()
-        for task in workspace_tasks:
             if task is not asyncio.current_task():
                 task.cancel()
         for inv in list(self._invocations.values()):
@@ -218,6 +224,8 @@ class ExecutionService:
                 await asyncio.gather(*acquisition_tasks, return_exceptions=True)
             if workspace_tasks:
                 await asyncio.gather(*workspace_tasks, return_exceptions=True)
+            if reservation_operations:
+                await asyncio.gather(*reservation_operations, return_exceptions=False)
             if operations:
                 await asyncio.gather(*operations, return_exceptions=False)
             await self.pool.stop_all()
@@ -237,6 +245,7 @@ class ExecutionService:
         self._controller_id = None
         self._workspace_tasks.clear()
         self._workspace_reservations.clear()
+        self._workspace_cancelled.clear()
         self._controller_events = None
 
     def controller_events(self) -> asyncio.Queue[WorkspaceStoppedEvent] | None:
@@ -282,51 +291,76 @@ class ExecutionService:
     async def _cancel_workspace_reservation(
         self, invocation_id: str, reservation: _WorkspaceReservation
     ) -> None:
+        if reservation.cleanup_task is None:
+            reservation.cancel_requested = True
+            current = asyncio.current_task()
+            reservation.cleanup_owner = current
+            if reservation.acquiring and current is self._acquire_tasks.get(invocation_id):
+                reservation.skip_operation = current
+            reservation.cleanup_task = asyncio.create_task(
+                self._finish_workspace_reservation(invocation_id, reservation)
+            )
+        task = reservation.cleanup_task
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            task.add_done_callback(self._observe_task)
+            raise
+
+    async def _finish_workspace_reservation(
+        self, invocation_id: str, reservation: _WorkspaceReservation
+    ) -> None:
         deadline = asyncio.get_running_loop().time() + CLEANUP_DEADLINE_SECONDS
-        task = self._workspace_tasks.get(invocation_id)
-        if task is None:
-            task = self._acquire_tasks.get(invocation_id)
-        task_error: BaseException | None = None
-        uncertain = False
-        if task is not None and task is not asyncio.current_task():
-            task.cancel()
+        operation = self._workspace_tasks.get(invocation_id)
+        if operation is None:
+            operation = self._acquire_tasks.get(invocation_id)
+        operation_error: BaseException | None = None
+        if operation is not None and operation not in (
+            asyncio.current_task(),
+            reservation.skip_operation,
+        ):
+            operation.cancel()
             try:
                 remaining = max(0.001, deadline - asyncio.get_running_loop().time())
-                await asyncio.wait_for(asyncio.shield(task), remaining)
+                await asyncio.wait_for(asyncio.shield(operation), remaining)
             except asyncio.CancelledError:
                 pass
             except TimeoutError as exc:
-                uncertain = True
-                task_error = exc
-                task.add_done_callback(self._observe_task)
+                operation_error = exc
+                operation.add_done_callback(self._observe_task)
+                self._mark_unhealthy()
             except BaseException as exc:
-                task_error = exc
+                operation_error = exc
                 if isinstance(exc, OwnedProcessCleanupError):
                     self._mark_unhealthy()
-        if uncertain:
-            self._mark_unhealthy()
         try:
             remaining = max(0.001, deadline - asyncio.get_running_loop().time())
-            await asyncio.wait_for(
-                asyncio.shield(self.pool.discard(reservation.request.session_key)),
-                remaining,
-            )
-        except TimeoutError as exc:
-            self._mark_unhealthy()
-            if task_error is None:
-                task_error = exc
-        except BaseException as exc:
-            self._mark_unhealthy()
-            if task_error is None:
-                task_error = exc
+            discard_task = asyncio.create_task(self.pool.discard(reservation.request.session_key))
+            try:
+                await asyncio.wait_for(asyncio.shield(discard_task), remaining)
+                if self._unhealthy and operation_error is None:
+                    operation_error = RuntimeError("workspace cleanup failed; service is unhealthy")
+            except TimeoutError as exc:
+                self._mark_unhealthy()
+                discard_task.add_done_callback(self._observe_task)
+                if operation_error is None:
+                    operation_error = exc
+            except BaseException as exc:
+                self._mark_unhealthy()
+                if operation_error is None:
+                    operation_error = exc
         finally:
             self._workspace_reservations.pop(invocation_id, None)
-        if task_error is not None:
-            raise task_error
+            self._workspace_cancelled.add(invocation_id)
+            if len(self._workspace_cancelled) > 64:
+                self._workspace_cancelled.pop()
+        if operation_error is not None:
+            raise operation_error
 
     async def prepare_workspace(self, request: WorkspacePrepareRequest) -> dict[str, str]:
         """Run the public hook and register its latest cleanup before native acquire."""
         self._assert_controller(request.controller_id)
+        self._workspace_cancelled.discard(request.invocation_id)
         if request.invocation_id in self._workspace_reservations:
             raise ValueError("workspace reservation already exists")
         if request.invocation_id in self._invocations or request.invocation_id in self._acquiring:
@@ -415,22 +449,38 @@ class ExecutionService:
             reservation.workspace = workspace
             completed = True
             return {"status": "ok", "workspace": str(workspace)}
+        except asyncio.CancelledError:
+            if reservation.cleanup_task is not None:
+                raise
+            reservation.cancel_requested = True
+            reservation.skip_operation = asyncio.current_task()
+            if reservation.cleanup_task is None:
+                reservation.cleanup_task = asyncio.create_task(
+                    self._finish_workspace_reservation(request.invocation_id, reservation)
+                )
+            try:
+                await asyncio.shield(reservation.cleanup_task)
+            except asyncio.CancelledError:
+                reservation.cleanup_task.add_done_callback(self._observe_task)
+            raise
         except OwnedProcessCleanupError:
             self._mark_unhealthy()
-            try:
-                await asyncio.shield(self.pool.discard(request.session_key))
-            except BaseException:
-                self._mark_unhealthy()
+            if not reservation.cancel_requested:
+                try:
+                    await asyncio.shield(self.pool.discard(request.session_key))
+                except BaseException:
+                    self._mark_unhealthy()
             raise
         except BaseException:
-            try:
-                await asyncio.shield(self.pool.discard(request.session_key))
-            except BaseException:
-                self._mark_unhealthy()
+            if not reservation.cancel_requested:
+                try:
+                    await asyncio.shield(self.pool.discard(request.session_key))
+                except BaseException:
+                    self._mark_unhealthy()
             raise
         finally:
             self._workspace_tasks.pop(request.invocation_id, None)
-            if not completed:
+            if not completed and not reservation.cancel_requested:
                 self._workspace_reservations.pop(request.invocation_id, None)
 
     async def handoff_workspace(self, request: WorkspaceHandoffRequest) -> dict[str, str]:
@@ -441,6 +491,8 @@ class ExecutionService:
             raise ValueError("workspace reservation controller mismatch")
         if reservation.request.session_key != request.session_key:
             raise ValueError("workspace reservation lane mismatch")
+        if reservation.acquiring or request.invocation_id in self._acquire_tasks:
+            raise ValueError("workspace reservation is acquiring")
         if (
             reservation.request.home != request.home
             or reservation.request.work_dir != request.work_dir
@@ -487,6 +539,11 @@ class ExecutionService:
             if reservation.acquiring:
                 raise ValueError("workspace reservation is already acquiring")
             reservation.acquiring = True
+        elif any(
+            item.request.session_key == request.lane_key
+            for item in self._workspace_reservations.values()
+        ):
+            raise ValueError("workspace lane has a pending reservation")
         cfg = _engine_config(request.config)
         self._acquiring.add(request.invocation_id)
         self._acquiring_lanes[request.invocation_id] = request.lane_key
@@ -1073,6 +1130,8 @@ class ExecutionService:
         reservation = self._workspace_reservations.get(invocation_id)
         if reservation is not None and invocation_id not in self._invocations:
             await self._cancel_workspace_reservation(invocation_id, reservation)
+            return
+        if invocation_id in self._workspace_cancelled:
             return
         inv = self._invocations.get(invocation_id)
         if inv is None or inv.handle.controller_id != controller_id:

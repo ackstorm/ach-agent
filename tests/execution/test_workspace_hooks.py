@@ -29,6 +29,7 @@ from ach_agent.execution.wire import (
     WorkspaceHandoffRequest,
     WorkspaceHook,
     WorkspacePrepareRequest,
+    WorkspaceStoppedEvent,
 )
 
 
@@ -141,6 +142,113 @@ async def test_cancel_reclaims_idle_reservation_and_peer_survives(
 
 
 @pytest.mark.asyncio
+async def test_duplicate_cancel_joins_one_cleanup_and_waits_for_callback(
+    fake_driver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+    cleanup_started = asyncio.Event()
+    cleanup_release = asyncio.Event()
+
+    async def controlled_hook(hook: object, **kwargs: object) -> None:
+        if getattr(hook, "script", "") == "cleanup":
+            cleanup_started.set()
+            await asyncio.shield(cleanup_release.wait())
+
+    monkeypatch.setattr("ach_agent.execution.service.run_public_hook", controlled_hook)
+    request = _prepare(
+        tmp_path,
+        prepare=None,
+        cleanup={"script": "cleanup", "timeout_seconds": 2},
+    )
+    await service.prepare_workspace(request)
+    first = asyncio.create_task(service.cancel("controller", request.invocation_id))
+    await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+    second = asyncio.create_task(service.cancel("controller", request.invocation_id))
+    await asyncio.sleep(0.02)
+    assert not first.done() and not second.done()
+    cleanup_release.set()
+    await asyncio.gather(first, second)
+    assert request.invocation_id not in service._workspace_reservations
+    assert not service._unhealthy
+    await service.release_controller("controller")
+
+
+@pytest.mark.asyncio
+async def test_controller_loss_joins_reservation_cleanup_before_reconnect(
+    fake_driver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+    cleanup_started = asyncio.Event()
+    cleanup_release = asyncio.Event()
+
+    async def controlled_hook(hook: object, **kwargs: object) -> None:
+        if getattr(hook, "script", "") == "cleanup":
+            cleanup_started.set()
+            await asyncio.shield(cleanup_release.wait())
+
+    monkeypatch.setattr("ach_agent.execution.service.run_public_hook", controlled_hook)
+    request = _prepare(
+        tmp_path,
+        prepare=None,
+        cleanup={"script": "cleanup", "timeout_seconds": 2},
+    )
+    await service.prepare_workspace(request)
+    release = asyncio.create_task(service.release_controller("controller"))
+    await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+    assert not release.done()
+    cleanup_release.set()
+    await release
+    assert service.can_accept_controller
+    assert not service._unhealthy
+
+
+@pytest.mark.asyncio
+async def test_acquire_and_handoff_cannot_cross_pending_reservation(
+    fake_driver, tmp_path: Path
+) -> None:
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+    first = _prepare(tmp_path, prepare=None)
+    await service.prepare_workspace(first)
+    with pytest.raises(ValueError, match="pending reservation"):
+        await service.acquire(
+            AcquireRequest(
+                controller_id="controller",
+                invocation_id="other",
+                lane_key=first.session_key,
+                conversation_key="other",
+                reuse=True,
+                remaining_seconds=5,
+                config=PublicEngineConfig(),
+            )
+        )
+    assert first.invocation_id in service._workspace_reservations
+    await service.cancel("controller", first.invocation_id)
+
+    second = _prepare(tmp_path, invocation_id="second", session_key="second", prepare=None)
+    await service.prepare_workspace(second)
+    service._workspace_reservations[second.invocation_id].acquiring = True
+    with pytest.raises(ValueError, match="acquiring"):
+        await service.handoff_workspace(
+            WorkspaceHandoffRequest(
+                controller_id="controller",
+                invocation_id=second.invocation_id,
+                session_key=second.session_key,
+                home=second.home,
+                work_dir=second.work_dir,
+                bundle_path="bundle",
+                head="a" * 40,
+                remaining_seconds=5,
+            )
+        )
+    service._workspace_reservations[second.invocation_id].acquiring = False
+    await service.cancel("controller", second.invocation_id)
+    await service.release_controller("controller")
+
+
+@pytest.mark.asyncio
 async def test_reservation_rejects_duplicate_invocation_and_lane_without_mutation(
     fake_driver, tmp_path: Path
 ) -> None:
@@ -209,6 +317,28 @@ async def test_public_cleanup_timeout_is_best_effort_after_confirmed_stop(
     assert "WorkspaceHookTimedOut" in service.workspace_cleanup_errors[-1]
     assert not service._unhealthy
     await service.release_controller("controller")
+
+
+@pytest.mark.asyncio
+async def test_cleanup_stop_failure_does_not_acknowledge_cancel(
+    fake_driver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+
+    async def uncertain_hook(*args: object, **kwargs: object) -> None:
+        raise OwnedProcessCleanupError("cleanup process ownership lost")
+
+    monkeypatch.setattr("ach_agent.execution.service.run_public_hook", uncertain_hook)
+    request = _prepare(
+        tmp_path,
+        prepare=None,
+        cleanup={"script": "cleanup", "timeout_seconds": 2},
+    )
+    await service.prepare_workspace(request)
+    with pytest.raises(RuntimeError, match="unhealthy"):
+        await service.cancel("controller", request.invocation_id)
+    assert service._unhealthy
 
 
 @pytest.mark.asyncio
@@ -287,6 +417,27 @@ async def test_controller_loss_cancels_public_prepare(fake_driver, tmp_path: Pat
 
 
 @pytest.mark.asyncio
+async def test_caller_cancel_waits_for_prepare_reservation_cleanup(
+    fake_driver, tmp_path: Path
+) -> None:
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+    request = _prepare(
+        tmp_path,
+        prepare={"script": "sleep 30", "timeout_seconds": 30},
+        remaining_seconds=10,
+    )
+    task = asyncio.create_task(service.prepare_workspace(request))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert request.invocation_id not in service._workspace_reservations
+    assert not service._unhealthy
+    await service.release_controller("controller")
+
+
+@pytest.mark.asyncio
 async def test_real_http_long_prepare_uses_deadline_and_failed_prepare_is_invocation_local(
     fake_driver, tmp_path: Path
 ) -> None:
@@ -304,7 +455,7 @@ async def test_real_http_long_prepare_uses_deadline_and_failed_prepare_is_invoca
             )
             result = await client.prepare_workspace(slow)
             assert result["workspace"] == str(Path(slow.work_dir) / "group-project-1-ac555c4f")
-            with pytest.raises(WorkspaceOperationFailed, match="public hook exited 17"):
+            with pytest.raises(WorkspaceOperationFailed, match="public hook exited 17") as failure:
                 await client.prepare_workspace(
                     _prepare(
                         tmp_path,
@@ -313,11 +464,45 @@ async def test_real_http_long_prepare_uses_deadline_and_failed_prepare_is_invoca
                         prepare={"script": "exit 17", "timeout_seconds": 2},
                     )
                 )
+            assert failure.value.confirmed
             peer = await client.prepare_workspace(
                 _prepare(tmp_path, invocation_id="peer", session_key="peer", prepare=None)
             )
             assert peer["status"] == "ok"
             await client.cancel("controller", "slow")
+            await client.cancel("controller", "peer")
+        finally:
+            await client.close()
+
+
+@pytest.mark.asyncio
+async def test_real_http_malformed_success_confirms_reservation_cancel(
+    fake_driver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ExecutionService(fake_driver, {})
+    original_prepare = service.prepare_workspace
+
+    async def malformed(request: WorkspacePrepareRequest) -> dict[str, str]:
+        await original_prepare(request)
+        return {"status": "ok"}
+
+    monkeypatch.setattr(service, "prepare_workspace", malformed)
+    app = create_execution_app(service)
+    async with _running_server(app) as base_url:
+        client = ExecutionClient(base_url, controller_id="controller", timeout=0.5)
+        try:
+            await client.connect()
+            request = _prepare(tmp_path, prepare=None)
+            with pytest.raises(WorkspaceOperationFailed, match="invalid workspace") as failure:
+                await client.prepare_workspace(request)
+            assert failure.value.confirmed
+            assert request.invocation_id not in service._workspace_reservations
+            assert not client._failed
+            monkeypatch.undo()
+            peer = await client.prepare_workspace(
+                _prepare(tmp_path, invocation_id="peer", session_key="peer", prepare=None)
+            )
+            assert peer["status"] == "ok"
             await client.cancel("controller", "peer")
         finally:
             await client.close()
@@ -376,6 +561,39 @@ async def test_controller_event_waiter_wakes_when_client_closes(fake_driver) -> 
     await client.close()
     with pytest.raises(ExecutionClientError, match="closed"):
         await waiter
+
+
+@pytest.mark.asyncio
+async def test_cancelled_event_waiter_does_not_drop_next_event() -> None:
+    client = ExecutionClient("http://execution", controller_id="controller")
+    client.instance_id = "instance"
+    stale = asyncio.get_running_loop().create_future()
+    stale.cancel()
+    client._controller_event_waiters.add(stale)
+    stop = asyncio.Event()
+    event = WorkspaceStoppedEvent(
+        controller_id="controller",
+        instance_id="instance",
+        session_key="lane",
+        event_id="event",
+        invocation_id="invocation",
+        workspace="/workspace",
+    )
+
+    async def lines() -> AsyncIterator[bytes]:
+        yield event.model_dump_json().encode()
+        await stop.wait()
+
+    monitor = asyncio.create_task(client._monitor_controller(lines()))
+    await asyncio.sleep(0.02)
+    stop.set()
+    monitor.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await monitor
+    try:
+        assert (await client.next_controller_event()).invocation_id == "invocation"
+    finally:
+        await client.close()
 
 
 @pytest.mark.skipif(os.name != "posix", reason="requires process ownership procfs")

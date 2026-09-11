@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from starlette.types import Send
 
 from ach_agent.engine.lifecycle import NativeLaunchFailed
+from ach_agent.engine.workspace import WorkspaceHandoffFailed, WorkspaceHookFailed
 from ach_agent.execution.service import (
     MAX_NDJSON_RECORD_BYTES,
     ExecutionService,
@@ -33,6 +34,7 @@ from ach_agent.execution.wire import (
     SessionReadyRequest,
     TurnRequest,
     WorkspaceHandoffRequest,
+    WorkspaceOperationFailure,
     WorkspacePrepareRequest,
 )
 
@@ -119,6 +121,11 @@ def _invalid(message: str) -> JSONResponse:
 
 
 def _error_response(exc: Exception) -> JSONResponse:
+    if isinstance(exc, (WorkspaceHookFailed, WorkspaceHandoffFailed)):
+        return JSONResponse(
+            WorkspaceOperationFailure(message=str(exc), confirmed=True).model_dump(mode="json"),
+            status_code=422,
+        )
     if isinstance(exc, NativeLaunchFailed):
         return JSONResponse({"type": "LaunchFailed", "message": str(exc)}, status_code=502)
     if isinstance(exc, OutputLimitExceeded):

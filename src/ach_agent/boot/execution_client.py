@@ -39,6 +39,7 @@ from ach_agent.execution.wire import (
     SessionReadyRequest,
     TurnRequest,
     WorkspaceHandoffRequest,
+    WorkspaceOperationFailure,
     WorkspacePrepareRequest,
     WorkspaceStoppedEvent,
 )
@@ -54,6 +55,18 @@ class ExecutionClientError(RuntimeError):
 
 class WorkspaceOperationFailed(ExecutionClientError):
     """A completed workspace operation failed without invalidating controller admission."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        confirmed: bool = False,
+        rejection: bool = False,
+    ) -> None:
+        super().__init__(message, status_code=status_code)
+        self.confirmed = confirmed
+        self.rejection = rejection
 
 
 class ExecutionClientLaunchFailed(ExecutionClientError):
@@ -293,11 +306,16 @@ class ExecutionClient:
                     or event.instance_id != self.instance_id
                 ):
                     raise ExecutionClientError("controller event identity mismatch")
-                waiter = next(iter(self._controller_event_waiters), None)
-                if waiter is not None:
+                delivered = False
+                while self._controller_event_waiters:
+                    waiter = next(iter(self._controller_event_waiters))
                     self._controller_event_waiters.remove(waiter)
-                    if not waiter.done():
-                        waiter.set_result(event)
+                    if waiter.done():
+                        continue
+                    waiter.set_result(event)
+                    delivered = True
+                    break
+                if delivered:
                     continue
                 try:
                     self._controller_events.put_nowait(event)
@@ -405,6 +423,7 @@ class ExecutionClient:
                     "POST",
                     "/execution/v1/cancel",
                     json={"controller_id": controller_id, "invocation_id": invocation_id},
+                    timeout=None,
                 ),
             )
             if response.status_code < 200 or response.status_code >= 300:
@@ -458,13 +477,43 @@ class ExecutionClient:
             raise WorkspaceOperationFailed("workspace operation response was ambiguous") from exc
         if response.status_code < 200 or response.status_code >= 300:
             detail = content[:512].decode("utf-8", "replace")
+            try:
+                payload = json.loads(content)
+            except ValueError:
+                payload = None
+            if isinstance(payload, dict) and payload.get("type") == "WorkspaceOperationFailed":
+                try:
+                    failure = WorkspaceOperationFailure.model_validate(payload)
+                except ValueError:
+                    failure = None
+                if failure is not None:
+                    raise WorkspaceOperationFailed(
+                        failure.message,
+                        status_code=response.status_code,
+                        confirmed=failure.confirmed,
+                    )
+            if response.status_code in (404, 409, 422) and isinstance(payload, dict):
+                rejection = payload.get("detail")
+                if isinstance(rejection, str):
+                    raise WorkspaceOperationFailed(
+                        rejection,
+                        status_code=response.status_code,
+                        confirmed=True,
+                        rejection=True,
+                    )
+            await self._confirm_workspace_cancel(body.controller_id, body.invocation_id)
             raise WorkspaceOperationFailed(
-                f"execution {path} failed: {detail}", status_code=response.status_code
+                f"execution {path} failed and was canceled: {detail}",
+                status_code=response.status_code,
+                confirmed=True,
             )
         try:
             return json.loads(content)
         except ValueError as exc:
-            raise WorkspaceOperationFailed("invalid workspace operation response") from exc
+            await self._confirm_workspace_cancel(body.controller_id, body.invocation_id)
+            raise WorkspaceOperationFailed(
+                "invalid workspace operation response; reservation canceled", confirmed=True
+            ) from exc
 
     def _validate_controller(self, controller_id: str) -> None:
         if controller_id != self.controller_id:
@@ -579,7 +628,10 @@ class ExecutionClient:
             or not isinstance(result.get("workspace"), str)
             or result["workspace"] != expected
         ):
-            raise WorkspaceOperationFailed("invalid workspace prepare response")
+            await self._confirm_workspace_cancel(request.controller_id, request.invocation_id)
+            raise WorkspaceOperationFailed(
+                "invalid workspace prepare response; reservation canceled", confirmed=True
+            )
         return {"status": "ok", "workspace": expected}
 
     async def handoff_workspace(self, request: WorkspaceHandoffRequest) -> dict[str, str]:
@@ -592,7 +644,10 @@ class ExecutionClient:
             or not isinstance(result.get("workspace"), str)
             or result["workspace"] != expected
         ):
-            raise WorkspaceOperationFailed("invalid workspace handoff response")
+            await self._confirm_workspace_cancel(request.controller_id, request.invocation_id)
+            raise WorkspaceOperationFailed(
+                "invalid workspace handoff response; reservation canceled", confirmed=True
+            )
         return {"status": "ok", "workspace": expected}
 
     async def _ack_session(self, request: TurnRequest, event: ExecutionEvent) -> None:
@@ -818,13 +873,7 @@ class ExecutionClient:
         if active:
             self._cancelled_invocations.add(invocation_id)
         try:
-            result = await self._json_request(
-                "POST",
-                "/execution/v1/cancel",
-                {"controller_id": controller_id, "invocation_id": invocation_id},
-                client=self.priority_client,
-            )
-            await self._require_ok(result, "cancel")
+            await self._confirm_workspace_cancel(controller_id, invocation_id)
         except BaseException as exc:
             if active:
                 self._cancelled_invocations.discard(invocation_id)

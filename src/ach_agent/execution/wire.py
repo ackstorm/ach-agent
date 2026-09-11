@@ -213,6 +213,14 @@ class WorkspaceStoppedEvent(_WireModel):
     workspace: str
 
 
+class WorkspaceOperationFailure(_WireModel):
+    """Typed completed workspace failure; ``confirmed`` means cleanup is known."""
+
+    type: Literal["WorkspaceOperationFailed"] = "WorkspaceOperationFailed"
+    message: str
+    confirmed: bool
+
+
 class ExecutionEvent(_WireModel):
     kind: Literal["text", "tool", "usage", "session_resolved", "turn_done", "error"]
     execution_id: str

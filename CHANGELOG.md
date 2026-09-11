@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.16.1] - 2026-09-11
+
 ### Removed
 
 - **BREAKING** `mcpServers[].type=repoCheckout`, the harness-hosted `checkout_repo` tool.
@@ -19,6 +21,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   TTL sweep and the prompt hint that advertised the tool. Gone with it:
   `engine/repo_facade.py`, `find_repo_checkout`, `resolve_repo_archive_endpoint`,
   `checkout_hint` and the `repo` MCP facade id.
+
+### Fixed
+
+- Call ach-memory by the name the server advertises. A gateway that aggregates several MCP
+  servers namespaces what it proxies — through ACH, LiteLLM serves `recall` as
+  `ach-memory.recall` — while the harness sent the bare name, so the SDK found no matching
+  tool in `tools/list` and skipped output-schema validation on every call, and the gateway
+  blind-forwarded a name it had no schema to check arguments against. The name is now
+  resolved from `tools/list` inside `call_ach_memory`, the one seam both the boot context and
+  the facade route through. An exact match wins, so a direct endpoint is unaffected; only a
+  single unambiguous prefixed candidate is accepted, because calling the wrong tool with the
+  right arguments is worse than the call failing; and `_` is not treated as a separator,
+  since `sync_retain` ends with `_retain`. The lookup costs nothing — `call_tool` fires that
+  same `tools/list` itself on the cache miss a per-call session guarantees.
 
 ## [0.16.0] - 2026-09-10
 

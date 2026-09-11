@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -26,6 +28,8 @@ class _RealProcessDriver:
         self.started = asyncio.Event()
         self.process = None
         self.processes = []
+        self.servers = []
+        self.ready_path = Path("/tmp") / f"ach-test-native-ready-{uuid.uuid4().hex}"
 
     def skills_dir(self, home: Path) -> Path:
         return home
@@ -33,6 +37,7 @@ class _RealProcessDriver:
     async def launch(self, cfg, session_key):
         from ach_agent.engine.lifecycle import ManagedServer
 
+        self.ready_path.unlink(missing_ok=True)
         process = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
@@ -40,13 +45,23 @@ class _RealProcessDriver:
             "--",
             sys.executable,
             "-c",
-            "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)",
+            "import signal,sys,time; from pathlib import Path; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "Path(sys.argv[1]).write_text('ready'); time.sleep(30)",
+            str(self.ready_path),
             start_new_session=True,
         )
         server = ManagedServer(port=0)
         server.register_process(process, protect_root=True)
         self.process = process
         self.processes.append(process)
+        self.servers.append(server)
+        deadline = asyncio.get_running_loop().time() + 2.0
+        while not self.ready_path.exists() and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.01)
+        if not self.ready_path.exists():
+            await server.stop()
+            raise RuntimeError("native test process did not become ready")
         return server
 
     async def health(self, server) -> bool:
@@ -69,6 +84,12 @@ class _RealProcessDriver:
     async def stop(self, server) -> None:
         await server.stop()
 
+    async def cleanup(self) -> None:
+        for server in self.servers:
+            with contextlib.suppress(BaseException):
+                await server.stop()
+        self.ready_path.unlink(missing_ok=True)
+
 
 def _acquire() -> AcquireRequest:
     return AcquireRequest(
@@ -88,7 +109,7 @@ async def test_controller_release_joins_real_process_before_new_controller() -> 
     driver = _RealProcessDriver()
     service = ExecutionService(driver, {})
     await service.claim_controller("controller")
-    request = _acquire().model_copy(update={"controller_id": "controller"})
+    request = _acquire().model_copy(update={"controller_id": "controller", "remaining_seconds": 30})
     handle = await service.acquire(request)
     stream = service.turn(
         TurnRequest(
@@ -110,6 +131,7 @@ async def test_controller_release_joins_real_process_before_new_controller() -> 
     finally:
         turn_task.cancel()
         await asyncio.gather(turn_task, return_exceptions=True)
+        await driver.cleanup()
 
 
 @pytest.mark.asyncio
@@ -118,13 +140,14 @@ async def test_cancel_supervised_term_resistant_process_keeps_other_execution_he
     driver = _RealProcessDriver()
     service = ExecutionService(driver, {})
     await service.claim_controller("controller")
-    first = await service.acquire(_acquire())
+    first = await service.acquire(_acquire().model_copy(update={"remaining_seconds": 30}))
     _second = await service.acquire(
         _acquire().model_copy(
             update={
                 "invocation_id": "inv-two",
                 "lane_key": "lane-two",
                 "controller_id": "controller",
+                "remaining_seconds": 30,
             }
         )
     )
@@ -145,6 +168,7 @@ async def test_cancel_supervised_term_resistant_process_keeps_other_execution_he
         started = asyncio.get_running_loop().time()
         await service.cancel("controller", "inv")
         elapsed = asyncio.get_running_loop().time() - started
+        assert elapsed >= 4.5
         assert elapsed < 9.0
         assert driver.processes[0].returncode is not None
         assert driver.processes[1].returncode is None
@@ -155,6 +179,7 @@ async def test_cancel_supervised_term_resistant_process_keeps_other_execution_he
     finally:
         turn_task.cancel()
         await asyncio.gather(turn_task, return_exceptions=True)
+        await driver.cleanup()
 
 
 @pytest.mark.asyncio

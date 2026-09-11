@@ -67,7 +67,7 @@ def export_legacy_sessions(
     path = Path(db_path)
     if not path.exists():
         return []
-    con = sqlite3.connect(f"file:{path.absolute()}?mode=ro", uri=True)
+    con = sqlite3.connect(f"{path.absolute().as_uri()}?mode=ro", uri=True)
     try:
         try:
             rows = con.execute(

@@ -18,6 +18,7 @@ def test_execution_wire_round_trip_and_extra_fields_are_rejected() -> None:
 
     config = PublicEngineConfig(
         engine_type="pi",
+        binary_path="/engine/bin/pi",
         home="/engine/home",
         work_dir="/engine/work",
         model="model-x",
@@ -30,6 +31,7 @@ def test_execution_wire_round_trip_and_extra_fields_are_rejected() -> None:
         steps=4,
         startup_timeout_seconds=9,
         model_base_url="http://127.0.0.1:8000/model",
+        mcp_local_urls={"proxy": "http://127.0.0.1:8000/mcp/proxy"},
         mcp_templates={
             "srv": {
                 "type": "remote",
@@ -83,11 +85,11 @@ def test_execution_wire_round_trip_and_extra_fields_are_rejected() -> None:
             idle_ttl_seconds=10,
         ),
         ExecutionEvent(
-            kind="usage",
+            kind="tool",
             execution_id="execution",
             invocation_id="invocation",
             turn_id="turn",
-            payload={"input": 1},
+            payload={"name": "tool", "input": {"arg": "value"}, "output": {"ok": True}},
         ),
     ]
     for message in messages:
@@ -97,6 +99,54 @@ def test_execution_wire_round_trip_and_extra_fields_are_rejected() -> None:
         PublicEngineConfig.model_validate({"unexpected_secret": "ek-test"})
     with pytest.raises(ValidationError):
         AcquireRequest.model_validate({**request.model_dump(), "forward_env": ["TOKEN"]})
+    for forbidden in ("forward_env", "extra_mcp_servers", "environment", "managed_headers"):
+        with pytest.raises(ValidationError):
+            PublicEngineConfig.model_validate(
+                {**config.model_dump(), forbidden: {"TOKEN": "secret"}}
+            )
+
+
+def test_deadlines_are_finite_and_public_mcp_templates_remain_raw() -> None:
+    from ach_agent.execution.wire import AcquireRequest, PublicEngineConfig, ReleaseRequest
+
+    config = PublicEngineConfig(
+        mcp_templates={
+            "local": {
+                "type": "local",
+                "command": "server",
+                "args": ["--stdio"],
+                "env": ["TOKEN_NAME"],
+            },
+            "remote": {
+                "type": "remote",
+                "url": "http://mcp",
+                "headers": {"Authorization": "${env:TOKEN}"},
+            },
+        },
+    )
+    restored = PublicEngineConfig.model_validate_json(config.model_dump_json())
+    assert restored == config
+    base = {
+        "controller_id": "c",
+        "invocation_id": "i",
+        "lane_key": "l",
+        "conversation_key": "k",
+        "reuse": True,
+        "config": config,
+    }
+    with pytest.raises(ValidationError):
+        AcquireRequest.model_validate({**base, "remaining_seconds": float("inf")})
+    with pytest.raises(ValidationError):
+        AcquireRequest.model_validate({**base, "remaining_seconds": 0})
+    with pytest.raises(ValidationError):
+        ReleaseRequest.model_validate(
+            {
+                "controller_id": "c",
+                "execution_id": "e",
+                "invocation_id": "i",
+                "idle_ttl_seconds": float("nan"),
+            }
+        )
 
 
 def test_execution_event_rejects_non_finite_payload() -> None:

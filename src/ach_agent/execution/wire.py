@@ -42,8 +42,8 @@ class PublicEngineConfig(_WireModel):
     thinking_effort: str | None = None
     system_prompt: str = ""
     compose: Literal["append", "replace"] = "append"
-    steps: int = Field(default=50, gt=0)
-    startup_timeout_seconds: int = Field(default=30, gt=0)
+    steps: int = 50
+    startup_timeout_seconds: int = 30
     model_base_url: str = ""
     mcp_servers: dict[str, str] = Field(default_factory=dict)
     mcp_local_urls: dict[str, str] = Field(default_factory=dict)

@@ -12,9 +12,12 @@ console channel_name/session_key and payload["text"] == the line.
 
 from __future__ import annotations
 
+import asyncio
+
 from prometheus_client import REGISTRY
 
 from ach_agent.boot.completions import CompletionRegistry
+from ach_agent.channels.envelopes import EventRef
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.tui import run_one_shot, run_tui_console
 from ach_agent.router.router import RouterAdmitResult
@@ -204,3 +207,48 @@ async def test_one_shot_writes_engine_reply_and_event_fields() -> None:
     assert event.payload == {"text": "review this"}
     # free_form marker → engine_runner skips terminal extraction / repair turn
     assert event.free_form is True
+    assert not handler.completion_port._sinks
+
+
+async def test_tui_discards_sinks_on_handler_cancel_and_wait_failure() -> None:
+    """Every TUI exit path releases its process-local sink registration."""
+
+    class FailingHandler:
+        def __init__(self, error: BaseException) -> None:
+            self.error = error
+            self.events: list[MessageEvent] = []
+            self.completion_port = CompletionRegistry(self._admit)
+
+        async def _admit(self, _event: MessageEvent) -> RouterAdmitResult:
+            return RouterAdmitResult.ACCEPTED
+
+        async def handle(self, event: MessageEvent) -> RouterAdmitResult:
+            self.events.append(event)
+            if isinstance(self.error, asyncio.CancelledError):
+                raise self.error
+            raise self.error
+
+    from ach_agent.channels.tui import _handle_line
+
+    canceled = FailingHandler(asyncio.CancelledError())
+    try:
+        await _handle_line(
+            canceled, "cancel", lambda _text: None, "tui-console", stream_sink=lambda _: None
+        )
+    except asyncio.CancelledError:
+        pass
+    assert not canceled.completion_port._sinks
+
+    class WaitFailurePort(CompletionRegistry):
+        async def wait(self, _ref: EventRef):
+            raise RuntimeError("wait failed")
+
+    wait_failure = FakeHandler()
+    wait_failure.completion_port = WaitFailurePort(wait_failure._admit)
+    try:
+        await _handle_line(
+            wait_failure, "wait", lambda _text: None, "tui-console", stream_sink=lambda _: None
+        )
+    except RuntimeError:
+        pass
+    assert not wait_failure.completion_port._sinks

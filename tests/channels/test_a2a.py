@@ -145,6 +145,88 @@ def _make_full_queue_handler() -> AsyncMock:
     return handler
 
 
+@pytest.mark.asyncio
+async def test_a2a_cancel_during_admission_suppresses_late_working_and_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancellation is registered before a blocked admission can complete."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+    handler = AsyncMock()
+    handler.completion_port = CompletionRegistry(lambda _event: _accepted())
+
+    async def blocked_handle(_event: Any) -> RouterAdmitResult:
+        started.set()
+        await release.wait()
+        return RouterAdmitResult.ACCEPTED
+
+    async def _accepted() -> RouterAdmitResult:
+        return RouterAdmitResult.ACCEPTED
+
+    handler.handle.side_effect = blocked_handle
+    bridge = A2AAgentExecutorBridge(
+        handler=handler,
+        channel_cfg=_make_authed_channel_cfg(monkeypatch),
+        completion_port=handler.completion_port,
+    )
+    ctx = _authed_ctx(task_id="cancel-admission")
+    eq = MockEventQueue()
+    execute_task = asyncio.create_task(bridge.execute(ctx, eq))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    await bridge.cancel(ctx, eq)
+    release.set()
+    await asyncio.wait_for(execute_task, timeout=1)
+    assert len(eq.events) == 1
+    assert eq.events[0].task_id == "cancel-admission"
+    assert bridge._waiter_counts == {}
+
+
+@pytest.mark.asyncio
+async def test_a2a_cancel_during_wait_suppresses_late_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler = _make_accepted_handler()
+    bridge = A2AAgentExecutorBridge(
+        handler=handler,
+        channel_cfg=_make_authed_channel_cfg(monkeypatch),
+        completion_port=handler.completion_port,
+    )
+    ctx = _authed_ctx(task_id="cancel-wait")
+    eq = MockEventQueue()
+    execute_task = asyncio.create_task(bridge.execute(ctx, eq))
+    await asyncio.sleep(0.05)
+    await bridge.cancel(ctx, eq)
+    await asyncio.wait_for(execute_task, timeout=1)
+    await handler.completion_port.finish(
+        EventRef(agent="default", channel_name="test-a2a", idempotency_key="a2a:cancel-wait"),
+        {"action": "a2a_reply", "text": "late"},
+    )
+    assert len(eq.events) == 2
+    assert eq.events[-1].task_id == "cancel-wait"
+    assert bridge._waiter_counts == {}
+
+
+@pytest.mark.asyncio
+async def test_a2a_invalid_terminal_result_is_failed_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    handler = _make_accepted_handler()
+    bridge = A2AAgentExecutorBridge(
+        handler=handler,
+        channel_cfg=_make_authed_channel_cfg(monkeypatch),
+        completion_port=handler.completion_port,
+    )
+    ctx = _authed_ctx(task_id="invalid-terminal")
+    eq = MockEventQueue()
+    execute_task = asyncio.create_task(bridge.execute(ctx, eq))
+    await asyncio.sleep(0.05)
+    await handler.completion_port.finish(
+        EventRef(agent="default", channel_name="test-a2a", idempotency_key="a2a:invalid-terminal"),
+        {"action": "none", "text": ""},
+    )
+    await asyncio.wait_for(execute_task, timeout=1)
+    assert eq.events[-1].status.message.parts[0].text == "invalid terminal output"
+    assert "invalid terminal" in eq.events[-1].status.message.parts[0].text
+
+
 # ---------------------------------------------------------------------------
 # Header auth tests (spec §14.6 / T-04-13)
 # ---------------------------------------------------------------------------

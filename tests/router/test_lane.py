@@ -199,3 +199,52 @@ async def test_engine_launch_failure_increments_metric_and_finishes_completion()
 
     assert after - before == 1.0, f"expected ENGINE_LAUNCH_FAILURES +1, got {after - before}"
     fake_pool.release.assert_not_called()
+
+
+async def test_lane_cancel_finishes_running_and_queued_registry_entries() -> None:
+    """Cancelling a lane drains the current and queued events exactly once."""
+    from ach_agent.boot.completions import CompletionRegistry
+    from ach_agent.router.router import RouterAdmitResult
+
+    class _CountingRouter(_FakeRouter):
+        def __init__(self) -> None:
+            self.released = 0
+
+        def release_queued_slot(self) -> None:
+            self.released += 1
+
+    router = _CountingRouter()
+    async def _accepted(_event):
+        return RouterAdmitResult.ACCEPTED
+
+    registry = CompletionRegistry(_accepted)
+
+    running = asyncio.Event()
+    stop = asyncio.Event()
+
+    async def slow_runner(_event, _on_kill):  # noqa: ANN001
+        running.set()
+        await stop.wait()
+
+    async def notify(event, error):  # noqa: ANN001
+        await registry.finish(registry.ref_for(event), error=error)
+
+    lane = Lane(
+        session_key="k",
+        router_ref=weakref.ref(router),
+        invocation_semaphores=lambda _name: (asyncio.Semaphore(1), asyncio.Semaphore(1)),
+        engine_runner=slow_runner,
+        max_invocation_seconds=30,
+        completion_notifier=notify,
+    )
+    events = [make_event(idempotency_key=f"cancel-{index}") for index in range(2)]
+    for event in events:
+        await registry.submit(event)
+        await lane.put(event)
+    await asyncio.wait_for(running.wait(), timeout=1)
+    lane.cancel()
+    await lane.wait_closed()
+    await asyncio.wait_for(lane.join(), timeout=1)
+    assert router.released == 2
+    for event in events:
+        assert (await registry.wait(registry.ref_for(event))).state == "failed"

@@ -254,39 +254,37 @@ class A2AAgentExecutorBridge:
             payload={"text": text, "task_id": task_id, "context_id": context_id},
             source_trait="async_no_retry",  # HTTP-delivered, but completion is out-of-band
         )
-        assert self._handler is not None, "_handler not wired before execute()"
-        try:
-            result = await self._handler.handle(event)
-        except asyncio.CancelledError:
-            raise
-        if result == RouterAdmitResult.FULL_QUEUE:
-            log.warning(
-                "a2a: request rejected — queue full (D-05/RTR-05)",
-                channel=self._channel_cfg.name,
-            )
-            await event_queue.enqueue_event(
-                _status_event("failed", "Queue full", task_id, context_id)
-            )
-            return
-        if result == RouterAdmitResult.DUPLICATE:
-            log.info("a2a: duplicate task_id — deduplicated", channel=self._channel_cfg.name)
-
-        # Emit ONE interim WORKING event so the a2a-sdk non-blocking path has a
-        # task-creating event to break on: with SendMessageConfiguration.return_immediately
-        # the handler's consume_and_break_on_interrupt(blocking=False) returns the task_id
-        # after this event, then persists the later terminal event to the task_store for
-        # GetTask polling. In the blocking path the aggregator ignores WORKING and waits for
-        # the terminal event, so this is harmless there. Ids match the TaskManager
-        # (save_task_event validates them). ponytail: the SDK owns the block/non-block fork
-        # via its own flag — no branch here.
-        await event_queue.enqueue_event(_status_event("working", None, task_id, context_id))
-
-        ref = self._completion_port.ref_for(event)
         cancel_event = self._cancel_events.setdefault(task_id, asyncio.Event())
         self._waiter_counts[task_id] = self._waiter_counts.get(task_id, 0) + 1
-        outcome_task = asyncio.create_task(self._completion_port.wait(ref))
-        cancel_task = asyncio.create_task(cancel_event.wait())
+        outcome_task: asyncio.Task[Any] | None = None
+        cancel_task: asyncio.Task[Any] | None = None
         try:
+            assert self._handler is not None, "_handler not wired before execute()"
+            result = await self._handler.handle(event)
+            if cancel_event.is_set():
+                return
+            if result == RouterAdmitResult.FULL_QUEUE:
+                log.warning(
+                    "a2a: request rejected — queue full (D-05/RTR-05)",
+                    channel=self._channel_cfg.name,
+                )
+                await event_queue.enqueue_event(
+                    _status_event("failed", "Queue full", task_id, context_id)
+                )
+                return
+            if result == RouterAdmitResult.DUPLICATE:
+                log.info("a2a: duplicate task_id — deduplicated", channel=self._channel_cfg.name)
+
+            # Emit ONE interim WORKING event so the a2a-sdk non-blocking path has a
+            # task-creating event to break on. The later terminal event is retained for
+            # GetTask polling in the blocking path.
+            await event_queue.enqueue_event(_status_event("working", None, task_id, context_id))
+            if cancel_event.is_set():
+                return
+
+            ref = self._completion_port.ref_for(event)
+            outcome_task = asyncio.create_task(self._completion_port.wait(ref))
+            cancel_task = asyncio.create_task(cancel_event.wait())
             done, _ = await asyncio.wait(
                 (outcome_task, cancel_task), return_when=asyncio.FIRST_COMPLETED
             )
@@ -318,9 +316,11 @@ class A2AAgentExecutorBridge:
             raise
         finally:
             for task in (outcome_task, cancel_task):
-                if not task.done():
+                if task is not None and not task.done():
                     task.cancel()
-            await asyncio.gather(outcome_task, cancel_task, return_exceptions=True)
+            tasks = tuple(task for task in (outcome_task, cancel_task) if task is not None)
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
             self._waiter_counts[task_id] -= 1
             if self._waiter_counts[task_id] == 0:
                 self._waiter_counts.pop(task_id, None)
@@ -331,9 +331,9 @@ class A2AAgentExecutorBridge:
         task_id: str = getattr(context, "task_id", None) or ""
         context_id: str = getattr(context, "context_id", None) or ""
         cancel_event = self._cancel_events.get(task_id)
-        await event_queue.enqueue_event(_status_event("canceled", None, task_id, context_id))
         if cancel_event is not None:
             cancel_event.set()
+        await event_queue.enqueue_event(_status_event("canceled", None, task_id, context_id))
         log.info("a2a: task canceled", channel=self._channel_cfg.name, task_id=task_id)
 
 

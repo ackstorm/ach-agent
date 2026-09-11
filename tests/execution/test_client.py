@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 
 import httpx
@@ -12,8 +11,10 @@ from ach_agent.engine.base.events import OpenCodeUsage
 from ach_agent.execution.service import ExecutionService
 from ach_agent.execution.wire import (
     AcquireRequest,
+    ExecutionEvent,
     ExecutionHandle,
     PublicEngineConfig,
+    ReleaseRequest,
     SessionReadyRequest,
     TurnRequest,
 )
@@ -458,6 +459,160 @@ async def test_client_rejects_truncated_stream_and_confirms_cancel() -> None:
 
 
 @pytest.mark.asyncio
+async def test_client_turn_does_not_prefetch_while_consumer_is_paused() -> None:
+    from ach_agent.boot.execution_client import ExecutionClient
+
+    consumed = 0
+    events = [
+        {
+            "kind": "text",
+            "execution_id": "execution",
+            "invocation_id": "invocation",
+            "turn_id": "turn-1",
+            "payload": "x" * 1024,
+        }
+        for _ in range(100)
+    ]
+    events.append(
+        {
+            "kind": "turn_done",
+            "execution_id": "execution",
+            "invocation_id": "invocation",
+            "turn_id": "turn-1",
+            "payload": {"text": "done", "session_ref": "native"},
+        }
+    )
+
+    class OneRecordStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            nonlocal consumed
+            for event in events:
+                consumed += 1
+                yield json.dumps(event).encode() + b"\n"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=OneRecordStream(), request=request)
+
+    client = ExecutionClient(
+        "http://execution", controller_id="controller", transport=httpx.MockTransport(handler)
+    )
+    client._handles["invocation"] = ExecutionHandle(
+        instance_id="instance",
+        controller_id="controller",
+        execution_id="execution",
+        invocation_id="invocation",
+        proxy_route="token",
+    )
+    request = TurnRequest(
+        controller_id="controller",
+        execution_id="execution",
+        invocation_id="invocation",
+        turn_id="turn-1",
+        prompt="prompt",
+        max_tool_calls=0,
+    )
+    stream = client.turn(request)
+    assert (await stream.__anext__()).kind == "text"
+    assert consumed == 1
+    await stream.aclose()
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_client_rejects_mismatched_acquire_handle() -> None:
+    from ach_agent.boot.execution_client import ExecutionClient, ExecutionClientError
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "instance_id": "other-instance",
+                "controller_id": "other-controller",
+                "execution_id": "execution",
+                "invocation_id": "other-invocation",
+                "proxy_route": "token",
+            },
+            request=request,
+        )
+
+    client = ExecutionClient(
+        "http://execution",
+        controller_id="controller",
+        instance_id="instance",
+        transport=httpx.MockTransport(handler),
+    )
+    request = AcquireRequest(
+        controller_id="controller",
+        invocation_id="invocation",
+        lane_key="lane",
+        conversation_key="conversation",
+        reuse=True,
+        remaining_seconds=5,
+        config=PublicEngineConfig(),
+    )
+    with pytest.raises(ExecutionClientError, match="identity mismatch"):
+        await client.acquire(request)
+    assert client._failed
+    assert not client._handles
+    await client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["cancel", "release", "session-ready"])
+async def test_client_requires_exact_cleanup_ack(operation: str) -> None:
+    from ach_agent.boot.execution_client import ExecutionClient, ExecutionClientError
+
+    handle = ExecutionHandle(
+        instance_id="instance",
+        controller_id="controller",
+        execution_id="execution",
+        invocation_id="invocation",
+        proxy_route="token",
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={}, request=request)
+
+    client = ExecutionClient(
+        "http://execution", controller_id="controller", transport=httpx.MockTransport(handler)
+    )
+    client._handles[handle.invocation_id] = handle
+    with pytest.raises(ExecutionClientError, match="acknowledgement"):
+        if operation == "cancel":
+            await client.cancel("controller", "invocation")
+        elif operation == "release":
+            await client.release(
+                ReleaseRequest(
+                    controller_id="controller",
+                    execution_id="execution",
+                    invocation_id="invocation",
+                    idle_ttl_seconds=0,
+                )
+            )
+        else:
+            await client._ack_session(
+                TurnRequest(
+                    controller_id="controller",
+                    execution_id="execution",
+                    invocation_id="invocation",
+                    turn_id="turn-1",
+                    prompt="prompt",
+                    max_tool_calls=0,
+                ),
+                ExecutionEvent(
+                    kind="session_resolved",
+                    execution_id="execution",
+                    invocation_id="invocation",
+                    turn_id="turn-1",
+                    payload={"session_ref": "native"},
+                ),
+            )
+    assert client._failed
+    assert handle.invocation_id in client._handles
+    await client.close()
+
+
+@pytest.mark.asyncio
 async def test_real_http_client_ack_cancel_pool_and_controller_loss(fake_driver) -> None:
     from ach_agent.boot.execution_client import ExecutionClient, ExecutionClientError
     from tests.execution.test_http import _running_server
@@ -495,6 +650,22 @@ async def test_real_http_client_ack_cancel_pool_and_controller_loss(fake_driver)
             barrier = asyncio.Event()
             fake_driver.turn_barrier = barrier
 
+            handles = [first, second]
+            for index in range(6):
+                handles.append(
+                    await client.acquire(
+                        AcquireRequest(
+                            controller_id="controller",
+                            invocation_id=f"active-{index}",
+                            lane_key=f"active-lane-{index}",
+                            conversation_key=f"active-conversation-{index}",
+                            reuse=True,
+                            remaining_seconds=5,
+                            config=PublicEngineConfig(),
+                        )
+                    )
+                )
+
             async def consume(handle: ExecutionHandle, turn_id: str) -> list[object]:
                 request = TurnRequest(
                     controller_id=handle.controller_id,
@@ -506,39 +677,35 @@ async def test_real_http_client_ack_cancel_pool_and_controller_loss(fake_driver)
                 )
                 return [event async for event in client.turn(request)]
 
-            first_task = asyncio.create_task(consume(first, "turn-first"))
-            second_task = asyncio.create_task(consume(second, "turn-second"))
+            stream_tasks = [
+                asyncio.create_task(consume(handle, f"turn-{index}"))
+                for index, handle in enumerate(handles)
+            ]
             fake_driver.launch_barrier = asyncio.Event()
-            slow_acquire = asyncio.create_task(
-                client.acquire(
-                    AcquireRequest(
-                        controller_id="controller",
-                        invocation_id="slow-acquire",
-                        lane_key="slow-acquire-lane",
-                        conversation_key="slow-acquire-conversation",
-                        reuse=True,
-                        remaining_seconds=5,
-                        config=PublicEngineConfig(),
+            slow_acquires = [
+                asyncio.create_task(
+                    client.acquire(
+                        AcquireRequest(
+                            controller_id="controller",
+                            invocation_id=f"slow-acquire-{index}",
+                            lane_key=f"slow-acquire-lane-{index}",
+                            conversation_key=f"slow-acquire-conversation-{index}",
+                            reuse=True,
+                            remaining_seconds=5,
+                            config=PublicEngineConfig(),
+                        )
                     )
                 )
-            )
+                for index in range(4)
+            ]
             for _ in range(100):
-                if fake_driver.turn_session_refs:
+                if len(fake_driver.turn_session_refs) == 8:
                     break
                 await asyncio.sleep(0.01)
-            assert not first_task.done()
-            assert not second_task.done()
+            assert all(not task.done() for task in stream_tasks)
             await asyncio.sleep(0)
-            assert not slow_acquire.done()
+            assert all(not task.done() for task in slow_acquires)
             await client.cancel("controller", "first")
-            assert not second_task.done()
-            assert not slow_acquire.done()
-            fake_driver.launch_barrier.set()
-            await asyncio.wait_for(slow_acquire, timeout=2)
-            barrier.set()
-            await asyncio.wait_for(second_task, timeout=2)
-            with contextlib.suppress(Exception):
-                await first_task
             assert client._controller_response is not None
             await client._controller_response.aclose()
             for _ in range(100):
@@ -546,6 +713,9 @@ async def test_real_http_client_ack_cancel_pool_and_controller_loss(fake_driver)
                     break
                 await asyncio.sleep(0.01)
             assert client._controller_lost
+            await asyncio.wait_for(
+                asyncio.gather(*stream_tasks, *slow_acquires, return_exceptions=True), timeout=2
+            )
             with pytest.raises(ExecutionClientError):
                 await client.acquire(
                     AcquireRequest(
@@ -558,7 +728,7 @@ async def test_real_http_client_ack_cancel_pool_and_controller_loss(fake_driver)
                         config=PublicEngineConfig(),
                     )
                 )
-            assert first_task.done()
+            assert all(task.done() for task in stream_tasks + slow_acquires)
             assert service._invocations.get("first") is None
         finally:
             await client.close()

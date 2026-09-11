@@ -4,7 +4,8 @@ import asyncio
 
 import pytest
 
-from ach_agent.execution.service import ExecutionService
+from ach_agent.engine.base.events import OpenCodeUsage
+from ach_agent.execution.service import ExecutionService, OutputLimitExceeded
 from ach_agent.execution.wire import (
     AcquireRequest,
     PublicEngineConfig,
@@ -53,6 +54,119 @@ async def test_turns_keep_current_native_ref_and_resolve_once(fake_driver):
             controller_id="controller",
             execution_id=handle.execution_id,
             invocation_id="inv",
+            idle_ttl_seconds=0,
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_turn_done_stats_normalize_native_usage_dataclass(fake_driver):
+    fake_driver.usage = OpenCodeUsage(
+        session_id="native-session",
+        message_id="message",
+        input_tokens=11,
+        output_tokens=7,
+        cache_read=3,
+        cache_write=2,
+        cost=0.125,
+        duration_ms=42,
+    )
+    service = ExecutionService(fake_driver, {})
+    handle = await service.acquire(_acquire())
+    events = [
+        event
+        async for event in service.turn(
+            TurnRequest(
+                controller_id="controller",
+                execution_id=handle.execution_id,
+                invocation_id="inv",
+                turn_id="main",
+                prompt="p",
+                max_tool_calls=0,
+            )
+        )
+    ]
+
+    done = events[-1]
+    assert done.kind == "turn_done"
+    assert done.payload["stats"]["usage"]["input_tokens"] == 11
+    assert done.payload["stats"]["usage"]["duration_ms"] == 42
+    await service.release(
+        ReleaseRequest(
+            controller_id="controller",
+            execution_id=handle.execution_id,
+            invocation_id="inv",
+            idle_ttl_seconds=0,
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_output_overflow_cancels_only_the_affected_invocation(fake_driver):
+    fake_driver.text_chunks = ["x" * 700_000] * 8
+    service = ExecutionService(fake_driver, {})
+    handle = await service.acquire(_acquire())
+    stream = service.turn(
+        TurnRequest(
+            controller_id="controller",
+            execution_id=handle.execution_id,
+            invocation_id="inv",
+            turn_id="main",
+            prompt="p",
+            max_tool_calls=0,
+        )
+    )
+
+    with pytest.raises(OutputLimitExceeded, match="4 MiB"):
+        await anext(stream)
+        while True:
+            await anext(stream)
+
+    assert fake_driver.stopped
+    assert "inv" not in service._invocations
+
+
+@pytest.mark.asyncio
+async def test_output_overflow_does_not_block_another_execution(fake_driver):
+    fake_driver.text_chunks_by_conversation["slow"] = ["x" * 700_000] * 8
+    service = ExecutionService(fake_driver, {})
+    slow = await service.acquire(
+        _acquire().model_copy(
+            update={"invocation_id": "slow-inv", "conversation_key": "slow"}
+        )
+    )
+    fast = await service.acquire(
+        _acquire().model_copy(
+            update={"invocation_id": "fast-inv", "conversation_key": "fast"}
+        )
+    )
+
+    async def collect(handle, invocation_id, conversation_key):
+        return [
+            event
+            async for event in service.turn(
+                TurnRequest(
+                    controller_id="controller",
+                    execution_id=handle.execution_id,
+                    invocation_id=invocation_id,
+                    turn_id="main",
+                    prompt=conversation_key,
+                    max_tool_calls=0,
+                )
+            )
+        ]
+
+    slow_task = asyncio.create_task(collect(slow, "slow-inv", "slow"))
+    fast_task = asyncio.create_task(collect(fast, "fast-inv", "fast"))
+    slow_result, fast_result = await asyncio.gather(slow_task, fast_task, return_exceptions=True)
+
+    assert isinstance(slow_result, OutputLimitExceeded)
+    assert fast_result[-1].kind == "turn_done"
+    await service.release(
+        ReleaseRequest(
+            controller_id="controller",
+            execution_id=fast.execution_id,
+            invocation_id="fast-inv",
             idle_ttl_seconds=0,
         )
     )
@@ -430,3 +544,37 @@ async def test_cancelled_release_waits_for_owned_cleanup(fake_driver):
         await release
     assert fake_driver.stopped
     assert "inv" not in service._invocations
+
+
+@pytest.mark.asyncio
+async def test_concurrent_cancel_joins_existing_cleanup(fake_driver):
+    service = ExecutionService(fake_driver, {})
+    await service.acquire(_acquire())
+    fake_driver.stop_barrier = asyncio.Event()
+    first = asyncio.create_task(service.cancel("controller", "inv"))
+    await asyncio.wait_for(fake_driver.stop_started.wait(), timeout=1)
+
+    second = asyncio.create_task(service.cancel("controller", "inv"))
+    await asyncio.sleep(0)
+    assert not second.done()
+    fake_driver.stop_barrier.set()
+    await first
+    await second
+
+
+@pytest.mark.asyncio
+async def test_warm_expiry_failure_marks_service_unhealthy(fake_driver):
+    service = ExecutionService(fake_driver, {})
+    handle = await service.acquire(_acquire())
+    fake_driver.stop_error = RuntimeError("warm stop failed")
+    await service.release(
+        ReleaseRequest(
+            controller_id="controller",
+            execution_id=handle.execution_id,
+            invocation_id="inv",
+            idle_ttl_seconds=0.01,
+        )
+    )
+    await asyncio.sleep(0.05)
+    assert service._unhealthy
+    assert service.shutdown_requested

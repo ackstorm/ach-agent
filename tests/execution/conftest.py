@@ -34,6 +34,9 @@ class FakeDriver:
         self.stop_started = asyncio.Event()
         self.stop_barrier = None
         self.stopped = False
+        self.usage = None
+        self.text_chunks: list[str] = []
+        self.text_chunks_by_conversation: dict[str, list[str]] = {}
 
     def skills_dir(self, home):
         return home
@@ -55,12 +58,16 @@ class FakeDriver:
 
     async def run_turn(self, server, **kwargs):
         self.turn_session_refs.append(kwargs["session_ref"])
+        if self.usage is not None:
+            kwargs["stats"]["usage"] = self.usage
         barrier = self.turn_barrier
         if barrier is not None:
             await barrier.wait()
         if self.run_error is not None:
             raise self.run_error
-        kwargs["on_text"]("reply")
+        chunks = self.text_chunks_by_conversation.get(kwargs["conv_key"], self.text_chunks)
+        for text in chunks or ["reply"]:
+            kwargs["on_text"](text)
         return TurnResult(
             text='{"action":"none","text":"reply"}', session_ref=kwargs["session_ref"]
         )

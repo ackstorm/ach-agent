@@ -202,6 +202,7 @@ class ExecutionClient:
         self._owned_tasks: set[asyncio.Task[Any]] = set()
         self._owned_responses: set[httpx.Response] = set()
         self._cancelled_invocations: set[str] = set()
+        self._active_turns: set[str] = set()
         self._handles: dict[str, ExecutionHandle] = {}
         self._turn_ids: dict[str, itertools.count[int]] = {}
         self._closed = False
@@ -289,6 +290,7 @@ class ExecutionClient:
         for response in responses:
             with contextlib.suppress(BaseException):
                 await response.aclose()
+        self._owned_responses.clear()
         pending = tuple(self._owned_tasks)
         for task in pending:
             if task is not asyncio.current_task() and not task.done():
@@ -343,12 +345,8 @@ class ExecutionClient:
     ) -> tuple[httpx.Response, bytes]:
         self._assert_controller_live()
         response = await self._owned_send(client, request)
-        try:
-            content = await self._owned_response(response)
-            return response, content
-        except BaseException as exc:
-            await self._fail_admission(exc)
-            raise
+        content = await self._owned_response(response)
+        return response, content
 
     async def _owned_response(self, response: httpx.Response) -> bytes:
         self._owned_responses.add(response)
@@ -356,9 +354,6 @@ class ExecutionClient:
         self._owned_tasks.add(task)
         try:
             return await asyncio.shield(task)
-        except BaseException as exc:
-            await self._fail_admission(exc)
-            raise
         finally:
             self._owned_responses.discard(response)
             self._owned_tasks.discard(task)
@@ -396,12 +391,16 @@ class ExecutionClient:
     async def acquire(self, request: AcquireRequest) -> ExecutionHandle:
         self._assert_controller_live()
         self._validate_controller(request.controller_id)
-        response, content = await self._owned_request(
-            self.acquire_client,
-            self.acquire_client.build_request(
-                "POST", "/execution/v1/acquire", json=request.model_dump(mode="json")
-            ),
-        )
+        try:
+            response, content = await self._owned_request(
+                self.acquire_client,
+                self.acquire_client.build_request(
+                    "POST", "/execution/v1/acquire", json=request.model_dump(mode="json")
+                ),
+            )
+        except BaseException as exc:
+            await self._fail_admission(exc)
+            raise
         try:
             if response.status_code < 200 or response.status_code >= 300:
                 if response.status_code == 502:
@@ -478,17 +477,33 @@ class ExecutionClient:
         """Stream one bounded turn, acknowledging every resolved native session."""
         self._assert_controller_live()
         self._validate_handle(request.controller_id, request.execution_id, request.invocation_id)
-        response = await self._owned_send(
-            self.stream_client,
-            self.stream_client.build_request(
-                "POST", "/execution/v1/turn", json=request.model_dump(mode="json")
-            ),
-        )
-        if response.status_code < 200 or response.status_code >= 300:
-            detail = (await self._owned_response(response))[:512].decode("utf-8", "replace")
-            raise ExecutionClientError(
-                f"execution turn failed: {detail}", status_code=response.status_code
+        self._active_turns.add(request.invocation_id)
+        try:
+            response = await self._owned_send(
+                self.stream_client,
+                self.stream_client.build_request(
+                    "POST", "/execution/v1/turn", json=request.model_dump(mode="json")
+                ),
             )
+        except BaseException:
+            with contextlib.suppress(BaseException):
+                await asyncio.shield(self.cancel(request.controller_id, request.invocation_id))
+            self._active_turns.discard(request.invocation_id)
+            self._cancelled_invocations.discard(request.invocation_id)
+            raise
+        if response.status_code < 200 or response.status_code >= 300:
+            try:
+                detail = (await self._owned_response(response))[:512].decode("utf-8", "replace")
+                raise ExecutionClientError(
+                    f"execution turn failed: {detail}", status_code=response.status_code
+                )
+            except BaseException:
+                with contextlib.suppress(BaseException):
+                    await asyncio.shield(self.cancel(request.controller_id, request.invocation_id))
+                raise
+            finally:
+                self._active_turns.discard(request.invocation_id)
+                self._cancelled_invocations.discard(request.invocation_id)
         self._owned_responses.add(response)
         lines = _bounded_lines(response.aiter_bytes())
         finished = False
@@ -557,6 +572,7 @@ class ExecutionClient:
             ):
                 await self._fail_admission(stream_error)
             self._cancelled_invocations.discard(request.invocation_id)
+            self._active_turns.discard(request.invocation_id)
 
     def turn_callable(self, handle: ExecutionHandle) -> Callable[..., Awaitable[TurnResult]]:
         """Bind execution identity and expose the terminal policy's run-turn vocabulary."""
@@ -641,7 +657,9 @@ class ExecutionClient:
 
     async def cancel(self, controller_id: str, invocation_id: str) -> None:
         self._validate_controller(controller_id)
-        self._cancelled_invocations.add(invocation_id)
+        active = invocation_id in self._active_turns
+        if active:
+            self._cancelled_invocations.add(invocation_id)
         try:
             result = await self._json_request(
                 "POST",
@@ -651,13 +669,16 @@ class ExecutionClient:
             )
             await self._require_ok(result, "cancel")
         except BaseException as exc:
-            self._cancelled_invocations.discard(invocation_id)
+            if active:
+                self._cancelled_invocations.discard(invocation_id)
             await self._fail_admission(exc)
             raise
         handle = self._handles.pop(invocation_id, None)
         if handle is not None:
             trace.drop(handle.proxy_route)
         self._turn_ids.pop(invocation_id, None)
+        if not active:
+            self._cancelled_invocations.discard(invocation_id)
 
     async def close(self) -> None:
         self._closed = True
@@ -680,6 +701,8 @@ class ExecutionClient:
             trace.drop(handle.proxy_route)
         self._handles.clear()
         self._turn_ids.clear()
+        self._cancelled_invocations.clear()
+        self._active_turns.clear()
         await self.stream_client.aclose()
         await self.acquire_client.aclose()
         await self.priority_client.aclose()
@@ -696,13 +719,13 @@ class ExecutionClient:
             response = await asyncio.shield(task)
             self._owned_responses.add(response)
             return response
-        except BaseException as exc:
+        except BaseException:
             if task.done() and not task.cancelled():
                 with contextlib.suppress(BaseException):
                     response = task.result()
                     self._owned_responses.add(response)
                     await response.aclose()
-            await self._fail_admission(exc)
+                    self._owned_responses.discard(response)
             raise
         finally:
             self._owned_tasks.discard(task)

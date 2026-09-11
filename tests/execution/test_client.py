@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 
 import httpx
@@ -516,6 +517,25 @@ async def test_client_turn_does_not_prefetch_while_consumer_is_paused() -> None:
     assert consumed == 1
     await stream.aclose()
     await client.close()
+    assert not client._owned_responses
+    assert not client._owned_tasks
+    assert not client._cancelled_invocations
+
+
+@pytest.mark.asyncio
+async def test_idle_cancellation_does_not_retain_invocation_markers() -> None:
+    from ach_agent.boot.execution_client import ExecutionClient
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"status": "ok"}, request=request)
+
+    client = ExecutionClient(
+        "http://execution", controller_id="controller", transport=httpx.MockTransport(handler)
+    )
+    for index in range(100):
+        await client.cancel("controller", f"idle-{index}")
+    assert not client._cancelled_invocations
+    await client.close()
 
 
 @pytest.mark.asyncio
@@ -730,6 +750,87 @@ async def test_real_http_client_ack_cancel_pool_and_controller_loss(fake_driver)
                 )
             assert all(task.done() for task in stream_tasks + slow_acquires)
             assert service._invocations.get("first") is None
+        finally:
+            await client.close()
+
+
+@pytest.mark.asyncio
+async def test_real_http_cancel_before_turn_headers_keeps_peer_healthy(fake_driver) -> None:
+    from ach_agent.boot.execution_client import ExecutionClient
+    from ach_agent.execution.app import create_execution_app
+    from tests.execution.test_http import _running_server
+
+    class BlockingResolveDriver(type(fake_driver)):
+        def __init__(self) -> None:
+            super().__init__()
+            self.block_started = asyncio.Event()
+            self.release_block = asyncio.Event()
+
+        async def resolve_session(self, server, *, conv_key, reuse, sessions, stats):
+            if conv_key == "blocked-conversation":
+                self.block_started.set()
+                await self.release_block.wait()
+            return await super().resolve_session(
+                server,
+                conv_key=conv_key,
+                reuse=reuse,
+                sessions=sessions,
+                stats=stats,
+            )
+
+    driver = BlockingResolveDriver()
+    service = ExecutionService(driver, {})
+    async with _running_server(create_execution_app(service)) as base_url:
+        client = ExecutionClient(base_url, controller_id="controller", timeout=2)
+        try:
+            await client.connect()
+            blocked = await client.acquire(
+                AcquireRequest(
+                    controller_id="controller",
+                    invocation_id="blocked",
+                    lane_key="blocked-lane",
+                    conversation_key="blocked-conversation",
+                    reuse=True,
+                    remaining_seconds=5,
+                    config=PublicEngineConfig(),
+                )
+            )
+            peer = await client.acquire(
+                AcquireRequest(
+                    controller_id="controller",
+                    invocation_id="peer",
+                    lane_key="peer-lane",
+                    conversation_key="peer-conversation",
+                    reuse=True,
+                    remaining_seconds=5,
+                    config=PublicEngineConfig(),
+                )
+            )
+
+            async def consume(handle: ExecutionHandle, turn_id: str) -> list[ExecutionEvent]:
+                return [
+                    event
+                    async for event in client.turn(
+                        TurnRequest(
+                            controller_id=handle.controller_id,
+                            execution_id=handle.execution_id,
+                            invocation_id=handle.invocation_id,
+                            turn_id=turn_id,
+                            prompt="prompt",
+                            max_tool_calls=0,
+                        )
+                    )
+                ]
+
+            blocked_task = asyncio.create_task(consume(blocked, "blocked-turn"))
+            await asyncio.wait_for(driver.block_started.wait(), timeout=2)
+            await client.cancel("controller", "blocked")
+            with contextlib.suppress(Exception):
+                await blocked_task
+            assert not client._cancelled_invocations
+            peer_events = await asyncio.wait_for(consume(peer, "peer-turn"), timeout=2)
+            assert any(event.kind == "turn_done" for event in peer_events)
+            assert not client._failed
         finally:
             await client.close()
 

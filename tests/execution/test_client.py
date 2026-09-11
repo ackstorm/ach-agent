@@ -523,6 +523,69 @@ async def test_client_turn_does_not_prefetch_while_consumer_is_paused() -> None:
 
 
 @pytest.mark.asyncio
+async def test_client_close_disposes_paused_turn_response() -> None:
+    from ach_agent.boot.execution_client import ExecutionClient
+
+    event = {
+        "kind": "text",
+        "execution_id": "execution",
+        "invocation_id": "invocation",
+        "turn_id": "turn-1",
+        "payload": "partial",
+    }
+
+    class TrackingStream(httpx.AsyncByteStream):
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def __aiter__(self):
+            yield json.dumps(event).encode() + b"\n"
+            await asyncio.Event().wait()
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    response_stream = TrackingStream()
+    response_holder: httpx.Response | None = None
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal response_holder
+        response_holder = httpx.Response(200, stream=response_stream, request=request)
+        return response_holder
+
+    client = ExecutionClient(
+        "http://execution", controller_id="controller", transport=httpx.MockTransport(handler)
+    )
+    client._handles["invocation"] = ExecutionHandle(
+        instance_id="instance",
+        controller_id="controller",
+        execution_id="execution",
+        invocation_id="invocation",
+        proxy_route="token",
+    )
+    request = TurnRequest(
+        controller_id="controller",
+        execution_id="execution",
+        invocation_id="invocation",
+        turn_id="turn-1",
+        prompt="prompt",
+        max_tool_calls=0,
+    )
+    stream = client.turn(request)
+    assert (await stream.__anext__()).kind == "text"
+
+    await client.close()
+
+    assert response_stream.closed
+    assert response_holder is not None and response_holder.is_closed
+    assert not client._owned_responses
+    assert not client._owned_tasks
+    assert not client._active_turns
+    assert not client._cancelled_invocations
+    await stream.aclose()
+
+
+@pytest.mark.asyncio
 async def test_idle_cancellation_does_not_retain_invocation_markers() -> None:
     from ach_agent.boot.execution_client import ExecutionClient
 
@@ -575,6 +638,64 @@ async def test_client_rejects_mismatched_acquire_handle() -> None:
     assert client._failed
     assert not client._handles
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_real_http_duplicate_turn_rejection_preserves_active_invocation(fake_driver) -> None:
+    from ach_agent.boot.execution_client import ExecutionClient, ExecutionClientError
+    from ach_agent.execution.app import create_execution_app
+    from tests.execution.test_http import _running_server
+
+    service = ExecutionService(fake_driver, {})
+    async with _running_server(create_execution_app(service)) as base_url:
+        client = ExecutionClient(base_url, controller_id="controller", timeout=2)
+        try:
+            await client.connect()
+            handle = await client.acquire(
+                AcquireRequest(
+                    controller_id="controller",
+                    invocation_id="invocation",
+                    lane_key="lane",
+                    conversation_key="conversation",
+                    reuse=True,
+                    remaining_seconds=5,
+                    config=PublicEngineConfig(),
+                )
+            )
+            fake_driver.turn_barrier = asyncio.Event()
+
+            def request(turn_id: str) -> TurnRequest:
+                return TurnRequest(
+                    controller_id=handle.controller_id,
+                    execution_id=handle.execution_id,
+                    invocation_id=handle.invocation_id,
+                    turn_id=turn_id,
+                    prompt="prompt",
+                    max_tool_calls=0,
+                )
+
+            first_request = request("turn-1")
+            first_stream = client.turn(first_request)
+            assert (await first_stream.__anext__()).kind == "session_resolved"
+
+            duplicate_stream = client.turn(request("turn-2"))
+            with pytest.raises(ExecutionClientError, match="already active"):
+                await duplicate_stream.__anext__()
+            assert not client._cancelled_invocations
+
+            fake_driver.turn_barrier.set()
+            first_events = [event async for event in first_stream]
+            assert any(event.kind == "turn_done" for event in first_events)
+
+            with pytest.raises(ExecutionClientError) as duplicate:
+                _ = [event async for event in client.turn(first_request)]
+            assert duplicate.value.status_code == 409
+            assert not client._cancelled_invocations
+
+            fresh_events = [event async for event in client.turn(request("turn-3"))]
+            assert any(event.kind == "turn_done" for event in fresh_events)
+        finally:
+            await client.close()
 
 
 @pytest.mark.asyncio

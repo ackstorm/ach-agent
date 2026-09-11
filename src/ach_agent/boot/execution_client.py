@@ -477,6 +477,8 @@ class ExecutionClient:
         """Stream one bounded turn, acknowledging every resolved native session."""
         self._assert_controller_live()
         self._validate_handle(request.controller_id, request.execution_id, request.invocation_id)
+        if request.invocation_id in self._active_turns:
+            raise ExecutionClientError("execution turn is already active")
         self._active_turns.add(request.invocation_id)
         try:
             response = await self._owned_send(
@@ -498,8 +500,11 @@ class ExecutionClient:
                     f"execution turn failed: {detail}", status_code=response.status_code
                 )
             except BaseException:
-                with contextlib.suppress(BaseException):
-                    await asyncio.shield(self.cancel(request.controller_id, request.invocation_id))
+                if response.status_code < 400 or response.status_code >= 500:
+                    with contextlib.suppress(BaseException):
+                        await asyncio.shield(
+                            self.cancel(request.controller_id, request.invocation_id)
+                        )
                 raise
             finally:
                 self._active_turns.discard(request.invocation_id)
@@ -694,6 +699,11 @@ class ExecutionClient:
                 task.cancel()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
+        responses = tuple(self._owned_responses)
+        for response in responses:
+            with contextlib.suppress(BaseException):
+                await response.aclose()
+        self._owned_responses.clear()
         if self._controller_response is not None:
             await self._controller_response.aclose()
             self._controller_response = None

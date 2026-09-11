@@ -10,10 +10,12 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from ach_agent.engine.base.driver import TurnResult
+
 if TYPE_CHECKING:
     from ach_agent.engine.base.events import OpenCodeToolUpdate
 
-RunTurn = Callable[..., Awaitable[Any]]
+RunTurn = Callable[..., Awaitable[TurnResult]]
 
 log = structlog.get_logger(__name__)
 

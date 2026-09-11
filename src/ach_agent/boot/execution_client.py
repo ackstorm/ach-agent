@@ -48,6 +48,10 @@ class ExecutionClientError(RuntimeError):
         self.status_code = status_code
 
 
+class ExecutionClientLaunchFailed(ExecutionClientError):
+    """The execution service could not launch the requested native engine."""
+
+
 async def _bounded_lines(chunks: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
     """Split NDJSON incrementally without allowing an unterminated record to grow."""
     buffer = bytearray()
@@ -167,17 +171,25 @@ class ExecutionClient:
             limits=control_limits,
             transport=transport,
         )
+        # Keep acknowledgement/cancellation capacity independent of session
+        # operations and release calls, which may wait on native cleanup.
+        self.priority_client = httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=timeout,
+            limits=httpx.Limits(max_connections=2, max_keepalive_connections=2),
+            transport=transport,
+        )
         # Acquisition can wait for a cold native launch.  Keep it out of the two
         # connections reserved for session-ready/cancel/release control traffic.
         self.acquire_client = httpx.AsyncClient(
             base_url=self.base_url,
-            timeout=timeout,
+            timeout=None,
             limits=httpx.Limits(max_connections=4, max_keepalive_connections=4),
             transport=transport,
         )
         self.stream_client = httpx.AsyncClient(
             base_url=self.base_url,
-            timeout=timeout,
+            timeout=None,
             limits=limits,
             transport=transport,
         )
@@ -185,9 +197,11 @@ class ExecutionClient:
         self._controller_iterator: AsyncIterator[bytes] | None = None
         self._controller_monitor: asyncio.Task[None] | None = None
         self._controller_lost = False
+        self._failed = False
+        self._failure_reason: str | None = None
+        self._owned_tasks: set[asyncio.Task[Any]] = set()
         self._handles: dict[str, ExecutionHandle] = {}
         self._turn_ids: dict[str, itertools.count[int]] = {}
-        self._turn_tasks: dict[str, asyncio.Task[Any]] = {}
         self._closed = False
 
     async def connect(self) -> ControllerHello:
@@ -262,47 +276,138 @@ class ExecutionClient:
             self._controller_lost = True
         else:
             self._controller_lost = True
-        if self._controller_lost:
-            for task in tuple(self._turn_tasks.values()):
-                if task is not asyncio.current_task() and not task.done():
-                    task.cancel()
+        if self._closed:
+            return
+        self._failed = True
+        self._failure_reason = "execution controller connection is lost"
+        if self._controller_response is not None:
+            with contextlib.suppress(BaseException):
+                await self._controller_response.aclose()
+        pending = tuple(self._owned_tasks)
+        for task in pending:
+            if task is not asyncio.current_task() and not task.done():
+                task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     async def claim_controller(self) -> ControllerHello:
         """Compatibility spelling matching ``ExecutionService.claim_controller``."""
         return await self.connect()
 
-    async def _json_request(self, method: str, path: str, body: Any) -> Any:
-        response = await self.control_client.send(
-            self.control_client.build_request(method, path, json=body), stream=True
-        )
-        content = await self._bounded_response(response)
-        if response.status_code < 200 or response.status_code >= 300:
-            detail = content[:512].decode("utf-8", "replace")
-            raise ExecutionClientError(
-                f"execution {method} {path} failed: {detail}",
-                status_code=response.status_code,
-            )
-        if not content:
-            return None
+    async def _json_request(
+        self,
+        method: str,
+        path: str,
+        body: Any,
+        *,
+        client: httpx.AsyncClient | None = None,
+    ) -> Any:
+        request_client = self.control_client if client is None else client
         try:
-            return json.loads(content)
-        except ValueError as exc:
-            raise ExecutionClientError("invalid execution JSON response") from exc
+            response, content = await self._owned_request(
+                request_client,
+                request_client.build_request(method, path, json=body),
+            )
+            if response.status_code < 200 or response.status_code >= 300:
+                detail = content[:512].decode("utf-8", "replace")
+                raise ExecutionClientError(
+                    f"execution {method} {path} failed: {detail}",
+                    status_code=response.status_code,
+                )
+            if not content:
+                return None
+            try:
+                return json.loads(content)
+            except ValueError as exc:
+                raise ExecutionClientError("invalid execution JSON response") from exc
+        except ExecutionClientError as exc:
+            await self._fail_admission(exc)
+            raise
 
     def _assert_controller_live(self) -> None:
-        if self._controller_lost:
-            raise ExecutionClientError("execution controller connection is lost")
+        if self._closed:
+            raise ExecutionClientError("execution client is closed")
+        if self._failed or self._controller_lost:
+            raise ExecutionClientError(
+                self._failure_reason or "execution controller connection is lost"
+            )
+
+    async def _owned_request(
+        self, client: httpx.AsyncClient, request: httpx.Request
+    ) -> tuple[httpx.Response, bytes]:
+        self._assert_controller_live()
+        task = asyncio.create_task(client.send(request, stream=True))
+        self._owned_tasks.add(task)
+        try:
+            response = await asyncio.shield(task)
+            content = await self._owned_response(response)
+            return response, content
+        finally:
+            self._owned_tasks.discard(task)
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task
+
+    async def _owned_response(self, response: httpx.Response) -> bytes:
+        task = asyncio.create_task(self._bounded_response(response))
+        self._owned_tasks.add(task)
+        try:
+            return await asyncio.shield(task)
+        finally:
+            self._owned_tasks.discard(task)
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task
+
+    def _validate_controller(self, controller_id: str) -> None:
+        if controller_id != self.controller_id:
+            raise ExecutionClientError("execution request has the wrong controller")
+
+    def _validate_handle(
+        self, controller_id: str, execution_id: str, invocation_id: str
+    ) -> ExecutionHandle:
+        self._validate_controller(controller_id)
+        handle = self._handles.get(invocation_id)
+        if (
+            handle is None
+            or handle.controller_id != controller_id
+            or handle.execution_id != execution_id
+            or (self.instance_id is not None and handle.instance_id != self.instance_id)
+        ):
+            raise ExecutionClientError("execution request identity mismatch")
+        return handle
+
+    async def _fail_admission(self, reason: BaseException | str) -> None:
+        self._failed = True
+        self._controller_lost = True
+        self._failure_reason = str(reason)
+        if self._controller_response is not None:
+            with contextlib.suppress(BaseException):
+                await self._controller_response.aclose()
 
     async def acquire(self, request: AcquireRequest) -> ExecutionHandle:
         self._assert_controller_live()
-        response = await self.acquire_client.send(
+        self._validate_controller(request.controller_id)
+        response, content = await self._owned_request(
+            self.acquire_client,
             self.acquire_client.build_request(
                 "POST", "/execution/v1/acquire", json=request.model_dump(mode="json")
             ),
-            stream=True,
         )
-        content = await self._bounded_response(response)
         if response.status_code < 200 or response.status_code >= 300:
+            if response.status_code == 502:
+                with contextlib.suppress(ValueError, TypeError):
+                    failure = json.loads(content)
+                    if (
+                        isinstance(failure, dict)
+                        and failure.get("type") == "LaunchFailed"
+                        and isinstance(failure.get("message"), str)
+                    ):
+                        raise ExecutionClientLaunchFailed(
+                            failure["message"], status_code=response.status_code
+                        )
             raise ExecutionClientError(
                 f"execution acquire failed: {content[:512].decode('utf-8', 'replace')}",
                 status_code=response.status_code,
@@ -315,15 +420,16 @@ class ExecutionClient:
             handle = ExecutionHandle.model_validate(value)
         except Exception as exc:
             raise ExecutionClientError("invalid execution handle") from exc
+        self._assert_controller_live()
         trace.adopt(handle.proxy_route)
         self._handles[handle.invocation_id] = handle
         self._turn_ids.setdefault(handle.invocation_id, itertools.count(1))
         return handle
 
     async def _ack_session(self, request: TurnRequest, event: ExecutionEvent) -> None:
-        handle = self._handles.get(request.invocation_id)
-        if handle is None or handle.execution_id != request.execution_id:
-            raise ExecutionClientError("session event is for an unknown execution")
+        handle = self._validate_handle(
+            request.controller_id, request.execution_id, request.invocation_id
+        )
         payload = event.payload
         session_ref = payload.get("session_ref") if isinstance(payload, dict) else None
         if not isinstance(session_ref, str) or not session_ref:
@@ -340,52 +446,85 @@ class ExecutionClient:
                 invocation_id=request.invocation_id,
                 turn_id=request.turn_id,
             ).model_dump(mode="json"),
+            client=self.priority_client,
         )
 
     async def turn(self, request: TurnRequest) -> AsyncIterator[ExecutionEvent]:
         """Stream one bounded turn, acknowledging every resolved native session."""
         self._assert_controller_live()
-        response = await self.stream_client.send(
+        self._validate_handle(request.controller_id, request.execution_id, request.invocation_id)
+        response = await self._owned_send(
+            self.stream_client,
             self.stream_client.build_request(
                 "POST", "/execution/v1/turn", json=request.model_dump(mode="json")
             ),
-            stream=True,
         )
         if response.status_code < 200 or response.status_code >= 300:
-            detail = (await self._bounded_response(response))[:512].decode("utf-8", "replace")
+            detail = (await self._owned_response(response))[:512].decode("utf-8", "replace")
             raise ExecutionClientError(
                 f"execution turn failed: {detail}", status_code=response.status_code
             )
         finished = False
-        task = asyncio.current_task()
-        if task is not None:
-            self._turn_tasks[request.invocation_id] = task
+        saw_turn_done = False
+        reader_queue: asyncio.Queue[tuple[ExecutionEvent | None, BaseException | None]] = (
+            asyncio.Queue()
+        )
+
+        async def read_stream() -> None:
+            try:
+                async for line in _bounded_lines(response.aiter_bytes()):
+                    if not line:
+                        continue
+                    event = _json_record(line)
+                    if (
+                        event.execution_id != request.execution_id
+                        or event.invocation_id != request.invocation_id
+                        or event.turn_id != request.turn_id
+                    ):
+                        raise ExecutionClientError("execution event identity mismatch")
+                    await reader_queue.put((event, None))
+            except BaseException as exc:
+                await reader_queue.put((None, exc))
+            finally:
+                await response.aclose()
+                await reader_queue.put((None, None))
+
+        reader = asyncio.create_task(read_stream())
+        self._owned_tasks.add(reader)
         try:
-            async for line in _bounded_lines(response.aiter_bytes()):
-                if not line:
-                    continue
-                event = _json_record(line)
-                if (
-                    event.execution_id != request.execution_id
-                    or event.invocation_id != request.invocation_id
-                    or event.turn_id != request.turn_id
-                ):
-                    raise ExecutionClientError("execution event identity mismatch")
+            while True:
+                event, error = await reader_queue.get()
+                if error is not None:
+                    if isinstance(error, asyncio.CancelledError):
+                        raise ExecutionClientError("execution controller connection is lost")
+                    raise error
+                if event is None:
+                    break
+                if saw_turn_done:
+                    raise ExecutionClientError("out-of-order event after turn_done")
                 if event.kind == "session_resolved":
                     await self._ack_session(request, event)
                 if event.kind == "error":
                     payload = event.payload if isinstance(event.payload, dict) else {}
                     raise ExecutionClientError(str(payload.get("message", "native turn failed")))
+                if event.kind == "turn_done":
+                    if saw_turn_done:
+                        raise ExecutionClientError("duplicate turn_done event")
+                    saw_turn_done = True
                 yield event
+            if not saw_turn_done:
+                raise ExecutionClientError("execution stream ended before turn_done")
             finished = True
         except asyncio.CancelledError:
             with contextlib.suppress(BaseException):
                 await asyncio.shield(self.cancel(request.controller_id, request.invocation_id))
             raise
         finally:
-            if self._turn_tasks.get(request.invocation_id) is task:
-                self._turn_tasks.pop(request.invocation_id, None)
-            await response.aclose()
+            self._owned_tasks.discard(reader)
+            if not reader.done():
+                reader.cancel()
+            with contextlib.suppress(BaseException):
+                await reader
             if not finished and not self._closed:
                 with contextlib.suppress(BaseException):
                     await asyncio.shield(self.cancel(request.controller_id, request.invocation_id))
@@ -449,24 +588,38 @@ class ExecutionClient:
 
     async def session_op(self, request: SessionOperation) -> None:
         self._assert_controller_live()
+        self._validate_handle(request.controller_id, request.execution_id, request.invocation_id)
         await self._json_request(
             "POST", "/execution/v1/session-op", request.model_dump(mode="json")
         )
 
     async def release(self, request: ReleaseRequest) -> None:
         self._assert_controller_live()
-        await self._json_request("POST", "/execution/v1/release", request.model_dump(mode="json"))
+        self._validate_handle(request.controller_id, request.execution_id, request.invocation_id)
+        try:
+            await self._json_request(
+                "POST", "/execution/v1/release", request.model_dump(mode="json")
+            )
+        except BaseException as exc:
+            await self._fail_admission(exc)
+            raise
         handle = self._handles.pop(request.invocation_id, None)
         if handle is not None:
             trace.drop(handle.proxy_route)
         self._turn_ids.pop(request.invocation_id, None)
 
     async def cancel(self, controller_id: str, invocation_id: str) -> None:
-        await self._json_request(
-            "POST",
-            "/execution/v1/cancel",
-            {"controller_id": controller_id, "invocation_id": invocation_id},
-        )
+        self._validate_controller(controller_id)
+        try:
+            await self._json_request(
+                "POST",
+                "/execution/v1/cancel",
+                {"controller_id": controller_id, "invocation_id": invocation_id},
+                client=self.priority_client,
+            )
+        except BaseException as exc:
+            await self._fail_admission(exc)
+            raise
         handle = self._handles.pop(invocation_id, None)
         if handle is not None:
             trace.drop(handle.proxy_route)
@@ -474,13 +627,45 @@ class ExecutionClient:
 
     async def close(self) -> None:
         self._closed = True
+        monitor = self._controller_monitor
+        self._controller_monitor = None
+        if monitor is not None:
+            monitor.cancel()
+            with contextlib.suppress(BaseException):
+                await monitor
+        pending = tuple(self._owned_tasks)
+        for task in pending:
+            if task is not asyncio.current_task() and not task.done():
+                task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
         if self._controller_response is not None:
             await self._controller_response.aclose()
             self._controller_response = None
+        for handle in self._handles.values():
+            trace.drop(handle.proxy_route)
+        self._handles.clear()
+        self._turn_ids.clear()
         await self.stream_client.aclose()
         await self.acquire_client.aclose()
+        await self.priority_client.aclose()
         await self.control_client.aclose()
         await self.controller_client.aclose()
+
+    async def _owned_send(
+        self, client: httpx.AsyncClient, request: httpx.Request
+    ) -> httpx.Response:
+        self._assert_controller_live()
+        task = asyncio.create_task(client.send(request, stream=True))
+        self._owned_tasks.add(task)
+        try:
+            return await asyncio.shield(task)
+        finally:
+            self._owned_tasks.discard(task)
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task
 
     @staticmethod
     async def _bounded_response(response: httpx.Response) -> bytes:

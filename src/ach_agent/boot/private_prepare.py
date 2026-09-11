@@ -24,6 +24,15 @@ from ach_agent.engine.sanitized_env import redact_text
 _ERROR_TAIL_BYTES = 4096
 
 
+async def _bounded_read(stream: asyncio.StreamReader) -> bytes:
+    tail = bytearray()
+    while chunk := await stream.read(8192):
+        tail.extend(chunk)
+        if len(tail) > _ERROR_TAIL_BYTES:
+            del tail[:-_ERROR_TAIL_BYTES]
+    return bytes(tail)
+
+
 class PrivatePrepareFailed(RuntimeError):
     """The private hook or its safe local handoff failed."""
 
@@ -111,12 +120,17 @@ async def _git(
         )
     except OSError as exc:
         raise PrivatePrepareFailed(f"private Git handoff could not start: {exc}") from exc
+    assert proc.stdout is not None and proc.stderr is not None
+    stdout_task = asyncio.create_task(proc.stdout.read())
+    stderr_task = asyncio.create_task(_bounded_read(proc.stderr))
     try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        await asyncio.wait_for(proc.wait(), timeout=timeout)
+        stdout, stderr = await asyncio.gather(stdout_task, stderr_task)
     except (TimeoutError, asyncio.CancelledError):
         with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)
         await proc.wait()
+        await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
         raise
     if proc.returncode:
         detail = redact_text(stderr[-_ERROR_TAIL_BYTES:].decode("utf-8", "replace").strip())
@@ -127,7 +141,10 @@ async def _git(
 
 
 async def _scan_git_objects(
-    source: Path, env: dict[str, str], secret_values: tuple[str, ...]
+    source: Path,
+    env: dict[str, str],
+    secret_values: tuple[str, ...],
+    timeout: int = 120,
 ) -> None:
     """Scan every object with one bounded streaming Git process."""
     if not secret_values:
@@ -140,29 +157,32 @@ async def _scan_git_objects(
     )
     assert proc.stdout is not None
     try:
-        while header := await proc.stdout.readline():
-            parts = header.rstrip(b"\n").split()
-            if len(parts) != 3 or parts[1] == b"missing":
-                continue
-            try:
-                size = int(parts[2])
-            except ValueError as exc:
-                raise PrivatePrepareFailed(
-                    "private Git object scan returned invalid metadata"
-                ) from exc
-            remaining = size
-            tail = b""
-            needles = tuple(value.encode() for value in secret_values)
-            while remaining:
-                chunk = await proc.stdout.read(min(remaining, 1024 * 1024))
-                if not chunk:
-                    raise PrivatePrepareFailed("private Git object scan ended early")
-                data = tail + chunk
-                if any(needle in data for needle in needles):
-                    raise PrivatePrepareFailed("private handoff contains a configured credential")
-                tail = data[-max((len(needle) for needle in needles), default=1) :]
-                remaining -= len(chunk)
-            await proc.stdout.readexactly(1)
+        async with asyncio.timeout(timeout):
+            while header := await proc.stdout.readline():
+                parts = header.rstrip(b"\n").split()
+                if len(parts) != 3 or parts[1] == b"missing":
+                    raise PrivatePrepareFailed("private Git object scan returned invalid metadata")
+                try:
+                    size = int(parts[2])
+                except ValueError as exc:
+                    raise PrivatePrepareFailed(
+                        "private Git object scan returned invalid metadata"
+                    ) from exc
+                remaining = size
+                tail = b""
+                needles = tuple(value.encode() for value in secret_values)
+                while remaining:
+                    chunk = await proc.stdout.read(min(remaining, 1024 * 1024))
+                    if not chunk:
+                        raise PrivatePrepareFailed("private Git object scan ended early")
+                    data = tail + chunk
+                    if any(needle in data for needle in needles):
+                        raise PrivatePrepareFailed(
+                            "private handoff contains a configured credential"
+                        )
+                    tail = data[-max((len(needle) for needle in needles), default=1) :]
+                    remaining -= len(chunk)
+                await proc.stdout.readexactly(1)
         await proc.wait()
     except BaseException:
         with contextlib.suppress(ProcessLookupError):

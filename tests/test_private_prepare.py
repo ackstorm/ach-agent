@@ -8,12 +8,16 @@ private-checkout implementation.  The security tests are strict xfails until Tas
 
 from __future__ import annotations
 
+import asyncio
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from ach_agent.boot.prepare import PrepareFailed, prepare_workspace, run_cleanup, run_prepare
+from ach_agent.boot.private_prepare import PrivatePrepareFailed, _git_env, _scan_git_objects
+from ach_agent.boot.private_prepare import _git as private_git
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import PrepareBlock
 
@@ -349,3 +353,92 @@ async def test_private_handoff_rejects_credentialed_origin(
     with pytest.raises(PrepareFailed, match="origin contains"):
         await run_prepare(cfg, _event(), workspace)
     assert not (workspace / "repo").exists()
+
+
+async def test_private_git_helper_cancellation_kills_descendants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    parent_pid = tmp_path / "parent.pid"
+    child_pid = tmp_path / "child.pid"
+    fake_git = bindir / "git"
+    fake_git.write_text(
+        "#!/bin/sh\n"
+        f"echo $$ > {parent_pid}\n"
+        f"(sleep 30) & child=$!; echo $child > {child_pid}; wait $child\n"
+    )
+    fake_git.chmod(0o700)
+    monkeypatch.setenv("PATH", f"{bindir}:/usr/bin:/bin")
+    task = asyncio.create_task(private_git(tmp_path, "status", env=_git_env()))
+    async with asyncio.timeout(2):
+        while not parent_pid.exists() or not child_pid.exists():
+            await asyncio.sleep(0.01)
+    parent = int(parent_pid.read_text())
+    child = int(child_pid.read_text())
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    for pid in (parent, child):
+        for _ in range(100):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            stat_path = Path(f"/proc/{pid}/stat")
+            if stat_path.exists() and stat_path.read_text().split()[2] == "Z":
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail(f"process {pid} survived cancellation")
+
+
+async def test_private_git_error_is_redacted_and_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    token = "synthetic-private-token"
+    fake_git = bindir / "git"
+    fake_git.write_text(
+        f'#!/bin/sh\ni=0; while [ "$i" -lt 20000 ]; do printf x >&2; i=$((i + 1)); done; '
+        f'printf "%s" "{token}" >&2; exit 19\n'
+    )
+    fake_git.chmod(0o700)
+    monkeypatch.setenv("PATH", f"{bindir}:/usr/bin:/bin")
+    with pytest.raises(PrivatePrepareFailed) as error:
+        await private_git(tmp_path, "status", env=_git_env(), secret_values=(token,))
+    message = str(error.value)
+    assert token not in message
+    assert "[REDACTED]" in message
+    assert len(message) < 4300
+
+
+async def test_private_object_scan_rejects_malformed_header(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    fake_git = bindir / "git"
+    fake_git.write_text("#!/bin/sh\nprintf 'malformed-header\\n'\n")
+    fake_git.chmod(0o700)
+    monkeypatch.setenv("PATH", f"{bindir}:/usr/bin:/bin")
+    with pytest.raises(PrivatePrepareFailed, match="invalid metadata"):
+        await _scan_git_objects(tmp_path, _git_env(), ("token",))
+
+
+async def test_private_object_scan_timeout_kills_process_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    pid_file = tmp_path / "scanner.pid"
+    fake_git = bindir / "git"
+    fake_git.write_text(f"#!/bin/sh\necho $$ > {pid_file}\nsleep 30\n")
+    fake_git.chmod(0o700)
+    monkeypatch.setenv("PATH", f"{bindir}:/usr/bin:/bin")
+    with pytest.raises(TimeoutError):
+        await _scan_git_objects(tmp_path, _git_env(), ("token",), timeout=1)
+    pid = int(pid_file.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)

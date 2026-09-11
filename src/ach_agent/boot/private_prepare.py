@@ -15,9 +15,13 @@ import signal
 import stat
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import PrepareBlock, resolve_secret
+from ach_agent.engine.sanitized_env import redact_text
+
+_ERROR_TAIL_BYTES = 4096
 
 
 class PrivatePrepareFailed(RuntimeError):
@@ -67,6 +71,10 @@ def _check_destination(repo: Path) -> None:
                     f"private handoff destination is not a directory: {current}"
                 )
         current = current.parent
+    if repo.exists():
+        if not (repo / ".git").is_dir() or (repo / ".git").is_symlink():
+            raise PrivatePrepareFailed("private handoff requires a real destination .git directory")
+        _reject_tree(repo)
 
 
 def _git_env() -> dict[str, str]:
@@ -82,7 +90,13 @@ def _git_env() -> dict[str, str]:
     return env
 
 
-async def _git(repo: Path, *args: str, env: dict[str, str], timeout: int = 120) -> str:
+async def _git(
+    repo: Path,
+    *args: str,
+    env: dict[str, str],
+    timeout: int = 120,
+    secret_values: tuple[str, ...] = (),
+) -> str:
     command = ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]
     if repo != Path("-"):
         command.extend(["-C", str(repo)])
@@ -105,9 +119,69 @@ async def _git(repo: Path, *args: str, env: dict[str, str], timeout: int = 120) 
         await proc.wait()
         raise
     if proc.returncode:
-        detail = stderr.decode("utf-8", "replace").strip()
+        detail = redact_text(stderr[-_ERROR_TAIL_BYTES:].decode("utf-8", "replace").strip())
+        for value in secret_values:
+            detail = detail.replace(value, "[REDACTED]")
         raise PrivatePrepareFailed(f"private Git handoff failed: {detail}")
     return stdout.decode("utf-8", "replace").strip()
+
+
+async def _scan_git_objects(
+    source: Path, env: dict[str, str], secret_values: tuple[str, ...]
+) -> None:
+    """Scan every object with one bounded streaming Git process."""
+    if not secret_values:
+        return
+    command = ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+               "-C", str(source), "cat-file", "--batch-all-objects", "--batch"]
+    proc = await asyncio.create_subprocess_exec(
+        *command, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    assert proc.stdout is not None
+    try:
+        while header := await proc.stdout.readline():
+            parts = header.rstrip(b"\n").split()
+            if len(parts) != 3 or parts[1] == b"missing":
+                continue
+            try:
+                size = int(parts[2])
+            except ValueError as exc:
+                raise PrivatePrepareFailed(
+                    "private Git object scan returned invalid metadata"
+                ) from exc
+            remaining = size
+            tail = b""
+            needles = tuple(value.encode() for value in secret_values)
+            while remaining:
+                chunk = await proc.stdout.read(min(remaining, 1024 * 1024))
+                if not chunk:
+                    raise PrivatePrepareFailed("private Git object scan ended early")
+                data = tail + chunk
+                if any(needle in data for needle in needles):
+                    raise PrivatePrepareFailed("private handoff contains a configured credential")
+                tail = data[-max((len(needle) for needle in needles), default=1) :]
+                remaining -= len(chunk)
+            await proc.stdout.readexactly(1)
+        await proc.wait()
+    except BaseException:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        await proc.wait()
+        raise
+    if proc.returncode:
+        raise PrivatePrepareFailed("private Git object scan failed")
+
+
+def _safe_origin(origin: str, secret_values: tuple[str, ...]) -> str:
+    if not origin or any(value and value in origin for value in secret_values):
+        raise PrivatePrepareFailed("private handoff origin contains a configured credential")
+    if any(ord(char) < 0x20 for char in origin):
+        raise PrivatePrepareFailed("private handoff origin contains control characters")
+    parsed = urlsplit(origin)
+    if parsed.username or parsed.password:
+        raise PrivatePrepareFailed("private handoff origin contains credentials")
+    return origin
 
 
 async def _run_private_hook(
@@ -163,20 +237,72 @@ async def _handoff(
     bundle = Path(bundle_name)
     bundle.unlink()
     try:
-        head = await _git(source, "rev-parse", "HEAD", env=env)
-        objects = await _git(source, "rev-list", "--objects", "--all", env=env)
-        for object_line in objects.splitlines():
-            object_id = object_line.split(maxsplit=1)[0]
-            content = await _git(source, "cat-file", "-p", object_id, env=env)
-            if any(value and value in content for value in secret_values):
-                raise PrivatePrepareFailed("private handoff contains a configured credential")
-        await _git(source, "bundle", "create", str(bundle), "--all", env=env)
+        head = await _git(source, "rev-parse", "HEAD", env=env, secret_values=secret_values)
+        await _scan_git_objects(source, env, secret_values)
+        origin = None
+        try:
+            origin = _safe_origin(
+                await _git(
+                    source,
+                    "remote",
+                    "get-url",
+                    "origin",
+                    env=env,
+                    secret_values=secret_values,
+                ),
+                secret_values,
+            )
+        except PrivatePrepareFailed as exc:
+            if "origin contains" in str(exc):
+                raise
+            # A script may intentionally create a repository without a remote.
+            origin = None
+        await _git(
+            source,
+            "bundle",
+            "create",
+            str(bundle),
+            "--all",
+            env=env,
+            secret_values=secret_values,
+        )
         if not repo.exists():
             repo.mkdir(parents=True, mode=0o700)
-            await _git(repo, "init", "-q", env=env)
-        await _git(repo, "fetch", "-q", "--no-tags", str(bundle), "+refs/*:refs/ach/private/*",
-                   "+refs/remotes/origin/*:refs/remotes/origin/*", env=env)
-        await _git(repo, "checkout", "-q", "--force", "--detach", head, env=env)
+            await _git(repo, "init", "-q", env=env, secret_values=secret_values)
+        if origin:
+            try:
+                await _git(
+                    repo,
+                    "remote",
+                    "set-url",
+                    "origin",
+                    origin,
+                    env=env,
+                    secret_values=secret_values,
+                )
+            except PrivatePrepareFailed:
+                await _git(
+                    repo,
+                    "remote",
+                    "add",
+                    "origin",
+                    origin,
+                    env=env,
+                    secret_values=secret_values,
+                )
+        await _git(
+            repo,
+            "fetch",
+            "-q",
+            "--no-tags",
+            str(bundle),
+            "+refs/*:refs/ach/private/*",
+            "+refs/remotes/origin/*:refs/remotes/origin/*",
+            env=env,
+            secret_values=secret_values,
+        )
+        await _git(repo, "checkout", "-q", "--force", "--detach", head, env=env,
+                   secret_values=secret_values)
     finally:
         with contextlib.suppress(OSError):
             bundle.unlink()

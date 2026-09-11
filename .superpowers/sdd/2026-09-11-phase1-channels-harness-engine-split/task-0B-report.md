@@ -4,7 +4,7 @@
 
 ```text
 rtk proxy ./scripts/dev.sh uv run pytest tests/test_prepare.py tests/test_private_prepare.py -q
-48 passed in 3.32s
+52 passed in 3.27s
 
 rtk proxy ./scripts/dev.sh uv run pytest tests/config -q
 133 passed in 0.54s
@@ -30,9 +30,13 @@ by `git diff` and `git merge-base`. Existing target `.git` state, untracked file
 objects and workspace inode remain in place; the bundle is removed in `finally`.
 
 Credential-free prepare and cleanup retain current workspace behavior. Credentialed cleanup
-runs only in fresh private state and cannot inspect or delete the engine workspace, so hooks
-that depend on the old credential-bearing workspace contract fail closed. `_event_value`
-validation remains unchanged.
+runs only in fresh private state and cannot inspect or delete the engine workspace; a legacy
+cleanup script may therefore complete while leaving the public workspace unchanged and must
+be migrated. `_event_value` validation remains unchanged.
+
+The affected preparation, wiring and pool suites passed with `136 passed, 1 warning`; strict
+mypy passed for the three changed boot modules. The warning is the existing Starlette test
+client deprecation.
 
 ## Safety limits
 

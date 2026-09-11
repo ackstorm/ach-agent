@@ -77,6 +77,7 @@ async def test_private_fixture_characterizes_reuse_and_cleanup(
     repo = workspace / "repo"
     assert _git(repo, "rev-parse", "origin/main") == initial_head
     assert _git(repo, "merge-base", "origin/main", "HEAD") == initial_head
+    assert _git(repo, "remote", "get-url", "origin") == str(source)
     _git(repo, "config", "user.email", "agent@example.invalid")
     _git(repo, "config", "user.name", "agent")
     assert workspace.stat().st_ino == inode
@@ -246,6 +247,40 @@ async def test_prepare_rejects_destination_symlink_escape(tmp_path: Path) -> Non
     assert not (sentinel / "marker").exists()
 
 
+@pytest.mark.parametrize("kind", ["gitdir", "nested"])
+async def test_private_handoff_rejects_existing_destination_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    source, _ = _local_origin(tmp_path)
+    monkeypatch.setenv("PRIVATE_PREPARE_TOKEN", "synthetic-token")
+    workspace = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), f"dest-{kind}")
+    repo = workspace / "repo"
+    _git(tmp_path, "init", "-q", str(repo))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    if kind == "gitdir":
+        original_git = repo / ".git"
+        moved_git = outside / "git"
+        original_git.rename(moved_git)
+        original_git.symlink_to(moved_git, target_is_directory=True)
+        sentinel = moved_git / "sentinel"
+    else:
+        nested = repo / "nested"
+        nested.symlink_to(outside, target_is_directory=True)
+        sentinel = outside / "sentinel"
+    sentinel.write_text("keep")
+    cfg = PrepareBlock.model_validate(
+        {
+            "script": 'git clone -q "$SOURCE" "$ACH_WORKSPACE/repo"',
+            "env": {"SOURCE": str(source)},
+            "secretEnv": {"TOKEN": {"env": "PRIVATE_PREPARE_TOKEN"}},
+        }
+    )
+    with pytest.raises(PrepareFailed, match="symlink|real destination"):
+        await run_prepare(cfg, _event(), workspace)
+    assert sentinel.read_text() == "keep"
+
+
 async def test_private_handoff_rejects_credential_in_published_bundle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -259,7 +294,9 @@ async def test_private_handoff_rejects_credential_in_published_bundle(
                 'printf "%s" "$TOKEN" > "$ACH_WORKSPACE/repo/secret.txt"; '
                 'git -C "$ACH_WORKSPACE/repo" add secret.txt; '
                 'git -C "$ACH_WORKSPACE/repo" -c user.name=x -c user.email=x@example.invalid '
-                'commit -qm secret'
+                'commit -qm secret; rm "$ACH_WORKSPACE/repo/secret.txt"; '
+                'git -C "$ACH_WORKSPACE/repo" -c user.name=x -c user.email=x@example.invalid '
+                'commit -qam remove-secret'
             ),
             "env": {"SOURCE": str(source)},
             "secretEnv": {"TOKEN": {"env": "PRIVATE_PREPARE_TOKEN"}},
@@ -290,3 +327,25 @@ async def test_private_handoff_rejects_source_symlink(
     )
     with pytest.raises(PrepareFailed, match="symlink"):
         await run_prepare(cfg, _event(), workspace)
+
+
+async def test_private_handoff_rejects_credentialed_origin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, _ = _local_origin(tmp_path)
+    monkeypatch.setenv("PRIVATE_PREPARE_TOKEN", "synthetic-token")
+    workspace = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "origin-secret")
+    cfg = PrepareBlock.model_validate(
+        {
+            "script": (
+                'set -eu; git clone -q "$SOURCE" "$ACH_WORKSPACE/repo"; '
+                'git -C "$ACH_WORKSPACE/repo" remote set-url origin '
+                '"https://oauth2:$TOKEN@example.invalid/repo.git"'
+            ),
+            "env": {"SOURCE": str(source)},
+            "secretEnv": {"TOKEN": {"env": "PRIVATE_PREPARE_TOKEN"}},
+        }
+    )
+    with pytest.raises(PrepareFailed, match="origin contains"):
+        await run_prepare(cfg, _event(), workspace)
+    assert not (workspace / "repo").exists()

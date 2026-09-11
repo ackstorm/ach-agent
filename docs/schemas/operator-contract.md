@@ -849,10 +849,10 @@ When `secretEnv` is present, the hook runs with a fresh harness-private `HOME`, 
 checkout. The supported result is a Git checkout at `$ACH_WORKSPACE/repo`; after the hook
 exits, the harness publishes a credential-free Git bundle and locally fetches it into the
 existing engine checkout. The target workspace root, `.git` directory, untracked files and
-local objects are retained. Private cleanup hooks use the same private contract and must not
-depend on reading or deleting the engine workspace. Hooks that need the legacy shared
-credential-bearing workspace contract fail closed. Hooks without `secretEnv` retain the
-ordinary workspace behavior above.
+local objects are retained. Private cleanup hooks use the same private contract and cannot
+read or delete the engine workspace; a cleanup script that still names the old workspace may
+complete successfully while leaving that workspace unchanged, so operators must migrate it.
+Hooks without `secretEnv` retain the ordinary workspace behavior above.
 
 **Contract for script authors:**
 
@@ -873,8 +873,9 @@ ordinary workspace behavior above.
 - **Prepare must be idempotent.** The target workspace is keyed by `session_key` and survives
   across events. Credential-bearing hooks run against fresh private checkout paths each time;
   clone-or-fetch behavior is preserved by the local bundle handoff into the populated target.
-- Cleanup should also be idempotent so a later process can safely clean a workspace left by an
-  interrupted cleanup. Its failures are best-effort: logged and counted without changing delivery.
+- Cleanup should also be idempotent so a later process can safely clean private state left by an
+  interrupted cleanup. Credential-bearing cleanup cannot mutate the engine workspace; its
+  failures are best-effort, logged and counted without changing delivery.
 - For prepare, non-zero exit, timeout, or spawn failure ⇒ **fail-closed**: the invocation is abandoned,
   nothing is posted, `ach_agent_prepare_failures_total{reason}` increments. Deliberately the
   opposite of memory's fail-open probe — a review of a repo that is not there is worse than

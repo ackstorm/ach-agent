@@ -5,7 +5,7 @@ Extracts the single terminal object {"action":...,"text":...,"thoughts":...} fro
 accumulated SSE text deltas. The terminal contract is a single object — NOT a list.
 
 Egress is the agent's responsibility via external MCP tools; the harness only relays
-the terminal `text` (reply mode / on_complete) and otherwise does nothing.
+the terminal `text` (reply mode) and otherwise does nothing.
 
 Constraint: No router or Hermes imports (D-08, RTR-06).
 """

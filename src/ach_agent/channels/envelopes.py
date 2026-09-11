@@ -34,6 +34,35 @@ class EventRef(BaseModel):
     idempotency_key: str
 
 
+CompletionState = Literal["queued", "running", "completed", "failed", "outcome_unavailable"]
+
+
+class Completion(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    ref: EventRef
+    invocation_id: str
+    state: CompletionState
+    result: JsonValue = None
+    error: str | None = None
+
+    @field_validator("result")
+    @classmethod
+    def finite_result(cls, value: JsonValue) -> JsonValue:
+        def check(item: JsonValue) -> None:
+            if isinstance(item, float) and not math.isfinite(item):
+                raise ValueError("JSON numbers must be finite")
+            if isinstance(item, dict):
+                for child in item.values():
+                    check(child)
+            elif isinstance(item, list):
+                for child in item:
+                    check(child)
+
+        check(value)
+        return value
+
+
 class EventEnvelope(BaseModel):
     """JSON-safe projection of ``MessageEvent`` with explicit free-form data."""
 

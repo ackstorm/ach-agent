@@ -4,21 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import math
 import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, JsonValue, field_validator
+from pydantic import BaseModel, ConfigDict, JsonValue
 
-from ach_agent.channels.envelopes import EventRef
+from ach_agent.channels.envelopes import Completion, EventRef
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.router.router import RouterAdmitResult
-
-CompletionState = Literal["queued", "running", "completed", "failed", "outcome_unavailable"]
 
 
 class Admission(StrEnum):
@@ -29,32 +26,6 @@ class Admission(StrEnum):
 
 class RegistryBusy(RuntimeError):
     """The local completion metadata bound is full; retry admission later."""
-
-
-class Completion(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
-
-    ref: EventRef
-    invocation_id: str
-    state: CompletionState
-    result: JsonValue = None
-    error: str | None = None
-
-    @field_validator("result")
-    @classmethod
-    def finite_result(cls, value: JsonValue) -> JsonValue:
-        def check(item: JsonValue) -> None:
-            if isinstance(item, float) and not math.isfinite(item):
-                raise ValueError("JSON numbers must be finite")
-            if isinstance(item, dict):
-                for child in item.values():
-                    check(child)
-            elif isinstance(item, list):
-                for child in item:
-                    check(child)
-
-        check(value)
-        return value
 
 
 class Submission(BaseModel):

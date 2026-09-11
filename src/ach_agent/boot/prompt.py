@@ -113,7 +113,7 @@ def build_engine_prompt(
 # ONLY per-turn place the model is told which action its final object must carry; without
 # it a model can emit a valid-but-wrong {"action":"none"} on an a2a turn, which
 # extract_terminal accepts and the a2a path (main.py) then delivers to the caller as a
-# FAILURE (on_fail). See operator contract §8.
+# FAILURE completion. See operator contract §8.
 #
 # Each block exposes ONLY the action its channel class expects — the a2a block never
 # names "none" (naming the wrong action just plants it: pink-elephant). The matching

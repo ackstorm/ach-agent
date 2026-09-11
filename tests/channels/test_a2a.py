@@ -18,7 +18,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ach_agent.boot.completions import CompletionRegistry
 from ach_agent.channels.a2a import A2AAgentExecutorBridge
+from ach_agent.channels.envelopes import EventRef
 from ach_agent.router.router import RouterAdmitResult
 
 # ---------------------------------------------------------------------------
@@ -118,13 +120,28 @@ def _authed_ctx(**kwargs: Any) -> FakeContext:
 
 def _make_accepted_handler() -> AsyncMock:
     handler = AsyncMock()
-    handler.handle.return_value = RouterAdmitResult.ACCEPTED
+    registry = CompletionRegistry(lambda _event: _accepted())
+
+    async def _handle(event: Any) -> RouterAdmitResult:
+        await registry.submit(event)
+        return RouterAdmitResult.ACCEPTED
+
+    async def _accepted() -> RouterAdmitResult:
+        return RouterAdmitResult.ACCEPTED
+
+    handler.handle.side_effect = _handle
+    handler.completion_port = registry
     return handler
 
 
 def _make_full_queue_handler() -> AsyncMock:
     handler = AsyncMock()
     handler.handle.return_value = RouterAdmitResult.FULL_QUEUE
+    handler.completion_port = CompletionRegistry(lambda _event: _full())
+
+    async def _full() -> RouterAdmitResult:
+        return RouterAdmitResult.FULL_QUEUE
+
     return handler
 
 
@@ -144,7 +161,9 @@ async def test_a2a_header_auth_missing_header_enqueues_failed_event(
 
     handler = _make_accepted_handler()
     channel_cfg = _make_channel_cfg(env_name=_UNIT_TEST_ENV)
-    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
 
     # Context with NO auth header
     ctx = FakeContext(headers={})
@@ -171,7 +190,9 @@ async def test_a2a_header_auth_wrong_header_enqueues_failed_event(
 
     handler = _make_accepted_handler()
     channel_cfg = _make_channel_cfg(env_name=_UNIT_TEST_ENV)
-    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
 
     # Context with WRONG auth header
     ctx = FakeContext(headers={"x-a2a-custom-api-key": "wrong-secret"})
@@ -193,17 +214,18 @@ async def test_a2a_header_auth_correct_header_proceeds_to_dispatch(
 
     handler = _make_accepted_handler()
     channel_cfg = _make_channel_cfg(env_name=_UNIT_TEST_ENV)
-    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
 
     ctx = FakeContext(headers={"x-a2a-custom-api-key": "correct-secret"})
     eq = MockEventQueue()
 
-    # We DON'T await completion here (no signal_completion called in this unit test),
+    # This test only verifies the interim event; completion is exercised separately,
     # so we drive execute() until it blocks on completion.wait() using a task + cancel.
     task = asyncio.create_task(bridge.execute(ctx, eq))
     # Give the coroutine a chance to run past handler.handle and reach completion.wait()
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    await asyncio.sleep(0.05)
 
     # handler.handle should have been called (auth passed, A′ passed, ACCEPTED)
     handler.handle.assert_called_once()
@@ -228,14 +250,15 @@ async def test_a2a_executor_bridge_builds_correct_message_event(
     """CHN-05: executor bridge builds MessageEvent with correct idempotency_key."""
     handler = _make_accepted_handler()
     channel_cfg = _make_authed_channel_cfg(monkeypatch)
-    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
 
     ctx = _authed_ctx(task_id="task-abc", context_id="ctx-1", text="hi there")
     eq = MockEventQueue()
 
     task = asyncio.create_task(bridge.execute(ctx, eq))
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    await asyncio.sleep(0.05)
 
     handler.handle.assert_called_once()
     captured_event = handler.handle.call_args[0][0]
@@ -255,14 +278,15 @@ async def test_a2a_session_key_uses_context_id(monkeypatch: pytest.MonkeyPatch) 
     """D-03: session_key = context_id when present."""
     handler = _make_accepted_handler()
     channel_cfg = _make_authed_channel_cfg(monkeypatch)
-    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
 
     ctx = _authed_ctx(task_id="task-1", context_id="ctx-999")
     eq = MockEventQueue()
 
     task = asyncio.create_task(bridge.execute(ctx, eq))
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    await asyncio.sleep(0.05)
 
     captured_event = handler.handle.call_args[0][0]
     # session_key must be context_id (priority over task_id)
@@ -282,14 +306,15 @@ async def test_a2a_session_key_fallback_to_task_id_when_no_context_id(
     """D-03: session_key = task_id when context_id is absent."""
     handler = _make_accepted_handler()
     channel_cfg = _make_authed_channel_cfg(monkeypatch)
-    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
 
     ctx = _authed_ctx(task_id="task-xyz", context_id="")
     eq = MockEventQueue()
 
     task = asyncio.create_task(bridge.execute(ctx, eq))
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    await asyncio.sleep(0.05)
 
     captured_event = handler.handle.call_args[0][0]
     assert captured_event.session_key == "task-xyz"
@@ -318,14 +343,15 @@ async def test_a2a_execute_emits_interim_working_before_completion(
 
     handler = _make_accepted_handler()
     channel_cfg = _make_authed_channel_cfg(monkeypatch)
-    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
 
     ctx = _authed_ctx(task_id="task-w", context_id="ctx-w")
     eq = MockEventQueue()
 
     task = asyncio.create_task(bridge.execute(ctx, eq))
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    await asyncio.sleep(0.05)
 
     # Dispatched, now blocked on completion.wait() — the interim WORKING event is present.
     handler.handle.assert_called_once()
@@ -350,16 +376,17 @@ async def test_a2a_engine_not_ready_routes_normally(monkeypatch: pytest.MonkeyPa
     """
     handler = _make_accepted_handler()
     channel_cfg = _make_authed_channel_cfg(monkeypatch)
-    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
 
     ctx = _authed_ctx(task_id="task-1")
     eq = MockEventQueue()
 
-    # We DON'T await completion here (no signal_completion called in this unit test),
+    # This test only verifies the interim event; completion is exercised separately,
     # so we drive execute() until it blocks on completion.wait() using a task + cancel.
     task = asyncio.create_task(bridge.execute(ctx, eq))
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    await asyncio.sleep(0.05)
 
     handler.handle.assert_called_once()
     # After dispatch the bridge emits one interim WORKING event (non-blocking support),
@@ -383,7 +410,9 @@ async def test_a2a_full_queue_enqueues_failed_event(monkeypatch: pytest.MonkeyPa
 
     handler = _make_full_queue_handler()
     channel_cfg = _make_authed_channel_cfg(monkeypatch)
-    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
 
     ctx = _authed_ctx(task_id="task-1")
     eq = MockEventQueue()
@@ -421,7 +450,9 @@ async def test_cr01_no_auth_block_rejects_request() -> None:
 
     channel_cfg = ChannelConfig(name="test-a2a-no-auth", type="a2a", a2a=None)
 
-    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
     ctx = FakeContext(headers={"x-a2a-custom-api-key": "any-value"})
     eq = MockEventQueue()
 
@@ -453,7 +484,9 @@ async def test_cr01_empty_secret_path_rejects_request() -> None:
     # env_name="" — no auth configured
     channel_cfg = _make_channel_cfg(env_name="")
 
-    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
     ctx = FakeContext(headers={})  # no auth header presented either
     eq = MockEventQueue()
 
@@ -490,7 +523,9 @@ async def test_cr02_unset_env_secret_rejects_request(
     a2a_auth = A2AAuthBlock(header=_UNIT_TEST_HEADER, secret=SecretSource(env=env_name))
     channel_cfg = ChannelConfig(name="test-a2a", type="a2a", a2a=A2ABlock(auth=a2a_auth))
 
-    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
     ctx = FakeContext(headers={})  # no auth header presented either
     eq = MockEventQueue()
 
@@ -521,7 +556,9 @@ async def test_cr02_unresolvable_env_secret_rejects_request(
     handler = _make_accepted_handler()
     channel_cfg = _make_channel_cfg(env_name=env_name)
 
-    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
     # Caller sends no header — "" vs "" was previously True → auth "passed"
     ctx = FakeContext(headers={})
     eq = MockEventQueue()
@@ -540,7 +577,7 @@ async def test_cr04_concurrent_empty_key_calls_complete_independently(
 ) -> None:
     """CR-04: Two concurrent execute() with empty context_id+task_id must not collide/hang.
 
-    Old code: both write session_key="" to _pending; second overwrites first,
+    Completion identity is keyed by task idempotency, rather than shared context,
     first coroutine's completion.wait() hangs forever.
 
     After fix: empty-key calls are rejected immediately (failed event — CR-04), so both
@@ -553,7 +590,9 @@ async def test_cr04_concurrent_empty_key_calls_complete_independently(
 
     handler = _make_accepted_handler()
     channel_cfg = _make_channel_cfg(env_name=_UNIT_TEST_ENV)
-    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
 
     # Provide correct auth header so requests pass auth and reach the session_key check
     auth_headers = {"x-a2a-custom-api-key": "test-secret"}
@@ -608,7 +647,10 @@ def test_build_a2a_app_constructs_sub_app(monkeypatch: pytest.MonkeyPatch) -> No
     from ach_agent.channels.a2a import build_a2a_app, make_a2a_agent_card
 
     channel_cfg = _make_authed_channel_cfg(monkeypatch)
-    bridge = A2AAgentExecutorBridge(handler=_make_accepted_handler(), channel_cfg=channel_cfg)
+    handler = _make_accepted_handler()
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
     agent_card = make_a2a_agent_card(channel_cfg.name)
 
     sub_app = build_a2a_app(agent_card, bridge)
@@ -626,7 +668,10 @@ def test_agent_card_is_0_3_x_compatible(monkeypatch: pytest.MonkeyPatch) -> None
     from ach_agent.channels.a2a import build_a2a_app, make_a2a_agent_card
 
     channel_cfg = _make_authed_channel_cfg(monkeypatch)
-    bridge = A2AAgentExecutorBridge(handler=_make_accepted_handler(), channel_cfg=channel_cfg)
+    handler = _make_accepted_handler()
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
     sub_app = build_a2a_app(make_a2a_agent_card("review"), bridge)
 
     parent = FastAPI()
@@ -658,7 +703,10 @@ def test_agent_card_advertises_1x_jsonrpc_interface(monkeypatch: pytest.MonkeyPa
     from ach_agent.channels.a2a import build_a2a_app, make_a2a_agent_card
 
     channel_cfg = _make_authed_channel_cfg(monkeypatch)
-    bridge = A2AAgentExecutorBridge(handler=_make_accepted_handler(), channel_cfg=channel_cfg)
+    handler = _make_accepted_handler()
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
     sub_app = build_a2a_app(make_a2a_agent_card("review"), bridge)
     parent = FastAPI()
     parent.mount("/a2a/review", sub_app)
@@ -698,7 +746,7 @@ async def _seed_working_task(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, dict
     and return (asgi client, correct-auth headers, the SDK-assigned task_id).
 
     return_immediately=True lets SendMessage return as soon as the bridge's
-    interim WORKING event lands, without needing signal_completion — the task
+    interim WORKING event lands before the registry terminal result — the task
     sits in task_store in a non-terminal (WORKING) state, exactly what
     GetTask/ListTasks/CancelTask need to have something real to guard.
     """
@@ -710,7 +758,10 @@ async def _seed_working_task(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, dict
     from ach_agent.channels.a2a import build_a2a_app, make_a2a_agent_card
 
     channel_cfg = _make_authed_channel_cfg(monkeypatch)
-    bridge = A2AAgentExecutorBridge(handler=_make_accepted_handler(), channel_cfg=channel_cfg)
+    handler = _make_accepted_handler()
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
     sub_app = build_a2a_app(make_a2a_agent_card(channel_cfg.name), bridge)
     parent = FastAPI()
     parent.mount("/a2a/review", sub_app)
@@ -806,57 +857,7 @@ async def test_a2a_task_apis_require_channel_credential(
         await client.aclose()
 
 
-# ---------------------------------------------------------------------------
-# signal_failure — FAILED callback on invalid terminal output
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_a2a_signal_failure_enqueues_failed_event_and_unblocks(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """signal_failure pops pending, enqueues a FAILED event, and sets the completion Event.
-
-    Mirrors signal_completion: the executor blocked on completion.wait() must unblock
-    (Pitfall 5 — never hang), the peer must receive a FAILED TaskStatusUpdateEvent (not a
-    COMPLETED one), and the task_id must no longer be pending (finding 5: keyed by
-    task_id, not session_key/context_id).
-    """
-    from a2a.types.a2a_pb2 import TASK_STATE_FAILED
-
-    handler = _make_accepted_handler()
-    channel_cfg = _make_authed_channel_cfg(monkeypatch)
-    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
-
-    ctx = _authed_ctx(task_id="task-fail", context_id="ctx-fail")
-    eq = MockEventQueue()
-    task = asyncio.create_task(bridge.execute(ctx, eq))
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
-
-    bridge.signal_failure("task-fail", "bad terminal")
-    await asyncio.wait_for(task, timeout=2.0)
-
-    assert eq.events[-1].status.state == TASK_STATE_FAILED
-    # ids must be stamped so TaskManager.save_task_event accepts the event
-    assert eq.events[-1].task_id == "task-fail"
-    assert eq.events[-1].context_id == "ctx-fail"
-    # task_id must be popped from pending
-    assert "task-fail" not in bridge._pending
-
-
-@pytest.mark.asyncio
-async def test_a2a_signal_failure_unknown_task_id_is_noop(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """signal_failure for an unknown task_id must not raise (mirror signal_completion)."""
-    channel_cfg = _make_authed_channel_cfg(monkeypatch)
-    bridge = A2AAgentExecutorBridge(handler=_make_accepted_handler(), channel_cfg=channel_cfg)
-
-    # Should log a warning and return without error.
-    bridge.signal_failure("does-not-exist", "reason")
-
-
+"""Legacy callback tests removed; terminal outcomes are registry-backed."""
 # ---------------------------------------------------------------------------
 # Terminal sequence regression guard
 # ---------------------------------------------------------------------------
@@ -873,18 +874,22 @@ async def test_a2a_terminal_sequence_is_working_then_completed(
 
     handler = _make_accepted_handler()
     channel_cfg = _make_authed_channel_cfg(monkeypatch)
-    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
 
     ctx = _authed_ctx(task_id="task-seq", context_id="ctx-seq")
     eq = MockEventQueue()
 
     task = asyncio.create_task(bridge.execute(ctx, eq))
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    await asyncio.sleep(0.05)
 
     # Interim WORKING is in flight; now the engine delivers.
-    bridge.signal_completion("task-seq", "done")
-    await asyncio.wait_for(task, timeout=2.0)  # signal_completion sets the Event → execute returns
+    await handler.completion_port.finish(
+        EventRef(agent="default", channel_name="test-a2a", idempotency_key="a2a:task-seq"),
+        {"action": "a2a_reply", "text": "done"},
+    )
+    await asyncio.wait_for(task, timeout=2.0)
 
     states = [e.status.state for e in eq.events]
     assert states == [TASK_STATE_WORKING, TASK_STATE_COMPLETED]
@@ -903,16 +908,18 @@ async def test_a2a_terminal_sequence_is_working_then_completed(
 async def test_a2a_shared_context_tasks_have_independent_completion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """finding 5: two tasks sharing one context_id (legitimate — router FIFO is
-    per session, not per task) must not share a completion destination. A repeat
-    of an already-active task (e.g. a client retry) coalesces onto the existing
-    completion instead of registering a second one or dispatching to the router
-    again; its terminal result fans out to every coalesced waiter."""
+    """Tasks sharing a context use independent completion destinations.
+
+    A retry submits the same idempotency key to the registry and independently
+    waits on that retained result; it does not create a second completion.
+    """
     from a2a.types.a2a_pb2 import TASK_STATE_COMPLETED
 
     handler = _make_accepted_handler()
     channel_cfg = _make_authed_channel_cfg(monkeypatch)
-    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
 
     ctx_a = _authed_ctx(task_id="task-a", context_id="ctx-shared")
     ctx_b = _authed_ctx(task_id="task-b", context_id="ctx-shared")
@@ -920,28 +927,31 @@ async def test_a2a_shared_context_tasks_have_independent_completion(
     eq_b = MockEventQueue()
 
     task_a = asyncio.create_task(bridge.execute(ctx_a, eq_a))
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    await asyncio.sleep(0.05)
     task_b = asyncio.create_task(bridge.execute(ctx_b, eq_b))
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    await asyncio.sleep(0.05)
 
     # Both admitted and pending, before either completes.
     assert handler.handle.call_count == 2
-    assert set(bridge._pending) == {"task-a", "task-b"}
+    assert set(bridge._waiter_counts) == {"task-a", "task-b"}
 
-    # Repeat active A: a fresh call for the same task_id must coalesce, not
-    # dispatch a second invocation.
+    # Repeat active A: the registry coalesces the duplicate admission while the
+    # bridge owns an independent waiter for the retained result.
     eq_a_retry = MockEventQueue()
     ctx_a_retry = _authed_ctx(task_id="task-a", context_id="ctx-shared")
     task_a_retry = asyncio.create_task(bridge.execute(ctx_a_retry, eq_a_retry))
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
-    assert handler.handle.call_count == 2
+    await asyncio.sleep(0.05)
+    assert handler.handle.call_count == 3
 
     # Complete A then B.
-    bridge.signal_completion("task-a", "answer-a")
-    bridge.signal_completion("task-b", "answer-b")
+    await handler.completion_port.finish(
+        EventRef(agent="default", channel_name="test-a2a", idempotency_key="a2a:task-a"),
+        {"action": "a2a_reply", "text": "answer-a"},
+    )
+    await handler.completion_port.finish(
+        EventRef(agent="default", channel_name="test-a2a", idempotency_key="a2a:task-b"),
+        {"action": "a2a_reply", "text": "answer-b"},
+    )
 
     await asyncio.wait_for(asyncio.gather(task_a, task_a_retry, task_b), timeout=2.0)
 
@@ -954,4 +964,4 @@ async def test_a2a_shared_context_tasks_have_independent_completion(
     assert eq_b.events[-1].status.state == TASK_STATE_COMPLETED
     assert eq_b.events[-1].status.message.parts[0].text == "answer-b"
 
-    assert bridge._pending == {}
+    assert bridge._waiter_counts == {}

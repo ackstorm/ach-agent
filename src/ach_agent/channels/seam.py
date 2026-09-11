@@ -13,8 +13,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from ach_agent.boot.completions import Completion
-    from ach_agent.channels.envelopes import EventRef
+    from ach_agent.channels.envelopes import Completion, EventRef
     from ach_agent.channels.message_event import MessageEvent
     from ach_agent.router import RouterAdmitResult
 

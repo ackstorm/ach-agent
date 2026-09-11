@@ -7,6 +7,7 @@ fires it must:
   - (via the cancelled engine_runner) always finish the ID-keyed completion with a
     timeout error and force-kill the runaway server (release ttl=0, never the warm TTL).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -159,7 +160,7 @@ async def test_timeout_force_kills_regardless_of_ttl() -> None:
 
 async def test_engine_launch_failure_increments_metric_and_finishes_completion() -> None:
     """pool.acquire raising is an explicit launch failure (Step 5, decoupled acceptance):
-    ENGINE_LAUNCH_FAILURES.inc() + WARN, and the awaiting reply_future receives the
+    ENGINE_LAUNCH_FAILURES.inc() + WARN, and the awaiting completion receives the
     completion — no hang, no silent drop. server stays None, so release is never called.
     """
     from unittest.mock import AsyncMock, MagicMock

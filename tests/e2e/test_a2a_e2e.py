@@ -5,14 +5,12 @@ Full-harness e2e: A2AAgentExecutorBridge → router → engine → completed Eve
 Architecture (hermetic — no live A2A peer):
   - MockEventQueue (conftest.py): captures EventQueue.enqueue_event() calls
   - A2AAgentExecutorBridge.execute() called directly with MockEventQueue
-  - fake_engine_runner: extracts on_complete from delivery_context, fires it
+  - fake_engine_runner: resolves the registry completion for the event
   - asyncio.Event + asyncio.timeout(5.0): no naked polling loops (CLAUDE.md)
 
 Wiring pattern (mirrors main.py boot seam):
-  - on_complete closure is created AFTER bridge is instantiated; captures bridge reference
-  - Handler wrapper injects on_complete into event.delivery_context before routing
-  - engine_runner extracts and calls on_complete(session_key, reply_text)
-  - bridge.signal_completion schedules enqueue_event + sets completion asyncio.Event
+  - the handler exposes the registry's typed completion port
+  - engine_runner resolves the event's EventRef through that port
 """
 
 from __future__ import annotations
@@ -23,7 +21,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ach_agent.boot.completions import CompletionRegistry
 from ach_agent.channels.a2a import A2AAgentExecutorBridge
+from ach_agent.channels.envelopes import EventRef
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.router import Router
 from ach_agent.router.dedup import InMemoryDedupStore
@@ -89,31 +89,23 @@ def _build_bridge_with_router(
     router: Router,
     channel_cfg: Any,
 ) -> tuple[A2AAgentExecutorBridge, Any]:
-    """Build a bridge + handler wrapper that injects on_complete into delivery_context.
+    """Build a bridge + handler wrapper backed by a local completion registry.
 
     Returns (bridge, handler_wrapper).
-    The engine_runner calls event.delivery_context['on_complete'](session_key, reply_text)
-    to signal completion back to the bridge. Mirrors main.py's _A2AHandler
-    (finding 5): the bridge's signal_completion is keyed by task_id, not
-    session_key (context_id, shared across a conversation's tasks) — so the
-    closure binds THIS event's task_id and ignores the session_key argument.
     """
-    bridge: A2AAgentExecutorBridge | None = None
 
     class _HandlerWithOnComplete:
+        completion_port: CompletionRegistry
+
         async def handle(self, event: MessageEvent) -> RouterAdmitResult:
-            # Inject on_complete closure (mirrors main.py boot seam: captures bridge)
-            task_id = str(event.payload["task_id"])
-
-            def on_complete(_session_key: str, reply_text: str) -> None:
-                if bridge is not None:
-                    bridge.signal_completion(task_id, reply_text)
-
-            event.delivery_context["on_complete"] = on_complete
-            return await router.handle(event)
+            submission = await self.completion_port.submit(event)
+            return submission.admission
 
     handler = _HandlerWithOnComplete()
-    bridge = A2AAgentExecutorBridge(handler=handler, channel_cfg=channel_cfg)
+    handler.completion_port = CompletionRegistry(router.handle)
+    bridge = A2AAgentExecutorBridge(
+        handler=handler, channel_cfg=channel_cfg, completion_port=handler.completion_port
+    )
     return bridge, handler
 
 
@@ -131,12 +123,20 @@ async def test_a2a_task_routes_to_engine_and_enqueues_completed_event(
 
     _REPLY_TEXT = "LGTM from A2A engine"
 
+    completion_port: CompletionRegistry | None = None
+
     async def fake_engine_runner(event: MessageEvent, on_kill: Any) -> None:
-        """Fake engine: fires on_complete from delivery_context to complete bridge."""
+        """Fake engine: resolves the event through the completion registry."""
         on_kill()
-        on_complete = event.delivery_context.get("on_complete")
-        if on_complete is not None:
-            on_complete(event.session_key, _REPLY_TEXT)
+        assert completion_port is not None
+        await completion_port.finish(
+            EventRef(
+                agent="default",
+                channel_name=event.channel_name,
+                idempotency_key=event.idempotency_key,
+            ),
+            {"action": "a2a_reply", "text": _REPLY_TEXT},
+        )
 
     router = Router(
         max_concurrent_invocations=1,
@@ -148,7 +148,8 @@ async def test_a2a_task_routes_to_engine_and_enqueues_completed_event(
     )
 
     channel_cfg = _make_a2a_channel_cfg_with_secret(monkeypatch)
-    bridge, _ = _build_bridge_with_router(router, channel_cfg)
+    bridge, handler = _build_bridge_with_router(router, channel_cfg)
+    completion_port = handler.completion_port
 
     ctx = _authed_ctx(task_id="task-e2e-1", context_id="ctx-e2e-1", text="review this")
     eq = MockEventQueue()
@@ -169,13 +170,10 @@ async def test_a2a_task_routes_to_engine_and_enqueues_completed_event(
 
 
 @pytest.mark.asyncio
-async def test_engine_runner_signals_on_fail_on_engine_error(
+async def test_engine_runner_finishes_registry_on_engine_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """F1 regression: when the engine raises, engine_runner MUST call
-    delivery_context['on_fail'] (and still re-raise). Otherwise the a2a bridge — whose
-    execute() awaits completion.wait() with NO timeout — hangs forever.
-    """
+    """F1 regression: engine errors resolve the registry before re-raising."""
     from ach_agent.boot.engine_runner import make_engine_runner
     from ach_agent.engine.base import terminal
     from ach_agent.engine.lifecycle import EngineConfig
@@ -206,29 +204,34 @@ async def test_engine_runner_signals_on_fail_on_engine_error(
 
     from ach_agent.engine.opencode.driver import OpencodeDriver
 
+    async def _accepted(_event: MessageEvent) -> RouterAdmitResult:
+        return RouterAdmitResult.ACCEPTED
+
+    registry = CompletionRegistry(_accepted)
     runner = make_engine_runner(
         pool=_FakePool(),
         driver=OpencodeDriver(),
         engine_cfg=EngineConfig(),
         max_invocation_seconds=30,
         memory_cfg=None,
+        completion_registry=registry,
     )
 
-    failures: list[tuple[str, str]] = []
     event = MessageEvent(
         idempotency_key="i-1",
         session_key="ctx-fail-1",
         channel_name="a2a",
         payload={"text": "review this"},
-        delivery_context={"on_fail": lambda k, r: failures.append((k, r))},
     )
+    ref = EventRef(agent="default", channel_name="a2a", idempotency_key="i-1")
+    await registry.submit(event)
 
     with pytest.raises(RuntimeError, match="engine exploded"):
         await runner(event, lambda: None)
 
-    assert len(failures) == 1 and failures[0][0] == "ctx-fail-1", (
-        "engine_runner must signal on_fail on an engine error — else the a2a executor hangs"
-    )
+    completion = await registry.wait(ref)
+    assert completion.state == "failed"
+    assert "engine exploded" in completion.error
 
 
 # ---------------------------------------------------------------------------
@@ -246,12 +249,20 @@ async def test_a2a_engine_not_ready_still_routes_to_engine(monkeypatch: pytest.M
     _REPLY_TEXT = "LGTM despite cold start"
     engine_invocations: list[Any] = []
 
+    completion_port: CompletionRegistry | None = None
+
     async def fake_engine_runner(event: MessageEvent, on_kill: Any) -> None:
         engine_invocations.append(event)
         on_kill()
-        on_complete = event.delivery_context.get("on_complete")
-        if on_complete is not None:
-            on_complete(event.session_key, _REPLY_TEXT)
+        assert completion_port is not None
+        await completion_port.finish(
+            EventRef(
+                agent="default",
+                channel_name=event.channel_name,
+                idempotency_key=event.idempotency_key,
+            ),
+            {"action": "a2a_reply", "text": _REPLY_TEXT},
+        )
 
     router = Router(
         max_concurrent_invocations=1,
@@ -264,7 +275,8 @@ async def test_a2a_engine_not_ready_still_routes_to_engine(monkeypatch: pytest.M
 
     channel_cfg = _make_a2a_channel_cfg_with_secret(monkeypatch)
     # Cold pool — engine not ready yet; must NOT block dispatch (decoupled)
-    bridge, _ = _build_bridge_with_router(router, channel_cfg)
+    bridge, handler = _build_bridge_with_router(router, channel_cfg)
+    completion_port = handler.completion_port
 
     ctx = _authed_ctx(task_id="task-cold-1")
     eq = MockEventQueue()
@@ -291,12 +303,20 @@ async def test_a2a_dedup_rejects_repeated_task_id(monkeypatch: pytest.MonkeyPatc
     _REPLY_TEXT = "done"
     engine_invocations: list[Any] = []
 
+    completion_port: CompletionRegistry | None = None
+
     async def fake_engine_runner(event: MessageEvent, on_kill: Any) -> None:
         engine_invocations.append(event)
         on_kill()
-        on_complete = event.delivery_context.get("on_complete")
-        if on_complete is not None:
-            on_complete(event.session_key, _REPLY_TEXT)
+        assert completion_port is not None
+        await completion_port.finish(
+            EventRef(
+                agent="default",
+                channel_name=event.channel_name,
+                idempotency_key=event.idempotency_key,
+            ),
+            {"action": "a2a_reply", "text": _REPLY_TEXT},
+        )
 
     router = Router(
         max_concurrent_invocations=1,
@@ -310,7 +330,8 @@ async def test_a2a_dedup_rejects_repeated_task_id(monkeypatch: pytest.MonkeyPatc
     channel_cfg = _make_a2a_channel_cfg_with_secret(monkeypatch)
 
     # First task — should succeed
-    bridge1, _ = _build_bridge_with_router(router, channel_cfg)
+    bridge1, handler1 = _build_bridge_with_router(router, channel_cfg)
+    completion_port = handler1.completion_port
     ctx1 = _authed_ctx(task_id="task-dedup", context_id="ctx-dedup", text="hello")
     eq1 = MockEventQueue()
     async with asyncio.timeout(5.0):
@@ -319,15 +340,13 @@ async def test_a2a_dedup_rejects_repeated_task_id(monkeypatch: pytest.MonkeyPatc
     assert any(e.status.state == TASK_STATE_COMPLETED for e in eq1.events)
     assert len(engine_invocations) == 1
 
-    # Second task with SAME task_id — should be deduplicated (DUPLICATE result, no completed event)
-    bridge2, _ = _build_bridge_with_router(router, channel_cfg)
+    # Second task with SAME task_id reads the retained completion from the same
+    # registry; it does not invoke the engine again.
     ctx2 = _authed_ctx(task_id="task-dedup", context_id="ctx-dedup", text="hello again")
     eq2 = MockEventQueue()
 
-    # Dedup path: execute() returns quickly without enqueuing any event
-    await bridge2.execute(ctx2, eq2)
+    await bridge1.execute(ctx2, eq2)
 
-    # No events emitted on duplicate
-    assert len(eq2.events) == 0
+    assert any(e.status.state == TASK_STATE_COMPLETED for e in eq2.events)
     # Engine still only invoked once total
     assert len(engine_invocations) == 1

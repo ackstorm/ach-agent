@@ -180,26 +180,19 @@ async def _handle_line(
         )
     try:
         result = await handler.handle(event)
-    except Exception:
-        port.discard_sinks(ref)
-        raise
-    if getattr(result, "name", "") == "FULL_QUEUE":
-        port.discard_sinks(ref)
-        raise RuntimeError("queue full")
-    try:
+        if getattr(result, "name", "") == "FULL_QUEUE":
+            raise RuntimeError("queue full")
         completion = await port.wait(ref)
-    except asyncio.CancelledError:
+        if completion.state != "completed":
+            raise RuntimeError(completion.error or "invocation failed")
+        raw = completion.result
+        text = str(raw.get("text", "")) if isinstance(raw, dict) else str(raw or "")
+        if stream_sink is not None and streamed:
+            stream_sink("\n\n")
+        else:
+            writer(text)
+    finally:
         port.discard_sinks(ref)
-        raise
-    if completion.state != "completed":
-        port.discard_sinks(ref)
-        raise RuntimeError(completion.error or "invocation failed")
-    raw = completion.result
-    text = str(raw.get("text", "")) if isinstance(raw, dict) else str(raw or "")
-    if stream_sink is not None and streamed:
-        stream_sink("\n\n")  # close the streamed line + a blank line between turns
-    else:
-        writer(text)  # nothing streamed (no deltas / tests) → write the full reply
 
 
 async def run_one_shot(

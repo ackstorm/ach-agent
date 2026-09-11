@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import asyncio
 import hmac
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -166,24 +165,6 @@ def _status_event(
     return TaskStatusUpdateEvent(task_id=task_id, context_id=context_id, status=status)
 
 
-@dataclass
-class _PendingTask:
-    """One in-flight task's completion state (finding 5).
-
-    Keyed by task_id, not session_key: a context_id is shared across every task
-    in a conversation (that's what gives them router FIFO), so keying pending
-    completion state by session_key let a second task's registration silently
-    overwrite the first's — the first task's real completion would then be
-    delivered to the second task's caller. `queues` fans a shared task_id's
-    terminal result out to every coalesced waiter (finding 5 / "repeat active").
-    """
-
-    completion: asyncio.Event
-    context_id: str
-    queues: list[Any] = field(default_factory=list)
-    watch: asyncio.Task[None] | None = None
-
-
 class A2AAgentExecutorBridge:
     """Bridges the a2a-sdk AgentExecutor interface to the ach_agent router seam.
 
@@ -203,34 +184,12 @@ class A2AAgentExecutorBridge:
         self._handler: MessageHandler | None = handler
         self._channel_cfg = channel_cfg
         self._completion_port = completion_port
-        # Maps task_id → _PendingTask (finding 5). See _PendingTask's docstring for
-        # why this is keyed by task_id and not session_key.
-        self._pending: dict[str, _PendingTask] = {}
+        self._cancel_events: dict[str, asyncio.Event] = {}
+        self._waiter_counts: dict[str, int] = {}
 
     @property
     def channel_cfg(self) -> ChannelConfig:
         return self._channel_cfg
-
-    async def _watch_completion(self, task_id: str, pending: _PendingTask, ref: Any) -> None:
-        completion = await self._completion_port.wait(ref)
-        if self._pending.get(task_id) is not pending:
-            return
-        if completion.state == "completed":
-            result = completion.result if isinstance(completion.result, dict) else {}
-            action = result.get("action")
-            text = str(result.get("text", ""))
-            if action == "a2a_reply" and text.strip():
-                state, message = "completed", text
-            else:
-                state, message = "failed", "invalid terminal output"
-        elif completion.state == "outcome_unavailable":
-            state, message = "failed", "Outcome unavailable"
-        else:
-            state, message = "failed", completion.error or "Invocation failed"
-        self._pending.pop(task_id, None)
-        for queue in pending.queues:
-            await queue.enqueue_event(_status_event(state, message, task_id, pending.context_id))
-        pending.completion.set()
 
     async def execute(self, context: Any, event_queue: Any) -> None:
         """AgentExecutor.execute implementation.
@@ -266,7 +225,7 @@ class A2AAgentExecutorBridge:
         # (2) Build MessageEvent and dispatch to router seam. Decoupled from engine
         # readiness (no gate here) — the engine starts lazily per session_key.
         session_key = context_id or task_id
-        # task_id backs _pending's key (finding 5); reject before registering it,
+        # task_id keys the local cancellation waiter; reject before registering it,
         # same as the old both-empty session_key guard did for CR-04. SDK requests
         # always carry a task_id — this only fires for hand-built test contexts.
         if not task_id:
@@ -287,27 +246,6 @@ class A2AAgentExecutorBridge:
         else:
             text = ""
 
-        # "repeat active" (finding 5): a second call for a task_id already pending
-        # (e.g. a client retry) coalesces onto the existing completion instead of
-        # registering a second one or dispatching to the router again — fan the
-        # eventual terminal result out to this queue too.
-        existing = self._pending.get(task_id)
-        if existing is not None:
-            existing.queues.append(event_queue)
-            await event_queue.enqueue_event(_status_event("working", None, task_id, context_id))
-            try:
-                await asyncio.shield(existing.completion.wait())
-            except asyncio.CancelledError:
-                if event_queue in existing.queues:
-                    existing.queues.remove(event_queue)
-                if not existing.queues:
-                    self._pending.pop(task_id, None)
-                    if existing.watch is not None:
-                        existing.watch.cancel()
-                        await asyncio.gather(existing.watch, return_exceptions=True)
-                raise
-            return
-
         idempotency_key = derive_a2a_idempotency_key(task_id)
         event = MessageEvent(
             idempotency_key=idempotency_key,
@@ -316,34 +254,22 @@ class A2AAgentExecutorBridge:
             payload={"text": text, "task_id": task_id, "context_id": context_id},
             source_trait="async_no_retry",  # HTTP-delivered, but completion is out-of-band
         )
-        pending = _PendingTask(completion=asyncio.Event(), context_id=context_id)
-        pending.queues.append(event_queue)
-        self._pending[task_id] = pending
-
         assert self._handler is not None, "_handler not wired before execute()"
         try:
             result = await self._handler.handle(event)
-        except Exception:
-            self._pending.pop(task_id, None)
+        except asyncio.CancelledError:
             raise
         if result == RouterAdmitResult.FULL_QUEUE:
             log.warning(
                 "a2a: request rejected — queue full (D-05/RTR-05)",
                 channel=self._channel_cfg.name,
             )
-            self._pending.pop(task_id, None)
             await event_queue.enqueue_event(
                 _status_event("failed", "Queue full", task_id, context_id)
             )
             return
         if result == RouterAdmitResult.DUPLICATE:
             log.info("a2a: duplicate task_id — deduplicated", channel=self._channel_cfg.name)
-            await event_queue.enqueue_event(_status_event("working", None, task_id, context_id))
-            pending.watch = asyncio.create_task(
-                self._watch_completion(task_id, pending, self._completion_port.ref_for(event))
-            )
-            await asyncio.shield(pending.completion.wait())
-            return
 
         # Emit ONE interim WORKING event so the a2a-sdk non-blocking path has a
         # task-creating event to break on: with SendMessageConfiguration.return_immediately
@@ -356,29 +282,58 @@ class A2AAgentExecutorBridge:
         await event_queue.enqueue_event(_status_event("working", None, task_id, context_id))
 
         ref = self._completion_port.ref_for(event)
-        pending.watch = asyncio.create_task(self._watch_completion(task_id, pending, ref))
+        cancel_event = self._cancel_events.setdefault(task_id, asyncio.Event())
+        self._waiter_counts[task_id] = self._waiter_counts.get(task_id, 0) + 1
+        outcome_task = asyncio.create_task(self._completion_port.wait(ref))
+        cancel_task = asyncio.create_task(cancel_event.wait())
         try:
-            await asyncio.shield(pending.completion.wait())
+            done, _ = await asyncio.wait(
+                (outcome_task, cancel_task), return_when=asyncio.FIRST_COMPLETED
+            )
+            if cancel_task in done:
+                return
+            completion = outcome_task.result()
+            if completion.state == "completed":
+                output = completion.result if isinstance(completion.result, dict) else {}
+                text_result = str(output.get("text", ""))
+                if output.get("action") == "a2a_reply" and text_result.strip():
+                    await event_queue.enqueue_event(
+                        _status_event("completed", text_result, task_id, context_id)
+                    )
+                else:
+                    await event_queue.enqueue_event(
+                        _status_event("failed", "invalid terminal output", task_id, context_id)
+                    )
+            elif completion.state == "outcome_unavailable":
+                await event_queue.enqueue_event(
+                    _status_event("failed", "Outcome unavailable", task_id, context_id)
+                )
+            else:
+                await event_queue.enqueue_event(
+                    _status_event(
+                        "failed", completion.error or "Invocation failed", task_id, context_id
+                    )
+                )
         except asyncio.CancelledError:
-            if event_queue in pending.queues:
-                pending.queues.remove(event_queue)
-            if not pending.queues:
-                self._pending.pop(task_id, None)
-                pending.watch.cancel()
-                await asyncio.gather(pending.watch, return_exceptions=True)
             raise
+        finally:
+            for task in (outcome_task, cancel_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(outcome_task, cancel_task, return_exceptions=True)
+            self._waiter_counts[task_id] -= 1
+            if self._waiter_counts[task_id] == 0:
+                self._waiter_counts.pop(task_id, None)
+                self._cancel_events.pop(task_id, None)
 
     async def cancel(self, context: Any, event_queue: Any) -> None:
         """AgentExecutor.cancel — enqueue a canceled event, wake every waiter on this task."""
         task_id: str = getattr(context, "task_id", None) or ""
         context_id: str = getattr(context, "context_id", None) or ""
-        pending = self._pending.pop(task_id, None)
+        cancel_event = self._cancel_events.get(task_id)
         await event_queue.enqueue_event(_status_event("canceled", None, task_id, context_id))
-        if pending is not None:
-            if pending.watch is not None:
-                pending.watch.cancel()
-                await asyncio.gather(pending.watch, return_exceptions=True)
-            pending.completion.set()
+        if cancel_event is not None:
+            cancel_event.set()
         log.info("a2a: task canceled", channel=self._channel_cfg.name, task_id=task_id)
 
 

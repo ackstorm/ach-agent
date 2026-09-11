@@ -2,9 +2,9 @@
 
 Invariant: the harness has NO channel-side posting path. The old v2 delivery layer
 (`ach_agent.actions.*`) is gone, and the engine_runner never posts on the model's
-behalf — for an async event with no reply seam it does nothing (egress already
-happened via the agent's MCP tool calls). The ONLY delivery seam is the injected
-`on_complete`/reply_future callback.
+behalf — for an async event with no registry admission it does nothing (egress
+already happened via the agent's MCP tool calls). The registry stores outcomes
+for admitted work and never posts to a channel.
 """
 
 from __future__ import annotations
@@ -14,7 +14,10 @@ from typing import Any
 
 import pytest
 
+from ach_agent.boot.completions import CompletionRegistry
+from ach_agent.channels.envelopes import EventRef
 from ach_agent.channels.message_event import MessageEvent
+from ach_agent.router.router import RouterAdmitResult
 
 
 def test_no_harness_side_delivery_module() -> None:
@@ -42,38 +45,41 @@ class _FakePool:
 
 
 async def test_engine_runner_does_not_post(monkeypatch: Any) -> None:
-    """§6.9: async event (no reply_future, no on_complete) → no harness-side delivery.
+    """§6.9: async event without registry admission has no harness-side delivery.
 
-    The engine_runner runs the invocation and, finding no reply seam, returns without
-    posting anywhere. A positive control proves the ONLY delivery path is the injected
-    on_complete callback — there is no hardcoded poster.
+    The engine_runner runs the invocation and, finding no registry admission, returns
+    without posting anywhere. An admitted event gets a retained terminal outcome.
     """
-    from ach_agent.boot.engine_runner import make_engine_runner
     import ach_agent.engine.base.terminal as terminal
+    from ach_agent.boot.engine_runner import make_engine_runner
     from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.engine.opencode.driver import OpencodeDriver
 
     async def _fake_run_contract_turn(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-        # a2a_reply terminal so the positive-control seam fires (engine_runner routes a
-        # valid a2a_reply to on_complete; a none-action async event simply falls through).
+        # a2a_reply terminal so the registry positive control resolves.
         return {"action": "a2a_reply", "text": "the agent already acted via MCP"}
 
     # make_engine_runner imports run_contract_turn from base.terminal at call time —
     # patch the source.
     monkeypatch.setattr(terminal, "run_contract_turn", _fake_run_contract_turn)
 
+    async def _accepted(_event: MessageEvent) -> RouterAdmitResult:
+        return RouterAdmitResult.ACCEPTED
+
+    registry = CompletionRegistry(_accepted)
     runner = make_engine_runner(
         pool=_FakePool(),
         driver=OpencodeDriver(),
         engine_cfg=EngineConfig(),
         max_invocation_seconds=30,
         memory_cfg=None,
+        completion_registry=registry,
     )
 
     def _on_kill() -> None:
         return None
 
-    # Async webhook event: no reply_future, no on_complete in delivery_context.
+    # Async webhook event is not admitted to the registry.
     async_event = MessageEvent(
         idempotency_key="k-async",
         session_key="42:7",
@@ -85,22 +91,18 @@ async def test_engine_runner_does_not_post(monkeypatch: Any) -> None:
     # Must complete with no exception and no posting (there is nothing to post to).
     await runner(async_event, _on_kill)
 
-    # Positive control: the ONLY delivery seam is the injected on_complete callback.
-    delivered: list[tuple[str, str]] = []
-
-    def _on_complete(session_key: str, text: str) -> None:
-        delivered.append((session_key, text))
-
+    # Positive control: an admitted event gets a retained terminal outcome.
     seam_event = MessageEvent(
         idempotency_key="k-seam",
         session_key="ctx-1",
         channel_name="a2a-peer",
         payload={},
-        delivery_context={"on_complete": _on_complete},
         source_trait="async_no_retry",
     )
+    ref = EventRef(agent="default", channel_name="a2a-peer", idempotency_key="k-seam")
+    await registry.submit(seam_event)
     await runner(seam_event, _on_kill)
 
-    assert delivered == [("ctx-1", "the agent already acted via MCP")], (
-        "§6.9: delivery happens ONLY through the injected on_complete seam, not a harness poster"
-    )
+    completion = await registry.wait(ref)
+    assert completion.state == "completed"
+    assert completion.result == {"action": "a2a_reply", "text": "the agent already acted via MCP"}

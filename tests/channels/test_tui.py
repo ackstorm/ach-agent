@@ -1,13 +1,13 @@
 """TUI console-runner unit tests — the `--tui` modifier (stdin/stdout, no contract).
 
 Drives run_tui_console with a fake reader (queued lines, "" = EOF) against a fake
-handler that resolves the event's reply_future, and a capturing writer.
+handler that resolves the event through the completion registry, and a capturing writer.
 
 Verifies:
   - The engine's free-form reply text is written to the writer (no terminal contract).
   - Blank lines are skipped; EOF ends the session.
   - The MessageEvent carries source_trait="sync", a non-empty idempotency_key, the
-    console channel_name/session_key, a reply_future, and payload["text"] == the line.
+console channel_name/session_key and payload["text"] == the line.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ def _inbound(channel: str, type_: str) -> float:
 
 
 class FakeHandler:
-    """Resolves the event reply_future with a fixed reply and records the event."""
+    """Resolves the event through the completion registry and records it."""
 
     def __init__(self, reply: str = "ENGINE REPLY") -> None:
         self._reply = reply
@@ -92,7 +92,7 @@ async def test_blank_lines_skipped_and_event_fields() -> None:
 
 
 class StreamingHandler:
-    """Invokes the event's on_text sink with deltas, then resolves the reply_future."""
+    """Invokes the event's on_text sink with deltas, then resolves the registry."""
 
     def __init__(self, deltas: list[str], reply: str) -> None:
         self._deltas = deltas

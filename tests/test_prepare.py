@@ -107,17 +107,17 @@ def test_cleanup_requires_prepare() -> None:
 
 
 def test_event_scalars_become_env_but_callables_do_not() -> None:
-    """delivery_context also carries the on_complete/on_fail callables — never stringify them."""
+    """Non-serializable delivery metadata is never copied into the environment."""
     env = build_prepare_env(
         _block(),
         _event(
-            project_id=42, project_path="group/sub/proj", head_sha="abc", on_fail=lambda *_: None
+            project_id=42, project_path="group/sub/proj", head_sha="abc", marker=lambda *_: None
         ),
         workspace_dir("/w", "42:7"),
     )
     assert env["ACH_EVENT_PROJECT_ID"] == "42"
     assert env["ACH_EVENT_PROJECT_PATH"] == "group/sub/proj"
-    assert "ACH_EVENT_ON_FAIL" not in env
+    assert "ACH_EVENT_MARKER" not in env
 
 
 @pytest.mark.parametrize(

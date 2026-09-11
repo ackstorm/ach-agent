@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from ach_agent.boot.completions import CompletionRegistry
+from ach_agent.boot.conversations import ConversationLocks
 from ach_agent.boot.prepare import (
     PrepareFailed,
     prepare_workspace,
@@ -108,6 +109,7 @@ def make_engine_runner(
     accountant: CostAccountant | None = None,
     cost_source: str = "engine",
     completion_registry: CompletionRegistry | None = None,
+    conversation_locks: ConversationLocks | None = None,
 ) -> Callable[..., Any]:
     """Build the engine_runner callable injected into the Router.
 
@@ -134,6 +136,8 @@ def make_engine_runner(
 
     ttl_by_channel = channel_ttl or {}
     channels_by_name = channels_by_name or {}
+    if conversation_locks is None:
+        conversation_locks = ConversationLocks()
 
     async def engine_runner(
         event: MessageEvent, on_kill: Callable[[], None]
@@ -208,7 +212,34 @@ def make_engine_runner(
         timed_out = False
         acquired = False
         session_reserved = False
+        # Resolve the native conversation before any pool acquisition.  The lock spans
+        # acquisition, every turn/maintenance operation, and pool release/quiescence.
+        session_cfg = ch_cfg.session if ch_cfg is not None else None
+        conv_key = event.session_key
+        if session_cfg is None or session_cfg.type == "auto":
+            reuse = True
+        elif session_cfg.type == "none":
+            reuse = False
+        else:  # custom: render the key template per event (validator guarantees key set)
+            tmpl = session_cfg.key or ""
+            rendered = render_template(tmpl, ctx).strip()
+            if rendered:
+                conv_key, reuse = rendered, True
+            else:
+                log.warning(
+                    "session: template rendered empty — falling back to none",
+                    channel=event.channel_name,
+                    template=tmpl,
+                )
+                reuse = False
+        lock_context = conversation_locks.hold(
+            getattr(driver, "engine_type", getattr(engine_cfg, "engine_type", "opencode")),
+            conv_key if reuse else None,
+        )
+        lock_entered = False
         try:
+            await lock_context.__aenter__()
+            lock_entered = True
             # channel.prepare: build this session's workspace on the LANE — after dedup and
             # backpressure admitted the event, before its engine is acquired or reused. The
             # workspace is the engine's cwd, so it must be ready before acquire. Fail-CLOSED:
@@ -279,27 +310,6 @@ def make_engine_runner(
             # stream when ACH_STATS_REDIS_URL is set). Wraps whatever on_tool renders/logs.
             if tool_sink is not None:
                 on_tool = make_tool_recorder(on_tool, tool_sink, event, engine_cfg.model)
-            # Conversation identity (session block). The router lane key
-            # (event.session_key) is NOT affected — only which opencode session
-            # this turn reuses. No ch_cfg (--tui console) → auto: REPL continuity.
-            session_cfg = ch_cfg.session if ch_cfg is not None else None
-            conv_key = event.session_key
-            if session_cfg is None or session_cfg.type == "auto":
-                reuse = True
-            elif session_cfg.type == "none":
-                reuse = False
-            else:  # custom: render the key template per event (validator guarantees key set)
-                tmpl = session_cfg.key or ""
-                rendered = render_template(tmpl, ctx).strip()
-                if rendered:
-                    conv_key, reuse = rendered, True
-                else:
-                    log.warning(
-                        "session: template rendered empty — falling back to none",
-                        channel=event.channel_name,
-                        template=tmpl,
-                    )
-                    reuse = False
             log.info(
                 "engine: prompt",
                 channel=event.channel_name,
@@ -428,33 +438,37 @@ def make_engine_runner(
                 await completion_registry.finish(ref, error=f"engine failure: {exc}")
             raise
         finally:
-            # Return the engine server to the pool. Slot release is owned by the lane:
-            # its `async with` blocks free the semaphores and its finally calls on_kill
-            # for queued_total. A timed-out invocation ALWAYS releases with ttl=0 (force
-            # kill of the runaway); otherwise the channel's warm idle TTL is applied so
-            # session:auto persists the server across events. `if server is not None`
-            # guards a cancel during a cold-start acquire.
-            if session_reserved and not acquired:
-                try:
-                    await pool.discard(event.session_key)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning(
-                        "pool discard error",
-                        session_key=event.session_key,
-                        task_id=event.task_id,
-                        error=str(exc),
-                    )
-            if server is not None:
-                ttl = 0.0 if timed_out else ttl_by_channel.get(event.channel_name, 0.0)
-                try:
-                    # Close the correlation window with the cost turn: a warm
-                    # pooled server must not stamp this invocation's traceparent
-                    # on whatever the engine does between turns.
-                    trace.end(server.proxy_token)
-                    if accountant is not None:
-                        accountant.discard_turn(server.proxy_token)
-                    await pool.release(event.session_key, ttl_seconds=ttl)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("pool release error", task_id=event.task_id, error=str(exc))
+            try:
+                # Return the engine server to the pool. Slot release is owned by the lane:
+                # its `async with` blocks free the semaphores and its finally calls on_kill
+                # for queued_total. A timed-out invocation ALWAYS releases with ttl=0 (force
+                # kill of the runaway); otherwise the channel's warm idle TTL is applied so
+                # session:auto persists the server across events. `if server is not None`
+                # guards a cancel during a cold-start acquire.
+                if session_reserved and not acquired:
+                    try:
+                        await pool.discard(event.session_key)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning(
+                            "pool discard error",
+                            session_key=event.session_key,
+                            task_id=event.task_id,
+                            error=str(exc),
+                        )
+                if server is not None:
+                    ttl = 0.0 if timed_out else ttl_by_channel.get(event.channel_name, 0.0)
+                    try:
+                        # Close the correlation window with the cost turn: a warm
+                        # pooled server must not stamp this invocation's traceparent
+                        # on whatever the engine does between turns.
+                        trace.end(server.proxy_token)
+                        if accountant is not None:
+                            accountant.discard_turn(server.proxy_token)
+                        await pool.release(event.session_key, ttl_seconds=ttl)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("pool release error", task_id=event.task_id, error=str(exc))
+            finally:
+                if lock_entered:
+                    await lock_context.__aexit__(None, None, None)
 
     return engine_runner

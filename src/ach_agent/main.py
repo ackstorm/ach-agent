@@ -608,6 +608,10 @@ async def main(
     )
     await tool_sink.start()
 
+    from ach_agent.boot.conversations import ConversationLocks
+
+    conversation_locks = ConversationLocks()
+
     # 6b. Build engine_runner. MEM-01/D-02: pass memory_cfg so engine_runner probes
     # before pool.acquire (Pitfall 3).
     # engine.idle_ttl_seconds (default 60) keeps a keyed server warm after its last release
@@ -653,6 +657,7 @@ async def main(
         accountant=accountant,
         cost_source=cfg.cost.source,
         completion_registry=completion_registry,
+        conversation_locks=conversation_locks,
     )
 
     # Step 6 (cont.): construct Router with all limits from config (RTR-03/04)

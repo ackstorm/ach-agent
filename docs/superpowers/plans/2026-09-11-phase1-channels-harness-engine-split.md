@@ -443,4 +443,3 @@ These commands are implementation-time checks, not executed by this planning tas
 - Cross-process trace/cost ordering and warm-expiry cleanup are included because source inspection found process-local coupling; they are parity work.
 - The production operator integration needs its own rendering change; no local manifest can silently complete another repository.
 - No implementation or tests have been executed by writing this plan.
-

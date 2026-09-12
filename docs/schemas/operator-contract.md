@@ -1043,16 +1043,20 @@ The harness publishes two bounded, atomic bootstrap files:
 | `/run/ach-agent/channels/bootstrap.json` | H | C | source projection, agent identity, H URL, stable channel authentication key |
 | `/run/ach-agent/engine/bootstrap.json` | H | E | existing credential-free `PublicEngineConfig` |
 
-H mounts both paths read/write. C mounts only the channels directory read-only;
-E mounts only the engine directory read-only. The image pre-creates both
-directories for UID 10001. C and E wait for their file for up to 300 seconds
+H mounts both directories read/write. C mounts only the channels directory
+read-only; E mounts only the engine directory read-only. Use two separate
+`emptyDir` volumes, not file-level `subPath` mounts. The image pre-creates both
+directories for Docker UID 10001; Kubernetes uses fsGroup 10001 for mount access.
+C and E wait for their file for up to 300 seconds
 and fail closed on malformed or missing content. A harness restart reuses the
-existing channel key when its bootstrap volume persists; a complete pod restart
-regenerates the bootstrap volume and is the rollout boundary.
+existing channel key when its bootstrap volume persists; pod replacement
+regenerates the bootstrap volumes and is the rollout boundary.
 
 Default listeners are H `127.0.0.1:8090`, E `127.0.0.1:8081`, and C
 `0.0.0.0:8080`; only C's ingress is published. Health and readiness probes use
-`/healthz` and `/readyz` on the role ports, with a 300 second startup budget.
+`/healthz` (startup/liveness) and `/readyz` on the role ports, with a 300 second
+startup budget. All H/E probes execute an HTTP request inside the container
+against loopback; C uses Kubernetes HTTP probes against its ingress port.
 Compose joins C and E to H's network namespace. Kubernetes uses one ordinary
 pod with no host network, host PID, shared process namespace, init container,
 or automatic service-account token.

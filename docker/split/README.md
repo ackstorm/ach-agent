@@ -42,8 +42,9 @@ engine mounts only the latter read-only. The generated channel bundle carries th
 agent identity, localhost harness URL, source projection and stable authentication
 key. The engine bundle is the credential-free public engine configuration. Role
 containers wait up to 300 seconds for their bundle and fail closed on malformed data.
-The image creates both directories for UID 10001, so named volumes and `emptyDir`
-mounts work without an init container.
+The image creates both directories for UID 10001 for Docker named-volume
+initialization. The Kubernetes pod uses fsGroup 10001 for writable `emptyDir`
+mounts. Neither requires a hydration init container.
 
 All three roles use the image entrypoint and select their role through `args:
 ["--role", "harness|channels|engine"]`. Default listeners are H `127.0.0.1:8090`,
@@ -88,8 +89,8 @@ The operator must create the PVC subdirectories before using `subPath` mounts
 `engine-codemem`, `workspace`, and `public-context`. No init
 container or download endpoint is part of this example. H hydrates public
 context before admitting the first invocation; E creates its own home/workspace
-links at boot and reports readiness independently. The engine does not wait on
-a separate H filesystem signal.
+links after reading its public bootstrap and reports readiness independently.
+There is no additional filesystem readiness flag or bootstrap handshake.
 
 ## Existing codemem data relocation
 

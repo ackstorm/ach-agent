@@ -1,6 +1,6 @@
 # Phase 1 split acceptance evidence
 
-This report records the Task 10B implementation at the final worktree commit. The
+This report records the Task 10B implementation at final source commit `beac73f`. The
 acceptance fixture is deliberately self-contained: its model, hydration, and
 authentication upstream is `tests/integration/fixtures/upstream.py`, and it uses no
 ACH credential or external memory service.
@@ -19,14 +19,14 @@ trap. It ran each engine with the same channels and harness roles.
 
 | target | live result | upstream evidence | failure/cancel evidence |
 | --- | --- | --- | --- |
-| OpenCode | two HTTP 202 admissions completed with `PHASE1_SPLIT_REPLY` / `action: none`; startup 4s | `authorized=4`, `hydrate=1`, `model=3`, message sizes `[3,2,4]` | an active `CANCEL_ME` event became `failed` after E termination in 2s; H `readyz` returned 503 |
-| Pi | two HTTP 202 admissions completed with `PHASE1_SPLIT_REPLY` / `action: none`; startup 5s | `authorized=3`, `hydrate=1`, `model=2`, message sizes `[2,4]` | an active `CANCEL_ME` event became `failed` after E termination in 2s; H `readyz` returned 503 |
+| OpenCode | two HTTP 202 admissions completed with `PHASE1_SPLIT_REPLY` / `action: none`; startup 4s; native session row reused | `authorized=4`, `hydrate=1`, `model=3`, message sizes `[3,2,4]` | an active `CANCEL_ME` event became `failed` after E termination in 2s; H `readyz` returned 503 |
+| Pi | two HTTP 202 admissions completed with `PHASE1_SPLIT_REPLY` / `action: none`; startup 4s; native session row reused | `authorized=3`, `hydrate=1`, `model=2`, message sizes `[2,4]` | an active `CANCEL_ME` event became `failed` after E termination in 1s; H `readyz` returned 503 |
 
-The final live run's built image IDs were H
-`sha256:6f19bc8779622def941ec1de33f89b6d725b72624cf05bb4968269e7c4b79f1b`, C
-`sha256:375af9cca70951527950cd6b48bad8c9073690dab0fe9a34611abb809e804998`, E/OpenCode
-`sha256:681a8dced7913f415f4e6f62d4e5edc0b371a0a42c60d2625b13ad3818422a92`, and
-E/Pi `sha256:456f287c60ed64cc0561f871726c222f75bb80f6cabb0e6fdc3343c1b3db9385`.
+The final-source live run at `beac73f` built H
+`sha256:ee73f5b40cebf025ce6f22707531e1d8002742eb4fa72a8b9bf5488559b59327`, C
+`sha256:6e0ad81693c2018d8004dfd4ce78defe8726ebc12f7aae073e97d404c4fcf98b`,
+E/OpenCode `sha256:79f3a5b14e143df0e40092ed0ad157b0969bc56fb676b1e01f6f20a4bb9b8830`,
+and E/Pi `sha256:2d9c10a3e7544085710b39a6dc1baf17d1e8b09e0b53724c0a19421eb47d0c09`.
 
 The fixture increments its authorized counter only after the synthetic `x-ach-key`
 check, so the model and hydration calls above demonstrate that credentials were
@@ -135,24 +135,28 @@ rtk proxy ./scripts/dev.sh uv run pytest tests/integration/test_split_parity.py 
 45 passed in 2.87s
 ```
 
-The unchanged repository gate was run in a clean local clone with
-`PRE_PUSH_BASE_REF=462912f`. The successful unchanged rerun at implementation
-commit `076bcac` produced:
+The unchanged repository gate was run in a clean local clone at `beac73f` with
+`PRE_PUSH_BASE_REF=462912f`; its complete output is preserved at
+`.superpowers/sdd/2026-09-11-phase1-channels-harness-engine-split/task-10b-final-gate-beac73f.log`:
 
 ```text
 rtk proxy env PRE_PUSH_BASE_REF=462912f ./scripts/pre-push-check.sh
-gitleaks: 53 commits scanned, no leaks found
+gitleaks: 58 commits scanned, no leaks found
 ruff/mypy: passed
-pytest tests/ --ignore=tests/e2e: 1211 passed, 3 skipped
+pytest tests/ --ignore=tests/e2e: 1215 passed, 3 skipped
 pytest tests/conformance/: 18 passed
 pre-push: all gates passed.
 ```
 
-The later docs-only commit `01953e8` was captured at
+The earlier implementation gate at `076bcac` and the later docs-only capture at `01953e8` were
+retained as historical evidence; the latter reproduced the cleanup lifecycle race in
+`test_graceful_stop_uses_long_cleanup_client_budget`, with `1210 passed, 3 skipped, 1 failed`.
+The deterministic EOF regression is red on the pre-fix source (`CancelledError` at
+`_owned_response`) and green at `beac73f`; root independently reproduced that red result
+by loading the pre-fix source into the test module without mutating the production tree.
+The corrected focused execution tests pass 5/5, including hung-stop timeout, external
+cancellation transport closure, and invalid stop confirmation. No push, merge, release,
+or external deployment is part of this evidence.
+
+The historical docs-only capture remains at
 `.superpowers/sdd/2026-09-11-phase1-channels-harness-engine-split/task-10b-final-gate.log`.
-That run reproduced one intermittent existing test failure,
-`test_graceful_stop_uses_long_cleanup_client_budget`, with `1210 passed, 3 skipped,
-1 failed`; gitleaks, lint, and mypy were green. Running that test in isolation
-immediately afterward passed. The failure is retained as an environment-sensitive
-test result rather than attributed to a confirmed source cause. No push, merge,
-release, or external deployment is part of this evidence.

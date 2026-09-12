@@ -1,8 +1,10 @@
 # Phase 1 independent final validation
 
-Root reviewed the branch while GPT-5.6-Luna implemented it. The final production
-source tested here is commit `076bcac`; later commits only update documentation.
-All upstreams in these checks were synthetic. No external deployment was made.
+Root reviewed the branch while GPT-5.6-Luna implemented it. The independent
+Compose, deadline, and Kubernetes snapshots in this report exercised commit
+`076bcac`; final-source Compose and gate evidence at `beac73f` is recorded in
+[the main evidence report](phase1-split-evidence.md). All upstreams in these checks
+were synthetic. No external deployment was made.
 
 ## Final Compose repeat
 

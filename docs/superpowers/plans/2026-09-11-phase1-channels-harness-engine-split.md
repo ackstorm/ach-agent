@@ -1,7 +1,7 @@
 # ACH Phase 1 — Channels/Harness/Engine Split Implementation Plan
 
 **Execution status (2026-09-12):** Tasks 0–10 implemented on `feat/phase1-split`;
-production source verified at `076bcac`. The original planning checklists below
+final production source and unchanged gate verified at `beac73f`. The original planning checklists below
 are retained as the task instructions. Completion evidence and limitations are in
 [the acceptance report](../../reports/phase1-split-evidence.md),
 [independent root validation](../../reports/phase1-split-root-validation.md), and

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import yaml
 
+from ach_agent.boot.roles import build_role_configs
 from ach_agent.config.schema import AgentConfig, ChannelSourceConfig
 from ach_agent.execution.wire import PublicEngineConfig
 
@@ -105,6 +106,7 @@ def test_dockerfile_exposes_split_targets_and_keeps_combined_default() -> None:
     assert "AS engine-pi" in dockerfile
     assert "AS combined" in dockerfile
     assert 'ENTRYPOINT ["/usr/bin/tini", "--", "python", "-m", "ach_agent.main"]' in dockerfile
+    assert "/tmp/ach-home/workspace" in dockerfile
     assert "opencode --version" in dockerfile
     assert "pi --version" in dockerfile
     assert "codemem --version" in dockerfile
@@ -121,3 +123,44 @@ def test_example_role_artifacts_validate_against_the_runtime_wire_models() -> No
 
     engine = json.loads((SPLIT / "engine.json").read_text(encoding="utf-8"))
     assert PublicEngineConfig.model_validate(engine).agent_name == "split-example"
+
+
+def test_opencode_and_pi_harness_engine_artifacts_stay_in_sync() -> None:
+    for suffix in ("", "-pi"):
+        config = yaml.safe_load((SPLIT / f"config{suffix}.yaml").read_text(encoding="utf-8"))
+        cfg = AgentConfig.model_validate(config)
+        _channels, projection = build_role_configs(cfg)
+        expected = PublicEngineConfig.model_validate(projection)
+        artifact = json.loads((SPLIT / f"engine{suffix}.json").read_text(encoding="utf-8"))
+        actual = PublicEngineConfig.model_validate(artifact)
+        assert actual.model_dump() == expected.model_dump()
+        assert actual.agent_name == cfg.agent.name
+        assert actual.engine_type == cfg.engine.type
+
+
+def test_ephemeral_artifacts_resolve_to_the_ephemeral_mount_map() -> None:
+    config = yaml.safe_load((SPLIT / "config-ephemeral.yaml").read_text(encoding="utf-8"))
+    cfg = AgentConfig.model_validate(config)
+    _channels, projection = build_role_configs(cfg)
+    public = PublicEngineConfig.model_validate(projection)
+    assert public.persistence_enabled is False
+    assert public.home == "/tmp/ach-home"
+    assert public.work_dir == "/tmp/ach-home/workspace"
+    assert public.public_context == "/tmp/ach-public-context"
+    assert public.codemem_db_path == "/tmp/ach-home/state/codemem.db"
+
+    compose = _documents(SPLIT / "compose-ephemeral.yaml")[0]
+    services = compose["services"]
+    harness = services["harness"]
+    engine = services["engine"]
+    assert "/tmp/ach-harness-state:uid=10001,gid=10001" in harness["tmpfs"]
+    assert "/tmp/ach-home:uid=10001,gid=10001" in engine["tmpfs"]
+    assert any("/tmp/ach-home/workspace" in mount for mount in harness["volumes"])
+    assert any("/tmp/ach-home/workspace" in mount for mount in engine["volumes"])
+    assert any("/tmp/ach-public-context" in mount for mount in harness["volumes"])
+    assert any("/tmp/ach-public-context" in mount for mount in engine["volumes"])
+    assert all(
+        "/var/lib/ach-agent" not in mount
+        for service in services.values()
+        for mount in service.get("volumes", [])
+    )

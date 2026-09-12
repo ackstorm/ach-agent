@@ -1,4 +1,4 @@
-name: ach-agent-split
+name: ach-agent-split-ephemeral
 
 services:
   harness:
@@ -18,24 +18,22 @@ services:
       ACH_TOKEN: ${ACH_TOKEN:?set ACH_TOKEN}
       ACH_BASE_URL: ${ACH_BASE_URL:?set ACH_BASE_URL}
       ACH_ENVIRONMENT: ${ACH_ENVIRONMENT:-platform}
-    ports:
-      - "8080:8080"
+    ports: ["8080:8080"]
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     tmpfs:
       - /tmp:mode=1777
+      - /tmp/ach-harness-state:uid=10001,gid=10001
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz')"]
       interval: 5s
       timeout: 3s
       retries: 12
     volumes:
-      - ./${ACH_HARNESS_CONFIG_FILE:-config.yaml}:/etc/ach-agent/config.yaml:ro
-      - harness-state:/var/lib/ach-agent/state
-      - shared-workspace:/var/lib/ach-agent/workspace
-      - public-context:/var/lib/ach-agent/public-context
-      - harness-scratch:/tmp/ach-private
+      - ./${ACH_HARNESS_CONFIG_FILE:-config-ephemeral.yaml}:/etc/ach-agent/config.yaml:ro
+      - ephemeral-workspace:/tmp/ach-home/workspace
+      - ephemeral-public-context:/tmp/ach-public-context
 
   channels:
     build:
@@ -43,8 +41,7 @@ services:
       dockerfile: Dockerfile
       target: channels
     command: ["--role", "channels"]
-    depends_on:
-      - harness
+    depends_on: [harness]
     network_mode: service:harness
     environment:
       ACH_ROLE: channels
@@ -58,13 +55,7 @@ services:
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    tmpfs:
-      - /tmp:mode=1777
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
+    tmpfs: ["/tmp:mode=1777"]
     volumes:
       - ./channels.json:/etc/ach-agent/channels.json:ro
 
@@ -86,24 +77,18 @@ services:
     security_opt: ["no-new-privileges:true"]
     tmpfs:
       - /tmp:mode=1777
+      - /tmp/ach-home:uid=10001,gid=10001
+      - /tmp/ach-home/state:uid=10001,gid=10001
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/execution/v1/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/readyz')"]
       interval: 5s
       timeout: 3s
       retries: 12
     volumes:
-      - ./${ACH_ENGINE_CONFIG_FILE:-engine.json}:/etc/ach-agent/engine.json:ro
-      - engine-home:/var/lib/ach-agent/home
-      # This E-owned directory is mounted at the logical codemem path. It is
-      # intentionally a different volume from H's state/state.db directory.
-      - engine-codemem:/var/lib/ach-agent/state
-      - shared-workspace:/var/lib/ach-agent/workspace
-      - public-context:/var/lib/ach-agent/public-context:ro
+      - ./${ACH_ENGINE_CONFIG_FILE:-engine-ephemeral.json}:/etc/ach-agent/engine.json:ro
+      - ephemeral-workspace:/tmp/ach-home/workspace
+      - ephemeral-public-context:/tmp/ach-public-context:ro
 
 volumes:
-  harness-state:
-  engine-home:
-  engine-codemem:
-  shared-workspace:
-  public-context:
-  harness-scratch:
+  ephemeral-workspace:
+  ephemeral-public-context:

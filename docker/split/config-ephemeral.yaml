@@ -1,0 +1,29 @@
+# Disposable split example. Paths match the emptyDir/tmpfs mounts in
+# compose-ephemeral.yaml; no persistent database survives container removal.
+schemaVersion: "1"
+agent:
+  name: split-example
+model:
+  name: gemini.gemini-flash-latest
+  type: openai
+capability:
+  type: ach
+  ach:
+    environment: platform
+prompt:
+  system:
+    type: text
+    text: "You are a concise software-engineering assistant."
+persistence:
+  enabled: false
+  mountPath: /tmp/ach-state
+engine:
+  home: /tmp/ach-home
+  workDir: /tmp/ach-home/workspace
+  startupTimeoutSeconds: 30
+memory:
+  type: codemem
+  codemem:
+    dbPath: /tmp/ach-home/state/codemem.db
+    project: ach-agent
+channels: []

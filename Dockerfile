@@ -159,7 +159,7 @@ RUN apt-get update -qq \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/deps /app/deps
 RUN useradd -u 10001 -m appuser \
- && mkdir -p /tmp/ach-home /tmp/ach-harness-state /tmp/ach-public-context /tmp/ach-private \
+ && mkdir -p /tmp/ach-home /tmp/ach-home/workspace /tmp/ach-harness-state /tmp/ach-public-context /tmp/ach-private \
       /var/lib/ach-agent/state /var/lib/ach-agent/home /var/lib/ach-agent/workspace \
       /var/lib/ach-agent/public-context \
  && chown -R 10001 /tmp/ach-home /tmp/ach-harness-state /tmp/ach-public-context /tmp/ach-private \

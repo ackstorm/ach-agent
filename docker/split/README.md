@@ -17,8 +17,20 @@ The Compose file has exactly three services. Channels and engine join the
 harness network namespace (`network_mode: service:harness`), so only the
 channels ingress is published. H listens on `127.0.0.1:8090`, E on
 `127.0.0.1:8081`, and C binds its published ingress to `0.0.0.0:8080` inside
-that shared namespace. Set `ACH_ENGINE_TARGET=engine-pi` together with an
-engine artifact whose `engineType` is `pi` for the Pi image.
+that shared namespace. For Pi, switch H and E together so the selected native
+driver and public bootstrap agree:
+
+```sh
+ACH_ENGINE_TARGET=engine-pi \
+ACH_HARNESS_CONFIG_FILE=config-pi.yaml \
+ACH_ENGINE_CONFIG_FILE=engine-pi.json \
+ACH_TOKEN=ek_example ACH_BASE_URL=https://ach.example \
+ACH_CHANNELS_HMAC_KEY=example \
+docker compose -f docker/split/compose.yaml config --quiet
+```
+
+`config-pi.yaml` sets `engine.type: pi`, and `engine-pi.json` carries the
+matching wire values `engine_type: pi` and `binary_path: pi`.
 
 The image without `--target` remains the combined native image. It carries both
 Pi and OpenCode, keeps Git and SSH for preparation hooks, and preserves the
@@ -40,34 +52,52 @@ logical codemem path remains `<mountPath>/state/codemem.db`, while E cannot see
 H's `<mountPath>/state/state.db`. Channels receives only `channels.json`; it
 has no state, workspace, home, public-context, or PVC mounts.
 
-For an ephemeral deployment, replace each PVC volume in `pod.yaml` with an
-`emptyDir: {}` volume of the same name and set `persistence.enabled: false` in
-the full H config plus matching `/tmp` paths in `engine.json`. The five role
-mount paths and their read/write directions stay unchanged. This is suitable
-for a disposable test pod only.
+`config.yaml` is also a concrete custom path example: H and E use the
+role-owned `/var/lib/ach-agent/home` and `/var/lib/ach-agent/workspace` paths,
+while codemem uses E's separate `/var/lib/ach-agent/state` mount. If an
+operator chooses another `engine.home` or `engine.workDir`, the E artifact and
+its private volume mounts must use those exact paths, and the mounted
+directories must be provisioned writable by UID 10001. The image only
+prepares the paths shown by these examples.
+
+For an ephemeral deployment, use the concrete `compose-ephemeral.yaml` example
+with `config-ephemeral.yaml` and `engine-ephemeral.json`. H's persistence is
+disabled, H state is `/tmp/ach-harness-state`, E home/codemem are under
+`/tmp/ach-home`, and the shared workspace/public-context volumes are mounted
+at those same `/tmp` paths in both roles. This keeps H's hydrated public
+context visible to E. The private `/tmp` data disappears when its container
+exits; the shared named workspace and public-context volumes remain until the
+operator removes them (`docker compose ... down -v`). A Kubernetes renderer
+can apply the same explicit substitutions:
+PVC-backed `state`, `home`, `engine-codemem`, `workspace`, and
+`public-context` become five `emptyDir` volumes, and the H/E artifact paths
+become the paths in the ephemeral artifacts. No generic renderer is supplied.
 
 The operator must create the PVC subdirectories before using `subPath` mounts
 (or use its equivalent volume renderer), including `state`, `home`,
 `engine-codemem`, `workspace`, and `public-context`. No init
-container or download endpoint is part of this example. H may create files
-inside those directories at startup; E retries its HTTP readiness until H's
-public context and workspace layout are available.
+container or download endpoint is part of this example. H hydrates public
+context before admitting the first invocation; E creates its own home/workspace
+links at boot and reports readiness independently. The engine does not wait on
+a separate H filesystem signal.
 
 ## Existing codemem data relocation
 
 Before changing a persistent deployment, stop the old H/E pair and make an
-offline backup of the old `<mountPath>/state/codemem.db` together with its
-`-wal` and `-shm` siblings. While the old process is stopped, create the
-PVC's `engine-codemem` directory and copy all three files into it as one set,
-preserving ownership and permissions. Run `sqlite3 <new>/codemem.db
-'PRAGMA integrity_check;'` (or the equivalent codemem SQLite check) before
-starting E. Leave H's `state/state.db` in `state`.
+offline backup of the old `<mountPath>/state/codemem.db`; copy its `-wal` and
+`-shm` siblings too when they are present. While the old process is stopped,
+create the PVC's `engine-codemem` directory and copy the database and any
+present siblings as one coherent set, preserving ownership and permissions.
+Run `sqlite3 <new>/codemem.db 'PRAGMA integrity_check;'` (or the equivalent
+codemem SQLite check) before starting E. Leave H's `state/state.db` in `state`.
 
 Do not deploy with an empty `engine-codemem` directory while expecting old
 memory to appear: codemem can create a fresh database, which would silently
-discard the old history. If the old database is absent or its WAL/SHM set is
-incomplete, stop the rollout and restore the backup or complete the offline
-copy first. No automatic migration or reset is performed by these manifests.
+discard the old history. A clean closed database may have no WAL/SHM files;
+their absence is valid for a fresh or cleanly checkpointed database. If an
+existing database is present with a WAL/SHM set, copy the present set
+coherently; if the backup is incomplete, stop the rollout and restore it. No
+automatic migration or reset is performed by these manifests.
 
 `pod.yaml` references ConfigMaps `ach-agent-config`, `ach-agent-channels`, and
 `ach-agent-engine`, and Secret `ach-agent-secrets`. Production `ach-runtime`

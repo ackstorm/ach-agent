@@ -1,0 +1,16 @@
+{
+  "agentName": "split-example",
+  "engine_type": "opencode",
+  "binary_path": "opencode",
+  "home": "/tmp/ach-home",
+  "work_dir": "/tmp/ach-home/workspace",
+  "persistenceEnabled": false,
+  "persistenceMountPath": "/tmp/ach-state",
+  "publicContext": "/tmp/ach-public-context",
+  "model": "gemini.gemini-flash-latest",
+  "model_type": "openai",
+  "steps": 50,
+  "startup_timeout_seconds": 30,
+  "codemem_db_path": "/tmp/ach-home/state/codemem.db",
+  "codemem_project": "ach-agent"
+}

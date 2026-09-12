@@ -18,10 +18,13 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from pydantic import JsonValue
+
+if TYPE_CHECKING:
+    from ach_agent.engine.lifecycle import ManagedServer
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,10 +116,21 @@ class LocalEngineProcess:
         artifacts: RoleArtifactPaths,
         *,
         isolated_process_group: bool,
+        process_owner: ManagedServer | None = None,
     ) -> None:
         self.process = process
         self.artifacts = artifacts
         self.isolated_process_group = isolated_process_group
+        if (
+            process_owner is None
+            and sys.platform.startswith("linux")
+            and isinstance(process, asyncio.subprocess.Process)
+        ):
+            from ach_agent.engine.lifecycle import ManagedServer
+
+            process_owner = ManagedServer(port=0)
+            process_owner.register_process(process, protect_root=True)
+        self.process_owner = process_owner
 
     @classmethod
     async def start(
@@ -166,14 +180,20 @@ class LocalEngineProcess:
             env=child_env,
             start_new_session=not terminal_mode,
         )
-        return cls(process, artifacts, isolated_process_group=not terminal_mode)
+        return cls(
+            process,
+            artifacts,
+            isolated_process_group=not terminal_mode,
+        )
 
     async def wait_ready(self, base_url: str, *, timeout: float = 30.0) -> dict[str, Any]:
         return await wait_engine_ready(base_url, timeout=timeout)
 
     async def close(self, *, timeout: float = 20.0) -> None:
         try:
-            if self.process.returncode is None and self.isolated_process_group:
+            if self.process_owner is not None:
+                await self.process_owner.stop(timeout=timeout)
+            elif self.process.returncode is None and self.isolated_process_group:
                 os.killpg(self.process.pid, signal.SIGTERM)
             elif self.process.returncode is None:
                 self.process.send_signal(signal.SIGTERM)

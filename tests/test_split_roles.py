@@ -259,6 +259,124 @@ def test_local_timeout_reaps_real_supervised_descendant(tmp_path: Path) -> None:
     assert not sentinel.exists()
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="the owned descendant fixture uses Linux /proc")
+@pytest.mark.parametrize(
+    ("terminal_mode", "start_new_session"),
+    ((False, True), (True, False)),
+)
+def test_local_timeout_reaps_term_resistant_detached_descendant(
+    tmp_path: Path, terminal_mode: bool, start_new_session: bool
+) -> None:
+    """Local cleanup kills a detached child before terminating its supervisor root."""
+    from ach_agent.boot.local import LocalEngineProcess, RoleArtifacts
+
+    artifacts = RoleArtifacts(tmp_path / "artifacts").write({}, {})
+    child_pid_file = tmp_path / "child.pid"
+    ready = tmp_path / "ready"
+    supervisor = (
+        Path(__file__).parents[1] / "src" / "ach_agent" / "engine" / "process_supervisor.py"
+    )
+    leader = """
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+child_pid_file = Path(sys.argv[1])
+ready = Path(sys.argv[2])
+child = subprocess.Popen(
+    [
+        sys.executable,
+        "-c",
+        "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)",
+    ],
+    start_new_session=True,
+)
+child_pid_file.write_text(str(child.pid), encoding="ascii")
+ready.write_text("ready", encoding="ascii")
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+while True:
+    time.sleep(1)
+"""
+    command = [
+        sys.executable,
+        str(supervisor),
+        "--",
+        sys.executable,
+        "-c",
+        leader,
+        str(child_pid_file),
+        str(ready),
+    ]
+    process: asyncio.subprocess.Process | None = None
+    child_pid: int | None = None
+
+    async def wait_gone(pid: int, timeout: float = 3.0, *, allow_zombie: bool = False) -> None:
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            proc_path = Path(f"/proc/{pid}")
+            if not proc_path.exists():
+                return
+            stat = proc_path / "stat"
+            if (
+                allow_zombie
+                and stat.exists()
+                and stat.read_text(encoding="ascii").split(" ", 3)[2] == "Z"
+            ):
+                return
+            await asyncio.sleep(0.02)
+        raise AssertionError(f"detached process {pid} remained live")
+
+    async def run() -> None:
+        nonlocal child_pid, process
+        unrelated: asyncio.subprocess.Process | None = None
+        try:
+            if terminal_mode:
+                unrelated = await asyncio.create_subprocess_exec("sleep", "30")
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                start_new_session=start_new_session,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            child = LocalEngineProcess(
+                process,
+                artifacts,
+                isolated_process_group=not terminal_mode,
+            )
+            await wait_for_path(ready)
+            child_pid = int(child_pid_file.read_text(encoding="ascii"))
+            assert os.getpgid(child_pid) != os.getpgid(process.pid)
+            started = asyncio.get_running_loop().time()
+            await child.close(timeout=0.05)
+            assert asyncio.get_running_loop().time() - started < 3.0
+            await wait_gone(child_pid)
+            assert process.returncode is not None
+            if unrelated is not None:
+                assert unrelated.returncode is None
+        finally:
+            if process is not None and process.returncode is None:
+                process.kill()
+                await process.wait()
+            if unrelated is not None and unrelated.returncode is None:
+                unrelated.terminate()
+                await unrelated.wait()
+            if child_pid is not None and Path(f"/proc/{child_pid}").exists():
+                os.kill(child_pid, signal.SIGKILL)
+                await wait_gone(child_pid, allow_zombie=True)
+
+    async def wait_for_path(path: Path, timeout: float = 3.0) -> None:
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            if path.exists():
+                return
+            await asyncio.sleep(0.02)
+        raise AssertionError(f"timed out waiting for {path}")
+
+    asyncio.run(run())
+
+
 def test_public_context_is_linked_from_custom_work_dir(tmp_path: Path) -> None:
     from ach_agent.engine.context import link_public_context
 

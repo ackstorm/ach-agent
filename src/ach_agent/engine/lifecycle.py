@@ -231,7 +231,7 @@ class ManagedServer:
                 live.append(identity)
         return live
 
-    async def _stop_owned_processes(self, proc: object) -> None:
+    async def _stop_owned_processes(self, proc: object, *, timeout: float | None = None) -> None:
         """Signal and join every observed owned process with PID-reuse guards."""
         pid = getattr(proc, "pid", None)
         if not isinstance(pid, int) or pid <= 0 or not self._owned_processes:
@@ -241,7 +241,8 @@ class ManagedServer:
         # Linux procfs gives us individual ownership proof.  The portable fallback below
         # retains the established process-group behavior for native macOS development mode.
         if Path("/proc").is_dir():
-            deadline = asyncio.get_running_loop().time() + self._shutdown_timeout
+            grace_timeout = self._shutdown_timeout if timeout is None else max(timeout, 0.0)
+            deadline = asyncio.get_running_loop().time() + grace_timeout
             self._signal_owned(signal.SIGTERM)
             while asyncio.get_running_loop().time() < deadline:
                 self._refresh_owned_processes()
@@ -268,6 +269,13 @@ class ManagedServer:
                     self._signal_owned(signal.SIGKILL)
                     await _wait_native_process(proc)
                     remaining = [item.pid for item in self._live_owned_processes()]
+                elif set(remaining) == {pid}:
+                    # A local process supervisor is deliberately protected while its
+                    # detached descendants are force-killed, so it can reap them.  Once
+                    # the tree is empty, the supervisor root itself can be joined safely.
+                    self._signal_owned(signal.SIGKILL)
+                    await _wait_native_process(proc)
+                    remaining = [item.pid for item in self._live_owned_processes()]
             if remaining:
                 raise OwnedProcessCleanupError(f"owned native processes remained live: {remaining}")
 
@@ -290,18 +298,18 @@ class ManagedServer:
                     f"cannot signal owned native process {identity.pid}"
                 ) from exc
 
-    async def stop(self) -> None:
+    async def stop(self, *, timeout: float | None = None) -> None:
         """Join one owned stop operation, retaining observations until confirmation."""
         if self._stop_task is None:
             proc = self._process
             if proc is None:
                 return
-            self._stop_task = asyncio.create_task(self._stop_impl(proc))
+            self._stop_task = asyncio.create_task(self._stop_impl(proc, timeout=timeout))
         await asyncio.shield(self._stop_task)
 
-    async def _stop_impl(self, proc: object) -> None:
+    async def _stop_impl(self, proc: object, *, timeout: float | None = None) -> None:
         try:
-            await self._stop_owned_processes(proc)
+            await self._stop_owned_processes(proc, timeout=timeout)
         finally:
             if self._ownership_task is not None:
                 self._ownership_task.cancel()

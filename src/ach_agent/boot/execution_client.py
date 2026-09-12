@@ -243,6 +243,11 @@ class ExecutionClient:
         self._failure_reason: str | None = None
         self._owned_tasks: set[asyncio.Task[Any]] = set()
         self._owned_responses: set[httpx.Response] = set()
+        # A successful stop closes the held controller stream as part of E's
+        # cleanup. Preserve only that bounded response while the monitor closes
+        # unrelated work after observing the expected EOF.
+        self._protected_owned_tasks: set[asyncio.Task[Any]] = set()
+        self._protected_owned_responses: set[httpx.Response] = set()
         self._cancelled_invocations: set[str] = set()
         # A turn can confirm cancellation before the runner's outer failure path
         # reaches its finally block.  Retain that confirmation only until the
@@ -372,15 +377,20 @@ class ExecutionClient:
             if timeout is not None
             else max(self.timeout, NATIVE_CLEANUP_TIMEOUT_SECONDS + HOOK_CLEANUP_MARGIN_SECONDS)
         )
-        await asyncio.wait_for(
+        result = await asyncio.wait_for(
             self._json_request(
                 "POST",
                 "/execution/v1/controller/stop",
                 {"controller_id": self.controller_id},
                 client=self.cleanup_client,
+                protect_from_controller_loss=True,
             ),
             timeout=budget,
         )
+        if result != {"status": "stopped"}:
+            error = ExecutionClientError("invalid execution controller stop response")
+            await self._fail_admission(error)
+            raise error
 
     @property
     def controller_lost(self) -> bool:
@@ -408,12 +418,14 @@ class ExecutionClient:
         body: Any,
         *,
         client: httpx.AsyncClient | None = None,
+        protect_from_controller_loss: bool = False,
     ) -> Any:
         request_client = self.control_client if client is None else client
         try:
             response, content = await self._owned_request(
                 request_client,
                 request_client.build_request(method, path, json=body),
+                protect_from_controller_loss=protect_from_controller_loss,
             )
             if response.status_code < 200 or response.status_code >= 300:
                 detail = content[:512].decode("utf-8", "replace")
@@ -491,22 +503,38 @@ class ExecutionClient:
             )
 
     async def _owned_request(
-        self, client: httpx.AsyncClient, request: httpx.Request
+        self,
+        client: httpx.AsyncClient,
+        request: httpx.Request,
+        *,
+        protect_from_controller_loss: bool = False,
     ) -> tuple[httpx.Response, bytes]:
         self._assert_controller_live()
-        response = await self._owned_send(client, request)
-        content = await self._owned_response(response)
+        response = await self._owned_send(
+            client, request, protect_from_controller_loss=protect_from_controller_loss
+        )
+        content = await self._owned_response(
+            response, protect_from_controller_loss=protect_from_controller_loss
+        )
         return response, content
 
-    async def _owned_response(self, response: httpx.Response) -> bytes:
+    async def _owned_response(
+        self, response: httpx.Response, *, protect_from_controller_loss: bool = False
+    ) -> bytes:
         self._owned_responses.add(response)
+        if protect_from_controller_loss:
+            self._protected_owned_responses.add(response)
         task = asyncio.create_task(self._bounded_response(response))
         self._owned_tasks.add(task)
+        if protect_from_controller_loss:
+            self._protected_owned_tasks.add(task)
         try:
             return await asyncio.shield(task)
         finally:
             self._owned_responses.discard(response)
+            self._protected_owned_responses.discard(response)
             self._owned_tasks.discard(task)
+            self._protected_owned_tasks.discard(task)
             if not task.done():
                 task.cancel()
                 with contextlib.suppress(BaseException):
@@ -678,12 +706,19 @@ class ExecutionClient:
                 waiter.set_exception(error)
 
     async def _close_owned_transport(self) -> None:
-        responses = tuple(self._owned_responses)
+        responses = tuple(
+            response
+            for response in self._owned_responses
+            if response not in self._protected_owned_responses
+        )
         for response in responses:
             with contextlib.suppress(BaseException):
                 await response.aclose()
-        self._owned_responses.clear()
-        pending = tuple(self._owned_tasks)
+        for response in responses:
+            self._owned_responses.discard(response)
+        pending = tuple(
+            task for task in self._owned_tasks if task not in self._protected_owned_tasks
+        )
         for task in pending:
             if task is not asyncio.current_task() and not task.done():
                 task.cancel()
@@ -1131,6 +1166,8 @@ class ExecutionClient:
             with contextlib.suppress(BaseException):
                 await response.aclose()
         self._owned_responses.clear()
+        self._protected_owned_tasks.clear()
+        self._protected_owned_responses.clear()
         if self._controller_response is not None:
             await self._controller_response.aclose()
             self._controller_response = None
@@ -1153,25 +1190,37 @@ class ExecutionClient:
         await self.controller_client.aclose()
 
     async def _owned_send(
-        self, client: httpx.AsyncClient, request: httpx.Request
+        self,
+        client: httpx.AsyncClient,
+        request: httpx.Request,
+        *,
+        protect_from_controller_loss: bool = False,
     ) -> httpx.Response:
         self._assert_controller_live()
         task = asyncio.create_task(client.send(request, stream=True))
         self._owned_tasks.add(task)
+        if protect_from_controller_loss:
+            self._protected_owned_tasks.add(task)
         try:
             response = await asyncio.shield(task)
             self._owned_responses.add(response)
+            if protect_from_controller_loss:
+                self._protected_owned_responses.add(response)
             return response
         except BaseException:
             if task.done() and not task.cancelled():
                 with contextlib.suppress(BaseException):
                     response = task.result()
                     self._owned_responses.add(response)
+                    if protect_from_controller_loss:
+                        self._protected_owned_responses.add(response)
                     await response.aclose()
                     self._owned_responses.discard(response)
+                    self._protected_owned_responses.discard(response)
             raise
         finally:
             self._owned_tasks.discard(task)
+            self._protected_owned_tasks.discard(task)
             if not task.done():
                 task.cancel()
                 with contextlib.suppress(BaseException):

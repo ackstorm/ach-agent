@@ -10,7 +10,7 @@ import uvicorn
 
 from ach_agent.boot.channels_api import create_channels_app
 from ach_agent.boot.completions import CompletionRegistry
-from ach_agent.boot.execution_client import ExecutionClient
+from ach_agent.boot.execution_client import ExecutionClient, ExecutionClientError
 from ach_agent.boot.health import HealthState
 from ach_agent.channels.client import ChannelsClient, SubmissionFailed
 from ach_agent.channels.envelopes import EventEnvelope
@@ -149,6 +149,190 @@ async def test_graceful_stop_uses_long_cleanup_client_budget(fake_driver, monkey
         finally:
             await execution.close()
     assert service.can_accept_controller
+
+
+@pytest.mark.asyncio
+async def test_graceful_stop_preserves_response_across_controller_eof(monkeypatch) -> None:
+    stop_response_started = asyncio.Event()
+    close_finished = asyncio.Event()
+
+    class HeldController(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{"version":1,"instance_id":"instance","controller_id":"eof-stop"}\n'
+            await stop_response_started.wait()
+
+    class DelayedStopResponse(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            stop_response_started.set()
+            await close_finished.wait()
+            if not self.closed:
+                yield b'{"status":"stopped"}'
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/execution/v1/controller":
+            return httpx.Response(200, stream=HeldController(), request=request)
+        if request.url.path == "/execution/v1/controller/stop":
+            return httpx.Response(200, stream=DelayedStopResponse(), request=request)
+        raise AssertionError(f"unexpected execution request: {request.url.path}")
+
+    execution = ExecutionClient(
+        "http://execution",
+        controller_id="eof-stop",
+        instance_id="instance",
+        transport=httpx.MockTransport(handler),
+    )
+    original_close = execution._close_owned_transport
+
+    async def close_owned_transport() -> None:
+        await original_close()
+        close_finished.set()
+
+    monkeypatch.setattr(execution, "_close_owned_transport", close_owned_transport)
+    try:
+        await execution.connect()
+        await execution.graceful_stop(timeout=1.0)
+        assert execution.controller_lost
+    finally:
+        await execution.close()
+
+
+@pytest.mark.asyncio
+async def test_graceful_stop_rejects_unconfirmed_response() -> None:
+    never = asyncio.Event()
+
+    class HeldController(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{"version":1,"instance_id":"instance","controller_id":"invalid-stop"}\n'
+            await never.wait()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/execution/v1/controller":
+            return httpx.Response(200, stream=HeldController(), request=request)
+        if request.url.path == "/execution/v1/controller/stop":
+            return httpx.Response(200, json={}, request=request)
+        raise AssertionError(f"unexpected execution request: {request.url.path}")
+
+    execution = ExecutionClient(
+        "http://execution",
+        controller_id="invalid-stop",
+        instance_id="instance",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        await execution.connect()
+        with pytest.raises(
+            ExecutionClientError, match="invalid execution controller stop response"
+        ):
+            await execution.graceful_stop(timeout=1.0)
+        assert execution.controller_lost
+    finally:
+        await execution.close()
+
+
+@pytest.mark.asyncio
+async def test_graceful_stop_timeout_closes_hung_response() -> None:
+    never = asyncio.Event()
+
+    class HeldController(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{"version":1,"instance_id":"instance","controller_id":"hung-stop"}\n'
+            await never.wait()
+
+    class HungStopResponse(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            if False:
+                yield b""
+            await never.wait()
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    hung_response = HungStopResponse()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/execution/v1/controller":
+            return httpx.Response(200, stream=HeldController(), request=request)
+        if request.url.path == "/execution/v1/controller/stop":
+            return httpx.Response(200, stream=hung_response, request=request)
+        raise AssertionError(f"unexpected execution request: {request.url.path}")
+
+    execution = ExecutionClient(
+        "http://execution",
+        controller_id="hung-stop",
+        instance_id="instance",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        await execution.connect()
+        with pytest.raises(TimeoutError):
+            await execution.graceful_stop(timeout=0.05)
+        assert not execution._owned_tasks
+        assert not execution._owned_responses
+        assert not execution._protected_owned_tasks
+        assert not execution._protected_owned_responses
+        assert hung_response.closed
+    finally:
+        await execution.close()
+
+
+@pytest.mark.asyncio
+async def test_graceful_stop_external_cancellation_closes_owned_response() -> None:
+    response_started = asyncio.Event()
+    never = asyncio.Event()
+
+    class HeldController(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{"version":1,"instance_id":"instance","controller_id":"cancel-stop"}\n'
+            await never.wait()
+
+    class CancellableStopResponse(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            response_started.set()
+            if False:
+                yield b""
+            await never.wait()
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    cancellable_response = CancellableStopResponse()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/execution/v1/controller":
+            return httpx.Response(200, stream=HeldController(), request=request)
+        if request.url.path == "/execution/v1/controller/stop":
+            return httpx.Response(200, stream=cancellable_response, request=request)
+        raise AssertionError(f"unexpected execution request: {request.url.path}")
+
+    execution = ExecutionClient(
+        "http://execution",
+        controller_id="cancel-stop",
+        instance_id="instance",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        await execution.connect()
+        stop_task = asyncio.create_task(execution.graceful_stop(timeout=5.0))
+        await asyncio.wait_for(response_started.wait(), timeout=1.0)
+        stop_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await stop_task
+        assert not execution._owned_tasks
+        assert not execution._owned_responses
+        assert not execution._protected_owned_tasks
+        assert not execution._protected_owned_responses
+        assert cancellable_response.closed
+    finally:
+        await execution.close()
 
 
 @pytest.mark.asyncio

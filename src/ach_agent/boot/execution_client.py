@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Concrete HTTP client for the native execution mini-harness.
 
 The client keeps the controller ownership stream separate from invocation streams and

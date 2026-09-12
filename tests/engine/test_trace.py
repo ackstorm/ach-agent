@@ -97,7 +97,9 @@ def test_the_session_header_uses_litellms_metadata_prefix() -> None:
     token = trace.mint_token()
     trace.set_session(token, "ses_0001")
     sent = trace.headers(token)
-    session_headers = {name for name in sent if name != "traceparent" and name != "x-litellm-trace-id"}
+    session_headers = {
+        name for name in sent if name != "traceparent" and name != "x-litellm-trace-id"
+    }
     assert session_headers == {"langfuse_session_id", "x-litellm-session-id"}
     assert any(name.startswith(LANGFUSE_METADATA_PREFIX) for name in session_headers), (
         "the langfuse_ prefix must survive — it's the only session mechanism the "
@@ -214,6 +216,21 @@ def test_tui_gets_an_invented_trace_and_a_constant_session() -> None:
     assert CLEAN_SESSION_VALUE_RE.match(ha["langfuse_session_id"])
 
 
+def test_engine_tui_adopts_h_trace_metadata_without_reminting() -> None:
+    token = trace.mint_token()
+    trace.begin_tui(token)
+    h_headers = trace.headers(token)
+    trace.reset_for_testing()
+    trace.adopt(token)
+    trace.adopt_tui(
+        token,
+        traceparent=h_headers["traceparent"],
+        session_id=h_headers["langfuse_session_id"],
+    )
+
+    assert trace.headers(token) == h_headers
+
+
 def test_begin_tui_on_an_unknown_token_is_a_no_op() -> None:
     trace.begin_tui("never-minted")
 
@@ -314,7 +331,9 @@ def test_the_proxy_path_token_is_never_logged() -> None:
 
 
 def _call(**params: object) -> bytes:
-    return json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params}).encode()
+    return json.dumps(
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params}
+    ).encode()
 
 
 def test_inject_meta_carries_the_w3c_context_in_the_message() -> None:

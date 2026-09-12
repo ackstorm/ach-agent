@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Authenticated HTTP routes between the channels and harness roles."""
 
 from __future__ import annotations

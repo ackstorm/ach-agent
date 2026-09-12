@@ -1,34 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Channel prepare/cleanup workspace hooks (CONTRACT §2).
+"""Channel prepare/cleanup hooks and their public workspace contract.
 
-The harness runs prepare on the LANE after the router admits each event and before
-`pool.acquire` acquires or reuses its session engine, with `ACH_WORKSPACE` as cwd. Cleanup
-runs best-effort from the workspace's parent when the reserved session is torn down: after
-an acquired engine stops, or after prepare/engine-acquire failure before acquisition.
-The canonical use is cloning and later removing the repo a merge-request event names, so
-the agent gets a real `.git` checkout it never had to fetch — and never holds the credential
-for.
+Credential-free hooks run directly against the engine workspace. Credential-bearing
+prepare hooks run in :mod:`private_prepare`'s fresh harness-private checkout; only a
+validated, credential-free Git bundle crosses into the public workspace. Cleanup hooks
+use the same private producer boundary when credentials are configured.
 
-Why here and not in the channel's HTTP handler: the pinned order is
-`dedup → backpressure → lane`. Cloning before admit turns a redelivery flood into a
-clone flood on events dedup was about to discard, and nothing bounds it
-(`maxConcurrentInvocations` applies only after admit).
-
-Three rules make the seam safe, and none of them are optional:
-
-1. **The payload never reaches the script text.** The script is static config; every
-   event-derived value arrives as an environment variable. There is no shell
-   interpolation of attacker-controlled data, so there is no command injection.
-2. **Event values are validated before they become env.** Non-scalars (the callables
-   `delivery_context` carries) are dropped, non-printable values are dropped, and repo
-   paths must match a strict slug regex with no `..` segment — a script builds its clone
-   URL as `{configured base}/{ACH_EVENT_PROJECT_PATH}.git`, so that variable is a trust
-   boundary.
-3. **The script is never written to disk and never placed in argv.** The agent shares this
-   uid; a script file inside the workspace would be a file the agent could rewrite between
-   events and have the harness execute with the harness's secrets in env. `/proc/<pid>/cmdline`
-   is world-readable, so the script text does not go there either — it arrives on stdin, or
-   (when stdin carries the event payload) through the env, via `_SCRIPT_TRAMPOLINE`.
+The serializable split-role envelope carries validated data only; it contains no Python
+callables. Event values travel as environment variables, which avoids interpolating
+payload data into the configured script text, but environment transport alone cannot
+prevent arbitrary shell scripts from interpolating those values unsafely. Callers must
+keep the static script and its quoting discipline responsible for that boundary.
 """
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Serializable channel event envelopes and event correlation keys."""
 
 from __future__ import annotations

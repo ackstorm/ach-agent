@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Native execution service used by the mini-harness.
 
 This module is deliberately a thin supervisor: native protocol parsing and session
@@ -127,6 +128,8 @@ def _engine_config(public: Any) -> EngineConfig:
             "persistence_mount_path",
             "public_context",
             "trace_token",
+            "trace_parent",
+            "trace_session_id",
         }
     )
     values["extra_mcp_servers"] = {

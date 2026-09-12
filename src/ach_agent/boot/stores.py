@@ -38,15 +38,22 @@ def open_dedup_store(cfg: AgentConfig) -> DedupStore:
 
     mount = Path(cfg.persistence.mount_path)
 
-    # D-04a: missing / non-writable mount → fail-closed (loud — ENG-06 pattern)
-    if not mount.exists() or not os.access(mount, os.W_OK):
+    # D-04a: the deployment may mount the root read-only while provisioning a
+    # writable private state child. Reuse an existing state directory without
+    # requiring write access to its parent; create it only when the parent is
+    # writable. Missing/unwritable storage still fails closed.
+    state_dir = mount / "state"
+    if not mount.exists() or (
+        (state_dir.exists() and not os.access(state_dir, os.W_OK))
+        or (not state_dir.exists() and not os.access(mount, os.W_OK))
+    ):
         log.error(
-            "persistence.enabled=true but mountPath missing or not writable — exiting",
+            "persistence.enabled=true but state storage missing or not writable — exiting",
             mount_path=str(mount),
         )
         sys.exit(1)
 
-    db_path = mount / "state" / "state.db"
+    db_path = state_dir / "state.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:

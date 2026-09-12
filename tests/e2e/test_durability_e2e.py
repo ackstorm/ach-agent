@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -114,6 +115,30 @@ def test_store_selection_file_backed(tmp_path: Path) -> None:
     db_path = tmp_path / "state" / "state.db"
     assert db_path.exists(), f"Expected state.db at {db_path}, not found"
     # Cleanup
+    store.close()
+
+
+def test_store_selection_accepts_precreated_writable_state_under_read_only_mount(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A curated H mount may be read-only while its private state child is writable."""
+    from ach_agent.boot.stores import open_dedup_store
+    from ach_agent.router.dedup import FileBackedDedupStore
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    real_access = os.access
+
+    def access(path: str | bytes | os.PathLike[str] | os.PathLike[bytes], mode: int) -> bool:
+        if Path(path) == tmp_path and mode == os.W_OK:
+            return False
+        return real_access(path, mode)
+
+    monkeypatch.setattr(os, "access", access)
+    cfg = _make_persistence_cfg(enabled=True, mount_path=str(tmp_path))
+    store = open_dedup_store(cfg)
+    assert isinstance(store, FileBackedDedupStore)
+    assert (state_dir / "state.db").exists()
     store.close()
 
 

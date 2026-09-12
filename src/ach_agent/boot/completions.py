@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Bounded in-memory admission and completion correlation."""
 
 from __future__ import annotations

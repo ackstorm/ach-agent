@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Serializable, deliberately narrow controller/engine execution contracts."""
 
 from __future__ import annotations
@@ -64,8 +65,11 @@ class PublicEngineConfig(_WireModel):
     codemem_project: str = ""
     pi_mcp_adapter_path: str = ""
     # Native TUI correlation is issued by H (or the local parent) and adopted
-    # by E.  It is an opaque route token, never an engine credential.
+    # by E.  It is an opaque route token, never an engine credential. The
+    # public trace metadata keeps E on H's already minted trace.
     trace_token: str = Field(default="", alias="traceToken")
+    trace_parent: str = Field(default="", alias="traceParent")
+    trace_session_id: str = Field(default="", alias="traceSessionId")
 
     _params_finite = field_validator("params", "mcp_templates")(_finite_json)
 

@@ -853,13 +853,19 @@ Honest ceiling: harness and opencode share a container and a uid, so an agent wi
 read `/proc/<pid>/environ`. "We do not hand it over" ≠ "it cannot be obtained".
 
 When `secretEnv` is present, the hook runs with a fresh harness-private `HOME`, cwd and
-checkout. The supported result is a Git checkout at `$ACH_WORKSPACE/repo`; after the hook
-exits, the harness publishes a credential-free Git bundle and locally fetches it into the
-existing engine checkout. The target workspace root, `.git` directory, untracked files and
-local objects are retained. Private cleanup hooks use the same private contract and cannot
-read or delete the engine workspace; a cleanup script that still names the old workspace may
-complete successfully while leaving that workspace unchanged, so operators must migrate it.
-Hooks without `secretEnv` retain the ordinary workspace behavior above.
+checkout. The supported result is a fully materialized Git checkout at
+`$ACH_WORKSPACE/repo`; before the hook exits it must download every object reachable from
+its refs so the producer can create a bundle without another network request. This costs
+more bandwidth and private scratch storage than a filtered clone, including historical
+blobs that the current revision does not use, but it keeps credential use inside the
+operator hook. An incomplete promisor checkout fails with guidance to fetch those objects
+while credentials are still available. After the hook exits, the harness publishes a
+credential-free Git bundle and locally fetches it into the existing engine checkout. The
+target workspace root, `.git` directory, untracked files and local objects are retained.
+Private cleanup hooks use the same private contract and cannot read or delete the engine
+workspace; a cleanup script that still names the old workspace may complete successfully
+while leaving that workspace unchanged, so operators must migrate it. Hooks without
+`secretEnv` retain the ordinary workspace behavior above.
 
 **Contract for script authors:**
 
@@ -911,11 +917,11 @@ export GIT_CONFIG_COUNT=1 \
 export GIT_LFS_SKIP_SMUDGE=1
 
 REPO="$ACH_WORKSPACE/repo"
-[ -d "$REPO/.git" ] || git clone --filter=blob:none --no-checkout --no-recurse-submodules \
+[ -d "$REPO/.git" ] || git clone --no-checkout --no-recurse-submodules \
   "$REPO_BASE_URL/$ACH_EVENT_PROJECT_PATH.git" "$REPO"
 # The MR head ref is MUTABLE — it advances on every push. Fetch it, then check out the SHA the
 # event named, or the agent reviews a different revision than the one it was told about.
-git -C "$REPO" fetch --filter=blob:none origin \
+git -C "$REPO" fetch origin \
   "+refs/merge-requests/$ACH_EVENT_MR_IID/head:refs/ach/mr-$ACH_EVENT_MR_IID"
 git -C "$REPO" checkout --force --detach "$ACH_EVENT_HEAD_SHA"
 ```

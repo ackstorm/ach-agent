@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Engine-owned public workspace hooks and credential-free Git handoff.
 
 Only public hook configuration enters this module.  Credential-bearing preparation stays

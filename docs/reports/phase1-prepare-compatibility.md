@@ -1,7 +1,11 @@
-# Phase 1 preparation compatibility (Task 0A)
+# Phase 1 preparation compatibility (Task 0A / Task 10A closeout)
 
-Status: characterization complete; private preparation remains a Task 0B fix. No
-production preparation or transport code was changed.
+Status: the private producer handoff is implemented and the compatibility contract is
+updated. Credential-bearing hooks must return a fully materialized checkout; the producer
+sets `GIT_NO_LAZY_FETCH=1` while creating its bundle, so an incomplete promisor checkout
+fails closed with guidance to fetch missing objects before the hook exits. Complete
+checkouts preserve history, `HEAD`, the existing workspace root and session state. The
+split transport remains outside this report.
 
 ## Files and validation
 
@@ -11,7 +15,7 @@ HEAD, tracked and untracked contents, local commit objects, cleanup, failed acqu
 and a destination symlink fixture. Two hostile-input tests plant both workspace
 `.gitconfig` and checkout `.git/config` settings for `core.fsmonitor` and `core.hooksPath`.
 
-The required command passed:
+The Task 0A characterization command passed:
 
 ```text
 rtk proxy ./scripts/dev.sh uv run pytest tests/test_prepare.py tests/test_private_prepare.py -q
@@ -43,13 +47,21 @@ intentional replacement of tracked files when the event selects a new revision. 
 handoff that replaces the whole workspace or `.git` directory would silently lose
 retained state and is rejected.
 
-## Tested handoff recommendation for Task 0B
+## Private producer handoff contract
 
 Use a harness-private scratch checkout for every credential-bearing clone/fetch. Give it
 a fresh private `HOME`, cwd, Git config, and checkout path. Set the authorization header
 with `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0=http.extraHeader`/`GIT_CONFIG_VALUE_0=...`; never
 put the token in a remote URL. Do not import `.git/config`, `.gitconfig`, hooks, or helper
 state from the agent workspace.
+
+The operator hook must fully materialize the checkout before returning. Filtered or
+promisor clones may be used only if the hook fetches all reachable objects while its
+credential is available; otherwise the producer rejects the handoff offline. This adds
+download and scratch-storage cost for historical blobs, including blobs unrelated to the
+selected `HEAD`, in exchange for preventing a post-hook unauthenticated fetch. The active
+reference script in `docs/schemas/operator-contract.md` therefore uses complete clone and
+fetch commands.
 
 After the prior engine writer has stopped, hand off only approved repository data. The
 executable test `test_private_scratch_prototype_preserves_target_retention` runs this
@@ -72,9 +84,14 @@ credential-free transfer hook from a scratch path outside `workDir`. The transfe
 receives no token and the planted target fsmonitor hook confirms that fact. This algorithm
 keeps the existing workspace path and inode, retains unrelated files and local objects,
 and makes the credential-bearing Git process independent of agent-planted configuration.
-The warm handoff must be implemented and run against this fixture before
-Task 0B is accepted; a generic recursive copy is not sufficient because it can follow
-symlinks and discard `.git` retention semantics.
+A generic recursive copy is not sufficient because it can follow symlinks and discard
+`.git` retention semantics.
+
+Task 10A also covers the authenticated filtered-clone regression: a complete clone and
+handoff succeeds with synthetic Basic auth, while an incomplete filtered clone fails during
+offline bundle production without an unauthenticated request or credential in the public
+workspace/artifact. The root diagnostic fixture is intentionally ignored and is not a
+production service.
 
 ## Concerns for implementation
 

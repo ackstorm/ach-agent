@@ -664,6 +664,8 @@ async def _run_harness(
         public_cfg = public_cfg.model_copy(
             update={
                 "trace_token": tui_token,
+                "trace_parent": trace.headers(tui_token)["traceparent"],
+                "trace_session_id": trace.headers(tui_token)["langfuse_session_id"],
                 "mcp_local_urls": terminal_mcp_urls,
                 "codemem_project": terminal_codmem_project,
             }

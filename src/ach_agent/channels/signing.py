@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Small, deterministic HMAC envelope used by the channels/harness HTTP seam."""
 
 from __future__ import annotations

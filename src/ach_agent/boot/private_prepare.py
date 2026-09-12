@@ -246,6 +246,7 @@ def _git_env() -> dict[str, str]:
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_CONFIG_SYSTEM": os.devnull,
             "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_NO_LAZY_FETCH": "1",
             "GIT_TERMINAL_PROMPT": "0",
         }
     )
@@ -570,15 +571,33 @@ async def _produce_bundle(
                 raise
             # A script may intentionally create a repository without a remote.
             origin = None
-        await _git(
-            source,
-            "bundle",
-            "create",
-            str(bundle),
-            "--all",
-            env=env,
-            secret_values=secret_values,
-        )
+        try:
+            await _git(
+                source,
+                "bundle",
+                "create",
+                str(bundle),
+                "--all",
+                env=env,
+                secret_values=secret_values,
+            )
+        except PrivatePrepareFailed as exc:
+            detail = str(exc).lower()
+            if any(
+                marker in detail
+                for marker in (
+                    "promisor",
+                    "missing object",
+                    "could not fetch",
+                    "unable to read",
+                    "pack-objects died",
+                )
+            ):
+                raise PrivatePrepareFailed(
+                    "private preparation requires a fully materialized Git checkout; "
+                    "fetch missing objects while credentials are available before the hook exits"
+                ) from exc
+            raise
         published_name = _publish_bundle(bundle, workspace)
         return PrivateBundle(published_name, head, _public_origin(origin, private_root))
     except BaseException:

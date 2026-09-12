@@ -9,9 +9,13 @@ private-checkout implementation.  The security tests are strict xfails until Tas
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import subprocess
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -21,13 +25,16 @@ from ach_agent.boot.private_prepare import (
     PrivateCleanupRegistry,
     PrivatePrepareFailed,
     _git_env,
+    _produce_bundle,
     _public_origin,
     _publish_bundle,
     _scan_git_objects,
     dispose_private_bundle,
     private_prepare,
 )
-from ach_agent.boot.private_prepare import _git as private_git
+from ach_agent.boot.private_prepare import (
+    _git as private_git,
+)
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import PrepareBlock
 from ach_agent.execution.wire import WorkspaceStoppedEvent
@@ -76,6 +83,187 @@ git -C "$REPO" checkout -q --force --detach origin/main
             "secretEnv": {"TOKEN": {"env": "PRIVATE_PREPARE_TOKEN"}},
         }
     )
+
+
+def test_private_git_environment_disables_promisor_lazy_fetch() -> None:
+    assert _git_env()["GIT_NO_LAZY_FETCH"] == "1"
+
+
+async def test_private_prepare_explains_incomplete_promisor_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, initial_head = _local_origin(tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    private_root = tmp_path / "private"
+    private_root.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+
+    async def fake_git(
+        repo: Path,
+        *args: str,
+        env: dict[str, str],
+        timeout: int = 120,
+        secret_values: tuple[str, ...] = (),
+    ) -> str:
+        del repo, env, timeout, secret_values
+        if args == ("rev-parse", "HEAD"):
+            return initial_head
+        if args == ("remote", "get-url", "origin"):
+            return str(source)
+        if args[:2] == ("bundle", "create"):
+            raise PrivatePrepareFailed(
+                "private Git handoff failed: fatal: could not fetch missing blob from "
+                "promisor remote"
+            )
+        raise AssertionError(args)
+
+    monkeypatch.setattr("ach_agent.boot.private_prepare._git", fake_git)
+    monkeypatch.setattr("ach_agent.boot.private_prepare._scan_git_objects", _noop_scan)
+
+    with pytest.raises(
+        PrivatePrepareFailed,
+        match=(
+            "fully materialized Git checkout.*fetch missing objects while credentials are available"
+        ),
+    ):
+        await _produce_bundle(source, workspace, private_root, home, ())
+
+
+async def _noop_scan(
+    source: Path,
+    env: dict[str, str],
+    secret_values: tuple[str, ...],
+    timeout: int = 120,
+) -> None:
+    del source, env, secret_values, timeout
+
+
+def _authenticated_git_http_server(
+    root: Path,
+) -> tuple[ThreadingHTTPServer, threading.Thread, dict[str, int]]:
+    counts = {"authorized": 0, "unauthorized": 0}
+    expected = "Basic " + base64.b64encode(b"oauth2:synthetic-filter-token").decode()
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args: object) -> None:
+            pass
+
+        def do_GET(self) -> None:
+            self._serve_git()
+
+        def do_POST(self) -> None:
+            self._serve_git()
+
+        def _serve_git(self) -> None:
+            if self.headers.get("Authorization") != expected:
+                counts["unauthorized"] += 1
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="synthetic"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            counts["authorized"] += 1
+            target = urlsplit(self.path)
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(content_length)
+            env = {
+                **os.environ,
+                "GIT_PROJECT_ROOT": str(root),
+                "GIT_HTTP_EXPORT_ALL": "1",
+                "PATH_INFO": target.path,
+                "QUERY_STRING": target.query,
+                "REQUEST_METHOD": self.command,
+                "REMOTE_USER": "synthetic",
+                "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+                "CONTENT_LENGTH": str(content_length),
+            }
+            if protocol := self.headers.get("Git-Protocol"):
+                env["HTTP_GIT_PROTOCOL"] = protocol
+            result = subprocess.run(
+                ["git", "http-backend"], env=env, input=body, capture_output=True, check=True
+            )
+            headers, data = result.stdout.split(b"\r\n\r\n", 1)
+            self.send_response(200)
+            for line in headers.decode().split("\r\n"):
+                key, value = line.split(":", 1)
+                self.send_header(key, value.strip())
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, counts
+
+
+def _http_origin(tmp_path: Path) -> tuple[Path, str]:
+    source, _ = _local_origin(tmp_path)
+    (source / "notes.txt").write_text("historical-1\n")
+    _git(source, "add", "notes.txt")
+    _git(source, "commit", "-qm", "historical")
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "clone", "--bare", "-q", str(source), str(origin)], check=True)
+    subprocess.run(
+        ["git", "--git-dir", str(origin), "config", "uploadpack.allowFilter", "true"],
+        check=True,
+    )
+    return origin, _git(source, "rev-parse", "HEAD")
+
+
+def _http_prepare_block(url: str, *, filtered: bool) -> PrepareBlock:
+    option = "--filter=blob:none " if filtered else ""
+    return PrepareBlock.model_validate(
+        {
+            "script": (
+                'set -eu; AUTH=$(printf "oauth2:%s" "$TOKEN" | base64 -w0); '
+                "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader; "
+                'export GIT_CONFIG_VALUE_0="Authorization: Basic $AUTH"; '
+                f'git clone {option}--no-recurse-submodules "$SOURCE" "$ACH_WORKSPACE/repo"'
+            ),
+            "env": {"SOURCE": url},
+            "secretEnv": {"TOKEN": {"env": "PRIVATE_PREPARE_TOKEN"}},
+        }
+    )
+
+
+@pytest.mark.parametrize("filtered", [False, True])
+async def test_authenticated_http_prepare_materialization_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, filtered: bool
+) -> None:
+    origin, head = _http_origin(tmp_path)
+    server, thread, counts = _authenticated_git_http_server(tmp_path)
+    monkeypatch.setenv("PRIVATE_PREPARE_TOKEN", "synthetic-filter-token")
+    workspace = tmp_path / ("filtered-workspace" if filtered else "complete-workspace")
+    workspace.mkdir()
+    try:
+        cfg = _http_prepare_block(
+            f"http://127.0.0.1:{server.server_port}/{origin.name}", filtered=filtered
+        )
+        if filtered:
+            with pytest.raises(
+                PrivatePrepareFailed,
+                match=(
+                    "fully materialized Git checkout.*fetch missing objects while credentials "
+                    "are available"
+                ),
+            ):
+                await private_prepare(cfg, _event(), workspace, tmp_path / "scratch")
+            assert counts["authorized"] > 0
+            assert counts["unauthorized"] == 0
+        else:
+            bundle = await private_prepare(cfg, _event(), workspace, tmp_path / "scratch")
+            assert bundle.head == head
+            assert counts["authorized"] > 0
+            assert counts["unauthorized"] == 0
+            assert b"synthetic-filter-token" not in (workspace / bundle.path).read_bytes()
+            dispose_private_bundle(bundle, workspace)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 async def test_private_fixture_characterizes_reuse_and_cleanup(
@@ -244,9 +432,7 @@ async def test_private_cleanup_registry_dispatches_all_bounded_callbacks(
             )
         )
     for item in stopped:
-        assert await registry.handle_event(
-            item, lambda value: _record_ack(acknowledgements, value)
-        )
+        assert await registry.handle_event(item, lambda value: _record_ack(acknowledgements, value))
     for _ in range(100):
         if len(acknowledgements) == len(stopped):
             break

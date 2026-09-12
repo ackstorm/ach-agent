@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Small Linux process supervisor for native engine launches.
 
 The supervisor is deliberately one purpose: keep a native engine's orphaned descendants in

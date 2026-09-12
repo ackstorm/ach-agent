@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Wire contracts and engine-owned state for split execution."""
 
 from ach_agent.execution.service import ExecutionService

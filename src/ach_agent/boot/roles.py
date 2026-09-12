@@ -232,8 +232,16 @@ async def run_engine(public_config: JsonValue, *, terminal_mode: bool = False) -
             token = public.trace_token
             if not token:
                 raise SplitRoleConfigError("traceToken is required for native terminal mode")
+            if not public.trace_parent or not public.trace_session_id:
+                raise SplitRoleConfigError(
+                    "traceParent and traceSessionId are required for native terminal mode"
+                )
             trace.adopt(token)
-            trace.begin_tui(token)
+            trace.adopt_tui(
+                token,
+                traceparent=public.trace_parent,
+                session_id=public.trace_session_id,
+            )
             native_cfg.model_base_url = trace.tokenize_url(native_cfg.model_base_url, token)
             native_cfg.mcp_local_urls = {
                 name: trace.tokenize_url(url, token)

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """HTTP API for the native execution mini-harness.
 
 The controller stream is the ownership boundary.  All operation requests carry its

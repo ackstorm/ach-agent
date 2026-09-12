@@ -131,6 +131,23 @@ def test_missing_engine_codemem_binary_degrades_with_empty_native_config(
     assert config.codemem_project == ""
 
 
+def test_native_config_drops_public_tui_trace_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ach_agent.execution.service import _engine_config
+
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    config = _engine_config(
+        PublicEngineConfig(
+            trace_token="route-token",
+            trace_parent="00-" + "a" * 32 + "-" + "b" * 16 + "-01",
+            trace_session_id="tui_session",
+        )
+    )
+    assert not hasattr(config, "trace_parent")
+    assert not hasattr(config, "trace_session_id")
+
+
 def test_public_context_paths_are_separate_from_engine_home(tmp_path: Path) -> None:
     cfg = _cfg(persistence={"enabled": True, "mountPath": str(tmp_path)})
 

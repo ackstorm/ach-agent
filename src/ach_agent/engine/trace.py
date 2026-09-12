@@ -206,6 +206,24 @@ def adopt(token: str) -> None:
         _registry.setdefault(token, _Entry())
 
 
+def adopt_tui(token: str, *, traceparent: str, session_id: str) -> None:
+    """Adopt the native-TUI trace minted by the harness parent process."""
+    entry = _registry.get(token)
+    if entry is not None:
+        entry.session_id = session_id
+        entry.traceparent = traceparent
+        structlog.contextvars.bind_contextvars(
+            trace_id=traceparent.split("-")[1], session_id=session_id
+        )
+        log.info(
+            "trace: tui adopted",
+            traceparent=traceparent,
+            trace_id=traceparent.split("-")[1],
+            channel="tui",
+            session_id=session_id,
+        )
+
+
 def set_session(token: str, session_ref: str) -> None:
     """Record the engine's own session id for ``token``'s server.
 

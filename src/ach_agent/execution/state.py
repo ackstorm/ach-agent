@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Engine-owned native session map and bounded legacy migration."""
 
 from __future__ import annotations

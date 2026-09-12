@@ -272,6 +272,7 @@ def test_local_timeout_reaps_term_resistant_detached_descendant(
 
     artifacts = RoleArtifacts(tmp_path / "artifacts").write({}, {})
     child_pid_file = tmp_path / "child.pid"
+    child_ready_file = tmp_path / "child-ready"
     ready = tmp_path / "ready"
     supervisor = (
         Path(__file__).parents[1] / "src" / "ach_agent" / "engine" / "process_supervisor.py"
@@ -284,15 +285,21 @@ import time
 from pathlib import Path
 
 child_pid_file = Path(sys.argv[1])
-ready = Path(sys.argv[2])
+child_ready_file = Path(sys.argv[2])
+ready = Path(sys.argv[3])
 child = subprocess.Popen(
     [
         sys.executable,
         "-c",
-        "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)",
+        "import signal, sys, time; from pathlib import Path; "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "Path(sys.argv[1]).write_text('ready', encoding='ascii'); time.sleep(30)",
+        str(child_ready_file),
     ],
     start_new_session=True,
 )
+while not child_ready_file.exists():
+    time.sleep(0.01)
 child_pid_file.write_text(str(child.pid), encoding="ascii")
 ready.write_text("ready", encoding="ascii")
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -307,6 +314,7 @@ while True:
         "-c",
         leader,
         str(child_pid_file),
+        str(child_ready_file),
         str(ready),
     ]
     process: asyncio.subprocess.Process | None = None

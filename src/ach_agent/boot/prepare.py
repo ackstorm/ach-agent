@@ -341,14 +341,21 @@ async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
 
 
 async def run_webhook_script(cfg: PrepareBlock, event: MessageEvent, work_dir: str) -> None:
-    """Run a deterministic webhook handler with normalized JSON on stdin and no engine."""
+    """Run a deterministic webhook handler with normalized JSON on stdin and no engine.
+
+    Every webhook script gets a harness-private temporary cwd.  A script without a
+    declared credential still has arbitrary shell authority, so placing it in the
+    engine-owned workspace would let an engine-written config or hook be consumed by
+    a later harness script. ``work_dir`` remains a compatibility argument and is never
+    used as the script cwd.
+    """
     # Serialized BEFORE the workspace exists, so a payload that cannot be encoded leaves no
     # directory behind. ensure_ascii (the default) is what makes that total: json.loads
     # accepts a lone surrogate — a truncated emoji in a commit message — and encoding one as
     # UTF-8 raises. The trailing newline is load-bearing: without it `read -r line` returns 1
     # at EOF (and `sh -e` aborts the script), while `while read` drops the payload entirely.
     payload = json.dumps(event.payload, separators=(",", ":")).encode() + b"\n"
-    base = private_scratch_dir() if cfg.secret_env else Path(work_dir)
+    base = private_scratch_dir()
     base.mkdir(parents=True, exist_ok=True)
     workspace = Path(tempfile.mkdtemp(prefix="webhook-script-", dir=base))
     started = asyncio.get_running_loop().time()

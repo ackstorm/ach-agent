@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Completed the Phase 1 split acceptance harness: the task-owned Compose fixture now
+  drives channels, harness, and engine roles through real OpenCode and Pi binaries,
+  with engine failure and active cancellation evidence. Webhook scripts always run
+  from harness-private scratch so an engine-planted config cannot influence a later
+  harness-side script.
+
 - Channel HTTP submissions and result lookups now use scoped HMAC request/response
   envelopes with bounded timestamp and nonce replay checks. Queue admission ACKs remain
   admission based despite `ackMode: onComplete`; authenticated `FULL_QUEUE` responses

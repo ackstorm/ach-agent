@@ -1,0 +1,1 @@
+{"schemaVersion":"1","channels":[{"name":"acceptance","type":"webhook","concurrency":2,"source":"generic","webhook":{"auth":{"type":"none"}}},{"name":"cancel","type":"webhook","concurrency":1,"source":"generic","webhook":{"auth":{"type":"none"}}}]}

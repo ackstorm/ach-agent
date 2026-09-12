@@ -53,7 +53,5 @@ def to_engine_entry(
     # RemoteMcpServer
     remote: dict[str, object] = {"type": "remote", "url": spec.url, "enabled": True}
     if spec.headers:
-        remote["headers"] = {
-            k: _expand_env_refs(v, env) for k, v in spec.headers.items()
-        }
+        remote["headers"] = {k: _expand_env_refs(v, env) for k, v in spec.headers.items()}
     return remote

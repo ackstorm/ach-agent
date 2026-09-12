@@ -51,9 +51,21 @@ Spec reference: `ach-agent-runtime-spec-v1_4_7.md` (API group `runtime.ackstorm.
 >    never appears in opencode's config or environment (§3/§9).
 > 6. **ACH context is skills / prompts / artifacts only (no plugins).** Each is a `tar.gz`
 >    decompressed into a directory at hydration (§3).
+
 >
 > The router (§6) — dedup → backpressure → lane, the three finite bounds — is **unchanged**. It is
 > the repo's IP. Harness language stays **Python**.
+
+### Phase 1 split deployment acceptance
+
+The repository's task-owned split Compose manifest is an acceptance fixture for the
+three application roles: channels, harness, and engine. It selects either the
+OpenCode or Pi engine image and mounts only the credential-free engine projection;
+the harness retains ACH credentials and private state. Operators must provide the
+equivalent role separation and explicit task-owned storage/network boundaries when
+rendering a deployment. The fixture's synthetic upstream and credentials are test
+values only. See [`phase1-split-evidence.md`](../reports/phase1-split-evidence.md)
+for the measured acceptance and its limits.
 
 ---
 

@@ -1,0 +1,55 @@
+schemaVersion: "1"
+agent:
+  name: split-acceptance
+model:
+  name: test-model
+  type: openai
+capability:
+  type: ach
+  ach:
+    baseUrl: http://mock-upstream:9080
+    environment: platform
+prompt:
+  system:
+    type: text
+    text: "You are an acceptance fixture agent."
+persistence:
+  enabled: true
+  mountPath: /var/lib/ach-agent
+engine:
+  type: pi
+  home: /var/lib/ach-agent/home
+  workDir: /var/lib/ach-agent/workspace
+  startupTimeoutSeconds: 30
+  idleTtlSeconds: 30
+limits:
+  maxConcurrentInvocations: 2
+  maxInvocationSeconds: 20
+  maxQueuedTotal: 16
+  maxSteps: 8
+  terminalOutputRetries: 1
+cost:
+  source: none
+channels:
+  - name: acceptance
+    type: webhook
+    source: generic
+    concurrency: 2
+    prompt: "Answer the split acceptance probe."
+    session:
+      type: custom
+      key: "split-acceptance-conversation"
+    webhook:
+      auth:
+        type: none
+  - name: cancel
+    type: webhook
+    source: generic
+    concurrency: 1
+    prompt: "CANCEL_ME"
+    session:
+      type: custom
+      key: "split-cancel-conversation"
+    webhook:
+      auth:
+        type: none

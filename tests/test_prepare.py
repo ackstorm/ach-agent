@@ -78,7 +78,7 @@ def test_cleanup_uses_prepare_shape() -> None:
             "cron": {"schedule": "* * * * *"},
             "prepare": {"script": "true"},
             "cleanup": {
-                "script": "rm -rf -- \"$ACH_WORKSPACE\"",
+                "script": 'rm -rf -- "$ACH_WORKSPACE"',
                 "env": {"MODE": "review"},
                 "secretEnv": {"TOKEN": {"env": "CLEANUP_TOKEN"}},
                 "timeoutSeconds": 30,
@@ -211,6 +211,34 @@ async def test_credentialed_webhook_script_uses_private_scratch(
     assert "/tmp/ach-private/" in workspace_file.read_text()
 
 
+@pytest.mark.parametrize("credentialed", [False, True])
+async def test_all_webhook_scripts_use_private_cwd_and_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, credentialed: bool
+) -> None:
+    """An E-planted config must not become input to a later H-side script."""
+    locations = tmp_path / ("locations-secret" if credentialed else "locations-public")
+    engine_work = tmp_path / "engine-work"
+    block_args: dict[str, object] = {
+        "env": {"LOCATIONS": str(locations)},
+    }
+    if credentialed:
+        monkeypatch.setenv("WEBHOOK_TOKEN", "synthetic-token")
+        block_args["secretEnv"] = {"TOKEN": {"env": "WEBHOOK_TOKEN"}}
+    cfg = _block(
+        'printf "%s\\n%s\\n%s" "$PWD" "$HOME" "$ACH_WORKSPACE" > "$LOCATIONS"',
+        **block_args,
+    )
+
+    await run_webhook_script(cfg, _event(), str(engine_work))
+
+    cwd, home, workspace = locations.read_text().splitlines()
+    assert cwd.startswith("/tmp/ach-private/")
+    assert home.startswith("/tmp/ach-private/")
+    assert workspace.startswith("/tmp/ach-private/")
+    assert not Path(cwd).is_relative_to(engine_work)
+    assert not engine_work.exists()
+
+
 async def test_webhook_script_nonzero_fails_without_an_engine(tmp_path: Path) -> None:
     with pytest.raises(WebhookScriptFailed, match="exited 9"):
         await run_webhook_script(_block("exit 9"), _event(), str(tmp_path / "work"))
@@ -239,7 +267,7 @@ async def test_webhook_script_survives_an_unpaired_surrogate(tmp_path: Path) -> 
 
     await run_webhook_script(_block("cat > /dev/null"), event, str(work))
 
-    assert list(work.iterdir()) == []
+    assert not work.exists()
 
 
 async def test_webhook_script_text_is_not_in_proc_cmdline(tmp_path: Path) -> None:
@@ -351,8 +379,7 @@ async def test_cleanup_runs_from_workspace_parent_with_isolated_env(tmp_path: Pa
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
     marker = ws.parent / "cleanup.txt"
     cfg = _block(
-        'printf "%s|%s|%s" "$ACH_WORKSPACE" "$ACH_SESSION_KEY" "$ONLY_CLEANUP" '
-        f'> "{marker}"',
+        f'printf "%s|%s|%s" "$ACH_WORKSPACE" "$ACH_SESSION_KEY" "$ONLY_CLEANUP" > "{marker}"',
         env={"ONLY_CLEANUP": "yes"},
     )
 

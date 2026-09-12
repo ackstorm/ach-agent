@@ -61,9 +61,7 @@ def link_public_context(
     home.mkdir(parents=True, exist_ok=True)
     if create_public:
         root.mkdir(parents=True, exist_ok=True)
-    _link_directory(
-        home / ".ach-state", root, create_target=create_public, replace_managed=True
-    )
+    _link_directory(home / ".ach-state", root, create_target=create_public, replace_managed=True)
     if work_dir is not None and Path(work_dir).resolve() != home.resolve():
         work = Path(work_dir)
         work.mkdir(parents=True, exist_ok=True)

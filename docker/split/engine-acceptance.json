@@ -1,0 +1,14 @@
+{
+  "agentName": "split-acceptance",
+  "engine_type": "opencode",
+  "binary_path": "opencode",
+  "home": "/var/lib/ach-agent/home",
+  "work_dir": "/var/lib/ach-agent/workspace",
+  "persistenceEnabled": true,
+  "persistenceMountPath": "/var/lib/ach-agent",
+  "publicContext": "/var/lib/ach-agent/public-context",
+  "model": "test-model",
+  "model_type": "openai",
+  "steps": 8,
+  "startup_timeout_seconds": 30
+}

@@ -31,7 +31,7 @@ from ach_agent.http.metrics import IdentityRegistry
 
 if TYPE_CHECKING:
     from ach_agent.channels.seam import MessageHandler
-    from ach_agent.config.schema import ChannelConfig
+    from ach_agent.config.schema import ChannelSourceConfig
 
 log = structlog.get_logger(__name__)
 
@@ -42,7 +42,7 @@ MAX_WEBHOOK_BODY_BYTES: int = 1 * 1024 * 1024  # 1 MiB
 
 
 def create_app(
-    channels: Sequence[ChannelConfig],
+    channels: Sequence[ChannelSourceConfig],
     handler: MessageHandler,
     a2a_mounts: Sequence[tuple[str, Any]] | None = None,  # [(path, sub_app), ...] — A2A sub-apps
 ) -> FastAPI:
@@ -60,7 +60,7 @@ def create_app(
         FastAPI application instance with lifespan, routes, and /metrics mount.
     """
     # Build a name→config lookup once at app creation
-    channel_map: dict[str, ChannelConfig] = {ch.name: ch for ch in channels}
+    channel_map: dict[str, ChannelSourceConfig] = {ch.name: ch for ch in channels}
 
     # Mutable state — set in lifespan after channel wiring is complete.
     # draining: flipped True by drain handler (SIGTERM, Plan 03-03) — D-12 straggler gate.

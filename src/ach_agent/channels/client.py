@@ -147,6 +147,14 @@ class ChannelsClient:
         finally:
             self._end_operation(operation)
 
+    async def probe_harness(self, channel_name: str = "") -> bool:
+        """Verify signed connectivity to H without submitting work."""
+        del channel_name
+        body = self._json_bytes({"agent": self.agent})
+        response_body, status = await self._post("/internal/v1/readyz", body)
+        payload = self._parse_object(response_body)
+        return status == 200 and payload.get("kind") == "ready" and payload.get("status") is True
+
     async def _wait(self, ref: EventRef) -> Completion:
         if ref.agent != self.agent:
             raise SubmissionFailed("result scope mismatch: agent")

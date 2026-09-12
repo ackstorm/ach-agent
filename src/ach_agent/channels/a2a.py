@@ -191,6 +191,11 @@ class A2AAgentExecutorBridge:
     def channel_cfg(self) -> ChannelSourceConfig:
         return self._channel_cfg
 
+    async def shutdown(self) -> None:
+        """Wake every outstanding completion waiter during source-role drain."""
+        for event in tuple(self._cancel_events.values()):
+            event.set()
+
     async def execute(self, context: Any, event_queue: Any) -> None:
         """AgentExecutor.execute implementation.
 

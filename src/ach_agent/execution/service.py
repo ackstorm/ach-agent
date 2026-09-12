@@ -126,6 +126,7 @@ def _engine_config(public: Any) -> EngineConfig:
             "persistence_enabled",
             "persistence_mount_path",
             "public_context",
+            "trace_token",
         }
     )
     values["extra_mcp_servers"] = {

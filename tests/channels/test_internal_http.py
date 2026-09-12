@@ -51,6 +51,7 @@ async def test_signed_submission_and_wait_round_trip() -> None:
     app = create_channels_app(registry, KEY, agent="agent-a", channels={"queue"})
     client = await _client_for(app)
     try:
+        assert await client.probe_harness()
         accepted = await client.submit(envelope())
         assert accepted.completion is not None
         assert accepted.completion.state == "queued"

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import re
 import shutil
 import signal
 from collections.abc import MutableMapping
@@ -40,6 +41,21 @@ from ach_agent.execution.wire import PublicEngineConfig
 
 class SplitRoleConfigError(ValueError):
     """A full harness config cannot be safely projected to a split role."""
+
+
+_MCP_ENV_REF = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
+_MANAGED_ENV_NAMES = frozenset(
+    {
+        "ACH_TOKEN",
+        "ACH_API_KEY",
+        "ACH_MODEL_TOKEN",
+        "ACH_CHANNELS_HMAC_KEY",
+        "ACH_HARNESS_URL",
+        "ACH_ENGINE_URL",
+        "ACH_MODEL_BASE_URL",
+        "ACH_MODEL_HEADER",
+    }
+)
 
 
 def _json_model(value: Any) -> dict[str, JsonValue]:
@@ -85,6 +101,17 @@ def _codemem_bootstrap(cfg: AgentConfig) -> tuple[str, str]:
     return db_path, params.project
 
 
+def _mcp_engine_env_names(cfg: AgentConfig) -> set[str]:
+    names: set[str] = set()
+    for spec in cfg.mcp_servers.values():
+        if isinstance(spec, LocalMcpServer):
+            names.update(spec.env)
+        elif isinstance(spec, RemoteMcpServer):
+            for value in spec.headers.values():
+                names.update(_MCP_ENV_REF.findall(value))
+    return names - _MANAGED_ENV_NAMES
+
+
 def _open_session_store(public: PublicEngineConfig, home: Path) -> MutableMapping[str, str]:
     """Select the engine-owned persistent map or the volatile boot map."""
     if public.persistence_enabled:
@@ -115,7 +142,12 @@ def build_role_configs(
         # reach the child environment.
         from ach_agent.boot.secrets import strip_forwarded_secrets
 
-        engine_env_names = strip_forwarded_secrets(cfg)
+        engine_env_names = [
+            name for name in strip_forwarded_secrets(cfg) if name not in _MANAGED_ENV_NAMES
+        ]
+        engine_env_names = list(
+            dict.fromkeys(engine_env_names + sorted(_mcp_engine_env_names(cfg)))
+        )
     paths = resolve_role_paths(cfg)
     channels: dict[str, JsonValue] = {
         "schemaVersion": "1",
@@ -187,7 +219,10 @@ async def run_engine(public_config: JsonValue, *, terminal_mode: bool = False) -
 
         try:
             native_cfg = _engine_config(public)
-            token = trace.mint_token()
+            token = public.trace_token
+            if not token:
+                raise SplitRoleConfigError("traceToken is required for native terminal mode")
+            trace.adopt(token)
             trace.begin_tui(token)
             native_cfg.model_base_url = trace.tokenize_url(native_cfg.model_base_url, token)
             native_cfg.mcp_local_urls = {
@@ -212,15 +247,23 @@ async def run_engine(public_config: JsonValue, *, terminal_mode: bool = False) -
                     if config_path
                     else {}
                 )
-                proc = await asyncio.create_subprocess_exec(
-                    binary,
-                    "attach",
-                    f"http://127.0.0.1:{server_native.port}",
-                    "--pure",
-                    env=env,
-                )
-                signal.signal(signal.SIGINT, signal.SIG_IGN)
-                await proc.wait()
+                log_path = Path(native_cfg.home or "/tmp") / "ach-opencode-tui.log"
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                previous_sigint = signal.getsignal(signal.SIGINT)
+                with log_path.open("ab") as log_file:
+                    proc = await asyncio.create_subprocess_exec(
+                        binary,
+                        "attach",
+                        f"http://127.0.0.1:{server_native.port}",
+                        "--pure",
+                        env=env,
+                        stderr=log_file,
+                    )
+                    signal.signal(signal.SIGINT, signal.SIG_IGN)
+                    try:
+                        await proc.wait()
+                    finally:
+                        signal.signal(signal.SIGINT, previous_sigint)
             finally:
                 await driver.stop(server_native)
         finally:
@@ -284,6 +327,7 @@ async def run_harness(
         one_shot_prompt=one_shot_prompt,
         debug_mode=debug_mode,
         cfg=cfg,
+        role_mode="harness",
     )
 
 
@@ -321,8 +365,26 @@ async def run_channels(channel_config: JsonValue) -> None:
     source_configs: list[ChannelSourceConfig] = [
         ChannelSourceConfig.model_validate(source) for source in raw_sources
     ]
-    client = ChannelsClient(harness_url, key_text.encode(), poll_interval=2.0)
+    agent_name = os.environ.get("ACH_AGENT_NAME", "").strip()
+    if not agent_name:
+        raise SplitRoleConfigError("ACH_AGENT_NAME is required for a separated channels role")
+    client = ChannelsClient(
+        harness_url, key_text.encode(), agent=agent_name, poll_interval=2.0
+    )
+    probe_deadline = asyncio.get_running_loop().time() + 30.0
+    probe_channel = source_configs[0].name if source_configs else ""
+    while True:
+        try:
+            if await client.probe_harness(probe_channel):
+                break
+        except Exception:
+            pass
+        if asyncio.get_running_loop().time() >= probe_deadline:
+            await client.close()
+            raise SplitRoleConfigError("harness signed connectivity did not become ready")
+        await asyncio.sleep(0.5)
     a2a_mounts: list[tuple[str, Any]] = []
+    a2a_bridges: list[A2AAgentExecutorBridge] = []
     for source_cfg in source_configs:
         if source_cfg.type != "a2a":
             continue
@@ -331,13 +393,17 @@ async def run_channels(channel_config: JsonValue) -> None:
             channel_cfg=source_cfg,
             completion_port=client,
         )
+        a2a_bridges.append(bridge)
         a2a_mounts.append(
             (
                 f"/a2a/{source_cfg.name}",
                 build_a2a_app(make_a2a_agent_card(source_cfg.name), bridge),
             )
         )
-    app = create_app(cast(Any, source_configs), client, a2a_mounts=a2a_mounts)
+    http_sources = [
+        source for source in source_configs if source.type in ("webhook", "webhook-script")
+    ]
+    app = create_app(http_sources, client, a2a_mounts=a2a_mounts)
     host = os.environ.get("ACH_CHANNELS_HOST", "0.0.0.0")
     try:
         port = int(os.environ.get("ACH_CHANNELS_PORT", "8080"))
@@ -358,6 +424,8 @@ async def run_channels(channel_config: JsonValue) -> None:
             await queue.start()
         await server.serve()
     finally:
+        for bridge in a2a_bridges:
+            await bridge.shutdown()
         for queue in queues:
             await queue.stop()
         await cron.stop()

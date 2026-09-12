@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
+from prometheus_client import make_asgi_app
 
 from ach_agent.boot.completions import CompletionRegistry
 from ach_agent.boot.health import HealthState
@@ -47,6 +48,7 @@ def create_channels_app(
     state = HealthState(ready=True)
     app.extra["state"] = state
     app.extra.update({"agent": agent, "channels": configured_channels, "registry": registry})
+    app.mount("/metrics", make_asgi_app())
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -127,6 +129,21 @@ def create_channels_app(
             else None,
         }
         return signed_response(key, nonce, status, body)
+
+    @app.post("/internal/v1/readyz")
+    async def internal_readyz(request: Request) -> Response:
+        authenticated = await authenticated_body(request)
+        if isinstance(authenticated, Response):
+            return authenticated
+        raw_body, nonce = authenticated
+        try:
+            payload = _object(raw_body)
+            if payload.get("agent") != agent:
+                return signed_response(key, nonce, 403, _rejection("scope mismatch: agent"))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            return signed_response(key, nonce, 400, {"kind": "error", "error": str(exc)})
+        status = 200 if state.ready else 503
+        return signed_response(key, nonce, status, {"kind": "ready", "status": state.ready})
 
     @app.post("/internal/v1/results")
     async def get_result(request: Request) -> Response:

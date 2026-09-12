@@ -92,6 +92,9 @@ class LimitsBlock(BaseModel):
     idempotency_window_seconds: int = Field(default=3600, alias="idempotencyWindowSeconds")
     max_steps: int = Field(default=50, alias="maxSteps")
     terminal_output_retries: int = Field(default=1, alias="terminalOutputRetries")
+    result_retention_seconds: int = Field(
+        default=300, alias="resultRetentionSeconds", gt=0, le=86_400
+    )
 
 
 class PiEngineBlock(BaseModel):

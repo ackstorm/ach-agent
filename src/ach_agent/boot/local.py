@@ -119,11 +119,15 @@ class LocalEngineProcess:
         host: str = "127.0.0.1",
         port: int = 8081,
         env: dict[str, str] | None = None,
+        terminal_mode: bool = False,
     ) -> LocalEngineProcess:
         package_root = Path(__file__).resolve().parents[2]
         child_env = {
             "PATH": os.environ.get("PATH", ""),
             "PYTHONUNBUFFERED": "1",
+            "TERM": os.environ.get("TERM", "dumb"),
+            "LANG": os.environ.get("LANG", "C.UTF-8"),
+            "LC_ALL": os.environ.get("LC_ALL", ""),
         }
         # Deployment-provided engine-only values are explicit.  The parent’s
         # harness token/configuration is never copied into the child environment.
@@ -140,16 +144,18 @@ class LocalEngineProcess:
                 "ACH_ENGINE_CONFIG_PATH": str(artifacts.engine),
             }
         )
+        use_supervisor = sys.platform.startswith("linux")
         supervisor = Path(__file__).resolve().parents[1] / "engine" / "process_supervisor.py"
+        command = (
+            [sys.executable, str(supervisor), "--", sys.executable, "-m", "ach_agent.main"]
+            if use_supervisor
+            else [sys.executable, "-m", "ach_agent.main"]
+        )
+        command.extend(["--role", "engine"])
+        if terminal_mode:
+            command.append("--tui")
         process = await asyncio.create_subprocess_exec(
-            sys.executable,
-            str(supervisor),
-            "--",
-            sys.executable,
-            "-m",
-            "ach_agent.main",
-            "--role",
-            "engine",
+            *command,
             env=child_env,
             start_new_session=True,
         )
@@ -158,14 +164,20 @@ class LocalEngineProcess:
     async def wait_ready(self, base_url: str, *, timeout: float = 30.0) -> dict[str, Any]:
         return await wait_engine_ready(base_url, timeout=timeout)
 
-    async def close(self, *, timeout: float = 10.0) -> None:
-        if self.process.returncode is not None:
-            return
+    async def close(self, *, timeout: float = 20.0) -> None:
         try:
-            self.process.send_signal(signal.SIGTERM)
-            await asyncio.wait_for(self.process.wait(), timeout=timeout)
+            if self.process.returncode is None and sys.platform.startswith("linux"):
+                self.process.send_signal(signal.SIGTERM)
+            elif self.process.returncode is None:
+                os.killpg(self.process.pid, signal.SIGTERM)
+            if self.process.returncode is None:
+                await asyncio.wait_for(self.process.wait(), timeout=timeout)
         except (ProcessLookupError, TimeoutError):
             if self.process.returncode is None:
-                self.process.kill()
+                if sys.platform.startswith("linux"):
+                    self.process.kill()
+                else:
+                    os.killpg(self.process.pid, signal.SIGKILL)
                 await self.process.wait()
-        shutil.rmtree(self.artifacts.channels.parent, ignore_errors=True)
+        finally:
+            shutil.rmtree(self.artifacts.channels.parent, ignore_errors=True)

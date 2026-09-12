@@ -48,6 +48,7 @@ from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a
 from ach_agent.channels.cron import CronScheduler
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.queue import QueueConsumer
+from ach_agent.channels.signing import NonceCache
 from ach_agent.channels.tui import run_one_shot, run_tui_console
 from ach_agent.config import load_config
 from ach_agent.config.schema import (
@@ -302,6 +303,7 @@ async def _run_harness(
     one_shot_prompt: str | None = None,
     debug_mode: bool = False,
     cfg: AgentConfig | None = None,
+    role_mode: str = "local",
 ) -> None:
     """Async entrypoint: load config, boot router, start channel adapters + uvicorn.
 
@@ -323,7 +325,7 @@ async def _run_harness(
 
     # Step 2: load config (hard-fail on schema mismatch — CFG-02)
     cfg = cfg if cfg is not None else load_config(config_path)
-    isolated_harness = os.environ.get("ACH_ROLE", "") == "harness"
+    isolated_harness = role_mode == "harness"
     try:
         validate_cost_source(cfg.cost.source, cfg.model.type)
     except ValueError as exc:
@@ -543,16 +545,13 @@ async def _run_harness(
     from ach_agent.boot.roles import build_role_configs
     from ach_agent.execution.wire import PublicEngineConfig
 
-    # opencode `serve` always binds loopback (127.0.0.1) on a free ephemeral port the pool
-    # picks — only reachable inside the container/host. `--tui` drives it via `opencode attach`
-    # (co-located, loopback); nothing is published off-host.
-    # codemem is static per-agent: resolve db_path + project once at boot (needs persistence
-    # context). Fail-open ("","") when not codemem or the binary is absent (MEM-02/D-02).
-    channels_projection, public_projection = build_role_configs(cfg)
+    # Engine home, workDir, codemem path and raw MCP templates are projected by H;
+    # E performs native normalization and binary probing.
+    local_mode = not isolated_harness
+    channels_projection, public_projection = build_role_configs(cfg, split_mode=not local_mode)
     public_cfg = PublicEngineConfig.model_validate(public_projection).model_copy(
         update={"home": engine_home, "work_dir": engine_work_dir}
     )
-    codemem_db_path, codemem_project = resolve_codemem_wiring(cfg)
 
     # Boot-static system prompt: persona + active backend's TOOLS_SPEC (appended once at boot).
     _persona = resolve_system_prompt(cfg.prompt, state_dir)
@@ -563,8 +562,6 @@ async def _run_harness(
 
     public_cfg = public_cfg.model_copy(
         update={
-            "codemem_db_path": codemem_db_path,
-            "codemem_project": codemem_project,
             "model": cfg.model.name,
             "model_type": cfg.model.type,
             "params": cfg.model.params,
@@ -581,6 +578,48 @@ async def _run_harness(
             else "",
         }
     )
+    configured_engine_url = os.environ.get("ACH_ENGINE_URL", "").strip()
+    # The local default --tui owns a real engine-role child.  H issues the
+    # correlation token and E only adopts it; this keeps native terminal
+    # attachment on the same role seam as the HTTP execution path.
+    native_tui_child = (
+        local_mode
+        and tui_mode
+        and not debug_mode
+        and one_shot_prompt is None
+        and not configured_engine_url
+    )
+    if native_tui_child:
+        from ach_agent.engine import trace
+
+        tui_token = trace.mint_token()
+        trace.begin_tui(tui_token)
+        public_cfg = public_cfg.model_copy(update={"trace_token": tui_token})
+        artifact_dir = Path(tempfile.mkdtemp(prefix="ach-role-", dir="/tmp"))
+        explicit_engine_env = {
+            name: os.environ[name]
+            for name in public_cfg.engine_env_names
+            if name in os.environ
+        }
+        artifacts = RoleArtifacts(artifact_dir).write(
+            channels_projection, public_cfg.model_dump(mode="json", by_alias=True)
+        )
+        terminal_engine = await LocalEngineProcess.start(
+            artifacts, env=explicit_engine_env, terminal_mode=True
+        )
+        try:
+            await terminal_engine.process.wait()
+        finally:
+            await terminal_engine.close()
+            await stop_model_proxies()
+            if mcp_proxy is not None:
+                await mcp_proxy.stop()
+            if memory_facade is not None:
+                await memory_facade.stop()
+            if a2a_facade is not None:
+                await a2a_facade.stop()
+        log.info("ach-agent: native terminal session ended")
+        return
     # D-03/D-04: dedup store first — it opens/repairs state.db (fail-closed on a bad
     # mount). Native session ownership stays in E; only the bounded legacy map
     # export is sent through the startup import operation below.
@@ -589,19 +628,39 @@ async def _run_harness(
     if hasattr(session_store, "close"):
         session_store.close()
 
-    engine_url = os.environ.get("ACH_ENGINE_URL", "http://127.0.0.1:8081").rstrip("/")
+    if isolated_harness and not configured_engine_url:
+        raise SystemExit("ACH_ENGINE_URL is required for an isolated harness role")
+    engine_url = (configured_engine_url or "http://127.0.0.1:8081").rstrip("/")
     local_engine: LocalEngineProcess | None = None
-    if "ACH_ENGINE_URL" not in os.environ:
+    if local_mode and not configured_engine_url:
         artifact_dir = Path(tempfile.mkdtemp(prefix="ach-role-", dir="/tmp"))
+        explicit_engine_env = {
+            name: os.environ[name]
+            for name in public_cfg.engine_env_names
+            if name in os.environ
+        }
         artifacts = RoleArtifacts(artifact_dir).write(
             channels_projection, public_cfg.model_dump(mode="json", by_alias=True)
         )
-        local_engine = await LocalEngineProcess.start(artifacts)
+        local_engine = await LocalEngineProcess.start(artifacts, env=explicit_engine_env)
         await local_engine.wait_ready(
             engine_url, timeout=float(cfg.engine.startup_timeout_seconds)
         )
     client = ExecutionClient(engine_url, controller_id=f"harness-{os.getpid()}-{id(cfg)}")
-    await client.connect()
+    connect_deadline = asyncio.get_running_loop().time() + float(
+        cfg.engine.startup_timeout_seconds
+    )
+    while True:
+        try:
+            await client.connect()
+            break
+        except Exception:
+            if asyncio.get_running_loop().time() >= connect_deadline:
+                await client.close()
+                if local_engine is not None:
+                    await local_engine.close()
+                raise
+            await asyncio.sleep(0.25)
     if cfg.persistence.enabled:
         from ach_agent.execution.state import export_legacy_sessions
 
@@ -651,6 +710,7 @@ async def _run_harness(
         admit,
         agent=cfg.agent.name,
         max_active_entries=cfg.limits.max_queued_total,
+        retention_seconds=float(cfg.limits.result_retention_seconds),
     )
     channel_handler = CompletionHandler(completion_registry)
     engine_runner = make_engine_runner(
@@ -691,10 +751,13 @@ async def _run_harness(
         completion_notifier=completion_registry.finish_event,
     )
     router_ref["router"] = router
+    projected_sources = channels_projection.get("channels", [])
+    if not isinstance(projected_sources, list):
+        raise ValueError("channels projection must contain a list of sources")
     source_configs = {
-        name: ChannelSourceConfig.model_validate(source)
-        for name, source in zip(
-            (channel.name for channel in cfg.channels), channels_projection, strict=True
+        source_config.name: source_config
+        for source_config in (
+            ChannelSourceConfig.model_validate(source) for source in projected_sources
         )
     }
 
@@ -717,10 +780,10 @@ async def _run_harness(
                 # by the engine-role child in separated deployments.
                 await run_tui_console(channel_handler)
         finally:
+            await client.close()
             close_runner = getattr(engine_runner, "close", None)
             if close_runner is not None:
                 await close_runner()
-            await client.close()
             if local_engine is not None:
                 await local_engine.close()
             await stop_model_proxies()
@@ -742,7 +805,11 @@ async def _run_harness(
     webhook_channels = (
         []
         if isolated_harness
-        else [ch for ch in cfg.channels if ch.type in ("webhook", "webhook-script")]
+        else [
+            source_configs[ch.name]
+            for ch in cfg.channels
+            if ch.type in ("webhook", "webhook-script")
+        ]
     )
 
     # Build A2A bridges and sub-apps (topology A: mounted under the same FastAPI/uvicorn socket).
@@ -785,6 +852,11 @@ async def _run_harness(
             hmac_key.encode(),
             agent=cfg.agent.name,
             channels=(channel.name for channel in cfg.channels),
+            nonce_cache=NonceCache(
+                max_entries=min(
+                    65_536, max(4_096, cfg.limits.max_queued_total * 30 + 1_024)
+                )
+            ),
         )
     else:
         app = create_app(
@@ -794,6 +866,21 @@ async def _run_harness(
         )
     # Expose state so _drain can flip draining/ready (same ref as app.extra['state'])
     state: HealthState = app.extra["state"]
+    readiness_task: asyncio.Task[None] | None = None
+    if isolated_harness:
+        # C must not observe H as ready until the private E endpoint is alive.
+        state.ready = False
+
+        async def watch_engine_readiness() -> None:
+            while True:
+                try:
+                    response = await client.control_client.get("/execution/v1/readyz")
+                    state.ready = response.status_code == 200
+                except Exception:
+                    state.ready = False
+                await asyncio.sleep(0.5)
+
+        readiness_task = asyncio.create_task(watch_engine_readiness())
 
     # Step 7: wire channel adapters (D-08: one CronScheduler for ALL cron channels, SC#3)
     tasks: list[asyncio.Task[None]] = []
@@ -834,8 +921,15 @@ async def _run_harness(
     # channels additionally serve their routes on this same socket (topology A).
     # uvicorn shares the SAME event loop as the cron tasks — no thread pool,
     # single-process topology (spec §15 topology A).
-    host = cfg.health.host
-    port = cfg.health.port
+    if isolated_harness:
+        host = os.environ.get("ACH_HARNESS_HOST", "127.0.0.1")
+        try:
+            port = int(os.environ.get("ACH_HARNESS_PORT", "8090"))
+        except ValueError as exc:
+            raise SystemExit("ACH_HARNESS_PORT must be an integer") from exc
+    else:
+        host = cfg.health.host
+        port = cfg.health.port
     uv_config = uvicorn.Config(
         app=app,
         host=host,
@@ -893,10 +987,15 @@ async def _run_harness(
             router=router,
             dedup_store=dedup_store,
         )
+        for bridge in a2a_bridges:
+            await bridge.shutdown()
+        if readiness_task is not None:
+            readiness_task.cancel()
+            await asyncio.gather(readiness_task, return_exceptions=True)
+        await client.close()
         close_runner = getattr(engine_runner, "close", None)
         if close_runner is not None:
             await close_runner()
-        await client.close()
         if local_engine is not None:
             await local_engine.close()
         # Plan 2: tear down the localhost proxies (closes their aiohttp runners/sessions).
@@ -916,7 +1015,36 @@ async def _run_harness(
         await asyncio.gather(*tasks, return_exceptions=True)
         log.info("ach-agent shutdown complete")
     else:
-        # Normal termination (all tasks completed without SIGTERM — rare in prod)
+        for consumer in queue_consumers:
+            await consumer.stop()
+        await _drain(
+            state=state,
+            uv_server=uv_server,
+            cron_scheduler=cron_scheduler,
+            router=router,
+            dedup_store=dedup_store,
+        )
+        for bridge in a2a_bridges:
+            await bridge.shutdown()
+        if readiness_task is not None:
+            readiness_task.cancel()
+            await asyncio.gather(readiness_task, return_exceptions=True)
+        await client.close()
+        close_runner = getattr(engine_runner, "close", None)
+        if close_runner is not None:
+            await close_runner()
+        if local_engine is not None:
+            await local_engine.close()
+        await stop_model_proxies()
+        if mcp_proxy is not None:
+            await mcp_proxy.stop()
+        if memory_facade is not None:
+            await memory_facade.stop()
+        if a2a_facade is not None:
+            await a2a_facade.stop()
+        await stats_sink.stop()
+        await tool_sink.stop()
+        await asyncio.gather(*tasks, return_exceptions=True)
         log.info("ach-agent shutdown complete")
 
 
@@ -966,7 +1094,6 @@ async def main(
             raise SystemExit("ACH_CHANNELS_CONFIG_PATH is required for --role channels")
         await run_channels(cast(Any, load_artifact(path)))
     elif role == "harness":
-        os.environ["ACH_ROLE"] = "harness"
         await run_harness(
             load_config(os.environ.get(CONFIG_PATH_ENV, DEFAULT_CONFIG_PATH)),
             tui_mode=tui_mode,

@@ -65,6 +65,9 @@ class PublicEngineConfig(_WireModel):
     codemem_db_path: str = ""
     codemem_project: str = ""
     pi_mcp_adapter_path: str = ""
+    # Native TUI correlation is issued by H (or the local parent) and adopted
+    # by E.  It is an opaque route token, never an engine credential.
+    trace_token: str = Field(default="", alias="traceToken")
 
     _params_finite = field_validator("params", "mcp_templates")(_finite_json)
 
@@ -91,6 +94,8 @@ class PublicEngineConfig(_WireModel):
             "ACH_CHANNELS_HMAC_KEY",
             "ACH_HARNESS_URL",
             "ACH_ENGINE_URL",
+            "ACH_MODEL_BASE_URL",
+            "ACH_MODEL_HEADER",
         }
         leaked = sorted(set(values) & managed)
         if leaked:

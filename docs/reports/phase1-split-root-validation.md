@@ -6,6 +6,20 @@ Compose, deadline, and Kubernetes snapshots in this report exercised commit
 [the main evidence report](phase1-split-evidence.md). All upstreams in these checks
 were synthetic. No external deployment was made.
 
+## Final repository gate
+
+Root independently ran the unchanged `scripts/pre-push-check.sh` in a clean local
+clone at `beac73f`, with `PRE_PUSH_BASE_REF=462912f`. It exited 0:
+1,215 tests passed, 3 skipped (82.89 seconds), 18 conformance tests passed,
+Ruff/format/mypy passed, and gitleaks found no leaks across 58 commits.
+The complete local log is `root-final-gate-beac73f.log` in the task scratch directory.
+
+Root also ran the focused execution HTTP/client suites: 37 passed in 3.85 seconds.
+Loading the pre-fix `076bcac` client into the new deterministic EOF regression
+produced the expected `CancelledError`; the production tree was not changed for
+that negative control. The final fix preserves only the bounded stop response
+across controller loss and requires an explicit stopped confirmation.
+
 ## Final Compose repeat
 
 Root independently ran `rtk proxy timeout -k 10 300 bash scripts/test-split.sh`.

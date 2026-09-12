@@ -23,22 +23,18 @@ import asyncio
 import os
 import signal
 import sys
+import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any, cast
 
 import structlog
 import uvicorn
-
-if TYPE_CHECKING:
-    from ach_agent.engine.base.driver import EngineDriver
 
 from ach_agent.boot.completions import CompletionHandler, CompletionRegistry
 from ach_agent.boot.engine_runner import make_engine_runner
 from ach_agent.boot.health import HealthState
 from ach_agent.boot.paths import (
     harness_log_dir,
-    link_ach_state,
-    resolve_engine_paths,
     write_pid_file,
 )
 from ach_agent.boot.prompt import resolve_system_prompt
@@ -56,12 +52,12 @@ from ach_agent.channels.tui import run_one_shot, run_tui_console
 from ach_agent.config import load_config
 from ach_agent.config.schema import (
     AchMemoryMemory,
-    CodememMemory,
+    AgentConfig,
+    ChannelSourceConfig,
     LocalMcpServer,
     McpServerConfig,
     RemoteMcpServer,
 )
-from ach_agent.engine import trace
 from ach_agent.engine.context import fetch_context
 from ach_agent.engine.cost import (
     CostAccountant,
@@ -79,7 +75,6 @@ from ach_agent.memory.ach_memory import excluded_mcp_server
 from ach_agent.memory.ach_memory_facade import AchMemoryFacade
 from ach_agent.router import Router
 from ach_agent.security.preflight import run_preflight
-from ach_agent.templating import build_template_context, render_template
 
 # configure_logging() is called at module TOP (not in main()) so that any
 # log emission during import (e.g. validation warnings) is already redacted.
@@ -302,8 +297,11 @@ def _engine_runtime_fields(cfg: Any) -> dict[str, Any]:
     }
 
 
-async def main(
-    tui_mode: bool = False, one_shot_prompt: str | None = None, debug_mode: bool = False
+async def _run_harness(
+    tui_mode: bool = False,
+    one_shot_prompt: str | None = None,
+    debug_mode: bool = False,
+    cfg: AgentConfig | None = None,
 ) -> None:
     """Async entrypoint: load config, boot router, start channel adapters + uvicorn.
 
@@ -324,7 +322,7 @@ async def main(
     config_path = os.environ.get(CONFIG_PATH_ENV, DEFAULT_CONFIG_PATH)
 
     # Step 2: load config (hard-fail on schema mismatch — CFG-02)
-    cfg = load_config(config_path)
+    cfg = cfg if cfg is not None else load_config(config_path)
     try:
         validate_cost_source(cfg.cost.source, cfg.model.type)
     except ValueError as exc:
@@ -341,10 +339,17 @@ async def main(
     # hard-fail — see strip_forwarded_secrets), and register the secret names' CURRENT
     # values for generic log redaction (the hardcoded ek_/GITLAB_TOKEN processors don't
     # catch arbitrary secret.env NAMES).
-    effective_forward_env = strip_forwarded_secrets(cfg)
+    strip_forwarded_secrets(cfg)
     add_secret_redaction(collect_secret_env_names(cfg))
-    engine_home, engine_work_dir = resolve_engine_paths(cfg)
-    state_dir = link_ach_state(engine_home, engine_work_dir)
+    from ach_agent.boot.paths import resolve_role_paths
+
+    role_paths = resolve_role_paths(cfg)
+    engine_home = str(role_paths.engine_home)
+    engine_work_dir = str(role_paths.work_dir)
+    # Hydrated prompts, artifacts and skills are public H→E context.  H never
+    # writes the engine-owned home or its native session database.
+    state_dir = role_paths.public_context
+    state_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
 
     # Step 3: D-02 gate — reject unwired channel types before serving.
     # Skipped under --tui/--prompt: configured channels are ignored in console mode.
@@ -415,7 +420,7 @@ async def main(
             manifest.context,
             ek,
             state_dir,
-            Path(engine_home) / ".config" / "opencode" / "skills",
+            role_paths.public_skills,
         )
         mcp_proxy = McpProxy()
         _exclude_servers = set(_exclude.mcp_servers)
@@ -529,17 +534,23 @@ async def main(
         )
         sys.exit(1)
 
-    # Step 5: build the engine pool. Egress is the agent's via external MCP tools —
-    # the harness has no delivery adapter (it never posts on the model's behalf).
-    from ach_agent.engine.base.driver import EngineConfig
-    from ach_agent.engine.base.pool import EnginePool
-    from ach_agent.engine.opencode.driver import OpencodeDriver
+    # Step 5: publish a credential-free engine bootstrap and connect over the
+    # same HTTP execution API used by the separated deployment. Native drivers
+    # are constructed only by the engine role.
+    from ach_agent.boot.execution_client import ExecutionClient
+    from ach_agent.boot.local import LocalEngineProcess, RoleArtifacts
+    from ach_agent.boot.roles import build_role_configs
+    from ach_agent.execution.wire import PublicEngineConfig
 
     # opencode `serve` always binds loopback (127.0.0.1) on a free ephemeral port the pool
     # picks — only reachable inside the container/host. `--tui` drives it via `opencode attach`
     # (co-located, loopback); nothing is published off-host.
     # codemem is static per-agent: resolve db_path + project once at boot (needs persistence
     # context). Fail-open ("","") when not codemem or the binary is absent (MEM-02/D-02).
+    channels_projection, public_projection = build_role_configs(cfg)
+    public_cfg = PublicEngineConfig.model_validate(public_projection).model_copy(
+        update={"home": engine_home, "work_dir": engine_work_dir}
+    )
     codemem_db_path, codemem_project = resolve_codemem_wiring(cfg)
 
     # Boot-static system prompt: persona + active backend's TOOLS_SPEC (appended once at boot).
@@ -549,46 +560,52 @@ async def main(
     _spec = tools_spec_for(cfg.memory)
     _system_prompt = f"{_persona}\n\n## Memory Tools\n{_spec}" if _spec else _persona
 
-    passthrough_mcp = collect_passthrough_mcp(cfg.mcp_servers)
-    engine_cfg = EngineConfig(
-        home=engine_home,
-        work_dir=engine_work_dir,
-        codemem_db_path=codemem_db_path,
-        codemem_project=codemem_project,
-        model=cfg.model.name,
-        model_type=cfg.model.type,
-        params=cfg.model.params,
-        # prompt.system = the inline agent persona + per-backend TOOLS_SPEC (boot-static).
-        system_prompt=_system_prompt,
-        # prompt.compose: append (top-level instructions) | replace (agent.build.prompt).
-        compose=cfg.prompt.compose if cfg.prompt else "append",
-        steps=cfg.limits.max_steps,
-        startup_timeout_seconds=cfg.engine.startup_timeout_seconds,
-        max_invocation_seconds=cfg.limits.max_invocation_seconds,
-        model_base_url=model_base_url,
-        mcp_local_urls=mcp_local_urls,
-        # SEC-01 / ek-hygiene: opencode's env is clean-slate (base allowlist only). Extra
-        # var names the operator wants forwarded come from engine.forwardEnv, with any
-        # secret.env name stripped (strip_forwarded_secrets, computed above).
-        forward_env=effective_forward_env,
-        # capability.filter.exclude.tools — disabled in opencode.json (withheld from model).
-        exclude_tools=cfg.capability.filter.exclude.tools,
-        extra_mcp_servers=passthrough_mcp,
-        engine_type=cfg.engine.type,
-        **_engine_runtime_fields(cfg),
+    public_cfg = public_cfg.model_copy(
+        update={
+            "codemem_db_path": codemem_db_path,
+            "codemem_project": codemem_project,
+            "model": cfg.model.name,
+            "model_type": cfg.model.type,
+            "params": cfg.model.params,
+            "system_prompt": _system_prompt,
+            "compose": cfg.prompt.compose if cfg.prompt else "append",
+            "steps": cfg.limits.max_steps,
+            "startup_timeout_seconds": cfg.engine.startup_timeout_seconds,
+            "model_base_url": model_base_url,
+            "mcp_servers": {},
+            "mcp_local_urls": mcp_local_urls,
+            "exclude_tools": cfg.capability.filter.exclude.tools,
+            "pi_mcp_adapter_path": cfg.engine.pi.mcp_adapter_path
+            if cfg.engine.type == "pi" and cfg.engine.pi
+            else "",
+        }
     )
     # D-03/D-04: dedup store first — it opens/repairs state.db (fail-closed on a bad
-    # mount). Then the session map shares that now-valid file (fail-open). The pool
-    # owns the session map so run_invocation reuses opencode sessions across restarts.
+    # mount). Native session ownership stays in E; only the bounded legacy map
+    # export is sent through the startup import operation below.
     dedup_store = open_dedup_store(cfg)
     session_store = open_session_store(cfg)
-    if cfg.engine.type == "pi":
-        from ach_agent.engine.pi.driver import PiDriver
+    if hasattr(session_store, "close"):
+        session_store.close()
 
-        driver: EngineDriver = PiDriver()
-    else:
-        driver = OpencodeDriver()
-    pool = EnginePool(driver=driver, sessions_map=session_store, accountant=accountant)
+    engine_url = os.environ.get("ACH_ENGINE_URL", "http://127.0.0.1:8081").rstrip("/")
+    local_engine: LocalEngineProcess | None = None
+    if "ACH_ENGINE_URL" not in os.environ:
+        artifact_dir = Path(tempfile.mkdtemp(prefix="ach-role-", dir="/tmp"))
+        artifacts = RoleArtifacts(artifact_dir).write(
+            channels_projection, public_cfg.model_dump(mode="json", by_alias=True)
+        )
+        local_engine = await LocalEngineProcess.start(artifacts)
+        await local_engine.wait_ready(
+            engine_url, timeout=float(cfg.engine.startup_timeout_seconds)
+        )
+    client = ExecutionClient(engine_url, controller_id=f"harness-{os.getpid()}-{id(cfg)}")
+    await client.connect()
+    if cfg.persistence.enabled:
+        from ach_agent.execution.state import export_legacy_sessions
+
+        legacy_path = Path(cfg.persistence.mount_path) / "state" / "state.db"
+        await client.import_legacy_sessions(export_legacy_sessions(legacy_path))
 
     # Best-effort stats sink (harness-local, ACH_STATS_* — never part of operator contract).
     # Unset ACH_STATS_REDIS_URL → Prometheus-only, no queue/writer.
@@ -636,9 +653,8 @@ async def main(
     )
     channel_handler = CompletionHandler(completion_registry)
     engine_runner = make_engine_runner(
-        pool=pool,
-        driver=driver,
-        engine_cfg=engine_cfg,
+        client=client,
+        engine_cfg=public_cfg,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
         terminal_output_retries=cfg.limits.terminal_output_retries,
         max_tool_calls=cfg.engine.max_tool_calls,
@@ -674,6 +690,12 @@ async def main(
         completion_notifier=completion_registry.finish_event,
     )
     router_ref["router"] = router
+    source_configs = {
+        name: ChannelSourceConfig.model_validate(source)
+        for name, source in zip(
+            (channel.name for channel in cfg.channels), channels_projection, strict=True
+        )
+    }
 
     # --tui / --prompt launch modifiers: ignore the configured channels and drive the
     # engine directly. The engine + proxies + hydration are already wired above; the
@@ -689,90 +711,17 @@ async def main(
             if one_shot_prompt is not None:
                 await run_one_shot(channel_handler, one_shot_prompt)
             else:
-                # --tui/--debug: launch opencode at boot (not lazily on the first prompt) + hold a
-                # ref for the whole REPL, so per-invocation release(0) never stops it between
-                # prompts — there is no idle TTL; only Ctrl-C / EOF ends the session (the
-                # finally below stops it). Probe memory first so the pre-warmed server's
-                # opencode.json wires the memory MCP exactly as engine_runner would.
-                import dataclasses
-
-                # codemem is already on engine_cfg from boot (static); only the memory
-                # facade is resolved here so the pre-warmed opencode.json matches.
-                warm_mcp_servers: dict[str, str] = {}
-                if isinstance(cfg.memory, AchMemoryMemory):
-                    from ach_agent.memory.ach_memory import prepare_ach_memory
-
-                    _mem_ok, _ = await prepare_ach_memory(
-                        memory_endpoint, memory_project, memory_auth_headers
-                    )
-                    if _mem_ok and memory_facade_url:
-                        warm_mcp_servers = {"memory": memory_facade_url}
-                if a2a_facade_url:
-                    warm_mcp_servers = {**warm_mcp_servers, "a2a": a2a_facade_url}
-                from ach_agent.channels.tui import _CONSOLE_SESSION_KEY
-
-                warm_codemem_project = engine_cfg.codemem_project
-                if isinstance(cfg.memory, CodememMemory) and "{{" in engine_cfg.codemem_project:
-                    warm_ctx = build_template_context(
-                        {},
-                        channel_name="tui",
-                        channel_type="tui",
-                        channel_source="",
-                        agent_name=cfg.agent.name,
-                        memory_bank="",
-                        event_id="",
-                        session_key=_CONSOLE_SESSION_KEY,
-                    )
-                    # Keyed pool reuses this warm server for the whole console session, so the
-                    # project must be rendered HERE — engine_runner's later render is discarded.
-                    warm_codemem_project = render_template(engine_cfg.codemem_project, warm_ctx)
-                warm_cfg = dataclasses.replace(
-                    engine_cfg, mcp_servers=warm_mcp_servers, codemem_project=warm_codemem_project
-                )
-                # --debug and non-TTY use the harness REPL. Pi's real-TTY --tui is its
-                # native CLI, configured by the harness but not launched in RPC mode.
-                if debug_mode or not sys.stdout.isatty():
-                    await run_tui_console(channel_handler)
-                elif cfg.engine.type == "pi":
-                    from ach_agent.engine.pi.driver import PiDriver
-
-                    # Native Pi bypasses the pool, so nothing has tokenized its proxied
-                    # wires. Mint here or the console's model AND tool calls take the
-                    # proxies' PLAIN routes and reach Langfuse uncorrelated.
-                    tui_token = trace.mint_token()
-                    trace.begin_tui(tui_token)
-                    warm_cfg = dataclasses.replace(
-                        warm_cfg,
-                        model_base_url=trace.tokenize_url(warm_cfg.model_base_url, tui_token),
-                        mcp_local_urls={
-                            sid: trace.tokenize_url(url, tui_token)
-                            for sid, url in warm_cfg.mcp_local_urls.items()
-                        },
-                    )
-                    await PiDriver().run_tui(warm_cfg, _CONSOLE_SESSION_KEY)
-                else:
-                    warm_server = await pool.acquire(_CONSOLE_SESSION_KEY, warm_cfg)
-                    # attach drives opencode's own loop — run_turn never runs, so this is
-                    # the only place the console session can be correlated.
-                    trace.begin_tui(warm_server.proxy_token)
-                    # No stdout banner — opencode's own --print-logs already announces the
-                    # listening address. Keep one structured info line with the loopback address.
-                    log.info(
-                        "ach-agent: opencode serve listening",
-                        url=f"http://127.0.0.1:{warm_server.port}",
-                    )
-                    await _run_opencode_attach(
-                        router,
-                        binary_path=engine_cfg.binary_path,
-                        port=warm_server.port,
-                        ephemeral_home=warm_server.ephemeral_home,
-                        config_path=warm_server.config_path,
-                    )
+                # The local console is an ordinary serializable invocation over
+                # the execution HTTP seam. Native terminal attachment is owned
+                # by the engine-role child in separated deployments.
+                await run_tui_console(channel_handler)
         finally:
-            # Stop any warm-held engine server (idle TTL may not have elapsed at EOF).
-            await pool.stop_all()
-            if hasattr(pool.sessions, "close"):
-                pool.sessions.close()
+            close_runner = getattr(engine_runner, "close", None)
+            if close_runner is not None:
+                await close_runner()
+            await client.close()
+            if local_engine is not None:
+                await local_engine.close()
             await stop_model_proxies()
             if mcp_proxy is not None:
                 await mcp_proxy.stop()
@@ -804,7 +753,7 @@ async def main(
         # The bridge is created here (boot module) — engine_runner never imports it.
         bridge = A2AAgentExecutorBridge(
             handler=channel_handler,
-            channel_cfg=channel,
+            channel_cfg=source_configs[channel.name],
             completion_port=completion_registry,
         )
 
@@ -833,7 +782,7 @@ async def main(
 
     # D-08/SC#3: collect all cron channels and construct exactly ONE CronScheduler.
     # Pitfall 9 (one task per channel) is superseded by D-08 (one scheduler for all).
-    cron_channels = [ch for ch in cfg.channels if ch.type == "cron"]
+    cron_channels = [source_configs[ch.name] for ch in cfg.channels if ch.type == "cron"]
     cron_scheduler: CronScheduler | None = None
     if cron_channels:
         cron_scheduler = CronScheduler(cron_channels, handler=channel_handler)
@@ -849,7 +798,7 @@ async def main(
     queue_channels = [ch for ch in cfg.channels if ch.type == "queue"]
     queue_consumers: list[QueueConsumer] = []
     for channel in queue_channels:
-        consumer = QueueConsumer(channel, handler=channel_handler)
+        consumer = QueueConsumer(source_configs[channel.name], handler=channel_handler)
         await consumer.start()
         queue_consumers.append(consumer)
         log.info("queue consumer started", channel_name=channel.name, stream=channel.queue.key)  # type: ignore[union-attr]
@@ -921,14 +870,12 @@ async def main(
             router=router,
             dedup_store=dedup_store,
         )
-        # Stop every warm keyed opencode server BEFORE the proxies. With
-        # engine.idle_ttl_seconds > 0 a recently-used server lingers past its last release
-        # with a pending _expire task; without this its subprocess (start_new_session=True,
-        # own process group) would survive the harness exit and orphan (leaking the port).
-        # Idempotent; also cancels the pending TTL tasks.
-        await pool.stop_all()
-        if hasattr(pool.sessions, "close"):
-            pool.sessions.close()
+        close_runner = getattr(engine_runner, "close", None)
+        if close_runner is not None:
+            await close_runner()
+        await client.close()
+        if local_engine is not None:
+            await local_engine.close()
         # Plan 2: tear down the localhost proxies (closes their aiohttp runners/sessions).
         await stop_model_proxies()
         if mcp_proxy is not None:
@@ -950,7 +897,7 @@ async def main(
         log.info("ach-agent shutdown complete")
 
 
-def _parse_cli(argv: list[str]) -> tuple[bool, str | None, bool]:
+def _parse_cli(argv: list[str]) -> tuple[str | None, bool, str | None, bool]:
     """Parse launch modifiers from argv.
 
     `--tui` → native TUI for the selected engine. `--debug` → plain stdin/stdout REPL (minimal,
@@ -958,18 +905,66 @@ def _parse_cli(argv: list[str]) -> tuple[bool, str | None, bool]:
     then exit. All ignore configured channels; precedence is `--prompt` > `--debug` > `--tui`.
     """
     parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--role", choices=("harness", "channels", "engine"))
     parser.add_argument("--tui", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--prompt")
     args, _unknown = parser.parse_known_args(argv)
-    return args.tui, args.prompt, args.debug
+    return args.role, args.tui, args.prompt, args.debug
+
+
+async def main(
+    tui_mode: bool = False,
+    one_shot_prompt: str | None = None,
+    debug_mode: bool = False,
+    *,
+    role: str | None = None,
+) -> None:
+    """Dispatch one of the explicit roles or the local parent launcher."""
+    if role is None:
+        await _run_harness(
+            tui_mode=tui_mode,
+            one_shot_prompt=one_shot_prompt,
+            debug_mode=debug_mode,
+        )
+        return
+
+    from ach_agent.boot.local import load_artifact
+    from ach_agent.boot.roles import run_channels, run_engine, run_harness
+
+    if role == "engine":
+        path = os.environ.get("ACH_ENGINE_CONFIG_PATH", "")
+        if not path:
+            raise SystemExit("ACH_ENGINE_CONFIG_PATH is required for --role engine")
+        await run_engine(cast(Any, load_artifact(path)), terminal_mode=tui_mode)
+    elif role == "channels":
+        path = os.environ.get("ACH_CHANNELS_CONFIG_PATH", "")
+        if not path:
+            raise SystemExit("ACH_CHANNELS_CONFIG_PATH is required for --role channels")
+        await run_channels(cast(Any, load_artifact(path)))
+    elif role == "harness":
+        await run_harness(
+            load_config(os.environ.get(CONFIG_PATH_ENV, DEFAULT_CONFIG_PATH)),
+            tui_mode=tui_mode,
+            one_shot_prompt=one_shot_prompt,
+            debug_mode=debug_mode,
+        )
+    else:  # pragma: no cover - argparse constrains CLI values
+        raise SystemExit(f"unknown role: {role}")
 
 
 if __name__ == "__main__":
     # `--tui` / `--debug` / `--prompt` launch modifiers: drive the engine directly.
-    _tui_mode, _one_shot, _debug_mode = _parse_cli(sys.argv[1:])
+    _role, _tui_mode, _one_shot, _debug_mode = _parse_cli(sys.argv[1:])
     try:
-        asyncio.run(main(tui_mode=_tui_mode, one_shot_prompt=_one_shot, debug_mode=_debug_mode))
+        asyncio.run(
+            main(
+                tui_mode=_tui_mode,
+                one_shot_prompt=_one_shot,
+                debug_mode=_debug_mode,
+                role=_role,
+            )
+        )
     except KeyboardInterrupt:
         # ponytail: Ctrl+C in the console/REPL modes — exit quietly, no traceback.
         pass

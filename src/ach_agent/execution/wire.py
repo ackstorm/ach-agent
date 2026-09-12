@@ -84,6 +84,17 @@ class PublicEngineConfig(_WireModel):
 
         if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) for name in values):
             raise ValueError("engineEnvNames must contain valid environment variable names")
+        managed = {
+            "ACH_TOKEN",
+            "ACH_API_KEY",
+            "ACH_MODEL_TOKEN",
+            "ACH_CHANNELS_HMAC_KEY",
+            "ACH_HARNESS_URL",
+            "ACH_ENGINE_URL",
+        }
+        leaked = sorted(set(values) & managed)
+        if leaked:
+            raise ValueError(f"engineEnvNames contains harness-managed names: {leaked}")
         return list(dict.fromkeys(values))
 
 

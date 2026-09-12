@@ -48,6 +48,7 @@ def link_public_context(
     engine_home: str | Path,
     public_context: str | Path,
     *,
+    work_dir: str | Path | None = None,
     create_public: bool = True,
 ) -> None:
     """Expose hydrated public context through engine discovery paths.
@@ -63,6 +64,12 @@ def link_public_context(
     _link_directory(
         home / ".ach-state", root, create_target=create_public, replace_managed=True
     )
+    if work_dir is not None and Path(work_dir).resolve() != home.resolve():
+        work = Path(work_dir)
+        work.mkdir(parents=True, exist_ok=True)
+        _link_directory(
+            work / ".ach-state", root, create_target=create_public, replace_managed=True
+        )
     skills = root / "skills"
     if create_public:
         skills.mkdir(parents=True, exist_ok=True)

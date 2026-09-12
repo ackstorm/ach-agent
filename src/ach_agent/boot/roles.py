@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import shutil
+import signal
 from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Any, cast
@@ -157,17 +159,20 @@ def build_role_configs(
     return channels, _json_model(public)
 
 
-async def run_engine(public_config: JsonValue) -> None:
+async def run_engine(public_config: JsonValue, *, terminal_mode: bool = False) -> None:
     """Start the engine HTTP role with no native process at endpoint boot."""
     public = PublicEngineConfig.model_validate(public_config)
     home = Path(public.home or "/tmp/ach-home")
     work_dir = Path(public.work_dir or home / "workspace")
     public_context = Path(public.public_context or "/tmp/ach-public-context")
+    from ach_agent import identity
+
+    identity.configure(public.agent_name, os.environ.get("ACH_ENVIRONMENT", ""))
     # E creates only its private home/workspace.  Public context may be a late-mounted
     # read-only volume hydrated by H, so endpoint boot never creates H-owned paths.
     home.mkdir(parents=True, exist_ok=True)
     work_dir.mkdir(parents=True, exist_ok=True)
-    link_public_context(home, public_context, create_public=False)
+    link_public_context(home, public_context, work_dir=work_dir, create_public=False)
     store = _open_session_store(public, home)
     if public.engine_type == "pi":
         from ach_agent.engine.pi.driver import PiDriver
@@ -175,6 +180,54 @@ async def run_engine(public_config: JsonValue) -> None:
         driver: EngineDriver = PiDriver()
     else:
         driver = OpencodeDriver()
+
+    if terminal_mode:
+        from ach_agent.engine import trace
+        from ach_agent.execution.service import _engine_config
+
+        try:
+            native_cfg = _engine_config(public)
+            token = trace.mint_token()
+            trace.begin_tui(token)
+            native_cfg.model_base_url = trace.tokenize_url(native_cfg.model_base_url, token)
+            native_cfg.mcp_local_urls = {
+                name: trace.tokenize_url(url, token)
+                for name, url in native_cfg.mcp_local_urls.items()
+            }
+            if public.engine_type == "pi":
+                from ach_agent.engine.pi.driver import PiDriver
+
+                await PiDriver().run_tui(native_cfg, "tui")
+                return
+            from ach_agent.engine.lifecycle import build_opencode_env
+
+            server_native = await driver.launch(native_cfg, "tui")
+            try:
+                binary = shutil.which(native_cfg.binary_path)
+                if binary is None:
+                    raise RuntimeError(f"engine binary not found: {native_cfg.binary_path}")
+                config_path = server_native.config_path
+                env = (
+                    build_opencode_env(server_native.ephemeral_home, native_cfg, config_path)
+                    if config_path
+                    else {}
+                )
+                proc = await asyncio.create_subprocess_exec(
+                    binary,
+                    "attach",
+                    f"http://127.0.0.1:{server_native.port}",
+                    "--pure",
+                    env=env,
+                )
+                signal.signal(signal.SIGINT, signal.SIG_IGN)
+                await proc.wait()
+            finally:
+                await driver.stop(server_native)
+        finally:
+            close = getattr(store, "close", None)
+            if close is not None:
+                close()
+        return
     service = ExecutionService(driver, store)
     app = create_execution_app(service)
     host = os.environ.get("ACH_ENGINE_HOST", "127.0.0.1")
@@ -214,11 +267,98 @@ async def run_engine(public_config: JsonValue) -> None:
         raise RuntimeError("engine role shutdown requested after unreliable cleanup")
 
 
-async def run_harness(_cfg: AgentConfig) -> None:
-    """Reserved role entrypoint; harness orchestration is owned by Task 8B."""
-    raise NotImplementedError("harness role orchestration is implemented by the local launcher")
+async def run_harness(
+    cfg: AgentConfig,
+    *,
+    tui_mode: bool = False,
+    one_shot_prompt: str | None = None,
+    debug_mode: bool = False,
+) -> None:
+    """Run the harness role while keeping the legacy local entrypoint stable."""
+    # Import lazily: ``main`` imports this module while constructing the role
+    # projections, and the role entrypoint must not create a second boot graph.
+    from ach_agent.main import _run_harness
+
+    await _run_harness(
+        tui_mode=tui_mode,
+        one_shot_prompt=one_shot_prompt,
+        debug_mode=debug_mode,
+        cfg=cfg,
+    )
 
 
-async def run_channels(_channel_config: JsonValue) -> None:
-    """Reserved role entrypoint; channel startup is owned by Task 8B."""
-    raise NotImplementedError("channels role orchestration is implemented by the local launcher")
+async def run_channels(channel_config: JsonValue) -> None:
+    """Start the source role from its filtered configuration artifact."""
+    if not isinstance(channel_config, dict):
+        raise SplitRoleConfigError("channels role requires an object configuration")
+    if channel_config.get("schemaVersion") != "1":
+        raise SplitRoleConfigError("invalid channels role artifact")
+    sources = channel_config.get("channels")
+    if not isinstance(sources, list):
+        raise SplitRoleConfigError("channels role artifact must contain channels")
+    raw_sources = sources
+    key_text = os.environ.get("ACH_CHANNELS_HMAC_KEY", "")
+    if not key_text:
+        raise SplitRoleConfigError(
+            "ACH_CHANNELS_HMAC_KEY is required for a separated channels role"
+        )
+    harness_url = os.environ.get("ACH_HARNESS_URL", "").strip()
+    if not harness_url:
+        raise SplitRoleConfigError("ACH_HARNESS_URL is required for a separated channels role")
+    from ach_agent import identity
+
+    identity.configure(
+        os.environ.get("ACH_AGENT_NAME", ""), os.environ.get("ACH_ENVIRONMENT", "")
+    )
+    for source in raw_sources:
+        ChannelSourceConfig.model_validate(source)
+    from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a2a_agent_card
+    from ach_agent.channels.client import ChannelsClient
+    from ach_agent.channels.cron import CronScheduler
+    from ach_agent.channels.queue import QueueConsumer
+    from ach_agent.http.app import create_app
+
+    source_configs: list[ChannelSourceConfig] = [
+        ChannelSourceConfig.model_validate(source) for source in raw_sources
+    ]
+    client = ChannelsClient(harness_url, key_text.encode(), poll_interval=2.0)
+    a2a_mounts: list[tuple[str, Any]] = []
+    for source_cfg in source_configs:
+        if source_cfg.type != "a2a":
+            continue
+        bridge = A2AAgentExecutorBridge(
+            handler=client,
+            channel_cfg=source_cfg,
+            completion_port=client,
+        )
+        a2a_mounts.append(
+            (
+                f"/a2a/{source_cfg.name}",
+                build_a2a_app(make_a2a_agent_card(source_cfg.name), bridge),
+            )
+        )
+    app = create_app(cast(Any, source_configs), client, a2a_mounts=a2a_mounts)
+    host = os.environ.get("ACH_CHANNELS_HOST", "0.0.0.0")
+    try:
+        port = int(os.environ.get("ACH_CHANNELS_PORT", "8080"))
+    except ValueError as exc:
+        await client.close()
+        raise SplitRoleConfigError("ACH_CHANNELS_PORT must be an integer") from exc
+    server = uvicorn.Server(uvicorn.Config(app=app, host=host, port=port, log_level="warning"))
+    cron = CronScheduler(
+        [source for source in source_configs if source.type == "cron"], handler=client
+    )
+    queues: list[QueueConsumer] = []
+    for source_cfg in source_configs:
+        if source_cfg.type == "queue":
+            queues.append(QueueConsumer(source_cfg, handler=client))
+    try:
+        await cron.start()
+        for queue in queues:
+            await queue.start()
+        await server.serve()
+    finally:
+        for queue in queues:
+            await queue.stop()
+        await cron.stop()
+        await client.close()

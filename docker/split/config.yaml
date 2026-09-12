@@ -1,0 +1,29 @@
+# Credential-free persistent split example. The operator supplies ACH_TOKEN,
+# ACH_BASE_URL and channel keys as environment/Secret references at deployment.
+schemaVersion: "1"
+agent:
+  name: split-example
+model:
+  name: gemini.gemini-flash-latest
+  type: openai
+capability:
+  type: ach
+  ach:
+    environment: platform
+prompt:
+  system:
+    type: text
+    text: "You are a concise software-engineering assistant."
+persistence:
+  enabled: true
+  mountPath: /var/lib/ach-agent
+engine:
+  home: /var/lib/ach-agent/home
+  workDir: /var/lib/ach-agent/workspace
+  startupTimeoutSeconds: 30
+memory:
+  type: codemem
+  codemem:
+    dbPath: /var/lib/ach-agent/state/codemem.db
+    project: ach-agent
+channels: []

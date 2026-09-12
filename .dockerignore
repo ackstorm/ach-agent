@@ -37,6 +37,8 @@ htmlcov/
 
 # Planning artifacts (dev only)
 .planning/
+.superpowers/
+.worktrees/
 
 # IDE/editor files
 .vscode/

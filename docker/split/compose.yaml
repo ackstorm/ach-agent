@@ -1,0 +1,109 @@
+name: ach-agent-split
+
+services:
+  harness:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: harness
+    command: ["--role", "harness"]
+    environment:
+      ACH_ROLE: harness
+      ACH_AGENT_NAME: split-example
+      ACH_CONFIG_PATH: /etc/ach-agent/config.yaml
+      ACH_ENGINE_URL: http://127.0.0.1:8081
+      ACH_HARNESS_HOST: 127.0.0.1
+      ACH_HARNESS_PORT: "8090"
+      ACH_CHANNELS_HMAC_KEY: ${ACH_CHANNELS_HMAC_KEY:?set ACH_CHANNELS_HMAC_KEY}
+      ACH_TOKEN: ${ACH_TOKEN:?set ACH_TOKEN}
+      ACH_BASE_URL: ${ACH_BASE_URL:?set ACH_BASE_URL}
+      ACH_ENVIRONMENT: ${ACH_ENVIRONMENT:-platform}
+    ports:
+      - "8080:8080"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:mode=1777
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - ./config.yaml:/etc/ach-agent/config.yaml:ro
+      - harness-state:/var/lib/ach-agent/state
+      - shared-workspace:/var/lib/ach-agent/workspace
+      - public-context:/var/lib/ach-agent/public-context
+      - harness-scratch:/tmp/ach-private
+
+  channels:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: channels
+    command: ["--role", "channels"]
+    depends_on:
+      - harness
+    network_mode: service:harness
+    environment:
+      ACH_ROLE: channels
+      ACH_AGENT_NAME: split-example
+      ACH_CHANNELS_CONFIG_PATH: /etc/ach-agent/channels.json
+      ACH_HARNESS_URL: http://127.0.0.1:8090
+      ACH_CHANNELS_HOST: 0.0.0.0
+      ACH_CHANNELS_PORT: "8080"
+      ACH_CHANNELS_HMAC_KEY: ${ACH_CHANNELS_HMAC_KEY:?set ACH_CHANNELS_HMAC_KEY}
+      ACH_ENVIRONMENT: ${ACH_ENVIRONMENT:-platform}
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:mode=1777
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - ./channels.json:/etc/ach-agent/channels.json:ro
+
+  engine:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: ${ACH_ENGINE_TARGET:-engine-opencode}
+    command: ["--role", "engine"]
+    network_mode: service:harness
+    environment:
+      ACH_ROLE: engine
+      ACH_ENGINE_CONFIG_PATH: /etc/ach-agent/engine.json
+      ACH_ENGINE_HOST: 127.0.0.1
+      ACH_ENGINE_PORT: "8081"
+      ACH_ENVIRONMENT: ${ACH_ENVIRONMENT:-platform}
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:mode=1777
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/execution/v1/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - ./engine.json:/etc/ach-agent/engine.json:ro
+      - engine-home:/var/lib/ach-agent/home
+      # This E-owned directory is mounted at the logical codemem path. It is
+      # intentionally a different volume from H's state/state.db directory.
+      - engine-codemem:/var/lib/ach-agent/state
+      - shared-workspace:/var/lib/ach-agent/workspace
+      - public-context:/var/lib/ach-agent/public-context:ro
+
+volumes:
+  harness-state:
+  engine-home:
+  engine-codemem:
+  shared-workspace:
+  public-context:
+  harness-scratch:

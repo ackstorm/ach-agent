@@ -112,6 +112,26 @@ For local/standalone runs use the container directly — see [Getting started](d
 
 Released container images are published to `ghcr.io/ackstorm/ach-agent`.
 
+### Phase 1 split packaging example
+
+The repository includes a three-container contract example in
+[`docker/split/`](docker/split/): channels, harness, and one engine role. The
+Compose example shares the harness network namespace for internal loopback
+traffic and publishes only the channels ingress. The Kubernetes example uses
+ordinary containers, no init container, no service-account token mount, and
+narrow role mounts. H owns credentials, dedup state, preparation, and hydration;
+C receives only its filtered channels artifact; E receives its engine bootstrap,
+private home, shared workspace, and read-only public context.
+
+The images are built with `--target harness`, `--target channels`,
+`--target engine-opencode`, and `--target engine-pi`. A build without a target
+continues to produce the combined native image with both Pi and OpenCode and
+the existing `--tui` / `--prompt` launch modifiers. E images include tini as
+PID 1. Production `ach-runtime` rendering remains a separate handoff; these
+files do not apply a cluster or replace operator-generated config and Secret
+objects. See [`docker/split/README.md`](docker/split/README.md) for persistence,
+ephemeral mounts, custom engine paths, and the offline codemem relocation.
+
 ### Operator contract
 
 The seam between the **`ach-runtime` operator** (Go) and this harness (Python) is one contract

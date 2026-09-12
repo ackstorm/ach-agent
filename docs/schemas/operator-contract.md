@@ -1007,3 +1007,37 @@ with a real `.git` — at the engine's cwd before the first token. That removes 
 the base64 tarball, the TTL sweep and the prompt hint that advertised the tool.
 
 Implementation-level gates live in the implementation plans, not here.
+
+## Phase 1 split role packaging
+
+The Phase 1 deployment may render three ordinary containers from the image
+targets `harness`, `channels`, and `engine-opencode` or `engine-pi`. The role
+environment is explicit: H uses `ACH_CONFIG_PATH`, `ACH_ENGINE_URL`, and the
+channel HMAC key; C uses `ACH_CHANNELS_CONFIG_PATH`, `ACH_HARNESS_URL`,
+`ACH_CHANNELS_HMAC_KEY`, and `ACH_AGENT_NAME`; E uses
+`ACH_ENGINE_CONFIG_PATH`, `ACH_ENGINE_HOST`, and `ACH_ENGINE_PORT`. The C
+`ACH_AGENT_NAME` value MUST equal H's rendered `agent.name`.
+
+Role images share the Python dependency base. H retains Git and operator script
+runtime dependencies; E includes the native selected engine, codemem when
+needed, Git for workspace/native coding behavior, and tini as PID 1; C has no
+full runtime config or private state mount. Internal H/E listeners bind
+127.0.0.1. In Compose, C and E use `network_mode: service:harness` and the
+channels ingress is published through that namespace. Kubernetes rendering
+uses no host network, host PID, runtime socket, init container, or automatic
+service-account token.
+
+Persistence is role-scoped. H's `<mountPath>/state/state.db` is private. E's
+codemem logical path remains `<mountPath>/state/codemem.db`, but E mounts an
+E-owned physical directory containing that database and its `-wal`/`-shm`
+siblings; it never mounts H's state directory. Existing codemem data must be
+relocated offline as one coherent SQLite set before rollout, with an integrity
+check and backup. An empty E directory is not a migration and MUST NOT be used
+to silently reset existing memory. Ephemeral deployments use the same logical
+paths backed by `emptyDir` and set persistence disabled. Custom `engine.home`
+and `engine.workDir` render equivalent narrow E/private and H/E/shared mounts.
+
+These repository manifests are contract examples and validation fixtures.
+Production `ach-runtime` owns dynamic path, PVC, ConfigMap, and Secret
+rendering; adding these files does not mutate a cluster or complete that
+separate repository change.

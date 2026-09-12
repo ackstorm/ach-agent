@@ -70,7 +70,7 @@ RUN uv pip install --system --no-cache-dir --target=/app/deps . \
  && find /app/deps -name "*.pyi" -delete
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────
-FROM python:3.12-slim
+FROM python:3.12-slim AS combined
 WORKDIR /app
 
 # PYTHONPATH points at the install target so deps are version-agnostic.
@@ -86,7 +86,7 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/app/deps
 # fails on every invocation, and the agent reviews nothing.
 RUN apt-get update -qq \
  && apt-get install -y --no-install-recommends \
-      ripgrep libatomic1 git openssh-client ca-certificates \
+      ripgrep libatomic1 git openssh-client ca-certificates tini \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/deps /app/deps
@@ -145,4 +145,78 @@ USER 10001
 #   docker run -it IMAGE --tui    → interactive console REPL
 #   docker run -i  IMAGE --prompt "hello"  → one-shot, print reply, exit
 # invoke via `python -m` so we don't depend on console-script shebangs or PATH.
+ENTRYPOINT ["/usr/bin/tini", "--", "python", "-m", "ach_agent.main"]
+
+# ── split role Python base ────────────────────────────────────────────────────
+# Split roles share the dependency layer while keeping native binaries and
+# preparation tooling scoped to their owner. The combined stage above remains
+# the default local image contract.
+FROM python:3.12-slim AS split-runtime
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/app/deps
+RUN apt-get update -qq \
+ && apt-get install -y --no-install-recommends ripgrep libatomic1 ca-certificates tini \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/deps /app/deps
+RUN useradd -u 10001 -m appuser \
+ && mkdir -p /tmp/ach-home /tmp/ach-harness-state /tmp/ach-public-context /tmp/ach-private \
+      /var/lib/ach-agent/state /var/lib/ach-agent/home /var/lib/ach-agent/workspace \
+      /var/lib/ach-agent/public-context \
+ && chown -R 10001 /tmp/ach-home /tmp/ach-harness-state /tmp/ach-public-context /tmp/ach-private \
+      /var/lib/ach-agent
+USER 10001
 ENTRYPOINT ["python", "-m", "ach_agent.main"]
+
+FROM split-runtime AS channels
+ENV ACH_ROLE=channels
+EXPOSE 8080
+
+FROM split-runtime AS harness
+USER root
+RUN apt-get update -qq \
+ && apt-get install -y --no-install-recommends git openssh-client \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /etc/ach-agent \
+ && chown -R 10001 /etc/ach-agent
+COPY docker/sample-config.yaml /etc/ach-agent/config.yaml
+ENV ACH_ROLE=harness ACH_CONFIG_PATH=/etc/ach-agent/config.yaml
+USER 10001
+EXPOSE 8090
+
+# ── per-engine role images ────────────────────────────────────────────────────
+# tini is PID 1 for E; the mini-harness Python process is its only direct child
+# and owns/reaps native Pi/OpenCode descendants.
+FROM split-runtime AS engine-opencode
+USER root
+RUN apt-get update -qq \
+ && apt-get install -y --no-install-recommends git openssh-client \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=opencode-bin /usr/local/bin/opencode /usr/local/bin/opencode
+COPY --from=codemem-bin /usr/local/bin/node /usr/local/bin/node
+COPY --from=codemem-bin /opt/codemem /opt/codemem
+ENV PATH="/opt/codemem/bin:${PATH}" ACH_ROLE=engine
+RUN opencode --version && codemem --version
+USER 10001
+ENTRYPOINT ["/usr/bin/tini", "--", "python", "-m", "ach_agent.main"]
+EXPOSE 8081
+
+FROM split-runtime AS engine-pi
+USER root
+RUN apt-get update -qq \
+ && apt-get install -y --no-install-recommends git openssh-client \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=codemem-bin /usr/local/bin/node /usr/local/bin/node
+COPY --from=codemem-bin /opt/codemem /opt/codemem
+COPY --from=pi-bin /opt/pi /opt/pi
+COPY --from=pi-bin /opt/pi-mcp-adapter /opt/pi-mcp-adapter
+ENV PATH="/opt/pi/bin:/opt/codemem/bin:${PATH}" ACH_ROLE=engine
+RUN pi --version \
+ && codemem --version \
+ && test -f /opt/pi-mcp-adapter/node_modules/pi-mcp-adapter/package.json
+USER 10001
+ENTRYPOINT ["/usr/bin/tini", "--", "python", "-m", "ach_agent.main"]
+EXPOSE 8081
+
+# Keep an explicit final alias so a build without --target still yields the
+# combined image even though split targets are declared after it.
+FROM combined AS default

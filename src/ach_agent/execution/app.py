@@ -184,7 +184,11 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
             try:
                 yield _json_line(response_hello.model_dump(mode="json"))
                 events = service.controller_events()
-                while not service.shutdown_requested and not await request.is_disconnected():
+                while (
+                    service.controller_id == hello.controller_id
+                    and not service.shutdown_requested
+                    and not await request.is_disconnected()
+                ):
                     if events is None:
                         await asyncio.sleep(0.05)
                         continue

@@ -35,3 +35,11 @@ def test_remote_headers_expand_env_refs(monkeypatch: pytest.MonkeyPatch) -> None
     )
     entry = to_engine_entry(spec)
     assert entry["headers"] == {"Authorization": "Bearer sekret"}
+
+
+def test_remote_headers_expand_from_engine_environment_snapshot() -> None:
+    spec = RemoteMcpServer(
+        type="remote", url="https://x/mcp", headers={"Authorization": "Bearer ${env:E_TOKEN}"}
+    )
+    entry = to_engine_entry(spec, env={"E_TOKEN": "engine-value"})
+    assert entry["headers"] == {"Authorization": "Bearer engine-value"}

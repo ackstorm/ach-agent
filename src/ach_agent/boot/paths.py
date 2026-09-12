@@ -33,16 +33,24 @@ class RolePaths:
 
 def resolve_role_paths(cfg: AgentConfig) -> RolePaths:
     """Resolve stable split-role paths without broad parent mounts."""
+
+    def trusted(path: str | Path) -> Path:
+        # These roots come from operator configuration and are captured before E
+        # starts.  Canonicalizing here makes later no-follow checks apply to the
+        # actual trusted root even when a deployment uses a relative path or an
+        # alias such as /tmp on a platform with a redirected temporary directory.
+        return Path(path).expanduser().resolve(strict=False)
+
     if cfg.persistence.enabled:
-        mount = Path(cfg.persistence.mount_path)
-        harness_state = mount / "state"
-        engine_home = Path(cfg.engine.home or mount / "home")
-        public_context = mount / "public-context"
+        mount = trusted(cfg.persistence.mount_path)
+        harness_state = trusted(mount / "state")
+        engine_home = trusted(cfg.engine.home or mount / "home")
+        public_context = trusted(mount / "public-context")
     else:
-        harness_state = Path("/tmp/ach-harness-state")
-        engine_home = Path(cfg.engine.home or "/tmp/ach-home")
-        public_context = Path("/tmp/ach-public-context")
-    work_dir = Path(cfg.engine.work_dir or engine_home / "workspace")
+        harness_state = trusted("/tmp/ach-harness-state")
+        engine_home = trusted(cfg.engine.home or "/tmp/ach-home")
+        public_context = trusted("/tmp/ach-public-context")
+    work_dir = trusted(cfg.engine.work_dir or engine_home / "workspace")
     return RolePaths(
         harness_state=harness_state,
         harness_scratch=Path("/tmp/ach-private"),
@@ -51,20 +59,6 @@ def resolve_role_paths(cfg: AgentConfig) -> RolePaths:
         public_context=public_context,
         public_skills=public_context / "skills",
     )
-
-
-def ensure_role_layout(paths: RolePaths) -> None:
-    """Create only role-local/public directories before health is reported."""
-    for path in (
-        paths.harness_state,
-        paths.harness_scratch,
-        paths.engine_home,
-        paths.work_dir,
-        paths.public_context,
-        paths.public_skills,
-    ):
-        path.mkdir(mode=0o700 if path in (paths.harness_state, paths.harness_scratch) else 0o755,
-                   parents=True, exist_ok=True)
 
 
 def write_pid_file(pid_path: Path) -> None:

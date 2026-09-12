@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import httpx
@@ -105,6 +106,31 @@ def test_default_codemem_path_preserves_existing_layout() -> None:
     assert public["codemem_db_path"] == "/tmp/ach-home/state/codemem.db"
 
 
+def test_default_codemem_path_stays_stable_with_custom_volatile_home(tmp_path: Path) -> None:
+    from ach_agent.boot.roles import build_role_configs
+
+    _channels, public = build_role_configs(
+        _cfg(
+            memory={"type": "codemem", "codemem": {}},
+            engine={"home": str(tmp_path / "custom-home")},
+        )
+    )
+    assert public["codemem_db_path"] == "/tmp/ach-home/state/codemem.db"
+
+
+def test_missing_engine_codemem_binary_degrades_with_empty_native_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ach_agent.execution.service import _engine_config
+
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    config = _engine_config(
+        PublicEngineConfig(codemem_db_path="/tmp/codemem.db", codemem_project="project")
+    )
+    assert config.codemem_db_path == ""
+    assert config.codemem_project == ""
+
+
 def test_public_context_paths_are_separate_from_engine_home(tmp_path: Path) -> None:
     cfg = _cfg(persistence={"enabled": True, "mountPath": str(tmp_path)})
 
@@ -114,6 +140,48 @@ def test_public_context_paths_are_separate_from_engine_home(tmp_path: Path) -> N
     assert paths.engine_home != paths.public_context
     assert paths.harness_scratch != paths.engine_home
     assert paths.public_context.parent == tmp_path
+
+
+def test_role_paths_canonicalize_relative_trusted_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _cfg(engine={"home": "./native/../engine-home", "workDir": "./work/../workspace"})
+
+    from ach_agent.boot.paths import resolve_role_paths
+
+    paths = resolve_role_paths(cfg)
+    assert paths.engine_home == (tmp_path / "engine-home").resolve()
+    assert paths.work_dir == (tmp_path / "workspace").resolve()
+
+
+def test_prepared_workspace_rejects_child_symlink_escape(tmp_path: Path) -> None:
+    from ach_agent.engine.workspace import (
+        WorkspaceHandoffFailed,
+        _check_path_components,
+        prepare_workspace,
+    )
+
+    workspace = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "session")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (workspace / "artifact").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(WorkspaceHandoffFailed, match="symlink"):
+        _check_path_components(workspace / "artifact" / "bundle", workspace)
+
+
+def test_role_session_store_selection_is_persistent_or_volatile(tmp_path: Path) -> None:
+    from ach_agent.boot.roles import _open_session_store
+    from ach_agent.engine.base.pool import _LRUSessionMap
+    from ach_agent.execution.state import NativeSessionStore
+
+    persistent = _open_session_store(
+        PublicEngineConfig(persistence_enabled=True), tmp_path / "persistent"
+    )
+    assert isinstance(persistent, NativeSessionStore)
+    persistent.close()  # type: ignore[attr-defined]
+    volatile = _open_session_store(PublicEngineConfig(), tmp_path / "volatile")
+    assert isinstance(volatile, _LRUSessionMap)
 
 
 def test_engine_context_links_public_state_without_replacing_private_home(tmp_path: Path) -> None:
@@ -169,13 +237,18 @@ def test_engine_context_accepts_read_only_public_target(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_session_import_is_controller_owned_and_startup_only(tmp_path: Path) -> None:
-    from ach_agent.engine.opencode.driver import OpencodeDriver
     from ach_agent.execution.service import ExecutionService
     from ach_agent.execution.state import NativeSessionStore
-    from ach_agent.execution.wire import SessionImportRequest
+    from ach_agent.execution.wire import (
+        AcquireRequest,
+        PublicEngineConfig,
+        ReleaseRequest,
+        SessionImportRequest,
+    )
+    from tests.execution.conftest import FakeDriver
 
     store = NativeSessionStore(tmp_path / "home")
-    service = ExecutionService(OpencodeDriver(), store)
+    service = ExecutionService(FakeDriver(), store)
     await service.claim_controller("controller")
     request = SessionImportRequest(
         controller_id="controller",
@@ -184,10 +257,34 @@ async def test_session_import_is_controller_owned_and_startup_only(tmp_path: Pat
     assert await service.import_legacy_sessions(request) == 1
     assert store.get("opencode:review") == "ses-old"
     assert await service.import_legacy_sessions(request) == 0
-    service._acquiring.add("already-started")
+
+    started_store = NativeSessionStore(tmp_path / "started")
+    started_service = ExecutionService(FakeDriver(), started_store)
+    await started_service.claim_controller("controller")
+    handle = await started_service.acquire(
+        AcquireRequest(
+            controller_id="controller",
+            invocation_id="invocation",
+            lane_key="lane",
+            conversation_key="conversation",
+            reuse=True,
+            remaining_seconds=5,
+            config=PublicEngineConfig(),
+        )
+    )
+    await started_service.release(
+        ReleaseRequest(
+            controller_id="controller",
+            execution_id=handle.execution_id,
+            invocation_id=handle.invocation_id,
+            idle_ttl_seconds=0,
+        )
+    )
+    late_request = request.model_copy(update={"controller_id": "controller"})
     with pytest.raises(ValueError, match="startup"):
-        await service.import_legacy_sessions(request)
+        await started_service.import_legacy_sessions(late_request)
     store.close()
+    started_store.close()
 
 
 @pytest.mark.asyncio
@@ -221,8 +318,65 @@ async def test_session_import_http_accepts_rows_only(tmp_path: Path) -> None:
     execution_client = ExecutionClient(
         "http://engine", controller_id="controller", transport=transport
     )
-    assert await execution_client.import_legacy_sessions(
-        [{"key": "opencode:review", "ocSessionId": "new", "lastUsed": 3.0}]
-    ) == 0
+    assert (
+        await execution_client.import_legacy_sessions(
+            [{"key": "opencode:review", "ocSessionId": "new", "lastUsed": 3.0}]
+        )
+        == 0
+    )
     await execution_client.close()
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_session_import_reconnect_is_idempotent_and_keeps_newer_mapping(
+    tmp_path: Path,
+) -> None:
+    from ach_agent.engine.opencode.driver import OpencodeDriver
+    from ach_agent.execution.service import ExecutionService
+    from ach_agent.execution.state import NativeSessionStore
+    from ach_agent.execution.wire import SessionImportRequest
+
+    store = NativeSessionStore(tmp_path / "engine")
+    store["opencode:review"] = "newer-session"
+    service = ExecutionService(OpencodeDriver(), store)
+    await service.claim_controller("first-controller")
+    old = SessionImportRequest(
+        controller_id="first-controller",
+        rows=[{"key": "opencode:review", "ocSessionId": "old-session", "lastUsed": 1.0}],
+    )
+    assert await service.import_legacy_sessions(old) == 1
+    await service.release_controller("first-controller")
+
+    await service.claim_controller("second-controller")
+    repeated = old.model_copy(update={"controller_id": "second-controller"})
+    assert await service.import_legacy_sessions(repeated) == 0
+    assert store.get("opencode:review") == "newer-session"
+    await service.release_controller("second-controller")
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_execution_client_imports_actual_sqlite_export(tmp_path: Path) -> None:
+    from ach_agent.boot.execution_client import ExecutionClient
+    from ach_agent.engine.opencode.driver import OpencodeDriver
+    from ach_agent.execution.app import create_execution_app
+    from ach_agent.execution.service import ExecutionService
+    from ach_agent.execution.state import NativeSessionStore, export_legacy_sessions
+
+    legacy = tmp_path / "legacy.db"
+    with sqlite3.connect(legacy) as connection:
+        connection.execute(
+            "CREATE TABLE oc_sessions (key TEXT PRIMARY KEY, oc_session_id TEXT, last_used REAL)"
+        )
+        connection.execute("INSERT INTO oc_sessions VALUES (?, ?, ?)", ("oc:one", "ses-1", 2.0))
+    exported = export_legacy_sessions(legacy)
+    store = NativeSessionStore(tmp_path / "engine")
+    service = ExecutionService(OpencodeDriver(), store)
+    await service.claim_controller("controller")
+    transport = httpx.ASGITransport(app=create_execution_app(service))
+    client = ExecutionClient("http://engine", controller_id="controller", transport=transport)
+    assert await client.import_legacy_sessions(exported) == 1
+    assert store.get("oc:one") == "ses-1"
+    await client.close()
     store.close()

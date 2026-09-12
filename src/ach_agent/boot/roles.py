@@ -66,7 +66,7 @@ def _source_projection(cfg: AgentConfig) -> list[dict[str, JsonValue]]:
     return projected
 
 
-def _codemem_bootstrap(cfg: AgentConfig, engine_home: Path) -> tuple[str, str]:
+def _codemem_bootstrap(cfg: AgentConfig) -> tuple[str, str]:
     """Return codemem path/project without probing the E image from H."""
     memory = cfg.memory
     if not isinstance(memory, CodememMemory):
@@ -77,8 +77,19 @@ def _codemem_bootstrap(cfg: AgentConfig, engine_home: Path) -> tuple[str, str]:
     elif cfg.persistence.enabled:
         db_path = str(Path(cfg.persistence.mount_path) / "state" / "codemem.db")
     else:
-        db_path = str(engine_home / "state" / "codemem.db")
+        # Keep the pre-split volatile location stable even when an operator
+        # chooses a custom native engine home.
+        db_path = "/tmp/ach-home/state/codemem.db"
     return db_path, params.project
+
+
+def _open_session_store(public: PublicEngineConfig, home: Path) -> MutableMapping[str, str]:
+    """Select the engine-owned persistent map or the volatile boot map."""
+    if public.persistence_enabled:
+        return NativeSessionStore(home)
+    from ach_agent.engine.base.pool import _LRUSessionMap
+
+    return _LRUSessionMap()
 
 
 def build_role_configs(
@@ -108,7 +119,7 @@ def build_role_configs(
         "schemaVersion": "1",
         "channels": cast(JsonValue, _source_projection(cfg)),
     }
-    codemem_db_path, codemem_project = _codemem_bootstrap(cfg, paths.engine_home)
+    codemem_db_path, codemem_project = _codemem_bootstrap(cfg)
     templates = {
         name: spec
         for name, spec in cfg.mcp_servers.items()
@@ -157,12 +168,7 @@ async def run_engine(public_config: JsonValue) -> None:
     home.mkdir(parents=True, exist_ok=True)
     work_dir.mkdir(parents=True, exist_ok=True)
     link_public_context(home, public_context, create_public=False)
-    if public.persistence_enabled:
-        store: MutableMapping[str, str] = NativeSessionStore(home)
-    else:
-        from ach_agent.engine.base.pool import _LRUSessionMap
-
-        store = _LRUSessionMap()
+    store = _open_session_store(public, home)
     if public.engine_type == "pi":
         from ach_agent.engine.pi.driver import PiDriver
 
@@ -181,15 +187,19 @@ async def run_engine(public_config: JsonValue) -> None:
         raise SplitRoleConfigError("ACH_ENGINE_PORT must be an integer") from exc
     server = uvicorn.Server(uvicorn.Config(app=app, host=host, port=port, log_level="warning"))
 
-    async def stop_on_unhealthy() -> None:
-        while not service.shutdown_requested:
+    async def stop_on_shutdown() -> None:
+        # Uvicorn waits for an open streaming response during graceful shutdown.
+        # Release the controller first for both an unhealthy service and an
+        # ordinary SIGTERM/should_exit request, so the held NDJSON response can
+        # finish and uvicorn can actually return from serve().
+        while not service.shutdown_requested and not server.should_exit:
             await asyncio.sleep(0.05)
-        # Force the held controller stream to observe shutdown.  Merely setting
-        # Server.should_exit leaves an active NDJSON response open indefinitely.
-        await service.release_controller(service.controller_id or "")
-        server.should_exit = True
+        try:
+            await service.release_controller(service.controller_id or "")
+        finally:
+            server.should_exit = True
 
-    watcher = asyncio.create_task(stop_on_unhealthy())
+    watcher = asyncio.create_task(stop_on_shutdown())
     try:
         await server.serve()
     finally:

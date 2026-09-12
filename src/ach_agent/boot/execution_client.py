@@ -29,6 +29,7 @@ from ach_agent.engine.base.events import (
 )
 from ach_agent.engine.workspace import workspace_dir
 from ach_agent.execution.service import MAX_NDJSON_RECORD_BYTES
+from ach_agent.execution.state import MAX_MIGRATION_ROWS, LegacySessionRow
 from ach_agent.execution.wire import (
     AcquireRequest,
     ControllerHello,
@@ -408,15 +409,43 @@ class ExecutionClient:
             raise
 
     async def import_legacy_sessions(
-        self, rows: Iterable[SessionImportRow | Mapping[str, Any]]
+        self, rows: Iterable[LegacySessionRow | SessionImportRow | Mapping[str, Any]]
     ) -> int:
         """Send the bounded row export to E before the first acquired execution."""
         self._assert_controller_live()
         self._validate_controller(self.controller_id)
-        typed_rows = [
-            row if isinstance(row, SessionImportRow) else SessionImportRow.model_validate(row)
-            for row in rows
-        ]
+        bounded = list(itertools.islice(rows, MAX_MIGRATION_ROWS + 1))
+        if len(bounded) > MAX_MIGRATION_ROWS:
+            raise ExecutionClientError(f"legacy session import exceeds {MAX_MIGRATION_ROWS} rows")
+        typed_rows: list[SessionImportRow] = []
+        for row in bounded:
+            if isinstance(row, LegacySessionRow):
+                typed_rows.append(
+                    SessionImportRow(
+                        key=row.key,
+                        oc_session_id=row.oc_session_id,
+                        last_used=row.last_used,
+                    )
+                )
+            elif isinstance(row, SessionImportRow):
+                typed_rows.append(row)
+            else:
+                try:
+                    # Accept the wire aliases too for callers that already
+                    # serialized a row, while LegacySessionRow remains the
+                    # canonical in-process export accepted from H.
+                    try:
+                        wire_row = SessionImportRow.model_validate(row)
+                    except (TypeError, ValueError):
+                        legacy_row = LegacySessionRow.model_validate(row)
+                        wire_row = SessionImportRow(
+                            key=legacy_row.key,
+                            oc_session_id=legacy_row.oc_session_id,
+                            last_used=legacy_row.last_used,
+                        )
+                    typed_rows.append(wire_row)
+                except (TypeError, ValueError) as exc:
+                    raise ExecutionClientError("invalid legacy session row") from exc
         result = await self._json_request(
             "POST",
             "/execution/v1/session-import",
@@ -425,9 +454,10 @@ class ExecutionClient:
                 rows=typed_rows,
             ).model_dump(mode="json"),
         )
-        if not isinstance(result, dict) or not isinstance(result.get("imported"), int):
+        imported = result.get("imported") if isinstance(result, dict) else None
+        if type(imported) is not int or imported < 0 or imported > len(typed_rows):
             raise ExecutionClientError("invalid legacy session import response")
-        return int(result["imported"])
+        return imported
 
     def _assert_controller_live(self) -> None:
         if self._closed:

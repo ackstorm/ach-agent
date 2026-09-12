@@ -2,10 +2,14 @@
 
 Implements the CI secret-leakage test required by the plan's threat model (T-00-EK).
 """
+
 from __future__ import annotations
 
 import logging
 import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -99,9 +103,37 @@ def test_redact_ek_processor_mid_token_secret() -> None:
     # Mid-token: ek_ is preceded by a word character ('n') — old \\b fails here
     event_dict = {"error": "upstream error: tokenek_live_ABC123 rejected"}
     result = redact_ek_processor(None, "info", event_dict)
-    assert "[REDACTED]" in result["error"], (
-        "CR-03: ek_ token embedded mid-word must be redacted"
-    )
+    assert "[REDACTED]" in result["error"], "CR-03: ek_ token embedded mid-word must be redacted"
     assert "ek_live_ABC123" not in result["error"], (
         "CR-03: raw ek_ value must NOT appear in redacted output"
     )
+
+
+@pytest.mark.parametrize("builder", ["opencode", "pi"])
+def test_native_child_receives_only_explicit_engine_env(
+    builder: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from ach_agent.engine.base.driver import EngineConfig
+
+    monkeypatch.setenv("E_OWNED_MARKER", "engine-value")
+    monkeypatch.setenv("H_MANAGED_MARKER", "must-not-cross")
+    config = EngineConfig(engine_env_names=["E_OWNED_MARKER"])
+    if builder == "opencode":
+        from ach_agent.engine.lifecycle import build_opencode_env
+
+        env = build_opencode_env(tmp_path / "home", config, tmp_path / "config.json")
+    else:
+        from ach_agent.engine.pi.config import build_pi_env
+
+        env = build_pi_env(tmp_path / "pi", config)
+    observed = subprocess.check_output(
+        [
+            sys.executable,
+            "-c",
+            "import os; print(os.getenv('E_OWNED_MARKER','')); "
+            "print(os.getenv('H_MANAGED_MARKER',''))",
+        ],
+        env=env,
+        text=True,
+    ).splitlines()
+    assert observed == ["engine-value", ""]

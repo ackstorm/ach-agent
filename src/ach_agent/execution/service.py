@@ -48,6 +48,7 @@ from ach_agent.execution.wire import (
     WorkspacePrepareRequest,
     WorkspaceStoppedEvent,
 )
+from ach_agent.memory.common import inc_memory_degraded
 
 log = structlog.get_logger(__name__)
 
@@ -142,6 +143,8 @@ def _engine_config(public: Any) -> EngineConfig:
     # Codemem is an engine-local executable.  H supplies only the approved path and
     # project; E decides whether its own image can provide the optional backend.
     if values.get("codemem_db_path") and shutil.which("codemem") is None:
+        log.warning("codemem binary not on PATH — running degraded (MEM-02, D-02)")
+        inc_memory_degraded()
         values["codemem_db_path"] = ""
         values["codemem_project"] = ""
     return EngineConfig(**values)
@@ -337,6 +340,10 @@ class ExecutionService:
         self._completed_cancellations.clear()
         self._controller_events = None
         self._workspace_barriers.clear()
+        # A fresh controller bootstrap may repeat the idempotent legacy import.
+        # Keep the acquisition guard active for the current controller until this
+        # cleanup completes, so a late import after release is still rejected.
+        self._execution_started = False
 
     def controller_events(self) -> asyncio.Queue[WorkspaceStoppedEvent] | None:
         """Return the finite event queue held by the current controller stream."""

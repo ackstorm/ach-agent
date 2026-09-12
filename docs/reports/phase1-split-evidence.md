@@ -19,8 +19,8 @@ trap. It ran each engine with the same channels and harness roles.
 
 | target | live result | upstream evidence | failure/cancel evidence |
 | --- | --- | --- | --- |
-| OpenCode | two HTTP 202 admissions completed with `PHASE1_SPLIT_REPLY` / `action: none`; startup 4s | `authorized=4`, `hydrate=1`, `model=3`, message sizes `[3,2,4]` | an active `CANCEL_ME` event became `failed` after E termination in 1s; H `readyz` returned 503 |
-| Pi | two HTTP 202 admissions completed with `PHASE1_SPLIT_REPLY` / `action: none`; startup 4s | `authorized=3`, `hydrate=1`, `model=2`, message sizes `[2,4]` | an active `CANCEL_ME` event became `failed` after E termination in 1s; H `readyz` returned 503 |
+| OpenCode | two HTTP 202 admissions completed with `PHASE1_SPLIT_REPLY` / `action: none`; startup 4s | `authorized=4`, `hydrate=1`, `model=3`, message sizes `[3,2,4]` | an active `CANCEL_ME` event became `failed` after E termination in 2s; H `readyz` returned 503 |
+| Pi | two HTTP 202 admissions completed with `PHASE1_SPLIT_REPLY` / `action: none`; startup 5s | `authorized=3`, `hydrate=1`, `model=2`, message sizes `[2,4]` | an active `CANCEL_ME` event became `failed` after E termination in 2s; H `readyz` returned 503 |
 
 The final live run's built image IDs were H
 `sha256:6f19bc8779622def941ec1de33f89b6d725b72624cf05bb4968269e7c4b79f1b`, C
@@ -131,9 +131,22 @@ The targeted Docker test command passed after the acceptance changes:
 
 ```text
 rtk proxy ./scripts/dev.sh uv run pytest tests/integration/test_split_parity.py tests/integration/test_split_failures.py tests/test_prepare.py -q
-45 passed in 3.15s
+45 passed in 2.87s
 ```
 
-The final unchanged repository pre-push gate and its exact result are recorded here
-after the final commit. No push, merge, release, or external deployment is part of
-this evidence.
+The unchanged repository gate was run in a clean local clone at commit `076bcac`
+with `PRE_PUSH_BASE_REF=462912f`:
+
+```text
+rtk proxy env PRE_PUSH_BASE_REF=462912f ./scripts/pre-push-check.sh
+gitleaks: 53 commits scanned, no leaks found
+ruff/mypy: passed
+pytest tests/ --ignore=tests/e2e: 1211 passed, 3 skipped
+pytest tests/conformance/: 18 passed
+pre-push: all gates passed.
+```
+
+The first full-gate attempt hit one timing-only failure in
+`test_graceful_stop_uses_long_cleanup_client_budget`; the isolated test passed,
+and the immediate unchanged gate rerun passed as recorded above. No push, merge,
+release, or external deployment is part of this evidence.

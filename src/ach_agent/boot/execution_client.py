@@ -38,6 +38,7 @@ from ach_agent.execution.wire import (
     SessionOperation,
     SessionReadyRequest,
     TurnRequest,
+    WorkspaceCancelRequest,
     WorkspaceCleanupAckRequest,
     WorkspaceHandoffRequest,
     WorkspaceOperationFailure,
@@ -435,7 +436,12 @@ class ExecutionClient:
                     await task
 
     async def _confirm_workspace_cancel(
-        self, controller_id: str, invocation_id: str, *, timeout: float | None = None
+        self,
+        controller_id: str,
+        invocation_id: str,
+        *,
+        execution_id: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         self._assert_controller_live()
         self._validate_controller(controller_id)
@@ -445,7 +451,11 @@ class ExecutionClient:
                 self.cleanup_client.build_request(
                     "POST",
                     "/execution/v1/cancel",
-                    json={"controller_id": controller_id, "invocation_id": invocation_id},
+                    json=WorkspaceCancelRequest(
+                        controller_id=controller_id,
+                        invocation_id=invocation_id,
+                        execution_id=execution_id,
+                    ).model_dump(mode="json", exclude_none=True),
                     timeout=max(
                         WORKSPACE_CANCEL_TIMEOUT_SECONDS,
                         timeout
@@ -833,7 +843,9 @@ class ExecutionClient:
             finished = True
         except asyncio.CancelledError:
             with contextlib.suppress(BaseException):
-                await asyncio.shield(self.cancel(request.controller_id, request.invocation_id))
+                await asyncio.shield(
+                    self._cancel_stream(request.controller_id, request.invocation_id)
+                )
             raise
         except BaseException as exc:
             stream_error = exc
@@ -843,10 +855,10 @@ class ExecutionClient:
             await response.aclose()
             if not finished and not self._closed:
                 if request.invocation_id not in self._cancelled_invocations:
-                        with contextlib.suppress(BaseException):
-                            await asyncio.shield(
-                                self._cancel_stream(request.controller_id, request.invocation_id)
-                            )
+                    with contextlib.suppress(BaseException):
+                        await asyncio.shield(
+                            self._cancel_stream(request.controller_id, request.invocation_id)
+                        )
             if (
                 isinstance(stream_error, httpx.HTTPError)
                 and request.invocation_id not in self._cancelled_invocations
@@ -956,14 +968,21 @@ class ExecutionClient:
         await self._cancel_owned(controller_id, invocation_id, retain_confirmation=False)
 
     async def _cancel_owned(
-        self, controller_id: str, invocation_id: str, *, retain_confirmation: bool
+        self,
+        controller_id: str,
+        invocation_id: str,
+        *,
+        execution_id: str | None = None,
+        retain_confirmation: bool,
     ) -> None:
         self._validate_controller(controller_id)
         active = invocation_id in self._active_turns
         if active:
             self._cancelled_invocations.add(invocation_id)
         try:
-            await self._confirm_workspace_cancel(controller_id, invocation_id)
+            await self._confirm_workspace_cancel(
+                controller_id, invocation_id, execution_id=execution_id
+            )
         except BaseException as exc:
             if active:
                 self._cancelled_invocations.discard(invocation_id)
@@ -981,7 +1000,14 @@ class ExecutionClient:
 
     async def _cancel_stream(self, controller_id: str, invocation_id: str) -> None:
         """Cancel a turn stream and retain confirmation for runner finalization."""
-        await self._cancel_owned(controller_id, invocation_id, retain_confirmation=True)
+        handle = self._handles.get(invocation_id)
+        execution_id = handle.execution_id if handle is not None else None
+        await self._cancel_owned(
+            controller_id,
+            invocation_id,
+            execution_id=execution_id,
+            retain_confirmation=True,
+        )
 
     async def cancel_handle(self, handle: ExecutionHandle) -> None:
         """Finalize cancellation for a handle acquired by this client.
@@ -995,7 +1021,12 @@ class ExecutionClient:
         if current is not None:
             if current != handle:
                 raise ExecutionClientError("execution request identity mismatch")
-            await self.cancel(handle.controller_id, handle.invocation_id)
+            await self._cancel_owned(
+                handle.controller_id,
+                handle.invocation_id,
+                execution_id=handle.execution_id,
+                retain_confirmation=False,
+            )
             return
         confirmed = self._confirmed_cancellations.get(handle.invocation_id)
         if confirmed == handle:

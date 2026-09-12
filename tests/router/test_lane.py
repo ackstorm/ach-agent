@@ -215,6 +215,7 @@ async def test_lane_cancel_finishes_running_and_queued_registry_entries() -> Non
             self.released += 1
 
     router = _CountingRouter()
+
     async def _accepted(_event):
         return RouterAdmitResult.ACCEPTED
 

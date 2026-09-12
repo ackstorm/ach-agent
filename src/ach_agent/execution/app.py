@@ -33,6 +33,7 @@ from ach_agent.execution.wire import (
     SessionOperation,
     SessionReadyRequest,
     TurnRequest,
+    WorkspaceCancelRequest,
     WorkspaceCleanupAckRequest,
     WorkspaceHandoffRequest,
     WorkspaceOperationFailure,
@@ -280,7 +281,11 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
         async def cancel_invocation() -> None:
             with anyio.CancelScope(shield=True):
                 with contextlib.suppress(BaseException):
-                    await service.cancel(body.controller_id, body.invocation_id)
+                    await service.cancel(
+                        body.controller_id,
+                        body.invocation_id,
+                        execution_id=body.execution_id,
+                    )
 
         async def output() -> AsyncIterator[bytes]:
             nonlocal stream_finished
@@ -385,17 +390,17 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
     @app.post("/execution/v1/cancel")
     async def cancel(request: Request) -> JSONResponse:
         try:
-            body = await _request_json(request)
-            controller_id = body["controller_id"]
-            invocation_id = body["invocation_id"]
-            if not isinstance(controller_id, str) or not isinstance(invocation_id, str):
-                raise ValueError("controller_id and invocation_id must be strings")
+            body = WorkspaceCancelRequest.model_validate(await _request_json(request))
         except _BodyTooLarge:
             return JSONResponse({"detail": "request body too large"}, status_code=413)
         except (_InvalidBody, KeyError, TypeError, ValueError) as exc:
             return _invalid(str(exc))
         try:
-            await service.cancel(controller_id, invocation_id)
+            await service.cancel(
+                body.controller_id,
+                body.invocation_id,
+                execution_id=body.execution_id,
+            )
         except Exception as exc:
             return service_error(exc)
         return JSONResponse({"status": "ok"})

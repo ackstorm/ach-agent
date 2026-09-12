@@ -131,6 +131,19 @@ class ReleaseRequest(_WireModel):
         return value
 
 
+class WorkspaceCancelRequest(_WireModel):
+    """Cancel one reservation or acquired invocation.
+
+    ``execution_id`` is optional for pre-acquire workspace reservations.  Acquired
+    invocation cancellation carries it so a duplicate cleanup can be confirmed only
+    for the exact handle that owned the native process.
+    """
+
+    controller_id: str
+    invocation_id: str
+    execution_id: str | None = None
+
+
 class WorkspaceHook(_WireModel):
     """Credential-free channel hook configuration owned by the engine."""
 

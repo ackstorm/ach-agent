@@ -203,7 +203,6 @@ async def test_engine_runner_finishes_registry_on_engine_error(
     # patch the source.
     monkeypatch.setattr(terminal, "run_contract_turn", _boom)
 
-
     async def _accepted(_event: MessageEvent) -> RouterAdmitResult:
         return RouterAdmitResult.ACCEPTED
 

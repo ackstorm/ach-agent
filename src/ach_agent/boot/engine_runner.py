@@ -103,6 +103,7 @@ def make_engine_runner(
     from ach_agent.boot.paths import private_scratch_dir
     from ach_agent.boot.private_prepare import (
         PrivateCleanupRegistry,
+        PrivatePrepareFailed,
         dispose_private_bundle,
         private_prepare,
     )
@@ -180,10 +181,7 @@ def make_engine_runner(
         if a2a_facade_url:
             mcp_servers = {**mcp_servers, "a2a": a2a_facade_url}
         invocation_engine_cfg = engine_cfg.model_copy(update={"mcp_servers": mcp_servers})
-        if (
-            isinstance(memory_cfg, CodememMemory)
-            and "{{" in memory_cfg.codemem.project
-        ):
+        if isinstance(memory_cfg, CodememMemory) and "{{" in memory_cfg.codemem.project:
             invocation_engine_cfg = invocation_engine_cfg.model_copy(
                 update={"codemem_project": render_template(memory_cfg.codemem.project, ctx)}
             )
@@ -336,6 +334,12 @@ def make_engine_runner(
                     on_tool = make_tool_recorder(
                         on_tool, tool_sink, event, invocation_engine_cfg.model
                     )
+                log.info(
+                    "engine: prompt",
+                    channel=event.channel_name,
+                    session_key=event.session_key,
+                    prompt=full_prompt,
+                )
                 turn_stats: dict[str, Any] = {}
                 obj = await run_contract_turn(
                     client.turn_callable(handle),
@@ -349,6 +353,13 @@ def make_engine_runner(
                     stats=turn_stats,
                 )
                 text = str(obj.get("text", ""))
+                log.info(
+                    "engine: response",
+                    channel=event.channel_name,
+                    session_key=event.session_key,
+                    action=obj.get("action"),
+                    text=text,
+                )
                 usage = turn_stats.get("usage")
                 if accountant is not None:
                     usage = accountant.end_turn(handle.proxy_route, usage)
@@ -383,6 +394,26 @@ def make_engine_runner(
                 else:
                     operation_names = []
                 for operation in operation_names:
+                    if operation == "compact":
+                        log.info(
+                            "session: maxTokens exceeded — compacting",
+                            session_key=event.session_key,
+                            session_ref=session_ref,
+                            input_tokens=getattr(usage, "input_tokens", 0),
+                            max_tokens=session_cfg.max_tokens if session_cfg is not None else None,
+                        )
+                    elif (
+                        operation == "discard"
+                        and session_cfg is not None
+                        and session_cfg.overflow == "rotate"
+                    ):
+                        log.info(
+                            "session: maxTokens exceeded — rotating",
+                            session_key=event.session_key,
+                            session_ref=session_ref,
+                            input_tokens=getattr(usage, "input_tokens", 0),
+                            max_tokens=session_cfg.max_tokens,
+                        )
                     await client.session_op(
                         SessionOperation(
                             controller_id=handle.controller_id,
@@ -423,8 +454,17 @@ def make_engine_runner(
         except Exception as exc:
             invocation_failed = True
             if handle is None:
-                ENGINE_LAUNCH_FAILURES.inc()
-                log.warning("engine: launch failed", session_key=event.session_key, error=str(exc))
+                if isinstance(exc, (PrivatePrepareFailed, WorkspaceOperationFailed)):
+                    log.warning(
+                        "workspace: preparation failed",
+                        session_key=event.session_key,
+                        error=str(exc),
+                    )
+                else:
+                    ENGINE_LAUNCH_FAILURES.inc()
+                    log.warning(
+                        "engine: launch failed", session_key=event.session_key, error=str(exc)
+                    )
             if completion_registry is not None and ref is not None:
                 await completion_registry.finish(ref, error=f"engine failure: {exc}")
             raise

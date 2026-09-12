@@ -242,7 +242,9 @@ async def test_supplied_empty_registry_is_used_and_evicted(tmp_path) -> None:
     with patch("ach_agent.engine.base.terminal.run_contract_turn", new=run_turn):
         runner = make_engine_runner(
             client=RunnerClient(Pool(), driver),
-        engine_cfg=PublicEngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
+            engine_cfg=PublicEngineConfig(
+                home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")
+            ),
             max_invocation_seconds=30,
             channels_by_name={"chat": channel},
             conversation_locks=locks,
@@ -310,7 +312,9 @@ async def test_runner_cancellation_during_release_does_not_poison_lock(tmp_path)
     with patch("ach_agent.engine.base.terminal.run_contract_turn", new=run_turn):
         runner = make_engine_runner(
             client=RunnerClient(Pool(), driver),
-        engine_cfg=PublicEngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
+            engine_cfg=PublicEngineConfig(
+                home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")
+            ),
             max_invocation_seconds=30,
             channels_by_name={"chat": channel},
         )

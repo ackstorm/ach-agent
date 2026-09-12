@@ -24,9 +24,12 @@ CHANNEL = "task-1-10-channel"
 
 
 def _counter_value() -> float:
-    return REGISTRY.get_sample_value(
-        "ach_agent_turn_cost_usd_total", {"model": MODEL, "channel": CHANNEL}
-    ) or 0.0
+    return (
+        REGISTRY.get_sample_value(
+            "ach_agent_turn_cost_usd_total", {"model": MODEL, "channel": CHANNEL}
+        )
+        or 0.0
+    )
 
 
 def _event() -> MessageEvent:

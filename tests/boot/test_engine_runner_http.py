@@ -481,3 +481,117 @@ async def test_public_workspace_hooks_do_not_accumulate_unconsumed_stop_events(
         finally:
             await runner.close()
             await client.close()
+
+
+@pytest.mark.asyncio
+async def test_real_http_runner_cancel_keeps_client_usable_for_peer() -> None:
+    from ach_agent.boot.execution_client import ExecutionClient
+    from ach_agent.execution.app import create_execution_app
+    from ach_agent.execution.service import ExecutionService
+    from tests.execution.conftest import FakeDriver
+    from tests.execution.test_http import _running_server
+
+    fake_driver = FakeDriver()
+    fake_driver.turn_barrier = asyncio.Event()
+    service = ExecutionService(fake_driver, {})
+    service.controller_required = True
+    async with _running_server(create_execution_app(service)) as base_url:
+        client = ExecutionClient(base_url, controller_id="controller", timeout=2)
+        await client.connect()
+        runner = make_engine_runner(
+            client=client,
+            engine_cfg=PublicEngineConfig(),
+            max_invocation_seconds=10,
+        )
+        task = asyncio.create_task(
+            runner(
+                MessageEvent(
+                    idempotency_key="cancelled",
+                    session_key="cancelled-lane",
+                    channel_name="chat",
+                    payload={},
+                ),
+                lambda: None,
+            )
+        )
+        try:
+            for _ in range(100):
+                if fake_driver.turn_session_refs:
+                    break
+                await asyncio.sleep(0.01)
+            assert fake_driver.turn_session_refs
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert fake_driver.stopped
+            assert not service._unhealthy
+            fake_driver.turn_barrier = None
+            peer = await runner(
+                MessageEvent(
+                    idempotency_key="peer-after-cancel",
+                    session_key="peer-lane",
+                    channel_name="chat",
+                    payload={},
+                ),
+                lambda: None,
+            )
+            assert peer == {"action": "none", "text": "reply"}
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            await runner.close()
+            await client.close()
+
+
+@pytest.mark.asyncio
+async def test_repeated_real_http_cancellation_consumes_handle_and_cost_metadata() -> None:
+    from ach_agent.boot.execution_client import ExecutionClient
+    from ach_agent.engine.cost import CostAccountant
+    from ach_agent.execution.app import create_execution_app
+    from ach_agent.execution.service import ExecutionService
+    from tests.execution.conftest import FakeDriver
+    from tests.execution.test_http import _running_server
+
+    fake_driver = FakeDriver()
+    service = ExecutionService(fake_driver, {})
+    service.controller_required = True
+    accountant = CostAccountant("engine", "openai", None, "gpt-4o-mini")
+    async with _running_server(create_execution_app(service)) as base_url:
+        client = ExecutionClient(base_url, controller_id="controller", timeout=2)
+        await client.connect()
+        runner = make_engine_runner(
+            client=client,
+            engine_cfg=PublicEngineConfig(),
+            max_invocation_seconds=10,
+            accountant=accountant,
+        )
+        try:
+            for index in range(3):
+                fake_driver.turn_barrier = asyncio.Event()
+                task = asyncio.create_task(
+                    runner(
+                        MessageEvent(
+                            idempotency_key=f"cancel-{index}",
+                            session_key=f"cancel-lane-{index}",
+                            channel_name="chat",
+                            payload={},
+                        ),
+                        lambda: None,
+                    )
+                )
+                for _ in range(100):
+                    if len(fake_driver.turn_session_refs) >= index + 1:
+                        break
+                    await asyncio.sleep(0.01)
+                assert len(fake_driver.turn_session_refs) >= index + 1
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                assert not client._handles
+                assert not client._confirmed_cancellations
+                assert not accountant._buckets
+            assert not service._unhealthy
+        finally:
+            await runner.close()
+            await client.close()

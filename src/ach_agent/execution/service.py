@@ -171,6 +171,7 @@ class ExecutionService:
         self._workspace_tasks: dict[str, asyncio.Task[Any]] = {}
         self._workspace_reservations: dict[str, _WorkspaceReservation] = {}
         self._workspace_cancelled: set[str] = set()
+        self._completed_cancellations: dict[str, str] = {}
         self.workspace_cleanup_errors: list[str] = []
         self._controller_events: asyncio.Queue[WorkspaceStoppedEvent] | None = None
         self._workspace_barriers: dict[str, _WorkspaceCleanupBarrier] = {}
@@ -269,9 +270,7 @@ class ExecutionService:
         try:
             await asyncio.wait_for(
                 asyncio.shield(cleanup_task),
-                timeout=CLEANUP_DEADLINE_SECONDS
-                + cleanup_budget
-                + CLEANUP_PROCESS_MARGIN_SECONDS,
+                timeout=CLEANUP_DEADLINE_SECONDS + cleanup_budget + CLEANUP_PROCESS_MARGIN_SECONDS,
             )
         except BaseException as exc:
             self._mark_unhealthy()
@@ -285,6 +284,7 @@ class ExecutionService:
         self._workspace_tasks.clear()
         self._workspace_reservations.clear()
         self._workspace_cancelled.clear()
+        self._completed_cancellations.clear()
         self._controller_events = None
         self._workspace_barriers.clear()
 
@@ -628,6 +628,7 @@ class ExecutionService:
 
     async def acquire(self, request: AcquireRequest) -> ExecutionHandle:
         self._assert_controller(request.controller_id)
+        self._completed_cancellations.pop(request.invocation_id, None)
         if self._unhealthy:
             raise RuntimeError("native cleanup failed; execution service is unhealthy")
         if request.invocation_id in self._invocations or request.invocation_id in self._acquiring:
@@ -892,6 +893,11 @@ class ExecutionService:
                 raise RuntimeError(inv.cleanup_error)
             if native_uncertain:
                 raise RuntimeError(inv.cleanup_error or "native cleanup uncertain")
+            if not release:
+                self._completed_cancellations[inv.handle.invocation_id] = inv.handle.execution_id
+                if len(self._completed_cancellations) > 64:
+                    oldest = next(iter(self._completed_cancellations))
+                    self._completed_cancellations.pop(oldest, None)
             if self._invocations.get(inv.handle.invocation_id) is inv:
                 self._invocations.pop(inv.handle.invocation_id, None)
 
@@ -1306,7 +1312,9 @@ class ExecutionService:
         if inv.cleanup_error is not None:
             raise RuntimeError(inv.cleanup_error)
 
-    async def cancel(self, controller_id: str, invocation_id: str) -> None:
+    async def cancel(
+        self, controller_id: str, invocation_id: str, *, execution_id: str | None = None
+    ) -> None:
         self._assert_controller(controller_id)
         reservation = self._workspace_reservations.get(invocation_id)
         if reservation is not None and invocation_id not in self._invocations:
@@ -1316,7 +1324,14 @@ class ExecutionService:
             return
         inv = self._invocations.get(invocation_id)
         if inv is None or inv.handle.controller_id != controller_id:
+            if (
+                execution_id is not None
+                and self._completed_cancellations.get(invocation_id) == execution_id
+            ):
+                return
             raise ValueError("unknown invocation")
+        if execution_id is not None and inv.handle.execution_id != execution_id:
+            raise ValueError("unknown execution")
         if inv.terminal:
             if inv.cleanup_task is not None:
                 await self._await_cleanup(inv.cleanup_task, inv)

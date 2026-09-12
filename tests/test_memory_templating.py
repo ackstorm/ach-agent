@@ -127,9 +127,7 @@ def test_console_prewarm_template_renders_session_key() -> None:
         session_key=_CONSOLE_SESSION_KEY,
     )
     result = render_template("{{ internal.session.key }}", ctx)
-    assert result == _CONSOLE_SESSION_KEY, (
-        f"expected {_CONSOLE_SESSION_KEY!r}, got {result!r}"
-    )
+    assert result == _CONSOLE_SESSION_KEY, f"expected {_CONSOLE_SESSION_KEY!r}, got {result!r}"
 
 
 def test_console_prewarm_literal_project_unchanged() -> None:

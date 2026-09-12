@@ -386,6 +386,17 @@ async def test_cancel_stops_running_turn(fake_driver):
 
 
 @pytest.mark.asyncio
+async def test_cancel_rejects_mismatched_execution_identity(fake_driver):
+    service = ExecutionService(fake_driver, {})
+    handle = await service.acquire(_acquire())
+    with pytest.raises(ValueError, match="unknown execution"):
+        await service.cancel("controller", handle.invocation_id, execution_id="wrong")
+    assert not fake_driver.stopped
+    await service.cancel("controller", handle.invocation_id, execution_id=handle.execution_id)
+    assert fake_driver.stopped
+
+
+@pytest.mark.asyncio
 async def test_invocation_deadline_cleans_idle_native_server(fake_driver):
     service = ExecutionService(fake_driver, {})
     request = _acquire().model_copy(update={"remaining_seconds": 0.03})
@@ -800,9 +811,7 @@ async def test_warm_expiry_failure_marks_service_unhealthy(fake_driver):
 
 
 @pytest.mark.asyncio
-async def test_native_uncertain_cleanup_fails_cancel_even_if_stop_returns(
-    fake_driver, monkeypatch
-):
+async def test_native_uncertain_cleanup_fails_cancel_even_if_stop_returns(fake_driver, monkeypatch):
     monkeypatch.setattr("ach_agent.execution.service.CLEANUP_DEADLINE_SECONDS", 0.03)
     service = ExecutionService(fake_driver, {})
     await service.acquire(_acquire())

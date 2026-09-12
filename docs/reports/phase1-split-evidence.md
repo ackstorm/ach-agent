@@ -58,7 +58,8 @@ as failed without replaying its prompt.
 ## Existing coverage mapped to the parity inventory
 
 The live Compose fixture is model-only. The following existing tests provide the
-remaining meaningful runtime evidence and are run by the repository gate:
+remaining meaningful runtime evidence; they are covered by the repository gate or
+the explicit targeted commands below:
 
 - `tests/e2e/test_opencode_mcp_structured_e2e.py` exercises real local MCP HTTP
   authentication through the proxy, model streaming, and terminal parsing. Its

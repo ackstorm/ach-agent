@@ -6,15 +6,16 @@ localhost proxy — so they carry no ACH credential and get no trace correlation
 Every engine consumes this one shape: opencode writes it verbatim into its `mcp.<name>`
 block, Pi's adapter reshapes it in ``engine.pi.mcp_json``. Mirrors
 ackbot-process._normalize_mcp_server: stdio → type "local" (command array), http → type
-"remote" (url + headers). Env NAMES / ${env:NAME} refs are resolved harness-side at write
-time — passthrough auth necessarily lands in the engine's config file, which is what needs
-it.
+"remote" (url + headers). Env NAMES / ${env:NAME} refs are resolved in the engine role at
+write time — passthrough auth necessarily lands in the engine's config file, which is what
+needs it. The harness serializes the typed template unchanged.
 """
 
 from __future__ import annotations
 
 import os
 import re
+from collections.abc import Mapping
 
 from ach_agent.config.schema import LocalMcpServer, RemoteMcpServer
 
@@ -22,25 +23,37 @@ from ach_agent.config.schema import LocalMcpServer, RemoteMcpServer
 _ENV_REF = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
-def _expand_env_refs(value: str) -> str:
-    """Expand ${env:NAME} → os.environ[NAME] (empty string if unset)."""
-    return _ENV_REF.sub(lambda m: os.environ.get(m.group(1), ""), value)
+def _expand_env_refs(value: str, env: Mapping[str, str] | None = None) -> str:
+    """Expand ${env:NAME} from the process-local engine environment."""
+    source = os.environ if env is None else env
+    return _ENV_REF.sub(lambda m: source.get(m.group(1), ""), value)
 
 
-def to_engine_entry(spec: LocalMcpServer | RemoteMcpServer) -> dict[str, object]:
-    """The canonical engine mcp entry for one passthrough server."""
+def to_engine_entry(
+    spec: LocalMcpServer | RemoteMcpServer,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    """The canonical engine MCP entry for one passthrough server.
+
+    The optional mapping exists for engine-role tests and callers that need an
+    explicit environment snapshot; the default reads the current engine process.
+    """
     if isinstance(spec, LocalMcpServer):
         entry: dict[str, object] = {
             "type": "local",
             "command": [spec.command, *spec.args],
             "enabled": True,
         }
-        env = {name: os.environ[name] for name in spec.env if name in os.environ}
-        if env:
-            entry["environment"] = env
+        source = os.environ if env is None else env
+        values = {name: source[name] for name in spec.env if name in source}
+        if values:
+            entry["environment"] = values
         return entry
     # RemoteMcpServer
     remote: dict[str, object] = {"type": "remote", "url": spec.url, "enabled": True}
     if spec.headers:
-        remote["headers"] = {k: _expand_env_refs(v) for k, v in spec.headers.items()}
+        remote["headers"] = {
+            k: _expand_env_refs(v, env) for k, v in spec.headers.items()
+        }
     return remote

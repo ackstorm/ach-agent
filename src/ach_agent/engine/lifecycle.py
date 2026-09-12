@@ -578,7 +578,7 @@ def build_opencode_env(
         name: os.environ[name] for name in _OPENCODE_ENV_ALLOWLIST if name in os.environ
     }
     # Operator-defined exceptions (engine.forwardEnv) — forwarded by name when present.
-    for name in config.forward_env:
+    for name in (*config.forward_env, *config.engine_env_names):
         value = os.environ.get(name)
         if value is not None:
             env[name] = value

@@ -13,6 +13,70 @@ from ach_agent.engine.hydrate import Context
 _KINDS = ("skills", "prompts", "artifacts")
 
 
+def _link_directory(
+    link: Path,
+    target: Path,
+    *,
+    create_target: bool = True,
+    replace_managed: bool = False,
+) -> None:
+    """Create a stable engine-local link without replacing existing native files."""
+    if create_target:
+        target.mkdir(parents=True, exist_ok=True)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink():
+        if link.resolve() != target.resolve():
+            raise ValueError(f"engine context link points outside public context: {link}")
+        return
+    if link.exists():
+        if not link.is_dir() or any(link.iterdir()):
+            if not replace_managed or not link.is_dir():
+                raise ValueError(f"engine context path is already occupied: {link}")
+            # Older in-process boots put hydrated context directly in these managed
+            # directories. Preserve it beside the new public link; native sessions
+            # and all other home files remain untouched.
+            backup = link.with_name(f"{link.name}.pre-split")
+            if backup.exists() or backup.is_symlink():
+                raise ValueError(f"cannot preserve previous engine context path: {backup}")
+            link.rename(backup)
+        else:
+            link.rmdir()
+    link.symlink_to(target, target_is_directory=True)
+
+
+def link_public_context(
+    engine_home: str | Path,
+    public_context: str | Path,
+    *,
+    create_public: bool = True,
+) -> None:
+    """Expose hydrated public context through engine discovery paths.
+
+    Harness hydration writes ``public_context``.  E owns ``engine_home`` and only
+    creates links, keeping private native files and the public context mount distinct.
+    """
+    home = Path(engine_home)
+    root = Path(public_context)
+    home.mkdir(parents=True, exist_ok=True)
+    if create_public:
+        root.mkdir(parents=True, exist_ok=True)
+    _link_directory(
+        home / ".ach-state", root, create_target=create_public, replace_managed=True
+    )
+    skills = root / "skills"
+    if create_public:
+        skills.mkdir(parents=True, exist_ok=True)
+    _link_directory(
+        home / ".config" / "opencode" / "skills",
+        skills,
+        create_target=create_public,
+        replace_managed=True,
+    )
+    _link_directory(
+        home / "pi" / "skills", skills, create_target=create_public, replace_managed=True
+    )
+
+
 async def _get_bytes(url: str, ek: str) -> bytes:
     async with httpx.AsyncClient(timeout=30) as c:
         # ACH auth is the `x-ach-key` header, NOT `Authorization: Bearer` (the latter

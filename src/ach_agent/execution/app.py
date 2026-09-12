@@ -14,7 +14,7 @@ from typing import Any
 
 import anyio
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import ValidationError
 from starlette.types import Send
 
@@ -30,6 +30,7 @@ from ach_agent.execution.wire import (
     ControllerHello,
     ExecutionEvent,
     ReleaseRequest,
+    SessionImportRequest,
     SessionOperation,
     SessionReadyRequest,
     TurnRequest,
@@ -183,7 +184,7 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
             try:
                 yield _json_line(response_hello.model_dump(mode="json"))
                 events = service.controller_events()
-                while not await request.is_disconnected():
+                while not service.shutdown_requested and not await request.is_disconnected():
                     if events is None:
                         await asyncio.sleep(0.05)
                         continue
@@ -373,6 +374,20 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
             return service_error(exc)
         return JSONResponse({"status": "ok"})
 
+    @app.post("/execution/v1/session-import")
+    async def session_import(request: Request) -> JSONResponse:
+        try:
+            body = SessionImportRequest.model_validate(await _request_json(request))
+        except _BodyTooLarge:
+            return JSONResponse({"detail": "request body too large"}, status_code=413)
+        except (_InvalidBody, ValidationError) as exc:
+            return _invalid(str(exc))
+        try:
+            imported = await service.import_legacy_sessions(body)
+        except Exception as exc:
+            return service_error(exc)
+        return JSONResponse({"status": "ok", "imported": imported})
+
     @app.post("/execution/v1/release")
     async def release(request: Request) -> JSONResponse:
         try:
@@ -420,5 +435,11 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
             },
             status_code=503 if service._unhealthy else 200,
         )
+
+    @app.get("/metrics")
+    async def metrics() -> Response:
+        from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     return app

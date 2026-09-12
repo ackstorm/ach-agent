@@ -38,7 +38,7 @@ from ach_agent.router.router import RouterAdmitResult
 
 if TYPE_CHECKING:
     from ach_agent.channels.seam import MessageHandler
-    from ach_agent.config.schema import ChannelConfig, WebhookAuthBlock
+    from ach_agent.config.schema import ChannelSourceConfig, WebhookAuthBlock
 
 log = structlog.get_logger(__name__)
 
@@ -278,7 +278,7 @@ def _status_map(result: RouterAdmitResult, task_id: str) -> WebhookResult:
 async def handle_webhook_request(
     raw_body: bytes,
     headers: dict[str, str],
-    channel_cfg: ChannelConfig,
+    channel_cfg: ChannelSourceConfig,
     handler: MessageHandler,
 ) -> WebhookResult:
     """Handle a webhook request end-to-end — always async (202 accept-and-process).

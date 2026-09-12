@@ -31,7 +31,7 @@ from ach_agent.router.router import RouterAdmitResult
 
 if TYPE_CHECKING:
     from ach_agent.channels.seam import MessageHandler
-    from ach_agent.config.schema import ChannelConfig
+    from ach_agent.config.schema import ChannelSourceConfig
 
 log = structlog.get_logger(__name__)
 
@@ -57,7 +57,7 @@ class CronScheduler:
 
     def __init__(
         self,
-        channels: list[ChannelConfig],
+        channels: list[ChannelSourceConfig],
         handler: MessageHandler,
     ) -> None:
         # Build slots: (channel_cfg, croniter_obj, next_dt)
@@ -67,7 +67,7 @@ class CronScheduler:
         # `0 8 * * *` fires at 08:00 local, not 08:00 UTC (schema validates the tz).
         # get_next(datetime) then returns tz-aware ticks; subtraction against
         # datetime.now(UTC) in _run() stays correct (both aware).
-        self._slots: list[tuple[ChannelConfig, croniter, datetime | None]] = [
+        self._slots: list[tuple[ChannelSourceConfig, croniter, datetime | None]] = [
             (ch, croniter(ch.cron.schedule, datetime.now(ZoneInfo(ch.cron.timezone))), None)
             for ch in channels
             if ch.cron
@@ -113,7 +113,7 @@ class CronScheduler:
             # Fire all channels due at (or before) the earliest tick we slept towards.
             # Using `earliest` rather than datetime.now() ensures correctness even when
             # asyncio.sleep returns early (tests) or the wall clock drifts slightly.
-            new_slots: list[tuple[ChannelConfig, croniter, datetime | None]] = []
+            new_slots: list[tuple[ChannelSourceConfig, croniter, datetime | None]] = []
             for ch, cron, next_dt in self._slots:
                 if next_dt is not None and next_dt <= earliest:
                     # This channel is due — fire it and advance its croniter (Pitfall 7)
@@ -126,7 +126,7 @@ class CronScheduler:
                     new_slots.append((ch, cron, next_dt))
             self._slots = new_slots
 
-    async def _fire(self, channel_cfg: ChannelConfig, scheduled_next_dt: datetime) -> None:
+    async def _fire(self, channel_cfg: ChannelSourceConfig, scheduled_next_dt: datetime) -> None:
         """Fire one cron tick for the given channel.
 
         Preserves:

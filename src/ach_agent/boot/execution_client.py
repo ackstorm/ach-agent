@@ -12,7 +12,7 @@ import asyncio
 import contextlib
 import itertools
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from typing import Any
 
 import httpx
@@ -35,6 +35,8 @@ from ach_agent.execution.wire import (
     ExecutionEvent,
     ExecutionHandle,
     ReleaseRequest,
+    SessionImportRequest,
+    SessionImportRow,
     SessionOperation,
     SessionReadyRequest,
     TurnRequest,
@@ -404,6 +406,28 @@ class ExecutionClient:
         except ExecutionClientError as exc:
             await self._fail_admission(exc)
             raise
+
+    async def import_legacy_sessions(
+        self, rows: Iterable[SessionImportRow | Mapping[str, Any]]
+    ) -> int:
+        """Send the bounded row export to E before the first acquired execution."""
+        self._assert_controller_live()
+        self._validate_controller(self.controller_id)
+        typed_rows = [
+            row if isinstance(row, SessionImportRow) else SessionImportRow.model_validate(row)
+            for row in rows
+        ]
+        result = await self._json_request(
+            "POST",
+            "/execution/v1/session-import",
+            SessionImportRequest(
+                controller_id=self.controller_id,
+                rows=typed_rows,
+            ).model_dump(mode="json"),
+        )
+        if not isinstance(result, dict) or not isinstance(result.get("imported"), int):
+            raise ExecutionClientError("invalid legacy session import response")
+        return int(result["imported"])
 
     def _assert_controller_live(self) -> None:
         if self._closed:

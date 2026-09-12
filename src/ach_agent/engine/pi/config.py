@@ -28,7 +28,7 @@ def build_pi_env(agent_dir: Path, cfg: EngineConfig) -> dict[str, str]:
     env: dict[str, str] = {
         name: os.environ[name] for name in _PI_ENV_ALLOWLIST if name in os.environ
     }
-    for name in cfg.forward_env:
+    for name in (*cfg.forward_env, *cfg.engine_env_names):
         value = os.environ.get(name)
         if value is not None:
             env[name] = value

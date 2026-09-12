@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 import structlog
@@ -11,6 +12,59 @@ import structlog
 from ach_agent.config.schema import AgentConfig
 
 log = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class RolePaths:
+    """Role-owned filesystem roots for split boot.
+
+    ``public_context`` is the only hydration output visible to the engine.  The
+    harness state/scratch roots and engine home remain separate even when they share
+    an operator-provided persistence mount.
+    """
+
+    harness_state: Path
+    harness_scratch: Path
+    engine_home: Path
+    work_dir: Path
+    public_context: Path
+    public_skills: Path
+
+
+def resolve_role_paths(cfg: AgentConfig) -> RolePaths:
+    """Resolve stable split-role paths without broad parent mounts."""
+    if cfg.persistence.enabled:
+        mount = Path(cfg.persistence.mount_path)
+        harness_state = mount / "state"
+        engine_home = Path(cfg.engine.home or mount / "home")
+        public_context = mount / "public-context"
+    else:
+        harness_state = Path("/tmp/ach-harness-state")
+        engine_home = Path(cfg.engine.home or "/tmp/ach-home")
+        public_context = Path("/tmp/ach-public-context")
+    work_dir = Path(cfg.engine.work_dir or engine_home / "workspace")
+    return RolePaths(
+        harness_state=harness_state,
+        harness_scratch=Path("/tmp/ach-private"),
+        engine_home=engine_home,
+        work_dir=work_dir,
+        public_context=public_context,
+        public_skills=public_context / "skills",
+    )
+
+
+def ensure_role_layout(paths: RolePaths) -> None:
+    """Create only role-local/public directories before health is reported."""
+    for path in (
+        paths.harness_state,
+        paths.harness_scratch,
+        paths.engine_home,
+        paths.work_dir,
+        paths.public_context,
+        paths.public_skills,
+    ):
+        path.mkdir(mode=0o700 if path in (paths.harness_state, paths.harness_scratch) else 0o755,
+                   parents=True, exist_ok=True)
 
 
 def write_pid_file(pid_path: Path) -> None:

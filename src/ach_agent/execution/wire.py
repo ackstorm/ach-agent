@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
@@ -25,16 +26,28 @@ def _finite_json(value: JsonValue) -> JsonValue:
 
 
 class _WireModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+    model_config = ConfigDict(
+        extra="forbid", strict=True, frozen=True, populate_by_name=True
+    )
 
 
 class PublicEngineConfig(_WireModel):
     """Allowlisted engine input with managed secret fields excluded by construction."""
 
+    # Bootstrap identity/layout metadata is public and credential-free.  The harness
+    # supplies these values directly; the engine never receives AgentConfig or its
+    # persistence database path.
+    agent_name: str = Field(default="", alias="agentName")
     engine_type: Literal["opencode", "pi"] = "opencode"
     binary_path: str = "opencode"
     home: str = ""
     work_dir: str = "/workspace"
+    persistence_enabled: bool = Field(default=False, alias="persistenceEnabled")
+    persistence_mount_path: str = Field(default="", alias="persistenceMountPath")
+    public_context: str = Field(default="", alias="publicContext")
+    # Names are an explicit engine-role contract.  Values are read only from the
+    # engine process environment and are never serialized in this object.
+    engine_env_names: list[str] = Field(default_factory=list, alias="engineEnvNames")
     model: str = "gpt-4o-mini"
     model_type: str = "openai"
     params: dict[str, JsonValue] = Field(default_factory=dict)
@@ -54,6 +67,24 @@ class PublicEngineConfig(_WireModel):
     pi_mcp_adapter_path: str = ""
 
     _params_finite = field_validator("params", "mcp_templates")(_finite_json)
+
+    @field_validator("home", "work_dir", "persistence_mount_path", "public_context")
+    @classmethod
+    def trusted_paths(cls, value: str) -> str:
+        if value:
+            path = PurePosixPath(value)
+            if not path.is_absolute() or ".." in path.parts:
+                raise ValueError("engine paths must be absolute and must not contain '..'")
+        return value
+
+    @field_validator("engine_env_names")
+    @classmethod
+    def valid_engine_env_names(cls, values: list[str]) -> list[str]:
+        import re
+
+        if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) for name in values):
+            raise ValueError("engineEnvNames must contain valid environment variable names")
+        return list(dict.fromkeys(values))
 
 
 class ControllerHello(_WireModel):
@@ -108,6 +139,21 @@ class SessionReadyRequest(_WireModel):
     execution_id: str
     invocation_id: str
     turn_id: str
+
+
+class SessionImportRow(_WireModel):
+    """One bounded legacy mapping exported by H (never an H database path)."""
+
+    key: str
+    oc_session_id: str = Field(alias="ocSessionId")
+    last_used: float = Field(alias="lastUsed")
+
+
+class SessionImportRequest(_WireModel):
+    """The single startup-only controller request for legacy session mappings."""
+
+    controller_id: str
+    rows: list[SessionImportRow] = Field(default_factory=list, max_length=1024)
 
 
 class SessionOperation(_WireModel):

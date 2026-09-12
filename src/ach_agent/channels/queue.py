@@ -48,7 +48,7 @@ from ach_agent.router.router import RouterAdmitResult
 
 if TYPE_CHECKING:
     from ach_agent.channels.seam import MessageHandler
-    from ach_agent.config.schema import ChannelConfig
+    from ach_agent.config.schema import ChannelSourceConfig
 
 log = structlog.get_logger(__name__)
 
@@ -73,7 +73,7 @@ class QueueConsumer:
 
     def __init__(
         self,
-        channel_cfg: ChannelConfig,
+        channel_cfg: ChannelSourceConfig,
         handler: MessageHandler,
         redis_client: Any = None,
     ) -> None:

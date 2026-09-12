@@ -10,6 +10,9 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import os
+import re
+import shutil
 import uuid
 from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
@@ -36,6 +39,7 @@ from ach_agent.execution.wire import (
     ExecutionEvent,
     ExecutionHandle,
     ReleaseRequest,
+    SessionImportRequest,
     SessionOperation,
     SessionReadyRequest,
     TurnRequest,
@@ -113,10 +117,33 @@ CLEANUP_PROCESS_MARGIN_SECONDS = 5.0
 
 def _engine_config(public: Any) -> EngineConfig:
     """Copy the approved wire fields into the native driver's config type."""
-    values = public.model_dump(exclude={"mcp_templates"})
+    values = public.model_dump(
+        exclude={
+            "mcp_templates",
+            # Bootstrap-only metadata never belongs in the native driver's config.
+            "agent_name",
+            "persistence_enabled",
+            "persistence_mount_path",
+            "public_context",
+        }
+    )
     values["extra_mcp_servers"] = {
         name: to_engine_entry(spec) for name, spec in public.mcp_templates.items()
     }
+    # Deployment may provide approved E-only names separately from the public
+    # bootstrap.  Read names only; values come from E's own environment in the
+    # native builders, and no harness environment is copied wholesale.
+    if not values.get("engine_env_names"):
+        raw_names = os.environ.get("ACH_ENGINE_ENV_NAMES", "")
+        names = [name.strip() for name in raw_names.split(",") if name.strip()]
+        if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) for name in names):
+            raise ValueError("ACH_ENGINE_ENV_NAMES contains an invalid environment name")
+        values["engine_env_names"] = list(dict.fromkeys(names))
+    # Codemem is an engine-local executable.  H supplies only the approved path and
+    # project; E decides whether its own image can provide the optional backend.
+    if values.get("codemem_db_path") and shutil.which("codemem") is None:
+        values["codemem_db_path"] = ""
+        values["codemem_project"] = ""
     return EngineConfig(**values)
 
 
@@ -152,6 +179,8 @@ class ExecutionService:
     ) -> None:
         self.driver = driver
         self.pool = EnginePool(driver=driver, sessions_map=sessions_map, strict_cleanup=True)
+        self._sessions_map = sessions_map
+        self._execution_started = False
         self._invocations: dict[str, _Invocation] = {}
         self._acquiring: set[str] = set()
         self._acquiring_lanes: dict[str, str] = {}
@@ -192,6 +221,27 @@ class ExecutionService:
         self._controller_id = controller_id
         self._admission_open = True
         self._controller_events = asyncio.Queue(maxsize=64)
+
+    async def import_legacy_sessions(self, request: SessionImportRequest) -> int:
+        """Import H-exported rows once before the first engine acquisition.
+
+        The request carries rows only; accepting an H database path here would make
+        the engine role depend on a private harness mount.  The persistent marker in
+        ``NativeSessionStore`` makes a repeat bootstrap safe and non-overwriting.
+        """
+        self._assert_controller(request.controller_id)
+        if self._execution_started or self._invocations or self._acquiring:
+            raise ValueError("legacy session import is startup-only")
+        from ach_agent.execution.state import MigrationAlreadyComplete, import_legacy_sessions
+
+        store = self._sessions_map
+        if store is None or not hasattr(store, "migration_complete"):
+            raise ValueError("legacy session import requires an engine-owned session store")
+        rows = [row.model_dump(mode="python") for row in request.rows]
+        try:
+            return import_legacy_sessions(store, rows)  # type: ignore[arg-type]
+        except MigrationAlreadyComplete:
+            return 0
 
     def _assert_controller(self, controller_id: str) -> None:
         if self._unhealthy:
@@ -628,6 +678,7 @@ class ExecutionService:
 
     async def acquire(self, request: AcquireRequest) -> ExecutionHandle:
         self._assert_controller(request.controller_id)
+        self._execution_started = True
         self._completed_cancellations.pop(request.invocation_id, None)
         if self._unhealthy:
             raise RuntimeError("native cleanup failed; execution service is unhealthy")

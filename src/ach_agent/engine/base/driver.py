@@ -75,6 +75,9 @@ class EngineConfig:
     # inherited — so the ek_ (ACH_TOKEN/ACH_API_KEY) never reaches opencode unless explicitly
     # named here. Use sparingly (e.g. a custom CA bundle path); never list the ek_.
     forward_env: list[str] = field(default_factory=list)
+    # Split-role bootstrap: explicit names resolved from the engine process environment.
+    # This is intentionally separate from the harness-only legacy forward_env field.
+    engine_env_names: list[str] = field(default_factory=list)
     # capability.filter.exclude.tools — opencode tool ids to disable in opencode.json
     # (agent.build.tools[<id>]=False), withholding them from the model.
     exclude_tools: list[str] = field(default_factory=list)

@@ -8,6 +8,8 @@ from ach_agent.execution.wire import (
     ExecutionHandle,
     PublicEngineConfig,
     ReleaseRequest,
+    SessionImportRequest,
+    SessionImportRow,
     SessionOperation,
     TurnRequest,
 )
@@ -19,6 +21,8 @@ __all__ = [
     "ExecutionHandle",
     "PublicEngineConfig",
     "ReleaseRequest",
+    "SessionImportRequest",
+    "SessionImportRow",
     "SessionOperation",
     "TurnRequest",
     "ExecutionService",

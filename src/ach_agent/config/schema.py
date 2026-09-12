@@ -880,6 +880,53 @@ class ChannelConfig(BaseModel):
         return self
 
 
+class ChannelSourceConfig(BaseModel):
+    """Validated channel projection owned by the channels role.
+
+    Source adapters need transport identity and the source block only.  Execution
+    policy (prompt/session), preparation hooks, and webhook scripts remain harness
+    private.  In particular, a ``webhook-script`` source is valid here without
+    inventing a script field for the channels process to consume.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    name: str
+    type: ChannelType
+    concurrency: int = 1
+    source: Literal["gitlab", "github", "generic"] | None = None
+    webhook: WebhookBlock | None = None
+    cron: CronBlock | None = None
+    queue: QueueBlock | None = None
+    a2a: A2ABlock | None = None
+
+    @model_validator(mode="after")
+    def check_source_block_coherence(self) -> ChannelSourceConfig:
+        if self.type in ("webhook", "webhook-script"):
+            if self.source is None:
+                raise ValueError(f"channel '{self.name}': webhook source is required")
+            if self.webhook is None:
+                raise ValueError(f"channel '{self.name}': webhook block is required")
+        elif self.type == "cron" and self.cron is None:
+            raise ValueError(f"channel '{self.name}': cron block is required")
+        elif self.type == "queue" and self.queue is None:
+            raise ValueError(f"channel '{self.name}': queue block is required")
+        elif self.type == "a2a" and self.a2a is None:
+            raise ValueError(f"channel '{self.name}': a2a block is required")
+
+        expected = {
+            "webhook": {"webhook"},
+            "webhook-script": {"webhook"},
+            "cron": {"cron"},
+            "queue": {"queue"},
+            "a2a": {"a2a"},
+        }[self.type]
+        for field in ("webhook", "cron", "queue", "a2a"):
+            if field not in expected and getattr(self, field) is not None:
+                raise ValueError(f"channel '{self.name}': {self.type} forbids '{field}' block")
+        return self
+
+
 # ---------------------------------------------------------------------------
 # Root AgentConfig
 # ---------------------------------------------------------------------------

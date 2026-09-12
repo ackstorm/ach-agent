@@ -41,7 +41,7 @@ from ach_agent.router.router import RouterAdmitResult
 
 if TYPE_CHECKING:
     from ach_agent.channels.seam import MessageHandler
-    from ach_agent.config.schema import ChannelConfig
+    from ach_agent.config.schema import ChannelSourceConfig
 
 log = structlog.get_logger(__name__)
 
@@ -56,7 +56,7 @@ _CARD_PATHS = frozenset(
 )
 
 
-def _is_authorized(channel_cfg: ChannelConfig, headers: dict[str, str]) -> bool:
+def _is_authorized(channel_cfg: ChannelSourceConfig, headers: dict[str, str]) -> bool:
     """Constant-time channel-credential check (spec §14.6).
 
     Shared by the HTTP boundary guard (`_AuthGuardMiddleware`, covers every
@@ -89,7 +89,7 @@ class _AuthGuardMiddleware:
     Rejection is HTTP 401 with a generic body; never logs the credential.
     """
 
-    def __init__(self, app: Any, channel_cfg: ChannelConfig) -> None:
+    def __init__(self, app: Any, channel_cfg: ChannelSourceConfig) -> None:
         self._app = app
         self._channel_cfg = channel_cfg
 
@@ -178,7 +178,7 @@ class A2AAgentExecutorBridge:
     def __init__(
         self,
         handler: MessageHandler | None,
-        channel_cfg: ChannelConfig,
+        channel_cfg: ChannelSourceConfig,
         completion_port: CompletionPort,
     ) -> None:
         self._handler: MessageHandler | None = handler
@@ -188,7 +188,7 @@ class A2AAgentExecutorBridge:
         self._waiter_counts: dict[str, int] = {}
 
     @property
-    def channel_cfg(self) -> ChannelConfig:
+    def channel_cfg(self) -> ChannelSourceConfig:
         return self._channel_cfg
 
     async def execute(self, context: Any, event_queue: Any) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
@@ -61,6 +62,21 @@ class Completion(BaseModel):
 
         check(value)
         return value
+
+
+class Admission(StrEnum):
+    ACCEPTED = "accepted"
+    DUPLICATE = "duplicate"
+    FULL_QUEUE = "full_queue"
+
+
+class Submission(BaseModel):
+    """Authenticated admission plus the optional current completion."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    admission: Admission
+    completion: Completion | None = None
 
 
 class EventEnvelope(BaseModel):

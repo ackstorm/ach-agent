@@ -52,6 +52,7 @@ class CompletionPort(Protocol):
 
 
 class CompletionHandler(Protocol):
-    completion_port: CompletionPort
+    @property
+    def completion_port(self) -> CompletionPort: ...
 
     async def handle(self, event: MessageEvent) -> RouterAdmitResult: ...

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Channel HTTP submissions and result lookups now use scoped HMAC request/response
+  envelopes with bounded timestamp and nonce replay checks. Queue admission ACKs remain
+  admission based despite `ackMode: onComplete`; authenticated `FULL_QUEUE` responses
+  intentionally acknowledge and drop overload, while unauthenticated transport responses
+  stay pending for recovery.
+
 - Credential-bearing `channel.prepare` and `channel.cleanup` hooks now run with fresh
   harness-private HOME/cwd/checkouts. Preparation publishes only a credential-free local Git
   bundle into the retained engine workspace, rejecting symlink and path traversal handoffs;

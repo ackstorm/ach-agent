@@ -409,6 +409,13 @@ mismatch.
 }
 ```
 
+Queue delivery uses admission acknowledgement in the current split transport. The
+`ackMode: onComplete` label is retained for compatibility with the source contract, but
+accepted and duplicate events are acknowledged after authenticated harness admission,
+before execution completes. An authenticated `FULL_QUEUE` response is acknowledged and
+dropped for async queue sources; transport failures and unauthenticated responses remain
+pending for recovery.
+
 **`tui` is NOT a channel** — it is the `--tui` launch modifier (console mode that ignores the
 configured channels and attaches to opencode's native TUI). It has no terminal contract (§8) and
 is absent from the `channels[]` list and from the channel-type union.

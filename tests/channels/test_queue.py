@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
 import pytest
 from prometheus_client import REGISTRY
 
@@ -278,3 +279,59 @@ async def test_queue_ensures_group_on_start() -> None:
     assert fake_redis.groups_created == [("ach:jobs", "ach-jobs")], (
         f"consumer group must be created on the stream key, got {fake_redis.groups_created!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_queue_acks_only_authenticated_full_queue_from_remote_harness() -> None:
+    from ach_agent.boot.channels_api import create_channels_app
+    from ach_agent.boot.completions import CompletionRegistry
+    from ach_agent.channels.client import ChannelsClient
+    from ach_agent.channels.queue import QueueConsumer
+    from ach_agent.router.router import RouterAdmitResult
+
+    async def admit(_event):
+        return RouterAdmitResult.FULL_QUEUE
+
+    registry = CompletionRegistry(admit, agent="default")
+    app = create_channels_app(registry, b"key", channels={"jobs"})
+    transport = httpx.ASGITransport(app=app)
+    http = httpx.AsyncClient(transport=transport, base_url="http://harness")
+    handler = ChannelsClient("http://harness", b"key", channel_name="jobs", http_client=http)
+    redis = FakeRedis([("1700000000000-0", {"foo": "bar"})], [])
+    consumer = QueueConsumer(_make_channel_cfg(), handler=handler, redis_client=redis)
+    try:
+        await consumer._consume_once()
+        assert redis.acked == ["1700000000000-0"]
+    finally:
+        await handler.close()
+
+
+@pytest.mark.asyncio
+async def test_queue_leaves_message_pending_when_remote_response_mac_is_forged() -> None:
+    from ach_agent.boot.channels_api import create_channels_app
+    from ach_agent.boot.completions import CompletionRegistry
+    from ach_agent.channels.client import ChannelsClient
+    from ach_agent.channels.queue import QueueConsumer
+    from ach_agent.router.router import RouterAdmitResult
+
+    async def admit(_event):
+        return RouterAdmitResult.FULL_QUEUE
+
+    registry = CompletionRegistry(admit, agent="default")
+    app = create_channels_app(registry, b"key", channels={"jobs"})
+
+    class ForgingTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            response = await httpx.ASGITransport(app=app).handle_async_request(request)
+            body = await response.aread()
+            return httpx.Response(response.status_code, content=body)
+
+    http = httpx.AsyncClient(transport=ForgingTransport(), base_url="http://harness")
+    handler = ChannelsClient("http://harness", b"key", channel_name="jobs", http_client=http)
+    redis = FakeRedis([("1700000000000-0", {"foo": "bar"})], [])
+    consumer = QueueConsumer(_make_channel_cfg(), handler=handler, redis_client=redis)
+    try:
+        await consumer._consume_once()
+        assert redis.acked == []
+    finally:
+        await handler.close()

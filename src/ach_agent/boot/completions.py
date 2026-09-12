@@ -8,31 +8,17 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import JsonValue
 
-from ach_agent.channels.envelopes import Completion, EventRef
+from ach_agent.channels.envelopes import Admission, Completion, EventRef, Submission
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.router.router import RouterAdmitResult
 
 
-class Admission(StrEnum):
-    ACCEPTED = "accepted"
-    DUPLICATE = "duplicate"
-    FULL_QUEUE = "full_queue"
-
-
 class RegistryBusy(RuntimeError):
     """The local completion metadata bound is full; retry admission later."""
-
-
-class Submission(BaseModel):
-    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
-
-    admission: Admission
-    completion: Completion | None = None
 
 
 @dataclass(slots=True)

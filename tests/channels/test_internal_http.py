@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from ach_agent.boot.channels_api import create_channels_app
 from ach_agent.boot.completions import CompletionRegistry
 from ach_agent.channels.client import ChannelsClient, SubmissionFailed
-from ach_agent.channels.envelopes import EventEnvelope, EventRef
+from ach_agent.channels.envelopes import Completion, EventEnvelope, EventRef
 from ach_agent.channels.signing import NonceCache, request_mac, response_mac
 from ach_agent.router.router import RouterAdmitResult
 
@@ -333,15 +333,34 @@ async def test_close_cancels_pending_wait_with_external_http_client() -> None:
 
 @pytest.mark.asyncio
 async def test_response_stream_over_limit_is_rejected_before_signature_parse() -> None:
-    class HugeTransport(httpx.AsyncBaseTransport):
-        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, content=b"x" * (2 * 1024 * 1024))
+    class OversizeStream(httpx.AsyncByteStream):
+        def __init__(self) -> None:
+            self.consumed = 0
+            self.closed = False
 
-    external = httpx.AsyncClient(transport=HugeTransport(), base_url="http://harness")
+        async def __aiter__(self):
+            for chunk in (b"a" * (512 * 1024), b"b" * (512 * 1024), b"c" * (512 * 1024), b"d"):
+                self.consumed += 1
+                yield chunk
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    class HugeTransport(httpx.AsyncBaseTransport):
+        def __init__(self) -> None:
+            self.stream = OversizeStream()
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, stream=self.stream)
+
+    transport = HugeTransport()
+    external = httpx.AsyncClient(transport=transport, base_url="http://harness")
     client = ChannelsClient("http://harness", KEY, http_client=external)
     try:
         with pytest.raises(SubmissionFailed, match="too large"):
             await client.submit(envelope())
+        assert transport.stream.consumed == 3
+        assert transport.stream.closed
     finally:
         await client.close()
 
@@ -431,14 +450,81 @@ async def test_maximum_retained_result_survives_signed_wire_envelope_margin() ->
 
     registry = CompletionRegistry(admit, agent="agent-a")
     app = create_channels_app(registry, KEY, agent="agent-a", channels={"queue"})
-    client = await _client_for(app)
+
+    class RecordingTransport(httpx.AsyncBaseTransport):
+        def __init__(self) -> None:
+            self.response_size = 0
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            response = await httpx.ASGITransport(app=app).handle_async_request(request)
+            body = await response.aread()
+            self.response_size = len(body)
+            return httpx.Response(
+                response.status_code,
+                headers=dict(response.headers),
+                content=body,
+            )
+
+    transport = RecordingTransport()
+    external = httpx.AsyncClient(transport=transport, base_url="http://harness")
+    client = ChannelsClient("http://harness", KEY, agent="agent-a", http_client=external)
     try:
         accepted = await client.submit(envelope())
         assert accepted.completion is not None
-        large_result = {"blob": "x" * 1_047_500}
+        base = Completion(
+            ref=accepted.completion.ref,
+            invocation_id=accepted.completion.invocation_id,
+            state="completed",
+            result={"blob": ""},
+        )
+        max_result_bytes = 1 * 1024 * 1024
+        blob_size = max_result_bytes - len(base.model_dump_json().encode())
+        large_result = {"blob": "x" * blob_size}
         await registry.finish(accepted.completion.ref, large_result)
+        retained = registry.lookup(accepted.completion.ref)
+        assert len(retained.model_dump_json().encode()) == max_result_bytes
         completed = await client.wait(accepted.completion.ref)
         assert completed.state == "completed"
         assert completed.result == large_result
+        assert transport.response_size > max_result_bytes
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_close_during_polling_cancels_wait_but_keeps_admitted_work() -> None:
+    async def admit(_event):
+        return RouterAdmitResult.ACCEPTED
+
+    registry = CompletionRegistry(admit, agent="agent-a")
+    app = create_channels_app(registry, KEY, agent="agent-a", channels={"queue"})
+    lookup_seen = asyncio.Event()
+
+    class ObservingTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/internal/v1/results":
+                lookup_seen.set()
+            return await httpx.ASGITransport(app=app).handle_async_request(request)
+
+    external = httpx.AsyncClient(transport=ObservingTransport(), base_url="http://harness")
+    client = ChannelsClient(
+        "http://harness",
+        KEY,
+        agent="agent-a",
+        http_client=external,
+        poll_interval=60,
+    )
+    try:
+        accepted = await client.submit(envelope())
+        assert accepted.completion is not None
+        waiter = asyncio.create_task(client.wait(accepted.completion.ref))
+        await lookup_seen.wait()
+        await client.close()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert registry.lookup(accepted.completion.ref).state == "queued"
+        assert registry.active_count == 1
+        assert not external.is_closed
+    finally:
+        await client.close()
+        await external.aclose()

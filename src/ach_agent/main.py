@@ -321,6 +321,17 @@ async def _refresh_engine_readiness(client: Any, state: HealthState) -> None:
         state.ready = False
 
 
+def _graceful_stop_timeout(cfg: AgentConfig) -> float:
+    """Bound normal E cleanup by the longest configured workspace hook."""
+    hook_seconds = [
+        float(hook.timeout_seconds)
+        for channel in cfg.channels
+        for hook in (channel.prepare, channel.cleanup, channel.script)
+        if hook is not None
+    ]
+    return max(15.0, (max(hook_seconds) if hook_seconds else 0.0) + 15.0)
+
+
 async def _run_harness(
     tui_mode: bool = False,
     one_shot_prompt: str | None = None,
@@ -665,23 +676,28 @@ async def _run_harness(
             channels_projection, public_cfg.model_dump(mode="json", by_alias=True)
         )
         terminal_engine: LocalEngineProcess | None = None
-        try:
-            terminal_engine = await LocalEngineProcess.start(
-                artifacts, env=explicit_engine_env, terminal_mode=True
-            )
-            await terminal_engine.process.wait()
-        finally:
-            if terminal_engine is not None:
-                await terminal_engine.close()
-            else:
-                shutil.rmtree(artifact_dir, ignore_errors=True)
-            await stop_model_proxies()
-            if mcp_proxy is not None:
-                await mcp_proxy.stop()
-            if memory_facade is not None:
-                await memory_facade.stop()
-            if a2a_facade is not None:
-                await a2a_facade.stop()
+        tui_log_path = harness_log_dir() / "tui-attach.log"
+        with tui_log_path.open("a", encoding="utf-8") as tui_log:
+            real_stderr = sys.stderr
+            sys.stderr = tui_log
+            try:
+                terminal_engine = await LocalEngineProcess.start(
+                    artifacts, env=explicit_engine_env, terminal_mode=True
+                )
+                await terminal_engine.process.wait()
+            finally:
+                sys.stderr = real_stderr
+                if terminal_engine is not None:
+                    await terminal_engine.close()
+                else:
+                    shutil.rmtree(artifact_dir, ignore_errors=True)
+                await stop_model_proxies()
+                if mcp_proxy is not None:
+                    await mcp_proxy.stop()
+                if memory_facade is not None:
+                    await memory_facade.stop()
+                if a2a_facade is not None:
+                    await a2a_facade.stop()
         log.info("ach-agent: native terminal session ended")
         return
     # D-03/D-04: dedup store first — it opens/repairs state.db (fail-closed on a bad
@@ -763,7 +779,7 @@ async def _run_harness(
             await client.import_legacy_sessions(export_legacy_sessions(legacy_path))
         except BaseException:
             with contextlib.suppress(Exception):
-                await client.graceful_stop()
+                await client.graceful_stop(timeout=_graceful_stop_timeout(cfg))
             await client.close()
             if local_engine is not None:
                 await local_engine.close()
@@ -890,7 +906,7 @@ async def _run_harness(
                 await run_tui_console(channel_handler)
         finally:
             with contextlib.suppress(Exception):
-                await client.graceful_stop()
+                await client.graceful_stop(timeout=_graceful_stop_timeout(cfg))
             await client.close()
             close_runner = getattr(engine_runner, "close", None)
             if close_runner is not None:
@@ -1093,7 +1109,7 @@ async def _run_harness(
             readiness_task.cancel()
             await asyncio.gather(readiness_task, return_exceptions=True)
         with contextlib.suppress(Exception):
-            await client.graceful_stop()
+            await client.graceful_stop(timeout=_graceful_stop_timeout(cfg))
         await client.close()
         close_runner = getattr(engine_runner, "close", None)
         if close_runner is not None:
@@ -1132,7 +1148,7 @@ async def _run_harness(
             readiness_task.cancel()
             await asyncio.gather(readiness_task, return_exceptions=True)
         with contextlib.suppress(Exception):
-            await client.graceful_stop()
+            await client.graceful_stop(timeout=_graceful_stop_timeout(cfg))
         await client.close()
         close_runner = getattr(engine_runner, "close", None)
         if close_runner is not None:

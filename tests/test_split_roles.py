@@ -8,6 +8,7 @@ import json
 import os
 import signal
 import socket
+import sys
 from pathlib import Path
 
 import httpx
@@ -220,8 +221,42 @@ def test_local_timeout_kills_owned_supervisor_process_group(
     monkeypatch.setattr(os, "killpg", lambda pid, sig: killed.append((pid, sig)))
     monkeypatch.setattr(asyncio, "wait_for", always_timeout)
     asyncio.run(run())
-    assert killed == [(4567, signal.SIGKILL)]
+    assert killed == [(4567, signal.SIGTERM), (4567, signal.SIGKILL)]
     assert not artifacts.channels.parent.exists()
+
+
+def test_local_timeout_reaps_real_supervised_descendant(tmp_path: Path) -> None:
+    from ach_agent.boot.local import LocalEngineProcess, RoleArtifacts
+
+    artifacts = RoleArtifacts(tmp_path / "artifacts").write({}, {})
+    sentinel = tmp_path / "descendant-alive"
+    supervisor = (
+        Path(__file__).parents[1] / "src" / "ach_agent" / "engine" / "process_supervisor.py"
+    )
+    command = [
+        sys.executable,
+        str(supervisor),
+        "--",
+        "/bin/sh",
+        "-c",
+        f"trap '' TERM; (sleep 1; echo alive > {sentinel}) & wait",
+    ]
+
+    async def run() -> None:
+        process = await asyncio.create_subprocess_exec(
+            *command, start_new_session=True, stdout=asyncio.subprocess.DEVNULL
+        )
+        child = LocalEngineProcess(process, artifacts, isolated_process_group=True)
+        for _ in range(50):
+            if process.returncode is None:
+                await asyncio.sleep(0.01)
+                continue
+            break
+        await child.close(timeout=0.05)
+        await asyncio.sleep(1.2)
+
+    asyncio.run(run())
+    assert not sentinel.exists()
 
 
 def test_public_context_is_linked_from_custom_work_dir(tmp_path: Path) -> None:

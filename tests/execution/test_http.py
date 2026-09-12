@@ -131,6 +131,27 @@ async def test_h_e_readiness_and_signed_c_probe_share_instance(fake_driver) -> N
 
 
 @pytest.mark.asyncio
+async def test_graceful_stop_uses_long_cleanup_client_budget(fake_driver, monkeypatch) -> None:
+    service = ExecutionService(fake_driver, {})
+    app = create_execution_app(service)
+    original_stop = service.graceful_stop_controller
+
+    async def delayed_stop(controller_id: str) -> None:
+        await asyncio.sleep(0.15)
+        await original_stop(controller_id)
+
+    monkeypatch.setattr(service, "graceful_stop_controller", delayed_stop)
+    async with _running_server(app) as base_url:
+        execution = ExecutionClient(base_url, controller_id="slow-stop", timeout=0.03)
+        await execution.connect()
+        try:
+            await execution.graceful_stop(timeout=2.0)
+        finally:
+            await execution.close()
+    assert service.can_accept_controller
+
+
+@pytest.mark.asyncio
 async def test_controller_version_and_instance_are_checked(fake_driver):
     service = ExecutionService(fake_driver, {})
     app = create_execution_app(service)

@@ -363,13 +363,22 @@ class ExecutionClient:
         """Compatibility spelling matching ``ExecutionService.claim_controller``."""
         return await self.connect()
 
-    async def graceful_stop(self) -> None:
+    async def graceful_stop(self, *, timeout: float | None = None) -> None:
         """Ask E to finish warm cleanup while the controller event pump is live."""
         self._assert_controller_live()
-        await self._json_request(
-            "POST",
-            "/execution/v1/controller/stop",
-            {"controller_id": self.controller_id},
+        budget = (
+            timeout
+            if timeout is not None
+            else max(self.timeout, NATIVE_CLEANUP_TIMEOUT_SECONDS + HOOK_CLEANUP_MARGIN_SECONDS)
+        )
+        await asyncio.wait_for(
+            self._json_request(
+                "POST",
+                "/execution/v1/controller/stop",
+                {"controller_id": self.controller_id},
+                client=self.cleanup_client,
+            ),
+            timeout=budget,
         )
 
     @property

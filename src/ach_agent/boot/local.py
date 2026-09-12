@@ -173,10 +173,10 @@ class LocalEngineProcess:
 
     async def close(self, *, timeout: float = 20.0) -> None:
         try:
-            if self.process.returncode is None and sys.platform.startswith("linux"):
-                self.process.send_signal(signal.SIGTERM)
-            elif self.process.returncode is None:
+            if self.process.returncode is None and self.isolated_process_group:
                 os.killpg(self.process.pid, signal.SIGTERM)
+            elif self.process.returncode is None:
+                self.process.send_signal(signal.SIGTERM)
             if self.process.returncode is None:
                 await asyncio.wait_for(self.process.wait(), timeout=timeout)
         except (ProcessLookupError, TimeoutError):

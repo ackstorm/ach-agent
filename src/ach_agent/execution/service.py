@@ -201,6 +201,7 @@ class ExecutionService:
         self.controller_cleanup_error: str | None = None
         self._ttl_watchers: set[asyncio.Task[None]] = set()
         self._controller_cleanup_task: asyncio.Task[None] | None = None
+        self._warm_cleanup_budget_seconds = 0.0
         self._workspace_tasks: dict[str, asyncio.Task[Any]] = {}
         self._workspace_reservations: dict[str, _WorkspaceReservation] = {}
         self._workspace_cancelled: set[str] = set()
@@ -327,6 +328,7 @@ class ExecutionService:
                 for reservation in self._workspace_reservations.values()
             ]
             + [inv.workspace_cleanup_timeout_seconds for inv in self._invocations.values()]
+            + [self._warm_cleanup_budget_seconds]
             + [0.0]
         )
         try:
@@ -354,6 +356,7 @@ class ExecutionService:
         # Keep the acquisition guard active for the current controller until this
         # cleanup completes, so a late import after release is still rejected.
         self._execution_started = False
+        self._warm_cleanup_budget_seconds = 0.0
 
     async def graceful_stop_controller(self, controller_id: str) -> None:
         """Drain normal work and run private cleanup hooks before controller close."""
@@ -1379,6 +1382,11 @@ class ExecutionService:
             or (inv.task is not None and not inv.task.done())
         ):
             raise ValueError("cannot release an active invocation")
+        if request.idle_ttl_seconds > 0:
+            self._warm_cleanup_budget_seconds = max(
+                self._warm_cleanup_budget_seconds,
+                inv.workspace_cleanup_timeout_seconds,
+            )
         cleanup = self._start_cleanup(inv, release=True, idle_ttl_seconds=request.idle_ttl_seconds)
         await self._await_cleanup(cleanup, inv)
         if inv.cleanup_error is not None:

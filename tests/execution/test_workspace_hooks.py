@@ -189,6 +189,39 @@ async def test_graceful_controller_stop_preserves_warm_cleanup_ack(
 
 
 @pytest.mark.asyncio
+async def test_warm_release_retains_hook_budget_for_pool_stop(fake_driver, tmp_path: Path) -> None:
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+    request = _prepare(
+        tmp_path,
+        cleanup=WorkspaceHook(script="true", timeout_seconds=300),
+        cleanup_ack_required=False,
+    )
+    await service.prepare_workspace(request)
+    handle = await service.acquire(
+        AcquireRequest(
+            controller_id="controller",
+            invocation_id=request.invocation_id,
+            lane_key=request.session_key,
+            conversation_key="conversation",
+            reuse=True,
+            remaining_seconds=5,
+            config=PublicEngineConfig(),
+        )
+    )
+    await service.release(
+        ReleaseRequest(
+            controller_id="controller",
+            execution_id=handle.execution_id,
+            invocation_id=handle.invocation_id,
+            idle_ttl_seconds=60,
+        )
+    )
+    assert service._warm_cleanup_budget_seconds == 300
+    await service.graceful_stop_controller("controller")
+
+
+@pytest.mark.asyncio
 async def test_private_cleanup_ack_controller_loss_wakes_native_cleanup(
     fake_driver, tmp_path: Path
 ) -> None:

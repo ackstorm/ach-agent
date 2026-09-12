@@ -58,14 +58,12 @@ Spec reference: `ach-agent-runtime-spec-v1_4_7.md` (API group `runtime.ackstorm.
 
 ### Phase 1 split deployment acceptance
 
-The repository's task-owned split Compose manifest is an acceptance fixture for the
-three application roles: channels, harness, and engine. It selects either the
-OpenCode or Pi engine image and mounts only the credential-free engine projection;
-the harness retains ACH credentials and private state. Operators must provide the
-equivalent role separation and explicit task-owned storage/network boundaries when
-rendering a deployment. The fixture's synthetic upstream and credentials are test
-values only. See [`phase1-split-evidence.md`](../reports/phase1-split-evidence.md)
-for the measured acceptance and its limits.
+The repository's task-owned split Compose manifest is an acceptance fixture for
+the three application roles: channels, harness, and engine. H receives the full
+config and writes the two fixed bootstrap files; C and E consume only their
+read-only bootstrap directory. The fixture's synthetic upstream and credentials
+are test values only. See [`phase1-split-evidence.md`](../reports/phase1-split-evidence.md)
+for historical measured acceptance and its limits.
 
 ---
 
@@ -1028,13 +1026,36 @@ Implementation-level gates live in the implementation plans, not here.
 
 ## Phase 1 split role packaging
 
-The Phase 1 deployment may render three ordinary containers from the image
-targets `harness`, `channels`, and `engine-opencode` or `engine-pi`. The role
-environment is explicit: H uses `ACH_CONFIG_PATH`, `ACH_ENGINE_URL`, and the
-channel HMAC key; C uses `ACH_CHANNELS_CONFIG_PATH`, `ACH_HARNESS_URL`,
-`ACH_CHANNELS_HMAC_KEY`, and `ACH_AGENT_NAME`; E uses
-`ACH_ENGINE_CONFIG_PATH`, `ACH_ENGINE_HOST`, and `ACH_ENGINE_PORT`. The C
-`ACH_AGENT_NAME` value MUST equal H's rendered `agent.name`.
+The Phase 1 deployment renders three ordinary containers from the image targets
+`harness`, `channels`, and `engine-opencode` or `engine-pi`. Every role uses the
+image entrypoint, `[/usr/bin/tini, --, python, -m, ach_agent.main]`, and selects
+its role with args `--role harness`, `--role channels`, or `--role engine`.
+The harness alone receives the full `ACH_CONFIG_PATH` configuration (the image
+default is `/etc/ach-agent/config.yaml`) and existing integration credentials
+such as `ACH_BASE_URL` and `ACH_TOKEN`. Channels and engine receive no full
+config, generated role config, internal URL/host/port, agent-name, or
+operator-generated HMAC environment variable.
+
+The harness publishes two bounded, atomic bootstrap files:
+
+| Path | Writer | Readers | Contents |
+| --- | --- | --- | --- |
+| `/run/ach-agent/channels/bootstrap.json` | H | C | source projection, agent identity, H URL, stable channel authentication key |
+| `/run/ach-agent/engine/bootstrap.json` | H | E | existing credential-free `PublicEngineConfig` |
+
+H mounts both paths read/write. C mounts only the channels directory read-only;
+E mounts only the engine directory read-only. The image pre-creates both
+directories for UID 10001. C and E wait for their file for up to 300 seconds
+and fail closed on malformed or missing content. A harness restart reuses the
+existing channel key when its bootstrap volume persists; a complete pod restart
+regenerates the bootstrap volume and is the rollout boundary.
+
+Default listeners are H `127.0.0.1:8090`, E `127.0.0.1:8081`, and C
+`0.0.0.0:8080`; only C's ingress is published. Health and readiness probes use
+`/healthz` and `/readyz` on the role ports, with a 300 second startup budget.
+Compose joins C and E to H's network namespace. Kubernetes uses one ordinary
+pod with no host network, host PID, shared process namespace, init container,
+or automatic service-account token.
 
 Role images share the Python dependency base. H retains Git and operator script
 runtime dependencies; E includes the native selected engine, codemem when
@@ -1056,6 +1077,6 @@ paths backed by `emptyDir` and set persistence disabled. Custom `engine.home`
 and `engine.workDir` render equivalent narrow E/private and H/E/shared mounts.
 
 These repository manifests are contract examples and validation fixtures.
-Production `ach-runtime` owns dynamic path, PVC, ConfigMap, and Secret
+Production ACH owns dynamic path, PVC, full-config ConfigMap, and Secret
 rendering; adding these files does not mutate a cluster or complete that
 separate repository change.

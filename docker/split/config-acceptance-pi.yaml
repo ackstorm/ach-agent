@@ -18,6 +18,7 @@ persistence:
   mountPath: /var/lib/ach-agent
 engine:
   type: pi
+  forwardEnv: [DEBUG, CUSTOM_TOOL_TOKEN]
   home: /var/lib/ach-agent/home
   workDir: /var/lib/ach-agent/workspace
   startupTimeoutSeconds: 30

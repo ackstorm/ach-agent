@@ -11,7 +11,6 @@ COMPOSE=(docker compose -p "$PROJECT" -f "$ROOT_DIR/docker/split/compose.yaml" -
 export ACH_HARNESS_CONFIG_FILE=config-acceptance.yaml
 export ACH_BASE_URL=http://mock-upstream:9080
 export ACH_TOKEN=split-acceptance-key
-export ACH_CHANNELS_HMAC_KEY=split-acceptance-hmac
 
 cleanup() {
   "${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
@@ -24,10 +23,8 @@ run_engine_acceptance() {
   export ACH_ENGINE_TARGET="$target"
   if [ "$target" = engine-pi ]; then
     export ACH_HARNESS_CONFIG_FILE=config-acceptance-pi.yaml
-    export ACH_ENGINE_CONFIG_FILE=engine-acceptance-pi.json
   else
     export ACH_HARNESS_CONFIG_FILE=config-acceptance.yaml
-    export ACH_ENGINE_CONFIG_FILE=engine-acceptance.json
   fi
   "${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
   "${COMPOSE[@]}" config --quiet
@@ -58,6 +55,7 @@ run_engine_acceptance() {
   first_session="$(native_session_ref)"
   [ -n "$first_session" ] || { echo "first native session was not recorded" >&2; return 1; }
   echo "$target native session after first event: $first_session"
+  assert_engine_forwarded_env
 
   second_task="$(submit "$second")"
   [ -n "$second_task" ] || { echo "second admission had no task id" >&2; return 1; }
@@ -175,6 +173,25 @@ print(f"{rows[0][0]}={rows[0][1]}")
 PY
 }
 
+assert_engine_forwarded_env() {
+  "${COMPOSE[@]}" exec -T engine python - <<'PY'
+from pathlib import Path
+
+for proc_dir in Path("/proc").glob("[0-9]*"):
+    try:
+        command = (proc_dir / "cmdline").read_bytes().replace(b"\0", b" ")
+        environment = (proc_dir / "environ").read_bytes().split(b"\0")
+    except OSError:
+        continue
+    if b"opencode" not in command and b"/pi" not in command:
+        continue
+    if b"DEBUG=engine-value" in environment and b"CUSTOM_TOOL_TOKEN=engine-token" in environment:
+        print("native engine received selected forwardEnv names")
+        raise SystemExit(0)
+raise SystemExit("native engine process did not receive selected forwardEnv values")
+PY
+}
+
 submit() {
   submit_channel acceptance "$1"
 }
@@ -194,6 +211,7 @@ wait_completion() {
   local channel="$1" event_id="$2"
   "${COMPOSE[@]}" exec -T harness python - "$channel" "$event_id" <<'PY'
 import asyncio
+import json
 import sys
 
 from ach_agent.channels.client import ChannelsClient
@@ -203,16 +221,21 @@ from ach_agent.channels.envelopes import EventRef
 async def main() -> None:
     channel = sys.argv[1]
     event_id = sys.argv[2]
+    with open("/run/ach-agent/channels/bootstrap.json", encoding="utf-8") as stream:
+        bundle = json.load(stream)
+    harness_url = bundle["harnessUrl"]
+    hmac_key = bundle["hmacKey"]
+    agent_name = bundle["agentName"]
     client = ChannelsClient(
-        "http://127.0.0.1:8090",
-        b"split-acceptance-hmac",
-        agent="split-acceptance",
+        harness_url,
+        hmac_key.encode(),
+        agent=agent_name,
         poll_interval=0.2,
         wait_timeout=25,
     )
     try:
         completion = await client.wait(EventRef(
-            agent="split-acceptance", channel_name=channel, idempotency_key=event_id
+            agent=agent_name, channel_name=channel, idempotency_key=event_id
         ))
         print(completion.model_dump_json())
         if completion.state != "completed":
@@ -229,6 +252,7 @@ wait_result() {
   local channel="$1" event_id="$2"
   "${COMPOSE[@]}" exec -T harness python - "$channel" "$event_id" <<'PY'
 import asyncio
+import json
 import sys
 
 from ach_agent.channels.client import ChannelsClient
@@ -237,16 +261,21 @@ from ach_agent.channels.envelopes import EventRef
 
 async def main() -> None:
     channel, event_id = sys.argv[1:3]
+    with open("/run/ach-agent/channels/bootstrap.json", encoding="utf-8") as stream:
+        bundle = json.load(stream)
+    harness_url = bundle["harnessUrl"]
+    hmac_key = bundle["hmacKey"]
+    agent_name = bundle["agentName"]
     client = ChannelsClient(
-        "http://127.0.0.1:8090",
-        b"split-acceptance-hmac",
-        agent="split-acceptance",
+        harness_url,
+        hmac_key.encode(),
+        agent=agent_name,
         poll_interval=0.2,
         wait_timeout=25,
     )
     try:
         completion = await client.wait(EventRef(
-            agent="split-acceptance", channel_name=channel, idempotency_key=event_id
+            agent=agent_name, channel_name=channel, idempotency_key=event_id
         ))
         print(completion.model_dump_json())
     finally:

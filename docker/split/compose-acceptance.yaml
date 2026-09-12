@@ -4,31 +4,20 @@ services:
     ports: !override
       - "127.0.0.1:0:8080"
     environment:
-      ACH_AGENT_NAME: split-acceptance
       ACH_BASE_URL: http://mock-upstream:9080
       ACH_TOKEN: split-acceptance-key
-      ACH_CHANNELS_HMAC_KEY: split-acceptance-hmac
-      ACH_HARNESS_CONFIG_FILE: config-acceptance.yaml
+      ACH_HARNESS_CONFIG_FILE: ${ACH_HARNESS_CONFIG_FILE:-config-acceptance.yaml}
+      DEBUG: harness-value
+      CUSTOM_TOOL_TOKEN: harness-token
 
   channels:
     image: ach-agent-split-channels
-    environment:
-      ACH_AGENT_NAME: split-acceptance
-      ACH_CHANNELS_CONFIG_PATH: /etc/ach-agent/channels-acceptance.json
-      ACH_CHANNELS_HMAC_KEY: split-acceptance-hmac
-    volumes: !override
-      - ./channels-acceptance.json:/etc/ach-agent/channels-acceptance.json:ro
 
   engine:
     image: ach-agent-split-engine
     environment:
-      ACH_ENGINE_CONFIG_FILE: ${ACH_ENGINE_CONFIG_FILE:-engine-acceptance.json}
-    volumes: !override
-      - ./${ACH_ENGINE_CONFIG_FILE:-engine-acceptance.json}:/etc/ach-agent/engine.json:ro
-      - engine-home:/var/lib/ach-agent/home
-      - engine-codemem:/var/lib/ach-agent/state
-      - shared-workspace:/var/lib/ach-agent/workspace
-      - public-context:/var/lib/ach-agent/public-context:ro
+      DEBUG: engine-value
+      CUSTOM_TOOL_TOKEN: engine-token
 
   mock-upstream:
     image: ach-agent-split-harness

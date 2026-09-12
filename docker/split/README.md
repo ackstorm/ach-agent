@@ -2,7 +2,7 @@
 
 This directory is a runnable contract example for the Phase 1 split. It keeps
 the role boundaries explicit while leaving production rendering to
-`ach-runtime`. Build the images with the targets below, then provide the
+the ACH operator. Build the images with the targets below, then provide the
 operator values as environment variables (the example never contains a token):
 
 ```sh
@@ -10,7 +10,7 @@ docker build --target harness -t ach-agent:harness -f Dockerfile .
 docker build --target channels -t ach-agent:channels -f Dockerfile .
 docker build --target engine-opencode -t ach-agent:engine-opencode -f Dockerfile .
 ACH_TOKEN=ek_example ACH_BASE_URL=https://ach.example \
-  ACH_CHANNELS_HMAC_KEY=example docker compose -f docker/split/compose.yaml config --quiet
+  docker compose -f docker/split/compose.yaml config --quiet
 ```
 
 The Compose file has exactly three services. Channels and engine join the
@@ -23,19 +23,32 @@ driver and public bootstrap agree:
 ```sh
 ACH_ENGINE_TARGET=engine-pi \
 ACH_HARNESS_CONFIG_FILE=config-pi.yaml \
-ACH_ENGINE_CONFIG_FILE=engine-pi.json \
 ACH_TOKEN=ek_example ACH_BASE_URL=https://ach.example \
-ACH_CHANNELS_HMAC_KEY=example \
 docker compose -f docker/split/compose.yaml config --quiet
 ```
 
-`config-pi.yaml` sets `engine.type: pi`, and `engine-pi.json` carries the
-matching wire values `engine_type: pi` and `binary_path: pi`.
+`config-pi.yaml` sets `engine.type: pi`; the harness derives the matching engine
+bootstrap automatically.
 
 The image without `--target` remains the combined native image. It carries both
 Pi and OpenCode, keeps Git and SSH for preparation hooks, and preserves the
 existing `--tui` and `--prompt` local launchers. The split E images use `/usr/bin/tini`
 as PID 1; the mini-harness is its child and owns native engine descendants.
+
+The harness is the only role that receives `/etc/ach-agent/config.yaml`. At boot it
+atomically publishes `/run/ach-agent/channels/bootstrap.json` and
+`/run/ach-agent/engine/bootstrap.json`. Channels mounts only the former read-only;
+engine mounts only the latter read-only. The generated channel bundle carries the
+agent identity, localhost harness URL, source projection and stable authentication
+key. The engine bundle is the credential-free public engine configuration. Role
+containers wait up to 300 seconds for their bundle and fail closed on malformed data.
+The image creates both directories for UID 10001, so named volumes and `emptyDir`
+mounts work without an init container.
+
+All three roles use the image entrypoint and select their role through `args:
+["--role", "harness|channels|engine"]`. Default listeners are H `127.0.0.1:8090`,
+E `127.0.0.1:8081`, and C `0.0.0.0:8080`; only C is published in Compose.
+Health checks use the same endpoints and allow a 300 second startup period.
 
 The PVC-backed Pod example uses one claim with separate subpaths:
 
@@ -49,19 +62,17 @@ The PVC-backed Pod example uses one claim with separate subpaths:
 
 The two `/state` mounts deliberately have different physical sources. The
 logical codemem path remains `<mountPath>/state/codemem.db`, while E cannot see
-H's `<mountPath>/state/state.db`. Channels receives only `channels.json`; it
-has no state, workspace, home, public-context, or PVC mounts.
+H's `<mountPath>/state/state.db`. Channels receives only its generated bootstrap;
+it has no state, workspace, home, public-context, or PVC mounts.
 
 `config.yaml` is also a concrete custom path example: H and E use the
 role-owned `/var/lib/ach-agent/home` and `/var/lib/ach-agent/workspace` paths,
 while codemem uses E's separate `/var/lib/ach-agent/state` mount. If an
-operator chooses another `engine.home` or `engine.workDir`, the E artifact and
-its private volume mounts must use those exact paths, and the mounted
-directories must be provisioned writable by UID 10001. The image only
-prepares the paths shown by these examples.
+operator chooses another `engine.home` or `engine.workDir`, mount those exact
+paths in E and the shared workspace in H/E.
 
 For an ephemeral deployment, use the concrete `compose-ephemeral.yaml` example
-with `config-ephemeral.yaml` and `engine-ephemeral.json`. H's persistence is
+with `config-ephemeral.yaml`. H's persistence is
 disabled, H state is `/tmp/ach-harness-state`, E home/codemem are under
 `/tmp/ach-home`, and the shared workspace/public-context volumes are mounted
 at those same `/tmp` paths in both roles. This keeps H's hydrated public
@@ -70,8 +81,7 @@ exits; the shared named workspace and public-context volumes remain until the
 operator removes them (`docker compose ... down -v`). A Kubernetes renderer
 can apply the same explicit substitutions:
 PVC-backed `state`, `home`, `engine-codemem`, `workspace`, and
-`public-context` become five `emptyDir` volumes, and the H/E artifact paths
-become the paths in the ephemeral artifacts. No generic renderer is supplied.
+`public-context` become five `emptyDir` volumes. No generic renderer is supplied.
 
 The operator must create the PVC subdirectories before using `subPath` mounts
 (or use its equivalent volume renderer), including `state`, `home`,
@@ -99,8 +109,8 @@ existing database is present with a WAL/SHM set, copy the present set
 coherently; if the backup is incomplete, stop the rollout and restore it. No
 automatic migration or reset is performed by these manifests.
 
-`pod.yaml` references ConfigMaps `ach-agent-config`, `ach-agent-channels`, and
-`ach-agent-engine`, and Secret `ach-agent-secrets`. Production `ach-runtime`
-must render those objects, images, PVC, custom `engine.home`/`workDir` mount
-maps, and secret references. Adding these examples does not mutate a cluster
-or complete that separate repository handoff.
+`pod.yaml` references the full-config ConfigMap `ach-agent-config` and Secret
+`ach-agent-secrets`; bootstrap files are generated into the two `emptyDir`
+mounts. Production ACH must render those objects, images, PVC,
+custom `engine.home`/`workDir` mount maps, and secret references. Adding these
+examples does not mutate a cluster or complete that separate repository handoff.

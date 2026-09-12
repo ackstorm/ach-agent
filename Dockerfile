@@ -137,7 +137,8 @@ EXPOSE 8080
 # live UNDER home, so the harness creates them — no top-level scratch dirs needed.
 RUN useradd -u 10001 -m appuser \
  && mkdir -p /tmp/ach-home \
- && chown -R 10001 /tmp/ach-home
+ && mkdir -p /run/ach-agent/channels /run/ach-agent/engine \
+ && chown -R 10001 /tmp/ach-home /run/ach-agent
 USER 10001
 
 # ENTRYPOINT (not CMD) so launch modifiers append cleanly:
@@ -160,12 +161,13 @@ RUN apt-get update -qq \
 COPY --from=builder /app/deps /app/deps
 RUN useradd -u 10001 -m appuser \
  && mkdir -p /tmp/ach-home /tmp/ach-home/workspace /tmp/ach-harness-state /tmp/ach-public-context /tmp/ach-private \
+      /run/ach-agent/channels /run/ach-agent/engine \
       /var/lib/ach-agent/state /var/lib/ach-agent/home /var/lib/ach-agent/workspace \
       /var/lib/ach-agent/public-context \
  && chown -R 10001 /tmp/ach-home /tmp/ach-harness-state /tmp/ach-public-context /tmp/ach-private \
-      /var/lib/ach-agent
+      /run/ach-agent /var/lib/ach-agent
 USER 10001
-ENTRYPOINT ["python", "-m", "ach_agent.main"]
+ENTRYPOINT ["/usr/bin/tini", "--", "python", "-m", "ach_agent.main"]
 
 FROM split-runtime AS channels
 ENV ACH_ROLE=channels
@@ -197,7 +199,6 @@ COPY --from=codemem-bin /opt/codemem /opt/codemem
 ENV PATH="/opt/codemem/bin:${PATH}" ACH_ROLE=engine
 RUN opencode --version && codemem --version
 USER 10001
-ENTRYPOINT ["/usr/bin/tini", "--", "python", "-m", "ach_agent.main"]
 EXPOSE 8081
 
 FROM split-runtime AS engine-pi
@@ -214,7 +215,6 @@ RUN pi --version \
  && codemem --version \
  && test -f /opt/pi-mcp-adapter/node_modules/pi-mcp-adapter/package.json
 USER 10001
-ENTRYPOINT ["/usr/bin/tini", "--", "python", "-m", "ach_agent.main"]
 EXPOSE 8081
 
 # Keep an explicit final alias so a build without --target still yields the

@@ -62,23 +62,34 @@ def test_pod_keeps_private_and_shared_mounts_narrow() -> None:
     assert "/var/lib/ach-agent/workspace" not in channel_mounts
 
 
-def test_role_environment_contract_is_explicit_and_agent_name_is_shared() -> None:
+def test_roles_use_image_entrypoint_args_and_only_harness_gets_full_config() -> None:
     pod = _documents(SPLIT / "pod.yaml")[0]
     containers = {item["name"]: item for item in pod["spec"]["containers"]}
+    assert all("command" not in item for item in containers.values())
+    assert containers["harness"]["args"] == ["--role", "harness"]
+    assert containers["channels"]["args"] == ["--role", "channels"]
+    assert containers["engine"]["args"] == ["--role", "engine"]
+    harness_env = {item["name"] for item in containers["harness"].get("env", [])}
+    assert "ACH_CONFIG_PATH" not in harness_env
+    assert "ACH_TOKEN" in harness_env
+    assert "ACH_CHANNELS_HMAC_KEY" not in harness_env
+    assert "ACH_CHANNELS_CONFIG_PATH" not in harness_env
+    assert "ACH_ENGINE_CONFIG_PATH" not in harness_env
+    assert all(not item.get("env") for name, item in containers.items() if name != "harness")
 
-    def env(container: dict[str, object]) -> dict[str, object]:
-        return {item["name"]: item for item in container["env"]}
-
-    harness = env(containers["harness"])
-    channels = env(containers["channels"])
-    engine = env(containers["engine"])
-    assert harness["ACH_ROLE"]["value"] == "harness"
-    assert channels["ACH_ROLE"]["value"] == "channels"
-    assert engine["ACH_ROLE"]["value"] == "engine"
-    assert channels["ACH_AGENT_NAME"]["value"] == "split-example"
-    assert harness["ACH_AGENT_NAME"]["value"] == "split-example"
-    assert engine["ACH_ENGINE_CONFIG_PATH"]["value"] == "/etc/ach-agent/engine.json"
-    assert channels["ACH_CHANNELS_CONFIG_PATH"]["value"] == "/etc/ach-agent/channels.json"
+    harness_mounts = {item["mountPath"]: item for item in containers["harness"]["volumeMounts"]}
+    channel_mounts = {item["mountPath"]: item for item in containers["channels"]["volumeMounts"]}
+    engine_mounts = {item["mountPath"]: item for item in containers["engine"]["volumeMounts"]}
+    assert harness_mounts["/etc/ach-agent/config.yaml"]["readOnly"] is True
+    assert harness_mounts["/run/ach-agent/channels"].get("readOnly") is not True
+    assert harness_mounts["/run/ach-agent/engine"].get("readOnly") is not True
+    assert channel_mounts["/run/ach-agent/channels"]["readOnly"] is True
+    assert "/run/ach-agent/engine" not in channel_mounts
+    assert engine_mounts["/run/ach-agent/engine"]["readOnly"] is True
+    assert "/run/ach-agent/channels" not in engine_mounts
+    assert containers["engine"]["startupProbe"]["exec"]["command"][-1].endswith(
+        "127.0.0.1:8081/healthz')"
+    )
 
 
 def test_compose_uses_one_network_namespace_and_named_role_volumes() -> None:
@@ -97,7 +108,12 @@ def test_compose_uses_one_network_namespace_and_named_role_volumes() -> None:
         "engine-codemem",
         "shared-workspace",
         "public-context",
+        "channels-bootstrap",
+        "engine-bootstrap",
     }
+    assert "ACH_CHANNELS_HMAC_KEY" not in str(compose)
+    assert "ACH_CHANNELS_CONFIG_PATH" not in str(compose)
+    assert "ACH_ENGINE_CONFIG_PATH" not in str(compose)
 
 
 def test_dockerfile_exposes_split_targets_and_keeps_combined_default() -> None:
@@ -110,6 +126,9 @@ def test_dockerfile_exposes_split_targets_and_keeps_combined_default() -> None:
     assert "opencode --version" in dockerfile
     assert "pi --version" in dockerfile
     assert "codemem --version" in dockerfile
+    assert dockerfile.count('ENTRYPOINT ["/usr/bin/tini", "--", "python", "-m", "ach_agent.main"]') >= 2
+    assert "/run/ach-agent/channels" in dockerfile
+    assert "/run/ach-agent/engine" in dockerfile
 
 
 def test_example_role_artifacts_validate_against_the_runtime_wire_models() -> None:
@@ -164,3 +183,6 @@ def test_ephemeral_artifacts_resolve_to_the_ephemeral_mount_map() -> None:
         for service in services.values()
         for mount in service.get("volumes", [])
     )
+    assert "channels-bootstrap" in services["harness"]["volumes"][-2]
+    assert "engine-bootstrap" in services["harness"]["volumes"][-1]
+    assert "ACH_CHANNELS_HMAC_KEY" not in str(compose)

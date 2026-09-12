@@ -8,13 +8,6 @@ services:
       target: harness
     command: ["--role", "harness"]
     environment:
-      ACH_ROLE: harness
-      ACH_AGENT_NAME: split-example
-      ACH_CONFIG_PATH: /etc/ach-agent/config.yaml
-      ACH_ENGINE_URL: http://127.0.0.1:8081
-      ACH_HARNESS_HOST: 127.0.0.1
-      ACH_HARNESS_PORT: "8090"
-      ACH_CHANNELS_HMAC_KEY: ${ACH_CHANNELS_HMAC_KEY:?set ACH_CHANNELS_HMAC_KEY}
       ACH_TOKEN: ${ACH_TOKEN:?set ACH_TOKEN}
       ACH_BASE_URL: ${ACH_BASE_URL:?set ACH_BASE_URL}
       ACH_ENVIRONMENT: ${ACH_ENVIRONMENT:-platform}
@@ -30,10 +23,13 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
+      start_period: 300s
     volumes:
       - ./${ACH_HARNESS_CONFIG_FILE:-config-ephemeral.yaml}:/etc/ach-agent/config.yaml:ro
       - ephemeral-workspace:/tmp/ach-home/workspace
       - ephemeral-public-context:/tmp/ach-public-context
+      - ephemeral-channels-bootstrap:/run/ach-agent/channels
+      - ephemeral-engine-bootstrap:/run/ach-agent/engine
 
   channels:
     build:
@@ -44,20 +40,13 @@ services:
     depends_on: [harness]
     network_mode: service:harness
     environment:
-      ACH_ROLE: channels
-      ACH_AGENT_NAME: split-example
-      ACH_CHANNELS_CONFIG_PATH: /etc/ach-agent/channels.json
-      ACH_HARNESS_URL: http://127.0.0.1:8090
-      ACH_CHANNELS_HOST: 0.0.0.0
-      ACH_CHANNELS_PORT: "8080"
-      ACH_CHANNELS_HMAC_KEY: ${ACH_CHANNELS_HMAC_KEY:?set ACH_CHANNELS_HMAC_KEY}
       ACH_ENVIRONMENT: ${ACH_ENVIRONMENT:-platform}
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     tmpfs: ["/tmp:mode=1777"]
     volumes:
-      - ./channels.json:/etc/ach-agent/channels.json:ro
+      - ephemeral-channels-bootstrap:/run/ach-agent/channels:ro
 
   engine:
     build:
@@ -67,10 +56,6 @@ services:
     command: ["--role", "engine"]
     network_mode: service:harness
     environment:
-      ACH_ROLE: engine
-      ACH_ENGINE_CONFIG_PATH: /etc/ach-agent/engine.json
-      ACH_ENGINE_HOST: 127.0.0.1
-      ACH_ENGINE_PORT: "8081"
       ACH_ENVIRONMENT: ${ACH_ENVIRONMENT:-platform}
     read_only: true
     cap_drop: ["ALL"]
@@ -84,11 +69,14 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
+      start_period: 300s
     volumes:
-      - ./${ACH_ENGINE_CONFIG_FILE:-engine-ephemeral.json}:/etc/ach-agent/engine.json:ro
+      - ephemeral-engine-bootstrap:/run/ach-agent/engine:ro
       - ephemeral-workspace:/tmp/ach-home/workspace
       - ephemeral-public-context:/tmp/ach-public-context:ro
 
 volumes:
   ephemeral-workspace:
   ephemeral-public-context:
+  ephemeral-channels-bootstrap:
+  ephemeral-engine-bootstrap:

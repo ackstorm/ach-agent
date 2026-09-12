@@ -22,12 +22,10 @@ spec:
     - name: harness-config
       configMap:
         name: ach-agent-config
-    - name: channels-config
-      configMap:
-        name: ach-agent-channels
-    - name: engine-config
-      configMap:
-        name: ach-agent-engine
+    - name: channels-bootstrap
+      emptyDir: {}
+    - name: engine-bootstrap
+      emptyDir: {}
     - name: state
       persistentVolumeClaim:
         claimName: ach-agent-state
@@ -55,31 +53,13 @@ spec:
     - name: harness
       image: ghcr.io/ackstorm/ach-agent:harness
       imagePullPolicy: IfNotPresent
-      command: ["python", "-m", "ach_agent.main"]
       args: ["--role", "harness"]
       env:
-        - name: ACH_ROLE
-          value: harness
-        - name: ACH_AGENT_NAME
-          value: split-example
-        - name: ACH_CONFIG_PATH
-          value: /etc/ach-agent/config.yaml
-        - name: ACH_ENGINE_URL
-          value: http://127.0.0.1:8081
         - name: ACH_BASE_URL
           valueFrom:
             secretKeyRef:
               name: ach-agent-secrets
               key: ach-base-url
-        - name: ACH_HARNESS_HOST
-          value: 127.0.0.1
-        - name: ACH_HARNESS_PORT
-          value: "8090"
-        - name: ACH_CHANNELS_HMAC_KEY
-          valueFrom:
-            secretKeyRef:
-              name: ach-agent-secrets
-              key: channels-hmac-key
         - name: ACH_TOKEN
           valueFrom:
             secretKeyRef:
@@ -92,6 +72,12 @@ spec:
         exec:
           command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/readyz')"]
         periodSeconds: 5
+      startupProbe:
+        exec:
+          command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz')"]
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 60
       livenessProbe:
         exec:
           command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz')"]
@@ -119,29 +105,14 @@ spec:
           mountPath: /tmp/ach-private
         - name: harness-tmp
           mountPath: /tmp
+        - name: channels-bootstrap
+          mountPath: /run/ach-agent/channels
+        - name: engine-bootstrap
+          mountPath: /run/ach-agent/engine
     - name: channels
       image: ghcr.io/ackstorm/ach-agent:channels
       imagePullPolicy: IfNotPresent
-      command: ["python", "-m", "ach_agent.main"]
       args: ["--role", "channels"]
-      env:
-        - name: ACH_ROLE
-          value: channels
-        - name: ACH_AGENT_NAME
-          value: split-example
-        - name: ACH_CHANNELS_CONFIG_PATH
-          value: /etc/ach-agent/channels.json
-        - name: ACH_HARNESS_URL
-          value: http://127.0.0.1:8090
-        - name: ACH_CHANNELS_HOST
-          value: 0.0.0.0
-        - name: ACH_CHANNELS_PORT
-          value: "8080"
-        - name: ACH_CHANNELS_HMAC_KEY
-          valueFrom:
-            secretKeyRef:
-              name: ach-agent-secrets
-              key: channels-hmac-key
       ports:
         - name: ingress
           containerPort: 8080
@@ -150,6 +121,13 @@ spec:
           path: /readyz
           port: ingress
         periodSeconds: 5
+      startupProbe:
+        httpGet:
+          path: /healthz
+          port: ingress
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 60
       livenessProbe:
         httpGet:
           path: /healthz
@@ -157,26 +135,15 @@ spec:
         periodSeconds: 10
       securityContext: *restricted
       volumeMounts:
-        - name: channels-config
-          mountPath: /etc/ach-agent/channels.json
-          subPath: channels.json
+        - name: channels-bootstrap
+          mountPath: /run/ach-agent/channels
           readOnly: true
         - name: channels-tmp
           mountPath: /tmp
     - name: engine
       image: ghcr.io/ackstorm/ach-agent:engine-opencode
       imagePullPolicy: IfNotPresent
-      command: ["/usr/bin/tini", "--", "python", "-m", "ach_agent.main"]
       args: ["--role", "engine"]
-      env:
-        - name: ACH_ROLE
-          value: engine
-        - name: ACH_ENGINE_CONFIG_PATH
-          value: /etc/ach-agent/engine.json
-        - name: ACH_ENGINE_HOST
-          value: 127.0.0.1
-        - name: ACH_ENGINE_PORT
-          value: "8081"
       ports:
         - name: engine
           containerPort: 8081
@@ -184,15 +151,20 @@ spec:
         exec:
           command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/readyz')"]
         periodSeconds: 5
+      startupProbe:
+        exec:
+          command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz')"]
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 60
       livenessProbe:
         exec:
           command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz')"]
         periodSeconds: 10
       securityContext: *restricted
       volumeMounts:
-        - name: engine-config
-          mountPath: /etc/ach-agent/engine.json
-          subPath: engine.json
+        - name: engine-bootstrap
+          mountPath: /run/ach-agent/engine
           readOnly: true
         - name: engine-home
           mountPath: /var/lib/ach-agent/home

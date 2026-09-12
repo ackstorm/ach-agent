@@ -323,6 +323,7 @@ async def _run_harness(
 
     # Step 2: load config (hard-fail on schema mismatch — CFG-02)
     cfg = cfg if cfg is not None else load_config(config_path)
+    isolated_harness = os.environ.get("ACH_ROLE", "") == "harness"
     try:
         validate_cost_source(cfg.cost.source, cfg.model.type)
     except ValueError as exc:
@@ -736,8 +737,13 @@ async def _run_harness(
         log.info("ach-agent: session ended")
         return
 
-    # Collect webhook channels to wire; build FastAPI app if any exist
-    webhook_channels = [ch for ch in cfg.channels if ch.type in ("webhook", "webhook-script")]
+    # In an isolated deployment C owns ingress. H exposes only its authenticated
+    # serializable channels API; the local parent keeps the legacy adapters.
+    webhook_channels = (
+        []
+        if isolated_harness
+        else [ch for ch in cfg.channels if ch.type in ("webhook", "webhook-script")]
+    )
 
     # Build A2A bridges and sub-apps (topology A: mounted under the same FastAPI/uvicorn socket).
     # W9: engine_runner must NOT import channels.a2a or hold a bridge reference.
@@ -746,7 +752,7 @@ async def _run_harness(
     a2a_bridges: list[A2AAgentExecutorBridge] = []
     a2a_mounts: list[tuple[str, Any]] = []
 
-    for channel in cfg.channels:
+    for channel in ([] if isolated_harness else cfg.channels):
         if channel.type != "a2a":
             continue
 
@@ -768,11 +774,24 @@ async def _run_harness(
 
     # 6c. Create FastAPI app with all webhook channels.
     # a2a_mounts threads the A2A sub-apps under the same socket (topology A).
-    app = create_app(
-        channels=webhook_channels,
-        handler=channel_handler,
-        a2a_mounts=a2a_mounts,
-    )
+    if isolated_harness:
+        from ach_agent.boot.channels_api import create_channels_app
+
+        hmac_key = os.environ.get("ACH_CHANNELS_HMAC_KEY", "")
+        if not hmac_key:
+            raise SystemExit("ACH_CHANNELS_HMAC_KEY is required for an isolated harness role")
+        app = create_channels_app(
+            completion_registry,
+            hmac_key.encode(),
+            agent=cfg.agent.name,
+            channels=(channel.name for channel in cfg.channels),
+        )
+    else:
+        app = create_app(
+            channels=webhook_channels,
+            handler=channel_handler,
+            a2a_mounts=a2a_mounts,
+        )
     # Expose state so _drain can flip draining/ready (same ref as app.extra['state'])
     state: HealthState = app.extra["state"]
 
@@ -782,7 +801,11 @@ async def _run_harness(
 
     # D-08/SC#3: collect all cron channels and construct exactly ONE CronScheduler.
     # Pitfall 9 (one task per channel) is superseded by D-08 (one scheduler for all).
-    cron_channels = [source_configs[ch.name] for ch in cfg.channels if ch.type == "cron"]
+    cron_channels = (
+        []
+        if isolated_harness
+        else [source_configs[ch.name] for ch in cfg.channels if ch.type == "cron"]
+    )
     cron_scheduler: CronScheduler | None = None
     if cron_channels:
         cron_scheduler = CronScheduler(cron_channels, handler=channel_handler)
@@ -795,7 +818,7 @@ async def _run_harness(
 
     # Queue channels (redis Streams, ackMode:onComplete): one QueueConsumer each.
     # Each consumer owns a single asyncio consume task; stopped in the drain branch.
-    queue_channels = [ch for ch in cfg.channels if ch.type == "queue"]
+    queue_channels = [] if isolated_harness else [ch for ch in cfg.channels if ch.type == "queue"]
     queue_consumers: list[QueueConsumer] = []
     for channel in queue_channels:
         consumer = QueueConsumer(source_configs[channel.name], handler=channel_handler)
@@ -943,6 +966,7 @@ async def main(
             raise SystemExit("ACH_CHANNELS_CONFIG_PATH is required for --role channels")
         await run_channels(cast(Any, load_artifact(path)))
     elif role == "harness":
+        os.environ["ACH_ROLE"] = "harness"
         await run_harness(
             load_config(os.environ.get(CONFIG_PATH_ENV, DEFAULT_CONFIG_PATH)),
             tui_mode=tui_mode,

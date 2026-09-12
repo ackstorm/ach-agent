@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import Response
 
 from ach_agent.boot.completions import CompletionRegistry
+from ach_agent.boot.health import HealthState
 from ach_agent.channels.envelopes import Admission, EventEnvelope, EventRef
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.signing import (
@@ -43,7 +44,21 @@ def create_channels_app(
     configured_channels = set(channels or ())
     replay = nonce_cache if nonce_cache is not None else NonceCache()
     app = FastAPI(title="ach-agent-harness-channels")
+    state = HealthState(ready=True)
+    app.extra["state"] = state
     app.extra.update({"agent": agent, "channels": configured_channels, "registry": registry})
+
+    @app.get("/healthz")
+    async def healthz() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/readyz")
+    async def readyz() -> Response:
+        return Response(
+            content=json.dumps({"status": "ready" if state.ready else "draining"}),
+            status_code=200 if state.ready else 503,
+            media_type="application/json",
+        )
 
     async def authenticated_body(request: Request) -> tuple[bytes, str] | Response:
         nonce = request.headers.get(NONCE_HEADER, "")

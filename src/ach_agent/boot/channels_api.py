@@ -100,6 +100,13 @@ def create_channels_app(
         if isinstance(authenticated, Response):
             return authenticated
         raw_body, nonce = authenticated
+        if state.draining:
+            return signed_response(
+                key,
+                nonce,
+                503,
+                {"kind": "error", "error": "harness is draining", "retry": True},
+            )
         try:
             payload = _object(raw_body)
             if payload.get("agent") != agent:

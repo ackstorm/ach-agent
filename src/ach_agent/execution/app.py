@@ -28,6 +28,7 @@ from ach_agent.execution.service import (
 from ach_agent.execution.wire import (
     AcquireRequest,
     ControllerHello,
+    ControllerStopRequest,
     ExecutionEvent,
     ReleaseRequest,
     SessionImportRequest,
@@ -211,6 +212,19 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
             media_type="application/x-ndjson",
             on_close=lambda: service.release_controller(hello.controller_id),
         )
+
+    @app.post("/execution/v1/controller/stop")
+    async def controller_stop(request: Request) -> JSONResponse:
+        try:
+            body = ControllerStopRequest.model_validate(await _request_json(request))
+            await service.graceful_stop_controller(body.controller_id)
+        except _BodyTooLarge:
+            return JSONResponse({"detail": "request body too large"}, status_code=413)
+        except (_InvalidBody, ValidationError) as exc:
+            return _invalid(str(exc))
+        except Exception as exc:
+            return service_error(exc)
+        return JSONResponse({"status": "stopped"})
 
     @app.post("/execution/v1/acquire")
     async def acquire(request: Request) -> JSONResponse:

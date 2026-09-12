@@ -363,6 +363,19 @@ class ExecutionClient:
         """Compatibility spelling matching ``ExecutionService.claim_controller``."""
         return await self.connect()
 
+    async def graceful_stop(self) -> None:
+        """Ask E to finish warm cleanup while the controller event pump is live."""
+        self._assert_controller_live()
+        await self._json_request(
+            "POST",
+            "/execution/v1/controller/stop",
+            {"controller_id": self.controller_id},
+        )
+
+    @property
+    def controller_lost(self) -> bool:
+        return self._controller_lost or self._failed
+
     async def next_controller_event(self) -> WorkspaceStoppedEvent:
         """Wait for a correlated engine lifecycle event from the held controller stream."""
         self._assert_controller_live()

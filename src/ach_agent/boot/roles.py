@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import signal
+import sys
 from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Any, cast
@@ -22,7 +23,8 @@ from typing import Any, cast
 import uvicorn
 from pydantic import JsonValue
 
-from ach_agent.boot.paths import resolve_role_paths
+from ach_agent.boot.paths import harness_log_dir, resolve_role_paths
+from ach_agent.boot.secrets import collect_secret_env_names
 from ach_agent.config.schema import (
     AgentConfig,
     ChannelSourceConfig,
@@ -136,17 +138,23 @@ def build_role_configs(
             "engine.forwardEnv is not supported in split mode; configure explicit engine env names"
         )
     engine_env_names: list[str] = []
-    if not split_mode and cfg.engine.forward_env:
+    if not split_mode:
         # Native local mode retains the established clean-slate forwarding policy;
         # secret names are removed by the existing fail-safe helper before they
         # reach the child environment.
         from ach_agent.boot.secrets import strip_forwarded_secrets
 
+        secret_names = collect_secret_env_names(cfg)
         engine_env_names = [
-            name for name in strip_forwarded_secrets(cfg) if name not in _MANAGED_ENV_NAMES
+            name
+            for name in strip_forwarded_secrets(cfg)
+            if name not in _MANAGED_ENV_NAMES and name not in secret_names
         ]
         engine_env_names = list(
-            dict.fromkeys(engine_env_names + sorted(_mcp_engine_env_names(cfg)))
+            dict.fromkeys(
+                engine_env_names
+                + [name for name in sorted(_mcp_engine_env_names(cfg)) if name not in secret_names]
+            )
         )
     paths = resolve_role_paths(cfg)
     channels: dict[str, JsonValue] = {
@@ -219,6 +227,8 @@ async def run_engine(public_config: JsonValue, *, terminal_mode: bool = False) -
 
         try:
             native_cfg = _engine_config(public)
+            from ach_agent.channels.tui import _CONSOLE_SESSION_KEY
+
             token = public.trace_token
             if not token:
                 raise SplitRoleConfigError("traceToken is required for native terminal mode")
@@ -232,11 +242,11 @@ async def run_engine(public_config: JsonValue, *, terminal_mode: bool = False) -
             if public.engine_type == "pi":
                 from ach_agent.engine.pi.driver import PiDriver
 
-                await PiDriver().run_tui(native_cfg, "tui")
+                await PiDriver().run_tui(native_cfg, _CONSOLE_SESSION_KEY)
                 return
             from ach_agent.engine.lifecycle import build_opencode_env
 
-            server_native = await driver.launch(native_cfg, "tui")
+            server_native = await driver.launch(native_cfg, _CONSOLE_SESSION_KEY)
             try:
                 binary = shutil.which(native_cfg.binary_path)
                 if binary is None:
@@ -247,21 +257,36 @@ async def run_engine(public_config: JsonValue, *, terminal_mode: bool = False) -
                     if config_path
                     else {}
                 )
-                log_path = Path(native_cfg.home or "/tmp") / "ach-opencode-tui.log"
-                log_path.parent.mkdir(parents=True, exist_ok=True)
+                log_path = harness_log_dir() / "tui-attach.log"
                 previous_sigint = signal.getsignal(signal.SIGINT)
-                with log_path.open("ab") as log_file:
-                    proc = await asyncio.create_subprocess_exec(
-                        binary,
-                        "attach",
-                        f"http://127.0.0.1:{server_native.port}",
-                        "--pure",
-                        env=env,
-                        stderr=log_file,
-                    )
-                    signal.signal(signal.SIGINT, signal.SIG_IGN)
+                proc: asyncio.subprocess.Process | None = None
+                with log_path.open("a", encoding="utf-8") as log_file:
                     try:
-                        await proc.wait()
+                        # Keep H/E Python logs off the alternate screen while the
+                        # attach process inherits the real terminal descriptors.
+                        real_stderr = sys.stderr
+                        sys.stderr = log_file
+                        try:
+                            proc = await asyncio.create_subprocess_exec(
+                                binary,
+                                "attach",
+                                f"http://127.0.0.1:{server_native.port}",
+                                "--pure",
+                                env=env,
+                            )
+                            signal.signal(signal.SIGINT, signal.SIG_IGN)
+                            await proc.wait()
+                        finally:
+                            sys.stderr = real_stderr
+                    except asyncio.CancelledError:
+                        if proc is not None and proc.returncode is None:
+                            proc.terminate()
+                            with contextlib.suppress(asyncio.TimeoutError):
+                                await asyncio.wait_for(proc.wait(), timeout=5.0)
+                            if proc.returncode is None:
+                                proc.kill()
+                                await proc.wait()
+                        raise
                     finally:
                         signal.signal(signal.SIGINT, previous_sigint)
             finally:
@@ -351,9 +376,7 @@ async def run_channels(channel_config: JsonValue) -> None:
         raise SplitRoleConfigError("ACH_HARNESS_URL is required for a separated channels role")
     from ach_agent import identity
 
-    identity.configure(
-        os.environ.get("ACH_AGENT_NAME", ""), os.environ.get("ACH_ENVIRONMENT", "")
-    )
+    identity.configure(os.environ.get("ACH_AGENT_NAME", ""), os.environ.get("ACH_ENVIRONMENT", ""))
     for source in raw_sources:
         ChannelSourceConfig.model_validate(source)
     from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a2a_agent_card
@@ -368,9 +391,7 @@ async def run_channels(channel_config: JsonValue) -> None:
     agent_name = os.environ.get("ACH_AGENT_NAME", "").strip()
     if not agent_name:
         raise SplitRoleConfigError("ACH_AGENT_NAME is required for a separated channels role")
-    client = ChannelsClient(
-        harness_url, key_text.encode(), agent=agent_name, poll_interval=2.0
-    )
+    client = ChannelsClient(harness_url, key_text.encode(), agent=agent_name, poll_interval=2.0)
     probe_deadline = asyncio.get_running_loop().time() + 30.0
     probe_channel = source_configs[0].name if source_configs else ""
     while True:

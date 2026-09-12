@@ -107,9 +107,16 @@ async def wait_engine_ready(
 class LocalEngineProcess:
     """Own the local engine-role child and terminate it in a bounded manner."""
 
-    def __init__(self, process: asyncio.subprocess.Process, artifacts: RoleArtifactPaths) -> None:
+    def __init__(
+        self,
+        process: asyncio.subprocess.Process,
+        artifacts: RoleArtifactPaths,
+        *,
+        isolated_process_group: bool,
+    ) -> None:
         self.process = process
         self.artifacts = artifacts
+        self.isolated_process_group = isolated_process_group
 
     @classmethod
     async def start(
@@ -157,9 +164,9 @@ class LocalEngineProcess:
         process = await asyncio.create_subprocess_exec(
             *command,
             env=child_env,
-            start_new_session=True,
+            start_new_session=not terminal_mode,
         )
-        return cls(process, artifacts)
+        return cls(process, artifacts, isolated_process_group=not terminal_mode)
 
     async def wait_ready(self, base_url: str, *, timeout: float = 30.0) -> dict[str, Any]:
         return await wait_engine_ready(base_url, timeout=timeout)
@@ -174,10 +181,10 @@ class LocalEngineProcess:
                 await asyncio.wait_for(self.process.wait(), timeout=timeout)
         except (ProcessLookupError, TimeoutError):
             if self.process.returncode is None:
-                if sys.platform.startswith("linux"):
-                    self.process.kill()
-                else:
+                if self.isolated_process_group:
                     os.killpg(self.process.pid, signal.SIGKILL)
+                else:
+                    self.process.kill()
                 await self.process.wait()
         finally:
             shutil.rmtree(self.artifacts.channels.parent, ignore_errors=True)

@@ -270,14 +270,22 @@ class ExecutionService:
         except BaseException:
             pass
 
-    async def release_controller(self, controller_id: str) -> None:
+    async def release_controller(
+        self,
+        controller_id: str,
+        *,
+        fail_barriers: bool = True,
+        close_admission: bool = True,
+    ) -> None:
         """Close admission and finish all owned cleanup before another controller."""
         if self._controller_id != controller_id:
             return
-        self._admission_open = False
-        for barrier in self._workspace_barriers.values():
-            barrier.failed = True
-            barrier.acknowledged.set()
+        if close_admission:
+            self._admission_open = False
+        if fail_barriers:
+            for barrier in self._workspace_barriers.values():
+                barrier.failed = True
+                barrier.acknowledged.set()
         reserved_acquisitions = {
             invocation_id
             for invocation_id, reservation in self._workspace_reservations.items()
@@ -334,6 +342,7 @@ class ExecutionService:
         finally:
             if cleanup_task.done() and self._controller_cleanup_task is cleanup_task:
                 self._controller_cleanup_task = None
+        self._admission_open = False
         self._controller_id = None
         self._workspace_tasks.clear()
         self._workspace_reservations.clear()
@@ -345,6 +354,10 @@ class ExecutionService:
         # Keep the acquisition guard active for the current controller until this
         # cleanup completes, so a late import after release is still rejected.
         self._execution_started = False
+
+    async def graceful_stop_controller(self, controller_id: str) -> None:
+        """Drain normal work and run private cleanup hooks before controller close."""
+        await self.release_controller(controller_id, fail_barriers=False, close_admission=False)
 
     def controller_events(self) -> asyncio.Queue[WorkspaceStoppedEvent] | None:
         """Return the finite event queue held by the current controller stream."""

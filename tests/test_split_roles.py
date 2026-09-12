@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import signal
 import socket
 from pathlib import Path
 
@@ -16,12 +18,12 @@ from ach_agent.config.schema import AgentConfig
 
 def _cfg(**updates: object) -> AgentConfig:
     raw: dict[str, object] = {
-            "schemaVersion": "1",
-            "agent": {"name": "role-test"},
-            "model": {"name": "openai.gpt-5", "type": "openai"},
-            "capability": {"ach": {"baseUrl": "https://ach.example.test"}},
-            "channels": [],
-        }
+        "schemaVersion": "1",
+        "agent": {"name": "role-test"},
+        "model": {"name": "openai.gpt-5", "type": "openai"},
+        "capability": {"ach": {"baseUrl": "https://ach.example.test"}},
+        "channels": [],
+    }
     raw.update(updates)
     return AgentConfig.model_validate(raw)
 
@@ -104,6 +106,36 @@ def test_local_mcp_refs_are_explicit_engine_env_and_managed_names_are_removed() 
     assert public["engineEnvNames"] == ["SAFE_OPERATOR", "MCP_OPERATOR", "MCP_REMOTE"]
 
 
+def test_local_mcp_reference_cannot_readd_config_secret() -> None:
+    from ach_agent.boot.roles import build_role_configs
+
+    cfg = _cfg(
+        engine={"forwardEnv": ["SAFE_OPERATOR"]},
+        channels=[
+            {
+                "name": "cron",
+                "type": "cron",
+                "cron": {"schedule": "* * * * *"},
+                "prepare": {"script": "true"},
+                "cleanup": {
+                    "script": "true",
+                    "secretEnv": {"TOKEN": {"env": "GITLAB_TOKEN"}},
+                },
+            }
+        ],
+        mcpServers={
+            "stdio": {
+                "type": "local",
+                "command": "demo-mcp",
+                "env": ["GITLAB_TOKEN", "MCP_OPERATOR"],
+            }
+        },
+    )
+
+    _channels, public = build_role_configs(cfg, split_mode=False)
+    assert public["engineEnvNames"] == ["SAFE_OPERATOR", "MCP_OPERATOR"]
+
+
 def test_public_engine_rejects_harness_managed_env_names() -> None:
     from ach_agent.execution.wire import PublicEngineConfig
 
@@ -135,7 +167,7 @@ def test_terminal_child_keeps_inherited_terminal_and_safe_environment(
 
     async def fake_spawn(*command: object, **kwargs: object) -> FakeProcess:
         calls.append(command)
-        assert kwargs["start_new_session"] is True
+        assert kwargs["start_new_session"] is False
         assert "stdin" not in kwargs and "stdout" not in kwargs
         env = kwargs["env"]
         assert isinstance(env, dict)
@@ -151,6 +183,45 @@ def test_terminal_child_keeps_inherited_terminal_and_safe_environment(
         await child.close(timeout=1)
 
     asyncio.run(run())
+
+
+def test_local_timeout_kills_owned_supervisor_process_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ach_agent.boot.local import LocalEngineProcess, RoleArtifacts
+
+    artifacts = RoleArtifacts(tmp_path / "artifacts").write({}, {})
+    killed: list[tuple[int, signal.Signals]] = []
+
+    class HungProcess:
+        pid = 4567
+        returncode = None
+
+        def send_signal(self, _signal: signal.Signals) -> None:
+            pass
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        async def wait(self) -> int:
+            self.returncode = -9
+            return -9
+
+    async def always_timeout(*_args: object, **_kwargs: object) -> None:
+        future = _args[0] if _args else None
+        if hasattr(future, "close"):
+            future.close()
+        raise TimeoutError
+
+    async def run() -> None:
+        child = LocalEngineProcess(HungProcess(), artifacts, isolated_process_group=True)  # type: ignore[arg-type]
+        await child.close(timeout=0.01)
+
+    monkeypatch.setattr(os, "killpg", lambda pid, sig: killed.append((pid, sig)))
+    monkeypatch.setattr(asyncio, "wait_for", always_timeout)
+    asyncio.run(run())
+    assert killed == [(4567, signal.SIGKILL)]
+    assert not artifacts.channels.parent.exists()
 
 
 def test_public_context_is_linked_from_custom_work_dir(tmp_path: Path) -> None:

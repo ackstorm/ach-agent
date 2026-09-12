@@ -156,6 +156,39 @@ async def test_private_cleanup_ack_is_completion_barrier(fake_driver, tmp_path: 
 
 
 @pytest.mark.asyncio
+async def test_graceful_controller_stop_preserves_warm_cleanup_ack(
+    fake_driver, tmp_path: Path
+) -> None:
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+    request = _prepare(
+        tmp_path,
+        prepare=None,
+        cleanup=None,
+        cleanup_ack_required=True,
+        cleanup_timeout_seconds=2,
+    )
+    await service.prepare_workspace(request)
+    stopping = asyncio.create_task(service.pool.discard(request.session_key))
+    events = service.controller_events()
+    assert events is not None
+    event = await asyncio.wait_for(events.get(), timeout=1)
+    await service.ack_workspace_cleanup(
+        WorkspaceCleanupAckRequest(
+            controller_id=event.controller_id,
+            instance_id=event.instance_id,
+            session_key=event.session_key,
+            event_id=event.event_id,
+            invocation_id=event.invocation_id,
+        )
+    )
+    await asyncio.wait_for(stopping, timeout=1)
+    await service.graceful_stop_controller("controller")
+    assert service.can_accept_controller
+    assert not service._unhealthy
+
+
+@pytest.mark.asyncio
 async def test_private_cleanup_ack_controller_loss_wakes_native_cleanup(
     fake_driver, tmp_path: Path
 ) -> None:
@@ -873,6 +906,7 @@ async def test_real_http_registry_orders_warm_expiry_before_same_lane_prepare(
 ) -> None:
     service = ExecutionService(fake_driver, {})
     app = create_execution_app(service)
+
     async def private_cleanup(*args: object, **kwargs: object) -> None:
         return None
 

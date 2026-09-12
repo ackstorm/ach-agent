@@ -64,6 +64,23 @@ async def test_signed_submission_and_wait_round_trip() -> None:
 
 
 @pytest.mark.asyncio
+async def test_draining_h_rejects_signed_retryable_admission() -> None:
+    async def admit(_event):
+        return RouterAdmitResult.ACCEPTED
+
+    registry = CompletionRegistry(admit, agent="agent-a")
+    app = create_channels_app(registry, KEY, agent="agent-a", channels={"queue"})
+    app.extra["state"].draining = True
+    client = await _client_for(app)
+    try:
+        with pytest.raises(SubmissionFailed, match="draining"):
+            await client.submit(envelope())
+        assert registry.lookup(envelope().event_ref("agent-a")).invocation_id == ""
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_same_event_retry_keeps_identity_but_uses_fresh_nonce(monkeypatch) -> None:
     seen: list[str] = []
 

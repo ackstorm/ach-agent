@@ -112,7 +112,17 @@ class PiDriver:
             cwd=str(work_dir),
             env=build_pi_env(agent_dir, cfg),
         )
-        await proc.wait()
+        try:
+            await proc.wait()
+        except asyncio.CancelledError:
+            if proc.returncode is None:
+                proc.terminate()
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                if proc.returncode is None:
+                    proc.kill()
+                    await proc.wait()
+            raise
 
     async def launch(self, cfg: EngineConfig, session_key: str) -> ManagedServer:
         from ach_agent.engine.lifecycle import ManagedServer, NativeLaunchFailed

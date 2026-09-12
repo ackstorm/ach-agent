@@ -26,9 +26,7 @@ def _finite_json(value: JsonValue) -> JsonValue:
 
 
 class _WireModel(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid", strict=True, frozen=True, populate_by_name=True
-    )
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True, populate_by_name=True)
 
 
 class PublicEngineConfig(_WireModel):
@@ -106,6 +104,10 @@ class PublicEngineConfig(_WireModel):
 class ControllerHello(_WireModel):
     version: int
     instance_id: str
+    controller_id: str
+
+
+class ControllerStopRequest(_WireModel):
     controller_id: str
 
 

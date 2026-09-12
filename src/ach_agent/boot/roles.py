@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 import os
 import re
 import shutil
@@ -23,6 +24,17 @@ from typing import Any, cast
 import uvicorn
 from pydantic import JsonValue
 
+from ach_agent.boot.bootstrap import (
+    DEFAULT_BOOTSTRAP_WAIT_SECONDS,
+    DEFAULT_CHANNELS_HOST,
+    DEFAULT_CHANNELS_PORT,
+    DEFAULT_ENGINE_HOST,
+    DEFAULT_ENGINE_PORT,
+    ChannelsBootstrap,
+    role_bootstrap_path,
+    wait_for_channels_bootstrap,
+    wait_for_engine_bootstrap,
+)
 from ach_agent.boot.paths import harness_log_dir, resolve_role_paths
 from ach_agent.boot.secrets import collect_secret_env_names, strip_forwarded_secrets
 from ach_agent.config.schema import (
@@ -122,11 +134,7 @@ def _engine_env_names(cfg: AgentConfig) -> list[str]:
         for name in strip_forwarded_secrets(cfg)
         if name not in _MANAGED_ENV_NAMES and name not in secret_names
     ]
-    names.extend(
-        name
-        for name in sorted(_mcp_engine_env_names(cfg))
-        if name not in secret_names
-    )
+    names.extend(name for name in sorted(_mcp_engine_env_names(cfg)) if name not in secret_names)
     return list(dict.fromkeys(names))
 
 
@@ -192,8 +200,15 @@ def build_role_configs(
     return channels, _json_model(public)
 
 
-async def run_engine(public_config: JsonValue, *, terminal_mode: bool = False) -> None:
+async def run_engine(
+    public_config: JsonValue | None = None, *, terminal_mode: bool = False
+) -> None:
     """Start the engine HTTP role with no native process at endpoint boot."""
+    if public_config is None:
+        public_config = await wait_for_engine_bootstrap(
+            role_bootstrap_path("engine"),
+            timeout=_bootstrap_wait_seconds(),
+        )
     public = PublicEngineConfig.model_validate(public_config)
     home = Path(public.home or "/tmp/ach-home")
     work_dir = Path(public.work_dir or home / "workspace")
@@ -299,9 +314,9 @@ async def run_engine(public_config: JsonValue, *, terminal_mode: bool = False) -
         return
     service = ExecutionService(driver, store)
     app = create_execution_app(service)
-    host = os.environ.get("ACH_ENGINE_HOST", "127.0.0.1")
+    host = os.environ.get("ACH_ENGINE_HOST", DEFAULT_ENGINE_HOST)
     try:
-        port = int(os.environ.get("ACH_ENGINE_PORT", "8081"))
+        port = int(os.environ.get("ACH_ENGINE_PORT", str(DEFAULT_ENGINE_PORT)))
     except ValueError as exc:
         close = getattr(store, "close", None)
         if close is not None:
@@ -357,8 +372,17 @@ async def run_harness(
     )
 
 
-async def run_channels(channel_config: JsonValue) -> None:
+async def run_channels(channel_config: JsonValue | None = None) -> None:
     """Start the source role from its filtered configuration artifact."""
+    bootstrap: ChannelsBootstrap | None = None
+    if channel_config is None:
+        bootstrap = await wait_for_channels_bootstrap(
+            role_bootstrap_path("channels"), timeout=_bootstrap_wait_seconds()
+        )
+        channel_config = {
+            "schemaVersion": "1",
+            "channels": cast(JsonValue, bootstrap.channels),
+        }
     if not isinstance(channel_config, dict):
         raise SplitRoleConfigError("channels role requires an object configuration")
     if channel_config.get("schemaVersion") != "1":
@@ -368,16 +392,23 @@ async def run_channels(channel_config: JsonValue) -> None:
         raise SplitRoleConfigError("channels role artifact must contain channels")
     raw_sources = sources
     key_text = os.environ.get("ACH_CHANNELS_HMAC_KEY", "")
+    if bootstrap is not None:
+        key_text = bootstrap.hmac_key
     if not key_text:
         raise SplitRoleConfigError(
             "ACH_CHANNELS_HMAC_KEY is required for a separated channels role"
         )
     harness_url = os.environ.get("ACH_HARNESS_URL", "").strip()
+    if bootstrap is not None:
+        harness_url = bootstrap.harness_url
     if not harness_url:
-        raise SplitRoleConfigError("ACH_HARNESS_URL is required for a separated channels role")
+        raise SplitRoleConfigError("channels bootstrap has no harness URL")
     from ach_agent import identity
 
-    identity.configure(os.environ.get("ACH_AGENT_NAME", ""), os.environ.get("ACH_ENVIRONMENT", ""))
+    agent_name = os.environ.get("ACH_AGENT_NAME", "").strip()
+    if bootstrap is not None:
+        agent_name = bootstrap.agent_name
+    identity.configure(agent_name, os.environ.get("ACH_ENVIRONMENT", ""))
     for source in raw_sources:
         ChannelSourceConfig.model_validate(source)
     from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a2a_agent_card
@@ -389,11 +420,12 @@ async def run_channels(channel_config: JsonValue) -> None:
     source_configs: list[ChannelSourceConfig] = [
         ChannelSourceConfig.model_validate(source) for source in raw_sources
     ]
-    agent_name = os.environ.get("ACH_AGENT_NAME", "").strip()
     if not agent_name:
         raise SplitRoleConfigError("ACH_AGENT_NAME is required for a separated channels role")
     client = ChannelsClient(harness_url, key_text.encode(), agent=agent_name, poll_interval=2.0)
-    probe_deadline = asyncio.get_running_loop().time() + 30.0
+    probe_deadline = asyncio.get_running_loop().time() + (
+        _bootstrap_wait_seconds() if bootstrap is not None else 30.0
+    )
     probe_channel = source_configs[0].name if source_configs else ""
     while True:
         try:
@@ -426,9 +458,9 @@ async def run_channels(channel_config: JsonValue) -> None:
         source for source in source_configs if source.type in ("webhook", "webhook-script")
     ]
     app = create_app(http_sources, client, a2a_mounts=a2a_mounts)
-    host = os.environ.get("ACH_CHANNELS_HOST", "0.0.0.0")
+    host = os.environ.get("ACH_CHANNELS_HOST", DEFAULT_CHANNELS_HOST)
     try:
-        port = int(os.environ.get("ACH_CHANNELS_PORT", "8080"))
+        port = int(os.environ.get("ACH_CHANNELS_PORT", str(DEFAULT_CHANNELS_PORT)))
     except ValueError as exc:
         await client.close()
         raise SplitRoleConfigError("ACH_CHANNELS_PORT must be an integer") from exc
@@ -452,3 +484,14 @@ async def run_channels(channel_config: JsonValue) -> None:
             await queue.stop()
         await cron.stop()
         await client.close()
+
+
+def _bootstrap_wait_seconds() -> float:
+    raw = os.environ.get("ACH_BOOTSTRAP_WAIT_SECONDS", str(DEFAULT_BOOTSTRAP_WAIT_SECONDS))
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise SplitRoleConfigError("ACH_BOOTSTRAP_WAIT_SECONDS must be a number") from exc
+    if value <= 0 or not math.isfinite(value):
+        raise SplitRoleConfigError("ACH_BOOTSTRAP_WAIT_SECONDS must be positive")
+    return value

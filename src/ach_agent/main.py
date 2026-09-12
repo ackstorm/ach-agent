@@ -32,6 +32,13 @@ from typing import Any, cast
 import structlog
 import uvicorn
 
+from ach_agent.boot.bootstrap import (
+    DEFAULT_ENGINE_URL,
+    DEFAULT_HARNESS_HOST,
+    DEFAULT_HARNESS_PORT,
+    bootstrap_paths,
+    publish_bootstraps,
+)
 from ach_agent.boot.completions import CompletionHandler, CompletionRegistry
 from ach_agent.boot.engine_runner import make_engine_runner
 from ach_agent.boot.health import HealthState
@@ -360,11 +367,8 @@ async def _run_harness(
     # Step 2: load config (hard-fail on schema mismatch — CFG-02)
     cfg = cfg if cfg is not None else load_config(config_path)
     isolated_harness = role_mode == "harness"
-    if isolated_harness:
-        if not os.environ.get("ACH_ENGINE_URL", "").strip():
-            raise SystemExit("ACH_ENGINE_URL is required for an isolated harness role")
-        if not os.environ.get("ACH_CHANNELS_HMAC_KEY", ""):
-            raise SystemExit("ACH_CHANNELS_HMAC_KEY is required for an isolated harness role")
+    configured_engine_url = os.environ.get("ACH_ENGINE_URL", "").strip()
+    if isolated_harness and os.environ.get("ACH_HARNESS_PORT", "").strip():
         try:
             int(os.environ.get("ACH_HARNESS_PORT", "8090"))
         except ValueError as exc:
@@ -643,7 +647,6 @@ async def _run_harness(
                 session_key="",
             ),
         )
-    configured_engine_url = os.environ.get("ACH_ENGINE_URL", "").strip()
     # The local default --tui owns a real engine-role child.  H issues the
     # correlation token and E only adopts it; this keeps native terminal
     # attachment on the same role seam as the HTTP execution path.
@@ -702,6 +705,35 @@ async def _run_harness(
                     await a2a_facade.stop()
         log.info("ach-agent: native terminal session ended")
         return
+    hmac_key = os.environ.get("ACH_CHANNELS_HMAC_KEY", "")
+    if isolated_harness:
+        harness_url = os.environ.get("ACH_HARNESS_URL", "").strip()
+        if not harness_url:
+            harness_host = os.environ.get("ACH_HARNESS_HOST", DEFAULT_HARNESS_HOST)
+            try:
+                harness_port = int(os.environ.get("ACH_HARNESS_PORT", str(DEFAULT_HARNESS_PORT)))
+            except ValueError as exc:
+                raise SystemExit("ACH_HARNESS_PORT must be an integer") from exc
+            harness_url = f"http://{harness_host}:{harness_port}"
+        try:
+            published = publish_bootstraps(
+                bootstrap_paths(),
+                channels_projection,
+                public_cfg.model_dump(mode="json", by_alias=True),
+                agent_name=cfg.agent.name,
+                harness_url=harness_url,
+                hmac_key=hmac_key or None,
+            )
+        except BaseException:
+            await stop_model_proxies()
+            if mcp_proxy is not None:
+                await mcp_proxy.stop()
+            if memory_facade is not None:
+                await memory_facade.stop()
+            if a2a_facade is not None:
+                await a2a_facade.stop()
+            raise
+        hmac_key = published.hmac_key
     # D-03/D-04: dedup store first — it opens/repairs state.db (fail-closed on a bad
     # mount). Native session ownership stays in E; only the bounded legacy map
     # export is sent through the startup import operation below.
@@ -720,7 +752,7 @@ async def _run_harness(
     if hasattr(session_store, "close"):
         session_store.close()
 
-    engine_url = (configured_engine_url or "http://127.0.0.1:8081").rstrip("/")
+    engine_url = (configured_engine_url or DEFAULT_ENGINE_URL).rstrip("/")
     local_engine: LocalEngineProcess | None = None
     if local_mode and not configured_engine_url:
         artifact_dir = Path(tempfile.mkdtemp(prefix="ach-role-", dir="/tmp"))
@@ -973,7 +1005,8 @@ async def _run_harness(
     if isolated_harness:
         from ach_agent.boot.channels_api import create_channels_app
 
-        hmac_key = os.environ["ACH_CHANNELS_HMAC_KEY"]
+        if not hmac_key:
+            raise SystemExit("channels bootstrap did not provide an authentication key")
         app = create_channels_app(
             completion_registry,
             hmac_key.encode(),
@@ -1043,8 +1076,8 @@ async def _run_harness(
     # uvicorn shares the SAME event loop as the cron tasks — no thread pool,
     # single-process topology (spec §15 topology A).
     if isolated_harness:
-        host = os.environ.get("ACH_HARNESS_HOST", "127.0.0.1")
-        port = int(os.environ.get("ACH_HARNESS_PORT", "8090"))
+        host = os.environ.get("ACH_HARNESS_HOST", DEFAULT_HARNESS_HOST)
+        port = int(os.environ.get("ACH_HARNESS_PORT", str(DEFAULT_HARNESS_PORT)))
     else:
         host = cfg.health.host
         port = cfg.health.port
@@ -1207,14 +1240,16 @@ async def main(
 
     if role == "engine":
         path = os.environ.get("ACH_ENGINE_CONFIG_PATH", "")
-        if not path:
-            raise SystemExit("ACH_ENGINE_CONFIG_PATH is required for --role engine")
-        await run_engine(cast(Any, load_artifact(path)), terminal_mode=tui_mode)
+        if path:
+            await run_engine(cast(Any, load_artifact(path)), terminal_mode=tui_mode)
+        else:
+            await run_engine(terminal_mode=tui_mode)
     elif role == "channels":
         path = os.environ.get("ACH_CHANNELS_CONFIG_PATH", "")
-        if not path:
-            raise SystemExit("ACH_CHANNELS_CONFIG_PATH is required for --role channels")
-        await run_channels(cast(Any, load_artifact(path)))
+        if path:
+            await run_channels(cast(Any, load_artifact(path)))
+        else:
+            await run_channels()
     elif role == "harness":
         await run_harness(
             load_config(os.environ.get(CONFIG_PATH_ENV, DEFAULT_CONFIG_PATH)),

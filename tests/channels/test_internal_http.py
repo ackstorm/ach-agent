@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import time
 from datetime import UTC, datetime
 
 import httpx
@@ -10,15 +13,15 @@ from ach_agent.boot.channels_api import create_channels_app
 from ach_agent.boot.completions import CompletionRegistry
 from ach_agent.channels.client import ChannelsClient, SubmissionFailed
 from ach_agent.channels.envelopes import EventEnvelope, EventRef
-from ach_agent.channels.signing import NonceCache
+from ach_agent.channels.signing import NonceCache, request_mac, response_mac
 from ach_agent.router.router import RouterAdmitResult
 
 KEY = b"channel-harness-key"
 
 
-def envelope(channel: str = "queue") -> EventEnvelope:
+def envelope(channel: str = "queue", *, key: str = "evt-1") -> EventEnvelope:
     return EventEnvelope(
-        idempotency_key="evt-1",
+        idempotency_key=key,
         session_key="lane-1",
         channel_name=channel,
         payload={"text": "hello"},
@@ -166,8 +169,7 @@ async def test_same_raw_id_on_two_configured_channels_has_distinct_registry_iden
             agent="agent-a", channel_name="other", idempotency_key="evt-1"
         )
         assert (
-            queue_submission.completion.invocation_id
-            != other_submission.completion.invocation_id
+            queue_submission.completion.invocation_id != other_submission.completion.invocation_id
         )
     finally:
         await queue_client.close()
@@ -217,5 +219,226 @@ async def test_injected_empty_nonce_cache_is_used_and_saturates() -> None:
         await client.submit(envelope())
         with pytest.raises(SubmissionFailed, match="saturated"):
             await client.submit(envelope())
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_signed_accepted_without_completion_does_not_ack_queue_message() -> None:
+    from ach_agent.channels.queue import QueueConsumer
+    from tests.channels.test_queue import FakeRedis, _make_channel_cfg
+
+    body = json.dumps(
+        {"kind": "submission", "admission": "accepted", "completion": None},
+        separators=(",", ":"),
+    ).encode()
+
+    class MalformedTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            nonce = request.headers["x-ach-request-nonce"]
+            return httpx.Response(
+                202,
+                headers={"X-ACH-Response-MAC": response_mac(KEY, nonce, 202, body)},
+                content=body,
+            )
+
+    http = httpx.AsyncClient(transport=MalformedTransport(), base_url="http://harness")
+    client = ChannelsClient("http://harness", KEY, channel_name="jobs", http_client=http)
+    redis = FakeRedis([("1700000000000-0", {"foo": "bar"})], [])
+    consumer = QueueConsumer(_make_channel_cfg(), client, redis)
+    try:
+        await consumer._consume_once()
+        assert redis.acked == []
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_wait_rejects_a_changed_invocation_id() -> None:
+    ref = EventRef(agent="agent-a", channel_name="queue", idempotency_key="evt-1")
+    first = {
+        "kind": "completion",
+        "completion": {"ref": ref.model_dump(), "invocation_id": "one", "state": "queued"},
+    }
+    second = {
+        "kind": "completion",
+        "completion": {
+            "ref": ref.model_dump(),
+            "invocation_id": "two",
+            "state": "completed",
+            "result": {"ok": True},
+        },
+    }
+
+    class ChangingTransport(httpx.AsyncBaseTransport):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            self.calls += 1
+            payload = first if self.calls == 1 else second
+            body = json.dumps(payload, separators=(",", ":")).encode()
+            nonce = request.headers["x-ach-request-nonce"]
+            return httpx.Response(
+                200,
+                headers={"X-ACH-Response-MAC": response_mac(KEY, nonce, 200, body)},
+                content=body,
+            )
+
+    transport = ChangingTransport()
+    http = httpx.AsyncClient(transport=transport, base_url="http://harness")
+    client = ChannelsClient(
+        "http://harness", KEY, agent="agent-a", poll_interval=0, http_client=http
+    )
+    try:
+        with pytest.raises(SubmissionFailed, match="invocation"):
+            await client.wait(ref)
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_close_cancels_pending_wait_with_external_http_client() -> None:
+    ref = EventRef(agent="agent-a", channel_name="queue", idempotency_key="evt-1")
+    completion = {"ref": ref.model_dump(), "invocation_id": "one", "state": "queued"}
+    body = json.dumps(
+        {"kind": "completion", "completion": completion}, separators=(",", ":")
+    ).encode()
+
+    class PendingTransport(httpx.AsyncBaseTransport):
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.cancelled = False
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+            return httpx.Response(200, content=body)
+
+    transport = PendingTransport()
+    external = httpx.AsyncClient(transport=transport, base_url="http://harness")
+    client = ChannelsClient("http://harness", KEY, agent="agent-a", http_client=external)
+    waiter = asyncio.create_task(client.wait(ref))
+    await transport.started.wait()
+    await client.close()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert transport.cancelled
+    assert not external.is_closed
+
+
+@pytest.mark.asyncio
+async def test_response_stream_over_limit_is_rejected_before_signature_parse() -> None:
+    class HugeTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"x" * (2 * 1024 * 1024))
+
+    external = httpx.AsyncClient(transport=HugeTransport(), base_url="http://harness")
+    client = ChannelsClient("http://harness", KEY, http_client=external)
+    try:
+        with pytest.raises(SubmissionFailed, match="too large"):
+            await client.submit(envelope())
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_app_rejects_tampered_target_body_and_replays() -> None:
+    async def admit(_event):
+        return RouterAdmitResult.ACCEPTED
+
+    registry = CompletionRegistry(admit, agent="agent-a")
+    app = create_channels_app(registry, KEY, agent="agent-a", channels={"queue"})
+    transport = httpx.ASGITransport(app=app)
+    external = httpx.AsyncClient(transport=transport, base_url="http://harness")
+    body = json.dumps(
+        {"agent": "agent-a", "event": envelope().model_dump(mode="json")},
+        separators=(",", ":"),
+    ).encode()
+    timestamp = int(time.time())
+    nonce = "fixed-nonce"
+
+    def signed_headers(
+        request_nonce: str, signed_target: str, signed_body: bytes
+    ) -> dict[str, str]:
+        return {
+            "X-ACH-Request-Timestamp": str(timestamp),
+            "X-ACH-Request-Nonce": request_nonce,
+            "X-ACH-Request-MAC": request_mac(
+                KEY, "POST", signed_target, timestamp, request_nonce, signed_body
+            ),
+        }
+
+    headers = signed_headers(nonce, "/internal/v1/events", body)
+    try:
+        first = await external.post("/internal/v1/events", content=body, headers=headers)
+        replay = await external.post("/internal/v1/events", content=body, headers=headers)
+        tampered_target = await external.post(
+            "/internal/v1/events?x=1",
+            content=body,
+            headers=signed_headers("target", "/internal/v1/events", body),
+        )
+        tampered_body = await external.post(
+            "/internal/v1/events",
+            content=body + b" ",
+            headers=signed_headers("body", "/internal/v1/events", body),
+        )
+        assert first.status_code == 202
+        assert replay.status_code == 401
+        assert tampered_target.status_code == 401
+        assert tampered_body.status_code == 401
+    finally:
+        await external.aclose()
+
+
+@pytest.mark.asyncio
+async def test_registry_busy_is_signed_retryable_failure_distinct_from_full_queue() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def admit(_event):
+        started.set()
+        await release.wait()
+        return RouterAdmitResult.ACCEPTED
+
+    registry = CompletionRegistry(admit, agent="agent-a", max_active_entries=1)
+    app = create_channels_app(registry, KEY, agent="agent-a", channels={"queue"})
+    first = await _client_for(app)
+    second = await _client_for(app)
+    first_task = asyncio.create_task(first.submit(envelope(key="first")))
+    await started.wait()
+    try:
+        with pytest.raises(SubmissionFailed, match="active-entry limit"):
+            await second.submit(envelope(key="second"))
+        release.set()
+        accepted = await first_task
+        assert accepted.admission.value == "accepted"
+    finally:
+        release.set()
+        await asyncio.gather(first_task, return_exceptions=True)
+        await first.close()
+        await second.close()
+
+
+@pytest.mark.asyncio
+async def test_maximum_retained_result_survives_signed_wire_envelope_margin() -> None:
+    async def admit(_event):
+        return RouterAdmitResult.ACCEPTED
+
+    registry = CompletionRegistry(admit, agent="agent-a")
+    app = create_channels_app(registry, KEY, agent="agent-a", channels={"queue"})
+    client = await _client_for(app)
+    try:
+        accepted = await client.submit(envelope())
+        assert accepted.completion is not None
+        large_result = {"blob": "x" * 1_047_500}
+        await registry.finish(accepted.completion.ref, large_result)
+        completed = await client.wait(accepted.completion.ref)
+        assert completed.state == "completed"
+        assert completed.result == large_result
     finally:
         await client.close()

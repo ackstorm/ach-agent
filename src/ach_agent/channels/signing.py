@@ -12,8 +12,6 @@ REQUEST_HEADER = "X-ACH-Request-MAC"
 RESPONSE_HEADER = "X-ACH-Response-MAC"
 TIMESTAMP_HEADER = "X-ACH-Request-Timestamp"
 NONCE_HEADER = "X-ACH-Request-Nonce"
-SIGNATURE_HEADER = RESPONSE_HEADER
-
 REQUEST_CLOCK_SKEW_SECONDS = 30
 DEFAULT_NONCE_WINDOW_SECONDS = 60
 DEFAULT_NONCE_CACHE_SIZE = 4096
@@ -100,10 +98,10 @@ class NonceCache:
         # Keep the nonce through the end of the entire timestamp-admissible
         # interval. A request carrying a future timestamp may still be replayed
         # after ``window_seconds`` has elapsed since arrival.
-        self._entries[nonce] = timestamp + self.window_seconds
-
-    def check_and_store(self, nonce: str, timestamp: int) -> None:
-        self.accept(nonce, timestamp)
+        self._entries[nonce] = max(
+            now + self.window_seconds,
+            timestamp + self.timestamp_window_seconds,
+        )
 
     def __len__(self) -> int:
         self._purge(self._clock())

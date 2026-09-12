@@ -59,8 +59,14 @@ def create_channels_app(
         if isinstance(body, Response):
             return body
         target = request.url.path
-        if not nonce or not signature or not verify_request_mac(
-            key, request.method, target, timestamp, nonce, body, signature
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        if (
+            not nonce
+            or not signature
+            or not verify_request_mac(
+                key, request.method, target, timestamp, nonce, body, signature
+            )
         ):
             return signed_response(
                 key, nonce, 401, {"kind": "error", "error": "invalid request authentication"}
@@ -131,10 +137,6 @@ def create_channels_app(
         )
 
     return app
-
-
-# Keep a concise alias for role boot code and tests that call the factory by its route name.
-create_app = create_channels_app
 
 
 def _message_event(envelope: EventEnvelope) -> MessageEvent:

@@ -135,8 +135,9 @@ rtk proxy ./scripts/dev.sh uv run pytest tests/integration/test_split_parity.py 
 45 passed in 2.87s
 ```
 
-The unchanged repository gate was run in a clean local clone at commit `076bcac`
-with `PRE_PUSH_BASE_REF=462912f`:
+The unchanged repository gate was run in a clean local clone with
+`PRE_PUSH_BASE_REF=462912f`. The successful unchanged rerun at implementation
+commit `076bcac` produced:
 
 ```text
 rtk proxy env PRE_PUSH_BASE_REF=462912f ./scripts/pre-push-check.sh
@@ -147,7 +148,11 @@ pytest tests/conformance/: 18 passed
 pre-push: all gates passed.
 ```
 
-The first full-gate attempt hit one timing-only failure in
-`test_graceful_stop_uses_long_cleanup_client_budget`; the isolated test passed,
-and the immediate unchanged gate rerun passed as recorded above. No push, merge,
+The later docs-only commit `01953e8` was captured at
+`.superpowers/sdd/2026-09-11-phase1-channels-harness-engine-split/task-10b-final-gate.log`.
+That run reproduced one intermittent existing test failure,
+`test_graceful_stop_uses_long_cleanup_client_budget`, with `1210 passed, 3 skipped,
+1 failed`; gitleaks, lint, and mypy were green. Running that test in isolation
+immediately afterward passed. The failure is retained as an environment-sensitive
+test result rather than attributed to a confirmed source cause. No push, merge,
 release, or external deployment is part of this evidence.

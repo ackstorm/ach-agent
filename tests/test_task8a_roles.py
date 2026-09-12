@@ -61,13 +61,15 @@ def test_source_projection_drops_execution_fields_but_accepts_webhook_script() -
     assert public["agentName"] == "agent-a"
 
 
-def test_split_role_projection_rejects_forward_env() -> None:
-    cfg = _cfg(engine={"forwardEnv": ["SAFE_NATIVE_VAR"]})
+def test_split_role_projection_forwards_names_without_values() -> None:
+    cfg = _cfg(engine={"forwardEnv": ["DEBUG", "CUSTOM_TOOL_TOKEN"]})
 
     from ach_agent.boot.roles import build_role_configs
 
-    with pytest.raises(ValueError, match="forwardEnv"):
-        build_role_configs(cfg)
+    _channels, public = build_role_configs(cfg)
+
+    assert public["engineEnvNames"] == ["DEBUG", "CUSTOM_TOOL_TOKEN"]
+    assert "engineEnvValues" not in public
 
 
 def test_local_projection_keeps_only_sanitized_forward_env_names() -> None:

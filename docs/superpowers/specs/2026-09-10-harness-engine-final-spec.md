@@ -155,7 +155,7 @@ Ordinary containers have no guaranteed shutdown order. Stop admission, attempt g
 
 ## 8. Credentials, proxies and security
 
-Managed credentials never enter the execution API, engine arguments, environment, generated config, workspace, responses or ordinary logs. Values legitimately required by the engine come from its own configured environment. Reject `engine.forwardEnv` in split mode; resolve passthrough `${env:NAME}` in the mini-harness from engine-container environment, never from harness environment. Operators may deliberately expose credentials through that engine environment; record exposure without values. Local child launch likewise uses an explicit environment, without inheriting managed harness secrets. No new credential broker is designed here.
+Managed credentials never enter the execution API, engine arguments, environment, generated config, workspace, responses or ordinary logs. Values legitimately required by the engine come from its own configured environment. The earlier snapshot rejection of `engine.forwardEnv` in split mode is superseded by the 2026-09-12 operator contract: it selects sanitized names for `engineEnvNames`, while the mini-harness resolves passthrough `${env:NAME}` values from the engine-container environment, never from the harness environment. Operators may deliberately expose credentials through that engine environment; record exposure without values. Local child launch likewise uses an explicit environment, without inheriting managed harness secrets. No new credential broker is designed here.
 
 Managed model/MCP/A2A integrations use harness loopback proxies. Content filtering may be disabled without disabling routing or authorization. Masking/restoration remains a gateway-side configuration decision, not a new harness subsystem.
 
@@ -226,7 +226,7 @@ State selection, consistency, engine-version compatibility, concurrent publicati
 | Launch failure | LaunchFailed cleans one process and fails its invocation without harness restart |
 | Controller loss | All owned executions, including detached descendants, stopped before new controller; cleanup failure exits/replaces endpoint; no replay; hung controller is detected by liveness and invocation deadline still terminates execution |
 | Ordering | Cancel/completion race has one terminal outcome; no lane reuse before quiescence/cleanup; duplicate turn rejected; warm idle reuse preserved; cleanup timeout fails all affected invocations and blocks engine admission until a new mini-harness instance accepts controller |
-| Credentials | In split mode, synthetic managed credentials unreadable/unreturned to engine; forwardEnv rejected; passthrough refs resolve from engine env; local launch does not implicitly inherit harness secrets |
+| Credentials | In split mode, synthetic managed credentials unreadable/unreturned to engine; forwardEnv selects sanitized engine names; passthrough refs resolve from engine env; local launch does not implicitly inherit harness secrets |
 | State isolation | Engine cannot read/write harness dedup/state/scratch; native mapping survives intended engine-home reuse and existing mappings migrate; channels cannot read either private store |
 | Preparation: hostile inputs | Seed prior workspace with .gitconfig, .git/config and hooks; credential-bearing preparation and cleanup do not execute any planted command |
 | Preparation: handoff | Seed source/destination symlinks and escaping paths; no traversal or credential state reaches target; controlled .ach-state recreation succeeds |

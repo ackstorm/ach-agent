@@ -5,6 +5,7 @@ Implements the CI secret-leakage test required by the plan's threat model (T-00-
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
@@ -137,3 +138,59 @@ def test_native_child_receives_only_explicit_engine_env(
         text=True,
     ).splitlines()
     assert observed == ["engine-value", ""]
+
+
+def test_split_engine_name_reads_engine_value_for_native_child(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Split forwarding passes a name; the native child resolves E's value."""
+    from ach_agent.boot.roles import build_role_configs
+    from ach_agent.config.schema import AgentConfig
+
+    cfg = AgentConfig.model_validate(
+        {
+            "schemaVersion": "1",
+            "agent": {"name": "split-env"},
+            "model": {"name": "openai.gpt-5", "type": "openai"},
+            "capability": {"ach": {"baseUrl": "https://ach.example.test"}},
+            "engine": {"forwardEnv": ["DEBUG", "CUSTOM_TOOL_TOKEN", "ACH_TOKEN"]},
+            "channels": [],
+        }
+    )
+    _channels, public = build_role_configs(cfg)
+    assert public["engineEnvNames"] == ["DEBUG", "CUSTOM_TOOL_TOKEN"]
+
+    monkeypatch.setenv("DEBUG", "harness-value")
+    monkeypatch.setenv("CUSTOM_TOOL_TOKEN", "harness-token")
+    engine_env = os.environ.copy()
+    engine_env["DEBUG"] = "engine-value"
+    engine_env["CUSTOM_TOOL_TOKEN"] = "engine-token"
+    engine_env["ACH_TOKEN"] = "managed-token"
+    script = (
+        "import os, subprocess, sys\n"
+        "from pathlib import Path\n"
+        "from ach_agent.engine.base.driver import EngineConfig\n"
+        "from ach_agent.execution.wire import PublicEngineConfig\n"
+        "from ach_agent.engine.lifecycle import build_opencode_env\n"
+        "public = PublicEngineConfig.model_validate_json(sys.argv[3])\n"
+        "env = build_opencode_env(Path(sys.argv[1]), "
+        "EngineConfig(engine_env_names=public.engine_env_names), Path(sys.argv[2]))\n"
+        "print(subprocess.check_output([sys.executable, '-c', "
+        "'import os; print(os.getenv(\"DEBUG\", \"\")); "
+        "print(os.getenv(\"CUSTOM_TOOL_TOKEN\", \"\")); "
+        "print(os.getenv(\"ACH_TOKEN\", \"\"))'], "
+        "env=env, text=True), end='')\n"
+    )
+    observed = subprocess.check_output(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(tmp_path / "home"),
+            str(tmp_path / "config.json"),
+            json.dumps(public),
+        ],
+        env=engine_env,
+        text=True,
+    )
+    assert observed == "engine-value\nengine-token\n\n"

@@ -24,7 +24,7 @@ import uvicorn
 from pydantic import JsonValue
 
 from ach_agent.boot.paths import harness_log_dir, resolve_role_paths
-from ach_agent.boot.secrets import collect_secret_env_names
+from ach_agent.boot.secrets import collect_secret_env_names, strip_forwarded_secrets
 from ach_agent.config.schema import (
     AgentConfig,
     ChannelSourceConfig,
@@ -114,6 +114,22 @@ def _mcp_engine_env_names(cfg: AgentConfig) -> set[str]:
     return names - _MANAGED_ENV_NAMES
 
 
+def _engine_env_names(cfg: AgentConfig) -> list[str]:
+    """Return the sanitized names allowed in the engine-role environment contract."""
+    secret_names = set(collect_secret_env_names(cfg))
+    names = [
+        name
+        for name in strip_forwarded_secrets(cfg)
+        if name not in _MANAGED_ENV_NAMES and name not in secret_names
+    ]
+    names.extend(
+        name
+        for name in sorted(_mcp_engine_env_names(cfg))
+        if name not in secret_names
+    )
+    return list(dict.fromkeys(names))
+
+
 def _open_session_store(public: PublicEngineConfig, home: Path) -> MutableMapping[str, str]:
     """Select the engine-owned persistent map or the volatile boot map."""
     if public.persistence_enabled:
@@ -128,34 +144,11 @@ def build_role_configs(
 ) -> tuple[dict[str, JsonValue], dict[str, JsonValue]]:
     """Build the channels projection and public engine bootstrap.
 
-    ``engine.forwardEnv`` is a harness-era inheritance mechanism and is rejected in
-    split mode.  Native subprocess forwarding, when intentionally configured by the
-    engine role, uses ``PublicEngineConfig.engineEnvNames`` and reads values from E's
-    own environment.
+    ``engine.forwardEnv`` selects names for the public engine bootstrap in both local
+    and split mode.  The engine role reads each selected value from its own process
+    environment; no value is serialized into this projection.
     """
-    if split_mode and cfg.engine.forward_env:
-        raise SplitRoleConfigError(
-            "engine.forwardEnv is not supported in split mode; configure explicit engine env names"
-        )
-    engine_env_names: list[str] = []
-    if not split_mode:
-        # Native local mode retains the established clean-slate forwarding policy;
-        # secret names are removed by the existing fail-safe helper before they
-        # reach the child environment.
-        from ach_agent.boot.secrets import strip_forwarded_secrets
-
-        secret_names = collect_secret_env_names(cfg)
-        engine_env_names = [
-            name
-            for name in strip_forwarded_secrets(cfg)
-            if name not in _MANAGED_ENV_NAMES and name not in secret_names
-        ]
-        engine_env_names = list(
-            dict.fromkeys(
-                engine_env_names
-                + [name for name in sorted(_mcp_engine_env_names(cfg)) if name not in secret_names]
-            )
-        )
+    engine_env_names = _engine_env_names(cfg)
     paths = resolve_role_paths(cfg)
     channels: dict[str, JsonValue] = {
         "schemaVersion": "1",

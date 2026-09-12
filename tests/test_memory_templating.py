@@ -17,15 +17,16 @@ from ach_agent.boot.engine_runner import make_engine_runner
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.tui import _CONSOLE_SESSION_KEY
 from ach_agent.config.schema import CodememMemory, CodememParams
-from ach_agent.engine.lifecycle import EngineConfig
+from ach_agent.execution.wire import PublicEngineConfig
 from ach_agent.templating import build_template_context, render_template
+from tests.runner_client import RunnerClient
 
 
 class _CapturingPool:
     """Pool that records the EngineConfig passed to acquire."""
 
     def __init__(self) -> None:
-        self.acquired_cfgs: list[EngineConfig] = []
+        self.acquired_cfgs: list[PublicEngineConfig] = []
         self.sessions: dict[str, str] = {}
 
     async def acquire(self, _session_key: str, cfg: Any) -> Any:
@@ -61,12 +62,11 @@ async def test_codemem_project_template_rendered_into_acquire_cfg() -> None:
         type="codemem",
         codemem=CodememParams(project="{{ internal.session.key }}"),
     )
-    base_cfg = EngineConfig(codemem_project="{{ internal.session.key }}")
+    base_cfg = PublicEngineConfig(codemem_project="{{ internal.session.key }}")
 
     with patch.object(terminal, "run_contract_turn", new=AsyncMock(side_effect=_fake_run)):
         runner = make_engine_runner(
-            pool=pool,
-            driver=OpencodeDriver(),
+            client=RunnerClient(pool, OpencodeDriver()),
             engine_cfg=base_cfg,
             max_invocation_seconds=30,
             memory_cfg=memory_cfg,
@@ -90,12 +90,11 @@ async def test_codemem_project_literal_passes_through() -> None:
 
     pool = _CapturingPool()
     memory_cfg = CodememMemory(type="codemem", codemem=CodememParams(project="ach-agent"))
-    base_cfg = EngineConfig(codemem_project="ach-agent")
+    base_cfg = PublicEngineConfig(codemem_project="ach-agent")
 
     with patch.object(terminal, "run_contract_turn", new=AsyncMock(side_effect=_fake_run)):
         runner = make_engine_runner(
-            pool=pool,
-            driver=OpencodeDriver(),
+            client=RunnerClient(pool, OpencodeDriver()),
             engine_cfg=base_cfg,
             max_invocation_seconds=30,
             memory_cfg=memory_cfg,

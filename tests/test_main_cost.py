@@ -14,9 +14,10 @@ from ach_agent.boot.engine_runner import make_engine_runner
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.engine.base.events import OpenCodeUsage
 from ach_agent.engine.cost import CostAccountant, ModelPrices, PriceTable, TokenUsage
+from ach_agent.execution.wire import PublicEngineConfig
 from ach_agent.stats import metrics
 from ach_agent.stats.sink import StatsSink
-
+from tests.runner_client import RunnerClient
 
 MODEL = "task-1-10-model"
 CHANNEL = "task-1-10-channel"
@@ -93,9 +94,8 @@ async def _run_turn(
 
     with patch("ach_agent.engine.base.terminal.run_contract_turn", fake_run_contract_turn):
         runner = make_engine_runner(
-            pool=pool,
-            driver=driver,
-            engine_cfg=SimpleNamespace(model=MODEL),
+            client=RunnerClient(pool, driver),
+            engine_cfg=PublicEngineConfig(model=MODEL),
             max_invocation_seconds=30,
             stats_sink=stats_sink,
             accountant=accountant,

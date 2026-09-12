@@ -71,13 +71,12 @@ async def _build_runner(fake_pool, channel_ttl: dict[str, float]):
 
 async def _build_runner_with_registry(fake_pool, channel_ttl, registry):
     from ach_agent.boot.engine_runner import make_engine_runner
-    from ach_agent.engine.lifecycle import EngineConfig
-    from ach_agent.engine.opencode.driver import OpencodeDriver
+    from ach_agent.execution.wire import PublicEngineConfig
+    from tests.runner_client import RunnerClient
 
     return make_engine_runner(
-        pool=fake_pool,
-        driver=OpencodeDriver(),
-        engine_cfg=EngineConfig(),
+        client=RunnerClient(fake_pool, object()),
+        engine_cfg=PublicEngineConfig(),
         max_invocation_seconds=1,
         channel_ttl=channel_ttl,
         channels_by_name={},
@@ -131,6 +130,7 @@ async def test_timeout_force_kills_regardless_of_ttl() -> None:
     recorded: list[float] = []
     fake_pool = MagicMock()
     fake_pool.acquire = AsyncMock(return_value=MagicMock())
+    fake_pool.discard = AsyncMock()
 
     async def record_release(session_key: str, ttl_seconds: float) -> None:
         recorded.append(ttl_seconds)
@@ -155,7 +155,8 @@ async def test_timeout_force_kills_regardless_of_ttl() -> None:
 
     lane.cancel()
     await lane.wait_closed()
-    assert recorded == [0.0], f"timeout release must force-kill (ttl=0), got {recorded}"
+    assert fake_pool.discard.await_count == 1
+    assert recorded == [], "a canceled invocation uses confirmed cancel, never warm release"
 
 
 async def test_engine_launch_failure_increments_metric_and_finishes_completion() -> None:

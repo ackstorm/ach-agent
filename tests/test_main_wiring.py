@@ -23,8 +23,10 @@ from fastapi.testclient import TestClient
 
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import ChannelConfig, SessionBlock
+from ach_agent.execution.wire import PublicEngineConfig
 from ach_agent.http.app import create_app
 from ach_agent.router.router import RouterAdmitResult
+from tests.runner_client import RunnerClient
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -96,53 +98,43 @@ def _hook_event() -> MessageEvent:
     )
 
 
+class _HookRunnerClient(RunnerClient):
+    """Test seam that models service-side public hook ordering and reservation cleanup."""
+
+    def __init__(self, pool: Any, driver: Any, *, prepare_error: Exception | None = None) -> None:
+        super().__init__(pool, driver)
+        self.prepare_error = prepare_error
+
+    async def prepare_workspace(self, request: Any) -> dict[str, str]:
+        await self.pool.begin_session(request.session_key, self._cleanup)
+        self.pool.calls.append("prepare_workspace")
+        if request.prepare is not None:
+            self.pool.calls.append("prepare")
+        if self.prepare_error is not None:
+            await self.pool.discard(request.session_key)
+            raise self.prepare_error
+        return await super().prepare_workspace(request)
+
+    async def _cleanup(self) -> None:
+        self.pool.calls.append("cleanup")
+
+
 async def test_engine_runner_registers_cleanup_before_prepare(tmp_path: Path) -> None:
-    import ach_agent.engine.base.terminal as terminal
     from ach_agent.boot.engine_runner import make_engine_runner
-    from ach_agent.engine.lifecycle import EngineConfig
-    from ach_agent.engine.opencode.driver import OpencodeDriver
 
     pool = _HookPool()
-
-    def prepare_workspace(*_args: Any) -> Path:
-        pool.calls.append("prepare_workspace")
-        return tmp_path / "workspace"
-
-    async def prepare(*_args: Any) -> None:
-        pool.calls.append("prepare")
-
-    with (
-        patch(
-            "ach_agent.boot.engine_runner.prepare_workspace",
-            side_effect=prepare_workspace,
-        ),
-        patch("ach_agent.boot.engine_runner.run_prepare", new=AsyncMock(side_effect=prepare)),
-        patch("ach_agent.boot.engine_runner.run_cleanup", new=AsyncMock()),
-        patch.object(
-            terminal,
-            "run_contract_turn",
-            new=AsyncMock(return_value={"action": "none", "text": ""}),
-        ),
-    ):
-        runner = make_engine_runner(
-            pool=pool,
-            driver=OpencodeDriver(),
-            engine_cfg=EngineConfig(
-                home=str(tmp_path / "home"),
-                work_dir=str(tmp_path / "work"),
-            ),
-            max_invocation_seconds=30,
-            channels_by_name={"hooks": _hook_channel()},
-        )
-        await runner(_hook_event(), lambda: None)
-
+    runner = make_engine_runner(
+        client=_HookRunnerClient(pool, SimpleNamespace()),
+        engine_cfg=PublicEngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
+        max_invocation_seconds=30,
+        channels_by_name={"hooks": _hook_channel()},
+    )
+    await runner(_hook_event(), lambda: None)
     assert pool.calls == ["begin", "prepare_workspace", "prepare", "acquire", "release:0.0"]
 
 
 async def test_webhook_script_runner_never_acquires_an_engine(tmp_path: Path) -> None:
     from ach_agent.boot.engine_runner import make_engine_runner
-    from ach_agent.engine.lifecycle import EngineConfig
-    from ach_agent.engine.opencode.driver import OpencodeDriver
 
     pool = _HookPool()
     channel = ChannelConfig.model_validate(
@@ -155,9 +147,8 @@ async def test_webhook_script_runner_never_acquires_an_engine(tmp_path: Path) ->
         }
     )
     runner = make_engine_runner(
-        pool=pool,
-        driver=OpencodeDriver(),
-        engine_cfg=EngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
+        client=RunnerClient(pool, SimpleNamespace()),
+        engine_cfg=PublicEngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
         max_invocation_seconds=30,
         channels_by_name={channel.name: channel},
     )
@@ -176,62 +167,32 @@ async def test_webhook_script_runner_never_acquires_an_engine(tmp_path: Path) ->
 
 async def test_prepare_failure_discards_reserved_cleanup(tmp_path: Path) -> None:
     from ach_agent.boot.engine_runner import make_engine_runner
-    from ach_agent.boot.prepare import PrepareFailed
-    from ach_agent.engine.lifecycle import EngineConfig
-    from ach_agent.engine.opencode.driver import OpencodeDriver
 
     pool = _HookPool()
-    cleanup = AsyncMock()
-    with (
-        patch(
-            "ach_agent.boot.engine_runner.run_prepare",
-            new=AsyncMock(side_effect=PrepareFailed("broken")),
-        ),
-        patch("ach_agent.boot.engine_runner.run_cleanup", new=cleanup),
-    ):
-        runner = make_engine_runner(
-            pool=pool,
-            driver=OpencodeDriver(),
-            engine_cfg=EngineConfig(
-                home=str(tmp_path / "home"),
-                work_dir=str(tmp_path / "work"),
-            ),
-            max_invocation_seconds=30,
-            channels_by_name={"hooks": _hook_channel()},
-        )
-        with pytest.raises(PrepareFailed, match="broken"):
-            await runner(_hook_event(), lambda: None)
-
-    assert pool.calls == ["begin", "discard"]
-    cleanup.assert_awaited_once()
+    runner = make_engine_runner(
+        client=_HookRunnerClient(pool, SimpleNamespace(), prepare_error=RuntimeError("broken")),
+        engine_cfg=PublicEngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
+        max_invocation_seconds=30,
+        channels_by_name={"hooks": _hook_channel()},
+    )
+    with pytest.raises(RuntimeError, match="broken"):
+        await runner(_hook_event(), lambda: None)
+    assert pool.calls == ["begin", "prepare_workspace", "prepare", "discard", "cleanup"]
 
 
 async def test_launch_failure_discards_reserved_cleanup(tmp_path: Path) -> None:
     from ach_agent.boot.engine_runner import make_engine_runner
-    from ach_agent.engine.lifecycle import EngineConfig
-    from ach_agent.engine.opencode.driver import OpencodeDriver
 
     pool = _HookPool(fail_acquire=True)
-    cleanup = AsyncMock()
-    with (
-        patch("ach_agent.boot.engine_runner.run_prepare", new=AsyncMock()),
-        patch("ach_agent.boot.engine_runner.run_cleanup", new=cleanup),
-    ):
-        runner = make_engine_runner(
-            pool=pool,
-            driver=OpencodeDriver(),
-            engine_cfg=EngineConfig(
-                home=str(tmp_path / "home"),
-                work_dir=str(tmp_path / "work"),
-            ),
-            max_invocation_seconds=30,
-            channels_by_name={"hooks": _hook_channel()},
-        )
-        with pytest.raises(RuntimeError, match="launch failed"):
-            await runner(_hook_event(), lambda: None)
-
-    assert pool.calls == ["begin", "acquire", "discard"]
-    cleanup.assert_awaited_once()
+    runner = make_engine_runner(
+        client=_HookRunnerClient(pool, SimpleNamespace()),
+        engine_cfg=PublicEngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
+        max_invocation_seconds=30,
+        channels_by_name={"hooks": _hook_channel()},
+    )
+    with pytest.raises(RuntimeError, match="launch failed"):
+        await runner(_hook_event(), lambda: None)
+    assert pool.calls == ["begin", "prepare_workspace", "prepare", "acquire", "discard", "cleanup"]
 
 
 MR_PAYLOAD = {
@@ -668,7 +629,6 @@ async def test_engine_runner_passes_a_bound_run_turn_callable() -> None:
     import ach_agent.engine.base.terminal as terminal
     from ach_agent.boot.engine_runner import make_engine_runner
     from ach_agent.channels.message_event import MessageEvent
-    from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.engine.opencode.driver import OpencodeDriver
 
     class _Pool:
@@ -700,9 +660,8 @@ async def test_engine_runner_passes_a_bound_run_turn_callable() -> None:
 
     with patch.object(terminal, "run_contract_turn", new=AsyncMock(side_effect=_fake_run)):
         runner = make_engine_runner(
-            pool=pool,
-            driver=OpencodeDriver(),
-            engine_cfg=EngineConfig(),
+            client=RunnerClient(pool, OpencodeDriver()),
+            engine_cfg=PublicEngineConfig(),
             max_invocation_seconds=30,
         )
         await runner(event, lambda: None)
@@ -782,7 +741,6 @@ async def _run_sess_case(
 
     import ach_agent.engine.base.terminal as terminal
     from ach_agent.boot.engine_runner import make_engine_runner
-    from ach_agent.engine.lifecycle import EngineConfig
 
     pool = pool if pool is not None else _SessPool()
     captured: dict[str, Any] = {}
@@ -815,9 +773,8 @@ async def _run_sess_case(
 
     with patch.object(terminal, "run_contract_turn", new=AsyncMock(side_effect=_fake_run)):
         runner = make_engine_runner(
-            pool=pool,
-            driver=driver,
-            engine_cfg=EngineConfig(),
+            client=RunnerClient(pool, driver),
+            engine_cfg=PublicEngineConfig(),
             max_invocation_seconds=30,
             channels_by_name=channels,
         )

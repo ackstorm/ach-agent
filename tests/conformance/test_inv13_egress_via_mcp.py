@@ -18,6 +18,7 @@ from ach_agent.boot.completions import CompletionRegistry
 from ach_agent.channels.envelopes import EventRef
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.router.router import RouterAdmitResult
+from tests.runner_client import RunnerClient
 
 
 def test_no_harness_side_delivery_module() -> None:
@@ -52,8 +53,8 @@ async def test_engine_runner_does_not_post(monkeypatch: Any) -> None:
     """
     import ach_agent.engine.base.terminal as terminal
     from ach_agent.boot.engine_runner import make_engine_runner
-    from ach_agent.engine.lifecycle import EngineConfig
     from ach_agent.engine.opencode.driver import OpencodeDriver
+    from ach_agent.execution.wire import PublicEngineConfig
 
     async def _fake_run_contract_turn(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         # a2a_reply terminal so the registry positive control resolves.
@@ -68,9 +69,8 @@ async def test_engine_runner_does_not_post(monkeypatch: Any) -> None:
 
     registry = CompletionRegistry(_accepted)
     runner = make_engine_runner(
-        pool=_FakePool(),
-        driver=OpencodeDriver(),
-        engine_cfg=EngineConfig(),
+        client=RunnerClient(_FakePool(), OpencodeDriver()),
+        engine_cfg=PublicEngineConfig(),
         max_invocation_seconds=30,
         memory_cfg=None,
         completion_registry=registry,

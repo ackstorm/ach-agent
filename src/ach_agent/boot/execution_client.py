@@ -239,6 +239,10 @@ class ExecutionClient:
         self._owned_tasks: set[asyncio.Task[Any]] = set()
         self._owned_responses: set[httpx.Response] = set()
         self._cancelled_invocations: set[str] = set()
+        # A turn can confirm cancellation before the runner's outer failure path
+        # reaches its finally block.  Retain that confirmation only until the
+        # runner finalizes the same already-acquired handle.
+        self._confirmed_cancellations: dict[str, ExecutionHandle] = {}
         self._active_turns: set[str] = set()
         self._controller_events: asyncio.Queue[WorkspaceStoppedEvent] = asyncio.Queue(maxsize=64)
         self._controller_event_waiters: set[asyncio.Future[WorkspaceStoppedEvent]] = set()
@@ -530,7 +534,14 @@ class ExecutionClient:
                         confirmed=True,
                         rejection=True,
                     )
-            await self._confirm_workspace_cancel(body.controller_id, body.invocation_id)
+            try:
+                await self._confirm_workspace_cancel(body.controller_id, body.invocation_id)
+            except BaseException as cancel_error:
+                raise WorkspaceOperationFailed(
+                    f"execution {path} failed and cancellation was uncertain: {detail}",
+                    status_code=response.status_code,
+                    confirmed=False,
+                ) from cancel_error
             raise WorkspaceOperationFailed(
                 f"execution {path} failed and was canceled: {detail}",
                 status_code=response.status_code,
@@ -752,7 +763,9 @@ class ExecutionClient:
             )
         except BaseException:
             with contextlib.suppress(BaseException):
-                await asyncio.shield(self.cancel(request.controller_id, request.invocation_id))
+                await asyncio.shield(
+                    self._cancel_stream(request.controller_id, request.invocation_id)
+                )
             self._active_turns.discard(request.invocation_id)
             self._cancelled_invocations.discard(request.invocation_id)
             raise
@@ -766,7 +779,7 @@ class ExecutionClient:
                 if response.status_code < 400 or response.status_code >= 500:
                     with contextlib.suppress(BaseException):
                         await asyncio.shield(
-                            self.cancel(request.controller_id, request.invocation_id)
+                            self._cancel_stream(request.controller_id, request.invocation_id)
                         )
                 raise
             finally:
@@ -830,10 +843,10 @@ class ExecutionClient:
             await response.aclose()
             if not finished and not self._closed:
                 if request.invocation_id not in self._cancelled_invocations:
-                    with contextlib.suppress(BaseException):
-                        await asyncio.shield(
-                            self.cancel(request.controller_id, request.invocation_id)
-                        )
+                        with contextlib.suppress(BaseException):
+                            await asyncio.shield(
+                                self._cancel_stream(request.controller_id, request.invocation_id)
+                            )
             if (
                 isinstance(stream_error, httpx.HTTPError)
                 and request.invocation_id not in self._cancelled_invocations
@@ -895,6 +908,10 @@ class ExecutionClient:
                     )
             if result is None:
                 raise ExecutionClientError("execution turn ended without a result")
+            # Keep the native reference diagnostic in the harness turn stats.  The
+            # terminal policy never targets it; runner maintenance uses the typed
+            # invocation-scoped session operations instead.
+            stats["session_ref"] = result.session_ref
             return result
 
         return run_turn
@@ -936,6 +953,11 @@ class ExecutionClient:
         self._cleanup_budgets.pop(request.invocation_id, None)
 
     async def cancel(self, controller_id: str, invocation_id: str) -> None:
+        await self._cancel_owned(controller_id, invocation_id, retain_confirmation=False)
+
+    async def _cancel_owned(
+        self, controller_id: str, invocation_id: str, *, retain_confirmation: bool
+    ) -> None:
         self._validate_controller(controller_id)
         active = invocation_id in self._active_turns
         if active:
@@ -950,10 +972,36 @@ class ExecutionClient:
         handle = self._handles.pop(invocation_id, None)
         if handle is not None:
             trace.drop(handle.proxy_route)
+            if retain_confirmation:
+                self._confirmed_cancellations[invocation_id] = handle
         self._turn_ids.pop(invocation_id, None)
         self._cleanup_budgets.pop(invocation_id, None)
         if not active:
             self._cancelled_invocations.discard(invocation_id)
+
+    async def _cancel_stream(self, controller_id: str, invocation_id: str) -> None:
+        """Cancel a turn stream and retain confirmation for runner finalization."""
+        await self._cancel_owned(controller_id, invocation_id, retain_confirmation=True)
+
+    async def cancel_handle(self, handle: ExecutionHandle) -> None:
+        """Finalize cancellation for a handle acquired by this client.
+
+        Turn streaming may already have confirmed and removed the handle.  The
+        temporary confirmation is scoped to that invocation and is consumed here;
+        an unknown or in-flight identity still fails closed.
+        """
+        self._validate_controller(handle.controller_id)
+        current = self._handles.get(handle.invocation_id)
+        if current is not None:
+            if current != handle:
+                raise ExecutionClientError("execution request identity mismatch")
+            await self.cancel(handle.controller_id, handle.invocation_id)
+            return
+        confirmed = self._confirmed_cancellations.get(handle.invocation_id)
+        if confirmed == handle:
+            self._confirmed_cancellations.pop(handle.invocation_id, None)
+            return
+        raise ExecutionClientError("execution request identity mismatch")
 
     async def close(self) -> None:
         self._closed = True
@@ -984,6 +1032,7 @@ class ExecutionClient:
         self._turn_ids.clear()
         self._cleanup_budgets.clear()
         self._cancelled_invocations.clear()
+        self._confirmed_cancellations.clear()
         self._active_turns.clear()
         while not self._controller_events.empty():
             with contextlib.suppress(asyncio.QueueEmpty):

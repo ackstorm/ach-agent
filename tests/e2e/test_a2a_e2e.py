@@ -25,10 +25,12 @@ from ach_agent.boot.completions import CompletionRegistry
 from ach_agent.channels.a2a import A2AAgentExecutorBridge
 from ach_agent.channels.envelopes import EventRef
 from ach_agent.channels.message_event import MessageEvent
+from ach_agent.execution.wire import PublicEngineConfig
 from ach_agent.router import Router
 from ach_agent.router.dedup import InMemoryDedupStore
 from ach_agent.router.router import RouterAdmitResult
 from tests.e2e.conftest import MockEventQueue
+from tests.runner_client import RunnerClient
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -176,7 +178,6 @@ async def test_engine_runner_finishes_registry_on_engine_error(
     """F1 regression: engine errors resolve the registry before re-raising."""
     from ach_agent.boot.engine_runner import make_engine_runner
     from ach_agent.engine.base import terminal
-    from ach_agent.engine.lifecycle import EngineConfig
 
     class _FakeServer:
         # trace.begin/end stamp the invocation's correlation on this token, so the
@@ -202,16 +203,14 @@ async def test_engine_runner_finishes_registry_on_engine_error(
     # patch the source.
     monkeypatch.setattr(terminal, "run_contract_turn", _boom)
 
-    from ach_agent.engine.opencode.driver import OpencodeDriver
 
     async def _accepted(_event: MessageEvent) -> RouterAdmitResult:
         return RouterAdmitResult.ACCEPTED
 
     registry = CompletionRegistry(_accepted)
     runner = make_engine_runner(
-        pool=_FakePool(),
-        driver=OpencodeDriver(),
-        engine_cfg=EngineConfig(),
+        client=RunnerClient(_FakePool(), object()),
+        engine_cfg=PublicEngineConfig(),
         max_invocation_seconds=30,
         memory_cfg=None,
         completion_registry=registry,

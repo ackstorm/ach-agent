@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from ach_agent.boot.conversations import ConversationLocks
+from tests.runner_client import RunnerClient
 
 
 @pytest.mark.asyncio
@@ -93,7 +94,7 @@ async def test_runner_holds_custom_conversation_through_release(tmp_path) -> Non
     from ach_agent.boot.engine_runner import make_engine_runner
     from ach_agent.channels.message_event import MessageEvent
     from ach_agent.config.schema import ChannelConfig
-    from ach_agent.engine.base.driver import EngineConfig
+    from ach_agent.execution.wire import PublicEngineConfig
 
     channel = ChannelConfig.model_validate(
         {
@@ -157,9 +158,8 @@ async def test_runner_holds_custom_conversation_through_release(tmp_path) -> Non
         )
 
     runner = make_engine_runner(
-        pool=Pool(),
-        driver=driver,
-        engine_cfg=EngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
+        client=RunnerClient(Pool(), driver),
+        engine_cfg=PublicEngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
         max_invocation_seconds=30,
         channels_by_name={"chat": channel},
     )
@@ -186,7 +186,7 @@ async def test_supplied_empty_registry_is_used_and_evicted(tmp_path) -> None:
     from ach_agent.boot.engine_runner import make_engine_runner
     from ach_agent.channels.message_event import MessageEvent
     from ach_agent.config.schema import ChannelConfig
-    from ach_agent.engine.base.driver import EngineConfig
+    from ach_agent.execution.wire import PublicEngineConfig
 
     channel = ChannelConfig.model_validate(
         {
@@ -241,9 +241,8 @@ async def test_supplied_empty_registry_is_used_and_evicted(tmp_path) -> None:
 
     with patch("ach_agent.engine.base.terminal.run_contract_turn", new=run_turn):
         runner = make_engine_runner(
-            pool=Pool(),
-            driver=driver,
-            engine_cfg=EngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
+            client=RunnerClient(Pool(), driver),
+        engine_cfg=PublicEngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
             max_invocation_seconds=30,
             channels_by_name={"chat": channel},
             conversation_locks=locks,
@@ -268,7 +267,7 @@ async def test_runner_cancellation_during_release_does_not_poison_lock(tmp_path)
     from ach_agent.boot.engine_runner import make_engine_runner
     from ach_agent.channels.message_event import MessageEvent
     from ach_agent.config.schema import ChannelConfig
-    from ach_agent.engine.base.driver import EngineConfig
+    from ach_agent.execution.wire import PublicEngineConfig
 
     channel = ChannelConfig.model_validate(
         {
@@ -310,9 +309,8 @@ async def test_runner_cancellation_during_release_does_not_poison_lock(tmp_path)
 
     with patch("ach_agent.engine.base.terminal.run_contract_turn", new=run_turn):
         runner = make_engine_runner(
-            pool=Pool(),
-            driver=driver,
-            engine_cfg=EngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
+            client=RunnerClient(Pool(), driver),
+        engine_cfg=PublicEngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
             max_invocation_seconds=30,
             channels_by_name={"chat": channel},
         )

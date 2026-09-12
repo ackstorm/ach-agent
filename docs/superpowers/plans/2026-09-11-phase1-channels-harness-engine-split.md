@@ -1,5 +1,14 @@
 # ACH Phase 1 — Channels/Harness/Engine Split Implementation Plan
 
+**Execution status (2026-09-12):** Tasks 0–10 implemented on `feat/phase1-split`;
+production source verified at `076bcac`. The original planning checklists below
+are retained as the task instructions. Completion evidence and limitations are in
+[the acceptance report](../../reports/phase1-split-evidence.md),
+[independent root validation](../../reports/phase1-split-root-validation.md), and
+[the decision log](../../reports/phase1-split-decisions.md). The user subsequently
+authorized implementation and local validation; publication and integration into
+the external operator remain outside this work.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.
 
 **Goal:** Run channels, harness and engine in three ordinary containers in one pod while preserving existing sessions, workspace behavior and managed proxy integrations.

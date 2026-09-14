@@ -20,7 +20,6 @@ from pydantic import ValidationError
 from starlette.types import Send
 
 from ach_agent.engine.lifecycle import NativeLaunchFailed
-from ach_agent.engine.workspace import WorkspaceHandoffFailed, WorkspaceHookFailed
 from ach_agent.execution.service import (
     MAX_NDJSON_RECORD_BYTES,
     ExecutionService,
@@ -39,8 +38,6 @@ from ach_agent.execution.wire import (
     TurnRequest,
     WorkspaceCancelRequest,
     WorkspaceCleanupAckRequest,
-    WorkspaceHandoffRequest,
-    WorkspaceOperationFailure,
     WorkspacePrepareRequest,
 )
 
@@ -127,13 +124,6 @@ def _invalid(message: str) -> JSONResponse:
 
 
 def _error_response(exc: Exception, *, workspace_confirmed: bool = True) -> JSONResponse:
-    if isinstance(exc, (WorkspaceHookFailed, WorkspaceHandoffFailed)):
-        return JSONResponse(
-            WorkspaceOperationFailure(message=str(exc), confirmed=workspace_confirmed).model_dump(
-                mode="json"
-            ),
-            status_code=422 if workspace_confirmed else 503,
-        )
     if isinstance(exc, NativeLaunchFailed):
         return JSONResponse({"type": "LaunchFailed", "message": str(exc)}, status_code=502)
     if isinstance(exc, OutputLimitExceeded):
@@ -154,6 +144,10 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
     app = FastAPI(title="ach-agent-execution")
     app.state.service = service
     service.controller_required = True
+
+    @app.on_event("shutdown")
+    async def close_service() -> None:
+        await service.close()
 
     def service_error(exc: Exception) -> JSONResponse:
         if service.shutdown_requested:
@@ -252,20 +246,6 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
             return _invalid(str(exc))
         try:
             result = await service.prepare_workspace(body)
-        except Exception as exc:
-            return service_error(exc)
-        return JSONResponse(result)
-
-    @app.post("/execution/v1/workspace/handoff")
-    async def workspace_handoff(request: Request) -> JSONResponse:
-        try:
-            body = WorkspaceHandoffRequest.model_validate(await _request_json(request))
-        except _BodyTooLarge:
-            return JSONResponse({"detail": "request body too large"}, status_code=413)
-        except (_InvalidBody, ValidationError) as exc:
-            return _invalid(str(exc))
-        try:
-            result = await service.handoff_workspace(body)
         except Exception as exc:
             return service_error(exc)
         return JSONResponse(result)

@@ -221,34 +221,15 @@ class WorkspaceCancelRequest(_WireModel):
     execution_id: str | None = None
 
 
-class WorkspaceHook(_WireModel):
-    """Credential-free channel hook configuration owned by the engine."""
-
-    script: str = Field(min_length=1)
-    env: dict[str, str] = Field(default_factory=dict)
-    timeout_seconds: float = Field(gt=0, le=3600)
-
-    @field_validator("timeout_seconds")
-    @classmethod
-    def finite_timeout(cls, value: float) -> float:
-        if not math.isfinite(value):
-            raise ValueError("timeout_seconds must be finite")
-        return value
-
-
 class WorkspacePrepareRequest(_WireModel):
-    """Prepare one public session workspace before native acquisition."""
+    """Reserve one shared session workspace before native acquisition."""
 
     controller_id: str
     invocation_id: str
     session_key: str
     event_id: str
-    channel_name: str
-    delivery_context: dict[str, JsonValue] = Field(default_factory=dict)
     home: str
     work_dir: str
-    prepare: WorkspaceHook | None = None
-    cleanup: WorkspaceHook | None = None
     notify_on_stop: bool = True
     cleanup_ack_required: bool = False
     cleanup_timeout_seconds: float = Field(default=120.0, gt=0, le=3600)
@@ -276,10 +257,8 @@ class WorkspacePrepareRequest(_WireModel):
 
     @property
     def cleanup_budget_seconds(self) -> float:
-        """Known public plus private hook allowance for the outer cleanup response."""
-        public = self.cleanup.timeout_seconds if self.cleanup is not None else 0.0
-        private = self.cleanup_timeout_seconds if self.cleanup_ack_required else 0.0
-        return public + private
+        """Allowance for the correlated cleanup acknowledgement barrier."""
+        return self.cleanup_timeout_seconds if self.cleanup_ack_required else 0.0
 
 
 class WorkspaceCleanupAckRequest(_WireModel):
@@ -290,37 +269,6 @@ class WorkspaceCleanupAckRequest(_WireModel):
     session_key: str
     event_id: str
     invocation_id: str
-
-
-class WorkspaceHandoffRequest(_WireModel):
-    """Import an approved credential-free Git bundle into the public workspace."""
-
-    controller_id: str
-    invocation_id: str
-    session_key: str
-    home: str
-    work_dir: str
-    bundle_path: str = Field(min_length=1)
-    head: str = Field(min_length=1)
-    origin: str | None = None
-    remaining_seconds: float = Field(gt=0)
-
-    @field_validator("bundle_path")
-    @classmethod
-    def safe_bundle_path(cls, value: str) -> str:
-        from pathlib import PurePosixPath
-
-        path = PurePosixPath(value)
-        if path.is_absolute() or ".." in path.parts:
-            raise ValueError("bundle_path must stay under the public workspace")
-        return value
-
-    @field_validator("remaining_seconds")
-    @classmethod
-    def finite_remaining_seconds(cls, value: float) -> float:
-        if not math.isfinite(value):
-            raise ValueError("remaining_seconds must be finite")
-        return value
 
 
 class WorkspaceStoppedEvent(_WireModel):

@@ -26,26 +26,20 @@ from ach_agent.engine.base.pool import EnginePool
 from ach_agent.engine.lifecycle import NativeLaunchFailed, OwnedProcessCleanupError
 from ach_agent.engine.mcp_passthrough import to_engine_entry
 from ach_agent.engine.workspace import (
-    WorkspaceHandoffFailed,
-    WorkspaceHookFailed,
-    build_public_env,
-    handoff_bundle,
     prepare_workspace,
-    run_public_hook,
     workspace_dir,
 )
 from ach_agent.execution.wire import (
     AcquireRequest,
-    PublicEngineConfig,
     ExecutionEvent,
     ExecutionHandle,
+    PublicEngineConfig,
     ReleaseRequest,
     SessionImportRequest,
     SessionOperation,
     SessionReadyRequest,
     TurnRequest,
     WorkspaceCleanupAckRequest,
-    WorkspaceHandoffRequest,
     WorkspacePrepareRequest,
     WorkspaceStoppedEvent,
 )
@@ -180,6 +174,7 @@ class ExecutionService:
         self.pool = EnginePool(driver=driver, sessions_map=sessions_map, strict_cleanup=True)
         self._configured = driver is not None
         self._public_config: PublicEngineConfig | None = None
+        self.configured_event = asyncio.Event()
         self._sessions_map = sessions_map
         self._execution_started = False
         self._invocations: dict[str, _Invocation] = {}
@@ -222,7 +217,10 @@ class ExecutionService:
     async def configure(self, public: PublicEngineConfig) -> None:
         if self._configured:
             previous = self._public_config
-            if previous is not None and (
+            if previous is None:
+                self._public_config = public
+                return
+            if (
                 previous.engine_type != public.engine_type
                 or previous.home != public.home
                 or previous.work_dir != public.work_dir
@@ -264,6 +262,24 @@ class ExecutionService:
         self.pool = EnginePool(driver=driver, sessions_map=self._sessions_map, strict_cleanup=True)
         self._configured = True
         self._public_config = public
+        self.configured_event.set()
+
+    @property
+    def public_config(self) -> PublicEngineConfig | None:
+        return self._public_config
+
+    async def close(self) -> None:
+        """Stop native work and close the engine-owned persistent session store."""
+        controller_id = self._controller_id
+        if controller_id is not None:
+            await self.release_controller(controller_id)
+        else:
+            await self.pool.stop_all()
+        close = getattr(self._sessions_map, "close", None)
+        if close is not None:
+            result = close()
+            if asyncio.iscoroutine(result):
+                await result
 
     async def claim_controller(
         self, controller_id: str, config: PublicEngineConfig | None = None
@@ -577,33 +593,6 @@ class ExecutionService:
         completed = False
 
         async def cleanup() -> None:
-            if request.cleanup is not None:
-                remaining = request.cleanup.timeout_seconds
-                env = build_public_env(
-                    request.cleanup,
-                    session_key=request.session_key,
-                    event_id=request.event_id,
-                    channel_name=request.channel_name,
-                    delivery_context=request.delivery_context,
-                    workspace=workspace,
-                )
-                try:
-                    await run_public_hook(
-                        request.cleanup,
-                        cwd=workspace.parent,
-                        env=env,
-                        remaining_seconds=remaining,
-                    )
-                except OwnedProcessCleanupError:
-                    self._mark_unhealthy()
-                    raise
-                except WorkspaceHookFailed as exc:
-                    self._record_workspace_failure(
-                        phase="cleanup", invocation_id=request.invocation_id, error=exc
-                    )
-                except BaseException:
-                    self._mark_unhealthy()
-                    raise
             if request.notify_on_stop:
                 event = WorkspaceStoppedEvent(
                     controller_id=request.controller_id,
@@ -645,28 +634,12 @@ class ExecutionService:
 
         try:
             await self.pool.begin_session(
-                request.session_key,
-                cleanup if (request.cleanup or request.notify_on_stop) else None,
+                request.session_key, cleanup if request.notify_on_stop else None
             )
             workspace = prepare_workspace(request.home, request.work_dir, request.session_key)
             remaining = deadline - loop.time()
             if remaining <= 0:
                 raise TimeoutError("workspace preparation deadline expired")
-            if request.prepare is not None:
-                env = build_public_env(
-                    request.prepare,
-                    session_key=request.session_key,
-                    event_id=request.event_id,
-                    channel_name=request.channel_name,
-                    delivery_context=request.delivery_context,
-                    workspace=workspace,
-                )
-                await run_public_hook(
-                    request.prepare,
-                    cwd=workspace,
-                    env=env,
-                    remaining_seconds=remaining,
-                )
             reservation.workspace = workspace
             completed = True
             return {"status": "ok", "workspace": str(workspace)}
@@ -713,47 +686,6 @@ class ExecutionService:
             self._workspace_tasks.pop(request.invocation_id, None)
             if not completed and not reservation.cancel_requested:
                 self._workspace_reservations.pop(request.invocation_id, None)
-
-    async def handoff_workspace(self, request: WorkspaceHandoffRequest) -> dict[str, str]:
-        """Import a credential-free bundle artifact into the public session workspace."""
-        self._assert_controller(request.controller_id)
-        reservation = self._workspace_reservation_for(request.invocation_id)
-        if reservation.request.controller_id != request.controller_id:
-            raise ValueError("workspace reservation controller mismatch")
-        if reservation.request.session_key != request.session_key:
-            raise ValueError("workspace reservation lane mismatch")
-        if reservation.acquiring or request.invocation_id in self._acquire_tasks:
-            raise ValueError("workspace reservation is acquiring")
-        if (
-            reservation.request.home != request.home
-            or reservation.request.work_dir != request.work_dir
-        ):
-            raise ValueError("workspace reservation path mismatch")
-        self._track_workspace_task(request.invocation_id)
-        try:
-            remaining = min(
-                request.remaining_seconds,
-                reservation.deadline - asyncio.get_running_loop().time(),
-            )
-            if remaining <= 0:
-                raise TimeoutError("workspace reservation deadline expired")
-            workspace = await handoff_bundle(
-                home=request.home,
-                work_dir=request.work_dir,
-                session_key=request.session_key,
-                bundle_path=request.bundle_path,
-                head=request.head,
-                origin=request.origin,
-                remaining_seconds=remaining,
-            )
-            if workspace != reservation.workspace:
-                raise WorkspaceHandoffFailed("workspace handoff changed the reserved workspace")
-            return {"status": "ok", "workspace": str(workspace)}
-        except OwnedProcessCleanupError:
-            self._mark_unhealthy()
-            raise
-        finally:
-            self._workspace_tasks.pop(request.invocation_id, None)
 
     async def acquire(self, request: AcquireRequest) -> ExecutionHandle:
         self._assert_controller(request.controller_id)

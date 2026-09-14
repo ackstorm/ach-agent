@@ -4,9 +4,9 @@ This supersedes the previous storage proposal. ACH renders placement, environmen
 and generic storage. ACH Agent owns the contents, native tool paths and compatibility.
 Do not add renderer branches for codemem, OpenCode, Pi, skills or hydration artifacts.
 
-Status: v0.16.2 is published and contains the split. The HTTP probe contract below
-supersedes its command-based probes and requires the next patch image. Kubernetes
-operator integration still needs joint cluster e2e.
+Status: the HTTP probe contract below targets `ghcr.io/ackstorm/ach-agent:v0.16.3`.
+It supersedes v0.16.2's command-based probes. Use the new image after its release
+workflow publishes it. Kubernetes operator integration still needs joint cluster e2e.
 
 ## Placement and image
 

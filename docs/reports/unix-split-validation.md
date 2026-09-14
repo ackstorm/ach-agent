@@ -297,3 +297,35 @@ README diagrams, the specification, behavior matrix and the self-contained opera
 handoff have been updated. `/tmp/to-ach.md` is a copy of that handoff for the other
 host. `mkdocs build --strict` and `git diff --check` pass. Documentation-only closure
 commits do not alter the runtime tree tested at `4869d98`.
+
+
+## HTTP probes correction — 2026-09-14
+
+The v0.16.3 correction replaces command probes with HTTP on C8080/H8090/E8081.
+H/E TCP apps expose health routes only; internal APIs stay on Unix sockets.
+Both placements require startup hydration installation and track engine loss.
+
+Root verification, after Luna implementation and root review:
+
+- Full suite: 1,225 passed, 4 skipped. Strict Ruff/format/mypy: 96 source files passed.
+- Manifest contract: 11 passed. Schema unchanged; strict MkDocs build passed.
+- Real Pi and OpenCode, three containers: two events reuse one native session;
+  hydration installed and transfer batch removed before work; selected environment
+  and shared-workspace hooks preserved. Health HTTP was queried from the mock
+  upstream's separate network namespace. Private API paths on H/E health ports
+  returned 404. Killing E made H and C readiness return 503 (1–2s cancellation).
+- Engine before init: `/healthz` and `/readyz` return 503; private API over TCP
+  returns 404. SIGTERM closes the role with exit 0.
+- Final combined test image: `sha256:3482565d380123cf22c7573274d51cb4183600e3cf5624c7671b39747f578b2b`.
+  Two standalone launchers shared a network with distinct public ports, both
+  hydrated successfully, and their child health ports did not collide. Killing
+  the engine child changed standalone readiness to 503 while liveness stayed 200.
+- Real native Pi and OpenCode TUIs each received a model response and exited with
+  code 0; the new listener did not hang shutdown.
+
+Evidence logs: `/tmp/ach-http-health-tests-final.log`,
+`/tmp/ach-http-health-lint-final.log`, `/tmp/ach-http-health-compose.log`,
+`/tmp/ach-http-standalone-final.log`, `/tmp/ach-http-tui-pi.log`, and
+`/tmp/ach-http-tui-opencode.log`. These tests use controlled synthetic ACH/model
+upstreams. They do not establish Kubernetes rollout success. The operator must
+validate its rendered probes and storage in its cluster.

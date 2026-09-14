@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Fixed
+
+- Every distributed role now exposes HTTP `/healthz` and `/readyz`: Channels on
+  8080, Harness on 8090 and Engine on 8081. Kubernetes uses `httpGet` probes;
+  the image-specific probe command is removed. Internal APIs remain on Unix sockets.
+- Standalone and distributed readiness both require completed hydration installation
+  and follow downstream engine availability after startup. Draining cannot restore
+  readiness. Local and TUI engine children use an ephemeral health port.
+
 ## [0.16.2] - 2026-09-14
 
 ### Changed

@@ -23,24 +23,24 @@
 
 Files: `src/ach_agent/boot/roles.py`, `src/ach_agent/boot/health.py`, `src/ach_agent/main.py`, `src/ach_agent/http/app.py`, execution health routes and related tests.
 
-- [ ] Add failing tests: HTTP health is 503 before initialization and 200 after installation; private execution routes return 404 over TCP; standalone and distributed lose readiness when E disappears.
-- [ ] Add health-only listeners and share readiness state with existing role apps. Ensure listener shutdown follows role lifecycle.
-- [ ] Use the existing engine readiness check in both placements; do not let app lifespan overwrite managed readiness.
-- [ ] Remove the image probe command and its obsolete tests.
-- [ ] Run focused runtime tests, Ruff and strict mypy. Commit runtime changes.
+- [x] Add failing tests: HTTP health is 503 before initialization and 200 after installation; private execution routes return 404 over TCP; standalone and distributed lose readiness when E disappears.
+- [x] Add health-only listeners and share readiness state with existing role apps. Ensure listener shutdown follows role lifecycle.
+- [x] Use the existing engine readiness check in both placements; do not let app lifespan overwrite managed readiness.
+- [x] Remove the image probe command and its obsolete tests.
+- [x] Run focused runtime tests, Ruff and strict mypy. Commit runtime changes.
 
 ## Task 2: Operator and deployment contract
 
 Files: `docker/split/{pod,compose,compose-ephemeral}.yaml`, `tests/test_split_manifest.py`, `scripts/test-split.sh`, README and current reference/handoff docs.
 
-- [ ] Replace Kubernetes exec probes with `httpGet`; startup/readiness `/readyz`, liveness `/healthz`, ports C8080/H8090/E8081.
-- [ ] Change Compose checks and acceptance checks to direct HTTP URLs; remove obsolete socket-health documentation.
-- [ ] Assert every Kubernetes role has exactly the approved HTTP probe handlers and startup budget; run manifest tests.
-- [ ] Update `/tmp/to-ach.md` from the canonical operator handoff.
+- [x] Replace Kubernetes exec probes with `httpGet`; startup/readiness `/readyz`, liveness `/healthz`, ports C8080/H8090/E8081.
+- [x] Change Compose checks and acceptance checks to direct HTTP URLs; remove obsolete socket-health documentation.
+- [x] Assert every Kubernetes role has exactly the approved HTTP probe handlers and startup budget; run manifest tests.
+- [x] Update `/tmp/to-ach.md` from the canonical operator handoff.
 
 ## Task 3: Review and verification
 
-- [ ] Root reviews source, parity and lifecycle behavior, including absence of private routes on TCP.
-- [ ] Run full test suite, lint, types, schema check and strict documentation build.
-- [ ] Exercise real three-container startup and engine failure with HTTP probes; exercise standalone startup and engine loss.
-- [ ] Record evidence and commit reviewed changes. Do not claim the published v0.16.2 image includes this correction.
+- [x] Root reviews source, parity and lifecycle behavior, including absence of private routes on TCP.
+- [x] Run full test suite, lint, types, schema check and strict documentation build.
+- [x] Exercise real three-container startup and engine failure with HTTP probes; exercise standalone startup and engine loss.
+- [x] Record evidence and commit reviewed changes. Do not claim the published v0.16.2 image includes this correction.

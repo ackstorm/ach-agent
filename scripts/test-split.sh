@@ -260,7 +260,7 @@ from ach_agent.channels.envelopes import EventRef
 async def main() -> None:
     channel = sys.argv[1]
     event_id = sys.argv[2]
-    client = ChannelsClient("http://ach-internal", b"", socket_path="/run/ach-agent/channels/channel.sock", poll_interval=0.2, wait_timeout=25)
+    client = ChannelsClient("/run/ach-agent/channels/channel.sock", poll_interval=0.2, wait_timeout=25)
     try:
         agent_name = (await client.fetch_config()).agent_name
         client.agent = agent_name
@@ -290,7 +290,7 @@ from ach_agent.channels.envelopes import EventRef
 
 async def main() -> None:
     channel, event_id = sys.argv[1:3]
-    client = ChannelsClient("http://ach-internal", b"", socket_path="/run/ach-agent/channels/channel.sock", poll_interval=0.2, wait_timeout=25)
+    client = ChannelsClient("/run/ach-agent/channels/channel.sock", poll_interval=0.2, wait_timeout=25)
     try:
         agent_name = (await client.fetch_config()).agent_name
         client.agent = agent_name

@@ -80,7 +80,7 @@ def create_channels_app(
                 return json_response(403, _rejection("scope mismatch: channel"))
             event = _message_event(envelope)
             submission = await registry.submit(event)
-        except Exception as exc:  # validation/admission errors are signed transport responses
+        except Exception as exc:  # validation/admission errors are transport responses
             return json_response(400, {"kind": "error", "error": str(exc)})
 
         status = {

@@ -24,13 +24,13 @@ from ach_agent.boot.ipc import channel_socket_path
 from ach_agent.router.router import RouterAdmitResult
 
 MAX_REQUEST_BODY_BYTES = 1 * 1024 * 1024
-# A retained completion may itself be exactly 1 MiB. The signed submission/result
-# envelope needs a fixed finite margin for its correlation and admission fields.
+# A retained completion may itself be exactly 1 MiB. The HTTP result envelope
+# needs a fixed finite margin for its correlation and admission fields.
 MAX_RESPONSE_BODY_BYTES = MAX_REQUEST_BODY_BYTES + 64 * 1024
 
 
 class SubmissionFailed(RuntimeError):
-    """The harness submission could not be authenticated or completed."""
+    """The harness submission could not be transported or completed."""
 
 
 class ChannelsClient:

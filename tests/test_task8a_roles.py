@@ -180,32 +180,53 @@ def test_role_paths_canonicalize_relative_trusted_roots(
 
 
 def test_prepared_workspace_rejects_child_symlink_escape(tmp_path: Path) -> None:
-    from ach_agent.engine.workspace import (
-        WorkspaceHandoffFailed,
-        _check_path_components,
-        prepare_workspace,
-    )
+    from ach_agent.engine.workspace import WorkspaceHookFailed, prepare_workspace, workspace_dir
 
-    workspace = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "session")
+    work_dir = tmp_path / "work"
+    workspace = workspace_dir(str(work_dir), "session")
     outside = tmp_path / "outside"
     outside.mkdir()
-    (workspace / "artifact").symlink_to(outside, target_is_directory=True)
-    with pytest.raises(WorkspaceHandoffFailed, match="symlink"):
-        _check_path_components(workspace / "artifact" / "bundle", workspace)
+    work_dir.mkdir()
+    workspace.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(WorkspaceHookFailed, match="not a directory"):
+        prepare_workspace(str(tmp_path / "home"), str(work_dir), "session")
 
 
 def test_role_session_store_selection_is_persistent_or_volatile(tmp_path: Path) -> None:
-    from ach_agent.boot.roles import _open_session_store
     from ach_agent.engine.base.pool import _LRUSessionMap
+    from ach_agent.execution.service import ExecutionService
     from ach_agent.execution.state import NativeSessionStore
 
-    persistent = _open_session_store(
-        PublicEngineConfig(persistence_enabled=True), tmp_path / "persistent"
-    )
-    assert isinstance(persistent, NativeSessionStore)
-    persistent.close()  # type: ignore[attr-defined]
-    volatile = _open_session_store(PublicEngineConfig(), tmp_path / "volatile")
-    assert isinstance(volatile, _LRUSessionMap)
+    async def run() -> None:
+        persistent_service = ExecutionService(None, None)
+        await persistent_service.configure(
+            PublicEngineConfig(
+                agent_name="persistent",
+                home=str(tmp_path / "persistent-home"),
+                work_dir=str(tmp_path / "persistent-work"),
+                public_context=str(tmp_path / "persistent-public"),
+                persistence_enabled=True,
+                persistence_mount_path=str(tmp_path),
+            )
+        )
+        assert isinstance(persistent_service._sessions_map, NativeSessionStore)
+        await persistent_service.close()
+
+        volatile_service = ExecutionService(None, None)
+        await volatile_service.configure(
+            PublicEngineConfig(
+                agent_name="volatile",
+                home=str(tmp_path / "volatile-home"),
+                work_dir=str(tmp_path / "volatile-work"),
+                public_context=str(tmp_path / "volatile-public"),
+            )
+        )
+        assert isinstance(volatile_service._sessions_map, _LRUSessionMap)
+        await volatile_service.close()
+
+    import asyncio
+
+    asyncio.run(run())
 
 
 def test_engine_context_links_public_state_without_replacing_private_home(tmp_path: Path) -> None:

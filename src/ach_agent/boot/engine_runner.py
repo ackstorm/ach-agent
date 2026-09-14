@@ -226,8 +226,8 @@ def make_engine_runner(
                         work_dir=str(invocation_engine_cfg.work_dir),
                         prepare=None,
                         cleanup=None,
-                        notify_on_stop=True,
-                        cleanup_ack_required=True,
+                        notify_on_stop=cleanup_cfg is not None,
+                        cleanup_ack_required=cleanup_cfg is not None,
                         cleanup_timeout_seconds=float(
                             cleanup_cfg.timeout_seconds if cleanup_cfg is not None else 120
                         ),

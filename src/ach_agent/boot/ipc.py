@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Role-owned Unix socket paths and safe listener creation."""
 
 from __future__ import annotations
@@ -43,8 +44,8 @@ def _reject_existing(path: Path) -> None:
 def bind_listener(path: Path) -> socket.socket:
     """Safely replace a stale owned Unix socket and return a nonblocking listener."""
     path = Path(path)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    path.parent.chmod(0o700)
+    if not path.parent.exists():
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if path.exists() or path.is_symlink():
         _reject_existing(path)
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

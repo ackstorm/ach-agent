@@ -1,10 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Channel prepare/cleanup hooks and their public workspace contract.
 
-Credential-free hooks run directly against the engine workspace. Credential-bearing
-prepare hooks run in :mod:`private_prepare`'s fresh harness-private checkout; only a
-validated, credential-free Git bundle crosses into the public workspace. Cleanup hooks
-use the same private producer boundary when credentials are configured.
+Hooks run directly against the shared session workspace owned by the harness. The
+webhook-script form uses a short-lived directory under the configured work directory.
 
 The serializable split-role envelope carries validated data only; it contains no Python
 callables. Event values travel as environment variables, which avoids interpolating
@@ -29,7 +27,7 @@ from typing import Any
 
 import structlog
 
-from ach_agent.boot.paths import link_ach_state, private_scratch_dir
+from ach_agent.boot.paths import link_ach_state
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import PrepareBlock, resolve_secret
 from ach_agent.engine.metrics import (
@@ -345,7 +343,7 @@ async def run_webhook_script(cfg: PrepareBlock, event: MessageEvent, work_dir: s
     # UTF-8 raises. The trailing newline is load-bearing: without it `read -r line` returns 1
     # at EOF (and `sh -e` aborts the script), while `while read` drops the payload entirely.
     payload = json.dumps(event.payload, separators=(",", ":")).encode() + b"\n"
-    base = private_scratch_dir()
+    base = Path(work_dir)
     base.mkdir(parents=True, exist_ok=True)
     workspace = Path(tempfile.mkdtemp(prefix="webhook-script-", dir=base))
     started = asyncio.get_running_loop().time()

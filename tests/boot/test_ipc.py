@@ -38,6 +38,19 @@ def test_bind_listener_replaces_stale_owned_socket(tmp_path: Path) -> None:
     path.unlink()
 
 
+def test_bind_listener_preserves_existing_writable_parent_mode(tmp_path: Path) -> None:
+    path = engine_socket_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    os.chmod(path.parent, 0o770)
+
+    listener = bind_listener(path)
+    try:
+        assert stat_mode(path.parent) == 0o770
+    finally:
+        listener.close()
+        path.unlink()
+
+
 def test_bind_listener_rejects_symlink(tmp_path: Path) -> None:
     path = engine_socket_path(tmp_path)
     path.parent.mkdir(parents=True)

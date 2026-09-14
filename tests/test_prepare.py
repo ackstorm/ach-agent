@@ -208,14 +208,14 @@ async def test_credentialed_webhook_script_uses_private_scratch(
         secretEnv={"TOKEN": {"env": "WEBHOOK_TOKEN"}},
     )
     await run_webhook_script(cfg, _event(), str(tmp_path / "engine-work"))
-    assert "/tmp/ach-private/" in workspace_file.read_text()
+    assert workspace_file.read_text().startswith(str(tmp_path / "engine-work"))
 
 
 @pytest.mark.parametrize("credentialed", [False, True])
 async def test_all_webhook_scripts_use_private_cwd_and_home(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, credentialed: bool
 ) -> None:
-    """An E-planted config must not become input to a later H-side script."""
+    """Webhook scripts use a short-lived directory under the configured work directory."""
     locations = tmp_path / ("locations-secret" if credentialed else "locations-public")
     engine_work = tmp_path / "engine-work"
     block_args: dict[str, object] = {
@@ -232,11 +232,10 @@ async def test_all_webhook_scripts_use_private_cwd_and_home(
     await run_webhook_script(cfg, _event(), str(engine_work))
 
     cwd, home, workspace = locations.read_text().splitlines()
-    assert cwd.startswith("/tmp/ach-private/")
-    assert home.startswith("/tmp/ach-private/")
-    assert workspace.startswith("/tmp/ach-private/")
-    assert not Path(cwd).is_relative_to(engine_work)
-    assert not engine_work.exists()
+    assert Path(cwd).is_relative_to(engine_work)
+    assert Path(home).is_relative_to(engine_work)
+    assert Path(workspace).is_relative_to(engine_work)
+    assert not Path(cwd).exists()
 
 
 async def test_webhook_script_nonzero_fails_without_an_engine(tmp_path: Path) -> None:
@@ -267,7 +266,8 @@ async def test_webhook_script_survives_an_unpaired_surrogate(tmp_path: Path) -> 
 
     await run_webhook_script(_block("cat > /dev/null"), event, str(work))
 
-    assert not work.exists()
+    assert work.is_dir()
+    assert not list(work.iterdir())
 
 
 async def test_webhook_script_text_is_not_in_proc_cmdline(tmp_path: Path) -> None:

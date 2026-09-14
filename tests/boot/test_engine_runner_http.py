@@ -533,6 +533,58 @@ async def test_public_workspace_hooks_do_not_accumulate_unconsumed_stop_events(
 
 
 @pytest.mark.asyncio
+async def test_prepare_only_workspace_release_does_not_wait_for_cleanup_ack(
+    tmp_path: Any,
+) -> None:
+    from ach_agent.boot.execution_client import ExecutionClient
+    from ach_agent.config.schema import ChannelConfig
+    from ach_agent.execution.app import create_execution_app
+    from ach_agent.execution.service import ExecutionService
+    from tests.execution.conftest import FakeDriver
+    from tests.execution.test_http import _running_server
+
+    channel = ChannelConfig.model_validate(
+        {
+            "name": "prepare-only",
+            "type": "cron",
+            "cron": {"schedule": "* * * * *"},
+            "prepare": {"script": "true"},
+        }
+    )
+    fake_driver = FakeDriver()
+    service = ExecutionService(fake_driver, {})
+    service.controller_required = True
+    async with _running_server(create_execution_app(service)) as base_url:
+        client = ExecutionClient(base_url, controller_id="controller", timeout=2)
+        await client.connect()
+        runner = make_engine_runner(
+            client=client,
+            engine_cfg=PublicEngineConfig(
+                home=str(tmp_path / "home"), work_dir=str(tmp_path / "workspace")
+            ),
+            max_invocation_seconds=5,
+            channel_ttl={"prepare-only": 0},
+            channels_by_name={"prepare-only": channel},
+        )
+        try:
+            result = await runner(
+                MessageEvent(
+                    idempotency_key="prepare-only-release",
+                    session_key="prepare-only-lane",
+                    channel_name="prepare-only",
+                    payload={},
+                ),
+                lambda: None,
+            )
+            assert result == {"action": "none", "text": "reply"}
+            assert client._controller_events.empty()
+            assert not service._unhealthy
+        finally:
+            await runner.close()
+            await client.close()
+
+
+@pytest.mark.asyncio
 async def test_real_http_runner_cancel_keeps_client_usable_for_peer() -> None:
     from ach_agent.boot.execution_client import ExecutionClient
     from ach_agent.execution.app import create_execution_app

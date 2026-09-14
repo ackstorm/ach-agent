@@ -41,8 +41,6 @@ spec:
     - name: engine-codemem
       persistentVolumeClaim:
         claimName: ach-agent-state
-    - name: harness-scratch
-      emptyDir: {}
     - name: harness-tmp
       emptyDir: {}
     - name: channels-tmp
@@ -98,8 +96,6 @@ spec:
         - name: public-context
           mountPath: /var/lib/ach-agent/public-context
           subPath: public-context
-        - name: harness-scratch
-          mountPath: /tmp/ach-private
         - name: harness-tmp
           mountPath: /tmp
         - name: channels-ipc

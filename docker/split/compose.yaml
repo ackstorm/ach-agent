@@ -29,7 +29,6 @@ services:
       - harness-state:/var/lib/ach-agent/state
       - shared-workspace:/var/lib/ach-agent/workspace
       - public-context:/var/lib/ach-agent/public-context
-      - harness-scratch:/tmp/ach-private
       - channels-ipc:/run/ach-agent/channels
       - engine-ipc:/run/ach-agent/engine:ro
 
@@ -93,6 +92,5 @@ volumes:
   engine-codemem:
   shared-workspace:
   public-context:
-  harness-scratch:
   channels-ipc:
   engine-ipc:

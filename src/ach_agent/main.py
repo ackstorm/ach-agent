@@ -40,7 +40,7 @@ from ach_agent.boot.bootstrap import (
 from ach_agent.boot.completions import CompletionHandler, CompletionRegistry
 from ach_agent.boot.engine_runner import make_engine_runner
 from ach_agent.boot.health import HealthState
-from ach_agent.boot.ipc import bind_listener, engine_socket_path
+from ach_agent.boot.ipc import bind_listener, channel_socket_path, engine_socket_path
 from ach_agent.boot.paths import (
     harness_log_dir,
     write_pid_file,
@@ -365,12 +365,7 @@ async def _run_harness(
     # Step 2: load config (hard-fail on schema mismatch — CFG-02)
     cfg = cfg if cfg is not None else load_config(config_path)
     isolated_harness = role_mode == "harness"
-    configured_engine_url = os.environ.get("ACH_ENGINE_URL", "").strip()
-    if isolated_harness and os.environ.get("ACH_HARNESS_PORT", "").strip():
-        try:
-            int(os.environ.get("ACH_HARNESS_PORT", "8090"))
-        except ValueError as exc:
-            raise SystemExit("ACH_HARNESS_PORT must be an integer") from exc
+    configured_engine_url = ""
     try:
         validate_cost_source(cfg.cost.source, cfg.model.type)
     except ValueError as exc:
@@ -1051,7 +1046,7 @@ async def _run_harness(
     else:
         host = cfg.health.host
         port = cfg.health.port
-    channel_socket = os.environ.get("ACH_CHANNEL_SOCKET", "").strip() if isolated_harness else ""
+    channel_socket = str(channel_socket_path()) if isolated_harness else ""
     channel_listener = bind_listener(Path(channel_socket)) if channel_socket else None
     uv_config = uvicorn.Config(
         app=app,

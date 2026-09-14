@@ -327,6 +327,13 @@ class ExecutionService:
         if not self._admission_open or self._controller_id != controller_id:
             raise ValueError("obsolete controller")
 
+    def _configured_driver(self) -> EngineDriver:
+        """Return the native driver after the configured-state invariant is checked."""
+        driver = self.driver
+        if driver is None:
+            raise RuntimeError("execution service is not configured")
+        return driver
+
     def _mark_unhealthy(self) -> None:
         self._unhealthy = True
         self.shutdown_requested = True
@@ -1083,6 +1090,7 @@ class ExecutionService:
 
     async def _turn_impl(self, request: TurnRequest) -> AsyncIterator[ExecutionEvent]:
         self._assert_controller(request.controller_id)
+        driver = self._configured_driver()
         inv = self._get(request.controller_id, request.execution_id, request.invocation_id)
         if inv.terminal or inv.released:
             raise ValueError("invocation is terminal")
@@ -1101,7 +1109,7 @@ class ExecutionService:
                 raise TimeoutError("invocation deadline expired")
 
             async def resolve() -> str:
-                return await self.driver.resolve_session(
+                return await driver.resolve_session(
                     inv.server,
                     conv_key=inv.conversation_key,
                     reuse=inv.reuse,
@@ -1210,7 +1218,7 @@ class ExecutionService:
             if remaining <= 0:
                 raise TimeoutError("invocation deadline expired")
             async with asyncio.timeout(remaining):
-                return await self.driver.run_turn(
+                return await driver.run_turn(
                     inv.server,
                     conv_key=inv.conversation_key,
                     prompt=request.prompt,
@@ -1316,6 +1324,7 @@ class ExecutionService:
 
     async def session_op(self, request: SessionOperation) -> None:
         self._assert_controller(request.controller_id)
+        driver = self._configured_driver()
         inv = self._get(request.controller_id, request.execution_id, request.invocation_id)
         if inv.terminal or inv.released or inv.turn_active or inv.maintenance_active:
             raise ValueError("invocation is not available for maintenance")
@@ -1330,9 +1339,9 @@ class ExecutionService:
                 max(0.001, inv.deadline - asyncio.get_running_loop().time())
             ):
                 if request.operation == "discard":
-                    await self.driver.discard_session(inv.server, inv.current_ref)
+                    await driver.discard_session(inv.server, inv.current_ref)
                 elif request.operation == "compact":
-                    await self.driver.compact_session(inv.server, inv.current_ref)
+                    await driver.compact_session(inv.server, inv.current_ref)
                 else:
                     self.pool.sessions.pop(inv.conversation_key, None)
                     inv.current_ref = None

@@ -168,9 +168,16 @@ class ChannelsClient:
         operation = self._begin_operation()
         try:
             try:
-                response = await self._http.get("/internal/v1/config")
-                response_body = response.content
-                status = response.status_code
+                async with self._http.stream("GET", "/internal/v1/config") as response:
+                    chunks: list[bytes] = []
+                    response_size = 0
+                    async for chunk in response.aiter_bytes():
+                        response_size += len(chunk)
+                        if response_size > MAX_RESPONSE_BODY_BYTES:
+                            raise SubmissionFailed("response body too large")
+                        chunks.append(chunk)
+                    response_body = b"".join(chunks)
+                    status = response.status_code
             except (httpx.HTTPError, OSError) as exc:
                 raise SubmissionFailed(f"channel configuration request failed: {exc}") from exc
             if status != 200:

@@ -11,7 +11,7 @@ from ach_agent.boot.channels_api import create_channels_app
 from ach_agent.boot.completions import CompletionRegistry
 from ach_agent.boot.execution_client import ExecutionClient
 from ach_agent.boot.ipc import bind_listener, engine_socket_path
-from ach_agent.channels.client import ChannelsClient
+from ach_agent.channels.client import MAX_RESPONSE_BODY_BYTES, ChannelsClient, SubmissionFailed
 from ach_agent.config.schema import ChannelSourceConfig
 from ach_agent.execution.app import create_execution_app
 from ach_agent.execution.service import ExecutionService
@@ -70,3 +70,16 @@ async def test_channels_client_fetches_typed_source_projection() -> None:
         inputs = await client.fetch_config()
     assert inputs.agent_name == "agent-a"
     assert inputs.channels == [source]
+
+
+@pytest.mark.asyncio
+async def test_channels_client_bounds_config_response() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"x" * (MAX_RESPONSE_BODY_BYTES + 1), request=request)
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://ach-internal"
+    ) as http:
+        client = ChannelsClient("http://ach-internal", b"test-key", http_client=http)
+        with pytest.raises(SubmissionFailed, match="response body too large"):
+            await client.fetch_config()

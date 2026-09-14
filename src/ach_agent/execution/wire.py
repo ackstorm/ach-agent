@@ -107,6 +107,13 @@ class PublicEngineConfig(_WireModel):
         return values
 
 
+class ControllerOpenRequest(_WireModel):
+    version: int
+    instance_id: str
+    controller_id: str
+    config: PublicEngineConfig | None = None
+
+
 class ControllerHello(_WireModel):
     version: int
     instance_id: str

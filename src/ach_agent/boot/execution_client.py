@@ -34,6 +34,7 @@ from ach_agent.execution.state import MAX_MIGRATION_ROWS, LegacySessionRow
 from ach_agent.execution.wire import (
     AcquireRequest,
     ControllerHello,
+    PublicEngineConfig,
     ExecutionEvent,
     ExecutionHandle,
     ReleaseRequest,
@@ -268,7 +269,7 @@ class ExecutionClient:
         self._turn_ids: dict[str, itertools.count[int]] = {}
         self._closed = False
 
-    async def connect(self) -> ControllerHello:
+    async def connect(self, config: PublicEngineConfig | None = None) -> ControllerHello:
         """Claim the mini-harness and retain its held controller connection."""
         if self._controller_response is not None:
             raise ExecutionClientError("controller is already connected")
@@ -285,14 +286,17 @@ class ExecutionClient:
                 self.instance_id = str(json.loads(body)["instance_id"])
             except (KeyError, TypeError, ValueError) as exc:
                 raise ExecutionClientError("invalid execution health response") from exc
+        request_body: dict[str, Any] = {
+            "version": 1,
+            "instance_id": self.instance_id,
+            "controller_id": self.controller_id,
+        }
+        if config is not None:
+            request_body["config"] = config.model_dump(mode="json", by_alias=True)
         request = self.controller_client.build_request(
             "POST",
             "/execution/v1/controller",
-            json={
-                "version": 1,
-                "instance_id": self.instance_id,
-                "controller_id": self.controller_id,
-            },
+            json=request_body,
         )
         try:
             response = await asyncio.wait_for(

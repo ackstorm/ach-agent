@@ -35,6 +35,7 @@ from ach_agent.engine.workspace import (
 )
 from ach_agent.execution.wire import (
     AcquireRequest,
+    PublicEngineConfig,
     ExecutionEvent,
     ExecutionHandle,
     ReleaseRequest,
@@ -171,11 +172,12 @@ def _event_bytes(event: ExecutionEvent) -> bytes:
 class ExecutionService:
     def __init__(
         self,
-        driver: EngineDriver,
+        driver: EngineDriver | None,
         sessions_map: MutableMapping[str, str] | None = None,
     ) -> None:
         self.driver = driver
         self.pool = EnginePool(driver=driver, sessions_map=sessions_map, strict_cleanup=True)
+        self._configured = driver is not None
         self._sessions_map = sessions_map
         self._execution_started = False
         self._invocations: dict[str, _Invocation] = {}
@@ -211,11 +213,36 @@ class ExecutionService:
     def controller_id(self) -> str | None:
         return self._controller_id
 
-    async def claim_controller(self, controller_id: str) -> None:
+    @property
+    def configured(self) -> bool:
+        return self._configured
+
+    async def configure(self, public: PublicEngineConfig) -> None:
+        if self._configured:
+            return
+        if public.engine_type == "pi":
+            from ach_agent.engine.pi.driver import PiDriver
+
+            driver: EngineDriver = PiDriver()
+        else:
+            from ach_agent.engine.opencode.driver import OpencodeDriver
+
+            driver = OpencodeDriver()
+        self.driver = driver
+        self.pool = EnginePool(driver=driver, sessions_map=self._sessions_map, strict_cleanup=True)
+        self._configured = True
+
+    async def claim_controller(
+        self, controller_id: str, config: PublicEngineConfig | None = None
+    ) -> None:
         if self._unhealthy:
             raise RuntimeError("native cleanup failed; execution service is unhealthy")
         if self._controller_id is not None:
             raise RuntimeError("execution service already has a controller")
+        if not self._configured:
+            if config is None:
+                raise RuntimeError("execution service is not configured")
+            await self.configure(config)
         self._controller_id = controller_id
         self._admission_open = True
         self._controller_events = asyncio.Queue(maxsize=64)

@@ -5,6 +5,7 @@ from ach_agent.execution.service import ExecutionService
 from ach_agent.execution.wire import (
     AcquireRequest,
     ControllerHello,
+    ControllerOpenRequest,
     ExecutionEvent,
     ExecutionHandle,
     PublicEngineConfig,
@@ -18,6 +19,7 @@ from ach_agent.execution.wire import (
 __all__ = [
     "AcquireRequest",
     "ControllerHello",
+    "ControllerOpenRequest",
     "ExecutionEvent",
     "ExecutionHandle",
     "PublicEngineConfig",

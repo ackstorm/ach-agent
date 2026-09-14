@@ -79,6 +79,40 @@ async def test_controller_hello_is_versioned_and_owns_service(fake_driver):
 
 
 @pytest.mark.asyncio
+async def test_unconfigured_execution_service_accepts_config_on_controller_open() -> None:
+    service = ExecutionService(None, {})
+    app = create_execution_app(service)
+    async with _running_server(app) as base_url:
+        async with httpx.AsyncClient(base_url=base_url, timeout=2) as client:
+        health = await client.get("/execution/v1/health")
+        assert health.status_code == 200
+        assert health.json()["instance_id"] == service.instance_id
+        async with client.stream(
+            "POST",
+            "/execution/v1/controller",
+            json={
+                "version": EXECUTION_API_VERSION,
+                "instance_id": service.instance_id,
+                "controller_id": "controller-a",
+            },
+        ) as missing:
+            assert missing.status_code == 503
+        async with client.stream(
+            "POST",
+            "/execution/v1/controller",
+            json={
+                "version": EXECUTION_API_VERSION,
+                "instance_id": service.instance_id,
+                "controller_id": "controller-a",
+                "config": PublicEngineConfig().model_dump(mode="json", by_alias=True),
+            },
+        ) as response:
+            assert response.status_code == 200
+            assert (await response.aiter_lines().__anext__())
+            await response.aclose()
+
+
+@pytest.mark.asyncio
 async def test_h_e_readiness_and_signed_c_probe_share_instance(fake_driver) -> None:
     service = ExecutionService(fake_driver, {})
     e_app = create_execution_app(service)

@@ -29,6 +29,7 @@ from ach_agent.execution.service import (
 from ach_agent.execution.wire import (
     AcquireRequest,
     ControllerHello,
+    ControllerOpenRequest,
     ControllerStopRequest,
     ExecutionEvent,
     ReleaseRequest,
@@ -162,7 +163,7 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
     @app.post("/execution/v1/controller", response_model=None)
     async def controller(request: Request) -> StreamingResponse | JSONResponse:
         try:
-            hello = ControllerHello.model_validate(await _request_json(request))
+            hello = ControllerOpenRequest.model_validate(await _request_json(request))
         except _BodyTooLarge:
             return JSONResponse({"detail": "request body too large"}, status_code=413)
         except (_InvalidBody, ValidationError) as exc:
@@ -172,7 +173,7 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
         if hello.instance_id != service.instance_id:
             return JSONResponse({"detail": "obsolete execution instance"}, status_code=409)
         try:
-            await service.claim_controller(hello.controller_id)
+            await service.claim_controller(hello.controller_id, config=hello.config)
         except Exception as exc:
             return service_error(exc)
 

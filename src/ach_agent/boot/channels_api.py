@@ -55,7 +55,7 @@ def create_channels_app(
 
     @app.get("/internal/v1/config", response_model=ChannelInputs)
     async def config() -> ChannelInputs:
-        return ChannelInputs(agentName=agent, channels=projected_sources)
+        return ChannelInputs(agent_name=agent, channels=projected_sources)
 
     async def request_body(request: Request) -> bytes | Response:
         return await read_bounded_body(request, max_body_bytes)

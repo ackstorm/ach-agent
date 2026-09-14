@@ -1,3 +1,5 @@
+> Historical evidence for the revisions named below. The [current split contract](../references/2026-09-14-three-role-split.md) is authoritative; latest acceptance evidence is in [unix-split-validation](unix-split-validation.md).
+
 # Phase 1 independent final validation
 
 Root reviewed the branch while GPT-5.6-Luna implemented it. The independent

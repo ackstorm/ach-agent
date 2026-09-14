@@ -133,10 +133,11 @@ or replace workspace contents. It therefore does not protect credentialed script
 from configuration left in that shared checkout. Existing process deadlines, basic
 path handling and output limits remain.
 
-This restores the original hook contract: prepare runs after admission on the lane,
+Prepare runs after admission on the lane,
 before engine acquisition, with `cwd = ACH_WORKSPACE`; cleanup is best-effort at
-teardown with `cwd = ACH_WORKSPACE.parent`. Hook `HOME` remains `ACH_WORKSPACE`,
-which is distinct from the native engine's home. Existing hook environment selection
+teardown with `cwd = ACH_WORKSPACE.parent`. Hook `HOME` is harness-private,
+separate from the workspace and the native engine's home. Scripts must write
+engine-visible output under `ACH_WORKSPACE`, not `HOME`. Existing hook environment selection
 and event-value validation are preserved, including for hooks using credentials.
 
 Cleanup belongs to workspace teardown, **not automatically to every response**. Warm
@@ -162,8 +163,7 @@ There is no internal HMAC or TCP control port. Socket directories are mounted on
 into their participants. Public ingress and capability proxies keep the networking
 their clients need. Local use keeps the parent-owned launcher and native TUI.
 
-See the [target specification](docs/superpowers/specs/2026-09-13-unix-split-simplification.md)
-and [implementation/simplification plan](docs/superpowers/plans/2026-09-14-preserve-behavior-simplify-split.md).
+See the [current split contract](docs/references/2026-09-14-three-role-split.md).
 
 ## Quick start (local dev)
 
@@ -253,7 +253,8 @@ C receives source-only channel inputs over
 existing controller request over `/run/ach-agent/engine/agent.sock`. H resolves the
 values selected by `engine.forwardEnv` and sends those explicit values to E; managed
 ACH/model/MCP credentials remain H-side. H executes every prepare and cleanup hook
-on the existing shared workspace, preserving the original cwd, HOME and lifecycle.
+on the existing shared workspace, preserving cwd and lifecycle, with a separate
+harness-private HOME.
 
 The two IPC directory mounts are separate: H writes the channels directory and C
 connects through its read-only mount; E writes the engine directory and H connects

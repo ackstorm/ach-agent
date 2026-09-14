@@ -1,3 +1,5 @@
+> Archived design history. Superseded by the [current split contract](../../references/2026-09-14-three-role-split.md). Do not use as implementation instructions.
+
 # Preserve Behavior and Simplify the Split — Implementation Plan
 
 > **For agentic workers:** Use superpowers:subagent-driven-development task-by-task. The user selected GPT-5.6-Luna implementation and root review; do not ask again and do not dispatch reviewer agents. This document authorizes no publishing or external deployment. Checkboxes track execution, not work already completed.

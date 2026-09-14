@@ -1,3 +1,5 @@
+> Archived design history. Superseded by the [current split contract](../../references/2026-09-14-three-role-split.md). Do not use as implementation instructions.
+
 # Simple Operator Bootstrap Implementation Plan
 
 > **For agentic workers:** Use superpowers:subagent-driven-development. User requires GPT-5.6-Luna implementation and root review; do not spawn reviewer agents.

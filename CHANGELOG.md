@@ -7,26 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
-### Fixed
+### Changed
 
-- Completed the Phase 1 split acceptance harness: the task-owned Compose fixture now
-  drives channels, harness, and engine roles through real OpenCode and Pi binaries,
-  with engine failure and active cancellation evidence. Webhook scripts always run
-  from harness-private scratch so an engine-planted config cannot influence a later
-  harness-side script.
-
-- Channel HTTP submissions and result lookups now use scoped HMAC request/response
-  envelopes with bounded timestamp and nonce replay checks. Queue admission ACKs remain
-  admission based despite `ackMode: onComplete`; authenticated `FULL_QUEUE` responses
-  intentionally acknowledge and drop overload, while unauthenticated transport responses
-  stay pending for recovery.
-
-- Credential-bearing `channel.prepare` and `channel.cleanup` hooks now run with fresh
-  harness-private HOME/cwd/checkouts. Preparation publishes only a credential-free local Git
-  bundle into the retained engine workspace, rejecting symlink and path traversal handoffs;
-  credential-free hooks keep their existing workspace behavior. In the current same-UID local
-  deployment, private scratch is not an OS boundary against a concurrently malicious engine;
-  split deployments must provide private mounts and namespaces.
+- Split channels, harness and native engine execution into roles communicating over
+  two Unix sockets. The harness retains private configuration and managed credentials;
+  the mini-harness receives explicit public launch inputs and selected `engine.forwardEnv`
+  values. Native session migration, controller cleanup and bounded result correlation
+  preserve existing session and reply behavior. No internal HMAC or bootstrap files.
+- Hook `HOME` is now harness-private instead of `ACH_WORKSPACE`. Prepare and cleanup
+  keep their working directories, shared workspace access and lifecycle. Scripts must
+  put engine-visible output under `ACH_WORKSPACE`; ACH does not inspect Git configuration
+  or require private clones. Shared checkout contents remain untrusted input to scripts.
+- Result retention uses a fixed internal 300-second window, with no new public schema
+  field. Existing Redis acknowledgement behavior is unchanged: admission is not durable
+  completion and `FULL_QUEUE` intentionally drops overload despite `ackMode: onComplete`.
+- Consolidated the current split contract in `docs/references/2026-09-14-three-role-split.md`;
+  older split plans and reports are marked as historical.
 
 ## [0.16.1] - 2026-09-11
 

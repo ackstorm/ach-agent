@@ -1,3 +1,5 @@
+> Historical evidence for the revisions named below. The [current split contract](../references/2026-09-14-three-role-split.md) is authoritative; latest acceptance evidence is in [unix-split-validation](unix-split-validation.md).
+
 # Phase 1 preparation compatibility (Task 0A / Task 10A closeout)
 
 Status: the private producer handoff is implemented and the compatibility contract is
@@ -9,7 +11,7 @@ split transport remains outside this report.
 
 ## Files and validation
 
-Added `tests/test_private_prepare.py`. It uses a local Git repository and synthetic
+Added `tests/test_cleanup_registry.py`. It uses a local Git repository and synthetic
 credential, and checks first checkout, warm reuse, root inode, `.ach-state` resolution,
 HEAD, tracked and untracked contents, local commit objects, cleanup, failed acquisition,
 and a destination symlink fixture. Two hostile-input tests plant both workspace
@@ -18,7 +20,7 @@ and a destination symlink fixture. Two hostile-input tests plant both workspace
 The Task 0A characterization command passed:
 
 ```text
-rtk proxy ./scripts/dev.sh uv run pytest tests/test_prepare.py tests/test_private_prepare.py -q
+rtk proxy ./scripts/dev.sh uv run pytest tests/test_prepare.py tests/test_cleanup_registry.py -q
 42 passed, 3 xfailed in 3.87s
 ```
 

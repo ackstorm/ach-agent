@@ -894,7 +894,10 @@ script's Git and checkout policy.
   nothing is posted, `ach_agent_prepare_failures_total{reason}` increments. Deliberately the
   opposite of memory's fail-open probe — a review of a repo that is not there is worse than
   no review.
-- `HOME` is pinned to the workspace and `GIT_TERMINAL_PROMPT=0` is set for prepare and cleanup.
+- `HOME` is harness-private, separate from the workspace and engine HOME;
+  `GIT_TERMINAL_PROMPT=0` is set for prepare and cleanup. Write engine-visible
+  files under `ACH_WORKSPACE`. A private HOME does not make engine-writable
+  checkout configuration safe for credential-bearing scripts.
   The base env is a small allowlist (`PATH`, `SHELL`, `LANG`, `LANGUAGE`, `TZ`) plus what
   `env`/`secretEnv` declare.
 

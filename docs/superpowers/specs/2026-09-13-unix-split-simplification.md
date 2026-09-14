@@ -1,3 +1,5 @@
+> Archived design history. Superseded by the [current split contract](../../references/2026-09-14-three-role-split.md). Do not use as implementation instructions.
+
 # Split simplification: queues, Unix sockets and private configuration
 
 Status: implemented on `feat/phase1-split`, verified locally on 2026-09-14.

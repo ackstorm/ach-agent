@@ -1,5 +1,44 @@
 # Unix split validation — 2026-09-14
 
+## Bounded cleanup follow-up
+
+Runtime revision: `d87894f`, following the previously validated `5b2e9e5` tree.
+The [current split contract](../references/2026-09-14-three-role-split.md) replaces
+the historical proposals linked below.
+
+Changes: hooks use a lazy process-owned temporary HOME (mode 0700), distinct
+from engine home and workspace. Prepare/cleanup working directories and lifecycle
+remain unchanged. Retention is an internal 300-second constant; the frozen public
+schema now matches original v0.16.1 exactly. The cleanup registry was renamed and
+acceptance-only fixtures moved under `tests/integration/fixtures/split/`.
+Session migration, session-ready acknowledgement, controller ownership and the
+existing execution API remain intact.
+
+Fresh verification on this runtime tree:
+
+- Full Docker pytest suite: **1,178 passed, 3 skipped**, 161 dependency deprecation
+  warnings. Command: `scripts/dev.sh uv run pytest tests/ -q --ignore=tests/e2e`.
+- Ruff check/format and strict mypy: passed for all 96 source files.
+- `scripts/gen_schema.py --check`: passed; diff of the frozen schema against
+  `462912f` is empty.
+- `scripts/test-split.sh`: passed with real OpenCode and Pi in three containers,
+  controlled upstreams, two turns and native-session reuse, selected environment
+  values, shared workspace hooks using the new HOME, active cancellation and
+  engine failure. Cancellation took two seconds for each engine. Private mount
+  assertions passed. Detailed local log: `/tmp/ach-split-cleanup-acceptance.log`.
+- Persistent/ephemeral/acceptance Compose configuration checks, shell syntax,
+  MkDocs strict build and whitespace checks passed.
+- Gitleaks scan of the staged tracked-file snapshot: no findings.
+  An initial whole-directory scan also included ignored dependency caches and
+  archived local test artifacts, reporting 40 findings there (including an old
+  local kind kubeconfig). Those files are not part of the tracked release tree.
+
+Native TUI and harness restart were not rerun for this bounded cleanup; their
+earlier revision-specific evidence remains below. No image publication, merge,
+push or Kubernetes rollout was performed.
+
+## Earlier split implementation evidence
+
 Branch: `feat/phase1-split`, worktree `.worktrees/phase1-split`.
 Behavioral reference: v0.16.1 (`462912f`). Scope: complete the approved
 [preserve-behavior simplification plan](../superpowers/plans/2026-09-14-preserve-behavior-simplify-split.md).

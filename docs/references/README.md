@@ -5,6 +5,7 @@ decision, prefixed `YYYY-MM-DD-` so `ls` sorts chronologically. Add a row below 
 
 | Date | Doc | Status | What it decides |
 |------|-----|--------|-----------------|
+| 2026-09-14 | [three-role-split](2026-09-14-three-role-split.md) | Current implementation contract | Channels/harness/engine over Unix sockets, private configuration, shared workspace, private hook HOME and preserved session/lifecycle behavior. Supersedes archived split plans. |
 | 2026-07-01 | [keyed-engine-pool](2026-07-01-keyed-engine-pool.md) | Shipped (`c57c92a`) | EnginePool keyed by `session_key`: one opencode server per key, per-key HOME isolation, `channel.session` reuse. |
 | 2026-07-01 | [router-pool-vs-legacy](2026-07-01-router-pool-vs-legacy.md) | Decisions | Router / pool / session lifecycle vs legacy `ackbot-process`: what to keep vs port; splits into follow-up plans. |
 | 2026-07-02 | [session-identity-and-bounds](2026-07-02-session-identity-and-bounds.md) | Accepted | `channel.session` becomes a block: separates `session_key` (lane/pool) from the oc-session reuse key; `maxTokens` + overflow bounds. |

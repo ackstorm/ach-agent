@@ -1,3 +1,5 @@
+> Archived design history. Superseded by the [current split contract](../../references/2026-09-14-three-role-split.md). Do not use as implementation instructions.
+
 # ACH Phase 1 — Channels/Harness/Engine Split Implementation Plan
 
 **Execution status (2026-09-12):** Tasks 0–10 implemented on `feat/phase1-split`;

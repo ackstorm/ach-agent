@@ -1,3 +1,5 @@
+> Archived design history. Superseded by the [current split contract](../../references/2026-09-14-three-role-split.md). Do not use as implementation instructions.
+
 # Unix split operator handoff
 
 Status: implemented and locally validated on `feat/phase1-split`, 2026-09-14.

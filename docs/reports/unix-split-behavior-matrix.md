@@ -1,3 +1,5 @@
+> Historical evidence for the revisions named below. The [current split contract](../references/2026-09-14-three-role-split.md) is authoritative; latest acceptance evidence is in [unix-split-validation](unix-split-validation.md).
+
 # Unix split behavior matrix
 
 Reference: original v0.16.1, `462912f`. This matrix records the implemented

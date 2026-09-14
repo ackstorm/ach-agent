@@ -1,3 +1,5 @@
+> Archived design history. Superseded by the [current split contract](../../references/2026-09-14-three-role-split.md). Do not use as implementation instructions.
+
 # Unix Split Simplification Implementation Plan
 
 **SUPERSEDED — do not execute this version.** The consolidated

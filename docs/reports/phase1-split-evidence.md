@@ -1,3 +1,5 @@
+> Historical evidence for the revisions named below. The [current split contract](../references/2026-09-14-three-role-split.md) is authoritative; latest acceptance evidence is in [unix-split-validation](unix-split-validation.md).
+
 # Phase 1 split acceptance evidence
 
 This report records the Task 10B implementation at final source commit `beac73f`. The
@@ -72,7 +74,7 @@ the explicit targeted commands below:
 - `tests/engine/test_lifecycle.py`, `tests/engine/pi/test_driver.py`, and the
   conformance tests cover typed launch failure, native process cleanup, terminal
   repair, usage/cost plumbing, environment stripping, and secret hygiene.
-- `tests/test_private_prepare.py` and `tests/test_prepare.py` cover authenticated
+- `tests/test_cleanup_registry.py` and `tests/test_prepare.py` cover authenticated
   Git/forge preparation, filtered-history materialization, workspace retention,
   and script-only cleanup. The Task 10B F1 regression now verifies both secret and
   no-secret scripts use private cwd, HOME, and workspace paths.

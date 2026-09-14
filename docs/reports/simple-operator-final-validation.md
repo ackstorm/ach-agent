@@ -1,3 +1,5 @@
+> Historical evidence for the revisions named below. The [current split contract](../references/2026-09-14-three-role-split.md) is authoritative; latest acceptance evidence is in [unix-split-validation](unix-split-validation.md).
+
 # Simplified operator contract — final validation
 
 Runtime and packaging snapshot: `929397a`, following forwarding `98393ad` and

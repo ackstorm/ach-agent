@@ -1,3 +1,5 @@
+> Archived design history. Superseded by the [current split contract](../../references/2026-09-14-three-role-split.md). Do not use as implementation instructions.
+
 # ACH operator handoff: three-role agent
 
 This is the Phase 1 packaging contract implemented in the local `ach-agent`

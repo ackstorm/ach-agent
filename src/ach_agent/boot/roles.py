@@ -35,7 +35,7 @@ from ach_agent.boot.bootstrap import (
     wait_for_channels_bootstrap,
     wait_for_engine_bootstrap,
 )
-from ach_agent.boot.ipc import bind_listener
+from ach_agent.boot.ipc import bind_listener, engine_socket_path
 from ach_agent.boot.paths import harness_log_dir, resolve_role_paths
 from ach_agent.boot.secrets import collect_secret_env_names, strip_forwarded_secrets
 from ach_agent.config.schema import (
@@ -208,6 +208,32 @@ async def run_engine(
     public_config: JsonValue | None = None, *, terminal_mode: bool = False
 ) -> None:
     """Start the engine HTTP role with no native process at endpoint boot."""
+    if public_config is None and not terminal_mode:
+        service = ExecutionService(None, None)
+        app = create_execution_app(service)
+        listener = bind_listener(engine_socket_path())
+        server = uvicorn.Server(
+            uvicorn.Config(app=app, host=DEFAULT_ENGINE_HOST, port=DEFAULT_ENGINE_PORT, log_level="warning")
+        )
+
+        async def stop_on_shutdown() -> None:
+            while not service.shutdown_requested and not server.should_exit:
+                await asyncio.sleep(0.05)
+            with contextlib.suppress(Exception):
+                await service.release_controller(service.controller_id or "")
+            server.should_exit = True
+
+        watcher = asyncio.create_task(stop_on_shutdown())
+        try:
+            await server.serve(sockets=[listener])
+        finally:
+            watcher.cancel()
+            await asyncio.gather(watcher, return_exceptions=True)
+            with contextlib.suppress(Exception):
+                await service.release_controller(service.controller_id or "")
+            listener.close()
+            engine_socket_path().unlink(missing_ok=True)
+        return
     if public_config is None:
         public_config = await wait_for_engine_bootstrap(
             role_bootstrap_path("engine"),

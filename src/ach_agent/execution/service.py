@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import os
 import shutil
 import uuid
 from collections.abc import AsyncIterator, MutableMapping
@@ -228,6 +229,26 @@ class ExecutionService:
             from ach_agent.engine.opencode.driver import OpencodeDriver
 
             driver = OpencodeDriver()
+        home = Path(public.home or "/tmp/ach-home")
+        work_dir = Path(public.work_dir or home / "workspace")
+        public_context = Path(public.public_context or "/tmp/ach-public-context")
+        home.mkdir(parents=True, exist_ok=True)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        from ach_agent.engine.context import link_public_context
+
+        link_public_context(home, public_context, work_dir=work_dir, create_public=False)
+        from ach_agent import identity
+
+        identity.configure(public.agent_name, os.environ.get("ACH_ENVIRONMENT", ""))
+        if self._sessions_map is None:
+            if public.persistence_enabled:
+                from ach_agent.execution.state import NativeSessionStore
+
+                self._sessions_map = NativeSessionStore(home)
+            else:
+                from ach_agent.engine.base.pool import _LRUSessionMap
+
+                self._sessions_map = _LRUSessionMap()
         self.driver = driver
         self.pool = EnginePool(driver=driver, sessions_map=self._sessions_map, strict_cleanup=True)
         self._configured = True

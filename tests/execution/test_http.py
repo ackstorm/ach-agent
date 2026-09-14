@@ -84,32 +84,32 @@ async def test_unconfigured_execution_service_accepts_config_on_controller_open(
     app = create_execution_app(service)
     async with _running_server(app) as base_url:
         async with httpx.AsyncClient(base_url=base_url, timeout=2) as client:
-        health = await client.get("/execution/v1/health")
-        assert health.status_code == 200
-        assert health.json()["instance_id"] == service.instance_id
-        async with client.stream(
-            "POST",
-            "/execution/v1/controller",
-            json={
-                "version": EXECUTION_API_VERSION,
-                "instance_id": service.instance_id,
-                "controller_id": "controller-a",
-            },
-        ) as missing:
-            assert missing.status_code == 503
-        async with client.stream(
-            "POST",
-            "/execution/v1/controller",
-            json={
-                "version": EXECUTION_API_VERSION,
-                "instance_id": service.instance_id,
-                "controller_id": "controller-a",
-                "config": PublicEngineConfig().model_dump(mode="json", by_alias=True),
-            },
-        ) as response:
-            assert response.status_code == 200
-            assert (await response.aiter_lines().__anext__())
-            await response.aclose()
+            health = await client.get("/execution/v1/health")
+            assert health.status_code == 200
+            assert health.json()["instance_id"] == service.instance_id
+            async with client.stream(
+                "POST",
+                "/execution/v1/controller",
+                json={
+                    "version": EXECUTION_API_VERSION,
+                    "instance_id": service.instance_id,
+                    "controller_id": "controller-a",
+                },
+            ) as missing:
+                assert missing.status_code == 503
+            async with client.stream(
+                "POST",
+                "/execution/v1/controller",
+                json={
+                    "version": EXECUTION_API_VERSION,
+                    "instance_id": service.instance_id,
+                    "controller_id": "controller-a",
+                    "config": PublicEngineConfig().model_dump(mode="json", by_alias=True),
+                },
+            ) as response:
+                assert response.status_code == 200
+                assert (await response.aiter_lines().__anext__())
+                await response.aclose()
 
 
 @pytest.mark.asyncio

@@ -16,7 +16,7 @@ import structlog
 from ach_agent.boot.completions import CompletionRegistry
 from ach_agent.boot.conversations import ConversationLocks
 from ach_agent.boot.execution_client import WorkspaceOperationFailed
-from ach_agent.boot.prepare import run_webhook_script
+from ach_agent.boot.prepare import PrepareFailed, run_prepare, run_webhook_script
 from ach_agent.boot.prompt import (
     build_engine_prompt,
     build_output_instructions,
@@ -63,18 +63,6 @@ async def select_memory_wiring_async(
     return mcp_servers, memory_prompt
 
 
-def _public_hook(cfg: PrepareBlock | None) -> Any:
-    if cfg is None or cfg.secret_env:
-        return None
-    from ach_agent.execution.wire import WorkspaceHook
-
-    return WorkspaceHook(
-        script=cfg.script,
-        env=dict(cfg.env),
-        timeout_seconds=float(cfg.timeout_seconds),
-    )
-
-
 def make_engine_runner(
     client: ExecutionClient,
     engine_cfg: PublicEngineConfig,
@@ -103,16 +91,12 @@ def make_engine_runner(
     from ach_agent.boot.paths import private_scratch_dir
     from ach_agent.boot.private_prepare import (
         PrivateCleanupRegistry,
-        PrivatePrepareFailed,
-        dispose_private_bundle,
-        private_prepare,
     )
     from ach_agent.engine.base.terminal import run_contract_turn
     from ach_agent.engine.workspace import workspace_dir
     from ach_agent.execution.wire import (
         ReleaseRequest,
         SessionOperation,
-        WorkspaceHandoffRequest,
         WorkspacePrepareRequest,
     )
     from ach_agent.stats.sink import build_session_stat
@@ -203,7 +187,6 @@ def make_engine_runner(
         handle: Any = None
         reservation_active = False
         invocation_failed = False
-        private_bundle: Any = None
         private_registered = False
 
         def remaining() -> float:
@@ -222,7 +205,7 @@ def make_engine_runner(
                 expected_workspace = workspace_dir(
                     invocation_engine_cfg.work_dir, event.session_key
                 )
-                if cleanup_cfg is not None and cleanup_cfg.secret_env:
+                if cleanup_cfg is not None:
                     await ensure_cleanup_pump()
                     await cleanup_registry.register(
                         invocation_id,
@@ -242,14 +225,12 @@ def make_engine_runner(
                         delivery_context=dict(event.delivery_context),
                         home=str(invocation_engine_cfg.home),
                         work_dir=str(invocation_engine_cfg.work_dir),
-                        prepare=_public_hook(prepare_cfg),
-                        cleanup=_public_hook(cleanup_cfg),
-                        notify_on_stop=bool(cleanup_cfg and cleanup_cfg.secret_env),
-                        cleanup_ack_required=bool(cleanup_cfg and cleanup_cfg.secret_env),
+                        prepare=None,
+                        cleanup=None,
+                        notify_on_stop=True,
+                        cleanup_ack_required=True,
                         cleanup_timeout_seconds=float(
-                            cleanup_cfg.timeout_seconds
-                            if cleanup_cfg and cleanup_cfg.secret_env
-                            else 120
+                            cleanup_cfg.timeout_seconds if cleanup_cfg is not None else 120
                         ),
                         remaining_seconds=remaining(),
                     )
@@ -266,27 +247,8 @@ def make_engine_runner(
                         raise RuntimeError("execution returned an unexpected workspace path")
                     workspace = expected_workspace
                     reservation_active = True
-                    if prepare_cfg is not None and prepare_cfg.secret_env:
-                        try:
-                            private_bundle = await private_prepare(
-                                prepare_cfg, event, workspace, private_scratch_dir()
-                            )
-                            await client.handoff_workspace(
-                                WorkspaceHandoffRequest(
-                                    controller_id=client.controller_id,
-                                    invocation_id=invocation_id,
-                                    session_key=event.session_key,
-                                    home=str(invocation_engine_cfg.home),
-                                    work_dir=str(invocation_engine_cfg.work_dir),
-                                    bundle_path=private_bundle.path,
-                                    head=private_bundle.head,
-                                    origin=private_bundle.origin,
-                                    remaining_seconds=remaining(),
-                                )
-                            )
-                        finally:
-                            if private_bundle is not None:
-                                dispose_private_bundle(private_bundle, workspace)
+                    if prepare_cfg is not None:
+                        await run_prepare(prepare_cfg, event, workspace)
                     if private_registered:
                         # Keep the context until the held-controller stop event is
                         # acknowledged; commit retires only superseded same-lane contexts.
@@ -454,7 +416,7 @@ def make_engine_runner(
         except Exception as exc:
             invocation_failed = True
             if handle is None:
-                if isinstance(exc, (PrivatePrepareFailed, WorkspaceOperationFailed)):
+                if isinstance(exc, (PrepareFailed, WorkspaceOperationFailed)):
                     log.warning(
                         "workspace: preparation failed",
                         session_key=event.session_key,

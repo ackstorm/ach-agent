@@ -943,7 +943,7 @@ async def test_real_http_registry_orders_warm_expiry_before_same_lane_prepare(
     async def private_cleanup(*args: object, **kwargs: object) -> None:
         return None
 
-    monkeypatch.setattr("ach_agent.boot.private_prepare.private_cleanup", private_cleanup)
+    monkeypatch.setattr("ach_agent.boot.prepare.run_cleanup", private_cleanup)
     registry = PrivateCleanupRegistry()
     async with _running_server(app) as base_url:
         client = ExecutionClient(base_url, controller_id="controller", timeout=1)

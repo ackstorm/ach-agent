@@ -63,7 +63,6 @@ class _PrivateCleanupContext:
     invocation_id: str
     event: MessageEvent
     workspace: Path
-    scratch_root: Path
     cfg: PrepareBlock
 
 
@@ -100,9 +99,8 @@ class PrivateCleanupRegistry:
             raise PrivatePrepareFailed("private cleanup context is already registered")
         if len(self._contexts) + len(self._tasks) >= self._max_contexts:
             raise PrivatePrepareFailed("private cleanup context limit reached")
-        self._contexts[invocation_id] = _PrivateCleanupContext(
-            invocation_id, event, workspace, scratch_root, cfg
-        )
+        del scratch_root  # retained while callers migrate from the private registry name
+        self._contexts[invocation_id] = _PrivateCleanupContext(invocation_id, event, workspace, cfg)
 
     def commit(self, invocation_id: str) -> None:
         """Commit a successful new prepare and retire superseded pending contexts."""
@@ -158,17 +156,13 @@ class PrivateCleanupRegistry:
         acknowledge: Callable[[WorkspaceStoppedEvent], Awaitable[None]],
     ) -> None:
         try:
-            await private_cleanup(
-                context.cfg,
-                context.event,
-                context.workspace,
-                context.scratch_root,
-            )
-        except PrivatePrepareFailed as exc:
-            # The private process was contained; preserve existing best-effort
-            # cleanup semantics and still release the engine callback barrier.
+            from ach_agent.boot.prepare import run_cleanup
+
+            await run_cleanup(context.cfg, context.event, context.workspace)
+        except Exception as exc:  # noqa: BLE001
+            # Cleanup is best-effort; always release the engine callback barrier.
             log.warning(
-                "cleanup: private hook failed",
+                "cleanup: hook failed",
                 invocation_id=event.invocation_id,
                 error=str(exc),
             )

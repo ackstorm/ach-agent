@@ -293,16 +293,6 @@ async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
     agent could rewrite, and so no part of it is visible in /proc/<pid>/cmdline. `-e` makes
     the first failing command fail the invocation; `-u` makes a missing credential loud.
     """
-    if cfg.secret_env:
-        from ach_agent.boot.private_prepare import PrivatePrepareFailed, private_prepare_compat
-
-        try:
-            await private_prepare_compat(cfg, event, workspace, private_scratch_dir())
-        except PrivatePrepareFailed as exc:
-            PREPARE_FAILURES.labels(reason="exit").inc()
-            raise PrepareFailed(str(exc)) from exc
-        return
-
     env = build_prepare_env(cfg, event, workspace)
     started = asyncio.get_running_loop().time()
     try:
@@ -408,16 +398,6 @@ async def run_webhook_script(cfg: PrepareBlock, event: MessageEvent, work_dir: s
 
 async def run_cleanup(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -> None:
     """Run the best-effort cleanup hook when a reserved session is torn down."""
-    if cfg.secret_env:
-        from ach_agent.boot.private_prepare import PrivatePrepareFailed, private_cleanup
-
-        try:
-            await private_cleanup(cfg, event, workspace, private_scratch_dir())
-        except PrivatePrepareFailed as exc:
-            CLEANUP_FAILURES.labels(reason="exit").inc()
-            log.warning("cleanup: private hook failed", error=str(exc))
-        return
-
     env = build_prepare_env(cfg, event, workspace)
     started = asyncio.get_running_loop().time()
     try:

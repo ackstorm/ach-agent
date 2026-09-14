@@ -112,6 +112,60 @@ async def test_runner_uses_execution_client_and_releases_handle(monkeypatch: Any
 
 
 @pytest.mark.asyncio
+async def test_runner_executes_prepare_in_h_after_e_reservation(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
+    import ach_agent.engine.base.terminal as terminal
+    from ach_agent.config.schema import ChannelConfig
+
+    async def fake_contract(run_turn: Any, **kwargs: Any) -> dict[str, str]:
+        result = await run_turn(
+            prompt=kwargs["prompt"],
+            max_tool_calls=kwargs["max_tool_calls"],
+            on_text=kwargs["on_text"],
+            on_tool=kwargs["on_tool"],
+            stats=kwargs["stats"],
+        )
+        return {"action": "none", "text": result.text}
+
+    monkeypatch.setattr(terminal, "run_contract_turn", fake_contract)
+    client = _FakeClient()
+    runner = make_engine_runner(
+        client=client,
+        engine_cfg=PublicEngineConfig(work_dir=str(tmp_path / "workspace")),
+        max_invocation_seconds=30,
+        channels_by_name={
+            "chat": ChannelConfig.model_validate(
+                {
+                    "name": "chat",
+                    "type": "cron",
+                    "cron": {"schedule": "* * * * *"},
+                    "prepare": {"script": "printf prepared > h-marker"},
+                }
+            )
+        },
+    )
+
+    await runner(
+        MessageEvent(
+            idempotency_key="event-prepare",
+            session_key="session-prepare",
+            channel_name="chat",
+            payload={},
+        ),
+        lambda: None,
+    )
+
+    names = [name for name, _ in client.calls]
+    assert names[:3] == ["prepare", "acquire", "turn"]
+    assert names[-1] == "release"
+    workspace = client.calls[0][1].work_dir
+    from ach_agent.engine.workspace import workspace_dir
+
+    assert (workspace_dir(workspace, "session-prepare") / "h-marker").read_text() == "prepared"
+
+
+@pytest.mark.asyncio
 async def test_runner_carries_one_deadline_through_memory_and_prepare(
     monkeypatch: Any, tmp_path: Any
 ) -> None:
@@ -344,40 +398,35 @@ async def test_runner_rotate_discards_then_forgets_and_gets_fresh_native_session
 
 
 @pytest.mark.asyncio
-async def test_private_prepare_failure_is_acknowledged_and_client_stays_usable(
+async def test_prepare_failure_is_acknowledged_and_client_stays_usable(
     monkeypatch: Any,
     tmp_path: Any,
 ) -> None:
-    import ach_agent.boot.private_prepare as private_module
     from ach_agent.boot.execution_client import ExecutionClient
-    from ach_agent.boot.private_prepare import PrivatePrepareFailed
+    from ach_agent.boot.prepare import PrepareFailed
     from ach_agent.config.schema import ChannelConfig
     from ach_agent.execution.app import create_execution_app
     from ach_agent.execution.service import ExecutionService
     from tests.execution.conftest import FakeDriver
     from tests.execution.test_http import _running_server
 
-    async def fail_prepare(*args: Any, **kwargs: Any) -> Any:
-        raise PrivatePrepareFailed("private prepare failed")
-
     cleanup_calls: list[str] = []
 
-    async def fake_cleanup(cfg: Any, event: MessageEvent, workspace: Any, scratch: Any) -> None:
+    async def fake_cleanup(cfg: Any, event: MessageEvent, workspace: Any) -> None:
         cleanup_calls.append(event.idempotency_key)
 
-    monkeypatch.setattr(private_module, "private_prepare", fail_prepare)
-    monkeypatch.setattr(private_module, "private_cleanup", fake_cleanup)
+    monkeypatch.setattr("ach_agent.boot.prepare.run_cleanup", fake_cleanup)
     private_channel = ChannelConfig.model_validate(
         {
             "name": "private",
             "type": "cron",
             "cron": {"schedule": "* * * * *"},
             "prepare": {
-                "script": "prepare.sh",
+                "script": "exit 17",
                 "secretEnv": {"TOKEN": {"env": "TOKEN"}},
             },
             "cleanup": {
-                "script": "cleanup.sh",
+                "script": "true",
                 "secretEnv": {"TOKEN": {"env": "TOKEN"}},
             },
         }
@@ -404,7 +453,7 @@ async def test_private_prepare_failure_is_acknowledged_and_client_stays_usable(
             channels_by_name={"private": private_channel, "plain": plain_channel},
         )
         try:
-            with pytest.raises(PrivatePrepareFailed, match="private prepare failed"):
+            with pytest.raises(PrepareFailed, match="exited 17"):
                 await runner(
                     MessageEvent(
                         idempotency_key="private-failure",

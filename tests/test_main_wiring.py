@@ -130,7 +130,7 @@ async def test_engine_runner_registers_cleanup_before_prepare(tmp_path: Path) ->
         channels_by_name={"hooks": _hook_channel()},
     )
     await runner(_hook_event(), lambda: None)
-    assert pool.calls == ["begin", "prepare_workspace", "prepare", "acquire", "release:0.0"]
+    assert pool.calls == ["begin", "prepare_workspace", "acquire", "release:0.0"]
 
 
 async def test_webhook_script_runner_never_acquires_an_engine(tmp_path: Path) -> None:
@@ -177,7 +177,7 @@ async def test_prepare_failure_discards_reserved_cleanup(tmp_path: Path) -> None
     )
     with pytest.raises(RuntimeError, match="broken"):
         await runner(_hook_event(), lambda: None)
-    assert pool.calls == ["begin", "prepare_workspace", "prepare", "discard", "cleanup"]
+    assert pool.calls == ["begin", "prepare_workspace", "discard", "cleanup"]
 
 
 async def test_launch_failure_discards_reserved_cleanup(tmp_path: Path) -> None:
@@ -192,7 +192,7 @@ async def test_launch_failure_discards_reserved_cleanup(tmp_path: Path) -> None:
     )
     with pytest.raises(RuntimeError, match="launch failed"):
         await runner(_hook_event(), lambda: None)
-    assert pool.calls == ["begin", "prepare_workspace", "prepare", "acquire", "discard", "cleanup"]
+    assert pool.calls == ["begin", "prepare_workspace", "acquire", "discard", "cleanup"]
 
 
 MR_PAYLOAD = {

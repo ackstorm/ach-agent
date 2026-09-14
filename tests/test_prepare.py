@@ -398,7 +398,7 @@ async def test_cleanup_nonzero_is_best_effort(tmp_path: Path) -> None:
     failures.labels.return_value.inc.assert_called_once_with()
 
 
-async def test_credentialed_cleanup_runs_in_private_workspace(
+async def test_credentialed_cleanup_runs_in_shared_workspace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "private-cleanup")
@@ -409,7 +409,7 @@ async def test_credentialed_cleanup_runs_in_private_workspace(
         secretEnv={"TOKEN": {"env": "PRIVATE_CLEANUP_TOKEN"}},
     )
     await run_cleanup(cfg, _event(), ws)
-    assert not marker.exists()
+    assert marker.exists()
 
 
 async def test_cleanup_nonzero_log_omits_env_values(tmp_path: Path) -> None:

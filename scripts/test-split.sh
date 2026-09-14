@@ -69,6 +69,7 @@ run_engine_acceptance() {
     return 1
   }
   echo "$target native session reused: $second_session"
+  assert_hook_workspace
 
   stats="$(${COMPOSE[@]} exec -T harness python - <<'PY'
 import urllib.request
@@ -111,7 +112,7 @@ PY
 import httpx
 
 try:
-    response = httpx.Client(transport=httpx.HTTPTransport(uds="/run/ach-agent/engine/agent.sock"), base_url="http://ach-internal", timeout=2).get("/readyz")
+    response = httpx.Client(transport=httpx.HTTPTransport(uds="/run/ach-agent/channels/channel.sock"), base_url="http://ach-internal", timeout=2).get("/readyz")
 except httpx.HTTPError:
     raise SystemExit(1)
 raise SystemExit(0 if response.status_code == 503 else 1)
@@ -129,7 +130,7 @@ PY
 wait_harness_ready() {
   for _ in $(seq 1 60); do
     if "${COMPOSE[@]}" exec -T harness python -c \
-      'import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds="/run/ach-agent/engine/agent.sock"), base_url="http://ach-internal", timeout=2); raise SystemExit(0 if c.get("/readyz").status_code == 200 else 1)' \
+      'import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds="/run/ach-agent/channels/channel.sock"), base_url="http://ach-internal", timeout=2); raise SystemExit(0 if c.get("/readyz").status_code == 200 else 1)' \
       >/dev/null 2>&1; then
       return 0
     fi
@@ -162,6 +163,21 @@ from pathlib import Path
 assert Path("/run/ach-agent/engine/agent.sock").is_socket()
 assert not Path("/run/ach-agent/channels/channel.sock").exists()
 PY
+}
+
+assert_hook_workspace() {
+  for role in harness engine; do
+    "${COMPOSE[@]}" exec -T "$role" python - <<'PY'
+from pathlib import Path
+
+roots = list(Path("/var/lib/ach-agent/workspace").glob("**/.split-prepare-runs"))
+if len(roots) != 1 or roots[0].read_text() != "xx":
+    raise SystemExit(f"prepare hook did not run twice in one workspace: {roots!r}")
+workspace = roots[0].parent
+if (workspace / "retained").read_text() != "original":
+    raise SystemExit("prepare hook did not retain the original workspace file")
+PY
+  done
 }
 
 wait_cancel_started() {
@@ -247,6 +263,7 @@ async def main() -> None:
     client = ChannelsClient("http://ach-internal", b"", socket_path="/run/ach-agent/channels/channel.sock", poll_interval=0.2, wait_timeout=25)
     try:
         agent_name = (await client.fetch_config()).agent_name
+        client.agent = agent_name
         completion = await client.wait(EventRef(
             agent=agent_name, channel_name=channel, idempotency_key=event_id
         ))
@@ -276,6 +293,7 @@ async def main() -> None:
     client = ChannelsClient("http://ach-internal", b"", socket_path="/run/ach-agent/channels/channel.sock", poll_interval=0.2, wait_timeout=25)
     try:
         agent_name = (await client.fetch_config()).agent_name
+        client.agent = agent_name
         completion = await client.wait(EventRef(
             agent=agent_name, channel_name=channel, idempotency_key=event_id
         ))

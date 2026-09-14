@@ -42,6 +42,21 @@ channels:
     webhook:
       auth:
         type: none
+    prepare:
+      script: >-
+        test "$PWD" = "$ACH_WORKSPACE" && test "$HOME" = "$ACH_WORKSPACE" &&
+        test "$TOKEN" = synthetic &&
+        { test -f retained || printf original > retained; } &&
+        printf x >> .split-prepare-runs
+      timeoutSeconds: 5
+      secretEnv:
+        TOKEN:
+          env: SPLIT_PREPARE_TOKEN
+    cleanup:
+      script: >-
+        test "$HOME" = "$ACH_WORKSPACE" &&
+        printf x >> "$ACH_WORKSPACE/.split-cleanup-runs"
+      timeoutSeconds: 5
   - name: cancel
     type: webhook
     source: generic

@@ -9,6 +9,7 @@ services:
       ACH_HARNESS_CONFIG_FILE: ${ACH_HARNESS_CONFIG_FILE:-config-acceptance.yaml}
       DEBUG: engine-value
       CUSTOM_TOOL_TOKEN: engine-token
+      SPLIT_PREPARE_TOKEN: synthetic
 
   channels:
     image: ach-agent-split-channels

@@ -96,6 +96,12 @@ def test_roles_use_image_entrypoint_args_and_only_harness_gets_full_config() -> 
         assert "uds=" in probe_text
     assert "8090" not in str(containers["harness"])
     assert "8081" not in str(containers["engine"])
+    assert "/etc/ach-agent/config.yaml" not in str(containers["channels"])
+    assert "/etc/ach-agent/config.yaml" not in str(containers["engine"])
+    assert "/var/lib/ach-agent/state" not in str(containers["channels"])
+    assert "/var/lib/ach-agent/home" not in str(containers["channels"])
+    assert "channel.sock" in str(containers["harness"]["startupProbe"])
+    assert "agent.sock" in str(containers["engine"]["startupProbe"])
 
 
 def test_compose_uses_one_network_namespace_and_named_role_volumes() -> None:
@@ -160,6 +166,20 @@ def test_all_split_manifests_use_socket_probes_and_no_bootstrap_contract() -> No
     engine_block = acceptance.split("\n  engine:", 1)[1]
     assert "DEBUG:" not in engine_block
     assert "CUSTOM_TOOL_TOKEN:" not in engine_block
+
+
+def test_acceptance_fixtures_cover_harness_hooks_and_selected_env() -> None:
+    for name in ("config-acceptance.yaml", "config-acceptance-pi.yaml"):
+        cfg = AgentConfig.model_validate(yaml.safe_load((SPLIT / name).read_text(encoding="utf-8")))
+        acceptance = next(channel for channel in cfg.channels if channel.name == "acceptance")
+        assert acceptance.prepare is not None
+        assert acceptance.cleanup is not None
+        assert acceptance.prepare.secret_env["TOKEN"].env == "SPLIT_PREPARE_TOKEN"
+        assert "SPLIT_PREPARE_TOKEN" not in acceptance.prepare.script
+    compose = (SPLIT / "compose-acceptance.yaml").read_text(encoding="utf-8")
+    assert "SPLIT_PREPARE_TOKEN: synthetic" in compose
+    engine = compose.split("\n  engine:", 1)[1]
+    assert "SPLIT_PREPARE_TOKEN" not in engine
 
 
 def test_example_role_artifacts_validate_against_the_runtime_wire_models() -> None:

@@ -1,5 +1,10 @@
 # Unix Split Simplification Implementation Plan
 
+**SUPERSEDED — do not execute this version.** The consolidated
+[2026-09-14 plan](2026-09-14-preserve-behavior-simplify-split.md) replaces it,
+including original-behavior characterization, H-side hooks and forwarded values.
+The text below is historical context, not the current execution baseline.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement task-by-task. The user selected GPT-5.6-Luna implementers and root review. Do not ask again which execution mode to use, and do not spawn reviewer agents. Steps use checkboxes for tracking.
 
 **Goal:** Replace internal TCP/HMAC and role-bootstrap files with two Unix endpoints, preserving the existing in-memory queue and engine behavior.

@@ -13,19 +13,19 @@
       
       
       
-      <link rel="icon" href="../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>Decision records & design notes - ach-agent</title>
+        <title>Unix split behavior matrix - ach-agent</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,7 +44,7 @@
       
     
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -70,7 +70,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#decision-records-design-notes" class="md-skip">
+        <a href="#unix-split-behavior-matrix" class="md-skip">
           Skip to content
         </a>
       
@@ -86,7 +86,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -106,7 +106,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Decision records &amp; design notes
+              Unix split behavior matrix
             
           </span>
         </div>
@@ -205,7 +205,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -235,7 +235,7 @@
   
   
     <li class="md-nav__item">
-      <a href=".." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -255,7 +255,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting-started/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -275,7 +275,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/" class="md-nav__link">
+      <a href="../../configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -308,6 +308,32 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#placement-and-transport-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Placement and transport changes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#baseline-characterization-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      Baseline characterization record
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -324,99 +350,134 @@
   
 
 
-<h1 id="decision-records-design-notes">Decision records &amp; design notes</h1>
-<p>Design/decision write-ups for significant changes (the <em>why</em>, not just the diff). One file per
-decision, prefixed <code>YYYY-MM-DD-</code> so <code>ls</code> sorts chronologically. Add a row below when you add a doc.</p>
+<blockquote>
+<p>Historical evidence for the revisions named below. The <a href="../../references/2026-09-14-three-role-split/">current split contract</a> is authoritative; latest acceptance evidence is in <a href="../unix-split-validation/">unix-split-validation</a>.</p>
+</blockquote>
+<h1 id="unix-split-behavior-matrix">Unix split behavior matrix</h1>
+<p>Reference: original v0.16.1, <code>462912f</code>. This matrix records the implemented
+simplification against that reference, rather than treating intermediate split
+decisions as original behavior. Final commands, source revisions and runtime
+evidence are recorded in <a href="../unix-split-validation/">Unix split validation</a>.</p>
 <table>
 <thead>
 <tr>
-<th>Date</th>
-<th>Doc</th>
-<th>Status</th>
-<th>What it decides</th>
+<th>Behavior</th>
+<th>Original contract retained</th>
+<th>Evidence</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>2026-09-14</td>
-<td><a href="2026-09-14-three-role-split/">three-role-split</a></td>
-<td>Current implementation contract</td>
-<td>Channels/harness/engine over Unix sockets, private configuration, shared workspace, private hook HOME and preserved session/lifecycle behavior. Supersedes archived split plans.</td>
+<td>Workspace identity</td>
+<td>Existing <code>workspace_dir(work_dir, session_key)</code> formula</td>
+<td>Characterization pins <code>/work/repo-42-a45d87f4</code> and <code>/work/repo-43-082624e0</code></td>
 </tr>
 <tr>
-<td>2026-07-01</td>
-<td><a href="2026-07-01-keyed-engine-pool/">keyed-engine-pool</a></td>
-<td>Shipped (<code>c57c92a</code>)</td>
-<td>EnginePool keyed by <code>session_key</code>: one opencode server per key, per-key HOME isolation, <code>channel.session</code> reuse.</td>
+<td>Repeated preparation</td>
+<td>The populated same-key checkout survives; prepare runs again there</td>
+<td>Baseline/current characterization; Compose retains <code>retained</code> and records two prepare runs in one directory</td>
 </tr>
 <tr>
-<td>2026-07-01</td>
-<td><a href="2026-07-01-router-pool-vs-legacy/">router-pool-vs-legacy</a></td>
-<td>Decisions</td>
-<td>Router / pool / session lifecycle vs legacy <code>ackbot-process</code>: what to keep vs port; splits into follow-up plans.</td>
+<td>Prepare environment</td>
+<td>cwd and HOME are workspace; selected env, secretEnv and validated event values retain their original meaning</td>
+<td><code>tests/compat</code>, <code>tests/test_prepare.py</code>; real H hook assertions with synthetic secret</td>
 </tr>
 <tr>
-<td>2026-07-02</td>
-<td><a href="2026-07-02-session-identity-and-bounds/">session-identity-and-bounds</a></td>
-<td>Accepted</td>
-<td><code>channel.session</code> becomes a block: separates <code>session_key</code> (lane/pool) from the oc-session reuse key; <code>maxTokens</code> + overflow bounds.</td>
+<td>Cleanup environment</td>
+<td>cwd is workspace parent, HOME remains workspace; failures are best-effort</td>
+<td>Characterization writes a sentinel before deliberately failing cleanup</td>
 </tr>
 <tr>
-<td>2026-07-03</td>
-<td><a href="2026-07-03-stats-observability/">stats-observability</a></td>
-<td>Shipped</td>
-<td>Two-tier stats sink (Prometheus + redis stream), <code>v="1"</code> stream contract (<code>ach:sessions</code> + <code>ach:tools</code>), Tier-1 tool trace, OTel <code>gen_ai.*</code> alignment.</td>
+<td>Hook ownership and ordering</td>
+<td>H executes hooks, after reservation and before native acquire; stop precedes cleanup; warm reuse defers cleanup</td>
+<td>Wiring tests observe H <code>run_prepare</code>; real HTTP registry/expiry/cleanup-ACK tests</td>
 </tr>
 <tr>
-<td>2026-07-03</td>
-<td><a href="2026-07-03-provider-by-model-type/">provider-by-model-type</a></td>
-<td>Shipped</td>
-<td><code>model.type</code> selects the opencode provider + native wire: gemini→built-in <code>google</code> on <code>/gemini/v1beta</code>, anthropic→built-in <code>anthropic</code>, openai→custom <code>ach</code>. Fixes <code>type: gemini</code> hitting <code>/v1/chat/completions</code>.</td>
+<td>Preparation failure</td>
+<td>No native acquire after failed H prepare; reservation is canceled</td>
+<td><code>test_h_prepare_failure_discards_reserved_cleanup</code>, original hook timeout tests</td>
 </tr>
 <tr>
-<td>2026-07-05</td>
-<td><a href="2026-07-05-hindsight-memory-facade/">hindsight-memory-facade</a></td>
-<td>Shipped</td>
-<td>Harness-hosted 4-tool MCP facade fronts Hindsight (bank_id + admin Bearer injected); boot-once provisioning of bank + mental models; <code>mentalModels</code> becomes rich specs; optional <code>auth</code>; per-repo via tags, not bank templating.</td>
+<td>Script-only execution</td>
+<td>H temporary directory under configured workDir; newline-terminated stdin payload; removed afterward; no native acquire</td>
+<td>Baseline/current characterization and main wiring tests</td>
 </tr>
 <tr>
-<td>2026-07-23</td>
-<td><a href="2026-07-23-pi-engine-driver/">pi-engine-driver</a></td>
-<td>Shipped</td>
-<td>Pi runs behind the symmetric EngineDriver seam over JSONL RPC; the harness owns terminal validation, engine-namespaced sessions, bounds, and loopback MCP egress via the vendored adapter.</td>
+<td>Explicit engine environment</td>
+<td>Original name selection/sanitization; selected H values reach native children</td>
+<td>Role/wire/env tests; real Pi/OpenCode process inspection with values absent from E environment</td>
 </tr>
 <tr>
-<td>2026-07-23</td>
-<td><a href="2026-07-23-pi-model-capability-and-thinking/">pi-model-capability-and-thinking</a></td>
-<td>Superseded</td>
-<td>Pi's <code>reasoning</code>/<code>input</code>/<code>contextWindow</code>/<code>maxTokens</code>/<code>--thinking</code> get a typed, generated <code>engine.pi.model</code>/<code>engine.pi.thinkingLevel</code> surface (not <code>model.params</code>, which stays opaque per-call passthrough); <code>model.type</code> wire selection untouched.</td>
+<td>Native session reuse</td>
+<td>Separate lane/workspace and conversation keys; none/auto/custom policy retained; native map retained/imported</td>
+<td>Runner/session/state suites; real two-turn Pi/OpenCode session continuity</td>
 </tr>
 <tr>
-<td>2026-07-24</td>
-<td><a href="2026-07-24-model-owned-thinking/">model-owned-thinking</a></td>
-<td>Shipped</td>
-<td>Thinking intent moves to a normalized <code>model.thinking</code>; <code>engine.pi</code> back to executable knobs only; each engine translates.</td>
+<td>Multi-turn behavior</td>
+<td>Turn budgets, terminal repair, usage, text/tool events and session maintenance remain</td>
+<td>Existing <code>tests/boot</code>, <code>tests/engine</code>, <code>tests/execution</code> suites</td>
 </tr>
 <tr>
-<td>2026-08-31</td>
-<td><a href="2026-08-31-channel-owned-repo-workspace/">channel-owned-repo-workspace</a></td>
-<td>Shipped (v0.13.0)</td>
-<td>Harness prepares the repo per event: credentials + origin on the channel, executed on the lane (post-dedup), workspace as the engine cwd. Landed as the generic <code>channel.prepare</code> script hook, not a typed clone block.</td>
+<td>Source ACK policy</td>
+<td>Existing Redis consumer behavior unchanged</td>
+<td>Relative to <code>462912f</code>, <code>channels/queue.py</code> changes only its source-config type annotation; queue tests retained</td>
 </tr>
 <tr>
-<td>2026-09-02</td>
-<td><a href="2026-09-02-webhook-script-channel/">webhook-script-channel</a></td>
-<td>Shipped (v0.13.4)</td>
-<td><code>webhook-script</code>: authenticated GitLab ingress that runs a static <code>/bin/sh</code> handler on a project-scoped lane and never starts an engine. Requires <code>source: gitlab</code> + explicit <code>gitlabEvents</code>; project/system kinds are exclusive to it.</td>
+<td>Admission</td>
+<td>Existing dedup, backpressure, FIFO and finite bounds; no replacement queue</td>
+<td>Existing router and conformance suites; no router changes in this simplification</td>
 </tr>
 <tr>
-<td>2026-09-09</td>
-<td><a href="2026-09-09-ach-memory-backend/">ach-memory-backend</a></td>
-<td>Spec (settled)</td>
-<td><code>ach-memory</code> replaces direct-Hindsight as the memory backend: per-repo scope resolved server-side through authz instead of a tag convention, budgeted <code>load_context</code> instead of four unbounded mental-model injections, <code>POST /v1/bootstrap</code> for provisioning. <strong>Supersedes <a href="2026-07-05-hindsight-memory-facade/">hindsight-memory-facade</a> for new agents.</strong></td>
+<td>Native TUI</td>
+<td>Inherited terminal, two native turns, resize, normal exit</td>
+<td>Real PTY tests of Pi and OpenCode, native session files and exit status</td>
 </tr>
 </tbody>
 </table>
+<h2 id="placement-and-transport-changes">Placement and transport changes</h2>
+<p>These are deliberate consequences of the split, not features of original v0.16.1:</p>
+<ul>
+<li>C uses the existing admission/result API on <code>channel.sock</code>; H uses the existing
+  execution API on <code>agent.sock</code>. HTTP JSON/NDJSON is retained; independent streams
+  and cancellation connections are retained.</li>
+<li>H reads the private full YAML. C fetches typed source inputs; E receives typed
+  public controller/acquisition configuration. There are no generated bootstrap
+  files or internal HMAC keys.</li>
+<li>Explicit stop acknowledgement carries the pool's former in-process cleanup
+  callback across IPC. Useful result correlation, bounded retention, ownership
+  and native-process supervision are retained.</li>
+<li>Native home and H state are separate mounts; H/E share workspace and public
+  context. <code>.ach-state</code> links directly to the shared public context, so H does not
+  need access to E's private home.</li>
+<li>A broken IPC connection can fail accepted work. The in-memory result registry
+  does not make acceptance durable or external effects exactly-once.</li>
+</ul>
+<p>The original runner allowed two lane keys to render the same custom conversation
+key; it did not provide a cross-lane conversation lock. The earlier split added
+<code>ConversationLocks</code>, covered by <code>tests/test_conversation_ownership.py</code>. That useful
+serialization remains: the mapping policy is unchanged, but overlapping access to
+one native conversation is serialized. It was not added or removed by this
+simplification. This is distinct from proving that two separate OpenCode servers
+can operate concurrently on one conversation; the native reuse acceptance uses
+one stable lane and conversation key.</p>
+<p>No new repository reset, private clone, bundle handoff, engine-side hook execution,
+Git policy, queue, transport framework, masking or autoscaler remains in this phase.
+Original credential-bearing hooks still consume a shared, agent-writable checkout;
+container placement does not make its Git configuration trustworthy.</p>
+<h2 id="baseline-characterization-record">Baseline characterization record</h2>
+<p>The same five characterization tests were run in a task-owned original checkout
+at <code>462912f</code> and the current split. The original focused command was:</p>
+<div class="highlight"><pre><span></span><code>rtk<span class="w"> </span>proxy<span class="w"> </span>./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/compat/test_original_split_behavior.py<span class="w"> </span>tests/test_prepare.py<span class="w"> </span>tests/router<span class="w"> </span>-q
+</code></pre></div>
+<p>The baseline focused run passed 81 tests. The intermediate split run at <code>2ff1dd8</code>
+passed 84 and failed one: script-only work used <code>/tmp/ach-private</code> instead of a
+temporary child of configured workDir. The implementation and the stale assertion
+that deleted the parent workDir were corrected. These historical failures are
+not xfails and are not treated as final validation evidence.</p>
+<p>The characterization tests prove their named observable behaviors, not equivalence
+for every possible repository, operator script or native-engine version. See the
+validation report for the broader suite and actual container checks.</p>
 
 
 
@@ -463,10 +524,10 @@ decision, prefixed <code>YYYY-MM-DD-</code> so <code>ls</code> sorts chronologic
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "..", "features": [], "search": "../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
     
   </body>

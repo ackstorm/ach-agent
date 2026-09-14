@@ -13,19 +13,19 @@
       
       
       
-      <link rel="icon" href="../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>Decision records & design notes - ach-agent</title>
+        <title>ACH operator handoff: distributed placement - ach-agent</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,7 +44,7 @@
       
     
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -70,7 +70,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#decision-records-design-notes" class="md-skip">
+        <a href="#ach-operator-handoff-distributed-placement" class="md-skip">
           Skip to content
         </a>
       
@@ -86,7 +86,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -106,7 +106,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Decision records &amp; design notes
+              ACH operator handoff: distributed placement
             
           </span>
         </div>
@@ -205,7 +205,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -235,7 +235,7 @@
   
   
     <li class="md-nav__item">
-      <a href=".." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -255,7 +255,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting-started/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -275,7 +275,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/" class="md-nav__link">
+      <a href="../../configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -308,6 +308,68 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#placement-and-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      Placement and image
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-and-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Environment and configuration
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#distributed-data-mounts" class="md-nav__link">
+    <span class="md-ellipsis">
+      Distributed data mounts
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ipc-and-networking" class="md-nav__link">
+    <span class="md-ellipsis">
+      IPC and networking
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#probes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Probes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#responsibility-and-acceptance" class="md-nav__link">
+    <span class="md-ellipsis">
+      Responsibility and acceptance
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -324,99 +386,137 @@
   
 
 
-<h1 id="decision-records-design-notes">Decision records &amp; design notes</h1>
-<p>Design/decision write-ups for significant changes (the <em>why</em>, not just the diff). One file per
-decision, prefixed <code>YYYY-MM-DD-</code> so <code>ls</code> sorts chronologically. Add a row below when you add a doc.</p>
+<h1 id="ach-operator-handoff-distributed-placement">ACH operator handoff: distributed placement</h1>
+<p>This supersedes the previous storage proposal. ACH renders placement, environment
+and generic storage. ACH Agent owns the contents, native tool paths and compatibility.
+Do not add renderer branches for codemem, OpenCode, Pi, skills or hydration artifacts.</p>
+<p>Status: implemented, locally validated and merged into <code>main</code> for v0.16.2.
+Use <code>ghcr.io/ackstorm/ach-agent:v0.16.2</code> after the release workflow publishes it;
+v0.16.1 does not contain the split. Kubernetes operator integration still needs
+joint cluster e2e.</p>
+<h2 id="placement-and-image">Placement and image</h2>
+<p>Keep <code>AgentProfile.spec.placement</code>, optional enum <code>standalone | distributed</code>,
+default <code>standalone</code>. Profile-only; never render it into <code>config.json</code>.</p>
+<ul>
+<li>Standalone: existing Deployment with one container and no role arguments.</li>
+<li>Distributed: one Deployment, one replica, three ordinary containers in one pod.</li>
+<li>Same combined image for all containers. Preserve the image entrypoint (tini is
+  already included); set only <code>args: ["--role", "channels"]</code> (or <code>harness</code>, <code>engine</code>).</li>
+<li>Keep Recreate, the existing scheduling/resource settings and public Service.</li>
+</ul>
+<h2 id="environment-and-configuration">Environment and configuration</h2>
+<p>For this increment Channels and Harness receive the same existing operator-supplied
+environment. Both are trusted components. Engine receives only the environment
+entries explicitly selected by <code>engine.forwardEnv</code>, resolved by the operator from
+that same environment. Do not copy unrestricted <code>envFrom</code> into Engine.</p>
+<p>Mount the complete configuration only in Harness and retain
+<code>ACH_CONFIG_PATH=/etc/ach-agent/config.json</code> there when using that path.
+Channels obtains its source configuration from Harness. Engine obtains only its
+public launch inputs.</p>
+<p>Keep the existing <code>engine.forwardEnv</code> configuration field. The mini-harness passes
+the selected environment to native children. ACH does not generate native
+configuration or bootstrap files.</p>
+<h2 id="distributed-data-mounts">Distributed data mounts</h2>
+<p>Resolve one base path:</p>
+<div class="highlight"><pre><span></span><code>persistent:     base = persistence.mountPath
+nonpersistent:  base = /tmp/ach-agent
+</code></pre></div>
+<p>Mount exactly these generic data directories:</p>
 <table>
 <thead>
 <tr>
-<th>Date</th>
-<th>Doc</th>
-<th>Status</th>
-<th>What it decides</th>
+<th>Directory</th>
+<th>Harness</th>
+<th>Engine</th>
+<th>Channels</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>2026-09-14</td>
-<td><a href="2026-09-14-three-role-split/">three-role-split</a></td>
-<td>Current implementation contract</td>
-<td>Channels/harness/engine over Unix sockets, private configuration, shared workspace, private hook HOME and preserved session/lifecycle behavior. Supersedes archived split plans.</td>
+<td><code>base/state</code></td>
+<td>Read/write</td>
+<td>Absent</td>
+<td>Absent</td>
 </tr>
 <tr>
-<td>2026-07-01</td>
-<td><a href="2026-07-01-keyed-engine-pool/">keyed-engine-pool</a></td>
-<td>Shipped (<code>c57c92a</code>)</td>
-<td>EnginePool keyed by <code>session_key</code>: one opencode server per key, per-key HOME isolation, <code>channel.session</code> reuse.</td>
+<td><code>base/home</code></td>
+<td>Absent</td>
+<td>Read/write</td>
+<td>Absent</td>
 </tr>
 <tr>
-<td>2026-07-01</td>
-<td><a href="2026-07-01-router-pool-vs-legacy/">router-pool-vs-legacy</a></td>
-<td>Decisions</td>
-<td>Router / pool / session lifecycle vs legacy <code>ackbot-process</code>: what to keep vs port; splits into follow-up plans.</td>
-</tr>
-<tr>
-<td>2026-07-02</td>
-<td><a href="2026-07-02-session-identity-and-bounds/">session-identity-and-bounds</a></td>
-<td>Accepted</td>
-<td><code>channel.session</code> becomes a block: separates <code>session_key</code> (lane/pool) from the oc-session reuse key; <code>maxTokens</code> + overflow bounds.</td>
-</tr>
-<tr>
-<td>2026-07-03</td>
-<td><a href="2026-07-03-stats-observability/">stats-observability</a></td>
-<td>Shipped</td>
-<td>Two-tier stats sink (Prometheus + redis stream), <code>v="1"</code> stream contract (<code>ach:sessions</code> + <code>ach:tools</code>), Tier-1 tool trace, OTel <code>gen_ai.*</code> alignment.</td>
-</tr>
-<tr>
-<td>2026-07-03</td>
-<td><a href="2026-07-03-provider-by-model-type/">provider-by-model-type</a></td>
-<td>Shipped</td>
-<td><code>model.type</code> selects the opencode provider + native wire: gemini→built-in <code>google</code> on <code>/gemini/v1beta</code>, anthropic→built-in <code>anthropic</code>, openai→custom <code>ach</code>. Fixes <code>type: gemini</code> hitting <code>/v1/chat/completions</code>.</td>
-</tr>
-<tr>
-<td>2026-07-05</td>
-<td><a href="2026-07-05-hindsight-memory-facade/">hindsight-memory-facade</a></td>
-<td>Shipped</td>
-<td>Harness-hosted 4-tool MCP facade fronts Hindsight (bank_id + admin Bearer injected); boot-once provisioning of bank + mental models; <code>mentalModels</code> becomes rich specs; optional <code>auth</code>; per-repo via tags, not bank templating.</td>
-</tr>
-<tr>
-<td>2026-07-23</td>
-<td><a href="2026-07-23-pi-engine-driver/">pi-engine-driver</a></td>
-<td>Shipped</td>
-<td>Pi runs behind the symmetric EngineDriver seam over JSONL RPC; the harness owns terminal validation, engine-namespaced sessions, bounds, and loopback MCP egress via the vendored adapter.</td>
-</tr>
-<tr>
-<td>2026-07-23</td>
-<td><a href="2026-07-23-pi-model-capability-and-thinking/">pi-model-capability-and-thinking</a></td>
-<td>Superseded</td>
-<td>Pi's <code>reasoning</code>/<code>input</code>/<code>contextWindow</code>/<code>maxTokens</code>/<code>--thinking</code> get a typed, generated <code>engine.pi.model</code>/<code>engine.pi.thinkingLevel</code> surface (not <code>model.params</code>, which stays opaque per-call passthrough); <code>model.type</code> wire selection untouched.</td>
-</tr>
-<tr>
-<td>2026-07-24</td>
-<td><a href="2026-07-24-model-owned-thinking/">model-owned-thinking</a></td>
-<td>Shipped</td>
-<td>Thinking intent moves to a normalized <code>model.thinking</code>; <code>engine.pi</code> back to executable knobs only; each engine translates.</td>
-</tr>
-<tr>
-<td>2026-08-31</td>
-<td><a href="2026-08-31-channel-owned-repo-workspace/">channel-owned-repo-workspace</a></td>
-<td>Shipped (v0.13.0)</td>
-<td>Harness prepares the repo per event: credentials + origin on the channel, executed on the lane (post-dedup), workspace as the engine cwd. Landed as the generic <code>channel.prepare</code> script hook, not a typed clone block.</td>
-</tr>
-<tr>
-<td>2026-09-02</td>
-<td><a href="2026-09-02-webhook-script-channel/">webhook-script-channel</a></td>
-<td>Shipped (v0.13.4)</td>
-<td><code>webhook-script</code>: authenticated GitLab ingress that runs a static <code>/bin/sh</code> handler on a project-scoped lane and never starts an engine. Requires <code>source: gitlab</code> + explicit <code>gitlabEvents</code>; project/system kinds are exclusive to it.</td>
-</tr>
-<tr>
-<td>2026-09-09</td>
-<td><a href="2026-09-09-ach-memory-backend/">ach-memory-backend</a></td>
-<td>Spec (settled)</td>
-<td><code>ach-memory</code> replaces direct-Hindsight as the memory backend: per-repo scope resolved server-side through authz instead of a tag convention, budgeted <code>load_context</code> instead of four unbounded mental-model injections, <code>POST /v1/bootstrap</code> for provisioning. <strong>Supersedes <a href="2026-07-05-hindsight-memory-facade/">hindsight-memory-facade</a> for new agents.</strong></td>
+<td><code>base/workspace</code></td>
+<td>Read/write</td>
+<td>Read/write</td>
+<td>Absent</td>
 </tr>
 </tbody>
 </table>
+<p>Use three subpaths on the existing PVC when persistent. For temporary deployments,
+<code>emptyDir</code> backing with the same three-directory ownership is sufficient.
+Do not expose the entire base volume to every container. Each container also gets
+its own writable <code>/tmp</code>.</p>
+<p>These directories are opaque to ACH. ACH Agent places native HOME, sessions, tool
+databases and workspaces within them. The renderer must not derive
+extra mounts from <code>engine.home</code>, <code>engine.workDir</code>, memory settings or the selected
+engine. Standalone keeps its existing storage/configuration behavior.</p>
+<p>Additionally mount one separate <code>emptyDir</code> at <code>/run/ach-agent/transfer</code>, read/write
+in Harness and Engine, absent in Channels. This is temporary startup handoff
+storage, including when persistence is enabled. ACH Agent creates and removes its
+own download batches there; the operator does not manage their contents.</p>
+<h2 id="ipc-and-networking">IPC and networking</h2>
+<p>Keep two separate IPC directories:</p>
+<table>
+<thead>
+<tr>
+<th>Mount</th>
+<th>Harness</th>
+<th>Engine</th>
+<th>Channels</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/run/ach-agent/channels</code></td>
+<td>Read/write</td>
+<td>Absent</td>
+<td>Read-only</td>
+</tr>
+<tr>
+<td><code>/run/ach-agent/engine</code></td>
+<td>Read-only</td>
+<td>Read/write</td>
+<td>Absent</td>
+</tr>
+</tbody>
+</table>
+<p>Mount directories, not individual socket files. Use UID/GID 10001 and
+<code>fsGroup: 10001</code>; verify fresh volume/subpath writability in e2e.</p>
+<p>The pod shares its normal network namespace. Public ingress/health port 8080 lives
+on Channels in distributed mode. No internal Services, HMAC keys,
+service-account token or extra RBAC.
+Retain restricted security contexts and separate PID namespaces.</p>
+<h2 id="probes">Probes</h2>
+<p>Use the image-provided command for each role and probe type:</p>
+<div class="highlight"><pre><span></span><code>python -m ach_agent.healthcheck --role channels --check startup
+python -m ach_agent.healthcheck --role harness --check startup
+python -m ach_agent.healthcheck --role engine --check startup
+</code></pre></div>
+<p>Use <code>--check readiness</code> and <code>--check liveness</code> for the corresponding probes.
+The command encapsulates endpoint details; no socket snippets are needed in ACH.</p>
+<p>Startup: <code>initialDelaySeconds: 15</code>, <code>periodSeconds: 5</code>, <code>timeoutSeconds: 3</code>,
+<code>failureThreshold: 6</code>. Keep the existing readiness/liveness schedules, with a
+three-second exec timeout. Initialization completes before startup succeeds.
+Profile resources apply to each container; document the resulting total pod requests.</p>
+<h2 id="responsibility-and-acceptance">Responsibility and acceptance</h2>
+<p>ACH Agent is responsible for internal path resolution and retaining existing
+native data during supported upgrades. Do not implement tool-specific migration,
+Git preparation or file copying in the operator.</p>
+<p>Validate standalone output unchanged; distributed container/env/mount shape;
+persistent and temporary startup; one real channel turn with Harness-side prepare;
+a second turn reusing its session; and Engine unable to read Harness-private files.</p>
+<p>Separate Deployments, new queues, autoscaling and release publication are not part
+of this renderer change. We will provide the validated image before joint e2e.</p>
 
 
 
@@ -463,10 +563,10 @@ decision, prefixed <code>YYYY-MM-DD-</code> so <code>ls</code> sorts chronologic
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "..", "features": [], "search": "../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
     
   </body>

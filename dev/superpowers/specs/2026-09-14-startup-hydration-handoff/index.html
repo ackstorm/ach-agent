@@ -1,0 +1,692 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>ACH Agent — Startup Hydration and Storage Boundary - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#ach-agent-startup-hydration-and-storage-boundary" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ACH Agent — Startup Hydration and Storage Boundary
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-responsibilities" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Responsibilities
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-storage-four-purposes" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Storage: four purposes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-startup-sequence" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Startup sequence
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-handoff-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Handoff contract
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-native-installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Native installation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-health-and-failure" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Health and failure
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-restarts-and-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Restarts and ownership
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-channel-prepare-and-cleanup-are-independent" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Channel prepare and cleanup are independent
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-operator-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Operator contract
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-compatibility-and-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      10. Compatibility and scope
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-acceptance-evidence-required-before-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      11. Acceptance evidence required before release
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="ach-agent-startup-hydration-and-storage-boundary">ACH Agent — Startup Hydration and Storage Boundary</h1>
+<p><strong>Status:</strong> Implemented and locally validated on <code>feat/operator-storage</code>, 2026-09-14. Release and joint Kubernetes operator e2e remain pending.
+<strong>Baseline:</strong> ACH Agent main <code>1b240ef</code>, containing the three-role split.
+<strong>Scope:</strong> Replace permanent shared hydration links with a startup download/install handoff. Keep the existing channels, execution, session and proxy behavior.
+<strong>Audience:</strong> ACH Agent and ACH operator engineers; access to agent source is not required.</p>
+<h2 id="1-responsibilities">1. Responsibilities</h2>
+<p>ACH Agent has three roles:</p>
+<ul>
+<li><strong>Channels:</strong> receives source events and delivers outcomes.</li>
+<li><strong>Harness:</strong> owns private agent configuration, credentials, admission, prompts, proxies and channel hooks.</li>
+<li><strong>Mini-harness:</strong> lives in the engine container; installs engine inputs and manages native Pi/OpenCode processes and sessions.</li>
+</ul>
+<p>The word <strong>hydration</strong> covers two distinct phases:</p>
+<ol>
+<li><strong>Download</strong>, performed by Harness using its ACH credentials.</li>
+<li><strong>Install</strong>, performed by the mini-harness inside the engine container.</li>
+</ol>
+<p>Native engine configuration belongs in engine HOME. The download directory is only a temporary delivery location.</p>
+<h2 id="2-storage-four-purposes">2. Storage: four purposes</h2>
+<table>
+<thead>
+<tr>
+<th>Storage</th>
+<th>Harness access</th>
+<th>Engine-container access</th>
+<th>Lifetime</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Harness-private state</td>
+<td>Read/write</td>
+<td>None</td>
+<td>Existing persistence policy</td>
+</tr>
+<tr>
+<td>Engine HOME</td>
+<td>None</td>
+<td>Read/write</td>
+<td>Existing persistence policy</td>
+</tr>
+<tr>
+<td>Workspace</td>
+<td>Read/write</td>
+<td>Read/write</td>
+<td>Existing workspace/session lifecycle</td>
+</tr>
+<tr>
+<td>Hydration transfer directory</td>
+<td>Read/write</td>
+<td>Read/write</td>
+<td>Temporary; one download batch per init attempt</td>
+</tr>
+</tbody>
+</table>
+<p>Channels has none of these mounts. Each container retains its private writable <code>/tmp</code>.</p>
+<p>For distributed mode, use these generic mount paths:</p>
+<div class="highlight"><pre><span></span><code>base/state       Harness-private
+base/home        Engine-private
+base/workspace   Shared workspaces
+
+/run/ach-agent/transfer   Shared temporary transfer mount
+</code></pre></div>
+<p><code>base</code> is <code>persistence.mountPath</code> for persistent storage, or <code>/tmp/ach-agent</code> for nonpersistent storage. Persistent backing can use three subpaths of one PVC. Temporary backing can use <code>emptyDir</code> with the same access boundaries.</p>
+<p>The transfer mount is always temporary, for example its own <code>emptyDir</code>. Harness creates a batch beneath it:</p>
+<div class="highlight"><pre><span></span><code>/run/ach-agent/transfer/
+└── .ach-harness-shared-files-&lt;random&gt;/
+    ├── prompts/
+    ├── artifacts/
+    └── skills/
+</code></pre></div>
+<p>Use <code>mkdtemp</code> <strong>inside the shared transfer mount</strong>, not inside Harness's private <code>/tmp</code>. Both containers see the same absolute batch path.</p>
+<p>The operator treats these directories as opaque. It must not know codemem, native configuration filenames, skill discovery paths or the contents of hydration.</p>
+<h2 id="3-startup-sequence">3. Startup sequence</h2>
+<p>Initialization is part of environment startup. <strong>It must not wait for a channel event, invocation or native session acquisition.</strong></p>
+<div class="highlight"><pre><span></span><code>sequenceDiagram
+    participant H as Harness
+    participant M as Mini-harness
+    participant N as Pi / OpenCode
+    M-&gt;&gt;M: Open control socket; not initialized
+    H-&gt;&gt;H: Read private config, contact ACH, start proxies
+    H-&gt;&gt;H: Download files into a fresh shared batch
+    H-&gt;&gt;H: Resolve any prompt text needed by Harness
+    H-&gt;&gt;M: Existing controller-open/init with public config + batch path
+    M-&gt;&gt;M: Copy files into engine HOME
+    M-&gt;&gt;M: Generate and validate native configuration
+    M-&gt;&gt;M: Delete the consumed batch
+    M--&gt;&gt;H: Initialization complete
+    Note over H,M: Startup/health/readiness now succeed
+    H-&gt;&gt;M: Execute admitted work later
+    M-&gt;&gt;N: Launch or reuse native engine
+</code></pre></div>
+<p>The native agent does not run a model turn during init. Startup checks may verify the selected executable, required integration files, writable native directories and generated configuration without performing user work.</p>
+<p>Per-session configuration that depends on a workspace, trace token or conversation still belongs to native launch. Init installs and validates the boot-static inputs; it does not invent a dummy invocation or native conversation.</p>
+<h2 id="4-handoff-contract">4. Handoff contract</h2>
+<p>Reuse the existing controller-open/configuration request over <code>agent.sock</code>. Do not introduce a second transport or an independent bootstrap service.</p>
+<p>Its initialization inputs are:</p>
+<ul>
+<li>The allowlisted public engine configuration: selected engine, model/proxy/MCP settings, eligible environment names and execution settings. No environment values cross this request.</li>
+<li>One absolute path to the completed download batch, conceptually <code>hydrationDir</code>.</li>
+</ul>
+<p>This is an <strong>internal wire field</strong>, not a new AgentProfile or agent YAML setting. Do not send the complete private agent configuration or managed upstream credentials.</p>
+<p>Harness completes all downloads and its own reads of that batch before handing it over. After sending init, Harness stops modifying or removing it. The mini-harness owns installation and disposal.</p>
+<p>The response means <strong>installation, configuration checks and batch deletion have completed successfully</strong>. A socket accepting connections does not imply successful initialization.</p>
+<p>The batch path must identify a batch inside the agreed transfer mount. Copy/delete operations must not traverse into private storage or remove the mount root. These are transfer-operation constraints, not inspection of operator scripts or Git repositories.</p>
+<h2 id="5-native-installation">5. Native installation</h2>
+<p>The mini-harness installs files in the locations its native adapter already uses:</p>
+<ul>
+<li>Skills in the selected engine's skill discovery directory.</li>
+<li>Prompts and artifacts in engine-owned installed context, accessible through the existing <code>.ach-state</code> convention.</li>
+<li>Model/MCP/native integration configuration in engine HOME.</li>
+</ul>
+<p>These are real installed files. <strong>No permanent symlink may point into the disposable transfer batch.</strong></p>
+<p>Workspace <code>.ach-state</code> links may point to installed engine-owned context. Harness must not rely on following those links to read E-private HOME; it already resolved any prompt content it needs before handoff. Prepare retains workspace access but is not promised direct access to private engine files.</p>
+<p>Refresh only the directories managed by ACH hydration. Preserve native sessions, conversation mappings, caches and unrelated files in engine HOME. Removed/excluded managed skills must not remain installed from an older startup.</p>
+<p>Once installation and validation succeed, the mini-harness deletes <strong>that batch</strong>, not the workspace, other batches or the whole transfer mount.</p>
+<h2 id="6-health-and-failure">6. Health and failure</h2>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Accept init/control discovery</th>
+<th>Accept execution</th>
+<th>Startup/health/readiness</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Waiting for init</td>
+<td>Yes</td>
+<td>No</td>
+<td>Not successful</td>
+</tr>
+<tr>
+<td>Installing/validating/deleting</td>
+<td>Control as needed</td>
+<td>No</td>
+<td>Not successful</td>
+</tr>
+<tr>
+<td>Initialized</td>
+<td>Existing controller rules</td>
+<td>Yes</td>
+<td>Successful, subject to existing health conditions</td>
+</tr>
+<tr>
+<td>Init failed</td>
+<td>No further execution</td>
+<td>No</td>
+<td>Failed; mini-harness exits nonzero</td>
+</tr>
+</tbody>
+</table>
+<p>Control discovery must be reachable before health is successful. The local launcher and Harness must not wait for <code>/readyz</code> or successful startup health before sending init, which would deadlock initialization.</p>
+<p>Startup probes provide the initialization allowance. Liveness enforcement must not kill a healthy installation merely because init has not finished yet. Waiting for Harness and installation remain bounded by startup policy; there is no indefinite pre-init state.</p>
+<p>A download failure prevents handoff. An installation, validation or disposal failure prevents readiness and causes the mini-harness to exit nonzero, making the engine container fail startup. Native execution must never start from partially installed inputs.</p>
+<p>A later Pi/OpenCode launch failure during an invocation retains the existing per-invocation <code>LaunchFailed</code> behavior. Do not turn every native launch failure into a container init failure.</p>
+<h2 id="7-restarts-and-ownership">7. Restarts and ownership</h2>
+<p>Init runs once per successful engine-environment startup, not once per event or conversation.</p>
+<p>Use existing controller ownership and instance identity. Do not add a lease, heartbeat or separate generation protocol.</p>
+<p>If the engine container restarts, its new mini-harness instance requires initialization before readiness. Harness must supply a fresh download batch: the previous successful batch has been deleted. Installed persistent native data remains available and must not be reset.</p>
+<p>If a connection fails during init, do not infer either completion or failure from the missing response alone. Existing controller/instance handling must establish whether the same instance completed initialization or a replacement needs a fresh attempt. Never replay a user prompt as part of recovering init.</p>
+<p>Failed/abandoned transfer batches are temporary startup data. They may be removed as part of bounded startup recovery; they are not channel workspace cleanup. No background artifact service is required.</p>
+<h2 id="8-channel-prepare-and-cleanup-are-independent">8. Channel prepare and cleanup are independent</h2>
+<p>For an admitted event:</p>
+<ol>
+<li>Harness selects the existing workspace by <code>session_key</code>.</li>
+<li>Harness runs the configured prepare there, using its private hook HOME and configured environment.</li>
+<li>Harness asks the already initialized mini-harness to execute the work.</li>
+<li>Channel cleanup runs at its existing lifecycle point, after required native stop confirmation.</li>
+</ol>
+<p>Prepare output is written to the workspace, not the hydration batch. The mini-harness deleting a hydration batch cannot delete prepared work.</p>
+<p>Keep warm reuse, FIFO, conversation-key behavior, terminal repair, usage, streaming, deadlines and cancellation. ACH does not inspect Git commands, rewrite checkout configuration or impose artifact publishing on channel hooks.</p>
+<h2 id="9-operator-contract">9. Operator contract</h2>
+<p>Keep <code>AgentProfile.spec.placement</code>, profile-only, <code>standalone | distributed</code>, default <code>standalone</code>.</p>
+<ul>
+<li>Standalone: one combined container, no role arguments; the parent-owned mini-harness performs the same startup install before work.</li>
+<li>Distributed: one Deployment, one replica, three ordinary containers, same combined image and explicit <code>--role</code> args.</li>
+<li>Image entrypoint already contains tini. No Kubernetes hydration init container.</li>
+<li>Channels and Harness receive the same existing operator environment for this increment.</li>
+<li>Full agent configuration is mounted only in Harness.</li>
+<li>Engine receives only the operator-resolved variables explicitly selected by <code>engine.forwardEnv</code>, never an unrestricted <code>envFrom</code>. The mini-harness retains eligible values from its own environment when starting native children. In standalone, the parent performs this selection when spawning its mini-harness child.</li>
+<li>Keep the two existing IPC directory volumes scoped to C/H and H/E.</li>
+<li>Add the generic temporary transfer mount shared read/write by H/E.</li>
+<li>Keep the private HOME/state and shared workspace mounts described above.</li>
+<li>Preserve public ingress on Channels, Recreate, one replica, restricted contexts and no service-account token.</li>
+</ul>
+<p>Probes invoke the image-provided command <code>python -m ach_agent.healthcheck --role ROLE --check startup|readiness|liveness</code>. Socket paths and HTTP client logic stay inside the image. Distributed startup defaults: initial delay 15 seconds, period 5 seconds, timeout 3 seconds, six failures. The startup probe gates liveness; internal discovery remains available before startup is successful.</p>
+<p>The operator does not implement download, copy, native installation, batch removal or tool-specific storage migration.</p>
+<h2 id="10-compatibility-and-scope">10. Compatibility and scope</h2>
+<p>The prior permanent <code>public-context</code> mount and links into it are superseded by the temporary handoff and engine-owned copies. This changes internal placement, not what skills/prompts/artifacts the engine receives.</p>
+<p>Agent implementation must preserve native files and session continuity during supported upgrades. Internal path compatibility is agent-owned; do not solve it with operator branches for each engine/tool. Unsupported/conflicting layouts must fail explicitly rather than discard data.</p>
+<p>No new public runtime configuration field, queue, artifact framework, remote TUI, proxy masking, S3 persistence or autoscaler is included. The existing execution and result contracts remain in place.</p>
+<h2 id="11-acceptance-evidence-required-before-release">11. Acceptance evidence required before release</h2>
+<ul>
+<li>With no channel event submitted, real Pi and OpenCode initialization installs content, generates native configuration, removes the batch and reaches readiness without running a user turn.</li>
+<li>While init is waiting or copying, execution is rejected and readiness/startup health do not report success.</li>
+<li>Missing/corrupt required hydration input, invalid native setup or failed batch deletion prevents readiness and makes the mini-harness exit nonzero.</li>
+<li>After transfer deletion, installed skills, prompts and artifacts remain usable; no installed link resolves into the deleted batch.</li>
+<li>H resolves configured prompt text before handoff and can still execute prepare with E HOME inaccessible.</li>
+<li>Two events reuse the existing native session and workspace. Channel cleanup remains separate from batch deletion.</li>
+<li>A new engine-container instance receives a fresh batch before becoming ready; persistent session data survives.</li>
+<li>Persistent and nonpersistent mounts both work. E cannot read H private state/config; H cannot read E HOME.</li>
+<li>Existing full test/lint/schema gates and real three-container acceptance pass.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../../..", "features": [], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

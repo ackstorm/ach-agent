@@ -13,19 +13,19 @@
       
       
       
-      <link rel="icon" href="../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>Decision records & design notes - ach-agent</title>
+        <title>Phase1 prepare compatibility - ach-agent</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,7 +44,7 @@
       
     
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -70,7 +70,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#decision-records-design-notes" class="md-skip">
+        <a href="#phase-1-preparation-compatibility-task-0a-task-10a-closeout" class="md-skip">
           Skip to content
         </a>
       
@@ -86,7 +86,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -106,7 +106,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Decision records &amp; design notes
+              Phase1 prepare compatibility
             
           </span>
         </div>
@@ -205,7 +205,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -235,7 +235,7 @@
   
   
     <li class="md-nav__item">
-      <a href=".." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -255,7 +255,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting-started/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -275,7 +275,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/" class="md-nav__link">
+      <a href="../../configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -308,6 +308,50 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#files-and-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Files and validation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#observed-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      Observed behavior
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#private-producer-handoff-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      Private producer handoff contract
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concerns-for-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Concerns for implementation
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -324,99 +368,94 @@
   
 
 
-<h1 id="decision-records-design-notes">Decision records &amp; design notes</h1>
-<p>Design/decision write-ups for significant changes (the <em>why</em>, not just the diff). One file per
-decision, prefixed <code>YYYY-MM-DD-</code> so <code>ls</code> sorts chronologically. Add a row below when you add a doc.</p>
-<table>
-<thead>
-<tr>
-<th>Date</th>
-<th>Doc</th>
-<th>Status</th>
-<th>What it decides</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>2026-09-14</td>
-<td><a href="2026-09-14-three-role-split/">three-role-split</a></td>
-<td>Current implementation contract</td>
-<td>Channels/harness/engine over Unix sockets, private configuration, shared workspace, private hook HOME and preserved session/lifecycle behavior. Supersedes archived split plans.</td>
-</tr>
-<tr>
-<td>2026-07-01</td>
-<td><a href="2026-07-01-keyed-engine-pool/">keyed-engine-pool</a></td>
-<td>Shipped (<code>c57c92a</code>)</td>
-<td>EnginePool keyed by <code>session_key</code>: one opencode server per key, per-key HOME isolation, <code>channel.session</code> reuse.</td>
-</tr>
-<tr>
-<td>2026-07-01</td>
-<td><a href="2026-07-01-router-pool-vs-legacy/">router-pool-vs-legacy</a></td>
-<td>Decisions</td>
-<td>Router / pool / session lifecycle vs legacy <code>ackbot-process</code>: what to keep vs port; splits into follow-up plans.</td>
-</tr>
-<tr>
-<td>2026-07-02</td>
-<td><a href="2026-07-02-session-identity-and-bounds/">session-identity-and-bounds</a></td>
-<td>Accepted</td>
-<td><code>channel.session</code> becomes a block: separates <code>session_key</code> (lane/pool) from the oc-session reuse key; <code>maxTokens</code> + overflow bounds.</td>
-</tr>
-<tr>
-<td>2026-07-03</td>
-<td><a href="2026-07-03-stats-observability/">stats-observability</a></td>
-<td>Shipped</td>
-<td>Two-tier stats sink (Prometheus + redis stream), <code>v="1"</code> stream contract (<code>ach:sessions</code> + <code>ach:tools</code>), Tier-1 tool trace, OTel <code>gen_ai.*</code> alignment.</td>
-</tr>
-<tr>
-<td>2026-07-03</td>
-<td><a href="2026-07-03-provider-by-model-type/">provider-by-model-type</a></td>
-<td>Shipped</td>
-<td><code>model.type</code> selects the opencode provider + native wire: gemini→built-in <code>google</code> on <code>/gemini/v1beta</code>, anthropic→built-in <code>anthropic</code>, openai→custom <code>ach</code>. Fixes <code>type: gemini</code> hitting <code>/v1/chat/completions</code>.</td>
-</tr>
-<tr>
-<td>2026-07-05</td>
-<td><a href="2026-07-05-hindsight-memory-facade/">hindsight-memory-facade</a></td>
-<td>Shipped</td>
-<td>Harness-hosted 4-tool MCP facade fronts Hindsight (bank_id + admin Bearer injected); boot-once provisioning of bank + mental models; <code>mentalModels</code> becomes rich specs; optional <code>auth</code>; per-repo via tags, not bank templating.</td>
-</tr>
-<tr>
-<td>2026-07-23</td>
-<td><a href="2026-07-23-pi-engine-driver/">pi-engine-driver</a></td>
-<td>Shipped</td>
-<td>Pi runs behind the symmetric EngineDriver seam over JSONL RPC; the harness owns terminal validation, engine-namespaced sessions, bounds, and loopback MCP egress via the vendored adapter.</td>
-</tr>
-<tr>
-<td>2026-07-23</td>
-<td><a href="2026-07-23-pi-model-capability-and-thinking/">pi-model-capability-and-thinking</a></td>
-<td>Superseded</td>
-<td>Pi's <code>reasoning</code>/<code>input</code>/<code>contextWindow</code>/<code>maxTokens</code>/<code>--thinking</code> get a typed, generated <code>engine.pi.model</code>/<code>engine.pi.thinkingLevel</code> surface (not <code>model.params</code>, which stays opaque per-call passthrough); <code>model.type</code> wire selection untouched.</td>
-</tr>
-<tr>
-<td>2026-07-24</td>
-<td><a href="2026-07-24-model-owned-thinking/">model-owned-thinking</a></td>
-<td>Shipped</td>
-<td>Thinking intent moves to a normalized <code>model.thinking</code>; <code>engine.pi</code> back to executable knobs only; each engine translates.</td>
-</tr>
-<tr>
-<td>2026-08-31</td>
-<td><a href="2026-08-31-channel-owned-repo-workspace/">channel-owned-repo-workspace</a></td>
-<td>Shipped (v0.13.0)</td>
-<td>Harness prepares the repo per event: credentials + origin on the channel, executed on the lane (post-dedup), workspace as the engine cwd. Landed as the generic <code>channel.prepare</code> script hook, not a typed clone block.</td>
-</tr>
-<tr>
-<td>2026-09-02</td>
-<td><a href="2026-09-02-webhook-script-channel/">webhook-script-channel</a></td>
-<td>Shipped (v0.13.4)</td>
-<td><code>webhook-script</code>: authenticated GitLab ingress that runs a static <code>/bin/sh</code> handler on a project-scoped lane and never starts an engine. Requires <code>source: gitlab</code> + explicit <code>gitlabEvents</code>; project/system kinds are exclusive to it.</td>
-</tr>
-<tr>
-<td>2026-09-09</td>
-<td><a href="2026-09-09-ach-memory-backend/">ach-memory-backend</a></td>
-<td>Spec (settled)</td>
-<td><code>ach-memory</code> replaces direct-Hindsight as the memory backend: per-repo scope resolved server-side through authz instead of a tag convention, budgeted <code>load_context</code> instead of four unbounded mental-model injections, <code>POST /v1/bootstrap</code> for provisioning. <strong>Supersedes <a href="2026-07-05-hindsight-memory-facade/">hindsight-memory-facade</a> for new agents.</strong></td>
-</tr>
-</tbody>
-</table>
+<blockquote>
+<p>Historical evidence for the revisions named below. The <a href="../../references/2026-09-14-three-role-split/">current split contract</a> is authoritative; latest acceptance evidence is in <a href="../unix-split-validation/">unix-split-validation</a>.</p>
+</blockquote>
+<h1 id="phase-1-preparation-compatibility-task-0a-task-10a-closeout">Phase 1 preparation compatibility (Task 0A / Task 10A closeout)</h1>
+<p>Status: the private producer handoff is implemented and the compatibility contract is
+updated. Credential-bearing hooks must return a fully materialized checkout; the producer
+sets <code>GIT_NO_LAZY_FETCH=1</code> while creating its bundle, so an incomplete promisor checkout
+fails closed with guidance to fetch missing objects before the hook exits. Complete
+checkouts preserve history, <code>HEAD</code>, the existing workspace root and session state. The
+split transport remains outside this report.</p>
+<h2 id="files-and-validation">Files and validation</h2>
+<p>Added <code>tests/test_cleanup_registry.py</code>. It uses a local Git repository and synthetic
+credential, and checks first checkout, warm reuse, root inode, <code>.ach-state</code> resolution,
+HEAD, tracked and untracked contents, local commit objects, cleanup, failed acquisition,
+and a destination symlink fixture. Two hostile-input tests plant both workspace
+<code>.gitconfig</code> and checkout <code>.git/config</code> settings for <code>core.fsmonitor</code> and <code>core.hooksPath</code>.</p>
+<p>The Task 0A characterization command passed:</p>
+<div class="highlight"><pre><span></span><code>rtk proxy ./scripts/dev.sh uv run pytest tests/test_prepare.py tests/test_cleanup_registry.py -q
+42 passed, 3 xfailed in 3.87s
+</code></pre></div>
+<p>The xfails are strict and represent the current reproduced vulnerability. Running the
+same tests with <code>--runxfail</code> gave 3 failures: both planted fsmonitor commands touched
+their outside-workspace marker during <code>git status</code>. The global case also emitted Git's
+<code>warning: Empty last update token</code>, confirming that the planted configuration was read;
+the third failure demonstrated destination symlink traversal.
+This is a regression harness, not a claim of protection from a malicious same-UID
+process.</p>
+<h2 id="observed-behavior">Observed behavior</h2>
+<p>The existing reference-style hook cloned a fresh checkout, then on the second event ran
+<code>git fetch</code> followed by <code>git checkout --detach origin/main</code>. The workspace directory's
+inode and <code>.ach-state</code> link remained stable. The force checkout replaced a dirty tracked
+file with the remote version. An untracked file remained, and the local commit object
+remained addressable even though it was no longer <code>HEAD</code>. A successful cleanup hook
+removed <code>$ACH_WORKSPACE/repo</code> while retaining the workspace directory and its inode.
+An acquisition exit raised <code>PrepareFailed</code> (fail closed) and retained the workspace;
+cleanup is best effort, so a failing cleanup does not remove the checkout by itself.</p>
+<p>These are the compatibility boundaries: preserve the session workspace root, hydration
+link, untracked files, and local Git objects; preserve the current reference hook's
+intentional replacement of tracked files when the event selects a new revision. A
+handoff that replaces the whole workspace or <code>.git</code> directory would silently lose
+retained state and is rejected.</p>
+<h2 id="private-producer-handoff-contract">Private producer handoff contract</h2>
+<p>Use a harness-private scratch checkout for every credential-bearing clone/fetch. Give it
+a fresh private <code>HOME</code>, cwd, Git config, and checkout path. Set the authorization header
+with <code>GIT_CONFIG_COUNT</code>/<code>GIT_CONFIG_KEY_0=http.extraHeader</code>/<code>GIT_CONFIG_VALUE_0=...</code>; never
+put the token in a remote URL. Do not import <code>.git/config</code>, <code>.gitconfig</code>, hooks, or helper
+state from the agent workspace.</p>
+<p>The operator hook must fully materialize the checkout before returning. Filtered or
+promisor clones may be used only if the hook fetches all reachable objects while its
+credential is available; otherwise the producer rejects the handoff offline. This adds
+download and scratch-storage cost for historical blobs, including blobs unrelated to the
+selected <code>HEAD</code>, in exchange for preventing a post-hook unauthenticated fetch. The active
+reference script in <code>docs/schemas/operator-contract.md</code> therefore uses complete clone and
+fetch commands.</p>
+<p>After the prior engine writer has stopped, hand off only approved repository data. The
+executable test <code>test_private_scratch_prototype_preserves_target_retention</code> runs this
+algorithm against the same warm-reuse fixtures:</p>
+<ol>
+<li>For a new session checkout, create <code>$ACH_WORKSPACE/repo</code> from the private scratch
+   checkout using a local, credential-free Git operation.</li>
+<li>For a warm session, update the existing target repository from scratch using a local
+   bundle or local fetch, then perform the same detached checkout operation as the
+   current script. Leave the target's existing untracked files and local refs/objects in
+   place; do not delete or replace the target <code>.git</code> directory.</li>
+<li>Recreate <code>.ach-state</code> from the harness-owned hydration location. Never copy it from
+   scratch or input. Before each destination write, reject escaping paths, refuse source
+   symlinks, and refuse destination symlink traversal.</li>
+<li>Run cleanup with its own private HOME/cwd/config. A failed cleanup remains best effort
+   and must not trigger a whole-workspace deletion policy.</li>
+</ol>
+<p>The test runs credentialed scratch preparation to completion first, then a separate
+credential-free transfer hook from a scratch path outside <code>workDir</code>. The transfer hook
+receives no token and the planted target fsmonitor hook confirms that fact. This algorithm
+keeps the existing workspace path and inode, retains unrelated files and local objects,
+and makes the credential-bearing Git process independent of agent-planted configuration.
+A generic recursive copy is not sufficient because it can follow symlinks and discard
+<code>.git</code> retention semantics.</p>
+<p>Task 10A also covers the authenticated filtered-clone regression: a complete clone and
+handoff succeeds with synthetic Basic auth, while an incomplete filtered clone fails during
+offline bundle production without an unauthenticated request or credential in the public
+workspace/artifact. The root diagnostic fixture is intentionally ignored and is not a
+production service.</p>
+<h2 id="concerns-for-implementation">Concerns for implementation</h2>
+<p>The current single-container same-UID deployment still cannot prevent a concurrent agent
+from observing or modifying private scratch files. The correction removes contaminated
+Git input and credential-bearing use of the agent checkout; process and mount isolation
+belongs to the split deployment. A private scratch implementation must also define the
+writer-stop boundary and lock it with the existing session lifecycle.</p>
 
 
 
@@ -463,10 +502,10 @@ decision, prefixed <code>YYYY-MM-DD-</code> so <code>ls</code> sorts chronologic
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "..", "features": [], "search": "../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
     
   </body>

@@ -315,6 +315,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#phase-1-split-deployment-acceptance" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 1 split deployment acceptance
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-direction-of-dependency-non-negotiable" class="md-nav__link">
     <span class="md-ellipsis">
       1. Direction of dependency (non-negotiable)
@@ -485,6 +494,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#phase-1-split-role-packaging" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 1 split role packaging
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -505,6 +523,14 @@
 
 <h1 id="ach-agent-runtime-operator-contract-the-seam">ACH Agent Runtime — Operator Contract (the seam)</h1>
 <blockquote>
+<p><strong>Deployment proposal, 2026-09-14:</strong> the self-contained
+<a href="../ach-deployment-modes/">standalone/distributed handoff</a> defines the proposed ACH
+placement selector and the locally validated startup/mount update in ACH Agent. The CR selector
+requires implementation in ACH; it does not alter the frozen agent configuration schema.
+For distributed placement, that handoff supersedes the historical single-process
+ownership and mount descriptions below. Harness downloads; the mini-harness installs
+into its private home before readiness. Selected <code>engine.forwardEnv</code> values are supplied
+by the operator to Engine, rather than sent over the execution API.</p>
 <p><strong>Pinned contract revision: v3.</strong> This file was named <code>CONTRACT_v3.md</code> until 2026-07-27;
 the revision it pins now lives here in the header instead of in the filename, so the
 document keeps its name across revisions. When <code>ach-runtime</code> cuts v4, bump this line —
@@ -556,6 +582,14 @@ freeze still needs <code>ach-runtime</code>'s rendered output diffed against thi
 <p>The router (§6) — dedup → backpressure → lane, the three finite bounds — is <strong>unchanged</strong>. It is
 the repo's IP. Harness language stays <strong>Python</strong>.</p>
 </blockquote>
+<h3 id="phase-1-split-deployment-acceptance">Phase 1 split deployment acceptance</h3>
+<p>Local validation has passed for the task-owned Unix split Compose manifest. The target is
+one pod with three ordinary tini containers and one active replica: channels (C),
+harness (H), and engine (E). H reads the full rendered config; C and E receive only
+the inputs required through the two Unix sockets. The fixture's synthetic upstream
+and credentials are test values only. See <a href="../../reports/unix-split-validation/"><code>unix-split-validation.md</code></a>
+for current measured acceptance and its limits. The self-contained operator handoff
+is <a href="../ach-deployment-modes/">the standalone/distributed deployment contract</a>.</p>
 <hr />
 <h2 id="1-direction-of-dependency-non-negotiable">1. Direction of dependency (non-negotiable)</h2>
 <div class="highlight"><pre><span></span><code>ach-runtime  ──renders──▶  rendered runtime config  ──read──▶  ach-agent
@@ -900,6 +934,12 @@ mismatch.</p>
   ]
 }
 </code></pre></div>
+<p>Queue delivery uses admission acknowledgement in the current split transport. The
+<code>ackMode: onComplete</code> label is retained for compatibility with the source contract, but
+accepted and duplicate events are acknowledged after authenticated harness admission,
+before execution completes. An authenticated <code>FULL_QUEUE</code> response is acknowledged and
+dropped for async queue sources; transport failures and unauthenticated responses remain
+pending for recovery.</p>
 <p><strong><code>tui</code> is NOT a channel</strong> — it is the <code>--tui</code> launch modifier (console mode that ignores the
 configured channels and attaches to opencode's native TUI). It has no terminal contract (§8) and
 is absent from the <code>channels[]</code> list and from the channel-type union.</p>
@@ -1321,11 +1361,17 @@ webhook budget (failed delivery <strong>and</strong> a redelivery for work alrea
 admit turns a redelivery flood into a clone flood on events dedup was about to discard, and
 nothing bounds parallel clones until <code>maxConcurrentInvocations</code> applies. On the lane, all
 three come free from machinery that already exists.</p>
-<p><strong>The credential is the harness's, never the agent's.</strong> <code>secretEnv</code> names go through the same
-env-only <code>SecretSource</code> as <code>webhook.auth.secret</code>: resolved from <code>os.environ</code> per use, redacted
-in logs, and stripped from <code>engine.forwardEnv</code> so the opencode subprocess cannot inherit them.
-Honest ceiling: harness and opencode share a container and a uid, so an agent with a shell can
-read <code>/proc/&lt;pid&gt;/environ</code>. "We do not hand it over" ≠ "it cannot be obtained".</p>
+<p><code>secretEnv</code> names are resolved by H from its environment per use, redacted in logs, and
+remain H-side. H resolves the existing <code>engine.forwardEnv</code> selector and sends only the
+selected names and values to E as explicit launch environment. Managed ACH/model/MCP
+credentials and preparation-only secrets are not automatically forwarded. An explicitly
+selected custom value is deliberately visible to the native engine.</p>
+<p>All prepare and cleanup hooks execute in H, whether or not they use <code>secretEnv</code>, against
+the existing shared session workspace. There is no mandatory private clone, bundle export
+or import, workspace reset, Git inspection, or credential-dependent hook path. This keeps
+the original shared-checkout trust model: an agent with shell access may inspect files or
+process environments available in its container. Operators remain responsible for the
+script's Git and checkout policy.</p>
 <p><strong>Contract for script authors:</strong></p>
 <table>
 <thead>
@@ -1358,17 +1404,20 @@ read <code>/proc/&lt;pid&gt;/environ</code>. "We do not hand it over" ≠ "it ca
   <code>/proc/&lt;pid&gt;/cmdline</code> either — <code>webhook-script</code>, whose stdin carries the payload, passes the
   script through <code>ACH_SCRIPT</code> + trampoline for the same reason). First failing command aborts;
   an unset var aborts.</li>
-<li><strong>Prepare must be idempotent.</strong> The workspace is keyed by <code>session_key</code> and survives across events
-  (that is the cache), so the second comment on an MR re-runs the script against a populated
-  directory: clone-or-fetch, not clone.</li>
-<li>Cleanup should also be idempotent so a later process can safely clean a workspace left by an
-  interrupted cleanup. Its failures are best-effort: logged and counted without changing delivery.</li>
+<li><strong>Prepare must be idempotent.</strong> The target workspace is keyed by <code>session_key</code> and survives
+  across events. The same populated checkout is used again for the same key.</li>
+<li>Cleanup should also be idempotent. Its failures are best-effort, logged and counted without
+  changing delivery.</li>
 <li>For prepare, non-zero exit, timeout, or spawn failure ⇒ <strong>fail-closed</strong>: the invocation is abandoned,
   nothing is posted, <code>ach_agent_prepare_failures_total{reason}</code> increments. Deliberately the
   opposite of memory's fail-open probe — a review of a repo that is not there is worse than
   no review.</li>
-<li><code>HOME</code> is pinned to the workspace and <code>GIT_TERMINAL_PROMPT=0</code> is set. The base env is a small
-  allowlist (<code>PATH</code>, <code>SHELL</code>, <code>LANG</code>, <code>LANGUAGE</code>, <code>TZ</code>) plus what <code>env</code>/<code>secretEnv</code> declare.</li>
+<li><code>HOME</code> is harness-private, separate from the workspace and engine HOME;
+  <code>GIT_TERMINAL_PROMPT=0</code> is set for prepare and cleanup. Write engine-visible
+  files under <code>ACH_WORKSPACE</code>. A private HOME does not make engine-writable
+  checkout configuration safe for credential-bearing scripts.
+  The base env is a small allowlist (<code>PATH</code>, <code>SHELL</code>, <code>LANG</code>, <code>LANGUAGE</code>, <code>TZ</code>) plus what
+  <code>env</code>/<code>secretEnv</code> declare.</li>
 </ul>
 <p><strong>Two rules the reference script exists to demonstrate:</strong></p>
 <ol>
@@ -1389,11 +1438,11 @@ read <code>/proc/&lt;pid&gt;/environ</code>. "We do not hand it over" ≠ "it ca
 <span class="nb">export</span><span class="w"> </span><span class="nv">GIT_LFS_SKIP_SMUDGE</span><span class="o">=</span><span class="m">1</span>
 
 <span class="nv">REPO</span><span class="o">=</span><span class="s2">"</span><span class="nv">$ACH_WORKSPACE</span><span class="s2">/repo"</span>
-<span class="o">[</span><span class="w"> </span>-d<span class="w"> </span><span class="s2">"</span><span class="nv">$REPO</span><span class="s2">/.git"</span><span class="w"> </span><span class="o">]</span><span class="w"> </span><span class="o">||</span><span class="w"> </span>git<span class="w"> </span>clone<span class="w"> </span>--filter<span class="o">=</span>blob:none<span class="w"> </span>--no-checkout<span class="w"> </span>--no-recurse-submodules<span class="w"> </span><span class="se">\</span>
+<span class="o">[</span><span class="w"> </span>-d<span class="w"> </span><span class="s2">"</span><span class="nv">$REPO</span><span class="s2">/.git"</span><span class="w"> </span><span class="o">]</span><span class="w"> </span><span class="o">||</span><span class="w"> </span>git<span class="w"> </span>clone<span class="w"> </span>--no-checkout<span class="w"> </span>--no-recurse-submodules<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span><span class="s2">"</span><span class="nv">$REPO_BASE_URL</span><span class="s2">/</span><span class="nv">$ACH_EVENT_PROJECT_PATH</span><span class="s2">.git"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$REPO</span><span class="s2">"</span>
 <span class="c1"># The MR head ref is MUTABLE — it advances on every push. Fetch it, then check out the SHA the</span>
 <span class="c1"># event named, or the agent reviews a different revision than the one it was told about.</span>
-git<span class="w"> </span>-C<span class="w"> </span><span class="s2">"</span><span class="nv">$REPO</span><span class="s2">"</span><span class="w"> </span>fetch<span class="w"> </span>--filter<span class="o">=</span>blob:none<span class="w"> </span>origin<span class="w"> </span><span class="se">\</span>
+git<span class="w"> </span>-C<span class="w"> </span><span class="s2">"</span><span class="nv">$REPO</span><span class="s2">"</span><span class="w"> </span>fetch<span class="w"> </span>origin<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span><span class="s2">"+refs/merge-requests/</span><span class="nv">$ACH_EVENT_MR_IID</span><span class="s2">/head:refs/ach/mr-</span><span class="nv">$ACH_EVENT_MR_IID</span><span class="s2">"</span>
 git<span class="w"> </span>-C<span class="w"> </span><span class="s2">"</span><span class="nv">$REPO</span><span class="s2">"</span><span class="w"> </span>checkout<span class="w"> </span>--force<span class="w"> </span>--detach<span class="w"> </span><span class="s2">"</span><span class="nv">$ACH_EVENT_HEAD_SHA</span><span class="s2">"</span>
 </code></pre></div>
@@ -1473,6 +1522,54 @@ in <a href="../../configuration/"><code>docs/configuration.md</code></a> and
 with a real <code>.git</code> — at the engine's cwd before the first token. That removes the tool call,
 the base64 tarball, the TTL sweep and the prompt hint that advertised the tool.</p>
 <p>Implementation-level gates live in the implementation plans, not here.</p>
+<h2 id="phase-1-split-role-packaging">Phase 1 split role packaging</h2>
+<p>The target uses three ordinary containers from the image targets <code>harness</code>, <code>channels</code>,
+and <code>engine-opencode</code> or <code>engine-pi</code>. Every role uses the image entrypoint
+<code>[/usr/bin/tini, --, python, -m, ach_agent.main]</code> with <code>--role harness</code>, <code>--role channels</code>,
+or <code>--role engine</code>. Run one active replica in one pod. H alone receives the full
+<code>ACH_CONFIG_PATH</code> configuration and managed credentials. C and E receive no full config,
+bootstrap artifact, internal control URL, generated HMAC key, or duplicated managed secret.</p>
+<p>Use two separate IPC directory volumes, mounted at the same paths in every participant:</p>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Owner</th>
+<th>Mounts</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/run/ach-agent/channels/channel.sock</code></td>
+<td>H</td>
+<td>H read/write; C read-only; absent E</td>
+<td>C fetches source-only <code>ChannelInputs</code> and submits events/results over HTTP</td>
+</tr>
+<tr>
+<td><code>/run/ach-agent/engine/agent.sock</code></td>
+<td>E</td>
+<td>E read/write; H read-only; absent C</td>
+<td>H opens the existing controller with <code>PublicEngineConfig</code>, then sends turns and lifecycle requests</td>
+</tr>
+</tbody>
+</table>
+<p>Mount directories rather than individual socket files. Use UID/GID and fsGroup 10001;
+socket mode is 0600. H/E socket probes are HTTP requests over their Unix endpoints.
+There are no operator control ports or mandatory internal URL/host/port environment
+variables. C's public ingress remains <code>0.0.0.0:8080</code>; model, MCP and native OpenCode
+HTTP endpoints remain where their existing clients need them.</p>
+<p>H hydrates the full config, starts the existing proxies and runs all prepare/cleanup hooks
+in H on the shared workspace. E owns native engine home, adapters, sessions and process
+lifecycle. H sends explicit values selected by <code>engine.forwardEnv</code>; E does not depend on
+ambient duplicate environment. The workspace and public context retain their existing
+logical paths. H state remains private, E home remains private, and the shared workspace
+is mounted read/write by H and E. No new scheduler, queue, lease, heartbeat or CR schema
+field is introduced.</p>
+<p>These repository manifests and this section are contract examples and validation fixtures.
+Production ACH owns dynamic path, PVC, full-config ConfigMap and Secret rendering. Future
+two-Deployment operation, including separate channel and H+E replicas, is deferred; it
+is not part of this one-pod target.</p>
 
 
 

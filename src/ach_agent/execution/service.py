@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
-import os
 import shutil
 import uuid
 from collections.abc import AsyncIterator, MutableMapping

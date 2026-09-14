@@ -29,7 +29,6 @@ from ach_agent.config.schema import (
     ChannelConfig,
     CodememMemory,
     Memory,
-    PrepareBlock,
 )
 from ach_agent.engine import trace
 from ach_agent.engine.cost import CostAccountant

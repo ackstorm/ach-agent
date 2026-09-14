@@ -11,6 +11,8 @@ services:
       ACH_TOKEN: ${ACH_TOKEN:?set ACH_TOKEN}
       ACH_BASE_URL: ${ACH_BASE_URL:?set ACH_BASE_URL}
       ACH_ENVIRONMENT: ${ACH_ENVIRONMENT:-platform}
+      ACH_CHANNEL_SOCKET: /run/ach-agent/channels/channel.sock
+      ACH_ENGINE_SOCKET: /run/ach-agent/engine/agent.sock
     ports: ["8080:8080"]
     read_only: true
     cap_drop: ["ALL"]
@@ -28,8 +30,8 @@ services:
       - ./${ACH_HARNESS_CONFIG_FILE:-config-ephemeral.yaml}:/etc/ach-agent/config.yaml:ro
       - ephemeral-workspace:/tmp/ach-home/workspace
       - ephemeral-public-context:/tmp/ach-public-context
-      - ephemeral-channels-bootstrap:/run/ach-agent/channels
-      - ephemeral-engine-bootstrap:/run/ach-agent/engine
+      - ephemeral-channels-ipc:/run/ach-agent/channels
+      - ephemeral-engine-ipc:/run/ach-agent/engine:ro
 
   channels:
     build:
@@ -41,12 +43,13 @@ services:
     network_mode: service:harness
     environment:
       ACH_ENVIRONMENT: ${ACH_ENVIRONMENT:-platform}
+      ACH_CHANNEL_SOCKET: /run/ach-agent/channels/channel.sock
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     tmpfs: ["/tmp:mode=1777"]
     volumes:
-      - ephemeral-channels-bootstrap:/run/ach-agent/channels:ro
+      - ephemeral-channels-ipc:/run/ach-agent/channels:ro
 
   engine:
     build:
@@ -57,6 +60,7 @@ services:
     network_mode: service:harness
     environment:
       ACH_ENVIRONMENT: ${ACH_ENVIRONMENT:-platform}
+      ACH_ENGINE_SOCKET: /run/ach-agent/engine/agent.sock
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
@@ -71,12 +75,12 @@ services:
       retries: 12
       start_period: 300s
     volumes:
-      - ephemeral-engine-bootstrap:/run/ach-agent/engine:ro
+      - ephemeral-engine-ipc:/run/ach-agent/engine
       - ephemeral-workspace:/tmp/ach-home/workspace
       - ephemeral-public-context:/tmp/ach-public-context:ro
 
 volumes:
   ephemeral-workspace:
   ephemeral-public-context:
-  ephemeral-channels-bootstrap:
-  ephemeral-engine-bootstrap:
+  ephemeral-channels-ipc:
+  ephemeral-engine-ipc:

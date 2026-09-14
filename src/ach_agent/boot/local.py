@@ -163,7 +163,6 @@ class LocalEngineProcess:
             child_env["PYTHONPATH"] = str(package_root)
         # Role control values are launcher-owned and cannot be overridden by
         # an operator environment projection.
-        child_env.update({"ACH_ENGINE_HOST": host, "ACH_ENGINE_PORT": str(port)})
         use_supervisor = sys.platform.startswith("linux")
         supervisor = Path(__file__).resolve().parents[1] / "engine" / "process_supervisor.py"
         command = (

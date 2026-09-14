@@ -345,14 +345,8 @@ async def run_engine(
     service = ExecutionService(driver, store)
     app = create_execution_app(service)
     socket_name = str(engine_socket_path())
-    host = os.environ.get("ACH_ENGINE_HOST", DEFAULT_ENGINE_HOST)
-    try:
-        port = int(os.environ.get("ACH_ENGINE_PORT", str(DEFAULT_ENGINE_PORT)))
-    except ValueError as exc:
-        close = getattr(store, "close", None)
-        if close is not None:
-            close()
-        raise SplitRoleConfigError("ACH_ENGINE_PORT must be an integer") from exc
+    host = DEFAULT_ENGINE_HOST
+    port = DEFAULT_ENGINE_PORT
     listener = bind_listener(Path(socket_name)) if socket_name else None
     server = uvicorn.Server(
         uvicorn.Config(

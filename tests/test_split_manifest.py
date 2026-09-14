@@ -75,12 +75,8 @@ def test_roles_use_image_entrypoint_args_and_only_harness_gets_full_config() -> 
     assert "ACH_CHANNELS_HMAC_KEY" not in harness_env
     assert "ACH_CHANNELS_CONFIG_PATH" not in harness_env
     assert "ACH_ENGINE_CONFIG_PATH" not in harness_env
-    assert {item["name"] for item in containers["channels"].get("env", [])} == {
-        "ACH_CHANNEL_SOCKET"
-    }
-    assert {item["name"] for item in containers["engine"].get("env", [])} == {
-        "ACH_ENGINE_SOCKET"
-    }
+    assert {item["name"] for item in (containers["channels"].get("env") or [])} == set()
+    assert {item["name"] for item in (containers["engine"].get("env") or [])} == set()
 
     harness_mounts = {item["mountPath"]: item for item in containers["harness"]["volumeMounts"]}
     channel_mounts = {item["mountPath"]: item for item in containers["channels"]["volumeMounts"]}
@@ -92,9 +88,14 @@ def test_roles_use_image_entrypoint_args_and_only_harness_gets_full_config() -> 
     assert "/run/ach-agent/engine" not in channel_mounts
     assert engine_mounts["/run/ach-agent/engine"].get("readOnly") is not True
     assert "/run/ach-agent/channels" not in engine_mounts
-    assert containers["engine"]["startupProbe"]["exec"]["command"][-1].endswith(
-        "127.0.0.1:8081/healthz')"
-    )
+    assert all("containerPort" not in item for item in containers.values())
+    for role in ("harness", "engine"):
+        probe_text = str(containers[role]["startupProbe"])
+        assert "HTTPTransport" in probe_text
+        assert "/run/ach-agent/" in probe_text
+        assert "uds=" in probe_text
+    assert "8090" not in str(containers["harness"])
+    assert "8081" not in str(containers["engine"])
 
 
 def test_compose_uses_one_network_namespace_and_named_role_volumes() -> None:
@@ -121,6 +122,9 @@ def test_compose_uses_one_network_namespace_and_named_role_volumes() -> None:
     assert "ACH_ENGINE_CONFIG_PATH" not in str(compose)
     assert "channels-ipc" in str(compose)
     assert "engine-ipc" in str(compose)
+    assert "8090" not in str(compose)
+    assert "8081" not in str(compose)
+    assert "bootstrap" not in str(compose).lower()
 
 
 def test_dockerfile_exposes_split_targets_and_keeps_combined_default() -> None:
@@ -139,6 +143,23 @@ def test_dockerfile_exposes_split_targets_and_keeps_combined_default() -> None:
     )
     assert "/run/ach-agent/channels" in dockerfile
     assert "/run/ach-agent/engine" in dockerfile
+    assert "EXPOSE 8090" not in dockerfile
+    assert "EXPOSE 8081" not in dockerfile
+
+
+def test_all_split_manifests_use_socket_probes_and_no_bootstrap_contract() -> None:
+    paths = list(SPLIT.glob("compose*.yaml")) + [SPLIT / "pod.yaml"]
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        lowered = text.lower()
+        assert "bootstrap" not in lowered, path
+        assert "hmac" not in lowered, path
+        assert "8090" not in text, path
+        assert "8081" not in text, path
+    acceptance = (SPLIT / "compose-acceptance.yaml").read_text(encoding="utf-8")
+    engine_block = acceptance.split("\n  engine:", 1)[1]
+    assert "DEBUG:" not in engine_block
+    assert "CUSTOM_TOOL_TOKEN:" not in engine_block
 
 
 def test_example_role_artifacts_validate_against_the_runtime_wire_models() -> None:

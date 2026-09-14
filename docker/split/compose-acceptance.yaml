@@ -7,17 +7,14 @@ services:
       ACH_BASE_URL: http://mock-upstream:9080
       ACH_TOKEN: split-acceptance-key
       ACH_HARNESS_CONFIG_FILE: ${ACH_HARNESS_CONFIG_FILE:-config-acceptance.yaml}
-      DEBUG: harness-value
-      CUSTOM_TOOL_TOKEN: harness-token
+      DEBUG: engine-value
+      CUSTOM_TOOL_TOKEN: engine-token
 
   channels:
     image: ach-agent-split-channels
 
   engine:
     image: ach-agent-split-engine
-    environment:
-      DEBUG: engine-value
-      CUSTOM_TOOL_TOKEN: engine-token
 
   mock-upstream:
     image: ach-agent-split-harness

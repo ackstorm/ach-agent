@@ -15,10 +15,10 @@ ACH_TOKEN=ek_example ACH_BASE_URL=https://ach.example \
 
 The Compose file has exactly three services. Channels and engine join the
 harness network namespace (`network_mode: service:harness`), so only the
-channels ingress is published. H listens on `127.0.0.1:8090`, E on
-`127.0.0.1:8081`, and C binds its published ingress to `0.0.0.0:8080` inside
-that shared namespace. For Pi, switch H and E together so the selected native
-driver and public bootstrap agree:
+channels ingress is published. C binds its published ingress to `0.0.0.0:8080`
+inside that shared namespace. H and E communicate over private `channel.sock`
+and `agent.sock` endpoints. For Pi, switch H and E together so the selected
+native driver agrees:
 
 ```sh
 ACH_ENGINE_TARGET=engine-pi \
@@ -28,28 +28,26 @@ docker compose -f docker/split/compose.yaml config --quiet
 ```
 
 `config-pi.yaml` sets `engine.type: pi`; the harness derives the matching engine
-bootstrap automatically.
+configuration automatically.
 
 The image without `--target` remains the combined native image. It carries both
 Pi and OpenCode, keeps Git and SSH for preparation hooks, and preserves the
 existing `--tui` and `--prompt` local launchers. The split E images use `/usr/bin/tini`
 as PID 1; the mini-harness is its child and owns native engine descendants.
 
-The harness is the only role that receives `/etc/ach-agent/config.yaml`. At boot it
-atomically publishes `/run/ach-agent/channels/bootstrap.json` and
-`/run/ach-agent/engine/bootstrap.json`. Channels mounts only the former read-only;
-engine mounts only the latter read-only. The generated channel bundle carries the
-agent identity, localhost harness URL, source projection and stable authentication
-key. The engine bundle is the credential-free public engine configuration. Role
-containers wait up to 300 seconds for their bundle and fail closed on malformed data.
+The harness is the only role that receives `/etc/ach-agent/config.yaml`. It owns
+`/run/ach-agent/channels/channel.sock` and sends the public engine configuration
+over `/run/ach-agent/engine/agent.sock`. Channels reads its source-only projection
+with an unsigned client over the channel socket. Role containers wait up to 300
+seconds for their socket and fail closed if it is unavailable.
 The image creates both directories for UID 10001 for Docker named-volume
 initialization. The Kubernetes pod uses fsGroup 10001 for writable `emptyDir`
 mounts. Neither requires a hydration init container.
 
 All three roles use the image entrypoint and select their role through `args:
-["--role", "harness|channels|engine"]`. Default listeners are H `127.0.0.1:8090`,
-E `127.0.0.1:8081`, and C `0.0.0.0:8080`; only C is published in Compose.
-Health checks use the same endpoints and allow a 300 second startup period.
+["--role", "harness|channels|engine"]`. H and E health checks use HTTP over
+their Unix sockets; C remains on public HTTP `0.0.0.0:8080`. Health checks allow
+a 300 second startup period.
 
 The PVC-backed Pod example uses one claim with separate subpaths:
 
@@ -63,7 +61,7 @@ The PVC-backed Pod example uses one claim with separate subpaths:
 
 The two `/state` mounts deliberately have different physical sources. The
 logical codemem path remains `<mountPath>/state/codemem.db`, while E cannot see
-H's `<mountPath>/state/state.db`. Channels receives only its generated bootstrap;
+H's `<mountPath>/state/state.db`. Channels receives only its source projection;
 it has no state, workspace, home, public-context, or PVC mounts.
 
 `config.yaml` is also a concrete custom path example: H and E use the
@@ -89,8 +87,9 @@ The operator must create the PVC subdirectories before using `subPath` mounts
 `engine-codemem`, `workspace`, and `public-context`. No init
 container or download endpoint is part of this example. H hydrates public
 context before admitting the first invocation; E creates its own home/workspace
-links after reading its public bootstrap and reports readiness independently.
-There is no additional filesystem readiness flag or bootstrap handshake.
+links after receiving its public configuration over the socket and reports
+readiness independently.
+There is no additional filesystem readiness flag or socket handshake.
 
 ## Existing codemem data relocation
 
@@ -111,7 +110,6 @@ coherently; if the backup is incomplete, stop the rollout and restore it. No
 automatic migration or reset is performed by these manifests.
 
 `pod.yaml` references the full-config ConfigMap `ach-agent-config` and Secret
-`ach-agent-secrets`; bootstrap files are generated into the two `emptyDir`
-mounts. Production ACH must render those objects, images, PVC,
+`ach-agent-secrets`. Production ACH must render those objects, images, PVC,
 custom `engine.home`/`workDir` mount maps, and secret references. Adding these
 examples does not mutate a cluster or complete that separate repository handoff.

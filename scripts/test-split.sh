@@ -43,6 +43,7 @@ run_engine_acceptance() {
   [ -n "$INGRESS_PORT" ] || { echo "channels ingress did not become reachable" >&2; return 1; }
 
   wait_harness_ready
+  assert_socket_mounts
   echo "$target startup seconds: $(( $(date +%s) - startup_started ))"
 
   first="split-${target}-one"
@@ -107,14 +108,13 @@ PY
   # E failure is observed by H's readiness monitor after the positive evidence.
   for _ in $(seq 1 30); do
     if "${COMPOSE[@]}" exec -T harness python - <<'PY' >/dev/null 2>&1
-import urllib.error
-import urllib.request
+import httpx
 
 try:
-    response = urllib.request.urlopen("http://127.0.0.1:8090/readyz")
-except urllib.error.HTTPError as exc:
-    raise SystemExit(0 if exc.code == 503 else 1)
-raise SystemExit(0 if response.status == 503 else 1)
+    response = httpx.Client(transport=httpx.HTTPTransport(uds="/run/ach-agent/engine/agent.sock"), base_url="http://ach-internal", timeout=2).get("/readyz")
+except httpx.HTTPError:
+    raise SystemExit(1)
+raise SystemExit(0 if response.status_code == 503 else 1)
 PY
     then
       echo "$target engine failure: harness readiness became 503"
@@ -129,7 +129,7 @@ PY
 wait_harness_ready() {
   for _ in $(seq 1 60); do
     if "${COMPOSE[@]}" exec -T harness python -c \
-      'import urllib.request; raise SystemExit(0 if urllib.request.urlopen("http://127.0.0.1:8090/readyz").status == 200 else 1)' \
+      'import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds="/run/ach-agent/engine/agent.sock"), base_url="http://ach-internal", timeout=2); raise SystemExit(0 if c.get("/readyz").status_code == 200 else 1)' \
       >/dev/null 2>&1; then
       return 0
     fi
@@ -138,6 +138,30 @@ wait_harness_ready() {
   echo "harness did not become ready" >&2
   "${COMPOSE[@]}" logs --no-color harness engine >&2 || true
   return 1
+}
+
+assert_socket_mounts() {
+  "${COMPOSE[@]}" exec -T harness python - <<'PY'
+from pathlib import Path
+assert Path("/run/ach-agent/channels/channel.sock").is_socket()
+assert Path("/run/ach-agent/engine/agent.sock").is_socket()
+PY
+  "${COMPOSE[@]}" exec -T channels python - <<'PY'
+from pathlib import Path
+assert Path("/run/ach-agent/channels/channel.sock").is_socket()
+assert not Path("/run/ach-agent/engine/agent.sock").exists()
+try:
+    Path("/run/ach-agent/channels/channel.sock").unlink()
+except OSError:
+    pass
+else:
+    raise SystemExit("channels could replace the harness socket")
+PY
+  "${COMPOSE[@]}" exec -T engine python - <<'PY'
+from pathlib import Path
+assert Path("/run/ach-agent/engine/agent.sock").is_socket()
+assert not Path("/run/ach-agent/channels/channel.sock").exists()
+PY
 }
 
 wait_cancel_started() {
@@ -211,7 +235,6 @@ wait_completion() {
   local channel="$1" event_id="$2"
   "${COMPOSE[@]}" exec -T harness python - "$channel" "$event_id" <<'PY'
 import asyncio
-import json
 import sys
 
 from ach_agent.channels.client import ChannelsClient
@@ -221,19 +244,9 @@ from ach_agent.channels.envelopes import EventRef
 async def main() -> None:
     channel = sys.argv[1]
     event_id = sys.argv[2]
-    with open("/run/ach-agent/channels/bootstrap.json", encoding="utf-8") as stream:
-        bundle = json.load(stream)
-    harness_url = bundle["harnessUrl"]
-    hmac_key = bundle["hmacKey"]
-    agent_name = bundle["agentName"]
-    client = ChannelsClient(
-        harness_url,
-        hmac_key.encode(),
-        agent=agent_name,
-        poll_interval=0.2,
-        wait_timeout=25,
-    )
+    client = ChannelsClient("http://ach-internal", b"", socket_path="/run/ach-agent/channels/channel.sock", poll_interval=0.2, wait_timeout=25)
     try:
+        agent_name = (await client.fetch_config()).agent_name
         completion = await client.wait(EventRef(
             agent=agent_name, channel_name=channel, idempotency_key=event_id
         ))
@@ -252,7 +265,6 @@ wait_result() {
   local channel="$1" event_id="$2"
   "${COMPOSE[@]}" exec -T harness python - "$channel" "$event_id" <<'PY'
 import asyncio
-import json
 import sys
 
 from ach_agent.channels.client import ChannelsClient
@@ -261,19 +273,9 @@ from ach_agent.channels.envelopes import EventRef
 
 async def main() -> None:
     channel, event_id = sys.argv[1:3]
-    with open("/run/ach-agent/channels/bootstrap.json", encoding="utf-8") as stream:
-        bundle = json.load(stream)
-    harness_url = bundle["harnessUrl"]
-    hmac_key = bundle["hmacKey"]
-    agent_name = bundle["agentName"]
-    client = ChannelsClient(
-        harness_url,
-        hmac_key.encode(),
-        agent=agent_name,
-        poll_interval=0.2,
-        wait_timeout=25,
-    )
+    client = ChannelsClient("http://ach-internal", b"", socket_path="/run/ach-agent/channels/channel.sock", poll_interval=0.2, wait_timeout=25)
     try:
+        agent_name = (await client.fetch_config()).agent_name
         completion = await client.wait(EventRef(
             agent=agent_name, channel_name=channel, idempotency_key=event_id
         ))

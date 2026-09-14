@@ -65,26 +65,19 @@ spec:
             secretKeyRef:
               name: ach-agent-secrets
               key: ach-token
-        - name: ACH_CHANNEL_SOCKET
-          value: /run/ach-agent/channels/channel.sock
-        - name: ACH_ENGINE_SOCKET
-          value: /run/ach-agent/engine/agent.sock
-      ports:
-        - name: harness
-          containerPort: 8090
       readinessProbe:
         exec:
-          command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/readyz')"]
+          command: ["python", "-c", "import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds='/run/ach-agent/channels/channel.sock'), base_url='http://ach-internal', timeout=2); c.get('/readyz').raise_for_status()"]
         periodSeconds: 5
       startupProbe:
         exec:
-          command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz')"]
+          command: ["python", "-c", "import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds='/run/ach-agent/channels/channel.sock'), base_url='http://ach-internal', timeout=2); c.get('/healthz').raise_for_status()"]
         periodSeconds: 5
         timeoutSeconds: 3
         failureThreshold: 60
       livenessProbe:
         exec:
-          command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz')"]
+          command: ["python", "-c", "import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds='/run/ach-agent/channels/channel.sock'), base_url='http://ach-internal', timeout=2); c.get('/healthz').raise_for_status()"]
         periodSeconds: 10
       securityContext: &restricted
         allowPrivilegeEscalation: false
@@ -119,8 +112,6 @@ spec:
       imagePullPolicy: IfNotPresent
       args: ["--role", "channels"]
       env:
-        - name: ACH_CHANNEL_SOCKET
-          value: /run/ach-agent/channels/channel.sock
       ports:
         - name: ingress
           containerPort: 8080
@@ -153,24 +144,19 @@ spec:
       imagePullPolicy: IfNotPresent
       args: ["--role", "engine"]
       env:
-        - name: ACH_ENGINE_SOCKET
-          value: /run/ach-agent/engine/agent.sock
-      ports:
-        - name: engine
-          containerPort: 8081
       readinessProbe:
         exec:
-          command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/readyz')"]
+          command: ["python", "-c", "import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds='/run/ach-agent/engine/agent.sock'), base_url='http://ach-internal', timeout=2); c.get('/readyz').raise_for_status()"]
         periodSeconds: 5
       startupProbe:
         exec:
-          command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz')"]
+          command: ["python", "-c", "import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds='/run/ach-agent/engine/agent.sock'), base_url='http://ach-internal', timeout=2); c.get('/healthz').raise_for_status()"]
         periodSeconds: 5
         timeoutSeconds: 3
         failureThreshold: 60
       livenessProbe:
         exec:
-          command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz')"]
+          command: ["python", "-c", "import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds='/run/ach-agent/engine/agent.sock'), base_url='http://ach-internal', timeout=2); c.get('/healthz').raise_for_status()"]
         periodSeconds: 10
       securityContext: *restricted
       volumeMounts:

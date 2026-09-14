@@ -183,7 +183,6 @@ RUN apt-get update -qq \
 COPY docker/sample-config.yaml /etc/ach-agent/config.yaml
 ENV ACH_ROLE=harness ACH_CONFIG_PATH=/etc/ach-agent/config.yaml
 USER 10001
-EXPOSE 8090
 
 # ── per-engine role images ────────────────────────────────────────────────────
 # tini is PID 1 for E; the mini-harness Python process is its only direct child
@@ -199,7 +198,6 @@ COPY --from=codemem-bin /opt/codemem /opt/codemem
 ENV PATH="/opt/codemem/bin:${PATH}" ACH_ROLE=engine
 RUN opencode --version && codemem --version
 USER 10001
-EXPOSE 8081
 
 FROM split-runtime AS engine-pi
 USER root
@@ -215,7 +213,6 @@ RUN pi --version \
  && codemem --version \
  && test -f /opt/pi-mcp-adapter/node_modules/pi-mcp-adapter/package.json
 USER 10001
-EXPOSE 8081
 
 # Keep an explicit final alias so a build without --target still yields the
 # combined image even though split targets are declared after it.

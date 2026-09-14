@@ -11,8 +11,6 @@ services:
       ACH_TOKEN: ${ACH_TOKEN:?set ACH_TOKEN}
       ACH_BASE_URL: ${ACH_BASE_URL:?set ACH_BASE_URL}
       ACH_ENVIRONMENT: ${ACH_ENVIRONMENT:-platform}
-      ACH_CHANNEL_SOCKET: /run/ach-agent/channels/channel.sock
-      ACH_ENGINE_SOCKET: /run/ach-agent/engine/agent.sock
     ports:
       - "8080:8080"
     read_only: true
@@ -21,7 +19,7 @@ services:
     tmpfs:
       - /tmp:mode=1777
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz')"]
+      test: ["CMD", "python", "-c", "import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds='/run/ach-agent/channels/channel.sock'), base_url='http://ach-internal', timeout=2); c.get('/healthz').raise_for_status()"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -46,7 +44,6 @@ services:
     network_mode: service:harness
     environment:
       ACH_ENVIRONMENT: ${ACH_ENVIRONMENT:-platform}
-      ACH_CHANNEL_SOCKET: /run/ach-agent/channels/channel.sock
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
@@ -70,14 +67,13 @@ services:
     network_mode: service:harness
     environment:
       ACH_ENVIRONMENT: ${ACH_ENVIRONMENT:-platform}
-      ACH_ENGINE_SOCKET: /run/ach-agent/engine/agent.sock
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     tmpfs:
       - /tmp:mode=1777
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/execution/v1/health')"]
+      test: ["CMD", "python", "-c", "import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds='/run/ach-agent/engine/agent.sock'), base_url='http://ach-internal', timeout=2); c.get('/healthz').raise_for_status()"]
       interval: 5s
       timeout: 3s
       retries: 12

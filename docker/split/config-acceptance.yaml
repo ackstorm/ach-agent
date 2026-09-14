@@ -33,7 +33,7 @@ cost:
 channels:
   - name: acceptance
     type: webhook
-    source: generic
+    source: github
     concurrency: 2
     prompt: "Answer the split acceptance probe."
     session:

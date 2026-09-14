@@ -241,7 +241,7 @@ submit_channel() {
   local reply status
   reply="$(curl -fsS -w $'\n%{http_code}' -X POST "http://127.0.0.1:${INGRESS_PORT}/channels/${channel}/events" \
     -H 'content-type: application/json' -H 'idempotency-key: '"$event_id" \
-    --data '{"probe":"split"}')"
+    --data '{"repository":{"full_name":"split/acceptance"},"number":42,"probe":"split"}')"
   status="${reply##*$'\n'}"
   [ "$status" = 202 ] || { echo "event $event_id was not admitted: $reply" >&2; return 1; }
   printf '%s' "${reply%$'\n'*}" | sed -n 's/.*"task_id":"\([^"]*\)".*/\1/p'

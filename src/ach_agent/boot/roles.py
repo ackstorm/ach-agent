@@ -25,15 +25,10 @@ import uvicorn
 from pydantic import JsonValue
 
 from ach_agent.boot.bootstrap import (
-    DEFAULT_BOOTSTRAP_WAIT_SECONDS,
     DEFAULT_CHANNELS_HOST,
     DEFAULT_CHANNELS_PORT,
     DEFAULT_ENGINE_HOST,
     DEFAULT_ENGINE_PORT,
-    ChannelsBootstrap,
-    role_bootstrap_path,
-    wait_for_channels_bootstrap,
-    wait_for_engine_bootstrap,
 )
 from ach_agent.boot.ipc import bind_listener, channel_socket_path, engine_socket_path
 from ach_agent.boot.paths import harness_log_dir, resolve_role_paths
@@ -634,13 +629,3 @@ async def run_channels(channel_config: JsonValue | None = None) -> None:
         await cron.stop()
         await client.close()
 
-
-def _bootstrap_wait_seconds() -> float:
-    raw = os.environ.get("ACH_BOOTSTRAP_WAIT_SECONDS", str(DEFAULT_BOOTSTRAP_WAIT_SECONDS))
-    try:
-        value = float(raw)
-    except ValueError as exc:
-        raise SplitRoleConfigError("ACH_BOOTSTRAP_WAIT_SECONDS must be a number") from exc
-    if value <= 0 or not math.isfinite(value):
-        raise SplitRoleConfigError("ACH_BOOTSTRAP_WAIT_SECONDS must be positive")
-    return value

@@ -182,6 +182,15 @@ def test_acceptance_fixtures_cover_harness_hooks_and_selected_env() -> None:
     assert "SPLIT_PREPARE_TOKEN" not in engine
 
 
+def test_ephemeral_acceptance_fixture_is_nonpersistent() -> None:
+    cfg = AgentConfig.model_validate(
+        yaml.safe_load((SPLIT / "config-ephemeral-acceptance.yaml").read_text(encoding="utf-8"))
+    )
+    assert cfg.persistence.enabled is False
+    assert cfg.engine.home == "/tmp/ach-home"
+    assert any(channel.name == "acceptance" for channel in cfg.channels)
+
+
 def test_example_role_artifacts_validate_against_the_runtime_wire_models() -> None:
     config = yaml.safe_load((SPLIT / "config.yaml").read_text(encoding="utf-8"))
     assert AgentConfig.model_validate(config).agent.name == "split-example"

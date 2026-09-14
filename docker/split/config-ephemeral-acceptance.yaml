@@ -1,0 +1,44 @@
+schemaVersion: "1"
+agent:
+  name: split-ephemeral-acceptance
+model:
+  name: test-model
+  type: openai
+capability:
+  type: ach
+  ach:
+    baseUrl: http://mock-upstream:9080
+    environment: platform
+prompt:
+  system:
+    type: text
+    text: "You are an ephemeral split acceptance fixture agent."
+persistence:
+  enabled: false
+  mountPath: /tmp/ach-state
+engine:
+  forwardEnv: [DEBUG, CUSTOM_TOOL_TOKEN]
+  home: /tmp/ach-home
+  workDir: /tmp/ach-home/workspace
+  startupTimeoutSeconds: 30
+  idleTtlSeconds: 30
+limits:
+  maxConcurrentInvocations: 2
+  maxInvocationSeconds: 20
+  maxQueuedTotal: 16
+  maxSteps: 8
+  terminalOutputRetries: 1
+cost:
+  source: none
+channels:
+  - name: acceptance
+    type: webhook
+    source: github
+    concurrency: 2
+    prompt: "Answer the split acceptance probe."
+    session:
+      type: custom
+      key: "split-ephemeral-conversation"
+    webhook:
+      auth:
+        type: none

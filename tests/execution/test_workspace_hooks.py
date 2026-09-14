@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from ach_agent.engine.workspace import workspace_dir
+from ach_agent.engine.workspace import prepare_workspace, workspace_dir
 from ach_agent.execution.service import ExecutionService
 from ach_agent.execution.wire import (
     AcquireRequest,
@@ -50,6 +50,25 @@ async def test_reserves_exact_shared_workspace_path(fake_driver, tmp_path: Path)
     assert expected.is_dir()
     assert (expected / ".ach-state").is_symlink()
     await service.release_controller("controller")
+
+
+@pytest.mark.asyncio
+async def test_workspace_state_link_targets_shared_public_context_directly(tmp_path: Path) -> None:
+    home = tmp_path / "engine-home"
+    work = tmp_path / "work"
+    public = tmp_path / "public-context"
+    public.mkdir()
+    service = ExecutionService(None, {})
+    await service.configure(
+        PublicEngineConfig(home=str(home), work_dir=str(work), public_context=str(public))
+    )
+
+    workspace = prepare_workspace(str(home), str(work), "group/project:public")
+    assert (workspace / ".ach-state").resolve() == public.resolve()
+    (public / "prepared.txt").write_text("shared")
+    home.rename(tmp_path / "engine-home-unavailable")
+    assert (workspace / ".ach-state" / "prepared.txt").read_text() == "shared"
+    await service.close()
 
 
 @pytest.mark.asyncio

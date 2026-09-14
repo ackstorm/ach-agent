@@ -35,6 +35,7 @@ from ach_agent.boot.bootstrap import (
     wait_for_channels_bootstrap,
     wait_for_engine_bootstrap,
 )
+from ach_agent.boot.ipc import bind_listener
 from ach_agent.boot.paths import harness_log_dir, resolve_role_paths
 from ach_agent.boot.secrets import collect_secret_env_names, strip_forwarded_secrets
 from ach_agent.config.schema import (
@@ -317,6 +318,7 @@ async def run_engine(
         return
     service = ExecutionService(driver, store)
     app = create_execution_app(service)
+    socket_name = os.environ.get("ACH_ENGINE_SOCKET", "").strip()
     host = os.environ.get("ACH_ENGINE_HOST", DEFAULT_ENGINE_HOST)
     try:
         port = int(os.environ.get("ACH_ENGINE_PORT", str(DEFAULT_ENGINE_PORT)))
@@ -325,7 +327,15 @@ async def run_engine(
         if close is not None:
             close()
         raise SplitRoleConfigError("ACH_ENGINE_PORT must be an integer") from exc
-    server = uvicorn.Server(uvicorn.Config(app=app, host=host, port=port, log_level="warning"))
+    listener = bind_listener(Path(socket_name)) if socket_name else None
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app=app,
+            host=host,
+            port=port,
+            log_level="warning",
+        )
+    )
 
     async def stop_on_shutdown() -> None:
         # Uvicorn waits for an open streaming response during graceful shutdown.
@@ -341,7 +351,10 @@ async def run_engine(
 
     watcher = asyncio.create_task(stop_on_shutdown())
     try:
-        await server.serve()
+        if listener is None:
+            await server.serve()
+        else:
+            await server.serve(sockets=[listener])
     finally:
         watcher.cancel()
         await asyncio.gather(watcher, return_exceptions=True)
@@ -350,6 +363,9 @@ async def run_engine(
         close = getattr(store, "close", None)
         if close is not None:
             close()
+        if listener is not None:
+            listener.close()
+            Path(socket_name).unlink(missing_ok=True)
     if service.shutdown_requested or service.controller_cleanup_error:
         raise RuntimeError("engine role shutdown requested after unreliable cleanup")
 
@@ -379,13 +395,35 @@ async def run_channels(channel_config: JsonValue | None = None) -> None:
     """Start the source role from its filtered configuration artifact."""
     bootstrap: ChannelsBootstrap | None = None
     if channel_config is None:
-        bootstrap = await wait_for_channels_bootstrap(
-            role_bootstrap_path("channels"), timeout=_bootstrap_wait_seconds()
-        )
-        channel_config = {
-            "schemaVersion": "1",
-            "channels": cast(JsonValue, bootstrap.channels),
-        }
+        channel_socket = os.environ.get("ACH_CHANNEL_SOCKET", "").strip()
+        if channel_socket:
+            from ach_agent.channels.client import ChannelsClient
+
+            config_client = ChannelsClient(
+                socket_path=channel_socket,
+                base_url="http://ach-internal",
+                key=b"",
+                agent=os.environ.get("ACH_AGENT_NAME", "").strip(),
+            )
+            try:
+                inputs = await config_client.fetch_config()
+            finally:
+                await config_client.close()
+            channel_config = {
+                "schemaVersion": "1",
+                "channels": cast(
+                    JsonValue,
+                    [item.model_dump(mode="json", by_alias=True) for item in inputs.channels],
+                ),
+            }
+        else:
+            bootstrap = await wait_for_channels_bootstrap(
+                role_bootstrap_path("channels"), timeout=_bootstrap_wait_seconds()
+            )
+            channel_config = {
+                "schemaVersion": "1",
+                "channels": cast(JsonValue, bootstrap.channels),
+            }
     if not isinstance(channel_config, dict):
         raise SplitRoleConfigError("channels role requires an object configuration")
     if channel_config.get("schemaVersion") != "1":
@@ -425,7 +463,14 @@ async def run_channels(channel_config: JsonValue | None = None) -> None:
     ]
     if not agent_name:
         raise SplitRoleConfigError("ACH_AGENT_NAME is required for a separated channels role")
-    client = ChannelsClient(harness_url, key_text.encode(), agent=agent_name, poll_interval=2.0)
+    channel_socket = os.environ.get("ACH_CHANNEL_SOCKET", "").strip()
+    client = ChannelsClient(
+        harness_url or "http://ach-internal",
+        key_text.encode(),
+        agent=agent_name,
+        poll_interval=2.0,
+        socket_path=channel_socket or None,
+    )
     probe_deadline = asyncio.get_running_loop().time() + (
         _bootstrap_wait_seconds() if bootstrap is not None else 30.0
     )

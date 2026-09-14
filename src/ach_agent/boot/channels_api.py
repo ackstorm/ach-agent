@@ -13,7 +13,7 @@ from prometheus_client import make_asgi_app
 
 from ach_agent.boot.completions import CompletionRegistry
 from ach_agent.boot.health import HealthState
-from ach_agent.channels.envelopes import Admission, EventEnvelope, EventRef
+from ach_agent.channels.envelopes import Admission, ChannelInputs, EventEnvelope, EventRef
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.signing import (
     NONCE_HEADER,
@@ -25,6 +25,7 @@ from ach_agent.channels.signing import (
     response_mac,
     verify_request_mac,
 )
+from ach_agent.config.schema import ChannelSourceConfig
 
 MAX_CHANNEL_BODY_BYTES = 1 * 1024 * 1024
 
@@ -35,6 +36,7 @@ def create_channels_app(
     *,
     agent: str = "default",
     channels: Iterable[str] | None = None,
+    source_configs: Iterable[ChannelSourceConfig] | None = None,
     nonce_cache: NonceCache | None = None,
     max_body_bytes: int = MAX_CHANNEL_BODY_BYTES,
 ) -> FastAPI:
@@ -44,6 +46,7 @@ def create_channels_app(
     validates scope, serializes the existing registry result, and signs it.
     """
     configured_channels = set(channels or ())
+    projected_sources = list(source_configs or ())
     replay = nonce_cache if nonce_cache is not None else NonceCache()
     app = FastAPI(title="ach-agent-harness-channels")
     state = HealthState(ready=True)
@@ -62,6 +65,10 @@ def create_channels_app(
             status_code=200 if state.ready else 503,
             media_type="application/json",
         )
+
+    @app.get("/internal/v1/config", response_model=ChannelInputs)
+    async def config() -> ChannelInputs:
+        return ChannelInputs(agentName=agent, channels=projected_sources)
 
     async def authenticated_body(request: Request) -> tuple[bytes, str] | Response:
         nonce = request.headers.get(NONCE_HEADER, "")

@@ -14,6 +14,7 @@ import httpx
 
 from ach_agent.channels.envelopes import (
     Admission,
+    ChannelInputs,
     Completion,
     EventEnvelope,
     EventRef,
@@ -56,8 +57,9 @@ class ChannelsClient:
         nonce_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
         poll_interval: float = 0.25,
         wait_timeout: float | None = None,
+        socket_path: str | None = None,
     ) -> None:
-        self.base_url = base_url.rstrip("/")
+        self.base_url = "http://ach-internal" if socket_path else base_url.rstrip("/")
         self.key = key
         self.agent = agent
         self.channel_name = channel_name
@@ -66,7 +68,11 @@ class ChannelsClient:
         self._poll_interval = poll_interval
         self._wait_timeout = wait_timeout
         self._owns_client = http_client is None
-        self._http = http_client or httpx.AsyncClient(base_url=self.base_url, timeout=timeout)
+        self._http = http_client or httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=timeout,
+            transport=httpx.AsyncHTTPTransport(uds=socket_path) if socket_path else None,
+        )
         self._closed = False
         self._operations: set[asyncio.Task[Any]] = set()
 
@@ -155,6 +161,25 @@ class ChannelsClient:
         response_body, status = await self._post("/internal/v1/readyz", body)
         payload = self._parse_object(response_body)
         return status == 200 and payload.get("kind") == "ready" and payload.get("status") is True
+
+    async def fetch_config(self) -> ChannelInputs:
+        """Fetch the typed source-only projection before starting adapters."""
+        operation = self._begin_operation()
+        try:
+            try:
+                response = await self._http.get("/internal/v1/config")
+                response_body = response.content
+                status = response.status_code
+            except (httpx.HTTPError, OSError) as exc:
+                raise SubmissionFailed(f"channel configuration request failed: {exc}") from exc
+            if status != 200:
+                raise SubmissionFailed("channel configuration fetch failed")
+            try:
+                return ChannelInputs.model_validate_json(response_body)
+            except Exception as exc:
+                raise SubmissionFailed("malformed channel configuration") from exc
+        finally:
+            self._end_operation(operation)
 
     async def _wait(self, ref: EventRef) -> Completion:
         if ref.agent != self.agent:

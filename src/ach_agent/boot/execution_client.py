@@ -179,12 +179,13 @@ class ExecutionClient:
 
     def __init__(
         self,
-        base_url: str,
+        base_url: str = "http://ach-internal",
         *,
         controller_id: str,
         instance_id: str | None = None,
         timeout: float | None = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        socket_path: str | None = None,
     ) -> None:
         limits = httpx.Limits(max_connections=8, max_keepalive_connections=8)
         control_limits = httpx.Limits(max_connections=2, max_keepalive_connections=2)
@@ -192,18 +193,24 @@ class ExecutionClient:
         self.controller_id = controller_id
         self.instance_id = instance_id
         self.timeout = timeout or 30.0
-        self.base_url = base_url.rstrip("/")
+        self.base_url = "http://ach-internal" if socket_path else base_url.rstrip("/")
+
+        def client_transport() -> httpx.AsyncBaseTransport | None:
+            if socket_path is not None:
+                return httpx.AsyncHTTPTransport(uds=socket_path)
+            return transport
+
         self.controller_client = httpx.AsyncClient(
             base_url=self.base_url,
             timeout=None,
             limits=controller_limits,
-            transport=transport,
+            transport=client_transport(),
         )
         self.control_client = httpx.AsyncClient(
             base_url=self.base_url,
             timeout=timeout,
             limits=control_limits,
-            transport=transport,
+            transport=client_transport(),
         )
         # Long release/cancel responses may wait for native and hook cleanup. Keep
         # them away from both the short priority ACKs and ordinary control calls.
@@ -211,7 +218,7 @@ class ExecutionClient:
             base_url=self.base_url,
             timeout=None,
             limits=httpx.Limits(max_connections=8, max_keepalive_connections=8),
-            transport=transport,
+            transport=client_transport(),
         )
         # Keep acknowledgement/cancellation capacity independent of session
         # operations and release calls, which may wait on native cleanup.
@@ -219,7 +226,7 @@ class ExecutionClient:
             base_url=self.base_url,
             timeout=timeout,
             limits=httpx.Limits(max_connections=2, max_keepalive_connections=2),
-            transport=transport,
+            transport=client_transport(),
         )
         # Acquisition can wait for a cold native launch.  Keep it out of the two
         # connections reserved for session-ready/cancel/release control traffic.
@@ -227,13 +234,13 @@ class ExecutionClient:
             base_url=self.base_url,
             timeout=None,
             limits=httpx.Limits(max_connections=4, max_keepalive_connections=4),
-            transport=transport,
+            transport=client_transport(),
         )
         self.stream_client = httpx.AsyncClient(
             base_url=self.base_url,
             timeout=None,
             limits=limits,
-            transport=transport,
+            transport=client_transport(),
         )
         self._controller_response: httpx.Response | None = None
         self._controller_iterator: AsyncIterator[bytes] | None = None

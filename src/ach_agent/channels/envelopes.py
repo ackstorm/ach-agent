@@ -11,6 +11,16 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from ach_agent.channels.message_event import MessageEvent
+from ach_agent.config.schema import ChannelSourceConfig
+
+
+class ChannelInputs(BaseModel):
+    """Source-only configuration fetched by C before constructing adapters."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True, populate_by_name=True)
+
+    agent_name: str = Field(alias="agentName")
+    channels: list[ChannelSourceConfig]
 
 
 def _finite_json(value: JsonValue) -> JsonValue:

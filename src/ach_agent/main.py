@@ -42,6 +42,7 @@ from ach_agent.boot.bootstrap import (
 from ach_agent.boot.completions import CompletionHandler, CompletionRegistry
 from ach_agent.boot.engine_runner import make_engine_runner
 from ach_agent.boot.health import HealthState
+from ach_agent.boot.ipc import bind_listener
 from ach_agent.boot.paths import (
     harness_log_dir,
     write_pid_file,
@@ -1006,6 +1007,7 @@ async def _run_harness(
             hmac_key.encode(),
             agent=cfg.agent.name,
             channels=(channel.name for channel in cfg.channels),
+            source_configs=(source_configs[channel.name] for channel in cfg.channels),
             nonce_cache=NonceCache(
                 max_entries=min(65_536, max(4_096, cfg.limits.max_queued_total * 30 + 1_024))
             ),
@@ -1075,6 +1077,8 @@ async def _run_harness(
     else:
         host = cfg.health.host
         port = cfg.health.port
+    channel_socket = os.environ.get("ACH_CHANNEL_SOCKET", "").strip() if isolated_harness else ""
+    channel_listener = bind_listener(Path(channel_socket)) if channel_socket else None
     uv_config = uvicorn.Config(
         app=app,
         host=host,
@@ -1082,8 +1086,12 @@ async def _run_harness(
         log_level="warning",  # uvicorn internal logs; harness uses structlog
     )
     uv_server = uvicorn.Server(uv_config)
-    log.info("uvicorn starting", host=host, port=port)
-    tasks.append(asyncio.create_task(uv_server.serve()))
+    log.info("uvicorn starting", host=host, port=port, socket=channel_socket or None)
+    tasks.append(
+        asyncio.create_task(
+            uv_server.serve(sockets=[channel_listener] if channel_listener is not None else None)
+        )
+    )
 
     # Install SIGTERM handler via loop.add_signal_handler (NOT signal.signal).
     # RESEARCH Pitfall 2: uvicorn uses signal.signal() inside capture_signals() —
@@ -1155,6 +1163,9 @@ async def _run_harness(
             await a2a_facade.stop()
         await stats_sink.stop()
         await tool_sink.stop()
+        if channel_listener is not None:
+            channel_listener.close()
+            Path(channel_socket).unlink(missing_ok=True)
         # uvicorn's serve() task returns on its own once should_exit=True; await it
         # so its lifespan shutdown completes before asyncio.run tears the loop down.
         # This avoids the force-cancel CancelledError traceback the old sys.exit(0)
@@ -1193,6 +1204,9 @@ async def _run_harness(
             await a2a_facade.stop()
         await stats_sink.stop()
         await tool_sink.stop()
+        if channel_listener is not None:
+            channel_listener.close()
+            Path(channel_socket).unlink(missing_ok=True)
         await asyncio.gather(*tasks, return_exceptions=True)
         log.info("ach-agent shutdown complete")
 

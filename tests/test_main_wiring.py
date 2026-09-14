@@ -108,8 +108,6 @@ class _HookRunnerClient(RunnerClient):
     async def prepare_workspace(self, request: Any) -> dict[str, str]:
         await self.pool.begin_session(request.session_key, self._cleanup)
         self.pool.calls.append("prepare_workspace")
-        if request.prepare is not None:
-            self.pool.calls.append("prepare")
         if self.prepare_error is not None:
             await self.pool.discard(request.session_key)
             raise self.prepare_error

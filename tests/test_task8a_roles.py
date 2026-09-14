@@ -163,7 +163,6 @@ def test_public_context_paths_are_separate_from_engine_home(tmp_path: Path) -> N
 
     paths = resolve_role_paths(cfg)
     assert paths.engine_home != paths.public_context
-    assert paths.harness_scratch != paths.engine_home
     assert paths.public_context.parent == tmp_path
 
 

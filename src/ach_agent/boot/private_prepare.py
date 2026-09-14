@@ -37,8 +37,7 @@ class _PrivateCleanupContext:
 class PrivateCleanupRegistry:
     """Bounded cleanup contexts correlated with engine stop events.
 
-    ``scratch_root`` remains an ignored registration argument for compatibility with
-    the runner while callers finish migrating from the old private registry name.
+    Contexts contain only workspace and hook data needed for ACK handling.
     """
 
     def __init__(self, *, max_contexts: int = 64) -> None:
@@ -55,11 +54,9 @@ class PrivateCleanupRegistry:
         invocation_id: str,
         event: MessageEvent,
         workspace: Path,
-        scratch_root: Path,
         cfg: PrepareBlock,
     ) -> None:
         """Store hook context before the corresponding workspace reservation."""
-        del scratch_root
         if self._closed:
             raise PrivatePrepareFailed("private cleanup registry is closed")
         if invocation_id in self._contexts or invocation_id in self._task_by_invocation:

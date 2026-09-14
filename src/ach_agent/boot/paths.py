@@ -18,13 +18,11 @@ log = structlog.get_logger(__name__)
 class RolePaths:
     """Role-owned filesystem roots for split boot.
 
-    ``public_context`` is the only hydration output visible to the engine.  The
-    harness state/scratch roots and engine home remain separate even when they share
-    an operator-provided persistence mount.
+    ``public_context`` is the only hydration output visible to the engine. Harness
+    state and engine home remain separate even when they share an operator mount.
     """
 
     harness_state: Path
-    harness_scratch: Path
     engine_home: Path
     work_dir: Path
     public_context: Path
@@ -53,7 +51,6 @@ def resolve_role_paths(cfg: AgentConfig) -> RolePaths:
     work_dir = trusted(cfg.engine.work_dir or engine_home / "workspace")
     return RolePaths(
         harness_state=harness_state,
-        harness_scratch=Path("/tmp/ach-private"),
         engine_home=engine_home,
         work_dir=work_dir,
         public_context=public_context,
@@ -127,10 +124,3 @@ def harness_log_dir() -> Path:
     d.mkdir(parents=True, exist_ok=True)
     return d
 
-
-def private_scratch_dir() -> Path:
-    """Harness-private parent for credential-bearing preparation scratch trees."""
-    d = Path("/tmp/ach-private")
-    d.mkdir(mode=0o700, parents=True, exist_ok=True)
-    d.chmod(0o700)
-    return d

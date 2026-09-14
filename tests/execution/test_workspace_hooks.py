@@ -411,7 +411,6 @@ async def test_real_http_registry_orders_warm_expiry_before_same_lane_prepare(
                 old.invocation_id,
                 old_event,
                 Path(old.work_dir),
-                tmp_path / "scratch",
                 PrepareBlock.model_validate({"script": "true"}),
             )
             await client.prepare_workspace(old)
@@ -456,7 +455,6 @@ async def test_real_http_registry_orders_warm_expiry_before_same_lane_prepare(
                 new.invocation_id,
                 new_event,
                 Path(new.work_dir),
-                tmp_path / "scratch",
                 PrepareBlock.model_validate({"script": "true"}),
             )
             preparing = asyncio.create_task(client.prepare_workspace(new))

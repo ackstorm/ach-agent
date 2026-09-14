@@ -87,7 +87,6 @@ def make_engine_runner(
     private_cleanup_registry: PrivateCleanupRegistry | None = None,
 ) -> Callable[..., Any]:
     """Build the router runner using one concrete ExecutionClient."""
-    from ach_agent.boot.paths import private_scratch_dir
     from ach_agent.boot.private_prepare import (
         PrivateCleanupRegistry,
     )
@@ -210,7 +209,6 @@ def make_engine_runner(
                         invocation_id,
                         event,
                         expected_workspace,
-                        private_scratch_dir(),
                         cleanup_cfg,
                     )
                     private_registered = True

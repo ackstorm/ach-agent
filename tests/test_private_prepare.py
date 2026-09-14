@@ -46,7 +46,7 @@ async def test_registry_correlates_stop_event_and_acknowledges(tmp_path: Path) -
     event = _event()
     registry = PrivateCleanupRegistry(max_contexts=2)
     cfg = PrepareBlock.model_validate({"script": "true"})
-    await registry.register("invocation", event, tmp_path / "workspace", tmp_path / "scratch", cfg)
+    await registry.register("invocation", event, tmp_path / "workspace", cfg)
 
     mismatched = _stopped(event, "invocation").model_copy(update={"event_id": "wrong"})
     acknowledgements: list[str] = []
@@ -75,7 +75,7 @@ async def test_registry_dispatches_bounded_callbacks(tmp_path: Path) -> None:
         event = _event(number + 1)
         invocation_id = f"invocation-{number}"
         await registry.register(
-            invocation_id, event, tmp_path / "workspace", tmp_path / "scratch", cfg
+            invocation_id, event, tmp_path / "workspace", cfg
         )
         events.append(_stopped(event, invocation_id))
     for event in events:
@@ -95,9 +95,9 @@ async def test_registry_rejects_duplicate_and_overflow_contexts(tmp_path: Path) 
     cfg = PrepareBlock.model_validate({"script": "true"})
     registry = PrivateCleanupRegistry(max_contexts=1)
     event = _event()
-    await registry.register("one", event, tmp_path / "workspace", tmp_path / "scratch", cfg)
+    await registry.register("one", event, tmp_path / "workspace", cfg)
     with pytest.raises(PrivatePrepareFailed, match="already registered"):
-        await registry.register("one", event, tmp_path / "workspace", tmp_path / "scratch", cfg)
+        await registry.register("one", event, tmp_path / "workspace", cfg)
     with pytest.raises(PrivatePrepareFailed, match="limit reached"):
-        await registry.register("two", event, tmp_path / "workspace", tmp_path / "scratch", cfg)
+        await registry.register("two", event, tmp_path / "workspace", cfg)
     await registry.close()

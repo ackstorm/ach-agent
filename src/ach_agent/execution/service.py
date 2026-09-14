@@ -179,6 +179,7 @@ class ExecutionService:
         self.driver = driver
         self.pool = EnginePool(driver=driver, sessions_map=sessions_map, strict_cleanup=True)
         self._configured = driver is not None
+        self._public_config: PublicEngineConfig | None = None
         self._sessions_map = sessions_map
         self._execution_started = False
         self._invocations: dict[str, _Invocation] = {}
@@ -220,6 +221,16 @@ class ExecutionService:
 
     async def configure(self, public: PublicEngineConfig) -> None:
         if self._configured:
+            previous = self._public_config
+            if previous is not None and (
+                previous.engine_type != public.engine_type
+                or previous.home != public.home
+                or previous.work_dir != public.work_dir
+                or previous.persistence_enabled != public.persistence_enabled
+                or previous.persistence_mount_path != public.persistence_mount_path
+                or previous.public_context != public.public_context
+            ):
+                raise RuntimeError("engine layout changed; restart required")
             return
         if public.engine_type == "pi":
             from ach_agent.engine.pi.driver import PiDriver
@@ -252,6 +263,7 @@ class ExecutionService:
         self.driver = driver
         self.pool = EnginePool(driver=driver, sessions_map=self._sessions_map, strict_cleanup=True)
         self._configured = True
+        self._public_config = public
 
     async def claim_controller(
         self, controller_id: str, config: PublicEngineConfig | None = None
@@ -260,10 +272,10 @@ class ExecutionService:
             raise RuntimeError("native cleanup failed; execution service is unhealthy")
         if self._controller_id is not None:
             raise RuntimeError("execution service already has a controller")
-        if not self._configured:
-            if config is None:
-                raise RuntimeError("execution service is not configured")
+        if config is not None:
             await self.configure(config)
+        elif not self._configured:
+            raise RuntimeError("execution service is not configured")
         self._controller_id = controller_id
         self._admission_open = True
         self._controller_events = asyncio.Queue(maxsize=64)
@@ -292,6 +304,8 @@ class ExecutionService:
     def _assert_controller(self, controller_id: str) -> None:
         if self._unhealthy:
             raise RuntimeError("native cleanup failed; execution service is unhealthy")
+        if not self._configured:
+            raise RuntimeError("execution service is not configured")
         if not self.controller_required and self._controller_id is None:
             return
         if not self._admission_open or self._controller_id != controller_id:

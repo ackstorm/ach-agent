@@ -36,13 +36,11 @@ from ach_agent.boot.bootstrap import (
     DEFAULT_ENGINE_URL,
     DEFAULT_HARNESS_HOST,
     DEFAULT_HARNESS_PORT,
-    bootstrap_paths,
-    publish_bootstraps,
 )
 from ach_agent.boot.completions import CompletionHandler, CompletionRegistry
 from ach_agent.boot.engine_runner import make_engine_runner
 from ach_agent.boot.health import HealthState
-from ach_agent.boot.ipc import bind_listener
+from ach_agent.boot.ipc import bind_listener, engine_socket_path
 from ach_agent.boot.paths import (
     harness_log_dir,
     write_pid_file,
@@ -58,7 +56,6 @@ from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a
 from ach_agent.channels.cron import CronScheduler
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.channels.queue import QueueConsumer
-from ach_agent.channels.signing import NonceCache
 from ach_agent.channels.tui import run_one_shot, run_tui_console
 from ach_agent.config import load_config
 from ach_agent.config.schema import (
@@ -703,35 +700,10 @@ async def _run_harness(
                     await a2a_facade.stop()
         log.info("ach-agent: native terminal session ended")
         return
-    hmac_key = os.environ.get("ACH_CHANNELS_HMAC_KEY", "")
     if isolated_harness:
-        harness_url = os.environ.get("ACH_HARNESS_URL", "").strip()
-        if not harness_url:
-            harness_host = os.environ.get("ACH_HARNESS_HOST", DEFAULT_HARNESS_HOST)
-            try:
-                harness_port = int(os.environ.get("ACH_HARNESS_PORT", str(DEFAULT_HARNESS_PORT)))
-            except ValueError as exc:
-                raise SystemExit("ACH_HARNESS_PORT must be an integer") from exc
-            harness_url = f"http://{harness_host}:{harness_port}"
-        try:
-            published = publish_bootstraps(
-                bootstrap_paths(),
-                channels_projection,
-                public_cfg.model_dump(mode="json", by_alias=True),
-                agent_name=cfg.agent.name,
-                harness_url=harness_url,
-                hmac_key=hmac_key or None,
-            )
-        except BaseException:
-            await stop_model_proxies()
-            if mcp_proxy is not None:
-                await mcp_proxy.stop()
-            if memory_facade is not None:
-                await memory_facade.stop()
-            if a2a_facade is not None:
-                await a2a_facade.stop()
-            raise
-        hmac_key = published.hmac_key
+        # H sends the typed public configuration during controller-open; no bootstrap
+        # artifact or signing key is needed for the engine/channel UDS seams.
+        pass
     # D-03/D-04: dedup store first — it opens/repairs state.db (fail-closed on a bad
     # mount). Native session ownership stays in E; only the bounded legacy map
     # export is sent through the startup import operation below.
@@ -775,7 +747,7 @@ async def _run_harness(
             if a2a_facade is not None:
                 await a2a_facade.stop()
             raise
-    engine_socket = os.environ.get("ACH_ENGINE_SOCKET", "").strip()
+    engine_socket = str(engine_socket_path())
     client = ExecutionClient(
         engine_url,
         controller_id=f"harness-{os.getpid()}-{id(cfg)}",
@@ -784,7 +756,7 @@ async def _run_harness(
     connect_deadline = asyncio.get_running_loop().time() + float(cfg.engine.startup_timeout_seconds)
     while True:
         try:
-            await client.connect()
+            await client.connect(public_cfg)
             break
         except Exception:
             if client.controller_lost:
@@ -792,7 +764,7 @@ async def _run_harness(
                 client = ExecutionClient(
                     engine_url,
                     controller_id=f"harness-{os.getpid()}-{id(cfg)}",
-                    socket_path=engine_socket or None,
+                    socket_path=engine_socket,
                 )
             if asyncio.get_running_loop().time() >= connect_deadline:
                 await client.close()
@@ -1007,18 +979,11 @@ async def _run_harness(
     if isolated_harness:
         from ach_agent.boot.channels_api import create_channels_app
 
-        if not hmac_key:
-            raise SystemExit("channels bootstrap did not provide an authentication key")
         app = create_channels_app(
             completion_registry,
-            hmac_key.encode(),
             agent=cfg.agent.name,
             channels=(channel.name for channel in cfg.channels),
             source_configs=(source_configs[channel.name] for channel in cfg.channels),
-            internal_auth=not bool(os.environ.get("ACH_CHANNEL_SOCKET", "").strip()),
-            nonce_cache=NonceCache(
-                max_entries=min(65_536, max(4_096, cfg.limits.max_queued_total * 30 + 1_024))
-            ),
         )
     else:
         app = create_app(

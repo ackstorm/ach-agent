@@ -427,8 +427,6 @@ async def run_channels(channel_config: JsonValue | None = None) -> None:
 
             config_client = ChannelsClient(
                 socket_path=channel_socket,
-                base_url="http://ach-internal",
-                key=b"",
                 agent=os.environ.get("ACH_AGENT_NAME", "").strip(),
             )
             try:
@@ -459,18 +457,6 @@ async def run_channels(channel_config: JsonValue | None = None) -> None:
         raise SplitRoleConfigError("channels role artifact must contain channels")
     raw_sources = sources
     channel_socket = os.environ.get("ACH_CHANNEL_SOCKET", "").strip()
-    key_text = os.environ.get("ACH_CHANNELS_HMAC_KEY", "")
-    if bootstrap is not None:
-        key_text = bootstrap.hmac_key
-    if not key_text and not channel_socket:
-        raise SplitRoleConfigError(
-            "ACH_CHANNELS_HMAC_KEY is required for a separated channels role"
-        )
-    harness_url = os.environ.get("ACH_HARNESS_URL", "").strip()
-    if bootstrap is not None:
-        harness_url = bootstrap.harness_url
-    if not harness_url and not channel_socket:
-        raise SplitRoleConfigError("channels bootstrap has no harness URL")
     from ach_agent import identity
 
     agent_name = os.environ.get("ACH_AGENT_NAME", "").strip()
@@ -491,8 +477,6 @@ async def run_channels(channel_config: JsonValue | None = None) -> None:
     if not agent_name:
         raise SplitRoleConfigError("ACH_AGENT_NAME is required for a separated channels role")
     client = ChannelsClient(
-        harness_url or "http://ach-internal",
-        key_text.encode(),
         agent=agent_name,
         poll_interval=2.0,
         socket_path=channel_socket or None,

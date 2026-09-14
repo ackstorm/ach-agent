@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import math
 import os
 import re
 import shutil
@@ -24,12 +23,6 @@ from typing import Any, cast
 import uvicorn
 from pydantic import JsonValue
 
-from ach_agent.boot.bootstrap import (
-    DEFAULT_CHANNELS_HOST,
-    DEFAULT_CHANNELS_PORT,
-    DEFAULT_ENGINE_HOST,
-    DEFAULT_ENGINE_PORT,
-)
 from ach_agent.boot.ipc import bind_listener, channel_socket_path, engine_socket_path
 from ach_agent.boot.paths import harness_log_dir, resolve_role_paths
 from ach_agent.boot.secrets import collect_secret_env_names, strip_forwarded_secrets
@@ -48,6 +41,11 @@ from ach_agent.execution.service import ExecutionService
 from ach_agent.execution.state import NativeSessionStore
 from ach_agent.execution.wire import PublicEngineConfig
 
+DEFAULT_CHANNELS_HOST = "0.0.0.0"
+DEFAULT_CHANNELS_PORT = 8080
+DEFAULT_ENGINE_HOST = "127.0.0.1"
+DEFAULT_ENGINE_PORT = 8081
+
 
 class SplitRoleConfigError(ValueError):
     """A full harness config cannot be safely projected to a split role."""
@@ -58,9 +56,9 @@ async def _run_native_terminal(service: ExecutionService) -> None:
     public = service.public_config
     if public is None or service.driver is None:
         raise SplitRoleConfigError("native terminal requires controller configuration")
+    from ach_agent.channels.tui import _CONSOLE_SESSION_KEY
     from ach_agent.engine import trace
     from ach_agent.execution.service import _engine_config
-    from ach_agent.channels.tui import _CONSOLE_SESSION_KEY
 
     token = public.trace_token
     if not token or not public.trace_parent or not public.trace_session_id:
@@ -221,9 +219,7 @@ def build_role_configs(
     environment; no value is serialized into this projection.
     """
     engine_env_names = _engine_env_names(cfg)
-    engine_env = {
-        name: os.environ[name] for name in engine_env_names if name in os.environ
-    }
+    engine_env = {name: os.environ[name] for name in engine_env_names if name in os.environ}
     paths = resolve_role_paths(cfg)
     channels: dict[str, JsonValue] = {
         "schemaVersion": "1",
@@ -276,21 +272,31 @@ async def run_engine(
         app = create_execution_app(service)
         listener = bind_listener(engine_socket_path())
         server = uvicorn.Server(
-            uvicorn.Config(app=app, host=DEFAULT_ENGINE_HOST, port=DEFAULT_ENGINE_PORT, log_level="warning")
+            uvicorn.Config(
+                app=app,
+                host=DEFAULT_ENGINE_HOST,
+                port=DEFAULT_ENGINE_PORT,
+                log_level="warning",
+            )
         )
 
         async def run_terminal() -> None:
             await service.configured_event.wait()
-            native_task = asyncio.create_task(_run_native_terminal(service))
+            native_task: asyncio.Task[None] | None = asyncio.create_task(
+                _run_native_terminal(service)
+            )
             try:
                 while not native_task.done():
-                    if service.controller_id is None:
+                    if service.controller_id is None or server.should_exit:
                         native_task.cancel()
                         await asyncio.gather(native_task, return_exceptions=True)
                         return
                     await asyncio.sleep(0.05)
                 await native_task
             finally:
+                if native_task is not None and not native_task.done():
+                    native_task.cancel()
+                    await asyncio.gather(native_task, return_exceptions=True)
                 with contextlib.suppress(Exception):
                     await service.release_controller(service.controller_id or "")
                 server.should_exit = True
@@ -312,7 +318,12 @@ async def run_engine(
         app = create_execution_app(service)
         listener = bind_listener(engine_socket_path())
         server = uvicorn.Server(
-            uvicorn.Config(app=app, host=DEFAULT_ENGINE_HOST, port=DEFAULT_ENGINE_PORT, log_level="warning")
+            uvicorn.Config(
+                app=app,
+                host=DEFAULT_ENGINE_HOST,
+                port=DEFAULT_ENGINE_PORT,
+                log_level="warning",
+            )
         )
 
         async def stop_on_shutdown() -> None:
@@ -628,4 +639,3 @@ async def run_channels(channel_config: JsonValue | None = None) -> None:
             await queue.stop()
         await cron.stop()
         await client.close()
-

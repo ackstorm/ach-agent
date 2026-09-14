@@ -27,16 +27,11 @@ import signal
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import structlog
 import uvicorn
 
-from ach_agent.boot.bootstrap import (
-    DEFAULT_ENGINE_URL,
-    DEFAULT_HARNESS_HOST,
-    DEFAULT_HARNESS_PORT,
-)
 from ach_agent.boot.completions import CompletionHandler, CompletionRegistry
 from ach_agent.boot.engine_runner import make_engine_runner
 from ach_agent.boot.health import HealthState
@@ -84,6 +79,9 @@ from ach_agent.memory.ach_memory import excluded_mcp_server
 from ach_agent.memory.ach_memory_facade import AchMemoryFacade
 from ach_agent.router import Router
 from ach_agent.security.preflight import run_preflight
+
+DEFAULT_HARNESS_HOST = "127.0.0.1"
+DEFAULT_HARNESS_PORT = 8090
 
 # configure_logging() is called at module TOP (not in main()) so that any
 # log emission during import (e.g. validation warnings) is already redacted.
@@ -756,7 +754,11 @@ async def _run_harness(
             if a2a_facade is not None:
                 await a2a_facade.stop()
             raise
-    engine_socket = str(engine_socket_path(local_runtime_dir)) if local_runtime_dir else str(engine_socket_path())
+    engine_socket = (
+        str(engine_socket_path(local_runtime_dir))
+        if local_runtime_dir
+        else str(engine_socket_path())
+    )
     client = ExecutionClient(
         engine_url,
         controller_id=f"harness-{os.getpid()}-{id(cfg)}",

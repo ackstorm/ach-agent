@@ -34,9 +34,9 @@ from ach_agent.execution.state import MAX_MIGRATION_ROWS, LegacySessionRow
 from ach_agent.execution.wire import (
     AcquireRequest,
     ControllerHello,
-    PublicEngineConfig,
     ExecutionEvent,
     ExecutionHandle,
+    PublicEngineConfig,
     ReleaseRequest,
     SessionImportRequest,
     SessionImportRow,

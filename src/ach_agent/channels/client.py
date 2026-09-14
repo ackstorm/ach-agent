@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from ach_agent.boot.ipc import channel_socket_path
 from ach_agent.channels.envelopes import (
     Admission,
     ChannelInputs,
@@ -20,7 +21,6 @@ from ach_agent.channels.envelopes import (
     Submission,
 )
 from ach_agent.channels.message_event import MessageEvent
-from ach_agent.boot.ipc import channel_socket_path
 from ach_agent.router.router import RouterAdmitResult
 
 MAX_REQUEST_BODY_BYTES = 1 * 1024 * 1024

@@ -66,7 +66,9 @@ def create_channels_app(
         if isinstance(raw_body, Response):
             return raw_body
         if state.draining:
-            return json_response(503, {"kind": "error", "error": "harness is draining", "retry": True})
+            return json_response(
+                503, {"kind": "error", "error": "harness is draining", "retry": True}
+            )
         try:
             payload = _object(raw_body)
             if payload.get("agent") != agent:
@@ -126,7 +128,9 @@ def create_channels_app(
             completion = registry.lookup(ref)
         except Exception as exc:
             return json_response(400, {"kind": "error", "error": str(exc)})
-        return json_response(200, {"kind": "completion", "completion": completion.model_dump(mode="json")})
+        return json_response(
+            200, {"kind": "completion", "completion": completion.model_dump(mode="json")}
+        )
 
     return app
 

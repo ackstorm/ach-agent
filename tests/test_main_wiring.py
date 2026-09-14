@@ -99,36 +99,53 @@ def _hook_event() -> MessageEvent:
 
 
 class _HookRunnerClient(RunnerClient):
-    """Test seam that models service-side public hook ordering and reservation cleanup."""
+    """Test seam that models E reservation ordering and cleanup notification."""
 
     def __init__(self, pool: Any, driver: Any, *, prepare_error: Exception | None = None) -> None:
         super().__init__(pool, driver)
         self.prepare_error = prepare_error
+        self._workspace_keys: dict[str, str] = {}
 
     async def prepare_workspace(self, request: Any) -> dict[str, str]:
         await self.pool.begin_session(request.session_key, self._cleanup)
         self.pool.calls.append("prepare_workspace")
+        self._workspace_keys[request.invocation_id] = request.session_key
         if self.prepare_error is not None:
             await self.pool.discard(request.session_key)
             raise self.prepare_error
         return await super().prepare_workspace(request)
 
+    async def cancel(self, controller_id: str, invocation_id: str) -> None:
+        session_key = self._workspace_keys.pop(invocation_id, invocation_id)
+        self.pool.calls.append("cancel")
+        await self.pool.discard(session_key)
+
     async def _cleanup(self) -> None:
         self.pool.calls.append("cleanup")
 
 
-async def test_engine_runner_registers_cleanup_before_prepare(tmp_path: Path) -> None:
+async def test_engine_runner_runs_h_prepare_after_e_reservation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from ach_agent.boot.engine_runner import make_engine_runner
 
     pool = _HookPool()
+
+    async def h_prepare(*_args: Any, **_kwargs: Any) -> None:
+        pool.calls.append("h_prepare")
+
+    monkeypatch.setattr("ach_agent.boot.engine_runner.run_prepare", h_prepare)
     runner = make_engine_runner(
         client=_HookRunnerClient(pool, SimpleNamespace()),
         engine_cfg=PublicEngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
         max_invocation_seconds=30,
         channels_by_name={"hooks": _hook_channel()},
     )
-    await runner(_hook_event(), lambda: None)
-    assert pool.calls == ["begin", "prepare_workspace", "acquire", "release:0.0"]
+    try:
+        await runner(_hook_event(), lambda: None)
+    finally:
+        await runner.close()
+    assert pool.calls == ["begin", "prepare_workspace", "h_prepare", "acquire", "release:0.0"]
 
 
 async def test_webhook_script_runner_never_acquires_an_engine(tmp_path: Path) -> None:
@@ -163,19 +180,30 @@ async def test_webhook_script_runner_never_acquires_an_engine(tmp_path: Path) ->
     assert pool.calls == []
 
 
-async def test_prepare_failure_discards_reserved_cleanup(tmp_path: Path) -> None:
+async def test_h_prepare_failure_discards_reserved_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from ach_agent.boot.engine_runner import make_engine_runner
+    from ach_agent.boot.prepare import PrepareFailed
 
     pool = _HookPool()
+
+    async def h_prepare(*_args: Any, **_kwargs: Any) -> None:
+        raise PrepareFailed("broken")
+
+    monkeypatch.setattr("ach_agent.boot.engine_runner.run_prepare", h_prepare)
     runner = make_engine_runner(
-        client=_HookRunnerClient(pool, SimpleNamespace(), prepare_error=RuntimeError("broken")),
+        client=_HookRunnerClient(pool, SimpleNamespace()),
         engine_cfg=PublicEngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
         max_invocation_seconds=30,
         channels_by_name={"hooks": _hook_channel()},
     )
-    with pytest.raises(RuntimeError, match="broken"):
-        await runner(_hook_event(), lambda: None)
-    assert pool.calls == ["begin", "prepare_workspace", "discard", "cleanup"]
+    try:
+        with pytest.raises(PrepareFailed, match="broken"):
+            await runner(_hook_event(), lambda: None)
+    finally:
+        await runner.close()
+    assert pool.calls == ["begin", "prepare_workspace", "cancel", "discard", "cleanup"]
 
 
 async def test_launch_failure_discards_reserved_cleanup(tmp_path: Path) -> None:
@@ -190,7 +218,7 @@ async def test_launch_failure_discards_reserved_cleanup(tmp_path: Path) -> None:
     )
     with pytest.raises(RuntimeError, match="launch failed"):
         await runner(_hook_event(), lambda: None)
-    assert pool.calls == ["begin", "prepare_workspace", "acquire", "discard", "cleanup"]
+    assert pool.calls == ["begin", "prepare_workspace", "acquire", "cancel", "discard", "cleanup"]
 
 
 MR_PAYLOAD = {

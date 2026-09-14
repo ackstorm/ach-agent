@@ -16,7 +16,6 @@ import re
 import shutil
 import signal
 import sys
-from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -33,12 +32,8 @@ from ach_agent.config.schema import (
     LocalMcpServer,
     RemoteMcpServer,
 )
-from ach_agent.engine.base.driver import EngineDriver
-from ach_agent.engine.context import link_public_context
-from ach_agent.engine.opencode.driver import OpencodeDriver
 from ach_agent.execution.app import create_execution_app
 from ach_agent.execution.service import ExecutionService
-from ach_agent.execution.state import NativeSessionStore
 from ach_agent.execution.wire import PublicEngineConfig
 
 DEFAULT_CHANNELS_HOST = "0.0.0.0"
@@ -200,15 +195,6 @@ def _engine_env_names(cfg: AgentConfig) -> list[str]:
     return list(dict.fromkeys(names))
 
 
-def _open_session_store(public: PublicEngineConfig, home: Path) -> MutableMapping[str, str]:
-    """Select the engine-owned persistent map or the volatile boot map."""
-    if public.persistence_enabled:
-        return NativeSessionStore(home)
-    from ach_agent.engine.base.pool import _LRUSessionMap
-
-    return _LRUSessionMap()
-
-
 def build_role_configs(
     cfg: AgentConfig, *, split_mode: bool = True
 ) -> tuple[dict[str, JsonValue], dict[str, JsonValue]]:
@@ -267,232 +253,58 @@ async def run_engine(
     public_config: JsonValue | None = None, *, terminal_mode: bool = False
 ) -> None:
     """Start the engine HTTP role with no native process at endpoint boot."""
-    if public_config is None and terminal_mode:
-        service = ExecutionService(None, None)
-        app = create_execution_app(service)
-        listener = bind_listener(engine_socket_path())
-        server = uvicorn.Server(
-            uvicorn.Config(
-                app=app,
-                host=DEFAULT_ENGINE_HOST,
-                port=DEFAULT_ENGINE_PORT,
-                log_level="warning",
-            )
-        )
-
-        async def run_terminal() -> None:
-            await service.configured_event.wait()
-            native_task: asyncio.Task[None] | None = asyncio.create_task(
-                _run_native_terminal(service)
-            )
-            try:
-                while not native_task.done():
-                    if service.controller_id is None or server.should_exit:
-                        native_task.cancel()
-                        await asyncio.gather(native_task, return_exceptions=True)
-                        return
-                    await asyncio.sleep(0.05)
-                await native_task
-            finally:
-                if native_task is not None and not native_task.done():
-                    native_task.cancel()
-                    await asyncio.gather(native_task, return_exceptions=True)
-                with contextlib.suppress(Exception):
-                    await service.release_controller(service.controller_id or "")
-                server.should_exit = True
-
-        terminal_task = asyncio.create_task(run_terminal())
-        try:
-            await server.serve(sockets=[listener])
-        finally:
-            if not terminal_task.done():
-                terminal_task.cancel()
-            await asyncio.gather(terminal_task, return_exceptions=True)
-            with contextlib.suppress(Exception):
-                await service.release_controller(service.controller_id or "")
-            listener.close()
-            engine_socket_path().unlink(missing_ok=True)
-        return
-    if public_config is None and not terminal_mode:
-        service = ExecutionService(None, None)
-        app = create_execution_app(service)
-        listener = bind_listener(engine_socket_path())
-        server = uvicorn.Server(
-            uvicorn.Config(
-                app=app,
-                host=DEFAULT_ENGINE_HOST,
-                port=DEFAULT_ENGINE_PORT,
-                log_level="warning",
-            )
-        )
-
-        async def stop_on_shutdown() -> None:
-            while not service.shutdown_requested and not server.should_exit:
-                await asyncio.sleep(0.05)
-            with contextlib.suppress(Exception):
-                await service.release_controller(service.controller_id or "")
-            server.should_exit = True
-
-        watcher = asyncio.create_task(stop_on_shutdown())
-        try:
-            await server.serve(sockets=[listener])
-        finally:
-            watcher.cancel()
-            await asyncio.gather(watcher, return_exceptions=True)
-            with contextlib.suppress(Exception):
-                await service.release_controller(service.controller_id or "")
-            listener.close()
-            engine_socket_path().unlink(missing_ok=True)
-        return
-    if public_config is None:
-        raise SplitRoleConfigError("engine configuration must arrive during controller-open")
-    public = PublicEngineConfig.model_validate(public_config)
-    home = Path(public.home or "/tmp/ach-home")
-    work_dir = Path(public.work_dir or home / "workspace")
-    public_context = Path(public.public_context or "/tmp/ach-public-context")
-    from ach_agent import identity
-
-    identity.configure(public.agent_name, os.environ.get("ACH_ENVIRONMENT", ""))
-    # E creates only its private home/workspace.  Public context may be a late-mounted
-    # read-only volume hydrated by H, so endpoint boot never creates H-owned paths.
-    home.mkdir(parents=True, exist_ok=True)
-    work_dir.mkdir(parents=True, exist_ok=True)
-    link_public_context(home, public_context, work_dir=work_dir, create_public=False)
-    store = _open_session_store(public, home)
-    if public.engine_type == "pi":
-        from ach_agent.engine.pi.driver import PiDriver
-
-        driver: EngineDriver = PiDriver()
-    else:
-        driver = OpencodeDriver()
-
-    if terminal_mode:
-        from ach_agent.engine import trace
-        from ach_agent.execution.service import _engine_config
-
-        try:
-            native_cfg = _engine_config(public)
-            from ach_agent.channels.tui import _CONSOLE_SESSION_KEY
-
-            token = public.trace_token
-            if not token:
-                raise SplitRoleConfigError("traceToken is required for native terminal mode")
-            if not public.trace_parent or not public.trace_session_id:
-                raise SplitRoleConfigError(
-                    "traceParent and traceSessionId are required for native terminal mode"
-                )
-            trace.adopt(token)
-            trace.adopt_tui(
-                token,
-                traceparent=public.trace_parent,
-                session_id=public.trace_session_id,
-            )
-            native_cfg.model_base_url = trace.tokenize_url(native_cfg.model_base_url, token)
-            native_cfg.mcp_local_urls = {
-                name: trace.tokenize_url(url, token)
-                for name, url in native_cfg.mcp_local_urls.items()
-            }
-            if public.engine_type == "pi":
-                from ach_agent.engine.pi.driver import PiDriver
-
-                await PiDriver().run_tui(native_cfg, _CONSOLE_SESSION_KEY)
-                return
-            from ach_agent.engine.lifecycle import build_opencode_env
-
-            server_native = await driver.launch(native_cfg, _CONSOLE_SESSION_KEY)
-            try:
-                binary = shutil.which(native_cfg.binary_path)
-                if binary is None:
-                    raise RuntimeError(f"engine binary not found: {native_cfg.binary_path}")
-                config_path = server_native.config_path
-                env = (
-                    build_opencode_env(server_native.ephemeral_home, native_cfg, config_path)
-                    if config_path
-                    else {}
-                )
-                log_path = harness_log_dir() / "tui-attach.log"
-                previous_sigint = signal.getsignal(signal.SIGINT)
-                proc: asyncio.subprocess.Process | None = None
-                with log_path.open("a", encoding="utf-8") as log_file:
-                    try:
-                        # Keep H/E Python logs off the alternate screen while the
-                        # attach process inherits the real terminal descriptors.
-                        real_stderr = sys.stderr
-                        sys.stderr = log_file
-                        try:
-                            proc = await asyncio.create_subprocess_exec(
-                                binary,
-                                "attach",
-                                f"http://127.0.0.1:{server_native.port}",
-                                "--pure",
-                                env=env,
-                            )
-                            signal.signal(signal.SIGINT, signal.SIG_IGN)
-                            await proc.wait()
-                        finally:
-                            sys.stderr = real_stderr
-                    except asyncio.CancelledError:
-                        if proc is not None and proc.returncode is None:
-                            proc.terminate()
-                            with contextlib.suppress(asyncio.TimeoutError):
-                                await asyncio.wait_for(proc.wait(), timeout=5.0)
-                            if proc.returncode is None:
-                                proc.kill()
-                                await proc.wait()
-                        raise
-                    finally:
-                        signal.signal(signal.SIGINT, previous_sigint)
-            finally:
-                await driver.stop(server_native)
-        finally:
-            close = getattr(store, "close", None)
-            if close is not None:
-                close()
-        return
-    service = ExecutionService(driver, store)
+    service = ExecutionService(None, None)
+    if public_config is not None:
+        await service.configure(PublicEngineConfig.model_validate(public_config))
     app = create_execution_app(service)
-    socket_name = str(engine_socket_path())
-    host = DEFAULT_ENGINE_HOST
-    port = DEFAULT_ENGINE_PORT
-    listener = bind_listener(Path(socket_name)) if socket_name else None
+    listener = bind_listener(engine_socket_path())
     server = uvicorn.Server(
         uvicorn.Config(
             app=app,
-            host=host,
-            port=port,
+            host=DEFAULT_ENGINE_HOST,
+            port=DEFAULT_ENGINE_PORT,
             log_level="warning",
         )
     )
 
     async def stop_on_shutdown() -> None:
-        # Uvicorn waits for an open streaming response during graceful shutdown.
-        # Release the controller first for both an unhealthy service and an
-        # ordinary SIGTERM/should_exit request, so the held NDJSON response can
-        # finish and uvicorn can actually return from serve().
         while not service.shutdown_requested and not server.should_exit:
             await asyncio.sleep(0.05)
-        try:
+        with contextlib.suppress(Exception):
             await service.release_controller(service.controller_id or "")
+        server.should_exit = True
+
+    async def run_terminal() -> None:
+        await service.configured_event.wait()
+        native_task = asyncio.create_task(_run_native_terminal(service))
+        try:
+            while not native_task.done():
+                if service.controller_id is None or server.should_exit:
+                    native_task.cancel()
+                    await asyncio.gather(native_task, return_exceptions=True)
+                    return
+                await asyncio.sleep(0.05)
+            await native_task
         finally:
+            if not native_task.done():
+                native_task.cancel()
+                await asyncio.gather(native_task, return_exceptions=True)
+            with contextlib.suppress(Exception):
+                await service.release_controller(service.controller_id or "")
             server.should_exit = True
 
-    watcher = asyncio.create_task(stop_on_shutdown())
+    watcher = asyncio.create_task(run_terminal() if terminal_mode else stop_on_shutdown())
     try:
-        if listener is None:
-            await server.serve()
-        else:
-            await server.serve(sockets=[listener])
+        await server.serve(sockets=[listener])
     finally:
-        watcher.cancel()
+        if not watcher.done():
+            watcher.cancel()
         await asyncio.gather(watcher, return_exceptions=True)
         with contextlib.suppress(Exception):
             await service.release_controller(service.controller_id or "")
-        close = getattr(store, "close", None)
-        if close is not None:
-            close()
-        if listener is not None:
-            listener.close()
-            Path(socket_name).unlink(missing_ok=True)
+        await service.close()
+        listener.close()
+        engine_socket_path().unlink(missing_ok=True)
     if service.shutdown_requested or service.controller_cleanup_error:
         raise RuntimeError("engine role shutdown requested after unreliable cleanup")
 

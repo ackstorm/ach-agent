@@ -74,7 +74,7 @@ from ach_agent.engine.mcp_passthrough import to_engine_entry
 from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
 from ach_agent.engine.metrics import DRAIN_COMPLETED
 from ach_agent.engine.sanitized_env import add_secret_redaction, configure_logging
-from ach_agent.http.app import create_app
+from ach_agent.http.app import create_app, create_health_app
 from ach_agent.memory.ach_memory import excluded_mcp_server
 from ach_agent.memory.ach_memory_facade import AchMemoryFacade
 from ach_agent.router import Router
@@ -741,7 +741,11 @@ async def _run_harness(
     local_runtime_dir: Path | None = None
     if local_mode and not configured_engine_url:
         local_runtime_dir = Path(tempfile.mkdtemp(prefix="ach-runtime-", dir="/tmp"))
-        local_socket_env = {**local_engine_env, "ACH_RUNTIME_DIR": str(local_runtime_dir)}
+        local_socket_env = {
+            **local_engine_env,
+            "ACH_RUNTIME_DIR": str(local_runtime_dir),
+            "ACH_ENGINE_HEALTH_PORT": "0",
+        }
         try:
             local_engine = await LocalEngineProcess.start(env=local_socket_env)
             await local_engine.wait_ready(
@@ -1027,20 +1031,19 @@ async def _run_harness(
             channels=webhook_channels,
             handler=channel_handler,
             a2a_mounts=a2a_mounts,
+            lifespan_ready=False,
         )
     # Expose state so _drain can flip draining/ready (same ref as app.extra['state'])
     state: HealthState = app.extra["state"]
     readiness_task: asyncio.Task[None] | None = None
-    if isolated_harness:
-        # C must not observe H as ready until the private E endpoint is alive.
-        state.ready = False
+    state.ready = False
 
-        async def watch_engine_readiness() -> None:
-            while True:
-                await _refresh_engine_readiness(client, state)
-                await asyncio.sleep(0.5)
+    async def watch_engine_readiness() -> None:
+        while True:
+            await _refresh_engine_readiness(client, state)
+            await asyncio.sleep(0.5)
 
-        readiness_task = asyncio.create_task(watch_engine_readiness())
+    readiness_task = asyncio.create_task(watch_engine_readiness())
 
     # Step 7: wire channel adapters (D-08: one CronScheduler for ALL cron channels, SC#3)
     tasks: list[asyncio.Task[None]] = []
@@ -1081,9 +1084,18 @@ async def _run_harness(
     # channels additionally serve their routes on this same socket (topology A).
     # uvicorn shares the SAME event loop as the cron tasks — no thread pool,
     # single-process topology (spec §15 topology A).
+    health_server: Any = None
     if isolated_harness:
-        host = os.environ.get("ACH_HARNESS_HOST", DEFAULT_HARNESS_HOST)
+        host = os.environ.get("ACH_HARNESS_HOST", "0.0.0.0")
         port = int(os.environ.get("ACH_HARNESS_PORT", str(DEFAULT_HARNESS_PORT)))
+        health_server = uvicorn.Server(
+            uvicorn.Config(
+                app=create_health_app(state),
+                host=host,
+                port=port,
+                log_level="warning",
+            )
+        )
     else:
         host = cfg.health.host
         port = cfg.health.port
@@ -1102,6 +1114,8 @@ async def _run_harness(
             uv_server.serve(sockets=[channel_listener] if channel_listener is not None else None)
         )
     )
+    if health_server is not None:
+        tasks.append(asyncio.create_task(health_server.serve()))
 
     # Install SIGTERM handler via loop.add_signal_handler (NOT signal.signal).
     # RESEARCH Pitfall 2: uvicorn uses signal.signal() inside capture_signals() —
@@ -1150,6 +1164,8 @@ async def _run_harness(
             router=router,
             dedup_store=dedup_store,
         )
+        if health_server is not None:
+            health_server.should_exit = True
         for bridge in a2a_bridges:
             await bridge.shutdown()
         if readiness_task is not None:
@@ -1192,6 +1208,8 @@ async def _run_harness(
             router=router,
             dedup_store=dedup_store,
         )
+        if health_server is not None:
+            health_server.should_exit = True
         for bridge in a2a_bridges:
             await bridge.shutdown()
         if readiness_task is not None:

@@ -138,6 +138,27 @@ def _error_response(exc: Exception, *, workspace_confirmed: bool = True) -> JSON
     return JSONResponse({"detail": str(exc)}, status_code=500)
 
 
+def _execution_probe(service: ExecutionService, *, readiness: bool) -> JSONResponse:
+    if service._unhealthy or not service.initialized:
+        return JSONResponse(
+            {"status": "unhealthy" if service._unhealthy else "initializing"},
+            status_code=503,
+        )
+    return JSONResponse({"status": "ready" if readiness else "ok"}, status_code=200)
+
+
+def _register_execution_health_routes(app: FastAPI, service: ExecutionService) -> None:
+    """Register identical probe routes on the private and public engine apps."""
+
+    @app.get("/healthz")
+    async def healthz() -> JSONResponse:
+        return _execution_probe(service, readiness=False)
+
+    @app.get("/readyz")
+    async def readyz() -> JSONResponse:
+        return _execution_probe(service, readiness=True)
+
+
 def create_execution_app(service: ExecutionService) -> FastAPI:
     """Create the versioned mini-harness execution API."""
 
@@ -420,25 +441,11 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
             return service_error(exc)
         return JSONResponse({"status": "ok"})
 
-    @app.get("/healthz")
-    async def healthz() -> JSONResponse:
-        if service._unhealthy:
-            return JSONResponse({"status": "unhealthy"}, status_code=503)
-        if not service.initialized:
-            return JSONResponse({"status": "initializing"}, status_code=503)
-        return JSONResponse({"status": "ok"}, status_code=200)
-
-    @app.get("/readyz")
-    async def readyz() -> JSONResponse:
-        if service._unhealthy:
-            return JSONResponse({"status": "unhealthy"}, status_code=503)
-        if not service.initialized:
-            return JSONResponse({"status": "initializing"}, status_code=503)
-        return JSONResponse({"status": "ready"}, status_code=200)
+    _register_execution_health_routes(app, service)
 
     @app.get("/execution/v1/health")
     async def execution_health() -> JSONResponse:
-        return JSONResponse(
+        response = JSONResponse(
             {
                 "status": "unhealthy" if service._unhealthy else "ok",
                 "version": EXECUTION_API_VERSION,
@@ -446,11 +453,26 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
             },
             status_code=503 if service._unhealthy else 200,
         )
+        return response
 
     @app.get("/metrics")
     async def metrics() -> Response:
         from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+    return app
+
+
+def create_execution_health_app(service: ExecutionService) -> FastAPI:
+    """Build the engine's public probe surface without exposing execution routes."""
+    app = FastAPI(
+        title="ach-agent-execution-health",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+
+    _register_execution_health_routes(app, service)
 
     return app

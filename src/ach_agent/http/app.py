@@ -45,6 +45,8 @@ def create_app(
     channels: Sequence[ChannelSourceConfig],
     handler: MessageHandler,
     a2a_mounts: Sequence[tuple[str, Any]] | None = None,  # [(path, sub_app), ...] — A2A sub-apps
+    *,
+    lifespan_ready: bool = True,
 ) -> FastAPI:
     """Create the FastAPI app with all HTTP surface endpoints.
 
@@ -75,7 +77,8 @@ def create_app(
         the flag. Engine warmup is NOT part of the ready gate (spec §8.5/HTTP-02).
         """
         # Wiring is complete — channels are registered and the route is active
-        state.ready = True
+        if lifespan_ready:
+            state.ready = True
         log.info("http: app ready — inbound route listening", channel_count=len(channel_map))
         yield
         state.ready = False
@@ -209,5 +212,29 @@ def create_app(
     for mount_path, sub_app in a2a_mounts or []:
         app.mount(mount_path, sub_app)
         log.info("a2a: sub-app mounted", path=mount_path)
+
+    return app
+
+
+def create_health_app(state: HealthState | None = None) -> FastAPI:
+    """Build the public probe surface without exposing private application routes."""
+    health_state = state or HealthState()
+    app = FastAPI(
+        title="ach-agent-health",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+    app.extra["state"] = health_state
+
+    @app.get("/healthz")
+    async def healthz() -> JSONResponse:
+        return JSONResponse({"status": "ok"}, status_code=200)
+
+    @app.get("/readyz")
+    async def readyz() -> JSONResponse:
+        if not health_state.ready or health_state.draining:
+            return JSONResponse({"status": "not_ready"}, status_code=503)
+        return JSONResponse({"status": "ok"}, status_code=200)
 
     return app

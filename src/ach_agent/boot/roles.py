@@ -32,13 +32,13 @@ from ach_agent.config.schema import (
     LocalMcpServer,
     RemoteMcpServer,
 )
-from ach_agent.execution.app import create_execution_app
+from ach_agent.execution.app import create_execution_app, create_execution_health_app
 from ach_agent.execution.service import ExecutionService
 from ach_agent.execution.wire import PublicEngineConfig
 
 DEFAULT_CHANNELS_HOST = "0.0.0.0"
 DEFAULT_CHANNELS_PORT = 8080
-DEFAULT_ENGINE_HOST = "127.0.0.1"
+DEFAULT_ENGINE_HOST = "0.0.0.0"
 DEFAULT_ENGINE_PORT = 8081
 
 
@@ -270,12 +270,25 @@ async def run_engine(
     if public_config is not None:
         await service.configure(PublicEngineConfig.model_validate(public_config))
     app = create_execution_app(service)
+    health_app = create_execution_health_app(service)
+    try:
+        health_port = int(os.environ.get("ACH_ENGINE_HEALTH_PORT", str(DEFAULT_ENGINE_PORT)))
+    except ValueError as exc:
+        raise SplitRoleConfigError("ACH_ENGINE_HEALTH_PORT must be an integer") from exc
     listener = bind_listener(engine_socket_path())
     server = uvicorn.Server(
         uvicorn.Config(
             app=app,
             host=DEFAULT_ENGINE_HOST,
             port=DEFAULT_ENGINE_PORT,
+            log_level="warning",
+        )
+    )
+    health_server = uvicorn.Server(
+        uvicorn.Config(
+            app=health_app,
+            host=DEFAULT_ENGINE_HOST,
+            port=health_port,
             log_level="warning",
         )
     )
@@ -286,6 +299,7 @@ async def run_engine(
         with contextlib.suppress(Exception):
             await service.release_controller(service.controller_id or "")
         server.should_exit = True
+        health_server.should_exit = True
 
     async def run_terminal() -> None:
         await service.configured_event.wait()
@@ -305,12 +319,28 @@ async def run_engine(
             with contextlib.suppress(Exception):
                 await service.release_controller(service.controller_id or "")
             server.should_exit = True
+            health_server.should_exit = True
 
     watcher = asyncio.create_task(run_terminal() if terminal_mode else stop_on_shutdown())
+    serve_tasks: list[asyncio.Task[Any]] = [
+        asyncio.create_task(server.serve(sockets=[listener])),
+        asyncio.create_task(health_server.serve()),
+    ]
     watcher_error: BaseException | None = None
     try:
-        await server.serve(sockets=[listener])
+        done, _pending = await asyncio.wait(
+            serve_tasks,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in done:
+            task.result()
     finally:
+        server.should_exit = True
+        health_server.should_exit = True
+        for task in serve_tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*serve_tasks, return_exceptions=True)
         if not watcher.done():
             watcher.cancel()
         watcher_result = await asyncio.gather(watcher, return_exceptions=True)
@@ -444,7 +474,9 @@ async def run_channels(channel_config: JsonValue | None = None) -> None:
     http_sources = [
         source for source in source_configs if source.type in ("webhook", "webhook-script")
     ]
-    app = create_app(http_sources, client, a2a_mounts=a2a_mounts)
+    app = create_app(http_sources, client, a2a_mounts=a2a_mounts, lifespan_ready=False)
+    state = app.extra["state"]
+    state.ready = False
     host = os.environ.get("ACH_CHANNELS_HOST", DEFAULT_CHANNELS_HOST)
     try:
         port = int(os.environ.get("ACH_CHANNELS_PORT", str(DEFAULT_CHANNELS_PORT)))
@@ -459,12 +491,23 @@ async def run_channels(channel_config: JsonValue | None = None) -> None:
     for source_cfg in source_configs:
         if source_cfg.type == "queue":
             queues.append(QueueConsumer(source_cfg, handler=client))
+    async def watch_harness_readiness() -> None:
+        while not server.should_exit:
+            try:
+                state.ready = await client.probe_harness(probe_channel)
+            except Exception:
+                state.ready = False
+            await asyncio.sleep(0.5)
+
+    readiness_task = asyncio.create_task(watch_harness_readiness())
     try:
         await cron.start()
         for queue in queues:
             await queue.start()
         await server.serve()
     finally:
+        readiness_task.cancel()
+        await asyncio.gather(readiness_task, return_exceptions=True)
         for bridge in a2a_bridges:
             await bridge.shutdown()
         for queue in queues:

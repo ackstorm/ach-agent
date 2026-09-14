@@ -165,6 +165,45 @@ async def test_h_e_readiness_and_signed_c_probe_share_instance(fake_driver) -> N
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("health_status", "ready_status", "instance_id", "controller_lost"),
+    [
+        (503, 200, "instance", False),
+        (200, 503, "instance", False),
+        (200, 200, "other", False),
+        (200, 200, "instance", True),
+    ],
+)
+async def test_refresh_engine_readiness_fails_closed(
+    health_status: int,
+    ready_status: int,
+    instance_id: str,
+    controller_lost: bool,
+) -> None:
+    class Control:
+        async def get(self, path: str) -> httpx.Response:
+            if path == "/execution/v1/health":
+                return httpx.Response(
+                    health_status,
+                    json={"instance_id": instance_id},
+                )
+            return httpx.Response(ready_status, json={"status": "ready"})
+
+    client = type(
+        "Client",
+        (),
+        {
+            "control_client": Control(),
+            "instance_id": "instance",
+            "controller_lost": controller_lost,
+        },
+    )()
+    state = HealthState(ready=True)
+    await _refresh_engine_readiness(client, state)
+    assert state.ready is False
+
+
+@pytest.mark.asyncio
 async def test_graceful_stop_uses_long_cleanup_client_budget(fake_driver, monkeypatch) -> None:
     service = ExecutionService(fake_driver, {})
     app = create_execution_app(service)

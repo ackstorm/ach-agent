@@ -22,7 +22,7 @@ import ach_agent.engine.metrics  # noqa: F401
 from ach_agent import identity
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import ChannelConfig
-from ach_agent.http.app import create_app
+from ach_agent.http.app import create_app, create_health_app
 from ach_agent.router.router import RouterAdmitResult
 
 # ---------------------------------------------------------------------------
@@ -139,6 +139,32 @@ def test_healthz(monkeypatch: pytest.MonkeyPatch) -> None:
         resp = client.get("/healthz")
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
+
+
+def test_health_app_exposes_only_probe_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
+    app = create_health_app()
+    with TestClient(app) as client:
+        assert client.get("/healthz").status_code == 200
+        assert client.get("/readyz").status_code == 503
+        assert client.post("/channels/example/events").status_code == 404
+        assert client.get("/metrics").status_code == 404
+        assert client.get("/docs").status_code == 404
+    app.extra["state"].ready = True
+    with TestClient(app) as client:
+        assert client.get("/readyz").status_code == 200
+
+
+def test_externally_managed_readiness_stays_false_through_lifespan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(SECRET_ENV, "s3cr3t")
+    app = create_app([_make_channel_cfg()], FakeHandler(), lifespan_ready=False)
+    with TestClient(app) as client:
+        assert client.get("/readyz").status_code == 503
+        app.extra["state"].ready = True
+        assert client.get("/readyz").status_code == 200
+    assert app.extra["state"].ready is False
 
 
 def test_metrics_stamps_every_exposed_sample(monkeypatch: pytest.MonkeyPatch) -> None:

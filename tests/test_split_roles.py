@@ -58,12 +58,13 @@ def test_native_terminal_failure_propagates_after_server_cleanup(
             pass
 
     class FakeServer:
-        should_exit = False
+        instances: list["FakeServer"] = []
 
         def __init__(self, _config: object) -> None:
-            pass
+            self.should_exit = False
+            self.__class__.instances.append(self)
 
-        async def serve(self, *, sockets: list[FakeListener]) -> None:
+        async def serve(self, *, sockets: list[FakeListener] | None = None) -> None:
             while not self.should_exit:
                 await asyncio.sleep(0)
 
@@ -82,6 +83,8 @@ def test_native_terminal_failure_propagates_after_server_cleanup(
             await roles.run_engine(terminal_mode=True)
 
     asyncio.run(run())
+    assert len(FakeServer.instances) == 2
+    assert all(server.should_exit for server in FakeServer.instances)
 
 
 def test_engine_child_starts_without_native_process(tmp_path: Path) -> None:

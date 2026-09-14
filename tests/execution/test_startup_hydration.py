@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from ach_agent.execution.app import create_execution_app
+from ach_agent.execution.app import create_execution_app, create_execution_health_app
 from ach_agent.execution.service import ExecutionService
 from ach_agent.execution.wire import PublicEngineConfig
 
@@ -92,6 +92,18 @@ async def test_startup_failure_marks_service_unhealthy_and_requests_shutdown(
     assert service._unhealthy
     assert service.shutdown_requested
     assert await _status(create_execution_app(service), "/readyz") == 503
+
+
+@pytest.mark.asyncio
+async def test_execution_health_app_has_no_internal_routes(tmp_path: Path) -> None:
+    service = ExecutionService(None, None)
+    app = create_execution_health_app(service)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://e") as client:
+        assert (await client.get("/healthz")).status_code == 503
+        assert (await client.get("/readyz")).status_code == 503
+        assert (await client.get("/execution/v1/health")).status_code == 404
+    await service.close()
 
 
 @pytest.mark.asyncio

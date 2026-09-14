@@ -11,9 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Split channels, harness and native engine execution into roles communicating over
   two Unix sockets. The harness retains private configuration and managed credentials;
-  the mini-harness receives explicit public launch inputs and selected `engine.forwardEnv`
-  values. Native session migration, controller cleanup and bounded result correlation
+  the mini-harness receives explicit public launch inputs. Selected `engine.forwardEnv`
+  values come from the operator or local launcher, rather than the execution API.
+  Native session migration, controller cleanup and bounded result correlation
   preserve existing session and reply behavior. No internal HMAC or bootstrap files.
+- Startup hydration is downloaded by the harness into temporary shared storage,
+  installed and validated by the mini-harness in its own home, then removed from
+  the transfer volume before readiness. Native agents still start on acquired work.
+  A role healthcheck command hides endpoint details from deployment probes.
 - Hook `HOME` is now harness-private instead of `ACH_WORKSPACE`. Prepare and cleanup
   keep their working directories, shared workspace access and lifecycle. Scripts must
   put engine-visible output under `ACH_WORKSPACE`; ACH does not inspect Git configuration

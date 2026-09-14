@@ -86,21 +86,28 @@ async def test_reserves_exact_shared_workspace_path(fake_driver, tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_workspace_state_link_targets_shared_public_context_directly(tmp_path: Path) -> None:
+async def test_workspace_state_link_targets_installed_engine_context(tmp_path: Path) -> None:
     home = tmp_path / "engine-home"
     work = tmp_path / "work"
-    public = tmp_path / "public-context"
-    public.mkdir()
+    transfer = tmp_path / "transfer"
+    batch = transfer / ".ach-harness-shared-files-test"
+    (batch / "skills").mkdir(parents=True)
+    (batch / "prompts").mkdir()
+    (batch / "artifacts").mkdir()
     service = ExecutionService(None, {})
     await service.configure(
-        PublicEngineConfig(home=str(home), work_dir=str(work), public_context=str(public))
+        PublicEngineConfig(
+            binary_path="true",
+            home=str(home),
+            work_dir=str(work),
+            hydration_dir=str(batch),
+        )
     )
 
     workspace = prepare_workspace(str(home), str(work), "group/project:public")
-    assert (workspace / ".ach-state").resolve() == public.resolve()
-    (public / "prepared.txt").write_text("shared")
-    home.rename(tmp_path / "engine-home-unavailable")
-    assert (workspace / ".ach-state" / "prepared.txt").read_text() == "shared"
+    assert (workspace / ".ach-state").resolve() == (home / ".ach-state").resolve()
+    (home / ".ach-state" / "prepared.txt").write_text("installed")
+    assert (workspace / ".ach-state" / "prepared.txt").read_text() == "installed"
     await service.close()
 
 

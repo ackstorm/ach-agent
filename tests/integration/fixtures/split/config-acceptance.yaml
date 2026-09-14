@@ -18,8 +18,6 @@ persistence:
   mountPath: /var/lib/ach-agent
 engine:
   forwardEnv: [DEBUG, CUSTOM_TOOL_TOKEN]
-  home: /var/lib/ach-agent/home
-  workDir: /var/lib/ach-agent/workspace
   startupTimeoutSeconds: 30
   idleTtlSeconds: 30
 limits:

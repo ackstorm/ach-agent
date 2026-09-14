@@ -48,11 +48,8 @@ class PublicEngineConfig(_WireModel):
     home: str = ""
     work_dir: str = "/workspace"
     persistence_enabled: bool = Field(default=False, alias="persistenceEnabled")
-    persistence_mount_path: str = Field(default="", alias="persistenceMountPath")
-    public_context: str = Field(default="", alias="publicContext")
-    # H resolves the explicitly selected values and sends only this allowlisted map.
-    # repr=False keeps credentials out of accidental model representations/logs.
-    engine_env: dict[str, str] = Field(default_factory=dict, alias="engineEnv", repr=False)
+    hydration_dir: str = Field(default="", alias="hydrationDir")
+    engine_env_names: list[str] = Field(default_factory=list, alias="engineEnvNames")
     model: str = "gpt-4o-mini"
     model_type: str = "openai"
     params: dict[str, JsonValue] = Field(default_factory=dict)
@@ -79,7 +76,7 @@ class PublicEngineConfig(_WireModel):
 
     _params_finite = field_validator("params", "mcp_templates")(_finite_json)
 
-    @field_validator("home", "work_dir", "persistence_mount_path", "public_context")
+    @field_validator("home", "work_dir", "hydration_dir")
     @classmethod
     def trusted_paths(cls, value: str) -> str:
         if value:
@@ -88,13 +85,13 @@ class PublicEngineConfig(_WireModel):
                 raise ValueError("engine paths must be absolute and must not contain '..'")
         return value
 
-    @field_validator("engine_env")
+    @field_validator("engine_env_names")
     @classmethod
-    def valid_engine_env(cls, values: dict[str, str]) -> dict[str, str]:
+    def valid_engine_env_names(cls, values: list[str]) -> list[str]:
         import re
 
         if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) for name in values):
-            raise ValueError("engineEnv must contain valid environment variable names")
+            raise ValueError("engineEnvNames must contain valid environment variable names")
         managed = {
             "ACH_TOKEN",
             "ACH_API_KEY",
@@ -108,8 +105,6 @@ class PublicEngineConfig(_WireModel):
         leaked = sorted(set(values) & managed)
         if leaked:
             raise ValueError("engineEnv contains harness-managed names")
-        if any("\x00" in value for value in values.values()):
-            raise ValueError("engineEnv values must be compatible with subprocess environments")
         return values
 
 

@@ -71,10 +71,7 @@ def test_projection_carries_only_selected_values(monkeypatch: pytest.MonkeyPatch
 
     _channels, public = build_role_configs(cfg)
 
-    assert public["engineEnv"] == {
-        "DEBUG": "1",
-        "CUSTOM_TOOL_TOKEN": "synthetic-custom",
-    }
+    assert public["engineEnvNames"] == ["DEBUG", "CUSTOM_TOOL_TOKEN"]
     assert "synthetic-managed" not in str(public)
 
 
@@ -84,14 +81,14 @@ def test_local_projection_keeps_only_sanitized_forward_env_names() -> None:
     from ach_agent.boot.roles import build_role_configs
 
     _channels, public = build_role_configs(cfg, split_mode=False)
-    assert public["engineEnv"] == {}
+    assert public["engineEnvNames"] == ["SAFE_NATIVE_VAR"]
 
 
 def test_public_bootstrap_has_no_managed_credentials_or_full_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cfg = _cfg(
-        memory={"type": "codemem", "codemem": {"dbPath": "/var/lib/ach/state.db"}},
+        memory={"type": "codemem", "codemem": {"dbPath": "/var/lib/ach/home/state.db"}},
         persistence={"enabled": True, "mountPath": "/var/lib/ach"},
     )
 
@@ -102,7 +99,7 @@ def test_public_bootstrap_has_no_managed_credentials_or_full_config(
     assert "capability" not in public
     assert "channels" not in public
     assert "memory" not in public
-    assert public["codemem_db_path"] == "/var/lib/ach/state.db"
+    assert public["codemem_db_path"] == "/var/lib/ach/home/state.db"
     assert public["persistenceEnabled"] is True
     PublicEngineConfig.model_validate(public)
 
@@ -111,7 +108,7 @@ def test_default_codemem_path_preserves_existing_layout() -> None:
     from ach_agent.boot.roles import build_role_configs
 
     _channels, public = build_role_configs(_cfg(memory={"type": "codemem", "codemem": {}}))
-    assert public["codemem_db_path"] == "/tmp/ach-home/state/codemem.db"
+    assert public["codemem_db_path"] == "/tmp/ach-agent/home/state/codemem.db"
 
 
 def test_default_codemem_path_stays_stable_with_custom_volatile_home(tmp_path: Path) -> None:
@@ -121,7 +118,8 @@ def test_default_codemem_path_stays_stable_with_custom_volatile_home(tmp_path: P
         _cfg(
             memory={"type": "codemem", "codemem": {}},
             engine={"home": str(tmp_path / "custom-home")},
-        )
+        ),
+        split_mode=False,
     )
     assert public["codemem_db_path"] == "/tmp/ach-home/state/codemem.db"
 
@@ -156,14 +154,16 @@ def test_native_config_drops_public_tui_trace_metadata(
     assert not hasattr(config, "trace_session_id")
 
 
-def test_public_context_paths_are_separate_from_engine_home(tmp_path: Path) -> None:
+def test_distributed_paths_use_three_roots_and_transfer_mount(tmp_path: Path) -> None:
     cfg = _cfg(persistence={"enabled": True, "mountPath": str(tmp_path)})
 
     from ach_agent.boot.paths import resolve_role_paths
 
     paths = resolve_role_paths(cfg)
-    assert paths.engine_home != paths.public_context
-    assert paths.public_context.parent == tmp_path
+    assert paths.engine_home == tmp_path / "home"
+    assert paths.work_dir == tmp_path / "workspace"
+    assert paths.harness_state == tmp_path / "state"
+    assert paths.transfer_root == Path("/run/ach-agent/transfer")
 
 
 def test_role_paths_canonicalize_relative_trusted_roots(
@@ -174,7 +174,7 @@ def test_role_paths_canonicalize_relative_trusted_roots(
 
     from ach_agent.boot.paths import resolve_role_paths
 
-    paths = resolve_role_paths(cfg)
+    paths = resolve_role_paths(cfg, split_mode=False)
     assert paths.engine_home == (tmp_path / "engine-home").resolve()
     assert paths.work_dir == (tmp_path / "workspace").resolve()
 
@@ -192,21 +192,22 @@ def test_prepared_workspace_rejects_child_symlink_escape(tmp_path: Path) -> None
         prepare_workspace(str(tmp_path / "home"), str(work_dir), "session")
 
 
-def test_role_session_store_selection_is_persistent_or_volatile(tmp_path: Path) -> None:
+def test_role_session_store_selection_is_persistent_or_volatile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from ach_agent.engine.base.pool import _LRUSessionMap
     from ach_agent.execution.service import ExecutionService
     from ach_agent.execution.state import NativeSessionStore
 
     async def run() -> None:
+        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/fake-native")
         persistent_service = ExecutionService(None, None)
         await persistent_service.configure(
             PublicEngineConfig(
                 agent_name="persistent",
                 home=str(tmp_path / "persistent-home"),
                 work_dir=str(tmp_path / "persistent-work"),
-                public_context=str(tmp_path / "persistent-public"),
                 persistence_enabled=True,
-                persistence_mount_path=str(tmp_path),
             )
         )
         assert isinstance(persistent_service._sessions_map, NativeSessionStore)
@@ -218,7 +219,6 @@ def test_role_session_store_selection_is_persistent_or_volatile(tmp_path: Path) 
                 agent_name="volatile",
                 home=str(tmp_path / "volatile-home"),
                 work_dir=str(tmp_path / "volatile-work"),
-                public_context=str(tmp_path / "volatile-public"),
             )
         )
         assert isinstance(volatile_service._sessions_map, _LRUSessionMap)

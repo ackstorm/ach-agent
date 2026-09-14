@@ -38,6 +38,7 @@ def test_pod_has_three_restricted_ordinary_roles_and_no_init_or_host_sharing() -
     assert all(item["securityContext"]["allowPrivilegeEscalation"] is False for item in containers)
     assert all(item["securityContext"]["readOnlyRootFilesystem"] is True for item in containers)
     assert all("hostPath" not in volume for volume in spec["volumes"])
+    assert {item["image"] for item in containers} == {"ghcr.io/ackstorm/ach-agent:latest"}
 
 
 def test_pod_keeps_private_and_shared_mounts_narrow() -> None:
@@ -49,16 +50,12 @@ def test_pod_keeps_private_and_shared_mounts_narrow() -> None:
     engine_mounts = {item["mountPath"]: item for item in containers["engine"]["volumeMounts"]}
 
     assert "/var/lib/ach-agent/state" in harness_mounts
-    assert "/var/lib/ach-agent/state" in engine_mounts
-    assert (
-        harness_mounts["/var/lib/ach-agent/state"]["name"]
-        != engine_mounts["/var/lib/ach-agent/state"]["name"]
-    )
+    assert "/var/lib/ach-agent/state" not in engine_mounts
     assert "/var/lib/ach-agent/home" in engine_mounts
     assert "/var/lib/ach-agent/workspace" in harness_mounts
     assert "/var/lib/ach-agent/workspace" in engine_mounts
-    assert "/var/lib/ach-agent/public-context" in harness_mounts
-    assert "/var/lib/ach-agent/public-context" in engine_mounts
+    assert "/run/ach-agent/transfer" in harness_mounts
+    assert "/run/ach-agent/transfer" in engine_mounts
     assert "/var/lib/ach-agent/state" not in channel_mounts
     assert "/var/lib/ach-agent/workspace" not in channel_mounts
 
@@ -76,7 +73,9 @@ def test_roles_use_image_entrypoint_args_and_only_harness_gets_full_config() -> 
     assert "ACH_CHANNELS_HMAC_KEY" not in harness_env
     assert "ACH_CHANNELS_CONFIG_PATH" not in harness_env
     assert "ACH_ENGINE_CONFIG_PATH" not in harness_env
-    assert {item["name"] for item in (containers["channels"].get("env") or [])} == set()
+    assert {item["name"] for item in (containers["channels"].get("env") or [])} == {
+        "ACH_TOKEN", "ACH_BASE_URL"
+    }
     assert {item["name"] for item in (containers["engine"].get("env") or [])} == set()
 
     harness_mounts = {item["mountPath"]: item for item in containers["harness"]["volumeMounts"]}
@@ -89,20 +88,20 @@ def test_roles_use_image_entrypoint_args_and_only_harness_gets_full_config() -> 
     assert "/run/ach-agent/engine" not in channel_mounts
     assert engine_mounts["/run/ach-agent/engine"].get("readOnly") is not True
     assert "/run/ach-agent/channels" not in engine_mounts
-    assert all("containerPort" not in item for item in containers.values())
+    assert containers["channels"]["ports"][0]["containerPort"] == 8080
+    assert "ports" not in containers["harness"]
+    assert "ports" not in containers["engine"]
     for role in ("harness", "engine"):
         probe_text = str(containers[role]["startupProbe"])
-        assert "HTTPTransport" in probe_text
-        assert "/run/ach-agent/" in probe_text
-        assert "uds=" in probe_text
+        assert "ach_agent.healthcheck" in probe_text
     assert "8090" not in str(containers["harness"])
     assert "8081" not in str(containers["engine"])
     assert "/etc/ach-agent/config.yaml" not in str(containers["channels"])
     assert "/etc/ach-agent/config.yaml" not in str(containers["engine"])
     assert "/var/lib/ach-agent/state" not in str(containers["channels"])
     assert "/var/lib/ach-agent/home" not in str(containers["channels"])
-    assert "channel.sock" in str(containers["harness"]["startupProbe"])
-    assert "agent.sock" in str(containers["engine"]["startupProbe"])
+    assert "/run/ach-agent/transfer" in str(containers["harness"])
+    assert "/run/ach-agent/transfer" in str(containers["engine"])
 
 
 def test_compose_uses_one_network_namespace_and_named_role_volumes() -> None:
@@ -115,14 +114,14 @@ def test_compose_uses_one_network_namespace_and_named_role_volumes() -> None:
     assert services["engine"]["network_mode"] == "service:harness"
     assert services["harness"]["ports"] == ["8080:8080"]
     assert services["harness"].get("network_mode") != "host"
+    assert all(service["build"]["target"] == "default" for service in services.values())
     assert set(compose["volumes"]) >= {
         "harness-state",
         "engine-home",
-        "engine-codemem",
         "shared-workspace",
-        "public-context",
         "channels-ipc",
         "engine-ipc",
+        "transfer-ipc",
     }
     assert "ACH_CHANNELS_HMAC_KEY" not in str(compose)
     assert "ACH_CHANNELS_CONFIG_PATH" not in str(compose)
@@ -165,13 +164,15 @@ def test_all_split_manifests_use_socket_probes_and_no_bootstrap_contract() -> No
         assert "8081" not in text, path
     acceptance = (SPLIT / "compose-acceptance.yaml").read_text(encoding="utf-8")
     engine_block = acceptance.split("\n  engine:", 1)[1]
-    assert "DEBUG:" not in engine_block
-    assert "CUSTOM_TOOL_TOKEN:" not in engine_block
+    assert "DEBUG: engine-value" in engine_block
+    assert "CUSTOM_TOOL_TOKEN: engine-token" in engine_block
 
 
 def test_acceptance_fixtures_cover_harness_hooks_and_selected_env() -> None:
     for name in ("config-acceptance.yaml", "config-acceptance-pi.yaml"):
-        cfg = AgentConfig.model_validate(yaml.safe_load((FIXTURES / name).read_text(encoding="utf-8")))
+        cfg = AgentConfig.model_validate(
+            yaml.safe_load((FIXTURES / name).read_text(encoding="utf-8"))
+        )
         acceptance = next(channel for channel in cfg.channels if channel.name == "acceptance")
         assert acceptance.prepare is not None
         assert acceptance.cleanup is not None
@@ -188,7 +189,7 @@ def test_ephemeral_acceptance_fixture_is_nonpersistent() -> None:
         yaml.safe_load((FIXTURES / "config-ephemeral-acceptance.yaml").read_text(encoding="utf-8"))
     )
     assert cfg.persistence.enabled is False
-    assert cfg.engine.home == "/tmp/ach-home"
+    assert cfg.engine.home == ""
     assert any(channel.name == "acceptance" for channel in cfg.channels)
 
 
@@ -224,21 +225,22 @@ def test_ephemeral_artifacts_resolve_to_the_ephemeral_mount_map() -> None:
     _channels, projection = build_role_configs(cfg)
     public = PublicEngineConfig.model_validate(projection)
     assert public.persistence_enabled is False
-    assert public.home == "/tmp/ach-home"
-    assert public.work_dir == "/tmp/ach-home/workspace"
-    assert public.public_context == "/tmp/ach-public-context"
-    assert public.codemem_db_path == "/tmp/ach-home/state/codemem.db"
+    assert public.home == "/tmp/ach-agent/home"
+    assert public.work_dir == "/tmp/ach-agent/workspace"
+    assert public.hydration_dir == ""
+    assert public.codemem_db_path == "/tmp/ach-agent/home/state/codemem.db"
 
     compose = _documents(SPLIT / "compose-ephemeral.yaml")[0]
     services = compose["services"]
     harness = services["harness"]
+    channels = services["channels"]
     engine = services["engine"]
-    assert "/tmp/ach-harness-state:uid=10001,gid=10001" in harness["tmpfs"]
-    assert "/tmp/ach-home:uid=10001,gid=10001" in engine["tmpfs"]
-    assert any("/tmp/ach-home/workspace" in mount for mount in harness["volumes"])
-    assert any("/tmp/ach-home/workspace" in mount for mount in engine["volumes"])
-    assert any("/tmp/ach-public-context" in mount for mount in harness["volumes"])
-    assert any("/tmp/ach-public-context" in mount for mount in engine["volumes"])
+    assert all(service["build"]["target"] == "default" for service in services.values())
+    assert "ach_agent.healthcheck" in str(channels["healthcheck"])
+    assert "/tmp/ach-agent/state:uid=10001,gid=10001" in harness["tmpfs"]
+    assert "/tmp/ach-agent/home:uid=10001,gid=10001" in engine["tmpfs"]
+    assert any("/tmp/ach-agent/workspace" in mount for mount in harness["volumes"])
+    assert any("/tmp/ach-agent/workspace" in mount for mount in engine["volumes"])
     assert all(
         "/var/lib/ach-agent" not in mount
         for service in services.values()
@@ -246,4 +248,5 @@ def test_ephemeral_artifacts_resolve_to_the_ephemeral_mount_map() -> None:
     )
     assert any("ephemeral-channels-ipc" in mount for mount in services["harness"]["volumes"])
     assert any("ephemeral-engine-ipc" in mount for mount in services["harness"]["volumes"])
+    assert any("ephemeral-transfer-ipc" in mount for mount in services["harness"]["volumes"])
     assert "ACH_CHANNELS_HMAC_KEY" not in str(compose)

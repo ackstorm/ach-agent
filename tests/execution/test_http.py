@@ -107,7 +107,7 @@ async def test_unconfigured_execution_service_accepts_config_on_controller_open(
                     "config": PublicEngineConfig(
                         home=str(tmp_path / "home"),
                         work_dir=str(tmp_path / "work"),
-                        public_context=str(tmp_path / "public"),
+                        binary_path="true",
                     ).model_dump(mode="json", by_alias=True),
                 },
             ) as response:

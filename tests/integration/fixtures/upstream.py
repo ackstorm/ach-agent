@@ -8,7 +8,9 @@ the synthetic key at the model boundary.  No production code imports this module
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import tarfile
 from collections import Counter
 from typing import Any
 
@@ -53,9 +55,33 @@ async def hydrate(request: Request) -> JSONResponse:
         {
             "environment": "split-acceptance",
             "runtime": {"models": [{"id": "test-model", "endpoint": f"{base}/v1"}]},
-            "context": {},
+            "context": {
+                "skills": [
+                    {
+                        "name": "split-fixture-skill",
+                        "id": "split-fixture-skill",
+                        "downloadUrl": f"{base}/content/skill/split-fixture-skill",
+                    }
+                ]
+            },
         }
     )
+
+
+@app.get("/content/skill/split-fixture-skill")
+async def skill_fixture(request: Request) -> Response:
+    if not _authorized(request):
+        return JSONResponse({"detail": "unauthorized"}, status_code=401)
+    payload = io.BytesIO()
+    with tarfile.open(fileobj=payload, mode="w:gz") as archive:
+        content = (
+            b"# Split fixture skill\n\n"
+            b"Use this installed skill to verify startup hydration.\n"
+        )
+        info = tarfile.TarInfo("split-fixture-skill/SKILL.md")
+        info.size = len(content)
+        archive.addfile(info, io.BytesIO(content))
+    return Response(payload.getvalue(), media_type="application/gzip")
 
 
 @app.get("/v1/models")

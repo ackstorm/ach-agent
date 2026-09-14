@@ -51,69 +51,50 @@ mounts. Neither requires a hydration init container.
 All three roles use the image entrypoint and select their role through `args:
 ["--role", "harness|channels|engine"]`. H and E health checks use HTTP over
 their Unix sockets; C remains on public HTTP `0.0.0.0:8080`. Health checks allow
-a 300 second startup period.
+a 15 second startup delay and bounded health retry policy.
 
 The PVC-backed Pod example uses one claim with separate subpaths:
 
 | Owner | Mount | Physical PVC subpath | Purpose |
 | --- | --- | --- | --- |
-| H | `/var/lib/ach-agent/state` | `state` | dedup `state.db` (existing path) |
-| H + E | `/var/lib/ach-agent/workspace` | `workspace` | prepared session workspaces |
-| H | `/var/lib/ach-agent/public-context` | `public-context` | hydrated public prompts/artifacts |
-| E | `/var/lib/ach-agent/home` | `home` | native home/session files (existing path) |
-| E | `/var/lib/ach-agent/state` | `engine-codemem` | codemem DB and SQLite siblings |
+| H | `/var/lib/ach-agent/state` | `state` | dedup `state.db` |
+| H + E | `/var/lib/ach-agent/workspace` | `workspace` | prepared session workspaces and transient hydration handoff |
+| E | `/var/lib/ach-agent/home` | `home` | native home/session files and codemem DB |
+| H + E | `/run/ach-agent/transfer` | `transfer` | temporary startup hydration batches |
 
-The two `/state` mounts deliberately have different physical sources. The
-logical codemem path remains `<mountPath>/state/codemem.db`, while E cannot see
-H's `<mountPath>/state/state.db`. Channels receives only its source projection;
-it has no state, workspace, home, public-context, or PVC mounts.
+The three data roots are rendered from one generic base. H sees `state` and
+workspace; E sees `home` and workspace. Codemem is internal to E at
+`<base>/home/state/codemem.db`. Hydration is copied from a temporary transfer
+batch into E's home and the batch is deleted before readiness; no permanent
+shared context mount exists. Channels receives only its source projection.
 
-`config.yaml` is also a concrete custom path example: H and E use the
-role-owned `/var/lib/ach-agent/home` and `/var/lib/ach-agent/workspace` paths,
-while codemem uses E's separate `/var/lib/ach-agent/state` mount. If an
-operator chooses another `engine.home` or `engine.workDir`, mount those exact
-paths in E and the shared workspace in H/E.
+`config.yaml` uses the defaults derived from `persistence.mountPath`; operators
+only render the generic base and the three data roots. Explicit engine paths
+remain available for standalone deployments.
 
 For an ephemeral deployment, use the concrete `compose-ephemeral.yaml` example
 with `config-ephemeral.yaml`. H's persistence is
-disabled, H state is `/tmp/ach-harness-state`, E home/codemem are under
-`/tmp/ach-home`, and the shared workspace/public-context volumes are mounted
-at those same `/tmp` paths in both roles. This keeps H's hydrated public
-context visible to E. The private `/tmp` data disappears when its container
-exits; the shared named workspace and public-context volumes remain until the
-operator removes them (`docker compose ... down -v`). A Kubernetes renderer
-can apply the same explicit substitutions:
-PVC-backed `state`, `home`, `engine-codemem`, `workspace`, and
-`public-context` become five `emptyDir` volumes. No generic renderer is supplied.
+disabled, the generic base is `/tmp/ach-agent`; H state and E home are private
+tmpfs paths and the shared workspace is mounted in both roles. Startup
+hydration uses the temporary transfer mount and is copied into E's home. The
+private `/tmp` data disappears when its container
+exits; the shared named workspace volume remains until the operator removes it
+(`docker compose ... down -v`). A Kubernetes renderer
+can apply the same substitutions with three data volumes and the transfer
+`emptyDir`. No generic renderer is supplied.
 
-The operator must create the PVC subdirectories before using `subPath` mounts
-(or use its equivalent volume renderer), including `state`, `home`,
-`engine-codemem`, `workspace`, and `public-context`. No init
-container or download endpoint is part of this example. H hydrates public
-context before admitting the first invocation; E creates its own home/workspace
-links after receiving its public configuration over the socket and reports
-readiness independently.
+The deployment renderer owns volume and subpath setup. No init container or
+download endpoint is part of this example. H hydrates requested context before
+admitting the first invocation; E copies the temporary batch into its home and
+reports readiness independently.
 There is no additional filesystem readiness flag or socket handshake.
 
-## Existing codemem data relocation
-
-Before changing a persistent deployment, stop the old H/E pair and make an
-offline backup of the old `<mountPath>/state/codemem.db`; copy its `-wal` and
-`-shm` siblings too when they are present. While the old process is stopped,
-create the PVC's `engine-codemem` directory and copy the database and any
-present siblings as one coherent set, preserving ownership and permissions.
-Run `sqlite3 <new>/codemem.db 'PRAGMA integrity_check;'` (or the equivalent
-codemem SQLite check) before starting E. Leave H's `state/state.db` in `state`.
-
-Do not deploy with an empty `engine-codemem` directory while expecting old
-memory to appear: codemem can create a fresh database, which would silently
-discard the old history. A clean closed database may have no WAL/SHM files;
-their absence is valid for a fresh or cleanly checkpointed database. If an
-existing database is present with a WAL/SHM set, copy the present set
-coherently; if the backup is incomplete, stop the rollout and restore it. No
-automatic migration or reset is performed by these manifests.
+Legacy native data migration is agent-owned. Existing codemem state is copied
+into E's private `home/state` during the bounded handoff, while H's state stays
+in `state`; explicit distributed paths outside the role roots fail clearly.
+Standalone deployments retain their explicit path compatibility.
 
 `pod.yaml` references the full-config ConfigMap `ach-agent-config` and Secret
-`ach-agent-secrets`. Production ACH must render those objects, images, PVC,
-custom `engine.home`/`workDir` mount maps, and secret references. Adding these
+`ach-agent-secrets`. Production ACH must render those objects, images, generic
+data roots, and secret references. Adding these
 examples does not mutate a cluster or complete that separate repository handoff.

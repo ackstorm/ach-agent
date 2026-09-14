@@ -1,6 +1,8 @@
 # Channels, harness and engine: current split contract
 
-Status: implementation merged into local `main` on 2026-09-14. This document supersedes
+Status: the original split was merged into local `main` on 2026-09-14. The startup
+hydration and operator-storage update below is implemented and locally validated on
+`feat/operator-storage`; it has not been released. This document supersedes
 the archived split proposals and plans in `docs/superpowers/`. The
 [validation report](../reports/unix-split-validation.md) records what was exercised
 and on which revisions; it is evidence, not an alternative specification.
@@ -43,11 +45,31 @@ The full agent configuration is private to the harness. Channels receive their
 source inputs; the engine receives only explicitly selected public launch inputs,
 including proxy/model/MCP settings and workspace/engine parameters.
 
-`engine.forwardEnv` selects environment names whose values the harness resolves
-and sends to the mini-harness. This is deliberate exposure to the engine; it does
-not copy the whole harness environment. Managed upstream credentials stay in
+`engine.forwardEnv` selects environment names. The operator supplies those selected
+values to the Engine container; the standalone parent supplies them to its child.
+The execution API carries names only, and the mini-harness resolves them from its
+own environment. This is deliberate exposure to the engine; it does not copy the
+whole harness environment. Managed upstream credentials stay in
 harness-owned proxies. The mini-harness writes native OpenCode/Pi configuration;
 turns carry prepared prompts rather than the complete agent configuration.
+
+## Startup hydration
+
+Harness downloads using its credentials into a unique batch under the shared
+temporary `/run/ach-agent/transfer` mount. It resolves its prompt text before
+handing the batch path to the mini-harness through the existing controller-open
+request. The mini-harness installs real files in its own home, checks native boot
+configuration, and removes the batch before reporting startup success. Initialization
+does not wait for an event or launch a native conversation. Initialization failure
+makes the engine role unhealthy and terminates it; a later native launch failure
+remains an invocation failure.
+
+Distributed storage has three generic data roots: Harness-only `base/state`,
+Engine-only `base/home`, and shared `base/workspace`. `base` is the configured
+persistence mount or `/tmp/ach-agent`. Transfer storage is always temporary and
+separate. Native sessions and tool files stay inside Engine-owned storage; the
+operator does not render native-specific mounts. Channel hooks still use the
+workspace and have no responsibility for removing hydration downloads.
 
 ## Workspace, HOME and hooks
 
@@ -101,10 +123,14 @@ The prior preserve-behavior plan's five tasks are complete: characterization,
 selected environment forwarding, H-side hooks, Unix-socket configuration delivery,
 and packaging/real acceptance. The subsequent bounded cleanup is complete as well.
 Post-merge tests on `main`: 1,178 passed, 3 skipped; Ruff and strict mypy passed.
+The subsequent startup/storage update passes 1,230 tests (4 skipped), strict lint
+and schema checks. Real Pi/OpenCode Compose, native TUI, temporary storage and a
+Harness-process restart were exercised; see the validation report for image
+revisions and limits. No operator rollout or image publication is claimed.
 
-Optional cleanup remains: move the four public projection JSON examples used only
-by manifest tests into fixtures; remove the unused `build_role_configs` `split_mode`
-argument and Uvicorn host/port defaults ignored by Unix-socket listeners. These are
+Optional cleanup remains: move public projection JSON examples used only
+by manifest tests into fixtures and remove Uvicorn host/port defaults ignored by
+Unix-socket listeners. These are
 not blockers, and do not justify replacing the execution API or result registry.
 
 This cleanup retains the implemented API, controller, native pool and completion

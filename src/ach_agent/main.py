@@ -385,21 +385,22 @@ async def _run_harness(
     add_secret_redaction(collect_secret_env_names(cfg))
     from ach_agent.boot.paths import resolve_role_paths
 
-    role_paths = resolve_role_paths(cfg)
+    local_mode = not isolated_harness
+    role_paths = resolve_role_paths(cfg, split_mode=not local_mode)
     engine_home = str(role_paths.engine_home)
     engine_work_dir = str(role_paths.work_dir)
     from ach_agent.boot.roles import build_role_configs
     from ach_agent.execution.wire import PublicEngineConfig
 
-    local_mode = not isolated_harness
     channels_projection, public_projection = build_role_configs(cfg, split_mode=not local_mode)
     public_cfg = PublicEngineConfig.model_validate(public_projection).model_copy(
         update={"home": engine_home, "work_dir": engine_work_dir}
     )
-    # Hydrated prompts, artifacts and skills are public H→E context.  H never
-    # writes the engine-owned home or its native session database.
-    state_dir = role_paths.public_context
-    state_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
+    from ach_agent.boot.paths import new_hydration_batch, stage_legacy_codemem
+
+    hydration_batch = new_hydration_batch(role_paths.transfer_root)
+    state_dir = hydration_batch
+    stage_legacy_codemem(cfg, role_paths, hydration_batch, split_mode=not local_mode)
 
     # Step 3: D-02 gate — reject unwired channel types before serving.
     # Skipped under --tui/--prompt: configured channels are ignored in console mode.
@@ -447,6 +448,7 @@ async def _run_harness(
     a2a_facade_url: str | None = None
     price_table: PriceTable | None = None
     accountant: CostAccountant | None = None
+    manifest = None
     if ek:
         manifest = await hydrate(
             cfg.capability.ach.base_url,
@@ -470,7 +472,7 @@ async def _run_harness(
             manifest.context,
             ek,
             state_dir,
-            role_paths.public_skills,
+            state_dir / "skills",
         )
         mcp_proxy = McpProxy()
         _exclude_servers = set(_exclude.mcp_servers)
@@ -577,6 +579,7 @@ async def _run_harness(
     # model-proxy, which only exists once we hydrate with the ek_. Without it there is no
     # model endpoint at all (model_base_url is set only inside the `if ek:` block above).
     if not model_base_url:
+        shutil.rmtree(hydration_batch, ignore_errors=True)
         log.error(
             "no model endpoint — set ACH_TOKEN (ek_) so the harness can hydrate and front "
             "the model via the localhost proxy. opencode points only at that proxy; there "
@@ -611,11 +614,15 @@ async def _run_harness(
             "mcp_servers": {},
             "mcp_local_urls": mcp_local_urls,
             "exclude_tools": cfg.capability.filter.exclude.tools,
+            "hydration_dir": str(hydration_batch or ""),
             "pi_mcp_adapter_path": cfg.engine.pi.mcp_adapter_path
             if cfg.engine.type == "pi" and cfg.engine.pi
             else "",
         }
     )
+    local_engine_env = {
+        name: os.environ[name] for name in public_cfg.engine_env_names if name in os.environ
+    }
     terminal_mcp_urls = dict(mcp_local_urls)
     if memory_facade_url:
         terminal_mcp_urls["memory"] = memory_facade_url
@@ -674,7 +681,8 @@ async def _run_harness(
             sys.stderr = tui_log
             try:
                 terminal_engine = await LocalEngineProcess.start(
-                    env={"ACH_RUNTIME_DIR": str(runtime_dir)}, terminal_mode=True
+                    env={**local_engine_env, "ACH_RUNTIME_DIR": str(runtime_dir)},
+                    terminal_mode=True,
                 )
                 await terminal_engine.wait_ready(
                     "http://ach-internal",
@@ -733,7 +741,7 @@ async def _run_harness(
     local_runtime_dir: Path | None = None
     if local_mode and not configured_engine_url:
         local_runtime_dir = Path(tempfile.mkdtemp(prefix="ach-runtime-", dir="/tmp"))
-        local_socket_env = {"ACH_RUNTIME_DIR": str(local_runtime_dir)}
+        local_socket_env = {**local_engine_env, "ACH_RUNTIME_DIR": str(local_runtime_dir)}
         try:
             local_engine = await LocalEngineProcess.start(env=local_socket_env)
             await local_engine.wait_ready(
@@ -772,6 +780,24 @@ async def _run_harness(
         except Exception:
             if client.controller_lost:
                 await client.close()
+                if not hydration_batch.exists():
+                    hydration_batch = new_hydration_batch(role_paths.transfer_root)
+                    if manifest is not None and ek:
+                        await fetch_context(
+                            manifest.context,
+                            ek,
+                            hydration_batch,
+                            hydration_batch / "skills",
+                        )
+                        stage_legacy_codemem(
+                            cfg,
+                            role_paths,
+                            hydration_batch,
+                            split_mode=not local_mode,
+                        )
+                    public_cfg = public_cfg.model_copy(
+                        update={"hydration_dir": str(hydration_batch)}
+                    )
                 client = ExecutionClient(
                     engine_url,
                     controller_id=f"harness-{os.getpid()}-{id(cfg)}",

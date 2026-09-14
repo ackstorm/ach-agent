@@ -13,9 +13,19 @@ services:
 
   channels:
     image: ach-agent-split-channels
+    environment:
+      ACH_TOKEN: split-acceptance-key
+      ACH_BASE_URL: http://mock-upstream:9080
+      ACH_ENVIRONMENT: platform
+      DEBUG: engine-value
+      CUSTOM_TOOL_TOKEN: engine-token
+      SPLIT_PREPARE_TOKEN: synthetic
 
   engine:
     image: ach-agent-split-engine
+    environment:
+      DEBUG: engine-value
+      CUSTOM_TOOL_TOKEN: engine-token
 
   mock-upstream:
     image: ach-agent-split-harness
@@ -31,6 +41,4 @@ services:
 
 volumes:
   engine-home:
-  engine-codemem:
   shared-workspace:
-  public-context:

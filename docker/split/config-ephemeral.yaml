@@ -16,14 +16,11 @@ prompt:
     text: "You are a concise software-engineering assistant."
 persistence:
   enabled: false
-  mountPath: /tmp/ach-state
+  mountPath: /tmp/ach-agent
 engine:
-  home: /tmp/ach-home
-  workDir: /tmp/ach-home/workspace
   startupTimeoutSeconds: 30
 memory:
   type: codemem
   codemem:
-    dbPath: /tmp/ach-home/state/codemem.db
     project: ach-agent
 channels: []

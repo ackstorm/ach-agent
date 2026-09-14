@@ -18,12 +18,9 @@ persistence:
   mountPath: /var/lib/ach-agent
 engine:
   type: pi
-  home: /var/lib/ach-agent/home
-  workDir: /var/lib/ach-agent/workspace
   startupTimeoutSeconds: 30
 memory:
   type: codemem
   codemem:
-    dbPath: /var/lib/ach-agent/state/codemem.db
     project: ach-agent
 channels: []

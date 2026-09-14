@@ -422,13 +422,19 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
 
     @app.get("/healthz")
     async def healthz() -> JSONResponse:
-        status = "unhealthy" if service._unhealthy else "ok"
-        return JSONResponse({"status": status}, status_code=503 if service._unhealthy else 200)
+        if service._unhealthy:
+            return JSONResponse({"status": "unhealthy"}, status_code=503)
+        if not service.initialized:
+            return JSONResponse({"status": "initializing"}, status_code=503)
+        return JSONResponse({"status": "ok"}, status_code=200)
 
     @app.get("/readyz")
     async def readyz() -> JSONResponse:
-        status = "unhealthy" if service._unhealthy else "ready"
-        return JSONResponse({"status": status}, status_code=503 if service._unhealthy else 200)
+        if service._unhealthy:
+            return JSONResponse({"status": "unhealthy"}, status_code=503)
+        if not service.initialized:
+            return JSONResponse({"status": "initializing"}, status_code=503)
+        return JSONResponse({"status": "ready"}, status_code=200)
 
     @app.get("/execution/v1/health")
     async def execution_health() -> JSONResponse:

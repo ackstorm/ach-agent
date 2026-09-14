@@ -98,7 +98,7 @@ def test_execution_wire_round_trip_and_extra_fields_are_rejected() -> None:
     with pytest.raises(ValidationError):
         PublicEngineConfig.model_validate({"unexpected_secret": "ek-test"})
     with pytest.raises(ValidationError):
-        PublicEngineConfig.model_validate({"engineEnv": {"BAD-NAME": "value"}})
+        PublicEngineConfig.model_validate({"engineEnvNames": ["BAD-NAME"]})
     with pytest.raises(ValidationError):
         AcquireRequest.model_validate({**request.model_dump(), "forward_env": ["TOKEN"]})
     for forbidden in ("forward_env", "extra_mcp_servers", "environment", "managed_headers"):
@@ -149,6 +149,19 @@ def test_deadlines_are_finite_and_public_mcp_templates_remain_raw() -> None:
                 "idle_ttl_seconds": float("nan"),
             }
         )
+
+
+def test_startup_wire_carries_hydration_directory_and_names_only() -> None:
+    from ach_agent.execution.wire import PublicEngineConfig
+
+    config = PublicEngineConfig(
+        hydration_dir="/run/ach-agent/transfer/.ach-harness-shared-files-x",
+        engine_env_names=["SAFE_OPERATOR"],
+    )
+    payload = config.model_dump(by_alias=True)
+    assert payload["hydrationDir"].startswith("/run/ach-agent/transfer/")
+    assert payload["engineEnvNames"] == ["SAFE_OPERATOR"]
+    assert "engineEnv" not in payload
 
 
 def test_execution_event_rejects_non_finite_payload() -> None:

@@ -15,11 +15,9 @@ prompt:
     text: "You are an ephemeral split acceptance fixture agent."
 persistence:
   enabled: false
-  mountPath: /tmp/ach-state
+  mountPath: /tmp/ach-agent
 engine:
   forwardEnv: [DEBUG, CUSTOM_TOOL_TOKEN]
-  home: /tmp/ach-home
-  workDir: /tmp/ach-home/workspace
   startupTimeoutSeconds: 30
   idleTtlSeconds: 30
 limits:

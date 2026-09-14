@@ -155,20 +155,35 @@ def _source_projection(cfg: AgentConfig) -> list[dict[str, JsonValue]]:
     return projected
 
 
-def _codemem_bootstrap(cfg: AgentConfig) -> tuple[str, str]:
+def _codemem_bootstrap(cfg: AgentConfig, *, split_mode: bool = True) -> tuple[str, str]:
     """Return codemem path/project without probing the E image from H."""
     memory = cfg.memory
     if not isinstance(memory, CodememMemory):
         return "", ""
     params = memory.codemem
     if params.db_path:
-        db_path = params.db_path
+        db_path = str(Path(params.db_path).expanduser().resolve())
+        if split_mode:
+            paths = resolve_role_paths(cfg, split_mode=True)
+            try:
+                Path(db_path).relative_to(paths.engine_home)
+            except ValueError as exc:
+                raise ValueError(
+                    "memory.codemem.dbPath must be within engine.home in distributed mode"
+                ) from exc
     elif cfg.persistence.enabled:
-        db_path = str(Path(cfg.persistence.mount_path) / "state" / "codemem.db")
+        if split_mode:
+            paths = resolve_role_paths(cfg, split_mode=True)
+            db_path = str(paths.engine_home / "state" / "codemem.db")
+        else:
+            db_path = str(Path(cfg.persistence.mount_path) / "state" / "codemem.db")
     else:
-        # Keep the pre-split volatile location stable even when an operator
-        # chooses a custom native engine home.
-        db_path = "/tmp/ach-home/state/codemem.db"
+        if split_mode:
+            paths = resolve_role_paths(cfg, split_mode=True)
+            db_path = str(paths.engine_home / "state" / "codemem.db")
+        else:
+            # Keep the standalone volatile location stable.
+            db_path = "/tmp/ach-home/state/codemem.db"
     return db_path, params.project
 
 
@@ -205,13 +220,12 @@ def build_role_configs(
     to the engine during controller-open.
     """
     engine_env_names = _engine_env_names(cfg)
-    engine_env = {name: os.environ[name] for name in engine_env_names if name in os.environ}
-    paths = resolve_role_paths(cfg)
+    paths = resolve_role_paths(cfg, split_mode=split_mode)
     channels: dict[str, JsonValue] = {
         "schemaVersion": "1",
         "channels": cast(JsonValue, _source_projection(cfg)),
     }
-    codemem_db_path, codemem_project = _codemem_bootstrap(cfg)
+    codemem_db_path, codemem_project = _codemem_bootstrap(cfg, split_mode=split_mode)
     templates = {
         name: spec
         for name, spec in cfg.mcp_servers.items()
@@ -228,9 +242,8 @@ def build_role_configs(
         home=str(paths.engine_home),
         work_dir=str(paths.work_dir),
         persistence_enabled=cfg.persistence.enabled,
-        persistence_mount_path=cfg.persistence.mount_path,
-        public_context=str(paths.public_context),
-        engine_env=engine_env,
+        hydration_dir="",
+        engine_env_names=engine_env_names,
         model=cfg.model.name,
         model_type=cfg.model.type,
         params=cfg.model.params,

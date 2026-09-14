@@ -62,6 +62,9 @@ flowchart LR
             MH --> HOME
         end
         WS[(Shared workspace volume)]
+        INIT[(Temporary hydration transfer)]
+        HN -->|startup downloads| INIT
+        INIT -->|mini-harness copies to home, then deletes batch| MH
         C -->|channel.sock: events| Q
         HN -->|channel.sock: correlated results| C
         HN <-->|agent.sock: launch inputs, turns and events| MH
@@ -77,6 +80,11 @@ broker is required now. A future durable handoff can change that transport; exis
 Redis source channels remain supported independently. Admission is not durable completion.
 
 ### Workspace and execution states
+
+Startup precedes channel admission: Harness downloads, mini-harness installs and
+validates, then removes the download batch and becomes ready. No event is needed
+to trigger this initialization. A failed initialization makes the Engine container
+unhealthy; a later native-agent launch failure belongs to its invocation.
 
 This is the lifecycle of a session workspace, including warm reuse. Normal events enter
 through admission before reaching the lane; the warm-reuse arrow refers to the next
@@ -129,7 +137,7 @@ visible to E, without copying, bundles or artifact transfer.
 | Conversation key | Selects native conversation reuse via existing `session: none / auto / custom` behavior; may differ from the lane key |
 | Workspace | H/E shared work files; same key reuses the same directory |
 | Engine home | E-owned native configuration, sessions and caches; H does not need this mount |
-| Public hydrated context | H writes, E reads; visible through the existing workspace context link |
+| Startup transfer | H downloads to a temporary shared batch; E installs it into its home and deletes the batch |
 
 The harness selects the channel's configured `prepare` and `cleanup`, resolves their
 environment and event variables, and executes them against the shared workspace.
@@ -153,14 +161,18 @@ H under its separate concurrency limit and bypasses engine acquisition.
 
 ### What crosses agent.sock
 
-H owns the private config and hydration. It sends only explicit native launch inputs:
-model/proxy/MCP settings, workspace, limits and the selected environment **names and
-values** resolved from `engine.forwardEnv`. Managed ACH credentials stay in H; an
-explicitly forwarded custom secret is deliberately visible to E. No whole-environment
-copy and no private config document are sent.
+H owns the private config and downloads hydration inputs. It sends explicit native
+launch inputs: model/proxy/MCP settings, workspace, limits, the download batch path
+and environment **names** selected by `engine.forwardEnv`. In distributed placement
+the operator supplies those selected values to E; locally the parent launcher does.
+The mini-harness passes them to native children. No environment values or private
+config document cross the socket. Managed ACH credentials stay in H; an explicitly
+forwarded custom secret is deliberately visible to E.
 
-The mini-harness generates `opencode.json` or Pi's equivalent when it launches the
-native engine. Turns then carry the prepared prompt and correlated execution IDs;
+At startup the mini-harness copies hydration into its own home, prepares and checks
+native configuration, and deletes the download batch. Only then is it healthy and
+ready. No native agent turn starts during initialization. Turns later carry the
+prepared prompt and correlated execution IDs;
 the native configuration is not resent with every prompt. H interprets channel
 configuration; E does not receive channel scripts or need to parse the full channel.
 
@@ -256,8 +268,8 @@ or operator control-plane sidecar is required.
 H alone reads the full rendered config, hydrates state and starts model/MCP proxies.
 C receives source-only channel inputs over
 `/run/ach-agent/channels/channel.sock`. E receives `PublicEngineConfig` through the
-existing controller request over `/run/ach-agent/engine/agent.sock`. H resolves the
-values selected by `engine.forwardEnv` and sends those explicit values to E; managed
+existing controller request over `/run/ach-agent/engine/agent.sock`. E receives
+selected `engine.forwardEnv` values from the operator or local launcher; managed
 ACH/model/MCP credentials remain H-side. H executes every prepare and cleanup hook
 on the existing shared workspace, preserving cwd and lifecycle, with a separate
 harness-private HOME.

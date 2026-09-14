@@ -1,5 +1,65 @@
 # Unix split validation — 2026-09-14
 
+## Startup hydration and generic operator storage
+
+Branch `feat/operator-storage`, based on `1b240ef`. Luna implementers completed
+the startup/storage plan; root reviewed the diffs, requested corrections, and ran
+the final verification independently. The public agent schema is unchanged.
+
+The harness now downloads into a temporary shared batch. The mini-harness installs
+and validates files in Engine home, deletes the batch and only then becomes ready.
+The execution API carries selected environment names; the operator or local launcher
+supplies their values to Engine. Channel hooks keep shared workspace access and
+their separate Harness HOME. Supported legacy workspace/native database data is
+preserved by agent code, without tool-specific operator mounts.
+
+Fresh verification:
+
+- Full Docker pytest: **1,230 passed, 4 skipped**, 169 existing dependency warnings.
+- Ruff check/format and strict mypy: passed for all **97 source files**.
+- Generated schema check passed; schema/model diff against `1b240ef` is empty.
+- MkDocs strict build and whitespace checks passed.
+- Combined image built successfully. Final runtime image:
+  `sha256:c2dd270ef2953a82920cda4e56fa491c74bd24edfee3dda4a1c1f1b33e108555`.
+- On that image, real OpenCode and Pi each completed two events with the same
+  native session, selected environment values and shared workspace hooks.
+  Startup checks verified installed skills and consumed transfer batches before
+  the first event. Killing Engine during a model request produced a failed result
+  and Harness readiness 503; cancellation took two seconds for Pi.
+  The final run used `scripts/test-split.sh` assertions with its build step omitted
+  after tagging the already-built image for all roles.
+- Harness-process restart passed with Channels/Engine container IDs unchanged,
+  the new startup batch consumed, and a second event reusing native session
+  `ses_f5ed2b7baffe1GCSbjvHqexkcT`. A test-only shell supervisor preserved Docker's
+  shared network namespace while restarting the Harness Python process.
+- A real Engine-role container rejected an unavailable native binary before any
+  invocation and exited with status **1**. Discovery worked before init while
+  public health returned 503.
+- The nonpersistent Compose profile completed two events and passed role health
+  checks and transfer cleanup. Native Pi and OpenCode TUI each completed two typed
+  prompts in a PTY, resized and exited with status **0**; their stored native
+  conversations contain two user and two assistant messages each.
+
+Temporary-storage and TUI checks used image
+`sha256:9e29ed4bcf343dd72864cb2febe032451466b2f39070deb2a0da8d7761780132`.
+The only subsequent runtime change preserved top-level directory symlinks during
+legacy workspace migration; this is covered by the final tests and does not run
+on those fresh/standalone paths.
+
+Root review also caught and corrected concurrent controller takeover during init,
+empty hydration batches on retry, stale env/path assertions, migration markers
+outside Engine mounts, and accidental dereferencing of repository symlinks.
+One verification attempt ran out of disk; disposable ACH build images/cache were
+removed and the full gate was rerun successfully. No data volumes were pruned.
+
+Local logs: `/tmp/ach-startup-full-tests.log`, `/tmp/ach-startup-lint.log`,
+`/tmp/ach-startup-compose-final.log`, `/tmp/ach-startup-restart.log`, and
+`/tmp/ach-startup-tui-{pi,opencode}.log`.
+
+No Kubernetes cluster rollout, live external model/MCP test, release or remote push
+was performed. Native engines used controlled synthetic ACH/model endpoints.
+Fresh PVC subpath creation and permissions remain a joint operator e2e check.
+
 ## Main integration
 
 On 2026-09-14, local `main` fast-forwarded from `462912f` to `36f0304`, including

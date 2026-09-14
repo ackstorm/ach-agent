@@ -146,6 +146,7 @@ assert_socket_mounts() {
 from pathlib import Path
 assert Path("/run/ach-agent/channels/channel.sock").is_socket()
 assert Path("/run/ach-agent/engine/agent.sock").is_socket()
+assert not list(Path("/run/ach-agent/transfer").glob(".ach-harness-shared-files-*"))
 Path("/var/lib/ach-agent/state/.split-harness-private-marker").write_text("harness-state-marker")
 PY
   "${COMPOSE[@]}" exec -T channels python - <<'PY'
@@ -166,20 +167,25 @@ from pathlib import Path
 assert Path("/run/ach-agent/engine/agent.sock").is_socket()
 assert not Path("/run/ach-agent/channels/channel.sock").exists()
 assert "ACH_TOKEN" not in os.environ
-assert not Path("/etc/ach-agent/config.yaml").exists()
+config = Path("/etc/ach-agent/config.yaml")
+assert not config.read_text().startswith("schemaVersion: \"1\"\nagent:\n  name: split-acceptance")
 assert not Path("/var/lib/ach-agent/state/.split-harness-private-marker").exists()
+assert not list(Path("/run/ach-agent/transfer").glob(".ach-harness-shared-files-*"))
+skill_roots = [
+    Path("/var/lib/ach-agent/home/.config/opencode/skills"),
+    Path("/var/lib/ach-agent/home/pi/skills"),
+]
+assert any((root / "split-fixture-skill" / "SKILL.md").is_file() for root in skill_roots)
 Path("/var/lib/ach-agent/home/.split-engine-private-marker").write_text("engine-home-marker")
-try:
-    Path("/var/lib/ach-agent/public-context/.split-engine-write-probe").write_text("must-fail")
-except OSError:
-    pass
-else:
-    raise SystemExit("engine could write the harness-owned public context")
+shared = Path("/var/lib/ach-agent/workspace/.ach-harness-shared-files")
+if shared.exists():
+    (shared / ".split-engine-shared-write-probe").write_text("shared")
 PY
   "${COMPOSE[@]}" exec -T harness python - <<'PY'
 from pathlib import Path
 
 assert not Path("/var/lib/ach-agent/home/.split-engine-private-marker").exists()
+assert not Path("/var/lib/ach-agent/state/.split-engine-private-marker").exists()
 PY
 }
 

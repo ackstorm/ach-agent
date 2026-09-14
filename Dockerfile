@@ -136,9 +136,10 @@ EXPOSE 8080
 # non-root-writable mountpoint. workDir (<home>/workspace) and .ach-state (<home>/.ach-state)
 # live UNDER home, so the harness creates them — no top-level scratch dirs needed.
 RUN useradd -u 10001 -m appuser \
- && mkdir -p /tmp/ach-home \
- && mkdir -p /run/ach-agent/channels /run/ach-agent/engine \
- && chown -R 10001 /tmp/ach-home /run/ach-agent
+ && mkdir -p /tmp/ach-home /tmp/ach-agent/state /tmp/ach-agent/home /tmp/ach-agent/workspace \
+      /var/lib/ach-agent/state /var/lib/ach-agent/home /var/lib/ach-agent/workspace \
+      /run/ach-agent/channels /run/ach-agent/engine /run/ach-agent/transfer \
+ && chown -R 10001 /tmp/ach-home /tmp/ach-agent /var/lib/ach-agent /run/ach-agent
 USER 10001
 
 # ENTRYPOINT (not CMD) so launch modifiers append cleanly:
@@ -160,12 +161,12 @@ RUN apt-get update -qq \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/deps /app/deps
 RUN useradd -u 10001 -m appuser \
- && mkdir -p /tmp/ach-home /tmp/ach-home/workspace /tmp/ach-harness-state /tmp/ach-public-context \
-      /run/ach-agent/channels /run/ach-agent/engine \
+ && mkdir -p /tmp/ach-home /tmp/ach-home/workspace /tmp/ach-harness-state \
+      /run/ach-agent/channels /run/ach-agent/engine /run/ach-agent/transfer \
       /var/lib/ach-agent/state /var/lib/ach-agent/home /var/lib/ach-agent/workspace \
-      /var/lib/ach-agent/public-context \
- && chown -R 10001 /tmp/ach-home /tmp/ach-harness-state /tmp/ach-public-context \
-      /run/ach-agent /var/lib/ach-agent
+      /tmp/ach-agent/state /tmp/ach-agent/home /tmp/ach-agent/workspace \
+ && chown -R 10001 /tmp/ach-home /tmp/ach-harness-state \
+      /tmp/ach-agent /run/ach-agent /var/lib/ach-agent
 USER 10001
 ENTRYPOINT ["/usr/bin/tini", "--", "python", "-m", "ach_agent.main"]
 

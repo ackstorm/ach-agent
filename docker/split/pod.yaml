@@ -32,15 +32,8 @@ spec:
     - name: workspace
       persistentVolumeClaim:
         claimName: ach-agent-state
-    - name: public-context
-      persistentVolumeClaim:
-        claimName: ach-agent-state
-    - name: engine-home
-      persistentVolumeClaim:
-        claimName: ach-agent-state
-    - name: engine-codemem
-      persistentVolumeClaim:
-        claimName: ach-agent-state
+    - name: transfer-ipc
+      emptyDir: {}
     - name: harness-tmp
       emptyDir: {}
     - name: channels-tmp
@@ -49,7 +42,7 @@ spec:
       emptyDir: {}
   containers:
     - name: harness
-      image: ghcr.io/ackstorm/ach-agent:harness
+      image: ghcr.io/ackstorm/ach-agent:latest
       imagePullPolicy: IfNotPresent
       args: ["--role", "harness"]
       env:
@@ -65,18 +58,21 @@ spec:
               key: ach-token
       readinessProbe:
         exec:
-          command: ["python", "-c", "import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds='/run/ach-agent/channels/channel.sock'), base_url='http://ach-internal', timeout=2); c.get('/readyz').raise_for_status()"]
-        periodSeconds: 5
-      startupProbe:
-        exec:
-          command: ["python", "-c", "import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds='/run/ach-agent/channels/channel.sock'), base_url='http://ach-internal', timeout=2); c.get('/healthz').raise_for_status()"]
+          command: ["python", "-m", "ach_agent.healthcheck", "--role", "harness", "--check", "readiness"]
         periodSeconds: 5
         timeoutSeconds: 3
-        failureThreshold: 60
+      startupProbe:
+        exec:
+          command: ["python", "-m", "ach_agent.healthcheck", "--role", "harness", "--check", "startup"]
+        initialDelaySeconds: 15
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 6
       livenessProbe:
         exec:
-          command: ["python", "-c", "import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds='/run/ach-agent/channels/channel.sock'), base_url='http://ach-internal', timeout=2); c.get('/healthz').raise_for_status()"]
+          command: ["python", "-m", "ach_agent.healthcheck", "--role", "harness", "--check", "liveness"]
         periodSeconds: 10
+        timeoutSeconds: 3
       securityContext: &restricted
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true
@@ -93,9 +89,8 @@ spec:
         - name: workspace
           mountPath: /var/lib/ach-agent/workspace
           subPath: workspace
-        - name: public-context
-          mountPath: /var/lib/ach-agent/public-context
-          subPath: public-context
+        - name: transfer-ipc
+          mountPath: /run/ach-agent/transfer
         - name: harness-tmp
           mountPath: /tmp
         - name: channels-ipc
@@ -104,30 +99,40 @@ spec:
           mountPath: /run/ach-agent/engine
           readOnly: true
     - name: channels
-      image: ghcr.io/ackstorm/ach-agent:channels
+      image: ghcr.io/ackstorm/ach-agent:latest
       imagePullPolicy: IfNotPresent
       args: ["--role", "channels"]
       env:
+        - name: ACH_BASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: ach-agent-secrets
+              key: ach-base-url
+        - name: ACH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: ach-agent-secrets
+              key: ach-token
       ports:
         - name: ingress
           containerPort: 8080
       readinessProbe:
-        httpGet:
-          path: /readyz
-          port: ingress
-        periodSeconds: 5
-      startupProbe:
-        httpGet:
-          path: /healthz
-          port: ingress
+        exec:
+          command: ["python", "-m", "ach_agent.healthcheck", "--role", "channels", "--check", "readiness"]
         periodSeconds: 5
         timeoutSeconds: 3
-        failureThreshold: 60
+      startupProbe:
+        exec:
+          command: ["python", "-m", "ach_agent.healthcheck", "--role", "channels", "--check", "startup"]
+        periodSeconds: 5
+        initialDelaySeconds: 15
+        timeoutSeconds: 3
+        failureThreshold: 6
       livenessProbe:
-        httpGet:
-          path: /healthz
-          port: ingress
+        exec:
+          command: ["python", "-m", "ach_agent.healthcheck", "--role", "channels", "--check", "liveness"]
         periodSeconds: 10
+        timeoutSeconds: 3
       securityContext: *restricted
       volumeMounts:
         - name: channels-ipc
@@ -136,40 +141,37 @@ spec:
         - name: channels-tmp
           mountPath: /tmp
     - name: engine
-      image: ghcr.io/ackstorm/ach-agent:engine-opencode
+      image: ghcr.io/ackstorm/ach-agent:latest
       imagePullPolicy: IfNotPresent
       args: ["--role", "engine"]
-      env:
       readinessProbe:
         exec:
-          command: ["python", "-c", "import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds='/run/ach-agent/engine/agent.sock'), base_url='http://ach-internal', timeout=2); c.get('/readyz').raise_for_status()"]
-        periodSeconds: 5
-      startupProbe:
-        exec:
-          command: ["python", "-c", "import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds='/run/ach-agent/engine/agent.sock'), base_url='http://ach-internal', timeout=2); c.get('/healthz').raise_for_status()"]
+          command: ["python", "-m", "ach_agent.healthcheck", "--role", "engine", "--check", "readiness"]
         periodSeconds: 5
         timeoutSeconds: 3
-        failureThreshold: 60
+      startupProbe:
+        exec:
+          command: ["python", "-m", "ach_agent.healthcheck", "--role", "engine", "--check", "startup"]
+        initialDelaySeconds: 15
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 6
       livenessProbe:
         exec:
-          command: ["python", "-c", "import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds='/run/ach-agent/engine/agent.sock'), base_url='http://ach-internal', timeout=2); c.get('/healthz').raise_for_status()"]
+          command: ["python", "-m", "ach_agent.healthcheck", "--role", "engine", "--check", "liveness"]
         periodSeconds: 10
+        timeoutSeconds: 3
       securityContext: *restricted
       volumeMounts:
         - name: engine-ipc
           mountPath: /run/ach-agent/engine
-        - name: engine-home
+        - name: state
           mountPath: /var/lib/ach-agent/home
           subPath: home
-        - name: engine-codemem
-          mountPath: /var/lib/ach-agent/state
-          subPath: engine-codemem
         - name: workspace
           mountPath: /var/lib/ach-agent/workspace
           subPath: workspace
-        - name: public-context
-          mountPath: /var/lib/ach-agent/public-context
-          subPath: public-context
-          readOnly: true
+        - name: transfer-ipc
+          mountPath: /run/ach-agent/transfer
         - name: engine-tmp
           mountPath: /tmp

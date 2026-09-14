@@ -756,9 +756,9 @@ async def test_reconfigure_checks_immutable_layout_but_allows_fresh_proxy_values
 ) -> None:
     service = ExecutionService(None, {})
     base = PublicEngineConfig(
+        binary_path="true",
         home=str(tmp_path / "home"),
         work_dir=str(tmp_path / "work"),
-        public_context=str(tmp_path / "public"),
     )
     await service.configure(base)
     await service.configure(base.model_copy(update={"model_base_url": "http://fresh-proxy"}))
@@ -784,7 +784,7 @@ async def test_close_closes_engine_owned_session_store(monkeypatch) -> None:
 def test_invalid_engine_env_does_not_echo_value() -> None:
     sentinel = "secret-engine-value"
     with pytest.raises(ValidationError) as error:
-        PublicEngineConfig(engine_env={"BAD-NAME": sentinel})
+        PublicEngineConfig(engine_env_names=["BAD-NAME"])
     assert sentinel not in str(error.value)
 
 

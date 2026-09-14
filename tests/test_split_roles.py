@@ -104,7 +104,7 @@ def test_engine_child_starts_without_native_process(tmp_path: Path) -> None:
                 transport=httpx.AsyncHTTPTransport(uds=str(socket_path)),
             ) as client:
                 response = await client.get("/readyz")
-            assert response.status_code == 200
+                assert response.status_code == 503
         finally:
             await child.close(timeout=5)
         assert child.process.returncode is not None
@@ -140,15 +140,8 @@ def test_local_mcp_refs_are_explicit_engine_env_and_managed_names_are_removed(
         },
     )
 
-    monkeypatch.setenv("SAFE_OPERATOR", "safe")
-    monkeypatch.setenv("MCP_OPERATOR", "mcp")
-    monkeypatch.setenv("MCP_REMOTE", "remote")
     _channels, public = build_role_configs(cfg, split_mode=False)
-    assert public["engineEnv"] == {
-        "SAFE_OPERATOR": "safe",
-        "MCP_OPERATOR": "mcp",
-        "MCP_REMOTE": "remote",
-    }
+    assert public["engineEnvNames"] == ["SAFE_OPERATOR", "MCP_OPERATOR", "MCP_REMOTE"]
 
 
 def test_local_mcp_reference_cannot_readd_config_secret(
@@ -179,18 +172,15 @@ def test_local_mcp_reference_cannot_readd_config_secret(
         },
     )
 
-    monkeypatch.setenv("SAFE_OPERATOR", "safe")
-    monkeypatch.setenv("MCP_OPERATOR", "mcp")
-    monkeypatch.setenv("GITLAB_TOKEN", "managed")
     _channels, public = build_role_configs(cfg, split_mode=False)
-    assert public["engineEnv"] == {"SAFE_OPERATOR": "safe", "MCP_OPERATOR": "mcp"}
+    assert public["engineEnvNames"] == ["SAFE_OPERATOR", "MCP_OPERATOR"]
 
 
 def test_public_engine_rejects_harness_managed_env_names() -> None:
     from ach_agent.execution.wire import PublicEngineConfig
 
     with pytest.raises(ValueError, match="harness-managed"):
-        PublicEngineConfig(engine_env={"ACH_TOKEN": "secret"})
+        PublicEngineConfig(engine_env_names=["ACH_TOKEN"])
 
 
 def test_terminal_child_keeps_inherited_terminal_and_safe_environment(

@@ -119,16 +119,22 @@ def _engine_config(public: Any) -> EngineConfig:
             # Bootstrap-only metadata never belongs in the native driver's config.
             "agent_name",
             "persistence_enabled",
-            "persistence_mount_path",
-            "public_context",
+            "hydration_dir",
+            "engine_env_names",
             "trace_token",
             "trace_parent",
             "trace_session_id",
         }
     )
     values["extra_mcp_servers"] = {
-        name: to_engine_entry(spec, env=public.engine_env)
+        name: to_engine_entry(
+            spec,
+            env={name: os.environ[name] for name in public.engine_env_names if name in os.environ},
+        )
         for name, spec in public.mcp_templates.items()
+    }
+    values["engine_env"] = {
+        name: os.environ[name] for name in public.engine_env_names if name in os.environ
     }
     # Codemem is an engine-local executable.  H supplies only the approved path and
     # project; E decides whether its own image can provide the optional backend.
@@ -173,6 +179,13 @@ class ExecutionService:
         self.driver = driver
         self.pool = EnginePool(driver=driver, sessions_map=sessions_map, strict_cleanup=True)
         self._configured = driver is not None
+        # A directly injected driver is the explicit seam used by unit tests and
+        # in-process callers. Production (driver=None) remains pre-init until the
+        # controller-open configuration has completed.
+        self._initialized = driver is not None
+        self._initializing = False
+        self._configure_lock = asyncio.Lock()
+        self._controller_lock = asyncio.Lock()
         self._public_config: PublicEngineConfig | None = None
         self.configured_event = asyncio.Event()
         self._sessions_map = sessions_map
@@ -214,55 +227,110 @@ class ExecutionService:
     def configured(self) -> bool:
         return self._configured
 
+    @property
+    def initialized(self) -> bool:
+        return self._initialized and not self._unhealthy
+
+    async def _initialize_native(self, public: PublicEngineConfig, driver: EngineDriver) -> None:
+        """Install H's one-shot batch and validate boot-static native inputs."""
+        from ach_agent.engine.context import (
+            delete_hydration_batch,
+            install_hydration,
+            install_legacy_codemem,
+            migrate_legacy_workspace,
+        )
+
+        try:
+            cfg = _engine_config(public)
+            home = Path(public.home or "/tmp/ach-home")
+            work_dir = Path(public.work_dir or home / "workspace")
+            home.mkdir(parents=True, exist_ok=True)
+            migrate_legacy_workspace(home, work_dir)
+            work_dir.mkdir(parents=True, exist_ok=True)
+            hydration = getattr(public, "hydration_dir", "")
+            if hydration:
+                install_hydration(hydration, home, driver.skills_dir(home))
+                if getattr(public, "codemem_db_path", ""):
+                    install_legacy_codemem(hydration, public.codemem_db_path)
+            # Reuse the native config writers for boot-static validation. These
+            # write only engine-owned files and do not launch a native process.
+            if driver.engine_type == "opencode":
+                from ach_agent.engine.lifecycle import write_opencode_config
+
+                write_opencode_config(home, cfg, "boot")
+            elif driver.engine_type == "pi":
+                prepare = getattr(driver, "_prepare_agent_dir", None)
+                if prepare is None:
+                    raise RuntimeError("Pi driver cannot prepare boot configuration")
+                prepare(cfg, "boot")
+            if not shutil.which(public.binary_path):
+                raise FileNotFoundError(f"native executable not found: {public.binary_path!r}")
+            if hydration:
+                delete_hydration_batch(hydration)
+        except BaseException:
+            self._mark_unhealthy()
+            raise
+
     async def configure(self, public: PublicEngineConfig) -> None:
-        if self._configured:
-            previous = self._public_config
-            if previous is None:
+        async with self._configure_lock:
+            if self._unhealthy:
+                raise RuntimeError("execution service is unhealthy")
+            if self._configured:
+                previous = self._public_config
+                if previous is None:
+                    self._public_config = public
+                    return
+                if (
+                    previous.engine_type != public.engine_type
+                    or previous.home != public.home
+                    or previous.work_dir != public.work_dir
+                    or previous.persistence_enabled != public.persistence_enabled
+                ):
+                    raise RuntimeError("engine layout changed; restart required")
+                hydration = public.hydration_dir
+                if hydration and Path(hydration).exists():
+                    configured_driver = self._configured_driver()
+                    await self._initialize_native(public, configured_driver)
                 self._public_config = public
                 return
-            if (
-                previous.engine_type != public.engine_type
-                or previous.home != public.home
-                or previous.work_dir != public.work_dir
-                or previous.persistence_enabled != public.persistence_enabled
-                or previous.persistence_mount_path != public.persistence_mount_path
-                or previous.public_context != public.public_context
-            ):
-                raise RuntimeError("engine layout changed; restart required")
-            return
-        if public.engine_type == "pi":
-            from ach_agent.engine.pi.driver import PiDriver
+            if public.engine_type == "pi":
+                from ach_agent.engine.pi.driver import PiDriver
 
-            driver: EngineDriver = PiDriver()
-        else:
-            from ach_agent.engine.opencode.driver import OpencodeDriver
-
-            driver = OpencodeDriver()
-        home = Path(public.home or "/tmp/ach-home")
-        work_dir = Path(public.work_dir or home / "workspace")
-        public_context = Path(public.public_context or "/tmp/ach-public-context")
-        home.mkdir(parents=True, exist_ok=True)
-        work_dir.mkdir(parents=True, exist_ok=True)
-        from ach_agent.engine.context import link_public_context
-
-        link_public_context(home, public_context, work_dir=work_dir, create_public=False)
-        from ach_agent import identity
-
-        identity.configure(public.agent_name, os.environ.get("ACH_ENVIRONMENT", ""))
-        if self._sessions_map is None:
-            if public.persistence_enabled:
-                from ach_agent.execution.state import NativeSessionStore
-
-                self._sessions_map = NativeSessionStore(home)
+                driver: EngineDriver = PiDriver()
             else:
-                from ach_agent.engine.base.pool import _LRUSessionMap
+                from ach_agent.engine.opencode.driver import OpencodeDriver
 
-                self._sessions_map = _LRUSessionMap()
-        self.driver = driver
-        self.pool = EnginePool(driver=driver, sessions_map=self._sessions_map, strict_cleanup=True)
-        self._configured = True
-        self._public_config = public
-        self.configured_event.set()
+                driver = OpencodeDriver()
+            home = Path(public.home or "/tmp/ach-home")
+            from ach_agent import identity
+
+            try:
+                identity.configure(public.agent_name, os.environ.get("ACH_ENVIRONMENT", ""))
+                await self._initialize_native(public, driver)
+            except BaseException:
+                self._mark_unhealthy()
+                raise
+            try:
+                if self._sessions_map is None:
+                    if public.persistence_enabled:
+                        from ach_agent.execution.state import NativeSessionStore
+
+                        self._sessions_map = NativeSessionStore(home)
+                    else:
+                        from ach_agent.engine.base.pool import _LRUSessionMap
+
+                        self._sessions_map = _LRUSessionMap()
+                self.driver = driver
+                self.pool = EnginePool(
+                    driver=driver, sessions_map=self._sessions_map, strict_cleanup=True
+                )
+            except BaseException:
+                self._mark_unhealthy()
+                raise
+            self._configured = True
+            self._initialized = True
+            self._public_config = public
+            self.configured_event.set()
 
     @property
     def public_config(self) -> PublicEngineConfig | None:
@@ -284,17 +352,20 @@ class ExecutionService:
     async def claim_controller(
         self, controller_id: str, config: PublicEngineConfig | None = None
     ) -> None:
-        if self._unhealthy:
-            raise RuntimeError("native cleanup failed; execution service is unhealthy")
-        if self._controller_id is not None:
-            raise RuntimeError("execution service already has a controller")
-        if config is not None:
-            await self.configure(config)
-        elif not self._configured:
-            raise RuntimeError("execution service is not configured")
-        self._controller_id = controller_id
-        self._admission_open = True
-        self._controller_events = asyncio.Queue(maxsize=64)
+        async with self._controller_lock:
+            if self._unhealthy:
+                raise RuntimeError("native cleanup failed; execution service is unhealthy")
+            if self._controller_id is not None:
+                raise RuntimeError("execution service already has a controller")
+            if config is not None:
+                await self.configure(config)
+            elif not self._configured:
+                raise RuntimeError("execution service is not configured")
+            if not self._initialized:
+                raise RuntimeError("execution service is not initialized")
+            self._controller_id = controller_id
+            self._admission_open = True
+            self._controller_events = asyncio.Queue(maxsize=64)
 
     async def import_legacy_sessions(self, request: SessionImportRequest) -> int:
         """Import H-exported rows once before the first engine acquisition.

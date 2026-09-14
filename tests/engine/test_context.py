@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from ach_agent.engine.context import fetch_context
-from ach_agent.engine.hydrate import Context, ContextItem
 from ach_agent.boot.paths import ach_state_dir, link_ach_state
+from ach_agent.engine.context import fetch_context, migrate_legacy_workspace
+from ach_agent.engine.hydrate import Context, ContextItem
 
 
 def _make_skill_targz() -> bytes:
@@ -122,3 +122,36 @@ def test_link_ach_state_no_symlink_when_workdir_equals_home(tmp_path):
     real = link_ach_state(str(home), str(home))
     assert real == home / ".ach-state"
     assert not (home / ".ach-state" / ".ach-state").exists()
+
+
+def test_legacy_workspace_migrates_once_and_preserves_later_changes(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    old = home / "workspace"
+    target = tmp_path / "workspace"
+    old.mkdir(parents=True)
+    (old / ".ach-state").symlink_to(home / ".ach-state", target_is_directory=True)
+    (old / "repo").mkdir()
+    (old / "repo" / "shared-link").symlink_to("../checkout.txt")
+    (old / "linked-repo").symlink_to(old / "repo", target_is_directory=True)
+    (old / "checkout.txt").write_text("original")
+
+    migrate_legacy_workspace(home, target)
+    assert (target / "checkout.txt").read_text() == "original"
+    assert (target / "repo" / "shared-link").is_symlink()
+    assert (target / "linked-repo").is_symlink()
+    assert (home / ".ach-workspace-migrated").is_file()
+    (target / "checkout.txt").write_text("new-workspace-state")
+
+    migrate_legacy_workspace(home, target)
+    assert (target / "checkout.txt").read_text() == "new-workspace-state"
+    assert old.is_dir()
+
+
+def test_legacy_workspace_rejects_nonempty_unmarked_target(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    (home / "workspace").mkdir(parents=True)
+    target = tmp_path / "workspace"
+    target.mkdir()
+    (target / "existing").write_text("keep")
+    with pytest.raises(ValueError, match="nonempty"):
+        migrate_legacy_workspace(home, target)

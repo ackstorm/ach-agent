@@ -140,7 +140,7 @@ def test_native_child_receives_only_explicit_engine_env(
     assert observed == ["engine-value", ""]
 
 
-def test_split_engine_values_reach_native_child_without_e_ambient_values(
+def test_split_engine_values_reach_native_child_from_e_ambient_values(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """H-resolved values reach the child even when E has no ambient values."""
@@ -160,10 +160,7 @@ def test_split_engine_values_reach_native_child_without_e_ambient_values(
     monkeypatch.setenv("DEBUG", "harness-value")
     monkeypatch.setenv("CUSTOM_TOOL_TOKEN", "harness-token")
     _channels, public = build_role_configs(cfg)
-    assert public["engineEnv"] == {
-        "DEBUG": "harness-value",
-        "CUSTOM_TOOL_TOKEN": "harness-token",
-    }
+    assert public["engineEnvNames"] == ["DEBUG", "CUSTOM_TOOL_TOKEN"]
     engine_env = os.environ.copy()
     engine_env["DEBUG"] = "engine-value"
     engine_env["CUSTOM_TOOL_TOKEN"] = "engine-token"
@@ -171,16 +168,16 @@ def test_split_engine_values_reach_native_child_without_e_ambient_values(
     script = (
         "import os, subprocess, sys\n"
         "from pathlib import Path\n"
-        "from ach_agent.engine.base.driver import EngineConfig\n"
+        "from ach_agent.execution.service import _engine_config\n"
         "from ach_agent.execution.wire import PublicEngineConfig\n"
         "from ach_agent.engine.lifecycle import build_opencode_env\n"
         "public = PublicEngineConfig.model_validate_json(sys.argv[3])\n"
         "env = build_opencode_env(Path(sys.argv[1]), "
-        "EngineConfig(engine_env=public.engine_env), Path(sys.argv[2]))\n"
+        "_engine_config(public), Path(sys.argv[2]))\n"
         "print(subprocess.check_output([sys.executable, '-c', "
-        "'import os; print(os.getenv(\"DEBUG\", \"\")); "
-        "print(os.getenv(\"CUSTOM_TOOL_TOKEN\", \"\")); "
-        "print(os.getenv(\"ACH_TOKEN\", \"\"))'], "
+        '\'import os; print(os.getenv("DEBUG", "")); '
+        'print(os.getenv("CUSTOM_TOOL_TOKEN", "")); '
+        'print(os.getenv("ACH_TOKEN", ""))\'], '
         "env=env, text=True), end='')\n"
     )
     observed = subprocess.check_output(
@@ -195,4 +192,4 @@ def test_split_engine_values_reach_native_child_without_e_ambient_values(
         env=engine_env,
         text=True,
     )
-    assert observed == "harness-value\nharness-token\n\n"
+    assert observed == "engine-value\nengine-token\n\n"

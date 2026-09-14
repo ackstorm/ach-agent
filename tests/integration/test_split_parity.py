@@ -27,3 +27,12 @@ def test_acceptance_config_and_channel_projection_match() -> None:
     assert source.name == config.channels[0].name == "acceptance"
     assert "prompt" not in projection["channels"][0]
     assert "session" not in projection["channels"][0]
+
+
+def test_acceptance_engine_artifacts_keep_hydration_and_env_names_credential_free() -> None:
+    for suffix, expected_type in (("", "opencode"), ("-pi", "pi")):
+        artifact = json.loads((FIXTURES / f"engine-acceptance{suffix}.json").read_text())
+        assert artifact["engine_type"] == expected_type
+        assert artifact["hydrationDir"] == ""
+        assert artifact["engineEnvNames"] == ["DEBUG", "CUSTOM_TOOL_TOKEN"]
+        assert "ACH_TOKEN" not in json.dumps(artifact)

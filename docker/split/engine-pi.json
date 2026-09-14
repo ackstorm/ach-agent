@@ -5,12 +5,12 @@
   "home": "/var/lib/ach-agent/home",
   "work_dir": "/var/lib/ach-agent/workspace",
   "persistenceEnabled": true,
-  "persistenceMountPath": "/var/lib/ach-agent",
-  "publicContext": "/var/lib/ach-agent/public-context",
+  "hydrationDir": "",
+  "engineEnvNames": [],
   "model": "gemini.gemini-flash-latest",
   "model_type": "openai",
   "steps": 50,
   "startup_timeout_seconds": 30,
-  "codemem_db_path": "/var/lib/ach-agent/state/codemem.db",
+  "codemem_db_path": "/var/lib/ach-agent/home/state/codemem.db",
   "codemem_project": "ach-agent"
 }

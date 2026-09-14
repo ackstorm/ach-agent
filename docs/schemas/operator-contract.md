@@ -2,8 +2,12 @@
 
 > **Deployment proposal, 2026-09-14:** the self-contained
 > [standalone/distributed handoff](ach-deployment-modes.md) defines the proposed ACH
-> placement selector and the implemented agent startup/mount contract. The CR selector
+> placement selector and the locally validated startup/mount update in ACH Agent. The CR selector
 > requires implementation in ACH; it does not alter the frozen agent configuration schema.
+> For distributed placement, that handoff supersedes the historical single-process
+> ownership and mount descriptions below. Harness downloads; the mini-harness installs
+> into its private home before readiness. Selected `engine.forwardEnv` values are supplied
+> by the operator to Engine, rather than sent over the execution API.
 
 > **Pinned contract revision: v3.** This file was named `CONTRACT_v3.md` until 2026-07-27;
 > the revision it pins now lives here in the header instead of in the filename, so the
@@ -69,7 +73,7 @@ harness (H), and engine (E). H reads the full rendered config; C and E receive o
 the inputs required through the two Unix sockets. The fixture's synthetic upstream
 and credentials are test values only. See [`unix-split-validation.md`](../reports/unix-split-validation.md)
 for current measured acceptance and its limits. The self-contained operator handoff
-is [`2026-09-14-unix-operator-handoff.md`](../superpowers/specs/2026-09-14-unix-operator-handoff.md).
+is [the standalone/distributed deployment contract](ach-deployment-modes.md).
 
 ---
 

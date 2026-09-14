@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import os
 import shutil
 import tarfile
 from pathlib import Path
@@ -11,6 +12,8 @@ import httpx
 from ach_agent.engine.hydrate import Context
 
 _KINDS = ("skills", "prompts", "artifacts")
+_BATCH_PREFIX = ".ach-harness-shared-files-"
+_TRANSFER_ROOT_NAMES = frozenset({"transfer", "ach-agent-transfer"})
 
 
 def _link_directory(
@@ -80,6 +83,127 @@ def link_public_context(
     _link_directory(
         home / "pi" / "skills", skills, create_target=create_public, replace_managed=True
     )
+
+
+def _safe_batch(path: str | Path) -> Path:
+    """Validate one disposable transfer batch and all paths below it."""
+    batch = Path(path)
+    if (
+        not batch.is_absolute()
+        or not batch.name.startswith(_BATCH_PREFIX)
+        or batch.parent.name not in _TRANSFER_ROOT_NAMES
+    ):
+        raise ValueError("hydrationDir must identify an absolute transfer batch")
+    if batch.is_symlink() or not batch.is_dir():
+        raise ValueError("hydrationDir must be a real directory")
+    resolved = batch.resolve(strict=True)
+    if resolved != batch.absolute():
+        raise ValueError("hydrationDir must not contain symlinked path components")
+    for child in resolved.rglob("*"):
+        if child.is_symlink():
+            try:
+                child.resolve(strict=True).relative_to(resolved)
+            except (FileNotFoundError, ValueError) as exc:
+                raise ValueError("hydration batch symlink escapes its transfer root") from exc
+    return resolved
+
+
+def _copy_tree_contents(source: Path, destination: Path) -> None:
+    """Replace one managed directory while leaving unrelated HOME data intact."""
+    if source.exists() and not source.is_dir():
+        raise ValueError(f"hydration input is not a directory: {source.name}")
+    if destination.is_symlink():
+        destination.unlink()
+    elif destination.exists():
+        shutil.rmtree(destination)
+    destination.mkdir(parents=True, exist_ok=True)
+    if source.exists():
+        for item in source.iterdir():
+            target = destination / item.name
+            if item.is_dir():
+                shutil.copytree(item, target, symlinks=False)
+            else:
+                shutil.copy2(item, target)
+
+
+def install_hydration(hydration_dir: str | Path, engine_home: str | Path, skills_dir: Path) -> None:
+    """Copy managed hydration into engine-owned HOME; no links into staging."""
+    batch = _safe_batch(hydration_dir)
+    home = Path(engine_home)
+    home.mkdir(parents=True, exist_ok=True)
+    state = home / ".ach-state"
+    if state.is_symlink():
+        state.unlink()
+    state.mkdir(parents=True, exist_ok=True)
+    _copy_tree_contents(batch / "skills", skills_dir)
+    _copy_tree_contents(batch / "prompts", state / "prompts")
+    _copy_tree_contents(batch / "artifacts", state / "artifacts")
+
+
+def delete_hydration_batch(hydration_dir: str | Path) -> None:
+    """Delete exactly a validated batch, never its transfer mount."""
+    shutil.rmtree(_safe_batch(hydration_dir))
+
+
+def install_legacy_codemem(hydration_dir: str | Path, target: str | Path) -> None:
+    """Import H's legacy SQLite backup once into E-owned storage.
+
+    A marker beside the target makes repeated H restarts idempotent while refusing
+    to overwrite an E database whose provenance is unknown.
+    """
+    batch = _safe_batch(hydration_dir)
+    source = batch / "codemem.db"
+    if not source.exists():
+        return
+    destination = Path(target)
+    marker = destination.with_name(destination.name + ".ach-migrated")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        if marker.is_file():
+            return
+        raise ValueError(f"codemem target already exists without migration marker: {destination}")
+    temporary = destination.with_name(destination.name + ".ach-import-tmp")
+    try:
+        shutil.copy2(source, temporary)
+        os.replace(temporary, destination)
+        marker.write_text("legacy codemem imported\n", encoding="utf-8")
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def migrate_legacy_workspace(engine_home: str | Path, work_dir: str | Path) -> None:
+    """Copy an old ``<home>/workspace`` into the new sibling workspace once."""
+    source = Path(engine_home) / "workspace"
+    target = Path(work_dir)
+    if source.resolve(strict=False) == target.resolve(strict=False) or not source.exists():
+        return
+    marker = Path(engine_home) / ".ach-workspace-migrated"
+    if source.is_symlink():
+        raise ValueError("legacy workspace must be a real directory")
+    if not source.is_dir():
+        raise ValueError("legacy workspace must be a real directory")
+    if target.exists():
+        if not target.is_dir():
+            raise ValueError("new workspace target is not a directory")
+        if marker.is_file():
+            return
+        if any(target.iterdir()):
+            raise ValueError("legacy workspace migration target is nonempty")
+    else:
+        target.mkdir(parents=True)
+    for item in source.iterdir():
+        # The old layout commonly linked this managed context back into HOME.
+        # The new boot recreates the workspace link after migration.
+        if item.name == ".ach-state":
+            continue
+        destination = target / item.name
+        if item.is_symlink():
+            destination.symlink_to(item.readlink(), target_is_directory=item.is_dir())
+        elif item.is_dir():
+            shutil.copytree(item, destination, symlinks=True)
+        else:
+            shutil.copy2(item, destination)
+    marker.write_text("legacy workspace migrated\n", encoding="utf-8")
 
 
 async def _get_bytes(url: str, ek: str) -> bytes:

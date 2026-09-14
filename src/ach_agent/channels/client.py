@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Signed HTTP client implementing the existing channel handler seam."""
+"""HTTP-over-Unix-socket client implementing the existing channel handler seam."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import time
-import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -21,14 +20,7 @@ from ach_agent.channels.envelopes import (
     Submission,
 )
 from ach_agent.channels.message_event import MessageEvent
-from ach_agent.channels.signing import (
-    NONCE_HEADER,
-    REQUEST_HEADER,
-    RESPONSE_HEADER,
-    TIMESTAMP_HEADER,
-    request_mac,
-    verify_response_mac,
-)
+from ach_agent.boot.ipc import channel_socket_path
 from ach_agent.router.router import RouterAdmitResult
 
 MAX_REQUEST_BODY_BYTES = 1 * 1024 * 1024
@@ -46,33 +38,26 @@ class ChannelsClient:
 
     def __init__(
         self,
-        base_url: str,
-        key: bytes,
+        socket_path: str | None = None,
         *,
         agent: str = "default",
         channel_name: str | None = None,
         timeout: float = 30.0,
         http_client: httpx.AsyncClient | None = None,
-        clock: Callable[[], float] = time.time,
-        nonce_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
         poll_interval: float = 0.25,
         wait_timeout: float | None = None,
-        socket_path: str | None = None,
     ) -> None:
-        self.base_url = "http://ach-internal" if socket_path else base_url.rstrip("/")
-        self._socket_path = socket_path
-        self.key = key
+        self.base_url = "http://ach-internal"
+        self._socket_path = socket_path or str(channel_socket_path())
         self.agent = agent
         self.channel_name = channel_name
-        self._clock = clock
-        self._nonce_factory = nonce_factory
         self._poll_interval = poll_interval
         self._wait_timeout = wait_timeout
         self._owns_client = http_client is None
         self._http = http_client or httpx.AsyncClient(
             base_url=self.base_url,
             timeout=timeout,
-            transport=httpx.AsyncHTTPTransport(uds=socket_path) if socket_path else None,
+            transport=httpx.AsyncHTTPTransport(uds=self._socket_path),
         )
         self._closed = False
         self._operations: set[asyncio.Task[Any]] = set()
@@ -156,7 +141,7 @@ class ChannelsClient:
             self._end_operation(operation)
 
     async def probe_harness(self, channel_name: str = "") -> bool:
-        """Verify signed connectivity to H without submitting work."""
+        """Verify connectivity to H without submitting work."""
         del channel_name
         body = self._json_bytes({"agent": self.agent})
         response_body, status = await self._post("/internal/v1/readyz", body)
@@ -192,7 +177,7 @@ class ChannelsClient:
     async def _wait(self, ref: EventRef) -> Completion:
         if ref.agent != self.agent:
             raise SubmissionFailed("result scope mismatch: agent")
-        deadline = self._clock() + self._wait_timeout if self._wait_timeout is not None else None
+        deadline = time.monotonic() + self._wait_timeout if self._wait_timeout is not None else None
         invocation_id: str | None = None
         while True:
             body = self._json_bytes(
@@ -213,7 +198,7 @@ class ChannelsClient:
                     raise SubmissionFailed("result invocation correlation mismatch")
             if completion.state in {"completed", "failed", "outcome_unavailable"}:
                 return completion
-            if deadline is not None and self._clock() >= deadline:
+            if deadline is not None and time.monotonic() >= deadline:
                 raise SubmissionFailed("result wait timed out")
             await asyncio.sleep(self._poll_interval)
 
@@ -258,17 +243,7 @@ class ChannelsClient:
     async def _post(self, target: str, body: bytes) -> tuple[bytes, int]:
         if len(body) > MAX_REQUEST_BODY_BYTES:
             raise SubmissionFailed("request body too large")
-        timestamp = int(self._clock())
-        nonce = self._nonce_factory()
         headers = {"content-type": "application/json"}
-        if self._socket_path is None:
-            headers.update(
-                {
-                    TIMESTAMP_HEADER: str(timestamp),
-                    NONCE_HEADER: nonce,
-                    REQUEST_HEADER: request_mac(self.key, "POST", target, timestamp, nonce, body),
-                }
-            )
         try:
             async with self._http.stream("POST", target, content=body, headers=headers) as response:
                 chunks: list[bytes] = []
@@ -280,14 +255,8 @@ class ChannelsClient:
                     chunks.append(chunk)
                 response_body = b"".join(chunks)
                 status = response.status_code
-                signature = response.headers.get(RESPONSE_HEADER, "")
         except (httpx.HTTPError, OSError) as exc:
             raise SubmissionFailed(f"channel HTTP request failed: {exc}") from exc
-        if self._socket_path is None and (
-            not signature
-            or not verify_response_mac(self.key, nonce, status, response_body, signature)
-        ):
-            raise SubmissionFailed("invalid channel response authentication")
         return response_body, status
 
     @staticmethod

@@ -59,14 +59,13 @@ async def test_channels_client_fetches_typed_source_projection() -> None:
     )
     app = create_channels_app(
         CompletionRegistry(admission),
-        b"test-key",
         agent="agent-a",
         channels=[source.name],
         source_configs=[source],
     )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://ach-internal") as http:
-        client = ChannelsClient("http://ach-internal", b"test-key", http_client=http)
+        client = ChannelsClient("/run/ach-agent/channels/channel.sock", http_client=http)
         inputs = await client.fetch_config()
     assert inputs.agent_name == "agent-a"
     assert inputs.channels == [source]
@@ -80,6 +79,6 @@ async def test_channels_client_bounds_config_response() -> None:
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(handler), base_url="http://ach-internal"
     ) as http:
-        client = ChannelsClient("http://ach-internal", b"test-key", http_client=http)
+        client = ChannelsClient("/run/ach-agent/channels/channel.sock", http_client=http)
         with pytest.raises(SubmissionFailed, match="response body too large"):
             await client.fetch_config()

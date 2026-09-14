@@ -722,23 +722,24 @@ async def _run_harness(
     if hasattr(session_store, "close"):
         session_store.close()
 
-    engine_url = (configured_engine_url or DEFAULT_ENGINE_URL).rstrip("/")
+    engine_url = (configured_engine_url or "http://ach-internal").rstrip("/")
     local_engine: LocalEngineProcess | None = None
+    local_runtime_dir: Path | None = None
     if local_mode and not configured_engine_url:
-        artifact_dir = Path(tempfile.mkdtemp(prefix="ach-role-", dir="/tmp"))
-        artifacts = RoleArtifacts(artifact_dir).write(
-            channels_projection, public_cfg.model_dump(mode="json", by_alias=True)
-        )
+        local_runtime_dir = Path(tempfile.mkdtemp(prefix="ach-runtime-", dir="/tmp"))
+        local_socket_env = {"ACH_RUNTIME_DIR": str(local_runtime_dir)}
         try:
-            local_engine = await LocalEngineProcess.start(artifacts)
+            local_engine = await LocalEngineProcess.start(None, env=local_socket_env)
             await local_engine.wait_ready(
-                engine_url, timeout=float(cfg.engine.startup_timeout_seconds)
+                engine_url,
+                timeout=float(cfg.engine.startup_timeout_seconds),
+                socket_path=str(engine_socket_path(local_runtime_dir)),
             )
         except BaseException:
             if local_engine is not None:
                 await local_engine.close()
             else:
-                shutil.rmtree(artifact_dir, ignore_errors=True)
+                shutil.rmtree(local_runtime_dir, ignore_errors=True)
             await stop_model_proxies()
             if mcp_proxy is not None:
                 await mcp_proxy.stop()
@@ -747,7 +748,7 @@ async def _run_harness(
             if a2a_facade is not None:
                 await a2a_facade.stop()
             raise
-    engine_socket = str(engine_socket_path())
+    engine_socket = str(engine_socket_path(local_runtime_dir)) if local_runtime_dir else str(engine_socket_path())
     client = ExecutionClient(
         engine_url,
         controller_id=f"harness-{os.getpid()}-{id(cfg)}",

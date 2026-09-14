@@ -344,7 +344,7 @@ async def run_engine(
         return
     service = ExecutionService(driver, store)
     app = create_execution_app(service)
-    socket_name = os.environ.get("ACH_ENGINE_SOCKET", "").strip()
+    socket_name = str(engine_socket_path())
     host = os.environ.get("ACH_ENGINE_HOST", DEFAULT_ENGINE_HOST)
     try:
         port = int(os.environ.get("ACH_ENGINE_PORT", str(DEFAULT_ENGINE_PORT)))

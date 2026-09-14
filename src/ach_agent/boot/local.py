@@ -84,11 +84,16 @@ async def wait_engine_ready(
     timeout: float = 30.0,
     poll_interval: float = 0.1,
     client: httpx.AsyncClient | None = None,
+    socket_path: str | None = None,
 ) -> dict[str, Any]:
     """Wait for the engine endpoint without requiring a native process."""
     deadline = asyncio.get_running_loop().time() + timeout
     owns_client = client is None
-    http = client or httpx.AsyncClient(base_url=base_url.rstrip("/"), timeout=1.0)
+    http = client or httpx.AsyncClient(
+        base_url=base_url.rstrip("/"),
+        timeout=1.0,
+        transport=httpx.AsyncHTTPTransport(uds=socket_path) if socket_path else None,
+    )
     try:
         while True:
             try:
@@ -135,7 +140,7 @@ class LocalEngineProcess:
     @classmethod
     async def start(
         cls,
-        artifacts: RoleArtifactPaths,
+        artifacts: RoleArtifactPaths | None = None,
         *,
         host: str = "127.0.0.1",
         port: int = 8081,
@@ -158,13 +163,7 @@ class LocalEngineProcess:
             child_env["PYTHONPATH"] = str(package_root)
         # Role control values are launcher-owned and cannot be overridden by
         # an operator environment projection.
-        child_env.update(
-            {
-                "ACH_ENGINE_HOST": host,
-                "ACH_ENGINE_PORT": str(port),
-                "ACH_ENGINE_CONFIG_PATH": str(artifacts.engine),
-            }
-        )
+        child_env.update({"ACH_ENGINE_HOST": host, "ACH_ENGINE_PORT": str(port)})
         use_supervisor = sys.platform.startswith("linux")
         supervisor = Path(__file__).resolve().parents[1] / "engine" / "process_supervisor.py"
         command = (
@@ -186,8 +185,10 @@ class LocalEngineProcess:
             isolated_process_group=not terminal_mode,
         )
 
-    async def wait_ready(self, base_url: str, *, timeout: float = 30.0) -> dict[str, Any]:
-        return await wait_engine_ready(base_url, timeout=timeout)
+    async def wait_ready(
+        self, base_url: str, *, timeout: float = 30.0, socket_path: str | None = None
+    ) -> dict[str, Any]:
+        return await wait_engine_ready(base_url, timeout=timeout, socket_path=socket_path)
 
     async def close(self, *, timeout: float = 20.0) -> None:
         try:

@@ -27,7 +27,13 @@ def _finite_json(value: JsonValue) -> JsonValue:
 
 
 class _WireModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True, populate_by_name=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        frozen=True,
+        populate_by_name=True,
+        hide_input_in_errors=True,
+    )
 
 
 class PublicEngineConfig(_WireModel):

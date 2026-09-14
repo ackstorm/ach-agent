@@ -79,7 +79,7 @@ async def test_controller_hello_is_versioned_and_owns_service(fake_driver):
 
 
 @pytest.mark.asyncio
-async def test_unconfigured_execution_service_accepts_config_on_controller_open() -> None:
+async def test_unconfigured_execution_service_accepts_config_on_controller_open(tmp_path) -> None:
     service = ExecutionService(None, {})
     app = create_execution_app(service)
     async with _running_server(app) as base_url:
@@ -104,11 +104,15 @@ async def test_unconfigured_execution_service_accepts_config_on_controller_open(
                     "version": EXECUTION_API_VERSION,
                     "instance_id": service.instance_id,
                     "controller_id": "controller-a",
-                    "config": PublicEngineConfig().model_dump(mode="json", by_alias=True),
+                    "config": PublicEngineConfig(
+                        home=str(tmp_path / "home"),
+                        work_dir=str(tmp_path / "work"),
+                        public_context=str(tmp_path / "public"),
+                    ).model_dump(mode="json", by_alias=True),
                 },
             ) as response:
                 assert response.status_code == 200
-                assert (await response.aiter_lines().__anext__())
+                assert await response.aiter_lines().__anext__()
                 await response.aclose()
 
 
@@ -130,15 +134,11 @@ async def test_h_e_readiness_and_signed_c_probe_share_instance(fake_driver) -> N
                 return RouterAdmitResult.ACCEPTED
 
             registry = CompletionRegistry(admit, agent="agent-a")
-            h_app = create_channels_app(
-                registry, b"channel-key", agent="agent-a", channels={"queue"}
-            )
+            h_app = create_channels_app(registry, agent="agent-a", channels={"queue"})
             c_http = httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=h_app), base_url="http://harness"
             )
-            channels = ChannelsClient(
-                "http://harness", b"channel-key", agent="agent-a", http_client=c_http
-            )
+            channels = ChannelsClient(agent="agent-a", http_client=c_http)
             try:
                 assert await channels.probe_harness()
                 h_app.extra["state"].draining = True

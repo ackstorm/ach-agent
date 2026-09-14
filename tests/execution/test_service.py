@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from ach_agent.engine.base.events import OpenCodeUsage
 from ach_agent.execution.service import ExecutionService, OutputLimitExceeded
@@ -747,6 +748,44 @@ async def test_release_reserves_invocation_before_awaiting_pool_cleanup(fake_dri
 
     fake_driver.stop_barrier.set()
     await release
+
+
+@pytest.mark.asyncio
+async def test_reconfigure_checks_immutable_layout_but_allows_fresh_proxy_values(
+    tmp_path: Path,
+) -> None:
+    service = ExecutionService(None, {})
+    base = PublicEngineConfig(
+        home=str(tmp_path / "home"),
+        work_dir=str(tmp_path / "work"),
+        public_context=str(tmp_path / "public"),
+    )
+    await service.configure(base)
+    await service.configure(base.model_copy(update={"model_base_url": "http://fresh-proxy"}))
+    with pytest.raises(RuntimeError, match="layout changed"):
+        await service.configure(base.model_copy(update={"work_dir": str(tmp_path / "other")}))
+
+
+@pytest.mark.asyncio
+async def test_close_closes_engine_owned_session_store(monkeypatch) -> None:
+    class Store:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    store = Store()
+    service = ExecutionService(None, store)
+    await service.pool.stop_all()
+    await service.close()
+    assert store.closed
+
+
+def test_invalid_engine_env_does_not_echo_value() -> None:
+    sentinel = "secret-engine-value"
+    with pytest.raises(ValidationError) as error:
+        PublicEngineConfig(engine_env={"BAD-NAME": sentinel})
+    assert sentinel not in str(error.value)
 
 
 @pytest.mark.asyncio

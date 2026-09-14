@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.16.3] - 2026-09-14
+
 ### Fixed
 
 - Every distributed role now exposes HTTP `/healthz` and `/readyz`: Channels on

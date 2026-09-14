@@ -49,18 +49,23 @@ initialization. The Kubernetes pod uses fsGroup 10001 for writable `emptyDir`
 mounts. Neither requires a hydration init container.
 
 All three roles use the image entrypoint and select their role through `args:
-["--role", "harness|channels|engine"]`. H and E health checks use HTTP over
-their Unix sockets; C remains on public HTTP `0.0.0.0:8080`. Health checks allow
-a 15 second startup delay and bounded health retry policy.
+["--role", "harness|channels|engine"]`. All roles expose ordinary HTTP health:
+C on `0.0.0.0:8080`, H on `0.0.0.0:8090`, E on `0.0.0.0:8081`. H/E TCP
+listeners expose only `/healthz` and `/readyz`; their APIs remain on Unix sockets.
+Kubernetes uses `httpGet` probes directly. Docker Compose uses its required command
+form to GET the same HTTP endpoints. No custom image probe command is needed.
+Startup/readiness checks use `/readyz`; liveness uses `/healthz`. Startup allows
+a 15 second initial delay and bounded retries. Both standalone and distributed
+wait for hydration installation before readiness and track engine loss afterward.
 
 The PVC-backed Pod example uses one claim with separate subpaths:
 
 | Owner | Mount | Physical PVC subpath | Purpose |
 | --- | --- | --- | --- |
 | H | `/var/lib/ach-agent/state` | `state` | dedup `state.db` |
-| H + E | `/var/lib/ach-agent/workspace` | `workspace` | prepared session workspaces and transient hydration handoff |
+| H + E | `/var/lib/ach-agent/workspace` | `workspace` | prepared session workspaces |
 | E | `/var/lib/ach-agent/home` | `home` | native home/session files and codemem DB |
-| H + E | `/run/ach-agent/transfer` | `transfer` | temporary startup hydration batches |
+| H + E | `/run/ach-agent/transfer` | separate `emptyDir` | temporary startup hydration batches |
 
 The three data roots are rendered from one generic base. H sees `state` and
 workspace; E sees `home` and workspace. Codemem is internal to E at

@@ -174,7 +174,7 @@ Keep `AgentProfile.spec.placement`, profile-only, `standalone | distributed`, de
 - Keep the private HOME/state and shared workspace mounts described above.
 - Preserve public ingress on Channels, Recreate, one replica, restricted contexts and no service-account token.
 
-Probes invoke the image-provided command `python -m ach_agent.healthcheck --role ROLE --check startup|readiness|liveness`. Socket paths and HTTP client logic stay inside the image. Distributed startup defaults: initial delay 15 seconds, period 5 seconds, timeout 3 seconds, six failures. The startup probe gates liveness; internal discovery remains available before startup is successful.
+Kubernetes probes use HTTP directly: Channels on 8080, Harness on 8090, Engine on 8081, bound to `0.0.0.0`. Startup and readiness query `/readyz`; liveness queries `/healthz`. Harness and Engine TCP listeners expose health endpoints only. No exec probes or socket clients are required. Startup defaults: initial delay 15 seconds, period 5 seconds, timeout 3 seconds, six failures. The startup probe gates liveness; internal discovery remains available before startup is successful. Standalone retains its configured public port and uses the same initialization and downstream-readiness rules.
 
 The operator does not implement download, copy, native installation, batch removal or tool-specific storage migration.
 

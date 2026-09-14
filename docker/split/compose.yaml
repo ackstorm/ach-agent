@@ -22,7 +22,7 @@ services:
     tmpfs:
       - /tmp:mode=1777
     healthcheck:
-      test: ["CMD", "python", "-m", "ach_agent.healthcheck", "--role", "harness", "--check", "startup"]
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8090/readyz', timeout=2)"]
       interval: 5s
       timeout: 3s
       retries: 6
@@ -57,7 +57,7 @@ services:
     tmpfs:
       - /tmp:mode=1777
     healthcheck:
-      test: ["CMD", "python", "-m", "ach_agent.healthcheck", "--role", "channels", "--check", "readiness"]
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/readyz', timeout=2)"]
       interval: 5s
       timeout: 3s
       retries: 6
@@ -78,7 +78,7 @@ services:
     tmpfs:
       - /tmp:mode=1777
     healthcheck:
-      test: ["CMD", "python", "-m", "ach_agent.healthcheck", "--role", "engine", "--check", "readiness"]
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8081/readyz', timeout=2)"]
       interval: 5s
       timeout: 3s
       retries: 6

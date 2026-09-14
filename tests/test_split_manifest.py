@@ -74,7 +74,8 @@ def test_roles_use_image_entrypoint_args_and_only_harness_gets_full_config() -> 
     assert "ACH_CHANNELS_CONFIG_PATH" not in harness_env
     assert "ACH_ENGINE_CONFIG_PATH" not in harness_env
     assert {item["name"] for item in (containers["channels"].get("env") or [])} == {
-        "ACH_TOKEN", "ACH_BASE_URL"
+        "ACH_TOKEN",
+        "ACH_BASE_URL",
     }
     assert {item["name"] for item in (containers["engine"].get("env") or [])} == set()
 
@@ -89,13 +90,20 @@ def test_roles_use_image_entrypoint_args_and_only_harness_gets_full_config() -> 
     assert engine_mounts["/run/ach-agent/engine"].get("readOnly") is not True
     assert "/run/ach-agent/channels" not in engine_mounts
     assert containers["channels"]["ports"][0]["containerPort"] == 8080
-    assert "ports" not in containers["harness"]
-    assert "ports" not in containers["engine"]
-    for role in ("harness", "engine"):
-        probe_text = str(containers[role]["startupProbe"])
-        assert "ach_agent.healthcheck" in probe_text
-    assert "8090" not in str(containers["harness"])
-    assert "8081" not in str(containers["engine"])
+    for role, port in (("channels", 8080), ("harness", 8090), ("engine", 8081)):
+        container = containers[role]
+        assert any(item["containerPort"] == port for item in container["ports"])
+        for probe, path in (
+            ("startupProbe", "/readyz"),
+            ("readinessProbe", "/readyz"),
+            ("livenessProbe", "/healthz"),
+        ):
+            assert container[probe]["httpGet"] == {"path": path, "port": port}
+            assert "exec" not in container[probe]
+            assert container[probe]["timeoutSeconds"] == 3
+        assert container["startupProbe"]["initialDelaySeconds"] == 15
+        assert container["startupProbe"]["periodSeconds"] == 5
+        assert container["startupProbe"]["failureThreshold"] == 6
     assert "/etc/ach-agent/config.yaml" not in str(containers["channels"])
     assert "/etc/ach-agent/config.yaml" not in str(containers["engine"])
     assert "/var/lib/ach-agent/state" not in str(containers["channels"])
@@ -128,8 +136,8 @@ def test_compose_uses_one_network_namespace_and_named_role_volumes() -> None:
     assert "ACH_ENGINE_CONFIG_PATH" not in str(compose)
     assert "channels-ipc" in str(compose)
     assert "engine-ipc" in str(compose)
-    assert "8090" not in str(compose)
-    assert "8081" not in str(compose)
+    assert "http://127.0.0.1:8090/readyz" in str(services["harness"]["healthcheck"])
+    assert "http://127.0.0.1:8081/readyz" in str(services["engine"]["healthcheck"])
     assert "bootstrap" not in str(compose).lower()
 
 
@@ -153,15 +161,15 @@ def test_dockerfile_exposes_split_targets_and_keeps_combined_default() -> None:
     assert "EXPOSE 8081" not in dockerfile
 
 
-def test_all_split_manifests_use_socket_probes_and_no_bootstrap_contract() -> None:
+def test_all_split_manifests_use_http_probes_and_no_bootstrap_contract() -> None:
     paths = list(SPLIT.glob("compose*.yaml")) + [SPLIT / "pod.yaml"]
     for path in paths:
         text = path.read_text(encoding="utf-8")
         lowered = text.lower()
         assert "bootstrap" not in lowered, path
         assert "hmac" not in lowered, path
-        assert "8090" not in text, path
-        assert "8081" not in text, path
+        assert "ach_agent.healthcheck" not in text, path
+        assert "HTTPTransport" not in text, path
     acceptance = (SPLIT / "compose-acceptance.yaml").read_text(encoding="utf-8")
     engine_block = acceptance.split("\n  engine:", 1)[1]
     assert "DEBUG: engine-value" in engine_block
@@ -236,7 +244,7 @@ def test_ephemeral_artifacts_resolve_to_the_ephemeral_mount_map() -> None:
     channels = services["channels"]
     engine = services["engine"]
     assert all(service["build"]["target"] == "default" for service in services.values())
-    assert "ach_agent.healthcheck" in str(channels["healthcheck"])
+    assert "http://127.0.0.1:8080/readyz" in str(channels["healthcheck"])
     assert "/tmp/ach-agent/state:uid=10001,gid=10001" in harness["tmpfs"]
     assert "/tmp/ach-agent/home:uid=10001,gid=10001" in engine["tmpfs"]
     assert any("/tmp/ach-agent/workspace" in mount for mount in harness["volumes"])

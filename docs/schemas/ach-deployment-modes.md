@@ -4,10 +4,9 @@ This supersedes the previous storage proposal. ACH renders placement, environmen
 and generic storage. ACH Agent owns the contents, native tool paths and compatibility.
 Do not add renderer branches for codemem, OpenCode, Pi, skills or hydration artifacts.
 
-Status: implemented, locally validated and merged into `main` for v0.16.2.
-Use `ghcr.io/ackstorm/ach-agent:v0.16.2` after the release workflow publishes it;
-v0.16.1 does not contain the split. Kubernetes operator integration still needs
-joint cluster e2e.
+Status: v0.16.2 is published and contains the split. The HTTP probe contract below
+supersedes its command-based probes and requires the next patch image. Kubernetes
+operator integration still needs joint cluster e2e.
 
 ## Placement and image
 
@@ -87,20 +86,33 @@ Retain restricted security contexts and separate PID namespaces.
 
 ## Probes
 
-Use the image-provided command for each role and probe type:
+Use ordinary Kubernetes `httpGet` probes for every container. No exec probe,
+image healthcheck command or Unix-socket client is required.
 
-```text
-python -m ach_agent.healthcheck --role channels --check startup
-python -m ach_agent.healthcheck --role harness --check startup
-python -m ach_agent.healthcheck --role engine --check startup
-```
+| Role | HTTP port |
+| --- | --- |
+| Channels | 8080 |
+| Harness | 8090 |
+| Engine | 8081 |
 
-Use `--check readiness` and `--check liveness` for the corresponding probes.
-The command encapsulates endpoint details; no socket snippets are needed in ACH.
+ACH Agent binds the health listeners to `0.0.0.0`. The new Harness/Engine TCP
+listeners expose health endpoints only; application traffic keeps using Unix
+sockets. No additional Service or operator-injected environment is needed.
 
-Startup: `initialDelaySeconds: 15`, `periodSeconds: 5`, `timeoutSeconds: 3`,
-`failureThreshold: 6`. Keep the existing readiness/liveness schedules, with a
-three-second exec timeout. Initialization completes before startup succeeds.
+Use `/readyz` for startup/readiness and `/healthz` for liveness:
+
+| Probe | Initial delay | Period | Timeout | Failure threshold |
+| --- | --- | --- | --- | --- |
+| Startup | 15s | 5s | 3s | 6 |
+| Readiness | 0s | 10s | 3s | 3 |
+| Liveness | 0s | 20s | 3s | 3 |
+
+Standalone retains its existing configured HTTP port and the same endpoints.
+Readiness has the same semantics in both placements: initialization must finish,
+including hydration copy, native configuration and directory preparation, before
+readiness succeeds. This happens at startup, without waiting for an event. Harness
+and Channels readiness reflects required downstream readiness, including engine
+loss after startup. ACH Agent owns this logic; the operator only renders probes.
 Profile resources apply to each container; document the resulting total pod requests.
 
 ## Responsibility and acceptance

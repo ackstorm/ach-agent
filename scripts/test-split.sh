@@ -43,6 +43,7 @@ run_engine_acceptance() {
   [ -n "$INGRESS_PORT" ] || { echo "channels ingress did not become reachable" >&2; return 1; }
 
   wait_harness_ready
+  assert_http_health
   assert_socket_mounts
   echo "$target startup seconds: $(( $(date +%s) - startup_started ))"
 
@@ -112,14 +113,22 @@ PY
 import httpx
 
 try:
-    response = httpx.Client(transport=httpx.HTTPTransport(uds="/run/ach-agent/channels/channel.sock"), base_url="http://ach-internal", timeout=2).get("/readyz")
+    response = httpx.Client(base_url="http://127.0.0.1:8090", timeout=2).get("/readyz")
 except httpx.HTTPError:
     raise SystemExit(1)
 raise SystemExit(0 if response.status_code == 503 else 1)
 PY
     then
       echo "$target engine failure: harness readiness became 503"
-      return 0
+      for _ in $(seq 1 30); do
+        if [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${INGRESS_PORT}/readyz")" = 503 ]; then
+          echo "$target engine failure: channels readiness became 503"
+          return 0
+        fi
+        sleep 1
+      done
+      echo "$target channels did not observe engine failure" >&2
+      return 1
     fi
     sleep 1
   done
@@ -127,10 +136,27 @@ PY
   return 1
 }
 
+assert_http_health() {
+  # A different network namespace queries the pod IP, as kubelet does.
+  "${COMPOSE[@]}" exec -T mock-upstream python - <<'PY'
+import httpx
+
+with httpx.Client(timeout=3) as client:
+    for role, port in (("channels", 8080), ("harness", 8090), ("engine", 8081)):
+        for path in ("/healthz", "/readyz"):
+            response = client.get(f"http://harness:{port}{path}")
+            assert response.status_code == 200, (role, path, response.status_code)
+    for port, path in ((8090, "/internal/v1/config"), (8081, "/execution/v1/health")):
+        response = client.get(f"http://harness:{port}{path}")
+        assert response.status_code == 404, (port, path, response.status_code)
+print("all roles expose HTTP health; private APIs are not exposed")
+PY
+}
+
 wait_harness_ready() {
   for _ in $(seq 1 60); do
     if "${COMPOSE[@]}" exec -T harness python -c \
-      'import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds="/run/ach-agent/channels/channel.sock"), base_url="http://ach-internal", timeout=2); raise SystemExit(0 if c.get("/readyz").status_code == 200 else 1)' \
+      'import httpx; c=httpx.Client(base_url="http://127.0.0.1:8090", timeout=2); raise SystemExit(0 if c.get("/readyz").status_code == 200 else 1)' \
       >/dev/null 2>&1; then
       return 0
     fi

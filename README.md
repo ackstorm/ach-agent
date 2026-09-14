@@ -276,8 +276,11 @@ harness-private HOME.
 
 The two IPC directory mounts are separate: H writes the channels directory and C
 connects through its read-only mount; E writes the engine directory and H connects
-through its read-only mount. H/E probes use
-HTTP over their Unix sockets; C's public ingress remains on port 8080, and native,
+through its read-only mount. Kubernetes probes use ordinary HTTP: Channels on
+8080, Harness on 8090 and Engine on 8081. The latter two expose only `/healthz`
+and `/readyz`; their control APIs remain on Unix sockets. Standalone uses its
+configured public health port with the same readiness rules: hydration must be
+installed before ready, and engine loss removes readiness. Native,
 model and MCP HTTP endpoints remain where their existing clients require them. There
 are no mandatory internal control ports, bootstrap files, bootstrap keys or internal
 operator environment variables. These files do not change the CR schema or publish

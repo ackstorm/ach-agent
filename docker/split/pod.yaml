@@ -45,6 +45,9 @@ spec:
       image: ghcr.io/ackstorm/ach-agent:latest
       imagePullPolicy: IfNotPresent
       args: ["--role", "harness"]
+      ports:
+        - name: harness-health
+          containerPort: 8090
       env:
         - name: ACH_BASE_URL
           valueFrom:
@@ -57,22 +60,27 @@ spec:
               name: ach-agent-secrets
               key: ach-token
       readinessProbe:
-        exec:
-          command: ["python", "-m", "ach_agent.healthcheck", "--role", "harness", "--check", "readiness"]
-        periodSeconds: 5
+        httpGet:
+          path: /readyz
+          port: 8090
+        periodSeconds: 10
         timeoutSeconds: 3
+        failureThreshold: 3
       startupProbe:
-        exec:
-          command: ["python", "-m", "ach_agent.healthcheck", "--role", "harness", "--check", "startup"]
+        httpGet:
+          path: /readyz
+          port: 8090
         initialDelaySeconds: 15
         periodSeconds: 5
         timeoutSeconds: 3
         failureThreshold: 6
       livenessProbe:
-        exec:
-          command: ["python", "-m", "ach_agent.healthcheck", "--role", "harness", "--check", "liveness"]
-        periodSeconds: 10
+        httpGet:
+          path: /healthz
+          port: 8090
+        periodSeconds: 20
         timeoutSeconds: 3
+        failureThreshold: 3
       securityContext: &restricted
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true
@@ -117,22 +125,27 @@ spec:
         - name: ingress
           containerPort: 8080
       readinessProbe:
-        exec:
-          command: ["python", "-m", "ach_agent.healthcheck", "--role", "channels", "--check", "readiness"]
-        periodSeconds: 5
+        httpGet:
+          path: /readyz
+          port: 8080
+        periodSeconds: 10
         timeoutSeconds: 3
+        failureThreshold: 3
       startupProbe:
-        exec:
-          command: ["python", "-m", "ach_agent.healthcheck", "--role", "channels", "--check", "startup"]
+        httpGet:
+          path: /readyz
+          port: 8080
         periodSeconds: 5
         initialDelaySeconds: 15
         timeoutSeconds: 3
         failureThreshold: 6
       livenessProbe:
-        exec:
-          command: ["python", "-m", "ach_agent.healthcheck", "--role", "channels", "--check", "liveness"]
-        periodSeconds: 10
+        httpGet:
+          path: /healthz
+          port: 8080
+        periodSeconds: 20
         timeoutSeconds: 3
+        failureThreshold: 3
       securityContext: *restricted
       volumeMounts:
         - name: channels-ipc
@@ -144,23 +157,31 @@ spec:
       image: ghcr.io/ackstorm/ach-agent:latest
       imagePullPolicy: IfNotPresent
       args: ["--role", "engine"]
+      ports:
+        - name: engine-health
+          containerPort: 8081
       readinessProbe:
-        exec:
-          command: ["python", "-m", "ach_agent.healthcheck", "--role", "engine", "--check", "readiness"]
-        periodSeconds: 5
+        httpGet:
+          path: /readyz
+          port: 8081
+        periodSeconds: 10
         timeoutSeconds: 3
+        failureThreshold: 3
       startupProbe:
-        exec:
-          command: ["python", "-m", "ach_agent.healthcheck", "--role", "engine", "--check", "startup"]
+        httpGet:
+          path: /readyz
+          port: 8081
         initialDelaySeconds: 15
         periodSeconds: 5
         timeoutSeconds: 3
         failureThreshold: 6
       livenessProbe:
-        exec:
-          command: ["python", "-m", "ach_agent.healthcheck", "--role", "engine", "--check", "liveness"]
-        periodSeconds: 10
+        httpGet:
+          path: /healthz
+          port: 8081
+        periodSeconds: 20
         timeoutSeconds: 3
+        failureThreshold: 3
       securityContext: *restricted
       volumeMounts:
         - name: engine-ipc

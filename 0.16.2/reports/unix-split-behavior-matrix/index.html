@@ -1,0 +1,534 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>Unix split behavior matrix - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#unix-split-behavior-matrix" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Unix split behavior matrix
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#placement-and-transport-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Placement and transport changes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#baseline-characterization-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      Baseline characterization record
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<blockquote>
+<p>Historical evidence for the revisions named below. The <a href="../../references/2026-09-14-three-role-split/">current split contract</a> is authoritative; latest acceptance evidence is in <a href="../unix-split-validation/">unix-split-validation</a>.</p>
+</blockquote>
+<h1 id="unix-split-behavior-matrix">Unix split behavior matrix</h1>
+<p>Reference: original v0.16.1, <code>462912f</code>. This matrix records the implemented
+simplification against that reference, rather than treating intermediate split
+decisions as original behavior. Final commands, source revisions and runtime
+evidence are recorded in <a href="../unix-split-validation/">Unix split validation</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Behavior</th>
+<th>Original contract retained</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Workspace identity</td>
+<td>Existing <code>workspace_dir(work_dir, session_key)</code> formula</td>
+<td>Characterization pins <code>/work/repo-42-a45d87f4</code> and <code>/work/repo-43-082624e0</code></td>
+</tr>
+<tr>
+<td>Repeated preparation</td>
+<td>The populated same-key checkout survives; prepare runs again there</td>
+<td>Baseline/current characterization; Compose retains <code>retained</code> and records two prepare runs in one directory</td>
+</tr>
+<tr>
+<td>Prepare environment</td>
+<td>cwd and HOME are workspace; selected env, secretEnv and validated event values retain their original meaning</td>
+<td><code>tests/compat</code>, <code>tests/test_prepare.py</code>; real H hook assertions with synthetic secret</td>
+</tr>
+<tr>
+<td>Cleanup environment</td>
+<td>cwd is workspace parent, HOME remains workspace; failures are best-effort</td>
+<td>Characterization writes a sentinel before deliberately failing cleanup</td>
+</tr>
+<tr>
+<td>Hook ownership and ordering</td>
+<td>H executes hooks, after reservation and before native acquire; stop precedes cleanup; warm reuse defers cleanup</td>
+<td>Wiring tests observe H <code>run_prepare</code>; real HTTP registry/expiry/cleanup-ACK tests</td>
+</tr>
+<tr>
+<td>Preparation failure</td>
+<td>No native acquire after failed H prepare; reservation is canceled</td>
+<td><code>test_h_prepare_failure_discards_reserved_cleanup</code>, original hook timeout tests</td>
+</tr>
+<tr>
+<td>Script-only execution</td>
+<td>H temporary directory under configured workDir; newline-terminated stdin payload; removed afterward; no native acquire</td>
+<td>Baseline/current characterization and main wiring tests</td>
+</tr>
+<tr>
+<td>Explicit engine environment</td>
+<td>Original name selection/sanitization; selected H values reach native children</td>
+<td>Role/wire/env tests; real Pi/OpenCode process inspection with values absent from E environment</td>
+</tr>
+<tr>
+<td>Native session reuse</td>
+<td>Separate lane/workspace and conversation keys; none/auto/custom policy retained; native map retained/imported</td>
+<td>Runner/session/state suites; real two-turn Pi/OpenCode session continuity</td>
+</tr>
+<tr>
+<td>Multi-turn behavior</td>
+<td>Turn budgets, terminal repair, usage, text/tool events and session maintenance remain</td>
+<td>Existing <code>tests/boot</code>, <code>tests/engine</code>, <code>tests/execution</code> suites</td>
+</tr>
+<tr>
+<td>Source ACK policy</td>
+<td>Existing Redis consumer behavior unchanged</td>
+<td>Relative to <code>462912f</code>, <code>channels/queue.py</code> changes only its source-config type annotation; queue tests retained</td>
+</tr>
+<tr>
+<td>Admission</td>
+<td>Existing dedup, backpressure, FIFO and finite bounds; no replacement queue</td>
+<td>Existing router and conformance suites; no router changes in this simplification</td>
+</tr>
+<tr>
+<td>Native TUI</td>
+<td>Inherited terminal, two native turns, resize, normal exit</td>
+<td>Real PTY tests of Pi and OpenCode, native session files and exit status</td>
+</tr>
+</tbody>
+</table>
+<h2 id="placement-and-transport-changes">Placement and transport changes</h2>
+<p>These are deliberate consequences of the split, not features of original v0.16.1:</p>
+<ul>
+<li>C uses the existing admission/result API on <code>channel.sock</code>; H uses the existing
+  execution API on <code>agent.sock</code>. HTTP JSON/NDJSON is retained; independent streams
+  and cancellation connections are retained.</li>
+<li>H reads the private full YAML. C fetches typed source inputs; E receives typed
+  public controller/acquisition configuration. There are no generated bootstrap
+  files or internal HMAC keys.</li>
+<li>Explicit stop acknowledgement carries the pool's former in-process cleanup
+  callback across IPC. Useful result correlation, bounded retention, ownership
+  and native-process supervision are retained.</li>
+<li>Native home and H state are separate mounts; H/E share workspace and public
+  context. <code>.ach-state</code> links directly to the shared public context, so H does not
+  need access to E's private home.</li>
+<li>A broken IPC connection can fail accepted work. The in-memory result registry
+  does not make acceptance durable or external effects exactly-once.</li>
+</ul>
+<p>The original runner allowed two lane keys to render the same custom conversation
+key; it did not provide a cross-lane conversation lock. The earlier split added
+<code>ConversationLocks</code>, covered by <code>tests/test_conversation_ownership.py</code>. That useful
+serialization remains: the mapping policy is unchanged, but overlapping access to
+one native conversation is serialized. It was not added or removed by this
+simplification. This is distinct from proving that two separate OpenCode servers
+can operate concurrently on one conversation; the native reuse acceptance uses
+one stable lane and conversation key.</p>
+<p>No new repository reset, private clone, bundle handoff, engine-side hook execution,
+Git policy, queue, transport framework, masking or autoscaler remains in this phase.
+Original credential-bearing hooks still consume a shared, agent-writable checkout;
+container placement does not make its Git configuration trustworthy.</p>
+<h2 id="baseline-characterization-record">Baseline characterization record</h2>
+<p>The same five characterization tests were run in a task-owned original checkout
+at <code>462912f</code> and the current split. The original focused command was:</p>
+<div class="highlight"><pre><span></span><code>rtk<span class="w"> </span>proxy<span class="w"> </span>./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/compat/test_original_split_behavior.py<span class="w"> </span>tests/test_prepare.py<span class="w"> </span>tests/router<span class="w"> </span>-q
+</code></pre></div>
+<p>The baseline focused run passed 81 tests. The intermediate split run at <code>2ff1dd8</code>
+passed 84 and failed one: script-only work used <code>/tmp/ach-private</code> instead of a
+temporary child of configured workDir. The implementation and the stale assertion
+that deleted the parent workDir were corrected. These historical failures are
+not xfails and are not treated as final validation evidence.</p>
+<p>The characterization tests prove their named observable behaviors, not equivalence
+for every possible repository, operator script or native-engine version. See the
+validation report for the broader suite and actual container checks.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

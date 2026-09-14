@@ -589,7 +589,7 @@ async def _run_harness(
     # same HTTP execution API used by the separated deployment. Native drivers
     # are constructed only by the engine role.
     from ach_agent.boot.execution_client import ExecutionClient
-    from ach_agent.boot.local import LocalEngineProcess, RoleArtifacts
+    from ach_agent.boot.local import LocalEngineProcess
 
     # Engine home, workDir, codemem path and raw MCP templates are projected by H;
     # E performs native normalization and binary probing.
@@ -666,26 +666,39 @@ async def _run_harness(
                 "codemem_project": terminal_codmem_project,
             }
         )
-        artifact_dir = Path(tempfile.mkdtemp(prefix="ach-role-", dir="/tmp"))
-        artifacts = RoleArtifacts(artifact_dir).write(
-            channels_projection, public_cfg.model_dump(mode="json", by_alias=True)
-        )
+        runtime_dir = Path(tempfile.mkdtemp(prefix="ach-tui-runtime-", dir="/tmp"))
+        tui_socket = str(engine_socket_path(runtime_dir))
         terminal_engine: LocalEngineProcess | None = None
+        terminal_client: ExecutionClient | None = None
         tui_log_path = harness_log_dir() / "tui-attach.log"
         with tui_log_path.open("a", encoding="utf-8") as tui_log:
             real_stderr = sys.stderr
             sys.stderr = tui_log
             try:
                 terminal_engine = await LocalEngineProcess.start(
-                    artifacts, terminal_mode=True
+                    None, env={"ACH_RUNTIME_DIR": str(runtime_dir)}, terminal_mode=True
                 )
+                await terminal_engine.wait_ready(
+                    "http://ach-internal",
+                    timeout=float(cfg.engine.startup_timeout_seconds),
+                    socket_path=tui_socket,
+                )
+                terminal_client = ExecutionClient(
+                    "http://ach-internal",
+                    controller_id=f"tui-{os.getpid()}-{id(cfg)}",
+                    socket_path=tui_socket,
+                )
+                await terminal_client.connect(public_cfg)
                 await terminal_engine.process.wait()
             finally:
                 sys.stderr = real_stderr
+                if terminal_client is not None:
+                    await terminal_client.close()
                 if terminal_engine is not None:
                     await terminal_engine.close()
                 else:
-                    shutil.rmtree(artifact_dir, ignore_errors=True)
+                    shutil.rmtree(runtime_dir, ignore_errors=True)
+                shutil.rmtree(runtime_dir, ignore_errors=True)
                 await stop_model_proxies()
                 if mcp_proxy is not None:
                     await mcp_proxy.stop()
@@ -1212,21 +1225,12 @@ async def main(
         )
         return
 
-    from ach_agent.boot.local import load_artifact
     from ach_agent.boot.roles import run_channels, run_engine, run_harness
 
     if role == "engine":
-        path = os.environ.get("ACH_ENGINE_CONFIG_PATH", "")
-        if path:
-            await run_engine(cast(Any, load_artifact(path)), terminal_mode=tui_mode)
-        else:
-            await run_engine(terminal_mode=tui_mode)
+        await run_engine(terminal_mode=tui_mode)
     elif role == "channels":
-        path = os.environ.get("ACH_CHANNELS_CONFIG_PATH", "")
-        if path:
-            await run_channels(cast(Any, load_artifact(path)))
-        else:
-            await run_channels()
+        await run_channels()
     elif role == "harness":
         await run_harness(
             load_config(os.environ.get(CONFIG_PATH_ENV, DEFAULT_CONFIG_PATH)),

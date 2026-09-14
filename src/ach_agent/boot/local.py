@@ -10,72 +10,17 @@ allowlisted projections produced by :mod:`ach_agent.boot.roles`.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import shutil
 import signal
 import sys
-import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
-from pydantic import JsonValue
 
 if TYPE_CHECKING:
     from ach_agent.engine.lifecycle import ManagedServer
-
-
-@dataclass(frozen=True, slots=True)
-class RoleArtifactPaths:
-    channels: Path
-    engine: Path
-
-
-class RoleArtifacts:
-    """Write role projections into a private, task-owned artifact directory."""
-
-    def __init__(self, root: Path) -> None:
-        self.root = root
-        self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self.root.chmod(0o700)
-
-    def _write(self, name: str, value: dict[str, JsonValue]) -> Path:
-        target = self.root / name
-        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-        fd, temporary = tempfile.mkstemp(prefix=f".{name}.", dir=self.root)
-        temporary_path = Path(temporary)
-        try:
-            os.fchmod(fd, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                stream.write(encoded)
-                stream.write("\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary_path, target)
-            target.chmod(0o600)
-        finally:
-            temporary_path.unlink(missing_ok=True)
-        return target
-
-    def write(
-        self,
-        channels: dict[str, JsonValue],
-        engine: dict[str, JsonValue],
-    ) -> RoleArtifactPaths:
-        return RoleArtifactPaths(
-            channels=self._write("channels.json", channels),
-            engine=self._write("engine.json", engine),
-        )
-
-
-def load_artifact(path: str | Path) -> dict[str, JsonValue]:
-    """Load one role artifact and reject non-object JSON at the process boundary."""
-    value = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(value, dict):
-        raise ValueError(f"role artifact must contain a JSON object: {path}")
-    return value
 
 
 async def wait_engine_ready(
@@ -118,7 +63,7 @@ class LocalEngineProcess:
     def __init__(
         self,
         process: asyncio.subprocess.Process,
-        artifacts: RoleArtifactPaths,
+        artifacts: object | None,
         *,
         isolated_process_group: bool,
         process_owner: ManagedServer | None = None,
@@ -140,7 +85,7 @@ class LocalEngineProcess:
     @classmethod
     async def start(
         cls,
-        artifacts: RoleArtifactPaths | None = None,
+        artifacts: object | None = None,
         *,
         host: str = "127.0.0.1",
         port: int = 8081,
@@ -207,4 +152,4 @@ class LocalEngineProcess:
                     self.process.kill()
                 await self.process.wait()
         finally:
-            shutil.rmtree(self.artifacts.channels.parent, ignore_errors=True)
+            pass

@@ -58,6 +58,65 @@ class SplitRoleConfigError(ValueError):
     """A full harness config cannot be safely projected to a split role."""
 
 
+async def _run_native_terminal(service: ExecutionService) -> None:
+    """Run the inherited native terminal after controller-open configuration."""
+    public = service.public_config
+    if public is None or service.driver is None:
+        raise SplitRoleConfigError("native terminal requires controller configuration")
+    from ach_agent.engine import trace
+    from ach_agent.execution.service import _engine_config
+    from ach_agent.channels.tui import _CONSOLE_SESSION_KEY
+
+    token = public.trace_token
+    if not token or not public.trace_parent or not public.trace_session_id:
+        raise SplitRoleConfigError("trace fields are required for native terminal mode")
+    trace.adopt(token)
+    trace.adopt_tui(token, traceparent=public.trace_parent, session_id=public.trace_session_id)
+    native_cfg = _engine_config(public)
+    native_cfg.model_base_url = trace.tokenize_url(native_cfg.model_base_url, token)
+    native_cfg.mcp_local_urls = {
+        name: trace.tokenize_url(url, token) for name, url in native_cfg.mcp_local_urls.items()
+    }
+    if public.engine_type == "pi":
+        await service.driver.run_tui(native_cfg, _CONSOLE_SESSION_KEY)  # type: ignore[attr-defined]
+        return
+    from ach_agent.engine.lifecycle import build_opencode_env
+
+    server_native = await service.driver.launch(native_cfg, _CONSOLE_SESSION_KEY)
+    try:
+        binary = shutil.which(native_cfg.binary_path)
+        if binary is None:
+            raise RuntimeError(f"engine binary not found: {native_cfg.binary_path}")
+        env = (
+            build_opencode_env(server_native.ephemeral_home, native_cfg, server_native.config_path)
+            if server_native.config_path
+            else {}
+        )
+        log_path = harness_log_dir() / "tui-attach.log"
+        previous_sigint = signal.getsignal(signal.SIGINT)
+        proc: asyncio.subprocess.Process | None = None
+        with log_path.open("a", encoding="utf-8") as log_file:
+            try:
+                real_stderr = sys.stderr
+                sys.stderr = log_file
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        binary,
+                        "attach",
+                        f"http://127.0.0.1:{server_native.port}",
+                        "--pure",
+                        env=env,
+                    )
+                    signal.signal(signal.SIGINT, signal.SIG_IGN)
+                    await proc.wait()
+                finally:
+                    sys.stderr = real_stderr
+            finally:
+                signal.signal(signal.SIGINT, previous_sigint)
+    finally:
+        await service.driver.stop(server_native)
+
+
 _MCP_ENV_REF = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
 _MANAGED_ENV_NAMES = frozenset(
     {
@@ -208,6 +267,33 @@ async def run_engine(
     public_config: JsonValue | None = None, *, terminal_mode: bool = False
 ) -> None:
     """Start the engine HTTP role with no native process at endpoint boot."""
+    if public_config is None and terminal_mode:
+        service = ExecutionService(None, None)
+        app = create_execution_app(service)
+        listener = bind_listener(engine_socket_path())
+        server = uvicorn.Server(
+            uvicorn.Config(app=app, host=DEFAULT_ENGINE_HOST, port=DEFAULT_ENGINE_PORT, log_level="warning")
+        )
+
+        async def run_terminal() -> None:
+            await service.configured_event.wait()
+            try:
+                await _run_native_terminal(service)
+            finally:
+                server.should_exit = True
+
+        terminal_task = asyncio.create_task(run_terminal())
+        try:
+            await server.serve(sockets=[listener])
+        finally:
+            if not terminal_task.done():
+                terminal_task.cancel()
+            await asyncio.gather(terminal_task, return_exceptions=True)
+            with contextlib.suppress(Exception):
+                await service.release_controller(service.controller_id or "")
+            listener.close()
+            engine_socket_path().unlink(missing_ok=True)
+        return
     if public_config is None and not terminal_mode:
         service = ExecutionService(None, None)
         app = create_execution_app(service)
@@ -235,10 +321,7 @@ async def run_engine(
             engine_socket_path().unlink(missing_ok=True)
         return
     if public_config is None:
-        public_config = await wait_for_engine_bootstrap(
-            role_bootstrap_path("engine"),
-            timeout=_bootstrap_wait_seconds(),
-        )
+        raise SplitRoleConfigError("engine configuration must arrive during controller-open")
     public = PublicEngineConfig.model_validate(public_config)
     home = Path(public.home or "/tmp/ach-home")
     work_dir = Path(public.work_dir or home / "workspace")
@@ -419,7 +502,17 @@ async def run_channels(channel_config: JsonValue | None = None) -> None:
 
         config_client = ChannelsClient(socket_path=str(channel_socket_path()))
         try:
-            inputs = await config_client.fetch_config()
+            deadline = asyncio.get_running_loop().time() + 30.0
+            while True:
+                try:
+                    inputs = await config_client.fetch_config()
+                    break
+                except Exception as exc:
+                    if asyncio.get_running_loop().time() >= deadline:
+                        raise SplitRoleConfigError(
+                            "channel configuration did not become available"
+                        ) from exc
+                    await asyncio.sleep(0.5)
         finally:
             await config_client.close()
         fetched_agent_name = inputs.agent_name

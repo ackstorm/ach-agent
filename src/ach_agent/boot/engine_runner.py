@@ -220,12 +220,8 @@ def make_engine_runner(
                         invocation_id=invocation_id,
                         session_key=event.session_key,
                         event_id=event.idempotency_key,
-                        channel_name=event.channel_name,
-                        delivery_context=dict(event.delivery_context),
                         home=str(invocation_engine_cfg.home),
                         work_dir=str(invocation_engine_cfg.work_dir),
-                        prepare=None,
-                        cleanup=None,
                         notify_on_stop=cleanup_cfg is not None,
                         cleanup_ack_required=cleanup_cfg is not None,
                         cleanup_timeout_seconds=float(

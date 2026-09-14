@@ -45,7 +45,6 @@ from ach_agent.execution.wire import (
     TurnRequest,
     WorkspaceCancelRequest,
     WorkspaceCleanupAckRequest,
-    WorkspaceHandoffRequest,
     WorkspaceOperationFailure,
     WorkspacePrepareRequest,
     WorkspaceStoppedEvent,
@@ -601,7 +600,7 @@ class ExecutionClient:
     async def _workspace_json_request(
         self,
         path: str,
-        body: WorkspacePrepareRequest | WorkspaceHandoffRequest,
+        body: WorkspacePrepareRequest,
     ) -> Any:
         self._assert_controller_live()
         self._validate_controller(body.controller_id)
@@ -812,22 +811,6 @@ class ExecutionClient:
             self._cleanup_budgets.pop(request.invocation_id, None)
             raise WorkspaceOperationFailed(
                 "invalid workspace prepare response; reservation canceled", confirmed=True
-            )
-        return {"status": "ok", "workspace": expected}
-
-    async def handoff_workspace(self, request: WorkspaceHandoffRequest) -> dict[str, str]:
-        """Import a credential-free shared-workspace bundle before native acquisition."""
-        result = await self._workspace_json_request("/execution/v1/workspace/handoff", request)
-        expected = str(workspace_dir(request.work_dir, request.session_key))
-        if (
-            not isinstance(result, dict)
-            or result.get("status") != "ok"
-            or not isinstance(result.get("workspace"), str)
-            or result["workspace"] != expected
-        ):
-            await self._confirm_workspace_cancel(request.controller_id, request.invocation_id)
-            raise WorkspaceOperationFailed(
-                "invalid workspace handoff response; reservation canceled", confirmed=True
             )
         return {"status": "ok", "workspace": expected}
 

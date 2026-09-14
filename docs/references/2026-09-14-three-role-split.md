@@ -1,11 +1,18 @@
 # Channels, harness and engine: current split contract
 
-Status: implementation reference for `feat/phase1-split`. This document supersedes
+Status: implementation merged into local `main` on 2026-09-14. This document supersedes
 the archived split proposals and plans in `docs/superpowers/`. The
 [validation report](../reports/unix-split-validation.md) records what was exercised
 and on which revisions; it is evidence, not an alternative specification.
 
 ## Placement and transport
+
+The ACH operator proposal offers `standalone` (one combined container) and
+`distributed` (the three-container boundary below), with one Deployment and one
+active pod in either case. This is operator placement, not a new agent config field
+or CLI flag. The existing launcher without `--role` serves standalone; explicit
+role args serve distributed. See the self-contained
+[operator handoff](../schemas/ach-deployment-modes.md).
 
 One pod contains three ordinary containers running the same application, selected by
 `--role channels`, `--role harness` and `--role engine`. The image uses tini to
@@ -89,6 +96,16 @@ before model traffic, including OpenCode's recreation of a stale session after
 a 404. Resolving the session initially does not cover that later transition.
 
 ## Scope
+
+The prior preserve-behavior plan's five tasks are complete: characterization,
+selected environment forwarding, H-side hooks, Unix-socket configuration delivery,
+and packaging/real acceptance. The subsequent bounded cleanup is complete as well.
+Post-merge tests on `main`: 1,178 passed, 3 skipped; Ruff and strict mypy passed.
+
+Optional cleanup remains: move the four public projection JSON examples used only
+by manifest tests into fixtures; remove the unused `build_role_configs` `split_mode`
+argument and Uvicorn host/port defaults ignored by Unix-socket listeners. These are
+not blockers, and do not justify replacing the execution API or result registry.
 
 This cleanup retains the implemented API, controller, native pool and completion
 registry. It removes a public retention knob, clarifies names and examples, and

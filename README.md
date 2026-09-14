@@ -24,10 +24,16 @@ use. Its behavior is pinned by an authoritative conformance suite (`make conform
 
 ## How it works
 
-The diagrams below describe the simplified split implemented on `feat/phase1-split`.
+The diagrams below describe the simplified split merged into `main`.
 The [validation report](docs/reports/unix-split-validation.md) records the full gate,
 real three-container runs and native TUI checks. Image publication and the external
 ACH operator rollout are separate from this implementation.
+
+The proposed ACH deployment modes are **standalone** (one combined container, no
+role arguments) and **distributed** (one pod containing channels, harness and
+engine with explicit role arguments). Both use the existing agent configuration;
+the choice belongs to the operator. See the
+[self-contained ACH handoff](docs/schemas/ach-deployment-modes.md).
 
 **Behavioral reference: the original agent, v0.16.1 (`462912f`), before the split.**
 The goal is to preserve its behavior while separating processes and simplifying our

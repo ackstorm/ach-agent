@@ -1,5 +1,17 @@
 # Unix split validation — 2026-09-14
 
+## Main integration
+
+On 2026-09-14, local `main` fast-forwarded from `462912f` to `36f0304`, including
+all 117 split-branch commits without conflicts. Two untracked older draft files
+that occupied incoming paths were preserved under `/tmp/ach-main-premerge.ov8tnk/`;
+other untracked files were left untouched. No remote push was performed.
+
+Fresh verification after integration in the main checkout: **1,178 passed,
+3 skipped**, Ruff check/format and strict mypy passed. Runtime behavior matches
+the previously tested branch tree. The new operator mode document is a handoff
+proposal; no ACH renderer or CR implementation was changed here.
+
 ## Bounded cleanup follow-up
 
 Runtime revision: `d87894f`, following the previously validated `5b2e9e5` tree.

@@ -1,5 +1,10 @@
 # ACH Agent Runtime — Operator Contract (the seam)
 
+> **Deployment proposal, 2026-09-14:** the self-contained
+> [standalone/distributed handoff](ach-deployment-modes.md) defines the proposed ACH
+> placement selector and the implemented agent startup/mount contract. The CR selector
+> requires implementation in ACH; it does not alter the frozen agent configuration schema.
+
 > **Pinned contract revision: v3.** This file was named `CONTRACT_v3.md` until 2026-07-27;
 > the revision it pins now lives here in the header instead of in the filename, so the
 > document keeps its name across revisions. When `ach-runtime` cuts v4, bump this line —

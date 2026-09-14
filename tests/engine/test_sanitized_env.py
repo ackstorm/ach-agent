@@ -118,7 +118,7 @@ def test_native_child_receives_only_explicit_engine_env(
 
     monkeypatch.setenv("E_OWNED_MARKER", "engine-value")
     monkeypatch.setenv("H_MANAGED_MARKER", "must-not-cross")
-    config = EngineConfig(engine_env_names=["E_OWNED_MARKER"])
+    config = EngineConfig(engine_env={"E_OWNED_MARKER": "engine-value"})
     if builder == "opencode":
         from ach_agent.engine.lifecycle import build_opencode_env
 
@@ -140,10 +140,10 @@ def test_native_child_receives_only_explicit_engine_env(
     assert observed == ["engine-value", ""]
 
 
-def test_split_engine_name_reads_engine_value_for_native_child(
+def test_split_engine_values_reach_native_child_without_e_ambient_values(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Split forwarding passes a name; the native child resolves E's value."""
+    """H-resolved values reach the child even when E has no ambient values."""
     from ach_agent.boot.roles import build_role_configs
     from ach_agent.config.schema import AgentConfig
 
@@ -157,11 +157,13 @@ def test_split_engine_name_reads_engine_value_for_native_child(
             "channels": [],
         }
     )
-    _channels, public = build_role_configs(cfg)
-    assert public["engineEnvNames"] == ["DEBUG", "CUSTOM_TOOL_TOKEN"]
-
     monkeypatch.setenv("DEBUG", "harness-value")
     monkeypatch.setenv("CUSTOM_TOOL_TOKEN", "harness-token")
+    _channels, public = build_role_configs(cfg)
+    assert public["engineEnv"] == {
+        "DEBUG": "harness-value",
+        "CUSTOM_TOOL_TOKEN": "harness-token",
+    }
     engine_env = os.environ.copy()
     engine_env["DEBUG"] = "engine-value"
     engine_env["CUSTOM_TOOL_TOKEN"] = "engine-token"
@@ -174,7 +176,7 @@ def test_split_engine_name_reads_engine_value_for_native_child(
         "from ach_agent.engine.lifecycle import build_opencode_env\n"
         "public = PublicEngineConfig.model_validate_json(sys.argv[3])\n"
         "env = build_opencode_env(Path(sys.argv[1]), "
-        "EngineConfig(engine_env_names=public.engine_env_names), Path(sys.argv[2]))\n"
+        "EngineConfig(engine_env=public.engine_env), Path(sys.argv[2]))\n"
         "print(subprocess.check_output([sys.executable, '-c', "
         "'import os; print(os.getenv(\"DEBUG\", \"\")); "
         "print(os.getenv(\"CUSTOM_TOOL_TOKEN\", \"\")); "
@@ -193,4 +195,4 @@ def test_split_engine_name_reads_engine_value_for_native_child(
         env=engine_env,
         text=True,
     )
-    assert observed == "engine-value\nengine-token\n\n"
+    assert observed == "harness-value\nharness-token\n\n"

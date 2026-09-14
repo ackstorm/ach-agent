@@ -674,9 +674,6 @@ async def _run_harness(
             }
         )
         artifact_dir = Path(tempfile.mkdtemp(prefix="ach-role-", dir="/tmp"))
-        explicit_engine_env = {
-            name: os.environ[name] for name in public_cfg.engine_env_names if name in os.environ
-        }
         artifacts = RoleArtifacts(artifact_dir).write(
             channels_projection, public_cfg.model_dump(mode="json", by_alias=True)
         )
@@ -687,7 +684,7 @@ async def _run_harness(
             sys.stderr = tui_log
             try:
                 terminal_engine = await LocalEngineProcess.start(
-                    artifacts, env=explicit_engine_env, terminal_mode=True
+                    artifacts, terminal_mode=True
                 )
                 await terminal_engine.process.wait()
             finally:
@@ -756,14 +753,11 @@ async def _run_harness(
     local_engine: LocalEngineProcess | None = None
     if local_mode and not configured_engine_url:
         artifact_dir = Path(tempfile.mkdtemp(prefix="ach-role-", dir="/tmp"))
-        explicit_engine_env = {
-            name: os.environ[name] for name in public_cfg.engine_env_names if name in os.environ
-        }
         artifacts = RoleArtifacts(artifact_dir).write(
             channels_projection, public_cfg.model_dump(mode="json", by_alias=True)
         )
         try:
-            local_engine = await LocalEngineProcess.start(artifacts, env=explicit_engine_env)
+            local_engine = await LocalEngineProcess.start(artifacts)
             await local_engine.wait_ready(
                 engine_url, timeout=float(cfg.engine.startup_timeout_seconds)
             )

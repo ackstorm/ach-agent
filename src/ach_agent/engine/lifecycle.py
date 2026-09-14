@@ -585,11 +585,13 @@ def build_opencode_env(
     env: dict[str, str] = {
         name: os.environ[name] for name in _OPENCODE_ENV_ALLOWLIST if name in os.environ
     }
-    # Operator-defined exceptions (engine.forwardEnv) — forwarded by name when present.
-    for name in (*config.forward_env, *config.engine_env_names):
+    # Operator-defined exceptions: legacy local values come from this process;
+    # split-role values are explicitly resolved by H and carried in engine_env.
+    for name in config.forward_env:
         value = os.environ.get(name)
         if value is not None:
             env[name] = value
+    env.update(config.engine_env)
     # Exa web-search is on by default for every agente: the harness pins the enable flag so
     # opencode always gets it without the operator listing it in forwardEnv. setdefault means a
     # forwarded harness value (via forwardEnv) still wins if the operator sets one explicitly.

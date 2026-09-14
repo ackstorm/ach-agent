@@ -157,6 +157,9 @@ def build_role_configs(
     environment; no value is serialized into this projection.
     """
     engine_env_names = _engine_env_names(cfg)
+    engine_env = {
+        name: os.environ[name] for name in engine_env_names if name in os.environ
+    }
     paths = resolve_role_paths(cfg)
     channels: dict[str, JsonValue] = {
         "schemaVersion": "1",
@@ -181,7 +184,7 @@ def build_role_configs(
         persistence_enabled=cfg.persistence.enabled,
         persistence_mount_path=cfg.persistence.mount_path,
         public_context=str(paths.public_context),
-        engine_env_names=engine_env_names,
+        engine_env=engine_env,
         model=cfg.model.name,
         model_type=cfg.model.type,
         params=cfg.model.params,

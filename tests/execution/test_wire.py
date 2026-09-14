@@ -98,6 +98,8 @@ def test_execution_wire_round_trip_and_extra_fields_are_rejected() -> None:
     with pytest.raises(ValidationError):
         PublicEngineConfig.model_validate({"unexpected_secret": "ek-test"})
     with pytest.raises(ValidationError):
+        PublicEngineConfig.model_validate({"engineEnv": {"BAD-NAME": "value"}})
+    with pytest.raises(ValidationError):
         AcquireRequest.model_validate({**request.model_dump(), "forward_env": ["TOKEN"]})
     for forbidden in ("forward_env", "extra_mcp_servers", "environment", "managed_headers"):
         with pytest.raises(ValidationError):

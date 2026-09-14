@@ -61,15 +61,21 @@ def test_source_projection_drops_execution_fields_but_accepts_webhook_script() -
     assert public["agentName"] == "agent-a"
 
 
-def test_split_role_projection_forwards_names_without_values() -> None:
+def test_projection_carries_only_selected_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEBUG", "1")
+    monkeypatch.setenv("CUSTOM_TOOL_TOKEN", "synthetic-custom")
+    monkeypatch.setenv("ACH_TOKEN", "synthetic-managed")
     cfg = _cfg(engine={"forwardEnv": ["DEBUG", "CUSTOM_TOOL_TOKEN"]})
 
     from ach_agent.boot.roles import build_role_configs
 
     _channels, public = build_role_configs(cfg)
 
-    assert public["engineEnvNames"] == ["DEBUG", "CUSTOM_TOOL_TOKEN"]
-    assert "engineEnvValues" not in public
+    assert public["engineEnv"] == {
+        "DEBUG": "1",
+        "CUSTOM_TOOL_TOKEN": "synthetic-custom",
+    }
+    assert "synthetic-managed" not in str(public)
 
 
 def test_local_projection_keeps_only_sanitized_forward_env_names() -> None:
@@ -78,7 +84,7 @@ def test_local_projection_keeps_only_sanitized_forward_env_names() -> None:
     from ach_agent.boot.roles import build_role_configs
 
     _channels, public = build_role_configs(cfg, split_mode=False)
-    assert public["engineEnvNames"] == ["SAFE_NATIVE_VAR"]
+    assert public["engineEnv"] == {}
 
 
 def test_public_bootstrap_has_no_managed_credentials_or_full_config(

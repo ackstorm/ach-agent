@@ -12,7 +12,6 @@ import asyncio
 import dataclasses
 import json
 import os
-import re
 import shutil
 import uuid
 from collections.abc import AsyncIterator, MutableMapping
@@ -133,17 +132,9 @@ def _engine_config(public: Any) -> EngineConfig:
         }
     )
     values["extra_mcp_servers"] = {
-        name: to_engine_entry(spec) for name, spec in public.mcp_templates.items()
+        name: to_engine_entry(spec, env=public.engine_env)
+        for name, spec in public.mcp_templates.items()
     }
-    # Deployment may provide approved E-only names separately from the public
-    # bootstrap.  Read names only; values come from E's own environment in the
-    # native builders, and no harness environment is copied wholesale.
-    if not values.get("engine_env_names"):
-        raw_names = os.environ.get("ACH_ENGINE_ENV_NAMES", "")
-        names = [name.strip() for name in raw_names.split(",") if name.strip()]
-        if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) for name in names):
-            raise ValueError("ACH_ENGINE_ENV_NAMES contains an invalid environment name")
-        values["engine_env_names"] = list(dict.fromkeys(names))
     # Codemem is an engine-local executable.  H supplies only the approved path and
     # project; E decides whether its own image can provide the optional backend.
     if values.get("codemem_db_path") and shutil.which("codemem") is None:

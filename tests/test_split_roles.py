@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import signal
 import socket
@@ -29,21 +28,6 @@ def _cfg(**updates: object) -> AgentConfig:
     return AgentConfig.model_validate(raw)
 
 
-def test_local_artifacts_are_filtered_and_atomic(tmp_path: Path) -> None:
-    from ach_agent.boot.local import RoleArtifacts
-    from ach_agent.boot.roles import build_role_configs
-
-    channels, public = build_role_configs(_cfg())
-    artifacts = RoleArtifacts(tmp_path)
-    paths = artifacts.write(channels, public)
-
-    assert paths.channels.parent == tmp_path
-    assert paths.engine.parent == tmp_path
-    assert json.loads(paths.channels.read_text()) == channels
-    assert json.loads(paths.engine.read_text()) == public
-    assert "capability" not in json.loads(paths.engine.read_text())
-
-
 def test_role_cli_selection_preserves_console_flags() -> None:
     from ach_agent.main import _parse_cli
 
@@ -52,23 +36,25 @@ def test_role_cli_selection_preserves_console_flags() -> None:
 
 
 def test_engine_child_starts_without_native_process(tmp_path: Path) -> None:
-    from ach_agent.boot.local import LocalEngineProcess, RoleArtifacts
-    from ach_agent.boot.roles import build_role_configs
+    from ach_agent.boot.local import LocalEngineProcess
+    from ach_agent.boot.ipc import engine_socket_path
 
-    _channels, public = build_role_configs(_cfg())
-    artifacts = RoleArtifacts(tmp_path).write(_channels, public)
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = int(probe.getsockname()[1])
+    runtime_dir = tmp_path / "runtime"
+    socket_path = engine_socket_path(runtime_dir)
 
     async def run() -> None:
-        child = await LocalEngineProcess.start(artifacts, port=port)
+        child = await LocalEngineProcess.start(None, env={"ACH_RUNTIME_DIR": str(runtime_dir)})
         try:
-            health = await child.wait_ready(f"http://127.0.0.1:{port}", timeout=10)
+            health = await child.wait_ready(
+                "http://ach-internal", timeout=10, socket_path=str(socket_path)
+            )
             assert child.process.returncode is None
             assert health["instance_id"]
-            async with httpx.AsyncClient() as client:
-                response = await client.get(f"http://127.0.0.1:{port}/readyz")
+            async with httpx.AsyncClient(
+                base_url="http://ach-internal",
+                transport=httpx.AsyncHTTPTransport(uds=str(socket_path)),
+            ) as client:
+                response = await client.get("/readyz")
             assert response.status_code == 200
         finally:
             await child.close(timeout=5)
@@ -161,9 +147,9 @@ def test_public_engine_rejects_harness_managed_env_names() -> None:
 def test_terminal_child_keeps_inherited_terminal_and_safe_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from ach_agent.boot.local import LocalEngineProcess, RoleArtifacts
+    from ach_agent.boot.local import LocalEngineProcess
 
-    artifacts = RoleArtifacts(tmp_path).write({}, {})
+    artifacts = None
     calls: list[tuple[object, ...]] = []
 
     class FakeProcess:
@@ -203,9 +189,9 @@ def test_terminal_child_keeps_inherited_terminal_and_safe_environment(
 def test_local_timeout_kills_owned_supervisor_process_group(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from ach_agent.boot.local import LocalEngineProcess, RoleArtifacts
+    from ach_agent.boot.local import LocalEngineProcess
 
-    artifacts = RoleArtifacts(tmp_path / "artifacts").write({}, {})
+    artifacts = None
     killed: list[tuple[int, signal.Signals]] = []
 
     class HungProcess:
@@ -236,13 +222,12 @@ def test_local_timeout_kills_owned_supervisor_process_group(
     monkeypatch.setattr(asyncio, "wait_for", always_timeout)
     asyncio.run(run())
     assert killed == [(4567, signal.SIGTERM), (4567, signal.SIGKILL)]
-    assert not artifacts.channels.parent.exists()
 
 
 def test_local_timeout_reaps_real_supervised_descendant(tmp_path: Path) -> None:
-    from ach_agent.boot.local import LocalEngineProcess, RoleArtifacts
+    from ach_agent.boot.local import LocalEngineProcess
 
-    artifacts = RoleArtifacts(tmp_path / "artifacts").write({}, {})
+    artifacts = None
     sentinel = tmp_path / "descendant-alive"
     supervisor = (
         Path(__file__).parents[1] / "src" / "ach_agent" / "engine" / "process_supervisor.py"
@@ -282,9 +267,9 @@ def test_local_timeout_reaps_term_resistant_detached_descendant(
     tmp_path: Path, terminal_mode: bool, start_new_session: bool
 ) -> None:
     """Local cleanup kills a detached child before terminating its supervisor root."""
-    from ach_agent.boot.local import LocalEngineProcess, RoleArtifacts
+    from ach_agent.boot.local import LocalEngineProcess
 
-    artifacts = RoleArtifacts(tmp_path / "artifacts").write({}, {})
+    artifacts = None
     child_pid_file = tmp_path / "child.pid"
     child_ready_file = tmp_path / "child-ready"
     ready = tmp_path / "ready"

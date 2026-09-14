@@ -3,8 +3,8 @@
 
 The local launcher keeps source adapters in the parent process, but starts the
 mini-harness as a real child and talks to it through the same HTTP execution
-client used by the separated deployment.  Role artifacts contain only the
-allowlisted projections produced by :mod:`ach_agent.boot.roles`.
+client used by the separated deployment. Runtime state is exchanged through
+private Unix socket directories.
 """
 
 from __future__ import annotations

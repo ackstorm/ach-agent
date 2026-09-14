@@ -111,6 +111,15 @@ async def _run_native_terminal(service: ExecutionService) -> None:
                     await proc.wait()
                 finally:
                     sys.stderr = real_stderr
+            except asyncio.CancelledError:
+                if proc is not None and proc.returncode is None:
+                    proc.terminate()
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(proc.wait(), timeout=5.0)
+                    if proc.returncode is None:
+                        proc.kill()
+                        await proc.wait()
+                raise
             finally:
                 signal.signal(signal.SIGINT, previous_sigint)
     finally:
@@ -277,9 +286,18 @@ async def run_engine(
 
         async def run_terminal() -> None:
             await service.configured_event.wait()
+            native_task = asyncio.create_task(_run_native_terminal(service))
             try:
-                await _run_native_terminal(service)
+                while not native_task.done():
+                    if service.controller_id is None:
+                        native_task.cancel()
+                        await asyncio.gather(native_task, return_exceptions=True)
+                        return
+                    await asyncio.sleep(0.05)
+                await native_task
             finally:
+                with contextlib.suppress(Exception):
+                    await service.release_controller(service.controller_id or "")
                 server.should_exit = True
 
         terminal_task = asyncio.create_task(run_terminal())

@@ -1,8 +1,8 @@
 # Channels, harness and engine: current split contract
 
 Status: the original split was merged into local `main` on 2026-09-14. The startup
-hydration and operator-storage update below is implemented and locally validated on
-`feat/operator-storage`; it has not been released. This document supersedes
+hydration and operator-storage update below is implemented, locally validated and
+merged into `main` for v0.16.2. This document supersedes
 the archived split proposals and plans in `docs/superpowers/`. The
 [validation report](../reports/unix-split-validation.md) records what was exercised
 and on which revisions; it is evidence, not an alternative specification.

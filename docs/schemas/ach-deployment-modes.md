@@ -4,9 +4,10 @@ This supersedes the previous storage proposal. ACH renders placement, environmen
 and generic storage. ACH Agent owns the contents, native tool paths and compatibility.
 Do not add renderer branches for codemem, OpenCode, Pi, skills or hydration artifacts.
 
-Status: implemented and locally validated on `feat/operator-storage`. Release
-remains paused; use the published image tag/digest we provide after release, not
-v0.16.1. Kubernetes operator integration still needs joint cluster e2e.
+Status: implemented, locally validated and merged into `main` for v0.16.2.
+Use `ghcr.io/ackstorm/ach-agent:v0.16.2` after the release workflow publishes it;
+v0.16.1 does not contain the split. Kubernetes operator integration still needs
+joint cluster e2e.
 
 ## Placement and image
 

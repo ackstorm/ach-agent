@@ -493,6 +493,7 @@ async def run_channels(channel_config: JsonValue | None = None) -> None:
     for source_cfg in source_configs:
         if source_cfg.type == "queue":
             queues.append(QueueConsumer(source_cfg, handler=client))
+
     async def watch_harness_readiness() -> None:
         while not server.should_exit:
             try:

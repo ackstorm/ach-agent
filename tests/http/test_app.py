@@ -164,6 +164,8 @@ def test_externally_managed_readiness_stays_false_through_lifespan(
         assert client.get("/readyz").status_code == 503
         app.extra["state"].ready = True
         assert client.get("/readyz").status_code == 200
+        app.extra["state"].draining = True
+        assert client.get("/readyz").status_code == 503
     assert app.extra["state"].ready is False
 
 

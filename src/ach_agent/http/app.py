@@ -193,7 +193,7 @@ def create_app(
 
         Split roles update the shared state after hydration and engine checks.
         """
-        if not state.ready:
+        if not state.ready or state.draining:
             return JSONResponse({"status": "not_ready"}, status_code=503)
         return JSONResponse({"status": "ok"}, status_code=200)
 

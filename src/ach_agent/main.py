@@ -320,6 +320,7 @@ async def _refresh_engine_readiness(client: Any, state: HealthState) -> None:
             and isinstance(payload, dict)
             and payload.get("instance_id") == client.instance_id
             and not client.controller_lost
+            and not state.draining
         )
     except Exception:
         state.ready = False

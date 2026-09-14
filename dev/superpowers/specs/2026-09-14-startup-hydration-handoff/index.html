@@ -618,7 +618,7 @@ base/workspace   Shared workspaces
 <li>Keep the private HOME/state and shared workspace mounts described above.</li>
 <li>Preserve public ingress on Channels, Recreate, one replica, restricted contexts and no service-account token.</li>
 </ul>
-<p>Probes invoke the image-provided command <code>python -m ach_agent.healthcheck --role ROLE --check startup|readiness|liveness</code>. Socket paths and HTTP client logic stay inside the image. Distributed startup defaults: initial delay 15 seconds, period 5 seconds, timeout 3 seconds, six failures. The startup probe gates liveness; internal discovery remains available before startup is successful.</p>
+<p>Kubernetes probes use HTTP directly: Channels on 8080, Harness on 8090, Engine on 8081, bound to <code>0.0.0.0</code>. Startup and readiness query <code>/readyz</code>; liveness queries <code>/healthz</code>. Harness and Engine TCP listeners expose health endpoints only. No exec probes or socket clients are required. Startup defaults: initial delay 15 seconds, period 5 seconds, timeout 3 seconds, six failures. The startup probe gates liveness; internal discovery remains available before startup is successful. Standalone retains its configured public port and uses the same initialization and downstream-readiness rules.</p>
 <p>The operator does not implement download, copy, native installation, batch removal or tool-specific storage migration.</p>
 <h2 id="10-compatibility-and-scope">10. Compatibility and scope</h2>
 <p>The prior permanent <code>public-context</code> mount and links into it are superseded by the temporary handoff and engine-owned copies. This changes internal placement, not what skills/prompts/artifacts the engine receives.</p>

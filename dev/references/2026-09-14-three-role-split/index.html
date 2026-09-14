@@ -490,10 +490,14 @@ The subsequent startup/storage update passes 1,230 tests (4 skipped), strict lin
 and schema checks. Real Pi/OpenCode Compose, native TUI, temporary storage and a
 Harness-process restart were exercised; see the validation report for image
 revisions and limits. No operator rollout or image publication is claimed.</p>
+<p>HTTP health uses Channels 8080, Harness 8090 and Engine 8081, with <code>/readyz</code>
+for startup/readiness and <code>/healthz</code> for liveness. Kubernetes uses <code>httpGet</code>;
+the Harness/Engine TCP listeners do not expose internal APIs. Standalone retains
+its configured public port and shares the same readiness conditions, including
+completed hydration installation and downstream engine availability.</p>
 <p>Optional cleanup remains: move public projection JSON examples used only
-by manifest tests into fixtures and remove Uvicorn host/port defaults ignored by
-Unix-socket listeners. These are
-not blockers, and do not justify replacing the execution API or result registry.</p>
+by manifest tests into fixtures. This is not a blocker and does not justify
+replacing the execution API or result registry.</p>
 <p>This cleanup retains the implemented API, controller, native pool and completion
 registry. It removes a public retention knob, clarifies names and examples, and
 separates hook HOME. It does not introduce a replacement RemoteDriver API.</p>

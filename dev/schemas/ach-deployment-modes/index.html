@@ -390,10 +390,9 @@
 <p>This supersedes the previous storage proposal. ACH renders placement, environment
 and generic storage. ACH Agent owns the contents, native tool paths and compatibility.
 Do not add renderer branches for codemem, OpenCode, Pi, skills or hydration artifacts.</p>
-<p>Status: implemented, locally validated and merged into <code>main</code> for v0.16.2.
-Use <code>ghcr.io/ackstorm/ach-agent:v0.16.2</code> after the release workflow publishes it;
-v0.16.1 does not contain the split. Kubernetes operator integration still needs
-joint cluster e2e.</p>
+<p>Status: the HTTP probe contract below targets <code>ghcr.io/ackstorm/ach-agent:v0.16.3</code>.
+It supersedes v0.16.2's command-based probes. Use the new image after its release
+workflow publishes it. Kubernetes operator integration still needs joint cluster e2e.</p>
 <h2 id="placement-and-image">Placement and image</h2>
 <p>Keep <code>AgentProfile.spec.placement</code>, optional enum <code>standalone | distributed</code>,
 default <code>standalone</code>. Profile-only; never render it into <code>config.json</code>.</p>
@@ -497,16 +496,74 @@ on Channels in distributed mode. No internal Services, HMAC keys,
 service-account token or extra RBAC.
 Retain restricted security contexts and separate PID namespaces.</p>
 <h2 id="probes">Probes</h2>
-<p>Use the image-provided command for each role and probe type:</p>
-<div class="highlight"><pre><span></span><code>python -m ach_agent.healthcheck --role channels --check startup
-python -m ach_agent.healthcheck --role harness --check startup
-python -m ach_agent.healthcheck --role engine --check startup
-</code></pre></div>
-<p>Use <code>--check readiness</code> and <code>--check liveness</code> for the corresponding probes.
-The command encapsulates endpoint details; no socket snippets are needed in ACH.</p>
-<p>Startup: <code>initialDelaySeconds: 15</code>, <code>periodSeconds: 5</code>, <code>timeoutSeconds: 3</code>,
-<code>failureThreshold: 6</code>. Keep the existing readiness/liveness schedules, with a
-three-second exec timeout. Initialization completes before startup succeeds.
+<p>Use ordinary Kubernetes <code>httpGet</code> probes for every container. No exec probe,
+image healthcheck command or Unix-socket client is required.</p>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>HTTP port</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Channels</td>
+<td>8080</td>
+</tr>
+<tr>
+<td>Harness</td>
+<td>8090</td>
+</tr>
+<tr>
+<td>Engine</td>
+<td>8081</td>
+</tr>
+</tbody>
+</table>
+<p>ACH Agent binds the health listeners to <code>0.0.0.0</code>. The new Harness/Engine TCP
+listeners expose health endpoints only; application traffic keeps using Unix
+sockets. No additional Service or operator-injected environment is needed.</p>
+<p>Use <code>/readyz</code> for startup/readiness and <code>/healthz</code> for liveness:</p>
+<table>
+<thead>
+<tr>
+<th>Probe</th>
+<th>Initial delay</th>
+<th>Period</th>
+<th>Timeout</th>
+<th>Failure threshold</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Startup</td>
+<td>15s</td>
+<td>5s</td>
+<td>3s</td>
+<td>6</td>
+</tr>
+<tr>
+<td>Readiness</td>
+<td>0s</td>
+<td>10s</td>
+<td>3s</td>
+<td>3</td>
+</tr>
+<tr>
+<td>Liveness</td>
+<td>0s</td>
+<td>20s</td>
+<td>3s</td>
+<td>3</td>
+</tr>
+</tbody>
+</table>
+<p>Standalone retains its existing configured HTTP port and the same endpoints.
+Readiness has the same semantics in both placements: initialization must finish,
+including hydration copy, native configuration and directory preparation, before
+readiness succeeds. This happens at startup, without waiting for an event. Harness
+and Channels readiness reflects required downstream readiness, including engine
+loss after startup. ACH Agent owns this logic; the operator only renders probes.
 Profile resources apply to each container; document the resulting total pod requests.</p>
 <h2 id="responsibility-and-acceptance">Responsibility and acceptance</h2>
 <p>ACH Agent is responsible for internal path resolution and retaining existing

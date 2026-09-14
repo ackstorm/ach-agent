@@ -123,4 +123,3 @@ def harness_log_dir() -> Path:
     d = Path("/tmp/ach-harness")
     d.mkdir(parents=True, exist_ok=True)
     return d
-

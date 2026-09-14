@@ -583,9 +583,8 @@ async def _run_harness(
         )
         sys.exit(1)
 
-    # Step 5: publish a credential-free engine bootstrap and connect over the
-    # same HTTP execution API used by the separated deployment. Native drivers
-    # are constructed only by the engine role.
+    # Step 5: connect over the same HTTP execution API used by the separated
+    # deployment. Native drivers are constructed only by the engine role.
     from ach_agent.boot.execution_client import ExecutionClient
     from ach_agent.boot.local import LocalEngineProcess
 
@@ -707,8 +706,8 @@ async def _run_harness(
         log.info("ach-agent: native terminal session ended")
         return
     if isolated_harness:
-        # H sends the typed public configuration during controller-open; no bootstrap
-        # artifact or signing key is needed for the engine/channel UDS seams.
+        # H sends the typed public configuration during controller-open over the
+        # engine/channel UDS seams.
         pass
     # D-03/D-04: dedup store first — it opens/repairs state.db (fail-closed on a bad
     # mount). Native session ownership stays in E; only the bounded legacy map

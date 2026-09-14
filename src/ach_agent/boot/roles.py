@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Split-role configuration and engine-role bootstrap.
+"""Split-role configuration and engine-role startup.
 
 The harness owns the full :class:`AgentConfig`.  This module is deliberately the
 small boundary used to derive the channels projection and the credential-free
-engine bootstrap.  It does not start inbound channels or the harness router;
+engine configuration.  It does not start inbound channels or the harness router;
 those orchestration paths remain in the local/deployment launcher.
 """
 
@@ -198,11 +198,11 @@ def _engine_env_names(cfg: AgentConfig) -> list[str]:
 def build_role_configs(
     cfg: AgentConfig, *, split_mode: bool = True
 ) -> tuple[dict[str, JsonValue], dict[str, JsonValue]]:
-    """Build the channels projection and public engine bootstrap.
+    """Build the channels projection and public engine configuration.
 
-    ``engine.forwardEnv`` selects names for the public engine bootstrap in both local
-    and split mode.  The engine role reads each selected value from its own process
-    environment; no value is serialized into this projection.
+    ``engine.forwardEnv`` selects names for the public engine configuration in both
+    local and split mode.  Their current values are copied into the typed config sent
+    to the engine during controller-open.
     """
     engine_env_names = _engine_env_names(cfg)
     engine_env = {name: os.environ[name] for name in engine_env_names if name in os.environ}
@@ -369,10 +369,10 @@ async def run_channels(channel_config: JsonValue | None = None) -> None:
     if not isinstance(channel_config, dict):
         raise SplitRoleConfigError("channels role requires an object configuration")
     if channel_config.get("schemaVersion") != "1":
-        raise SplitRoleConfigError("invalid channels role artifact")
+        raise SplitRoleConfigError("invalid channels role configuration")
     sources = channel_config.get("channels")
     if not isinstance(sources, list):
-        raise SplitRoleConfigError("channels role artifact must contain channels")
+        raise SplitRoleConfigError("channels role configuration must contain channels")
     raw_sources = sources
     channel_socket = str(channel_socket_path())
     from ach_agent import identity

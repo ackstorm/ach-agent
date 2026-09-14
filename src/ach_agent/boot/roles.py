@@ -275,6 +275,8 @@ async def run_engine(
         health_port = int(os.environ.get("ACH_ENGINE_HEALTH_PORT", str(DEFAULT_ENGINE_PORT)))
     except ValueError as exc:
         raise SplitRoleConfigError("ACH_ENGINE_HEALTH_PORT must be an integer") from exc
+    if not 0 <= health_port <= 65535:
+        raise SplitRoleConfigError("ACH_ENGINE_HEALTH_PORT must be between 0 and 65535")
     listener = bind_listener(engine_socket_path())
     server = uvicorn.Server(
         uvicorn.Config(

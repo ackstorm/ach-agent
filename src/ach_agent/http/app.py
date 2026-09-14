@@ -5,8 +5,8 @@ Locked decisions:
   - POST /channels/{channel_name}/events: raw body read before JSON parse; dispatches
     to WebhookChannelAdapter entry function; maps outcome to 401/200/202/503 (D-05).
   - GET /healthz: always 200 while process alive (HTTP-03).
-  - GET /readyz: 200 iff lifespan has set _ready flag; 503 otherwise (HTTP-02, Pitfall 6).
-    Engine warmup is NOT a gate (spec §8.5).
+  - GET /readyz: 200 only after the role has completed startup hydration and its
+    downstream engine is ready; 503 otherwise (HTTP-02, Pitfall 6).
   - GET /metrics: Prometheus exposition via make_asgi_app() mounted sub-application (HTTP-04).
   - Webhook events are always async (202 accept-and-process); the route never holds the
     connection waiting for engine output (D-04).
@@ -71,10 +71,10 @@ def create_app(
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> Any:
-        """FastAPI lifespan: set ready flag after wiring, clear on teardown.
+        """FastAPI lifespan: optionally set ready after wiring, clear on teardown.
 
-        Pitfall 6: /readyz must not return 200 until after this lifespan block sets
-        the flag. Engine warmup is NOT part of the ready gate (spec §8.5/HTTP-02).
+        Split-role startup manages the flag from downstream readiness; direct app
+        users retain the historical lifespan-managed behavior by default.
         """
         # Wiring is complete — channels are registered and the route is active
         if lifespan_ready:
@@ -189,10 +189,9 @@ def create_app(
 
     @app.get("/readyz")
     async def readyz() -> JSONResponse:
-        """Readiness probe — 200 iff lifespan has completed (HTTP-02, Pitfall 6).
+        """Readiness probe — 200 only while startup and downstream readiness hold.
 
-        Ready = the webhook adapter is listening (lifespan set the flag).
-        Engine warmup is NOT a gate (spec §8.5).
+        Split roles update the shared state after hydration and engine checks.
         """
         if not state.ready:
             return JSONResponse({"status": "not_ready"}, status_code=503)

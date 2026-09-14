@@ -744,7 +744,6 @@ async def _run_harness(
         local_socket_env = {
             **local_engine_env,
             "ACH_RUNTIME_DIR": str(local_runtime_dir),
-            "ACH_ENGINE_HEALTH_PORT": "0",
         }
         try:
             local_engine = await LocalEngineProcess.start(env=local_socket_env)

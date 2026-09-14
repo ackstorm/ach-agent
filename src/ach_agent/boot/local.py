@@ -98,6 +98,9 @@ class LocalEngineProcess:
         # harness token/configuration is never copied into the child environment.
         for name, value in (env or {}).items():
             child_env[name] = value
+        # Local engine children must never contend for the operator-facing role port.
+        # This is launcher-owned and cannot be overridden by forwarded environment.
+        child_env["ACH_ENGINE_HEALTH_PORT"] = "0"
         if (package_root / "ach_agent").is_dir():
             child_env["PYTHONPATH"] = str(package_root)
         # Role control values are launcher-owned and cannot be overridden by

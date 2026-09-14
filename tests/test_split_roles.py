@@ -58,7 +58,7 @@ def test_native_terminal_failure_propagates_after_server_cleanup(
             pass
 
     class FakeServer:
-        instances: list["FakeServer"] = []
+        instances: list[FakeServer] = []
 
         def __init__(self, _config: object) -> None:
             self.should_exit = False
@@ -186,7 +186,9 @@ def test_public_engine_rejects_harness_managed_env_names() -> None:
         PublicEngineConfig(engine_env_names=["ACH_TOKEN"])
 
 
-def test_terminal_child_keeps_inherited_terminal_and_safe_environment(
+@pytest.mark.parametrize("terminal_mode", [False, True])
+def test_local_child_uses_ephemeral_health_port(
+    terminal_mode: bool,
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from ach_agent.boot.local import LocalEngineProcess
@@ -209,19 +211,22 @@ def test_terminal_child_keeps_inherited_terminal_and_safe_environment(
 
     async def fake_spawn(*command: object, **kwargs: object) -> FakeProcess:
         calls.append(command)
-        assert kwargs["start_new_session"] is False
+        assert kwargs["start_new_session"] is not terminal_mode
         assert "stdin" not in kwargs and "stdout" not in kwargs
         env = kwargs["env"]
         assert isinstance(env, dict)
         assert env["TERM"]
         assert env["LANG"]
+        assert env["ACH_ENGINE_HEALTH_PORT"] == "0"
         return FakeProcess()
 
     monkeypatch.setattr("asyncio.create_subprocess_exec", fake_spawn)
 
     async def run() -> None:
-        child = await LocalEngineProcess.start(terminal_mode=True)
-        assert calls and calls[0][-1] == "--tui"
+        child = await LocalEngineProcess.start(terminal_mode=terminal_mode)
+        assert calls
+        assert (calls[0][-1] == "--tui") is terminal_mode
+        child.isolated_process_group = False
         await child.close(timeout=1)
 
     asyncio.run(run())

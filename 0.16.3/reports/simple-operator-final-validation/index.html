@@ -1,0 +1,519 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>Simple operator final validation - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#simplified-operator-contract-final-validation" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Simple operator final validation
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#repository-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      Repository gate
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#packaged-three-container-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      Packaged three-container execution
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#native-local-terminal-regression" class="md-nav__link">
+    <span class="md-ellipsis">
+      Native local terminal regression
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#review-and-deployment-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      Review and deployment limits
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<blockquote>
+<p>Historical evidence for the revisions named below. The <a href="../../references/2026-09-14-three-role-split/">current split contract</a> is authoritative; latest acceptance evidence is in <a href="../unix-split-validation/">unix-split-validation</a>.</p>
+</blockquote>
+<h1 id="simplified-operator-contract-final-validation">Simplified operator contract — final validation</h1>
+<p>Runtime and packaging snapshot: <code>929397a</code>, following forwarding <code>98393ad</code> and
+bootstrap <code>a58c43c</code>. GPT-5.6-Luna implemented; root reviewed and independently
+ran the repository gate and native terminal checks. Subsequent changes in this
+increment are documentation only. All upstream services and credentials used
+for these checks were synthetic. No image was published or external cluster
+changed.</p>
+<h2 id="repository-gate">Repository gate</h2>
+<p>Root ran the unchanged <code>scripts/pre-push-check.sh</code> in a clean local clone at
+<code>929397a</code>, with <code>PRE_PUSH_BASE_REF=462912f</code>. It exited 0:</p>
+<ul>
+<li>1,224 tests passed, 3 skipped, in 88.97 seconds.</li>
+<li>18 conformance tests passed in 1.73 seconds.</li>
+<li>Ruff, formatting and strict mypy passed (97 source files).</li>
+<li>Gitleaks scanned 65 commits and found no leaks.</li>
+</ul>
+<p>The complete log is in the ignored task scratch directory:
+<code>.superpowers/sdd/2026-09-12-simple-operator-bootstrap/root-gate-929397a-disk.log</code>.
+The first attempt stopped while downloading dev dependencies because the host's
+2 GiB <code>/tmp</code> tmpfs was nearly full. Moving this task's clone onto the project
+filesystem resolved that infrastructure issue; no gate or source was changed.
+The only origin warning reflects the local clone source rather than GitHub.</p>
+<p>Luna additionally ran the focused packaging/bootstrap/role suites: 47 passed.
+Root previously ran 27 forwarding/native-env tests and 39 bootstrap/role tests
+independently while reviewing Tasks 1 and 2.</p>
+<h2 id="packaged-three-container-execution">Packaged three-container execution</h2>
+<p><code>scripts/test-split.sh</code> passed for real OpenCode and Pi using the ordinary
+Compose definition plus its synthetic upstream fixture. Only H receives the
+full config; no manually supplied C/E projections or internal HMAC settings
+are required. Both engines completed two events with the same native session,
+received E-side <code>DEBUG</code> and <code>CUSTOM_TOOL_TOKEN</code> values, and failed a held
+invocation when E was killed. H readiness then returned 503.</p>
+<p>The acceptance log is <code>/tmp/simple-bootstrap-compose-929397a.log</code>. Root read
+the results and reviewed the script's held-inference barrier, native-session
+lookup and native-process environment checks. HMAC is read inside H by the
+test client, without exposing it in host shell arguments.</p>
+<table>
+<thead>
+<tr>
+<th>Image</th>
+<th>SHA256</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Harness</td>
+<td><code>16710e2644c20ba7b4e2b6d8e219fd14f8b7493a4d5710801388967039e253cb</code></td>
+</tr>
+<tr>
+<td>Channels</td>
+<td><code>1a996eca06998064f6d4278f6439a09a089c5554f8550459167698253b4eb8a5</code></td>
+</tr>
+<tr>
+<td>OpenCode engine</td>
+<td><code>7f1a52ed8e3601480bc518f52822ea0cbe52ebfc12159255602d19c956b4008f</code></td>
+</tr>
+<tr>
+<td>Pi engine</td>
+<td><code>4924e157cb5e42dc55a262d441399e5ddfc5fa02ab3b0446329355387e5292c8</code></td>
+</tr>
+</tbody>
+</table>
+<p>Independent real OpenCode bootstrap and harness-process restart evidence is
+recorded in <a href="../simple-bootstrap-root-validation/">the bootstrap report</a>: the
+key and native session survived H restart while C/E stayed alive. That check
+used a source-overlay diagnostic image, not the final packaging images above.</p>
+<h2 id="native-local-terminal-regression">Native local terminal regression</h2>
+<p>Root built the combined target from the same source:
+<code>a2fc42b48b9c9d40afcabe5f54d965491a39cf1c43f81e99a766af65f9ad996d</code>.
+Both real Pi and OpenCode ran through the image entrypoint with <code>--tui</code>,
+using <code>docker run -it</code> and an actual PTY, not piped prompt input.</p>
+<p>For each engine root typed two turns, resized the terminal to 32x100 through
+<code>TIOCSWINSZ</code>, and observed <code>PHASE1_NATIVE_TUI_REPLY</code> for both turns. Pi's JSONL
+contained one session with two user and two assistant messages. OpenCode's
+SQLite database likewise contained one session with two messages of each role.
+<code>/proc/1/cmdline</code> confirmed tini remained PID 1. Pi exited 0 with Ctrl-D;
+OpenCode exited 0 with Ctrl-C. The fixture recorded two hydrations and five
+model requests, all five carrying the expected synthetic authorization.</p>
+<h2 id="review-and-deployment-limits">Review and deployment limits</h2>
+<p>Root's packaging review corrected the E startup probe to exec against
+loopback; a kubelet HTTP probe to the pod IP cannot reach a loopback listener.
+The reviewed manifest uses two separate bootstrap <code>emptyDir</code> directories,
+read-only C/E mounts, UID/GID/fsGroup 10001, role arguments that preserve tini,
+and no service-account token. Manifest tests cover those boundaries.</p>
+<p>The final Kubernetes manifest was not reapplied to kind in this increment;
+earlier phase-one Kubernetes evidence remains separately identified. Production
+Deployment rendering and image publication remain integration work outside
+this local branch. <code>/tmp/to-ach.md</code> is the self-contained operator handoff,
+also tracked as the simplified operator specification.</p>
+<p>All task-owned acceptance/terminal containers and networks were removed.
+The existing unrelated memory services were left running. Phase-two proxy
+masking and later queue/autoscaling/S3 work remain deferred.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

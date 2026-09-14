@@ -58,12 +58,12 @@ Spec reference: `ach-agent-runtime-spec-v1_4_7.md` (API group `runtime.ackstorm.
 
 ### Phase 1 split deployment acceptance
 
-Validation is in progress for the task-owned split Compose manifest. The target is
+Local validation has passed for the task-owned Unix split Compose manifest. The target is
 one pod with three ordinary tini containers and one active replica: channels (C),
 harness (H), and engine (E). H reads the full rendered config; C and E receive only
 the inputs required through the two Unix sockets. The fixture's synthetic upstream
-and credentials are test values only. See [`phase1-split-evidence.md`](../reports/phase1-split-evidence.md)
-for historical measured acceptance and its limits. The self-contained operator handoff
+and credentials are test values only. See [`unix-split-validation.md`](../reports/unix-split-validation.md)
+for current measured acceptance and its limits. The self-contained operator handoff
 is [`2026-09-14-unix-operator-handoff.md`](../superpowers/specs/2026-09-14-unix-operator-handoff.md).
 
 ---

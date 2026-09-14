@@ -24,10 +24,10 @@ use. Its behavior is pinned by an authoritative conformance suite (`make conform
 
 ## How it works
 
-**Agreed target, pending implementation:** the diagrams below describe the simplified
-split approved on 2026-09-14. Validation is still in progress; the
-[implementation plan](docs/superpowers/plans/2026-09-14-preserve-behavior-simplify-split.md)
-replaces those mechanisms; these diagrams are not a claim that released images already do so.
+The diagrams below describe the simplified split implemented on `feat/phase1-split`.
+The [validation report](docs/reports/unix-split-validation.md) records the full gate,
+real three-container runs and native TUI checks. Image publication and the external
+ACH operator rollout are separate from this implementation.
 
 **Behavioral reference: the original agent, v0.16.1 (`462912f`), before the split.**
 The goal is to preserve its behavior while separating processes and simplifying our
@@ -241,8 +241,8 @@ Released container images are published to `ghcr.io/ackstorm/ach-agent`.
 
 ### Phase 1 split packaging example
 
-Validation is in progress against the approved Unix-socket target. The repository
-includes a three-container contract example in [`docker/split/`](docker/split/):
+The Unix-socket implementation has passed local validation. The repository
+includes a tested three-container contract example in [`docker/split/`](docker/split/):
 channels (C), harness (H), and one engine (E), all ordinary containers in one pod
 with one active replica. Each role uses tini and its role argument; no init container
 or operator control-plane sidecar is required.
@@ -255,8 +255,9 @@ values selected by `engine.forwardEnv` and sends those explicit values to E; man
 ACH/model/MCP credentials remain H-side. H executes every prepare and cleanup hook
 on the existing shared workspace, preserving the original cwd, HOME and lifecycle.
 
-The two IPC directory mounts are separate: H writes both, C reads only the channels
-directory, and E writes only the engine directory while H reads it. H/E probes use
+The two IPC directory mounts are separate: H writes the channels directory and C
+connects through its read-only mount; E writes the engine directory and H connects
+through its read-only mount. H/E probes use
 HTTP over their Unix sockets; C's public ingress remains on port 8080, and native,
 model and MCP HTTP endpoints remain where their existing clients require them. There
 are no mandatory internal control ports, bootstrap files, bootstrap keys or internal

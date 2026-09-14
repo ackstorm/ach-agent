@@ -1,6 +1,8 @@
 # Split simplification: queues, Unix sockets and private configuration
 
-Status: design approved in conversation; not implemented. Updated 2026-09-14.
+Status: implemented on `feat/phase1-split`, verified locally on 2026-09-14.
+See the [validation report](../../reports/unix-split-validation.md) for exact revisions,
+test results and the boundary between local evidence and an external rollout.
 Implementation starts from `d855fa5` on `feat/phase1-split`; **functional behavior
 is defined by the original agent v0.16.1 (`462912f`), before the split**.
 The split changes placement and transport, not the original agent's features or

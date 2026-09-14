@@ -62,13 +62,11 @@ class LocalEngineProcess:
     def __init__(
         self,
         process: asyncio.subprocess.Process,
-        artifacts: object | None,
         *,
         isolated_process_group: bool,
         process_owner: ManagedServer | None = None,
     ) -> None:
         self.process = process
-        self.artifacts = artifacts
         self.isolated_process_group = isolated_process_group
         if (
             process_owner is None
@@ -84,10 +82,7 @@ class LocalEngineProcess:
     @classmethod
     async def start(
         cls,
-        artifacts: object | None = None,
         *,
-        host: str = "127.0.0.1",
-        port: int = 8081,
         env: dict[str, str] | None = None,
         terminal_mode: bool = False,
     ) -> LocalEngineProcess:
@@ -124,7 +119,6 @@ class LocalEngineProcess:
         )
         return cls(
             process,
-            artifacts,
             isolated_process_group=not terminal_mode,
         )
 
@@ -150,5 +144,3 @@ class LocalEngineProcess:
                 else:
                     self.process.kill()
                 await self.process.wait()
-        finally:
-            pass

@@ -294,17 +294,24 @@ async def run_engine(
             server.should_exit = True
 
     watcher = asyncio.create_task(run_terminal() if terminal_mode else stop_on_shutdown())
+    watcher_error: BaseException | None = None
     try:
         await server.serve(sockets=[listener])
     finally:
         if not watcher.done():
             watcher.cancel()
-        await asyncio.gather(watcher, return_exceptions=True)
+        watcher_result = await asyncio.gather(watcher, return_exceptions=True)
+        if watcher_result and isinstance(watcher_result[0], BaseException):
+            result = watcher_result[0]
+            if not isinstance(result, asyncio.CancelledError):
+                watcher_error = result
         with contextlib.suppress(Exception):
             await service.release_controller(service.controller_id or "")
         await service.close()
         listener.close()
         engine_socket_path().unlink(missing_ok=True)
+    if watcher_error is not None:
+        raise watcher_error
     if service.shutdown_requested or service.controller_cleanup_error:
         raise RuntimeError("engine role shutdown requested after unreliable cleanup")
 

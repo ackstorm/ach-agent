@@ -674,7 +674,7 @@ async def _run_harness(
             sys.stderr = tui_log
             try:
                 terminal_engine = await LocalEngineProcess.start(
-                    None, env={"ACH_RUNTIME_DIR": str(runtime_dir)}, terminal_mode=True
+                    env={"ACH_RUNTIME_DIR": str(runtime_dir)}, terminal_mode=True
                 )
                 await terminal_engine.wait_ready(
                     "http://ach-internal",
@@ -735,7 +735,7 @@ async def _run_harness(
         local_runtime_dir = Path(tempfile.mkdtemp(prefix="ach-runtime-", dir="/tmp"))
         local_socket_env = {"ACH_RUNTIME_DIR": str(local_runtime_dir)}
         try:
-            local_engine = await LocalEngineProcess.start(None, env=local_socket_env)
+            local_engine = await LocalEngineProcess.start(env=local_socket_env)
             await local_engine.wait_ready(
                 engine_url,
                 timeout=float(cfg.engine.startup_timeout_seconds),

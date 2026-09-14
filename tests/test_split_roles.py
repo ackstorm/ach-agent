@@ -6,7 +6,6 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
-import socket
 import sys
 from pathlib import Path
 
@@ -35,15 +34,65 @@ def test_role_cli_selection_preserves_console_flags() -> None:
     assert (role, tui, prompt, debug) == ("engine", True, "hello", False)
 
 
+def test_native_terminal_failure_propagates_after_server_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import ach_agent.boot.roles as roles
+
+    class FakeService:
+        def __init__(self, *_args: object) -> None:
+            self.configured_event = asyncio.Event()
+            self.configured_event.set()
+            self.controller_id = "tui-controller"
+            self.shutdown_requested = False
+            self.controller_cleanup_error = False
+
+        async def release_controller(self, _controller_id: str) -> None:
+            self.controller_id = None
+
+        async def close(self) -> None:
+            pass
+
+    class FakeListener:
+        def close(self) -> None:
+            pass
+
+    class FakeServer:
+        should_exit = False
+
+        def __init__(self, _config: object) -> None:
+            pass
+
+        async def serve(self, *, sockets: list[FakeListener]) -> None:
+            while not self.should_exit:
+                await asyncio.sleep(0)
+
+    async def failed_terminal(_service: FakeService) -> None:
+        raise RuntimeError("native terminal failed")
+
+    monkeypatch.setattr(roles, "ExecutionService", FakeService)
+    monkeypatch.setattr(roles, "create_execution_app", lambda _service: object())
+    monkeypatch.setattr(roles, "bind_listener", lambda _path: FakeListener())
+    monkeypatch.setattr(roles, "engine_socket_path", lambda: tmp_path / "agent.sock")
+    monkeypatch.setattr(roles.uvicorn, "Server", FakeServer)
+    monkeypatch.setattr(roles, "_run_native_terminal", failed_terminal)
+
+    async def run() -> None:
+        with pytest.raises(RuntimeError, match="native terminal failed"):
+            await roles.run_engine(terminal_mode=True)
+
+    asyncio.run(run())
+
+
 def test_engine_child_starts_without_native_process(tmp_path: Path) -> None:
-    from ach_agent.boot.local import LocalEngineProcess
     from ach_agent.boot.ipc import engine_socket_path
+    from ach_agent.boot.local import LocalEngineProcess
 
     runtime_dir = tmp_path / "runtime"
     socket_path = engine_socket_path(runtime_dir)
 
     async def run() -> None:
-        child = await LocalEngineProcess.start(None, env={"ACH_RUNTIME_DIR": str(runtime_dir)})
+        child = await LocalEngineProcess.start(env={"ACH_RUNTIME_DIR": str(runtime_dir)})
         try:
             health = await child.wait_ready(
                 "http://ach-internal", timeout=10, socket_path=str(socket_path)
@@ -149,7 +198,6 @@ def test_terminal_child_keeps_inherited_terminal_and_safe_environment(
 ) -> None:
     from ach_agent.boot.local import LocalEngineProcess
 
-    artifacts = None
     calls: list[tuple[object, ...]] = []
 
     class FakeProcess:
@@ -179,7 +227,7 @@ def test_terminal_child_keeps_inherited_terminal_and_safe_environment(
     monkeypatch.setattr("asyncio.create_subprocess_exec", fake_spawn)
 
     async def run() -> None:
-        child = await LocalEngineProcess.start(artifacts, terminal_mode=True)
+        child = await LocalEngineProcess.start(terminal_mode=True)
         assert calls and calls[0][-1] == "--tui"
         await child.close(timeout=1)
 
@@ -191,7 +239,6 @@ def test_local_timeout_kills_owned_supervisor_process_group(
 ) -> None:
     from ach_agent.boot.local import LocalEngineProcess
 
-    artifacts = None
     killed: list[tuple[int, signal.Signals]] = []
 
     class HungProcess:
@@ -215,7 +262,7 @@ def test_local_timeout_kills_owned_supervisor_process_group(
         raise TimeoutError
 
     async def run() -> None:
-        child = LocalEngineProcess(HungProcess(), artifacts, isolated_process_group=True)  # type: ignore[arg-type]
+        child = LocalEngineProcess(HungProcess(), isolated_process_group=True)  # type: ignore[arg-type]
         await child.close(timeout=0.01)
 
     monkeypatch.setattr(os, "killpg", lambda pid, sig: killed.append((pid, sig)))
@@ -227,7 +274,6 @@ def test_local_timeout_kills_owned_supervisor_process_group(
 def test_local_timeout_reaps_real_supervised_descendant(tmp_path: Path) -> None:
     from ach_agent.boot.local import LocalEngineProcess
 
-    artifacts = None
     sentinel = tmp_path / "descendant-alive"
     supervisor = (
         Path(__file__).parents[1] / "src" / "ach_agent" / "engine" / "process_supervisor.py"
@@ -245,7 +291,7 @@ def test_local_timeout_reaps_real_supervised_descendant(tmp_path: Path) -> None:
         process = await asyncio.create_subprocess_exec(
             *command, start_new_session=True, stdout=asyncio.subprocess.DEVNULL
         )
-        child = LocalEngineProcess(process, artifacts, isolated_process_group=True)
+        child = LocalEngineProcess(process, isolated_process_group=True)
         for _ in range(50):
             if process.returncode is None:
                 await asyncio.sleep(0.01)
@@ -269,7 +315,6 @@ def test_local_timeout_reaps_term_resistant_detached_descendant(
     """Local cleanup kills a detached child before terminating its supervisor root."""
     from ach_agent.boot.local import LocalEngineProcess
 
-    artifacts = None
     child_pid_file = tmp_path / "child.pid"
     child_ready_file = tmp_path / "child-ready"
     ready = tmp_path / "ready"
@@ -347,11 +392,7 @@ while True:
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            child = LocalEngineProcess(
-                process,
-                artifacts,
-                isolated_process_group=not terminal_mode,
-            )
+            child = LocalEngineProcess(process, isolated_process_group=not terminal_mode)
             await wait_for_path(ready)
             child_pid = int(child_pid_file.read_text(encoding="ascii"))
             assert os.getpgid(child_pid) != os.getpgid(process.pid)

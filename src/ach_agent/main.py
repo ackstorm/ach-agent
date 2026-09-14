@@ -82,6 +82,7 @@ from ach_agent.security.preflight import run_preflight
 
 DEFAULT_HARNESS_HOST = "127.0.0.1"
 DEFAULT_HARNESS_PORT = 8090
+_COMPLETION_RETENTION_SECONDS = 300.0
 
 # configure_logging() is called at module TOP (not in main()) so that any
 # log emission during import (e.g. validation warnings) is already redacted.
@@ -853,7 +854,7 @@ async def _run_harness(
         admit,
         agent=cfg.agent.name,
         max_active_entries=cfg.limits.max_queued_total,
-        retention_seconds=float(cfg.limits.result_retention_seconds),
+        retention_seconds=_COMPLETION_RETENTION_SECONDS,
     )
     channel_handler = CompletionHandler(completion_registry)
     engine_runner = make_engine_runner(

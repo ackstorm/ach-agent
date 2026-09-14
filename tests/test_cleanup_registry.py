@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from ach_agent.boot.private_prepare import PrivateCleanupRegistry, PrivatePrepareFailed
+from ach_agent.boot.cleanup_registry import CleanupError, CleanupRegistry
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import PrepareBlock
 from ach_agent.execution.wire import WorkspaceStoppedEvent
@@ -44,7 +44,7 @@ async def _record_ack(acks: list[str], event: WorkspaceStoppedEvent) -> None:
 @pytest.mark.asyncio
 async def test_registry_correlates_stop_event_and_acknowledges(tmp_path: Path) -> None:
     event = _event()
-    registry = PrivateCleanupRegistry(max_contexts=2)
+    registry = CleanupRegistry(max_contexts=2)
     cfg = PrepareBlock.model_validate({"script": "true"})
     await registry.register("invocation", event, tmp_path / "workspace", cfg)
 
@@ -68,15 +68,13 @@ async def test_registry_correlates_stop_event_and_acknowledges(tmp_path: Path) -
 @pytest.mark.asyncio
 async def test_registry_dispatches_bounded_callbacks(tmp_path: Path) -> None:
     cfg = PrepareBlock.model_validate({"script": "true"})
-    registry = PrivateCleanupRegistry(max_contexts=64)
+    registry = CleanupRegistry(max_contexts=64)
     acknowledgements: list[str] = []
     events = []
     for number in range(10):
         event = _event(number + 1)
         invocation_id = f"invocation-{number}"
-        await registry.register(
-            invocation_id, event, tmp_path / "workspace", cfg
-        )
+        await registry.register(invocation_id, event, tmp_path / "workspace", cfg)
         events.append(_stopped(event, invocation_id))
     for event in events:
         assert await registry.handle_event(
@@ -93,11 +91,11 @@ async def test_registry_dispatches_bounded_callbacks(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_registry_rejects_duplicate_and_overflow_contexts(tmp_path: Path) -> None:
     cfg = PrepareBlock.model_validate({"script": "true"})
-    registry = PrivateCleanupRegistry(max_contexts=1)
+    registry = CleanupRegistry(max_contexts=1)
     event = _event()
     await registry.register("one", event, tmp_path / "workspace", cfg)
-    with pytest.raises(PrivatePrepareFailed, match="already registered"):
+    with pytest.raises(CleanupError, match="already registered"):
         await registry.register("one", event, tmp_path / "workspace", cfg)
-    with pytest.raises(PrivatePrepareFailed, match="limit reached"):
+    with pytest.raises(CleanupError, match="limit reached"):
         await registry.register("two", event, tmp_path / "workspace", cfg)
     await registry.close()

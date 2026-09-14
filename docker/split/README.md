@@ -1,5 +1,9 @@
 # Three-container split example
 
+See the [current split contract](../../docs/references/2026-09-14-three-role-split.md)
+for responsibilities and lifecycle. Acceptance-only configuration and JSON fixtures
+live under `tests/integration/fixtures/split/`; `scripts/test-split.sh` selects them.
+
 This directory is a runnable contract example for the Phase 1 split. It keeps
 the role boundaries explicit while leaving production rendering to
 the ACH operator. Build the images with the targets below, then provide the

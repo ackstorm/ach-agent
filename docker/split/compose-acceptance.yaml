@@ -6,7 +6,7 @@ services:
     environment:
       ACH_BASE_URL: http://mock-upstream:9080
       ACH_TOKEN: split-acceptance-key
-      ACH_HARNESS_CONFIG_FILE: ${ACH_HARNESS_CONFIG_FILE:-config-acceptance.yaml}
+      ACH_HARNESS_CONFIG_FILE: ${ACH_HARNESS_CONFIG_FILE:-../../tests/integration/fixtures/split/config-acceptance.yaml}
       DEBUG: engine-value
       CUSTOM_TOOL_TOKEN: engine-token
       SPLIT_PREPARE_TOKEN: synthetic

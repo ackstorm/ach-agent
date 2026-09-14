@@ -13,6 +13,7 @@ from ach_agent.execution.wire import PublicEngineConfig
 
 ROOT = Path(__file__).parents[1]
 SPLIT = ROOT / "docker" / "split"
+FIXTURES = ROOT / "tests" / "integration" / "fixtures" / "split"
 
 
 def _documents(path: Path) -> list[dict[str, object]]:
@@ -170,7 +171,7 @@ def test_all_split_manifests_use_socket_probes_and_no_bootstrap_contract() -> No
 
 def test_acceptance_fixtures_cover_harness_hooks_and_selected_env() -> None:
     for name in ("config-acceptance.yaml", "config-acceptance-pi.yaml"):
-        cfg = AgentConfig.model_validate(yaml.safe_load((SPLIT / name).read_text(encoding="utf-8")))
+        cfg = AgentConfig.model_validate(yaml.safe_load((FIXTURES / name).read_text(encoding="utf-8")))
         acceptance = next(channel for channel in cfg.channels if channel.name == "acceptance")
         assert acceptance.prepare is not None
         assert acceptance.cleanup is not None
@@ -184,7 +185,7 @@ def test_acceptance_fixtures_cover_harness_hooks_and_selected_env() -> None:
 
 def test_ephemeral_acceptance_fixture_is_nonpersistent() -> None:
     cfg = AgentConfig.model_validate(
-        yaml.safe_load((SPLIT / "config-ephemeral-acceptance.yaml").read_text(encoding="utf-8"))
+        yaml.safe_load((FIXTURES / "config-ephemeral-acceptance.yaml").read_text(encoding="utf-8"))
     )
     assert cfg.persistence.enabled is False
     assert cfg.engine.home == "/tmp/ach-home"

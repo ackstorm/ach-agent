@@ -675,13 +675,6 @@
           "title": "Maxsteps",
           "type": "integer"
         },
-        "resultRetentionSeconds": {
-          "default": 300,
-          "exclusiveMinimum": 0,
-          "maximum": 86400,
-          "title": "Resultretentionseconds",
-          "type": "integer"
-        },
         "terminalOutputRetries": {
           "default": 1,
           "title": "Terminaloutputretries",

@@ -1,10 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Harness-side cleanup correlation for workspace stop notifications.
-
-Prepare and cleanup hooks execute in ``boot.prepare`` on H's shared workspace. This
-module retains the existing registry name and registration shape while E's stop event
-and cleanup acknowledgement protocol is migrated away from the old private-clone path.
-"""
+"""Correlate workspace stop notifications with cleanup hooks and acknowledgements."""
 
 from __future__ import annotations
 
@@ -22,19 +17,19 @@ from ach_agent.execution.wire import WorkspaceStoppedEvent
 log = structlog.get_logger(__name__)
 
 
-class PrivatePrepareFailed(RuntimeError):
-    """Compatibility exception for callers still draining the old registry seam."""
+class CleanupError(RuntimeError):
+    """Raised when cleanup context registration or lifecycle operations fail."""
 
 
 @dataclass(frozen=True, slots=True)
-class _PrivateCleanupContext:
+class _CleanupContext:
     invocation_id: str
     event: MessageEvent
     workspace: Path
     cfg: PrepareBlock
 
 
-class PrivateCleanupRegistry:
+class CleanupRegistry:
     """Bounded cleanup contexts correlated with engine stop events.
 
     Contexts contain only workspace and hook data needed for ACK handling.
@@ -44,7 +39,7 @@ class PrivateCleanupRegistry:
         if max_contexts <= 0:
             raise ValueError("cleanup registry bounds must be positive")
         self._max_contexts = max_contexts
-        self._contexts: dict[str, _PrivateCleanupContext] = {}
+        self._contexts: dict[str, _CleanupContext] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         self._task_by_invocation: dict[str, asyncio.Task[None]] = {}
         self._closed = False
@@ -58,18 +53,18 @@ class PrivateCleanupRegistry:
     ) -> None:
         """Store hook context before the corresponding workspace reservation."""
         if self._closed:
-            raise PrivatePrepareFailed("private cleanup registry is closed")
+            raise CleanupError("cleanup registry is closed")
         if invocation_id in self._contexts or invocation_id in self._task_by_invocation:
-            raise PrivatePrepareFailed("private cleanup context is already registered")
+            raise CleanupError("cleanup context is already registered")
         if len(self._contexts) + len(self._tasks) >= self._max_contexts:
-            raise PrivatePrepareFailed("private cleanup context limit reached")
-        self._contexts[invocation_id] = _PrivateCleanupContext(invocation_id, event, workspace, cfg)
+            raise CleanupError("cleanup context limit reached")
+        self._contexts[invocation_id] = _CleanupContext(invocation_id, event, workspace, cfg)
 
     def commit(self, invocation_id: str) -> None:
         """Commit a successful prepare and retire superseded same-lane contexts."""
         context = self._contexts.get(invocation_id)
         if context is None:
-            raise PrivatePrepareFailed("private cleanup context is not pending")
+            raise CleanupError("cleanup context is not pending")
         for previous, candidate in tuple(self._contexts.items()):
             if (
                 previous != invocation_id
@@ -114,7 +109,7 @@ class PrivateCleanupRegistry:
 
     async def _cleanup_and_ack(
         self,
-        context: _PrivateCleanupContext,
+        context: _CleanupContext,
         event: WorkspaceStoppedEvent,
         acknowledge: Callable[[WorkspaceStoppedEvent], Awaitable[None]],
     ) -> None:

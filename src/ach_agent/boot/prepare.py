@@ -59,6 +59,11 @@ _BASE_ENV = ("PATH", "SHELL", "LANG", "LANGUAGE", "TZ")
 # Hook output is diagnostic and potentially noisy, so retain only a bounded tail.
 _HOOK_OUTPUT_TAIL_BYTES = 4096
 
+# Hook processes run in the shared engine workspace, but their HOME belongs to this
+# harness process. A lazy process-lifetime directory avoids sharing hook state between
+# harness replicas and keeps HOME outside the engine's configured home/workspace.
+_hook_home_dir: tempfile.TemporaryDirectory[str] | None = None
+
 # Runs the script when stdin is already taken by the event payload. The script travels in
 # ACH_SCRIPT (env, owner-readable) instead of argv (/proc/<pid>/cmdline, world-readable),
 # and is unset before eval so no grandchild process inherits it.
@@ -146,6 +151,14 @@ def prepare_workspace(home: str, work_dir: str, session_key: str) -> Path:
     return ws
 
 
+def _hook_home() -> Path:
+    """Return and create the harness-private HOME for this process's hooks."""
+    global _hook_home_dir
+    if _hook_home_dir is None:
+        _hook_home_dir = tempfile.TemporaryDirectory(prefix="ach-hook-home-", dir="/tmp")
+    return Path(_hook_home_dir.name)
+
+
 def _event_value(key: str, value: Any) -> str | None:
     """Coerce one delivery_context value to a safe env string, or None to drop it.
 
@@ -198,11 +211,10 @@ def build_prepare_env(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
     env["ACH_SESSION_KEY"] = event.session_key
     env["ACH_EVENT_ID"] = event.idempotency_key
     env["ACH_CHANNEL"] = event.channel_name
-    # git must never block a non-interactive subprocess on a credential prompt, and HOME
-    # is pinned into the workspace so git writes its config there and never reads the
-    # harness user's ~/.gitconfig or ~/.git-credentials.
+    # git must never block a non-interactive subprocess on a credential prompt. HOME is
+    # harness-private and separate from the engine's configured HOME/workspace.
     env["GIT_TERMINAL_PROMPT"] = "0"
-    env["HOME"] = str(workspace)
+    env["HOME"] = str(_hook_home())
     return env
 
 
@@ -331,11 +343,9 @@ async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
 async def run_webhook_script(cfg: PrepareBlock, event: MessageEvent, work_dir: str) -> None:
     """Run a deterministic webhook handler with normalized JSON on stdin and no engine.
 
-    Every webhook script gets a harness-private temporary cwd.  A script without a
-    declared credential still has arbitrary shell authority, so placing it in the
-    engine-owned workspace would let an engine-written config or hook be consumed by
-    a later harness script. ``work_dir`` remains a compatibility argument and is never
-    used as the script cwd.
+    Every webhook script gets a short-lived temporary child directory under ``work_dir``.
+    Its HOME remains harness-private so hook configuration does not share the engine's
+    configured HOME; the script cwd continues to be isolated from the session workspace.
     """
     # Serialized BEFORE the workspace exists, so a payload that cannot be encoded leaves no
     # directory behind. ensure_ascii (the default) is what makes that total: json.loads

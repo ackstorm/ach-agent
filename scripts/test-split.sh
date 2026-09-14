@@ -8,7 +8,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT="ach-phase1-split-${USER:-user}-$$-${RANDOM}"
 COMPOSE=(docker compose -p "$PROJECT" -f "$ROOT_DIR/docker/split/compose.yaml" -f "$ROOT_DIR/docker/split/compose-acceptance.yaml")
 
-export ACH_HARNESS_CONFIG_FILE=config-acceptance.yaml
+export ACH_HARNESS_CONFIG_FILE=../../tests/integration/fixtures/split/config-acceptance.yaml
 export ACH_BASE_URL=http://mock-upstream:9080
 export ACH_TOKEN=split-acceptance-key
 
@@ -22,9 +22,9 @@ run_engine_acceptance() {
   local target="$1"
   export ACH_ENGINE_TARGET="$target"
   if [ "$target" = engine-pi ]; then
-    export ACH_HARNESS_CONFIG_FILE=config-acceptance-pi.yaml
+    export ACH_HARNESS_CONFIG_FILE=../../tests/integration/fixtures/split/config-acceptance-pi.yaml
   else
-    export ACH_HARNESS_CONFIG_FILE=config-acceptance.yaml
+    export ACH_HARNESS_CONFIG_FILE=../../tests/integration/fixtures/split/config-acceptance.yaml
   fi
   "${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
   "${COMPOSE[@]}" config --quiet

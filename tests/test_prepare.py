@@ -145,7 +145,8 @@ def test_harness_vars_win_over_operator_env() -> None:
     )
     assert env["REPO_BASE_URL"] == "https://gitlab.example.com"
     assert env["ACH_WORKSPACE"].startswith("/w/")
-    assert env["HOME"] == env["ACH_WORKSPACE"]
+    assert env["HOME"] != env["ACH_WORKSPACE"]
+    assert env["HOME"].startswith("/tmp/ach-hook-home-")
     assert env["GIT_TERMINAL_PROMPT"] == "0"
     assert env["ACH_SESSION_KEY"] == "42:7"
 
@@ -177,6 +178,27 @@ async def test_script_runs_in_the_workspace(tmp_path) -> None:  # type: ignore[n
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "42:7")
     await run_prepare(_block('echo "$ACH_EVENT_MR_IID" > marker'), _event(mr_iid=7), ws)
     assert (ws / "marker").read_text().strip() == "7"
+
+
+async def test_prepare_home_is_private_from_engine_workspace(tmp_path: Path) -> None:
+    ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "42:7")
+    marker = tmp_path / "locations"
+    cfg = _block(
+        'printf "%s\\n%s\\n%s" "$PWD" "$HOME" "$ACH_WORKSPACE" > "$LOCATIONS"; '
+        'printf engine > "$HOME/engine-cannot-own-hook-home"',
+        env={"LOCATIONS": str(marker)},
+    )
+
+    await run_prepare(cfg, _event(), ws)
+
+    cwd, hook_home, workspace = marker.read_text().splitlines()
+    assert Path(cwd) == ws
+    assert Path(workspace) == ws
+    assert Path(hook_home) != ws
+    assert Path(hook_home).is_dir()
+    assert Path(hook_home).stat().st_mode & 0o777 == 0o700
+    assert (Path(hook_home) / "engine-cannot-own-hook-home").read_text() == "engine"
+    assert not (ws / "engine-cannot-own-hook-home").exists()
 
 
 async def test_webhook_script_receives_payload_on_stdin_and_removes_workspace(
@@ -215,7 +237,7 @@ async def test_credentialed_webhook_script_uses_private_scratch(
 async def test_all_webhook_scripts_use_private_cwd_and_home(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, credentialed: bool
 ) -> None:
-    """Webhook scripts use a short-lived directory under the configured work directory."""
+    """Webhook scripts use a short-lived cwd and harness-private HOME."""
     locations = tmp_path / ("locations-secret" if credentialed else "locations-public")
     engine_work = tmp_path / "engine-work"
     block_args: dict[str, object] = {
@@ -233,7 +255,9 @@ async def test_all_webhook_scripts_use_private_cwd_and_home(
 
     cwd, home, workspace = locations.read_text().splitlines()
     assert Path(cwd).is_relative_to(engine_work)
-    assert Path(home).is_relative_to(engine_work)
+    assert Path(home).name.startswith("ach-hook-home-")
+    assert Path(home).parent == Path("/tmp")
+    assert not Path(home).is_relative_to(engine_work)
     assert Path(workspace).is_relative_to(engine_work)
     assert not Path(cwd).exists()
 
@@ -386,6 +410,27 @@ async def test_cleanup_runs_from_workspace_parent_with_isolated_env(tmp_path: Pa
     await run_cleanup(cfg, _event(), ws)
 
     assert marker.read_text() == f"{ws}|42:7|yes"
+
+
+async def test_cleanup_home_is_private_from_engine_workspace(tmp_path: Path) -> None:
+    ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
+    marker = ws.parent / "cleanup-locations.txt"
+    cfg = _block(
+        'printf "%s\\n%s\\n%s" "$PWD" "$HOME" "$ACH_WORKSPACE" > "'
+        + str(marker)
+        + '"; printf cleanup > "$HOME/cleanup-state"'
+    )
+
+    await run_cleanup(cfg, _event(), ws)
+
+    cwd, hook_home, workspace = marker.read_text().splitlines()
+    assert Path(cwd) == ws.parent
+    assert Path(workspace) == ws
+    assert Path(hook_home) != ws
+    assert Path(hook_home) == Path(build_prepare_env(_block(), _event(), ws)["HOME"])
+    assert Path(hook_home).stat().st_mode & 0o777 == 0o700
+    assert (Path(hook_home) / "cleanup-state").read_text() == "cleanup"
+    assert not (ws / "cleanup-state").exists()
 
 
 async def test_cleanup_nonzero_is_best_effort(tmp_path: Path) -> None:

@@ -32,7 +32,7 @@ async def test_credentialed_prepare_keeps_original_workspace(
             "script": (
                 "set -eu; "
                 'test "$PWD" = "$ACH_WORKSPACE"; '
-                'test "$HOME" = "$ACH_WORKSPACE"; '
+                'test "$HOME" != "$ACH_WORKSPACE"; '
                 'test "$TOKEN" = synthetic; test -f retained; '
                 "printf ok >> runs"
             ),
@@ -59,7 +59,7 @@ async def test_cleanup_runs_from_workspace_parent_with_original_environment(
             "script": (
                 "set -eu; "
                 'test "$PWD" = "$(dirname "$ACH_WORKSPACE")"; '
-                'test "$HOME" = "$ACH_WORKSPACE"; '
+                'test "$HOME" != "$ACH_WORKSPACE"; '
                 'printf cleaned > "$ACH_WORKSPACE/cleanup-marker"'
             )
         }
@@ -79,7 +79,7 @@ async def test_cleanup_is_best_effort_after_validated_sentinel(tmp_path: Path) -
             "script": (
                 "set -eu; "
                 'test "$PWD" = "$(dirname "$ACH_WORKSPACE")"; '
-                'test "$HOME" = "$ACH_WORKSPACE"; '
+                'test "$HOME" != "$ACH_WORKSPACE"; '
                 'printf attempted > "$ACH_WORKSPACE/cleanup-sentinel"; '
                 "exit 7"
             )

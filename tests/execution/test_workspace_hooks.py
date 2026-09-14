@@ -14,12 +14,12 @@ from pathlib import Path
 import pytest
 import uvicorn
 
+from ach_agent.boot.cleanup_registry import CleanupRegistry
 from ach_agent.boot.execution_client import (
     ExecutionClient,
     ExecutionClientError,
     WorkspaceOperationFailed,
 )
-from ach_agent.boot.private_prepare import PrivateCleanupRegistry
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import PrepareBlock
 from ach_agent.engine.workspace import prepare_workspace, workspace_dir
@@ -391,7 +391,7 @@ async def test_real_http_registry_orders_warm_expiry_before_same_lane_prepare(
 ) -> None:
     service = ExecutionService(fake_driver, {})
     app = create_execution_app(service)
-    registry = PrivateCleanupRegistry()
+    registry = CleanupRegistry()
     async with _running_server(app) as base_url:
         client = ExecutionClient(base_url, controller_id="controller", timeout=1)
         try:

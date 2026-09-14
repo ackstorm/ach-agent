@@ -15,11 +15,12 @@ from ach_agent.config import load_config
 from ach_agent.config.schema import ChannelSourceConfig
 
 ROOT = Path(__file__).parents[2]
+FIXTURES = ROOT / "tests" / "integration" / "fixtures" / "split"
 
 
 def test_acceptance_config_and_channel_projection_match() -> None:
-    config = load_config(str(ROOT / "docker/split/config-acceptance.yaml"))
-    projection = json.loads((ROOT / "docker/split/channels-acceptance.json").read_text())
+    config = load_config(str(FIXTURES / "config-acceptance.yaml"))
+    projection = json.loads((FIXTURES / "channels-acceptance.json").read_text())
     assert config.agent.name == "split-acceptance"
     assert {channel.name for channel in config.channels} == {"acceptance", "cancel"}
     source = ChannelSourceConfig.model_validate(projection["channels"][0])

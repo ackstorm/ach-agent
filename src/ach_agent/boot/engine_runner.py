@@ -39,8 +39,8 @@ from ach_agent.stats.sink import StatsSink
 from ach_agent.templating import build_template_context, render_template
 
 if TYPE_CHECKING:
+    from ach_agent.boot.cleanup_registry import CleanupRegistry
     from ach_agent.boot.execution_client import ExecutionClient
-    from ach_agent.boot.private_prepare import PrivateCleanupRegistry
 
 log = structlog.get_logger(__name__)
 
@@ -84,12 +84,10 @@ def make_engine_runner(
     cost_source: str = "engine",
     completion_registry: CompletionRegistry | None = None,
     conversation_locks: ConversationLocks | None = None,
-    private_cleanup_registry: PrivateCleanupRegistry | None = None,
+    cleanup_registry: CleanupRegistry | None = None,
 ) -> Callable[..., Any]:
     """Build the router runner using one concrete ExecutionClient."""
-    from ach_agent.boot.private_prepare import (
-        PrivateCleanupRegistry,
-    )
+    from ach_agent.boot.cleanup_registry import CleanupRegistry
     from ach_agent.engine.base.terminal import run_contract_turn
     from ach_agent.engine.workspace import workspace_dir
     from ach_agent.execution.wire import (
@@ -105,13 +103,13 @@ def make_engine_runner(
         conversation_locks = ConversationLocks()
     if not isinstance(engine_cfg, PublicEngineConfig):
         raise TypeError("make_engine_runner requires credential-free PublicEngineConfig")
-    cleanup_registry = private_cleanup_registry or PrivateCleanupRegistry()
+    registry = cleanup_registry or CleanupRegistry()
     cleanup_pump: asyncio.Task[None] | None = None
 
     async def cleanup_events() -> None:
         while True:
             event = await client.next_controller_event()
-            await cleanup_registry.handle_event(event, client.ack_workspace_cleanup)
+            await registry.handle_event(event, client.ack_workspace_cleanup)
 
     async def ensure_cleanup_pump() -> None:
         nonlocal cleanup_pump
@@ -124,7 +122,7 @@ def make_engine_runner(
             cleanup_pump.cancel()
             await asyncio.gather(cleanup_pump, return_exceptions=True)
             cleanup_pump = None
-        await cleanup_registry.close()
+        await registry.close()
 
     async def engine_runner(
         event: MessageEvent, on_kill: Callable[[], None]
@@ -205,7 +203,7 @@ def make_engine_runner(
                 )
                 if cleanup_cfg is not None:
                     await ensure_cleanup_pump()
-                    await cleanup_registry.register(
+                    await registry.register(
                         invocation_id,
                         event,
                         expected_workspace,
@@ -231,7 +229,7 @@ def make_engine_runner(
                         result = await client.prepare_workspace(prep_request)
                     except WorkspaceOperationFailed as exc:
                         if private_registered and exc.confirmed and not reservation_active:
-                            cleanup_registry.retire(invocation_id)
+                            registry.retire(invocation_id)
                             private_registered = False
                         raise
                     # ExecutionClient validates this deterministic path. Keep the path used
@@ -245,7 +243,7 @@ def make_engine_runner(
                     if private_registered:
                         # Keep the context until the held-controller stop event is
                         # acknowledged; commit retires only superseded same-lane contexts.
-                        cleanup_registry.commit(invocation_id)
+                        registry.commit(invocation_id)
 
                 wire_cfg = invocation_engine_cfg.model_copy(update={"work_dir": str(workspace)})
                 from ach_agent.execution.wire import AcquireRequest

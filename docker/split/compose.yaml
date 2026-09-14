@@ -11,6 +11,8 @@ services:
       ACH_TOKEN: ${ACH_TOKEN:?set ACH_TOKEN}
       ACH_BASE_URL: ${ACH_BASE_URL:?set ACH_BASE_URL}
       ACH_ENVIRONMENT: ${ACH_ENVIRONMENT:-platform}
+      ACH_CHANNEL_SOCKET: /run/ach-agent/channels/channel.sock
+      ACH_ENGINE_SOCKET: /run/ach-agent/engine/agent.sock
     ports:
       - "8080:8080"
     read_only: true
@@ -30,8 +32,8 @@ services:
       - shared-workspace:/var/lib/ach-agent/workspace
       - public-context:/var/lib/ach-agent/public-context
       - harness-scratch:/tmp/ach-private
-      - channels-bootstrap:/run/ach-agent/channels
-      - engine-bootstrap:/run/ach-agent/engine
+      - channels-ipc:/run/ach-agent/channels
+      - engine-ipc:/run/ach-agent/engine:ro
 
   channels:
     build:
@@ -44,6 +46,7 @@ services:
     network_mode: service:harness
     environment:
       ACH_ENVIRONMENT: ${ACH_ENVIRONMENT:-platform}
+      ACH_CHANNEL_SOCKET: /run/ach-agent/channels/channel.sock
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
@@ -56,7 +59,7 @@ services:
       retries: 12
       start_period: 300s
     volumes:
-      - channels-bootstrap:/run/ach-agent/channels:ro
+      - channels-ipc:/run/ach-agent/channels:ro
 
   engine:
     build:
@@ -67,6 +70,7 @@ services:
     network_mode: service:harness
     environment:
       ACH_ENVIRONMENT: ${ACH_ENVIRONMENT:-platform}
+      ACH_ENGINE_SOCKET: /run/ach-agent/engine/agent.sock
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
@@ -79,7 +83,7 @@ services:
       retries: 12
       start_period: 300s
     volumes:
-      - engine-bootstrap:/run/ach-agent/engine:ro
+      - engine-ipc:/run/ach-agent/engine
       - engine-home:/var/lib/ach-agent/home
       # This E-owned directory is mounted at the logical codemem path. It is
       # intentionally a different volume from H's state/state.db directory.
@@ -94,5 +98,5 @@ volumes:
   shared-workspace:
   public-context:
   harness-scratch:
-  channels-bootstrap:
-  engine-bootstrap:
+  channels-ipc:
+  engine-ipc:

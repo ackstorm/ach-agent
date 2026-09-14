@@ -37,6 +37,7 @@ def create_channels_app(
     agent: str = "default",
     channels: Iterable[str] | None = None,
     source_configs: Iterable[ChannelSourceConfig] | None = None,
+    internal_auth: bool = True,
     nonce_cache: NonceCache | None = None,
     max_body_bytes: int = MAX_CHANNEL_BODY_BYTES,
 ) -> FastAPI:
@@ -71,6 +72,8 @@ def create_channels_app(
         return ChannelInputs(agentName=agent, channels=projected_sources)
 
     async def authenticated_body(request: Request) -> tuple[bytes, str] | Response:
+        if not internal_auth:
+            return await request.body(), ""
         nonce = request.headers.get(NONCE_HEADER, "")
         timestamp_value = request.headers.get(TIMESTAMP_HEADER, "")
         signature = request.headers.get(REQUEST_HEADER, "")

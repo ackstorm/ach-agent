@@ -60,6 +60,7 @@ class ChannelsClient:
         socket_path: str | None = None,
     ) -> None:
         self.base_url = "http://ach-internal" if socket_path else base_url.rstrip("/")
+        self._socket_path = socket_path
         self.key = key
         self.agent = agent
         self.channel_name = channel_name
@@ -252,12 +253,15 @@ class ChannelsClient:
             raise SubmissionFailed("request body too large")
         timestamp = int(self._clock())
         nonce = self._nonce_factory()
-        headers = {
-            "content-type": "application/json",
-            TIMESTAMP_HEADER: str(timestamp),
-            NONCE_HEADER: nonce,
-            REQUEST_HEADER: request_mac(self.key, "POST", target, timestamp, nonce, body),
-        }
+        headers = {"content-type": "application/json"}
+        if self._socket_path is None:
+            headers.update(
+                {
+                    TIMESTAMP_HEADER: str(timestamp),
+                    NONCE_HEADER: nonce,
+                    REQUEST_HEADER: request_mac(self.key, "POST", target, timestamp, nonce, body),
+                }
+            )
         try:
             async with self._http.stream("POST", target, content=body, headers=headers) as response:
                 chunks: list[bytes] = []
@@ -272,8 +276,9 @@ class ChannelsClient:
                 signature = response.headers.get(RESPONSE_HEADER, "")
         except (httpx.HTTPError, OSError) as exc:
             raise SubmissionFailed(f"channel HTTP request failed: {exc}") from exc
-        if not signature or not verify_response_mac(
-            self.key, nonce, status, response_body, signature
+        if self._socket_path is None and (
+            not signature
+            or not verify_response_mac(self.key, nonce, status, response_body, signature)
         ):
             raise SubmissionFailed("invalid channel response authentication")
         return response_body, status

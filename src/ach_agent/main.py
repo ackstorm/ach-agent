@@ -775,7 +775,12 @@ async def _run_harness(
             if a2a_facade is not None:
                 await a2a_facade.stop()
             raise
-    client = ExecutionClient(engine_url, controller_id=f"harness-{os.getpid()}-{id(cfg)}")
+    engine_socket = os.environ.get("ACH_ENGINE_SOCKET", "").strip()
+    client = ExecutionClient(
+        engine_url,
+        controller_id=f"harness-{os.getpid()}-{id(cfg)}",
+        socket_path=engine_socket or None,
+    )
     connect_deadline = asyncio.get_running_loop().time() + float(cfg.engine.startup_timeout_seconds)
     while True:
         try:
@@ -785,7 +790,9 @@ async def _run_harness(
             if client.controller_lost:
                 await client.close()
                 client = ExecutionClient(
-                    engine_url, controller_id=f"harness-{os.getpid()}-{id(cfg)}"
+                    engine_url,
+                    controller_id=f"harness-{os.getpid()}-{id(cfg)}",
+                    socket_path=engine_socket or None,
                 )
             if asyncio.get_running_loop().time() >= connect_deadline:
                 await client.close()
@@ -1008,6 +1015,7 @@ async def _run_harness(
             agent=cfg.agent.name,
             channels=(channel.name for channel in cfg.channels),
             source_configs=(source_configs[channel.name] for channel in cfg.channels),
+            internal_auth=not bool(os.environ.get("ACH_CHANNEL_SOCKET", "").strip()),
             nonce_cache=NonceCache(
                 max_entries=min(65_536, max(4_096, cfg.limits.max_queued_total * 30 + 1_024))
             ),

@@ -22,9 +22,9 @@ spec:
     - name: harness-config
       configMap:
         name: ach-agent-config
-    - name: channels-bootstrap
+    - name: channels-ipc
       emptyDir: {}
-    - name: engine-bootstrap
+    - name: engine-ipc
       emptyDir: {}
     - name: state
       persistentVolumeClaim:
@@ -65,6 +65,10 @@ spec:
             secretKeyRef:
               name: ach-agent-secrets
               key: ach-token
+        - name: ACH_CHANNEL_SOCKET
+          value: /run/ach-agent/channels/channel.sock
+        - name: ACH_ENGINE_SOCKET
+          value: /run/ach-agent/engine/agent.sock
       ports:
         - name: harness
           containerPort: 8090
@@ -105,14 +109,18 @@ spec:
           mountPath: /tmp/ach-private
         - name: harness-tmp
           mountPath: /tmp
-        - name: channels-bootstrap
+        - name: channels-ipc
           mountPath: /run/ach-agent/channels
-        - name: engine-bootstrap
+        - name: engine-ipc
           mountPath: /run/ach-agent/engine
+          readOnly: true
     - name: channels
       image: ghcr.io/ackstorm/ach-agent:channels
       imagePullPolicy: IfNotPresent
       args: ["--role", "channels"]
+      env:
+        - name: ACH_CHANNEL_SOCKET
+          value: /run/ach-agent/channels/channel.sock
       ports:
         - name: ingress
           containerPort: 8080
@@ -135,7 +143,7 @@ spec:
         periodSeconds: 10
       securityContext: *restricted
       volumeMounts:
-        - name: channels-bootstrap
+        - name: channels-ipc
           mountPath: /run/ach-agent/channels
           readOnly: true
         - name: channels-tmp
@@ -144,6 +152,9 @@ spec:
       image: ghcr.io/ackstorm/ach-agent:engine-opencode
       imagePullPolicy: IfNotPresent
       args: ["--role", "engine"]
+      env:
+        - name: ACH_ENGINE_SOCKET
+          value: /run/ach-agent/engine/agent.sock
       ports:
         - name: engine
           containerPort: 8081
@@ -163,9 +174,8 @@ spec:
         periodSeconds: 10
       securityContext: *restricted
       volumeMounts:
-        - name: engine-bootstrap
+        - name: engine-ipc
           mountPath: /run/ach-agent/engine
-          readOnly: true
         - name: engine-home
           mountPath: /var/lib/ach-agent/home
           subPath: home

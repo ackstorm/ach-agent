@@ -30,11 +30,11 @@ async def test_credentialed_prepare_keeps_original_workspace(
     block = PrepareBlock.model_validate(
         {
             "script": (
-                'set -eu; '
+                "set -eu; "
                 'test "$PWD" = "$ACH_WORKSPACE"; '
                 'test "$HOME" = "$ACH_WORKSPACE"; '
                 'test "$TOKEN" = synthetic; test -f retained; '
-                'printf ok >> runs'
+                "printf ok >> runs"
             ),
             "secretEnv": {"TOKEN": {"env": "TEST_FORGE_TOKEN"}},
         }
@@ -57,7 +57,7 @@ async def test_cleanup_runs_from_workspace_parent_with_original_environment(
     block = PrepareBlock.model_validate(
         {
             "script": (
-                'set -eu; '
+                "set -eu; "
                 'test "$PWD" = "$(dirname "$ACH_WORKSPACE")"; '
                 'test "$HOME" = "$ACH_WORKSPACE"; '
                 'printf cleaned > "$ACH_WORKSPACE/cleanup-marker"'
@@ -77,7 +77,7 @@ async def test_cleanup_is_best_effort_after_validated_sentinel(tmp_path: Path) -
     block = PrepareBlock.model_validate(
         {
             "script": (
-                'set -eu; '
+                "set -eu; "
                 'test "$PWD" = "$(dirname "$ACH_WORKSPACE")"; '
                 'test "$HOME" = "$ACH_WORKSPACE"; '
                 'printf attempted > "$ACH_WORKSPACE/cleanup-sentinel"; '
@@ -100,11 +100,7 @@ async def test_script_only_payload_uses_configured_workdir_and_is_removed(tmp_pa
     payload_file = tmp_path / "payload"
     block = PrepareBlock.model_validate(
         {
-            "script": (
-                'set -eu; '
-                'pwd > "$CWD_FILE"; '
-                'cat > "$PAYLOAD_FILE"'
-            ),
+            "script": ('set -eu; pwd > "$CWD_FILE"; cat > "$PAYLOAD_FILE"'),
             "env": {"CWD_FILE": str(cwd_file), "PAYLOAD_FILE": str(payload_file)},
         }
     )

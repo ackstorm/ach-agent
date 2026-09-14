@@ -1,8 +1,9 @@
 # Unix split behavior matrix
 
 This is the Task 1 characterization record for the simplification work. The reference
-implementation is original v0.16.1 at `462912f`; current results below are recorded
-against `feat/phase1-split` at `2ff1dd8`, before the pending workspace-hook correction.
+implementation is original v0.16.1 at `462912f`. The matrix's “Current split before
+this plan” column is the historical pre-plan snapshot at `2ff1dd8`; later verification
+attempts are listed separately below.
 
 | Behavior | Original reference | Current split before this plan | Regression test / evidence | Planned task |
 | --- | --- | --- | --- | --- |
@@ -46,6 +47,14 @@ rtk ./scripts/dev.sh uv run pytest tests/compat/test_original_split_behavior.py 
 The one current failure is intentional evidence for Task 3: the new script-only test
 observes `/tmp/ach-private/webhook-script-*` rather than a child of the supplied
 `work_dir`. It is not marked xfail, so a future runtime change must make it pass.
+
+After the runtime correction changed script-only execution to the supplied `work_dir`,
+the same focused command was rerun: **85 passed, 1 failed in 5.44s**. That remaining
+failure is an existing `tests/test_prepare.py::test_webhook_script_survives_an_unpaired_surrogate`
+expectation that the parent work directory disappears; the corrected implementation
+removes the temporary child and leaves the configured parent directory present. This
+late result is separate from the historical pre-plan matrix and was not changed in the
+owned characterization files.
 
 ## Baseline command
 

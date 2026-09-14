@@ -35,7 +35,7 @@ from ach_agent.boot.bootstrap import (
     wait_for_channels_bootstrap,
     wait_for_engine_bootstrap,
 )
-from ach_agent.boot.ipc import bind_listener, engine_socket_path
+from ach_agent.boot.ipc import bind_listener, channel_socket_path, engine_socket_path
 from ach_agent.boot.paths import harness_log_dir, resolve_role_paths
 from ach_agent.boot.secrets import collect_secret_env_names, strip_forwarded_secrets
 from ach_agent.config.schema import (
@@ -418,36 +418,24 @@ async def run_harness(
 
 
 async def run_channels(channel_config: JsonValue | None = None) -> None:
-    """Start the source role from its filtered configuration artifact."""
-    bootstrap: ChannelsBootstrap | None = None
+    """Start source adapters from the harness-owned channel socket projection."""
+    fetched_agent_name = ""
     if channel_config is None:
-        channel_socket = os.environ.get("ACH_CHANNEL_SOCKET", "").strip()
-        if channel_socket:
-            from ach_agent.channels.client import ChannelsClient
+        from ach_agent.channels.client import ChannelsClient
 
-            config_client = ChannelsClient(
-                socket_path=channel_socket,
-                agent=os.environ.get("ACH_AGENT_NAME", "").strip(),
-            )
-            try:
-                inputs = await config_client.fetch_config()
-            finally:
-                await config_client.close()
-            channel_config = {
-                "schemaVersion": "1",
-                "channels": cast(
-                    JsonValue,
-                    [item.model_dump(mode="json", by_alias=True) for item in inputs.channels],
-                ),
-            }
-        else:
-            bootstrap = await wait_for_channels_bootstrap(
-                role_bootstrap_path("channels"), timeout=_bootstrap_wait_seconds()
-            )
-            channel_config = {
-                "schemaVersion": "1",
-                "channels": cast(JsonValue, bootstrap.channels),
-            }
+        config_client = ChannelsClient(socket_path=str(channel_socket_path()))
+        try:
+            inputs = await config_client.fetch_config()
+        finally:
+            await config_client.close()
+        fetched_agent_name = inputs.agent_name
+        channel_config = {
+            "schemaVersion": "1",
+            "channels": cast(
+                JsonValue,
+                [item.model_dump(mode="json", by_alias=True) for item in inputs.channels],
+            ),
+        }
     if not isinstance(channel_config, dict):
         raise SplitRoleConfigError("channels role requires an object configuration")
     if channel_config.get("schemaVersion") != "1":
@@ -456,12 +444,12 @@ async def run_channels(channel_config: JsonValue | None = None) -> None:
     if not isinstance(sources, list):
         raise SplitRoleConfigError("channels role artifact must contain channels")
     raw_sources = sources
-    channel_socket = os.environ.get("ACH_CHANNEL_SOCKET", "").strip()
+    channel_socket = str(channel_socket_path())
     from ach_agent import identity
 
     agent_name = os.environ.get("ACH_AGENT_NAME", "").strip()
-    if bootstrap is not None:
-        agent_name = bootstrap.agent_name
+    if fetched_agent_name:
+        agent_name = fetched_agent_name
     identity.configure(agent_name, os.environ.get("ACH_ENVIRONMENT", ""))
     for source in raw_sources:
         ChannelSourceConfig.model_validate(source)
@@ -481,9 +469,7 @@ async def run_channels(channel_config: JsonValue | None = None) -> None:
         poll_interval=2.0,
         socket_path=channel_socket or None,
     )
-    probe_deadline = asyncio.get_running_loop().time() + (
-        _bootstrap_wait_seconds() if bootstrap is not None else 30.0
-    )
+    probe_deadline = asyncio.get_running_loop().time() + 30.0
     probe_channel = source_configs[0].name if source_configs else ""
     while True:
         try:
@@ -493,7 +479,7 @@ async def run_channels(channel_config: JsonValue | None = None) -> None:
             pass
         if asyncio.get_running_loop().time() >= probe_deadline:
             await client.close()
-            raise SplitRoleConfigError("harness signed connectivity did not become ready")
+            raise SplitRoleConfigError("harness connectivity did not become ready")
         await asyncio.sleep(0.5)
     a2a_mounts: list[tuple[str, Any]] = []
     a2a_bridges: list[A2AAgentExecutorBridge] = []

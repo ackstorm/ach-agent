@@ -25,8 +25,7 @@ use. Its behavior is pinned by an authoritative conformance suite (`make conform
 ## How it works
 
 **Agreed target, pending implementation:** the diagrams below describe the simplified
-split approved on 2026-09-14. The current branch still uses internal TCP/bootstrap files
-and splits hook execution by credential use. The
+split approved on 2026-09-14. Validation is still in progress; the
 [implementation plan](docs/superpowers/plans/2026-09-14-preserve-behavior-simplify-split.md)
 replaces those mechanisms; these diagrams are not a claim that released images already do so.
 
@@ -242,17 +241,27 @@ Released container images are published to `ghcr.io/ackstorm/ach-agent`.
 
 ### Phase 1 split packaging example
 
-This is the currently implemented TCP/bootstrap example, preceding the Unix-socket
-simplification described above. The plan updates these manifests as its final step.
+Validation is in progress against the approved Unix-socket target. The repository
+includes a three-container contract example in [`docker/split/`](docker/split/):
+channels (C), harness (H), and one engine (E), all ordinary containers in one pod
+with one active replica. Each role uses tini and its role argument; no init container
+or operator control-plane sidecar is required.
 
-The repository includes a three-container contract example in
-[`docker/split/`](docker/split/): channels, harness, and one engine role. The
-Compose example shares the harness network namespace for internal loopback
-traffic and publishes only the channels ingress. The Kubernetes example uses
-ordinary containers, no init container, no service-account token mount, and
-narrow role mounts. H owns credentials, dedup state, preparation, and hydration;
-C receives only its filtered channels artifact; E receives its engine bootstrap,
-private home, shared workspace, and read-only public context.
+H alone reads the full rendered config, hydrates state and starts model/MCP proxies.
+C receives source-only channel inputs over
+`/run/ach-agent/channels/channel.sock`. E receives `PublicEngineConfig` through the
+existing controller request over `/run/ach-agent/engine/agent.sock`. H resolves the
+values selected by `engine.forwardEnv` and sends those explicit values to E; managed
+ACH/model/MCP credentials remain H-side. H executes every prepare and cleanup hook
+on the existing shared workspace, preserving the original cwd, HOME and lifecycle.
+
+The two IPC directory mounts are separate: H writes both, C reads only the channels
+directory, and E writes only the engine directory while H reads it. H/E probes use
+HTTP over their Unix sockets; C's public ingress remains on port 8080, and native,
+model and MCP HTTP endpoints remain where their existing clients require them. There
+are no mandatory internal control ports, bootstrap files, bootstrap keys or internal
+operator environment variables. These files do not change the CR schema or publish
+an image; production `ach-runtime` rendering remains a separate handoff.
 
 The images are built with `--target harness`, `--target channels`,
 `--target engine-opencode`, and `--target engine-pi`. A build without a target
@@ -262,6 +271,8 @@ PID 1. Production `ach-runtime` rendering remains a separate handoff; these
 files do not apply a cluster or replace operator-generated config and Secret
 objects. See [`docker/split/README.md`](docker/split/README.md) for persistence,
 ephemeral mounts, custom engine paths, and the offline codemem relocation.
+
+The self-contained operator handoff is [`2026-09-14-unix-operator-handoff.md`](docs/superpowers/specs/2026-09-14-unix-operator-handoff.md).
 
 ### Operator contract
 

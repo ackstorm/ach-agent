@@ -58,12 +58,13 @@ Spec reference: `ach-agent-runtime-spec-v1_4_7.md` (API group `runtime.ackstorm.
 
 ### Phase 1 split deployment acceptance
 
-The repository's task-owned split Compose manifest is an acceptance fixture for
-the three application roles: channels, harness, and engine. H receives the full
-config and writes the two fixed bootstrap files; C and E consume only their
-read-only bootstrap directory. The fixture's synthetic upstream and credentials
-are test values only. See [`phase1-split-evidence.md`](../reports/phase1-split-evidence.md)
-for historical measured acceptance and its limits.
+Validation is in progress for the task-owned split Compose manifest. The target is
+one pod with three ordinary tini containers and one active replica: channels (C),
+harness (H), and engine (E). H reads the full rendered config; C and E receive only
+the inputs required through the two Unix sockets. The fixture's synthetic upstream
+and credentials are test values only. See [`phase1-split-evidence.md`](../reports/phase1-split-evidence.md)
+for historical measured acceptance and its limits. The self-contained operator handoff
+is [`2026-09-14-unix-operator-handoff.md`](../superpowers/specs/2026-09-14-unix-operator-handoff.md).
 
 ---
 
@@ -856,26 +857,18 @@ admit turns a redelivery flood into a clone flood on events dedup was about to d
 nothing bounds parallel clones until `maxConcurrentInvocations` applies. On the lane, all
 three come free from machinery that already exists.
 
-**The credential is the harness's, never the agent's.** `secretEnv` names go through the same
-env-only `SecretSource` as `webhook.auth.secret`: resolved from `os.environ` per use, redacted
-in logs, and stripped from `engine.forwardEnv` so the opencode subprocess cannot inherit them.
-Honest ceiling: harness and opencode share a container and a uid, so an agent with a shell can
-read `/proc/<pid>/environ`. "We do not hand it over" ≠ "it cannot be obtained".
+`secretEnv` names are resolved by H from its environment per use, redacted in logs, and
+remain H-side. H resolves the existing `engine.forwardEnv` selector and sends only the
+selected names and values to E as explicit launch environment. Managed ACH/model/MCP
+credentials and preparation-only secrets are not automatically forwarded. An explicitly
+selected custom value is deliberately visible to the native engine.
 
-When `secretEnv` is present, the hook runs with a fresh harness-private `HOME`, cwd and
-checkout. The supported result is a fully materialized Git checkout at
-`$ACH_WORKSPACE/repo`; before the hook exits it must download every object reachable from
-its refs so the producer can create a bundle without another network request. This costs
-more bandwidth and private scratch storage than a filtered clone, including historical
-blobs that the current revision does not use, but it keeps credential use inside the
-operator hook. An incomplete promisor checkout fails with guidance to fetch those objects
-while credentials are still available. After the hook exits, the harness publishes a
-credential-free Git bundle and locally fetches it into the existing engine checkout. The
-target workspace root, `.git` directory, untracked files and local objects are retained.
-Private cleanup hooks use the same private contract and cannot read or delete the engine
-workspace; a cleanup script that still names the old workspace may complete successfully
-while leaving that workspace unchanged, so operators must migrate it. Hooks without
-`secretEnv` retain the ordinary workspace behavior above.
+All prepare and cleanup hooks execute in H, whether or not they use `secretEnv`, against
+the existing shared session workspace. There is no mandatory private clone, bundle export
+or import, workspace reset, Git inspection, or credential-dependent hook path. This keeps
+the original shared-checkout trust model: an agent with shell access may inspect files or
+process environments available in its container. Operators remain responsible for the
+script's Git and checkout policy.
 
 **Contract for script authors:**
 
@@ -894,18 +887,16 @@ while leaving that workspace unchanged, so operators must migrate it. Hooks with
   script through `ACH_SCRIPT` + trampoline for the same reason). First failing command aborts;
   an unset var aborts.
 - **Prepare must be idempotent.** The target workspace is keyed by `session_key` and survives
-  across events. Credential-bearing hooks run against fresh private checkout paths each time;
-  clone-or-fetch behavior is preserved by the local bundle handoff into the populated target.
-- Cleanup should also be idempotent so a later process can safely clean private state left by an
-  interrupted cleanup. Credential-bearing cleanup cannot mutate the engine workspace; its
-  failures are best-effort, logged and counted without changing delivery.
+  across events. The same populated checkout is used again for the same key.
+- Cleanup should also be idempotent. Its failures are best-effort, logged and counted without
+  changing delivery.
 - For prepare, non-zero exit, timeout, or spawn failure ⇒ **fail-closed**: the invocation is abandoned,
   nothing is posted, `ach_agent_prepare_failures_total{reason}` increments. Deliberately the
   opposite of memory's fail-open probe — a review of a repo that is not there is worse than
   no review.
-- For credential-free hooks, `HOME` is pinned to the workspace and `GIT_TERMINAL_PROMPT=0` is
-  set. Credential-bearing hooks receive a fresh private `HOME`; the base env is a small
-  allowlist (`PATH`, `SHELL`, `LANG`, `LANGUAGE`, `TZ`) plus what `env`/`secretEnv` declare.
+- `HOME` is pinned to the workspace and `GIT_TERMINAL_PROMPT=0` is set for prepare and cleanup.
+  The base env is a small allowlist (`PATH`, `SHELL`, `LANG`, `LANGUAGE`, `TZ`) plus what
+  `env`/`secretEnv` declare.
 
 **Two rules the reference script exists to demonstrate:**
 
@@ -1026,61 +1017,35 @@ Implementation-level gates live in the implementation plans, not here.
 
 ## Phase 1 split role packaging
 
-The Phase 1 deployment renders three ordinary containers from the image targets
-`harness`, `channels`, and `engine-opencode` or `engine-pi`. Every role uses the
-image entrypoint, `[/usr/bin/tini, --, python, -m, ach_agent.main]`, and selects
-its role with args `--role harness`, `--role channels`, or `--role engine`.
-The harness alone receives the full `ACH_CONFIG_PATH` configuration (the image
-default is `/etc/ach-agent/config.yaml`) and existing integration credentials
-such as `ACH_BASE_URL` and `ACH_TOKEN`. Channels and engine receive no full
-config, generated role config, internal URL/host/port, agent-name, or
-operator-generated HMAC environment variable.
+The target uses three ordinary containers from the image targets `harness`, `channels`,
+and `engine-opencode` or `engine-pi`. Every role uses the image entrypoint
+`[/usr/bin/tini, --, python, -m, ach_agent.main]` with `--role harness`, `--role channels`,
+or `--role engine`. Run one active replica in one pod. H alone receives the full
+`ACH_CONFIG_PATH` configuration and managed credentials. C and E receive no full config,
+bootstrap artifact, internal control URL, generated HMAC key, or duplicated managed secret.
 
-The harness publishes two bounded, atomic bootstrap files:
+Use two separate IPC directory volumes, mounted at the same paths in every participant:
 
-| Path | Writer | Readers | Contents |
+| Endpoint | Owner | Mounts | Purpose |
 | --- | --- | --- | --- |
-| `/run/ach-agent/channels/bootstrap.json` | H | C | source projection, agent identity, H URL, stable channel authentication key |
-| `/run/ach-agent/engine/bootstrap.json` | H | E | existing credential-free `PublicEngineConfig` |
+| `/run/ach-agent/channels/channel.sock` | H | H read/write; C read-only; absent E | C fetches source-only `ChannelInputs` and submits events/results over HTTP |
+| `/run/ach-agent/engine/agent.sock` | E | E read/write; H read-only; absent C | H opens the existing controller with `PublicEngineConfig`, then sends turns and lifecycle requests |
 
-H mounts both directories read/write. C mounts only the channels directory
-read-only; E mounts only the engine directory read-only. Use two separate
-`emptyDir` volumes, not file-level `subPath` mounts. The image pre-creates both
-directories for Docker UID 10001; Kubernetes uses fsGroup 10001 for mount access.
-C and E wait for their file for up to 300 seconds
-and fail closed on malformed or missing content. A harness restart reuses the
-existing channel key when its bootstrap volume persists; pod replacement
-regenerates the bootstrap volumes and is the rollout boundary.
+Mount directories rather than individual socket files. Use UID/GID and fsGroup 10001;
+socket mode is 0600. H/E socket probes are HTTP requests over their Unix endpoints.
+There are no operator control ports or mandatory internal URL/host/port environment
+variables. C's public ingress remains `0.0.0.0:8080`; model, MCP and native OpenCode
+HTTP endpoints remain where their existing clients need them.
 
-Default listeners are H `127.0.0.1:8090`, E `127.0.0.1:8081`, and C
-`0.0.0.0:8080`; only C's ingress is published. Health and readiness probes use
-`/healthz` (startup/liveness) and `/readyz` on the role ports, with a 300 second
-startup budget. All H/E probes execute an HTTP request inside the container
-against loopback; C uses Kubernetes HTTP probes against its ingress port.
-Compose joins C and E to H's network namespace. Kubernetes uses one ordinary
-pod with no host network, host PID, shared process namespace, init container,
-or automatic service-account token.
+H hydrates the full config, starts the existing proxies and runs all prepare/cleanup hooks
+in H on the shared workspace. E owns native engine home, adapters, sessions and process
+lifecycle. H sends explicit values selected by `engine.forwardEnv`; E does not depend on
+ambient duplicate environment. The workspace and public context retain their existing
+logical paths. H state remains private, E home remains private, and the shared workspace
+is mounted read/write by H and E. No new scheduler, queue, lease, heartbeat or CR schema
+field is introduced.
 
-Role images share the Python dependency base. H retains Git and operator script
-runtime dependencies; E includes the native selected engine, codemem when
-needed, Git for workspace/native coding behavior, and tini as PID 1; C has no
-full runtime config or private state mount. Internal H/E listeners bind
-127.0.0.1. In Compose, C and E use `network_mode: service:harness` and the
-channels ingress is published through that namespace. Kubernetes rendering
-uses no host network, host PID, runtime socket, init container, or automatic
-service-account token.
-
-Persistence is role-scoped. H's `<mountPath>/state/state.db` is private. E's
-codemem logical path remains `<mountPath>/state/codemem.db`, but E mounts an
-E-owned physical directory containing that database and its `-wal`/`-shm`
-siblings; it never mounts H's state directory. Existing codemem data must be
-relocated offline as one coherent SQLite set before rollout, with an integrity
-check and backup. An empty E directory is not a migration and MUST NOT be used
-to silently reset existing memory. Ephemeral deployments use the same logical
-paths backed by `emptyDir` and set persistence disabled. Custom `engine.home`
-and `engine.workDir` render equivalent narrow E/private and H/E/shared mounts.
-
-These repository manifests are contract examples and validation fixtures.
-Production ACH owns dynamic path, PVC, full-config ConfigMap, and Secret
-rendering; adding these files does not mutate a cluster or complete that
-separate repository change.
+These repository manifests and this section are contract examples and validation fixtures.
+Production ACH owns dynamic path, PVC, full-config ConfigMap and Secret rendering. Future
+two-Deployment operation, including separate channel and H+E replicas, is deferred; it
+is not part of this one-pod target.

@@ -43,6 +43,7 @@ class FakeDriver:
         self.text_chunks: list[str] = []
         self.text_chunks_by_conversation: dict[str, list[str]] = {}
         self.yield_between_text_chunks = False
+        self.tool_updates = []
 
     def skills_dir(self, home):
         return home
@@ -81,6 +82,8 @@ class FakeDriver:
             kwargs["on_text"](text)
             if self.yield_between_text_chunks:
                 await asyncio.sleep(0)
+        for update in self.tool_updates:
+            kwargs["on_tool"](update)
         return TurnResult(
             text='{"action":"none","text":"reply"}', session_ref=kwargs["session_ref"]
         )

@@ -22,7 +22,7 @@ from ach_agent.boot.prompt import (
     build_output_instructions,
     terminal_action_for,
 )
-from ach_agent.boot.tooling import log_engine_tool, make_tool_recorder
+from ach_agent.boot.tooling import make_tool_recorder
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import (
     AchMemoryMemory,
@@ -281,18 +281,10 @@ def make_engine_runner(
                 on_tool = None
                 if completion_registry is not None and ref is not None:
                     on_text, on_tool = completion_registry.sinks(ref)
-                if on_tool is None:
-                    on_tool = log_engine_tool
                 if tool_sink is not None:
                     on_tool = make_tool_recorder(
                         on_tool, tool_sink, event, invocation_engine_cfg.model
                     )
-                log.info(
-                    "engine: prompt",
-                    channel=event.channel_name,
-                    session_key=event.session_key,
-                    prompt=full_prompt,
-                )
                 turn_stats: dict[str, Any] = {}
                 obj = await run_contract_turn(
                     client.turn_callable(handle),

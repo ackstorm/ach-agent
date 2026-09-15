@@ -57,22 +57,29 @@ def tool_detail(raw: str) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))[:300]
 
 
-def log_engine_tool(update: OpenCodeToolUpdate) -> None:
-    """Default on_tool sink for channel invocations.
-
-    run_invocation calls this as each tool moves running→completed/error. Wired only when
-    the channel provides no on_tool of its own (--debug/console keep their own streaming
-    sinks), so a channel turn shows the tools it ran — the action and its result — instead
-    of dead air. The ``running`` transition is skipped so each tool logs ONCE (on
-    completed/error); the result is JSON-decoded for readability and both fields are bounded.
-    """
+def log_engine_tool(
+    update: OpenCodeToolUpdate,
+    *,
+    execution_id: str = "",
+    invocation_id: str = "",
+    turn_id: str = "",
+) -> None:
+    """Log one bounded line when a native tool reaches completed/error."""
     state = update.state
     if state.status == "running":
         return  # one line per tool — the completed/error transition carries the result
     fields: dict[str, Any] = {
         "tool": clean_tool_name(update.tool_name),
         "status": state.status,
+        "session_id": update.session_id,
     }
+    for key, value in (
+        ("execution_id", execution_id),
+        ("invocation_id", invocation_id),
+        ("turn_id", turn_id),
+    ):
+        if value:
+            fields[key] = value
     # state is a ToolState union (Running/Completed/Error); title/output/error are declared
     # on some members but not others, so attribute access must stay dynamic here.
     action = getattr(state, "title", "")
@@ -85,7 +92,7 @@ def log_engine_tool(update: OpenCodeToolUpdate) -> None:
 
 
 def make_tool_recorder(
-    inner: Callable[[OpenCodeToolUpdate], None],
+    inner: Callable[[OpenCodeToolUpdate], None] | None,
     tool_sink: StatsSink,
     event: MessageEvent,
     model: str,
@@ -94,7 +101,7 @@ def make_tool_recorder(
 
     Stamps a monotonic start on the ``running`` transition; on the ``completed``/``error``
     transition computes the duration and records once per call_id, then delegates to ``inner``
-    (the channel's sink or log_engine_tool). Per-invocation state — a fresh map each turn.
+    (the channel's sink, when present). Per-invocation state — a fresh map each turn.
     """
     from ach_agent.stats.sink import build_tool_stat
 
@@ -130,6 +137,7 @@ def make_tool_recorder(
                     ts_ms=int(time.time() * 1000),
                 )
             )
-        inner(update)
+        if inner is not None:
+            inner(update)
 
     return on_tool

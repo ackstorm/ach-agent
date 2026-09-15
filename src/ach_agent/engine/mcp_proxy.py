@@ -164,7 +164,7 @@ async def _forward(
         data=body if body else None,
     ) as upstream:
         log.debug(
-            f"{label} forward",
+            f"proxy: {label} forward",
             method=request.method,
             path=request.path,
             rpc=rpc,

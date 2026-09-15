@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from ach_agent.engine.base.events import OpenCodeUsage
+from ach_agent.engine.events import OpenCodeToolUpdate, ToolStateCompleted, ToolStateRunning
 from ach_agent.execution.service import ExecutionService, OutputLimitExceeded
 from ach_agent.execution.wire import (
     AcquireRequest,
@@ -221,7 +222,7 @@ async def test_turns_keep_current_native_ref_and_resolve_once(fake_driver):
 
 
 @pytest.mark.asyncio
-async def test_turn_done_stats_normalize_native_usage_dataclass(fake_driver):
+async def test_turn_done_stats_normalize_native_usage_dataclass(fake_driver, capfd):
     fake_driver.usage = OpenCodeUsage(
         session_id="native-session",
         message_id="message",
@@ -252,6 +253,59 @@ async def test_turn_done_stats_normalize_native_usage_dataclass(fake_driver):
     assert done.kind == "turn_done"
     assert done.payload["stats"]["usage"]["input_tokens"] == 11
     assert done.payload["stats"]["usage"]["duration_ms"] == 42
+    captured = capfd.readouterr()
+    assert "engine: model usage" in captured.out + captured.err
+    assert "message_id=message" in captured.out + captured.err
+    await service.release(
+        ReleaseRequest(
+            controller_id="controller",
+            execution_id=handle.execution_id,
+            invocation_id="inv",
+            idle_ttl_seconds=0,
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_engine_logs_each_tool_and_forwards_it_once(fake_driver, capfd):
+    update = OpenCodeToolUpdate(
+        session_id="native-session",
+        part_id="part-1",
+        message_id="message-1",
+        tool_name="bash",
+        call_id="call-1",
+        state=ToolStateRunning(),
+    )
+    completed = OpenCodeToolUpdate(
+        session_id="native-session",
+        part_id="part-1",
+        message_id="message-1",
+        tool_name="bash",
+        call_id="call-1",
+        state=ToolStateCompleted(output="ok"),
+    )
+    fake_driver.tool_updates = [update, completed]
+    service = ExecutionService(fake_driver, {})
+    handle = await service.acquire(_acquire())
+    events = [
+        event
+        async for event in service.turn(
+            TurnRequest(
+                controller_id="controller",
+                execution_id=handle.execution_id,
+                invocation_id="inv",
+                turn_id="turn-1",
+                prompt="p",
+                max_tool_calls=0,
+            )
+        )
+    ]
+    tool_events = [event for event in events if event.kind == "tool"]
+    assert len(tool_events) == 2
+    captured = capfd.readouterr()
+    output = captured.out + captured.err
+    assert output.count("engine: tool") == 1
+    assert "execution_id=" + handle.execution_id in output
     await service.release(
         ReleaseRequest(
             controller_id="controller",

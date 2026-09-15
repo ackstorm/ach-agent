@@ -296,17 +296,20 @@ class PiDriver:
                 usage = pe.pi_usage(event, ref)
                 if usage is not None:
                     stats["usage"] = usage
-                    key = (usage.session_id, usage.message_id)
-                    if not usage.message_id or key not in generation_ids:
-                        generation_ids.add(key)
-                        log.info(
-                            "engine: model generation",
-                            session_id=usage.session_id,
-                            message_id=usage.message_id,
-                            input_tokens=usage.input_tokens,
-                            output_tokens=usage.output_tokens,
-                            duration_ms=usage.duration_ms,
-                        )
+                    message = event.get("message")
+                    role = message.get("role") if isinstance(message, dict) else None
+                    if event.get("type") == "message_end" and role in (None, "assistant"):
+                        key = (usage.session_id, usage.message_id)
+                        if not usage.message_id or key not in generation_ids:
+                            generation_ids.add(key)
+                            log.info(
+                                "engine: model generation",
+                                session_id=usage.session_id,
+                                message_id=usage.message_id,
+                                input_tokens=usage.input_tokens,
+                                output_tokens=usage.output_tokens,
+                                duration_ms=usage.duration_ms,
+                            )
                     continue
                 if pe.is_settled(event) or (
                     event.get("type") == EV_AGENT_END and not event.get("willRetry", False)

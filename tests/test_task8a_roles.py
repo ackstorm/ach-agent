@@ -161,7 +161,7 @@ def test_distributed_paths_use_three_roots_and_transfer_mount(tmp_path: Path) ->
 
     paths = resolve_role_paths(cfg)
     assert paths.engine_home == tmp_path / "home"
-    assert paths.work_dir == tmp_path / "workspace"
+    assert paths.work_dir == tmp_path / "home" / "workspace"
     assert paths.harness_state == tmp_path / "state"
     assert paths.transfer_root == Path("/run/ach-agent/transfer")
 

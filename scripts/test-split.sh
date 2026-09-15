@@ -94,45 +94,52 @@ sizes = stats["message_sizes"]
 assert len(sizes) >= 2 and max(sizes) > min(sizes), sizes
 PY
 
-  # Start a deliberately long model turn, then drop E. The controller must finish
-  # the admitted event as a failure and tear down the owned native process.
+  # Start a deliberately long model turn, then drop E. Controller ownership is a
+  # one-lifetime boundary: H must exit so its supervisor can rehydrate and claim a
+  # fresh controller. The in-memory event result is intentionally not awaited after
+  # H exits; replay is outside this acceptance check.
   cancel_id="split-${target}-cancel"
   cancel_task="$(submit_channel cancel "$cancel_id")"
   [ -n "$cancel_task" ] || { echo "cancel admission had no task id" >&2; return 1; }
   wait_cancel_started
   cancel_started="$(date +%s)"
   "${COMPOSE[@]}" kill engine >/dev/null
-  cancel_result="$(wait_result cancel "$cancel_id")"
   echo "$target cancellation seconds: $(( $(date +%s) - cancel_started ))"
-  echo "$target canceled completion: $cancel_result"
-  echo "$cancel_result" | grep -q '"state":"failed"'
 
-  # E failure is observed by H's readiness monitor after the positive evidence.
+  # E failure is observed by H's controller monitor. H exits cleanly; this compose
+  # acceptance project has no restart policy, so the stopped container is evidence.
   for _ in $(seq 1 30); do
-    if "${COMPOSE[@]}" exec -T harness python - <<'PY' >/dev/null 2>&1
-import httpx
-
-try:
-    response = httpx.Client(base_url="http://127.0.0.1:8090", timeout=2).get("/readyz")
-except httpx.HTTPError:
-    raise SystemExit(1)
-raise SystemExit(0 if response.status_code == 503 else 1)
-PY
-    then
-      echo "$target engine failure: harness readiness became 503"
-      for _ in $(seq 1 30); do
-        if [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${INGRESS_PORT}/readyz")" = 503 ]; then
-          echo "$target engine failure: channels readiness became 503"
-          return 0
-        fi
-        sleep 1
-      done
-      echo "$target channels did not observe engine failure" >&2
-      return 1
+    harness_id="$(${COMPOSE[@]} ps -q harness)"
+    if [ -n "$harness_id" ] && [ "$(docker inspect -f '{{.State.Running}}' "$harness_id")" = false ]; then
+      echo "$target controller loss: harness exited for supervisor restart"
+      break
     fi
     sleep 1
   done
-  echo "$target harness did not observe engine failure" >&2
+  [ -n "${harness_id:-}" ] && [ "$(docker inspect -f '{{.State.Running}}' "$harness_id")" = false ] || {
+    echo "$target harness did not exit after controller loss" >&2
+    "${COMPOSE[@]}" logs --no-color harness engine >&2 || true
+    return 1
+  }
+
+  # Channels shares H's network namespace, so probe its private listener from C.
+  for _ in $(seq 1 30); do
+    if "${COMPOSE[@]}" exec -T channels python - <<'PY' >/dev/null 2>&1
+import urllib.request
+
+try:
+    response = urllib.request.urlopen("http://127.0.0.1:8080/readyz", timeout=2)
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if response.status == 503 else 1)
+PY
+    then
+      echo "$target controller loss: channels readiness became 503"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "$target channels did not observe harness shutdown" >&2
   return 1
 }
 

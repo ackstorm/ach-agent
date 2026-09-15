@@ -1,0 +1,48 @@
+schemaVersion: "1"
+agent:
+  name: pvc-transition
+model:
+  name: test-model
+  type: openai
+capability:
+  type: ach
+  ach:
+    baseUrl: http://pvc-upstream:9080
+    environment: pvc-transition
+prompt:
+  system:
+    type: text
+    text: >-
+      Use the native bash tool to run `cat active-marker` in the current workspace,
+      then report exactly the marker value in your final answer.
+persistence:
+  enabled: true
+  mountPath: /base
+engine:
+  startupTimeoutSeconds: 30
+  idleTtlSeconds: 30
+limits:
+  maxConcurrentInvocations: 1
+  maxInvocationSeconds: 20
+  maxQueuedTotal: 4
+  maxSteps: 8
+  terminalOutputRetries: 1
+cost:
+  source: none
+channels:
+  - name: acceptance
+    type: webhook
+    source: github
+    concurrency: 1
+    prompt: "Read active-marker with the native bash tool and report its value."
+    session:
+      type: custom
+      key: "pvc-transition-conversation"
+    webhook:
+      auth:
+        type: none
+    prepare:
+      script: >-
+        test "$PWD" = "$ACH_WORKSPACE" &&
+        { test -f active-marker || printf standalone-marker > active-marker; }
+      timeoutSeconds: 5

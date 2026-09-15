@@ -1,0 +1,28 @@
+services:
+  standalone:
+    image: ${ACH_IMAGE:?set ACH_IMAGE}
+    command: []
+    environment:
+      ACH_TOKEN: pvc-transition-key
+      ACH_BASE_URL: http://pvc-upstream:9080
+      ACH_CONFIG_PATH: /etc/ach-agent/config.yaml
+    ports:
+      - "127.0.0.1:0:8080"
+    volumes:
+      - ${ACH_CONFIG_FILE:-../../tests/integration/fixtures/pvc-transition-config.yaml}:/etc/ach-agent/config.yaml:ro
+      - ${PVC_DIR:?set PVC_DIR}:/base
+    depends_on:
+      pvc-upstream:
+        condition: service_healthy
+
+  pvc-upstream:
+    image: ${ACH_IMAGE:?set ACH_IMAGE}
+    entrypoint: ["python", "-m", "uvicorn"]
+    command: ["pvc_transition_upstream:app", "--app-dir", "/acceptance", "--host", "0.0.0.0", "--port", "9080"]
+    volumes:
+      - ../../tests/integration/fixtures/pvc_transition_upstream.py:/acceptance/pvc_transition_upstream.py:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9080/health')"]
+      interval: 1s
+      timeout: 2s
+      retries: 20

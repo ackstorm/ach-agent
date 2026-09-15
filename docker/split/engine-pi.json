@@ -3,7 +3,7 @@
   "engine_type": "pi",
   "binary_path": "pi",
   "home": "/var/lib/ach-agent/home",
-  "work_dir": "/var/lib/ach-agent/workspace",
+  "work_dir": "/var/lib/ach-agent/home/workspace",
   "persistenceEnabled": true,
   "hydrationDir": "",
   "engineEnvNames": [],

@@ -215,7 +215,7 @@ skill_roots = [
 ]
 assert any((root / "split-fixture-skill" / "SKILL.md").is_file() for root in skill_roots)
 Path("/var/lib/ach-agent/home/.split-engine-private-marker").write_text("engine-home-marker")
-shared = Path("/var/lib/ach-agent/workspace/.ach-harness-shared-files")
+shared = Path("/var/lib/ach-agent/home/workspace/.ach-harness-shared-files")
 if shared.exists():
     (shared / ".split-engine-shared-write-probe").write_text("shared")
 PY
@@ -232,7 +232,7 @@ assert_hook_workspace() {
     "${COMPOSE[@]}" exec -T "$role" python - <<'PY'
 from pathlib import Path
 
-roots = list(Path("/var/lib/ach-agent/workspace").glob("**/.split-prepare-runs"))
+roots = list(Path("/var/lib/ach-agent/home/workspace").glob("**/.split-prepare-runs"))
 if len(roots) != 1 or roots[0].read_text() != "xx":
     raise SystemExit(f"prepare hook did not run twice in one workspace: {roots!r}")
 workspace = roots[0].parent

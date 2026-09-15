@@ -48,9 +48,13 @@ def resolve_role_paths(cfg: AgentConfig, *, split_mode: bool = True) -> RolePath
         mount = trusted(cfg.persistence.mount_path if cfg.persistence.enabled else "/tmp/ach-agent")
         harness_state = trusted(mount / "state")
         engine_home = trusted(cfg.engine.home or mount / "home")
-        work_dir = trusted(cfg.engine.work_dir or mount / "workspace")
         home_root = trusted(mount / "home")
-        workspace_root = trusted(mount / "workspace")
+        # Keep the historical standalone location inside HOME. Distributed roles
+        # mount this same physical directory separately for Harness, while Engine
+        # receives the parent HOME mount; native session directory identities stay
+        # stable across a placement change.
+        work_dir = trusted(cfg.engine.work_dir or engine_home / "workspace")
+        workspace_root = trusted(mount / "home" / "workspace")
         if not _within(engine_home, home_root):
             raise ValueError(f"engine.home must be within {home_root} in distributed mode")
         if not _within(work_dir, workspace_root):

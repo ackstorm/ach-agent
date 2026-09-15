@@ -63,7 +63,7 @@ The PVC-backed Pod example uses one claim with separate subpaths:
 | Owner | Mount | Physical PVC subpath | Purpose |
 | --- | --- | --- | --- |
 | H | `/var/lib/ach-agent/state` | `state` | dedup `state.db` |
-| H + E | `/var/lib/ach-agent/workspace` | `workspace` | prepared session workspaces |
+| H + E | `/var/lib/ach-agent/home/workspace` | `home/workspace` | prepared session workspaces |
 | E | `/var/lib/ach-agent/home` | `home` | native home/session files and codemem DB |
 | H + E | `/run/ach-agent/transfer` | separate `emptyDir` | temporary startup hydration batches |
 

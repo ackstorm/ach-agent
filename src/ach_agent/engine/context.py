@@ -171,41 +171,6 @@ def install_legacy_codemem(hydration_dir: str | Path, target: str | Path) -> Non
         temporary.unlink(missing_ok=True)
 
 
-def migrate_legacy_workspace(engine_home: str | Path, work_dir: str | Path) -> None:
-    """Copy an old ``<home>/workspace`` into the new sibling workspace once."""
-    source = Path(engine_home) / "workspace"
-    target = Path(work_dir)
-    if source.resolve(strict=False) == target.resolve(strict=False) or not source.exists():
-        return
-    marker = Path(engine_home) / ".ach-workspace-migrated"
-    if source.is_symlink():
-        raise ValueError("legacy workspace must be a real directory")
-    if not source.is_dir():
-        raise ValueError("legacy workspace must be a real directory")
-    if target.exists():
-        if not target.is_dir():
-            raise ValueError("new workspace target is not a directory")
-        if marker.is_file():
-            return
-        if any(target.iterdir()):
-            raise ValueError("legacy workspace migration target is nonempty")
-    else:
-        target.mkdir(parents=True)
-    for item in source.iterdir():
-        # The old layout commonly linked this managed context back into HOME.
-        # The new boot recreates the workspace link after migration.
-        if item.name == ".ach-state":
-            continue
-        destination = target / item.name
-        if item.is_symlink():
-            destination.symlink_to(item.readlink(), target_is_directory=item.is_dir())
-        elif item.is_dir():
-            shutil.copytree(item, destination, symlinks=True)
-        else:
-            shutil.copy2(item, destination)
-    marker.write_text("legacy workspace migrated\n", encoding="utf-8")
-
-
 async def _get_bytes(url: str, ek: str) -> bytes:
     async with httpx.AsyncClient(timeout=30) as c:
         # ACH auth is the `x-ach-key` header, NOT `Authorization: Bearer` (the latter

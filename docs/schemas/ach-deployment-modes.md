@@ -52,10 +52,13 @@ Mount exactly these generic data directories:
 | --- | --- | --- | --- |
 | `base/state` | Read/write | Absent | Absent |
 | `base/home` | Absent | Read/write | Absent |
-| `base/workspace` | Read/write | Read/write | Absent |
+| `base/home/workspace` | Read/write | Read/write through `base/home` | Absent |
 
-Use three subpaths on the existing PVC when persistent. For temporary deployments,
-`emptyDir` backing with the same three-directory ownership is sufficient.
+Use these exact subpaths on the existing PVC when persistent: `state`, `home`, and
+`home/workspace`. Harness mounts `home/workspace`; Engine mounts `home`, with the
+same `home/workspace` subpath visible at its historical absolute path. For
+temporary deployments, `emptyDir` backing with the same three-directory ownership
+is sufficient.
 Do not expose the entire base volume to every container. Each container also gets
 its own writable `/tmp`.
 
@@ -128,13 +131,13 @@ ACH Agent is responsible for internal path resolution and retaining existing
 native data during supported upgrades. Do not implement tool-specific migration,
 Git preparation or file copying in the operator.
 
-Existing-PVC placement changes are not yet validated as transparent upgrades.
-On v0.16.4, switching an OpenCode agent from the default standalone layout to
-distributed preserves files and session IDs, but the native session retains its
-old workspace path and the resumed invocation times out. See the
+The stable workspace path requires a coordinated image and mount rollout.
+`v0.16.4` used the old distributed default (`base/workspace`) and is not
+compatible with the corrected persistent mount contract. Roll out an image that
+uses `base/home/workspace` together with the operator's `state`, `home`, and
+`home/workspace` subpaths; do not pair the corrected mounts with an older image.
+The original placement failure and its evidence remain in the
 [live transition report](../reports/2026-09-15-pvc-placement-transition.md).
-Do not treat successful readiness as proof of conversation continuity across
-that switch.
 
 Validate standalone output unchanged; distributed container/env/mount shape;
 persistent and temporary startup; one real channel turn with Harness-side prepare;
@@ -147,10 +150,5 @@ configured with reachable ACH and model endpoints; a live-model cluster run
 remains a separate integration check. Existing Compose evidence does not replace
 operator-rendered Kubernetes coverage.
 
-The operator team reports that the current e2e fixture uses
-`ACH_BASE_URL=http://localhost:8080`. From an agent pod this targets the agent pod
-itself, not ACH. Fix the fixture's advertised/download URLs to addresses reachable
-from agent pods before requiring Pod Ready; preserve any host-facing login/callback
-requirements separately. Do not bypass hydration or weaken readiness to pass e2e.
 
 Separate Deployments, new queues and autoscaling are not part of this renderer change.

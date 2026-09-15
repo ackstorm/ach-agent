@@ -3,7 +3,7 @@
   "engine_type": "opencode",
   "binary_path": "opencode",
   "home": "/tmp/ach-agent/home",
-  "work_dir": "/tmp/ach-agent/workspace",
+  "work_dir": "/tmp/ach-agent/home/workspace",
   "persistenceEnabled": false,
   "hydrationDir": "",
   "engineEnvNames": [],

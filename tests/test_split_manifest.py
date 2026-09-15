@@ -52,12 +52,12 @@ def test_pod_keeps_private_and_shared_mounts_narrow() -> None:
     assert "/var/lib/ach-agent/state" in harness_mounts
     assert "/var/lib/ach-agent/state" not in engine_mounts
     assert "/var/lib/ach-agent/home" in engine_mounts
-    assert "/var/lib/ach-agent/workspace" in harness_mounts
-    assert "/var/lib/ach-agent/workspace" in engine_mounts
+    assert "/var/lib/ach-agent/home/workspace" in harness_mounts
+    assert "/var/lib/ach-agent/home" in engine_mounts
     assert "/run/ach-agent/transfer" in harness_mounts
     assert "/run/ach-agent/transfer" in engine_mounts
     assert "/var/lib/ach-agent/state" not in channel_mounts
-    assert "/var/lib/ach-agent/workspace" not in channel_mounts
+    assert "/var/lib/ach-agent/home/workspace" not in channel_mounts
 
 
 def test_roles_use_image_entrypoint_args_and_only_harness_gets_full_config() -> None:
@@ -234,7 +234,7 @@ def test_ephemeral_artifacts_resolve_to_the_ephemeral_mount_map() -> None:
     public = PublicEngineConfig.model_validate(projection)
     assert public.persistence_enabled is False
     assert public.home == "/tmp/ach-agent/home"
-    assert public.work_dir == "/tmp/ach-agent/workspace"
+    assert public.work_dir == "/tmp/ach-agent/home/workspace"
     assert public.hydration_dir == ""
     assert public.codemem_db_path == "/tmp/ach-agent/home/state/codemem.db"
 
@@ -247,8 +247,8 @@ def test_ephemeral_artifacts_resolve_to_the_ephemeral_mount_map() -> None:
     assert "http://127.0.0.1:8080/readyz" in str(channels["healthcheck"])
     assert "/tmp/ach-agent/state:uid=10001,gid=10001" in harness["tmpfs"]
     assert "/tmp/ach-agent/home:uid=10001,gid=10001" in engine["tmpfs"]
-    assert any("/tmp/ach-agent/workspace" in mount for mount in harness["volumes"])
-    assert any("/tmp/ach-agent/workspace" in mount for mount in engine["volumes"])
+    assert any("/tmp/ach-agent/home/workspace" in mount for mount in harness["volumes"])
+    assert any("/tmp/ach-agent/home" in mount for mount in engine["volumes"])
     assert all(
         "/var/lib/ach-agent" not in mount
         for service in services.values()

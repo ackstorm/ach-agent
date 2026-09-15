@@ -95,8 +95,8 @@ spec:
           mountPath: /var/lib/ach-agent/state
           subPath: state
         - name: workspace
-          mountPath: /var/lib/ach-agent/workspace
-          subPath: workspace
+          mountPath: /var/lib/ach-agent/home/workspace
+          subPath: home/workspace
         - name: transfer-ipc
           mountPath: /run/ach-agent/transfer
         - name: harness-tmp
@@ -189,9 +189,8 @@ spec:
         - name: state
           mountPath: /var/lib/ach-agent/home
           subPath: home
-        - name: workspace
-          mountPath: /var/lib/ach-agent/workspace
-          subPath: workspace
+        # Engine sees the shared workspace through its HOME mount. Harness mounts
+        # the same PVC subPath at the historical standalone absolute path above.
         - name: transfer-ipc
           mountPath: /run/ach-agent/transfer
         - name: engine-tmp

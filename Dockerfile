@@ -136,8 +136,8 @@ EXPOSE 8080
 # non-root-writable mountpoint. workDir (<home>/workspace) and .ach-state (<home>/.ach-state)
 # live UNDER home, so the harness creates them — no top-level scratch dirs needed.
 RUN useradd -u 10001 -m appuser \
- && mkdir -p /tmp/ach-home /tmp/ach-agent/state /tmp/ach-agent/home /tmp/ach-agent/workspace \
-      /var/lib/ach-agent/state /var/lib/ach-agent/home /var/lib/ach-agent/workspace \
+ && mkdir -p /tmp/ach-home /tmp/ach-agent/state /tmp/ach-agent/home/workspace \
+      /var/lib/ach-agent/state /var/lib/ach-agent/home/workspace \
       /run/ach-agent/channels /run/ach-agent/engine /run/ach-agent/transfer \
  && chown -R 10001 /tmp/ach-home /tmp/ach-agent /var/lib/ach-agent /run/ach-agent
 USER 10001
@@ -163,8 +163,8 @@ COPY --from=builder /app/deps /app/deps
 RUN useradd -u 10001 -m appuser \
  && mkdir -p /tmp/ach-home /tmp/ach-home/workspace /tmp/ach-harness-state \
       /run/ach-agent/channels /run/ach-agent/engine /run/ach-agent/transfer \
-      /var/lib/ach-agent/state /var/lib/ach-agent/home /var/lib/ach-agent/workspace \
-      /tmp/ach-agent/state /tmp/ach-agent/home /tmp/ach-agent/workspace \
+      /var/lib/ach-agent/state /var/lib/ach-agent/home/workspace \
+      /tmp/ach-agent/state /tmp/ach-agent/home/workspace \
  && chown -R 10001 /tmp/ach-home /tmp/ach-harness-state \
       /tmp/ach-agent /run/ach-agent /var/lib/ach-agent
 USER 10001

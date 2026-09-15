@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ach_agent.config.schema import CodememMemory
+from ach_agent.config.schema import AgentConfig, CodememMemory
 
 
 def _cfg(tmp_path: Path, *, home: str = "", work: str = "") -> SimpleNamespace:
@@ -21,8 +21,32 @@ def test_distributed_paths_have_three_roots_and_transfer_root(tmp_path: Path) ->
 
     assert paths.harness_state == tmp_path / "state"
     assert paths.engine_home == tmp_path / "home"
-    assert paths.work_dir == tmp_path / "workspace"
+    assert paths.work_dir == tmp_path / "home" / "workspace"
     assert paths.transfer_root == Path("/run/ach-agent/transfer")
+
+
+@pytest.mark.parametrize("engine_type", ["opencode", "pi"])
+def test_persistent_agent_configs_keep_workspace_path_across_placements(
+    engine_type: str,
+) -> None:
+    from ach_agent.boot.paths import resolve_role_paths
+
+    config = AgentConfig.model_validate(
+        {
+            "schemaVersion": "1",
+            "agent": {"name": "placement-test"},
+            "model": {"name": "test-model", "type": "openai"},
+            "capability": {"type": "ach", "ach": {"baseUrl": "http://ach"}},
+            "persistence": {"enabled": True, "mountPath": "/var/lib/ach-agent"},
+            "engine": {"type": engine_type},
+        }
+    )
+
+    standalone = resolve_role_paths(config, split_mode=False)
+    distributed = resolve_role_paths(config, split_mode=True)
+
+    assert standalone.work_dir == distributed.work_dir
+    assert standalone.work_dir == Path("/var/lib/ach-agent/home/workspace")
 
 
 def test_nonpersistent_distributed_paths_use_ephemeral_agent_base() -> None:
@@ -35,7 +59,7 @@ def test_nonpersistent_distributed_paths_use_ephemeral_agent_base() -> None:
     paths = resolve_role_paths(cfg)
     assert paths.harness_state == Path("/tmp/ach-agent/state")
     assert paths.engine_home == Path("/tmp/ach-agent/home")
-    assert paths.work_dir == Path("/tmp/ach-agent/workspace")
+    assert paths.work_dir == Path("/tmp/ach-agent/home/workspace")
 
 
 def test_standalone_persistent_defaults_remain_legacy(tmp_path: Path) -> None:
@@ -137,6 +161,21 @@ def test_distributed_paths_reject_work_dir_outside_root(tmp_path: Path) -> None:
         resolve_role_paths(_cfg(tmp_path, work=str(tmp_path / "elsewhere")))
 
 
+def test_distributed_custom_home_requires_explicit_workspace_under_mount_home(
+    tmp_path: Path,
+) -> None:
+    from ach_agent.boot.paths import resolve_role_paths
+
+    cfg = _cfg(
+        tmp_path,
+        home=str(tmp_path / "home" / "custom"),
+        work=str(tmp_path / "home" / "workspace"),
+    )
+    paths = resolve_role_paths(cfg)
+    assert paths.engine_home == tmp_path / "home" / "custom"
+    assert paths.work_dir == tmp_path / "home" / "workspace"
+
+
 def test_path_resolution_is_pure(tmp_path: Path) -> None:
     old = tmp_path / "home" / "workspace"
     old.mkdir(parents=True)
@@ -145,5 +184,21 @@ def test_path_resolution_is_pure(tmp_path: Path) -> None:
     from ach_agent.boot.paths import resolve_role_paths
 
     paths = resolve_role_paths(_cfg(tmp_path))
-    assert paths.work_dir == tmp_path / "workspace"
+    assert paths.work_dir == tmp_path / "home" / "workspace"
     assert (old / "session-data").read_text() == "keep"
+
+
+def test_nested_explicit_workspace_keeps_original_tree_without_relocation(tmp_path: Path) -> None:
+    from ach_agent.boot.paths import resolve_role_paths
+
+    old = tmp_path / "home" / "workspace"
+    nested = old / "session-keyed"
+    nested.mkdir(parents=True)
+    (nested / "session.jsonl").write_text("history", encoding="utf-8")
+    cfg = _cfg(tmp_path, work=str(nested))
+
+    paths = resolve_role_paths(cfg)
+
+    assert paths.work_dir == nested
+    assert (nested / "session.jsonl").read_text(encoding="utf-8") == "history"
+    assert not (tmp_path / "workspace").exists()

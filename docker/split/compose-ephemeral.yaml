@@ -29,7 +29,7 @@ services:
       start_period: 15s
     volumes:
       - ./${ACH_HARNESS_CONFIG_FILE:-config-ephemeral.yaml}:/etc/ach-agent/config.yaml:ro
-      - ephemeral-workspace:/tmp/ach-agent/workspace
+      - ephemeral-home:/tmp/ach-agent/home/workspace
       - ephemeral-channels-ipc:/run/ach-agent/channels
       - ephemeral-engine-ipc:/run/ach-agent/engine:ro
       - ephemeral-transfer-ipc:/run/ach-agent/transfer
@@ -83,11 +83,11 @@ services:
       start_period: 15s
     volumes:
       - ephemeral-engine-ipc:/run/ach-agent/engine
-      - ephemeral-workspace:/tmp/ach-agent/workspace
+      - ephemeral-home:/tmp/ach-agent/home
       - ephemeral-transfer-ipc:/run/ach-agent/transfer
 
 volumes:
-  ephemeral-workspace:
+  ephemeral-home:
   ephemeral-channels-ipc:
   ephemeral-engine-ipc:
   ephemeral-transfer-ipc:

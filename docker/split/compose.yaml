@@ -30,7 +30,7 @@ services:
     volumes:
       - ./${ACH_HARNESS_CONFIG_FILE:-config.yaml}:/etc/ach-agent/config.yaml:ro
       - harness-state:/var/lib/ach-agent/state
-      - shared-workspace:/var/lib/ach-agent/workspace
+      - shared-workspace:/var/lib/ach-agent/home/workspace
       - channels-ipc:/run/ach-agent/channels
       - engine-ipc:/run/ach-agent/engine:ro
       - transfer-ipc:/run/ach-agent/transfer
@@ -86,7 +86,7 @@ services:
     volumes:
       - engine-ipc:/run/ach-agent/engine
       - engine-home:/var/lib/ach-agent/home
-      - shared-workspace:/var/lib/ach-agent/workspace
+      - shared-workspace:/var/lib/ach-agent/home/workspace
       - transfer-ipc:/run/ach-agent/transfer
 
 volumes:

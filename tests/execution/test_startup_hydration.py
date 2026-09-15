@@ -70,6 +70,30 @@ async def test_startup_installs_real_files_deletes_batch_and_does_not_launch_nat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("engine_type", ["opencode", "pi"])
+async def test_nested_persistent_workspace_is_not_relocated_during_startup(
+    tmp_path: Path, engine_type: str
+) -> None:
+    batch = _batch(tmp_path, f"nested-{engine_type}")
+    home = tmp_path / "home"
+    workspace = home / "workspace"
+    nested = workspace / "session-keyed"
+    nested.mkdir(parents=True)
+    marker = nested / "native-session.jsonl"
+    marker.write_text("history", encoding="utf-8")
+    service = ExecutionService(None, None)
+
+    public = _public(tmp_path, batch, binary="true").model_copy(
+        update={"engine_type": engine_type, "home": str(home), "work_dir": str(nested)}
+    )
+    await service.configure(public)
+
+    assert marker.read_text(encoding="utf-8") == "history"
+    assert not (tmp_path / "workspace").exists()
+    await service.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["binary", "copy", "delete"])
 async def test_startup_failure_marks_service_unhealthy_and_requests_shutdown(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str

@@ -239,7 +239,6 @@ class ExecutionService:
             delete_hydration_batch,
             install_hydration,
             install_legacy_codemem,
-            migrate_legacy_workspace,
         )
 
         try:
@@ -247,7 +246,6 @@ class ExecutionService:
             home = Path(public.home or "/tmp/ach-home")
             work_dir = Path(public.work_dir or home / "workspace")
             home.mkdir(parents=True, exist_ok=True)
-            migrate_legacy_workspace(home, work_dir)
             work_dir.mkdir(parents=True, exist_ok=True)
             hydration = getattr(public, "hydration_dir", "")
             if hydration:

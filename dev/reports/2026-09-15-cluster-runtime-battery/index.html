@@ -332,6 +332,42 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#baseline-pi-in-kubernetes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Baseline: Pi in Kubernetes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compose-restart-limitation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compose restart limitation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#published-v0164" class="md-nav__link">
+    <span class="md-ellipsis">
+      Published v0.16.4
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cleanup" class="md-nav__link">
+    <span class="md-ellipsis">
+      Cleanup
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -413,8 +449,144 @@ controller client; its readiness watcher never exits to permit fresh startup.
 The first v0.16.4 publication workflow was cancelled before release/tag creation
 so the minimal recovery correction can be verified before deployment.</p>
 <h2 id="updated-release">Updated release</h2>
-<p>Runtime verification of the final image, Pi parity, recovery and cleanup are
-pending. This report does not claim those checks passed.</p>
+<p>The recovery correction makes the Harness exit through its normal shutdown path
+when its controller is permanently lost. Its supervisor starts a fresh Harness,
+which hydrates and initializes a new controller. A transient failed health check
+only removes readiness. This adds no reconnect or invocation replay protocol.</p>
+<p>Validation after the correction: 1,211 tests passed, 3 skipped; Ruff, formatting
+and strict mypy passed. The public schema is unchanged.</p>
+<h2 id="baseline-pi-in-kubernetes">Baseline: Pi in Kubernetes</h2>
+<p>Both standalone and distributed completed two real Gemini-backed invocations.
+The selected synthetic environment value reached the native bash subprocess;
+the unselected value was absent. Both modes reused their native session, and
+resubmitting the second event returned HTTP 200 <code>duplicate</code>.</p>
+<ul>
+<li>Standalone session: <code>2026-09-15T08-05-10-440Z_01a0a419-34a8-7-321bee93</code>.</li>
+<li>Distributed session: <code>2026-09-15T08-05-10-095Z_01a0a419-334f-7-a07fac0c</code>.</li>
+</ul>
+<p>The distributed Engine also lacked <code>ACH_TOKEN</code>, the complete configuration and
+Harness state, while its home and workspace were visible. These checks inspected
+only existence/booleans and the named synthetic values.</p>
+<h2 id="compose-restart-limitation">Compose restart limitation</h2>
+<p>The corrected <code>scripts/test-split.sh</code> completed with exit 0 on the release
+runtime, with real OpenCode and Pi binaries and a controlled model upstream:</p>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>OpenCode</th>
+<th>Pi</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Startup through completed hydration</td>
+<td>6 s</td>
+<td>7 s</td>
+</tr>
+<tr>
+<td>HTTP health/readiness on all three roles</td>
+<td>Pass</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Internal APIs absent from public health listeners</td>
+<td>Pass</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Skill copy, temporary transfer removal, private mounts</td>
+<td>Pass</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Selected environment values in native process</td>
+<td>Pass</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Two completed turns, same native session</td>
+<td>Pass</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Prepare twice on retained workspace; separate hook HOME</td>
+<td>Pass</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Proxy uses authorized upstream requests</td>
+<td>Pass</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Engine killed during held inference: Harness exits 0</td>
+<td>2 s</td>
+<td>2 s</td>
+</tr>
+<tr>
+<td>Channels becomes not ready after controller loss</td>
+<td>HTTP 503</td>
+<td>HTTP 503</td>
+</tr>
+</tbody>
+</table>
+<p>The script removed its Compose containers and volumes afterward. Local evidence:
+<code>/tmp/ach-v0.16.4-split-acceptance.log</code>.</p>
+<p>A separate experiment added <code>restart: always</code> to Harness and Engine. After an
+Engine failure, both restarted and readiness returned, but a new model invocation
+timed out. Inspecting <code>/proc/1/ns/net</code> showed that Harness had a new network
+namespace while Channels and Engine retained the old one; Engine could not reach
+the Harness HTTP listener on localhost. This is a limitation of restarting the
+namespace-owning container independently under Docker Compose's
+<code>network_mode: service:harness</code> arrangement. Recover that setup by recreating the
+stack together. Kubernetes recovery is tested separately because the pod owns
+the shared network namespace.</p>
+<h2 id="published-v0164">Published v0.16.4</h2>
+<p>Release commit: <code>153097a2b77eb3de00bc540c61b7ecd1ae556cf5</code>.
+Both <code>v0.16.4</code> and <code>latest</code> resolve to index digest
+<code>sha256:9573ea2d553cbe9f553adfd0cc396f50ef560aea3cbd990f319286e4fe7b7e7b</code>.
+GitHub release workflow <code>34945130899</code> completed successfully, including docs.</p>
+<p>The temporary agents pulled that digest in every container. Pi passed the
+following checks on the published image in <strong>both</strong> placements:</p>
+<ul>
+<li>Two distinct events completed with the same native session; duplicate second
+  submission returned HTTP 200 <code>duplicate</code>.</li>
+<li>Native bash returned the selected synthetic value and <code>private_present: false</code>.</li>
+<li>Distributed Engine emitted prompt, tool and model-generation logs. Harness
+  emitted final response/summary without those detailed engine logs.</li>
+<li>Killing Engine PID 1 in distributed mode caused Engine and Harness to restart
+  once; Channels remained running. Killing the native mini-harness child in
+  standalone caused its parent container to restart once.</li>
+<li>Both returned to Ready automatically and completed <code>pi-recovered-1</code> afterward.</li>
+<li>Engine could not see the managed token, private configuration or Harness state;
+  its home/workspace were present and the transfer directory had been cleaned.</li>
+</ul>
+<p>Pi telemetry still reports zero tools/duration in its summary despite a completed
+bash action. That was also observed on the v0.16.3 baseline; this battery validates
+execution and log placement, not the accuracy of those existing summary metrics.</p>
+<p>OpenCode passed the same two-turn/session-reuse, duplicate, environment and log
+placement checks in both modes. Its summary retained <code>tools=1</code> after the detailed
+tool log moved to Engine. Sessions were <code>ses_f5bd08aa5ffeAqZWySK52btTVs</code>
+(distributed) and <code>ses_f5bd08fbeffeNoTMX43UWu250R</code> (standalone).</p>
+<p>Both OpenCode placements also recovered automatically after mini-harness death
+and completed <code>oc-recovered-1</code> with the expected synthetic environment output.
+The distributed agent then recovered from separate Harness and Channels
+terminations. <code>roles-recovered-1</code> completed afterward, reusing the OpenCode
+session from before those two restarts.</p>
+<p><code>gitlab-reviewer</code> was restarted onto the published digest. Pod
+<code>achagent-gitlab-reviewer-7fd5d48fdf-mlc5n</code> became 3/3 Ready with zero restarts;
+its public gateway <code>/readyz</code> returned HTTP 200 and <code>{"status":"ok"}</code>. No new
+GitLab comment/hook was sent by this battery; the earlier user-triggered real
+review is recorded in <code>2026-09-15-distributed-gitlab-cluster-validation.md</code>.
+Direct HTTP checks also returned 200 for both <code>/healthz</code> and <code>/readyz</code> on all
+three role ports (8080, 8090 and 8081).</p>
+<h2 id="cleanup">Cleanup</h2>
+<p>GitOps commit <code>fcc01a86131135e7126b0a4974fb4816950d7f7b</code> removed both temporary
+agent manifests and their kustomization entries. Flux <code>workloads-agents</code> applied
+that revision; both ACHAgents and their Deployments, Pods and Services were
+absent afterward. Task-owned port-forwards and local Compose containers/volumes
+were removed. The distributed <code>gitlab-reviewer</code> remains deployed and Ready.</p>
 
 
 

@@ -1,0 +1,512 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>Phase1 prepare compatibility - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#phase-1-preparation-compatibility-task-0a-task-10a-closeout" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Phase1 prepare compatibility
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#files-and-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Files and validation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#observed-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      Observed behavior
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#private-producer-handoff-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      Private producer handoff contract
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concerns-for-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Concerns for implementation
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<blockquote>
+<p>Historical evidence for the revisions named below. The <a href="../../references/2026-09-14-three-role-split/">current split contract</a> is authoritative; latest acceptance evidence is in <a href="../unix-split-validation/">unix-split-validation</a>.</p>
+</blockquote>
+<h1 id="phase-1-preparation-compatibility-task-0a-task-10a-closeout">Phase 1 preparation compatibility (Task 0A / Task 10A closeout)</h1>
+<p>Status: the private producer handoff is implemented and the compatibility contract is
+updated. Credential-bearing hooks must return a fully materialized checkout; the producer
+sets <code>GIT_NO_LAZY_FETCH=1</code> while creating its bundle, so an incomplete promisor checkout
+fails closed with guidance to fetch missing objects before the hook exits. Complete
+checkouts preserve history, <code>HEAD</code>, the existing workspace root and session state. The
+split transport remains outside this report.</p>
+<h2 id="files-and-validation">Files and validation</h2>
+<p>Added <code>tests/test_cleanup_registry.py</code>. It uses a local Git repository and synthetic
+credential, and checks first checkout, warm reuse, root inode, <code>.ach-state</code> resolution,
+HEAD, tracked and untracked contents, local commit objects, cleanup, failed acquisition,
+and a destination symlink fixture. Two hostile-input tests plant both workspace
+<code>.gitconfig</code> and checkout <code>.git/config</code> settings for <code>core.fsmonitor</code> and <code>core.hooksPath</code>.</p>
+<p>The Task 0A characterization command passed:</p>
+<div class="highlight"><pre><span></span><code>rtk proxy ./scripts/dev.sh uv run pytest tests/test_prepare.py tests/test_cleanup_registry.py -q
+42 passed, 3 xfailed in 3.87s
+</code></pre></div>
+<p>The xfails are strict and represent the current reproduced vulnerability. Running the
+same tests with <code>--runxfail</code> gave 3 failures: both planted fsmonitor commands touched
+their outside-workspace marker during <code>git status</code>. The global case also emitted Git's
+<code>warning: Empty last update token</code>, confirming that the planted configuration was read;
+the third failure demonstrated destination symlink traversal.
+This is a regression harness, not a claim of protection from a malicious same-UID
+process.</p>
+<h2 id="observed-behavior">Observed behavior</h2>
+<p>The existing reference-style hook cloned a fresh checkout, then on the second event ran
+<code>git fetch</code> followed by <code>git checkout --detach origin/main</code>. The workspace directory's
+inode and <code>.ach-state</code> link remained stable. The force checkout replaced a dirty tracked
+file with the remote version. An untracked file remained, and the local commit object
+remained addressable even though it was no longer <code>HEAD</code>. A successful cleanup hook
+removed <code>$ACH_WORKSPACE/repo</code> while retaining the workspace directory and its inode.
+An acquisition exit raised <code>PrepareFailed</code> (fail closed) and retained the workspace;
+cleanup is best effort, so a failing cleanup does not remove the checkout by itself.</p>
+<p>These are the compatibility boundaries: preserve the session workspace root, hydration
+link, untracked files, and local Git objects; preserve the current reference hook's
+intentional replacement of tracked files when the event selects a new revision. A
+handoff that replaces the whole workspace or <code>.git</code> directory would silently lose
+retained state and is rejected.</p>
+<h2 id="private-producer-handoff-contract">Private producer handoff contract</h2>
+<p>Use a harness-private scratch checkout for every credential-bearing clone/fetch. Give it
+a fresh private <code>HOME</code>, cwd, Git config, and checkout path. Set the authorization header
+with <code>GIT_CONFIG_COUNT</code>/<code>GIT_CONFIG_KEY_0=http.extraHeader</code>/<code>GIT_CONFIG_VALUE_0=...</code>; never
+put the token in a remote URL. Do not import <code>.git/config</code>, <code>.gitconfig</code>, hooks, or helper
+state from the agent workspace.</p>
+<p>The operator hook must fully materialize the checkout before returning. Filtered or
+promisor clones may be used only if the hook fetches all reachable objects while its
+credential is available; otherwise the producer rejects the handoff offline. This adds
+download and scratch-storage cost for historical blobs, including blobs unrelated to the
+selected <code>HEAD</code>, in exchange for preventing a post-hook unauthenticated fetch. The active
+reference script in <code>docs/schemas/operator-contract.md</code> therefore uses complete clone and
+fetch commands.</p>
+<p>After the prior engine writer has stopped, hand off only approved repository data. The
+executable test <code>test_private_scratch_prototype_preserves_target_retention</code> runs this
+algorithm against the same warm-reuse fixtures:</p>
+<ol>
+<li>For a new session checkout, create <code>$ACH_WORKSPACE/repo</code> from the private scratch
+   checkout using a local, credential-free Git operation.</li>
+<li>For a warm session, update the existing target repository from scratch using a local
+   bundle or local fetch, then perform the same detached checkout operation as the
+   current script. Leave the target's existing untracked files and local refs/objects in
+   place; do not delete or replace the target <code>.git</code> directory.</li>
+<li>Recreate <code>.ach-state</code> from the harness-owned hydration location. Never copy it from
+   scratch or input. Before each destination write, reject escaping paths, refuse source
+   symlinks, and refuse destination symlink traversal.</li>
+<li>Run cleanup with its own private HOME/cwd/config. A failed cleanup remains best effort
+   and must not trigger a whole-workspace deletion policy.</li>
+</ol>
+<p>The test runs credentialed scratch preparation to completion first, then a separate
+credential-free transfer hook from a scratch path outside <code>workDir</code>. The transfer hook
+receives no token and the planted target fsmonitor hook confirms that fact. This algorithm
+keeps the existing workspace path and inode, retains unrelated files and local objects,
+and makes the credential-bearing Git process independent of agent-planted configuration.
+A generic recursive copy is not sufficient because it can follow symlinks and discard
+<code>.git</code> retention semantics.</p>
+<p>Task 10A also covers the authenticated filtered-clone regression: a complete clone and
+handoff succeeds with synthetic Basic auth, while an incomplete filtered clone fails during
+offline bundle production without an unauthenticated request or credential in the public
+workspace/artifact. The root diagnostic fixture is intentionally ignored and is not a
+production service.</p>
+<h2 id="concerns-for-implementation">Concerns for implementation</h2>
+<p>The current single-container same-UID deployment still cannot prevent a concurrent agent
+from observing or modifying private scratch files. The correction removes contaminated
+Git input and credential-bearing use of the agent checkout; process and mount isolation
+belongs to the split deployment. A private scratch implementation must also define the
+writer-stop boundary and lock it with the existing session lifecycle.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

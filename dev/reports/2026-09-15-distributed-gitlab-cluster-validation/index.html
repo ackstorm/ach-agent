@@ -18,7 +18,7 @@
     
     
       
-        <title>ACH operator handoff: distributed placement - ach-agent</title>
+        <title>Distributed GitLab reviewer: cluster validation - ach-agent</title>
       
     
     
@@ -70,7 +70,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#ach-operator-handoff-distributed-placement" class="md-skip">
+        <a href="#distributed-gitlab-reviewer-cluster-validation" class="md-skip">
           Skip to content
         </a>
       
@@ -106,7 +106,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ACH operator handoff: distributed placement
+              Distributed GitLab reviewer: cluster validation
             
           </span>
         </div>
@@ -315,54 +315,27 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#placement-and-image" class="md-nav__link">
+  <a href="#deployment" class="md-nav__link">
     <span class="md-ellipsis">
-      Placement and image
+      Deployment
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#environment-and-configuration" class="md-nav__link">
+  <a href="#user-triggered-gitlab-event" class="md-nav__link">
     <span class="md-ellipsis">
-      Environment and configuration
+      User-triggered GitLab event
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#distributed-data-mounts" class="md-nav__link">
+  <a href="#limits-and-follow-ups" class="md-nav__link">
     <span class="md-ellipsis">
-      Distributed data mounts
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#ipc-and-networking" class="md-nav__link">
-    <span class="md-ellipsis">
-      IPC and networking
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#probes" class="md-nav__link">
-    <span class="md-ellipsis">
-      Probes
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#responsibility-and-acceptance" class="md-nav__link">
-    <span class="md-ellipsis">
-      Responsibility and acceptance
+      Limits and follow-ups
     </span>
   </a>
   
@@ -386,210 +359,44 @@
   
 
 
-<h1 id="ach-operator-handoff-distributed-placement">ACH operator handoff: distributed placement</h1>
-<p>This supersedes the previous storage proposal. ACH renders placement, environment
-and generic storage. ACH Agent owns the contents, native tool paths and compatibility.
-Do not add renderer branches for codemem, OpenCode, Pi, skills or hydration artifacts.</p>
-<p>Status: <code>ghcr.io/ackstorm/ach-agent:v0.16.3</code> is published for linux/amd64 and linux/arm64.
-It supersedes v0.16.2's command-based probes. Kubernetes operator integration still
-needs joint cluster e2e.</p>
-<h2 id="placement-and-image">Placement and image</h2>
-<p>Placement is operator configuration: <code>AgentProfile.spec.achagent.placement</code> and
-<code>ACHAgent.spec.placement</code>, with values <code>standalone | distributed</code> and default
-<code>standalone</code>, as reported by the ACH operator team. The operator owns resolution
-between the two fields. Never render placement into Agent's <code>config.json</code>.</p>
+<h1 id="distributed-gitlab-reviewer-cluster-validation">Distributed GitLab reviewer: cluster validation</h1>
+<p>Validated on 2026-09-15 with ACH operator v0.8.11 and ACH Agent v0.16.3.
+This records the deployed release before the subsequent log-ownership correction.</p>
+<h2 id="deployment">Deployment</h2>
+<p>GitOps commit <code>e392b265cec81abceaef7698c321f155bcb1552b</code> adds only
+<code>spec.placement: distributed</code> to <code>ach/gitlab-reviewer</code>. Flux applied the change;
+the shared profile and other agents were unchanged.</p>
+<p>Pod <code>achagent-gitlab-reviewer-7fd5d48fdf-wqn4q</code> reached 3/3 Ready with zero
+restarts. All three containers used image digest
+<code>sha256:9426a036cea6d6f505bb45c4141053bf047f933a7c64c37d74cd9a3519f59c69</code>.
+Startup/readiness probes used HTTP <code>/readyz</code> on channels 8080, harness 8090,
+engine 8081. The public gateway readiness URL returned HTTP 200.</p>
+<h2 id="user-triggered-gitlab-event">User-triggered GitLab event</h2>
 <ul>
-<li>Standalone: existing Deployment with one container and no role arguments.</li>
-<li>Distributed: one Deployment, one replica, three ordinary containers in one pod.</li>
-<li>Same combined image for all containers. Preserve the image entrypoint (tini is
-  already included); set only <code>args: ["--role", "channels"]</code> (or <code>harness</code>, <code>engine</code>).</li>
-<li>Keep Recreate, the existing scheduling/resource settings and public Service.</li>
+<li>Channels received event <code>abd2318c-a4ee-427a-8dd5-930df5cc9b74</code> at 06:11:55 UTC,
+  session key <code>1158:issue:14</code>.</li>
+<li>Harness prepare cloned the repository into the shared session workspace:
+  exit 0, 3,467 ms.</li>
+<li>Engine launched OpenCode and became ready in approximately 2.1 seconds.</li>
+<li>Native session: <code>ses_f5c4e647bffeiZbtCkX9AGuJMj</code>.</li>
+<li>Trace: <code>487ccea9f76b05f3de9ef8a446115dec</code>.</li>
+<li>Model and MCP requests passed through Harness proxies. Logs recorded HTTP 200
+  and successful tool results.</li>
+<li>The GitLab comment tool returned comment ID <code>20090</code> on issue 14 at 06:13:40 UTC.
+  Harness recorded the final response at 06:13:49 and a summary of 25 tools.</li>
+<li>Cleanup completed at 06:14:20 UTC: exit 0, 40 ms. Pod remained 3/3 Ready without
+  restarts.</li>
 </ul>
-<h2 id="environment-and-configuration">Environment and configuration</h2>
-<p>For this increment Channels and Harness receive the same existing operator-supplied
-environment. Both are trusted components. Engine receives only the environment
-entries explicitly selected by <code>engine.forwardEnv</code>, resolved by the operator from
-that same environment. Do not copy unrestricted <code>envFrom</code> into Engine.</p>
-<p>Mount the complete configuration only in Harness and retain
-<code>ACH_CONFIG_PATH=/etc/ach-agent/config.json</code> there when using that path.
-Channels obtains its source configuration from Harness. Engine obtains only its
-public launch inputs.</p>
-<p>Keep the existing <code>engine.forwardEnv</code> configuration field. The mini-harness passes
-the selected environment to native children. ACH does not generate native
-configuration or bootstrap files.</p>
-<h2 id="distributed-data-mounts">Distributed data mounts</h2>
-<p>Resolve one base path:</p>
-<div class="highlight"><pre><span></span><code>persistent:     base = persistence.mountPath
-nonpersistent:  base = /tmp/ach-agent
-</code></pre></div>
-<p>Mount exactly these generic data directories:</p>
-<table>
-<thead>
-<tr>
-<th>Directory</th>
-<th>Harness</th>
-<th>Engine</th>
-<th>Channels</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>base/state</code></td>
-<td>Read/write</td>
-<td>Absent</td>
-<td>Absent</td>
-</tr>
-<tr>
-<td><code>base/home</code></td>
-<td>Absent</td>
-<td>Read/write</td>
-<td>Absent</td>
-</tr>
-<tr>
-<td><code>base/workspace</code></td>
-<td>Read/write</td>
-<td>Read/write</td>
-<td>Absent</td>
-</tr>
-</tbody>
-</table>
-<p>Use three subpaths on the existing PVC when persistent. For temporary deployments,
-<code>emptyDir</code> backing with the same three-directory ownership is sufficient.
-Do not expose the entire base volume to every container. Each container also gets
-its own writable <code>/tmp</code>.</p>
-<p>These directories are opaque to ACH. ACH Agent places native HOME, sessions, tool
-databases and workspaces within them. The renderer must not derive
-extra mounts from <code>engine.home</code>, <code>engine.workDir</code>, memory settings or the selected
-engine. Standalone keeps its existing storage/configuration behavior.</p>
-<p>Additionally mount one separate <code>emptyDir</code> at <code>/run/ach-agent/transfer</code>, read/write
-in Harness and Engine, absent in Channels. This is temporary startup handoff
-storage, including when persistence is enabled. ACH Agent creates and removes its
-own download batches there; the operator does not manage their contents.</p>
-<h2 id="ipc-and-networking">IPC and networking</h2>
-<p>Keep two separate IPC directories:</p>
-<table>
-<thead>
-<tr>
-<th>Mount</th>
-<th>Harness</th>
-<th>Engine</th>
-<th>Channels</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>/run/ach-agent/channels</code></td>
-<td>Read/write</td>
-<td>Absent</td>
-<td>Read-only</td>
-</tr>
-<tr>
-<td><code>/run/ach-agent/engine</code></td>
-<td>Read-only</td>
-<td>Read/write</td>
-<td>Absent</td>
-</tr>
-</tbody>
-</table>
-<p>Mount directories, not individual socket files. Use UID/GID 10001 and
-<code>fsGroup: 10001</code>; verify fresh volume/subpath writability in e2e.</p>
-<p>The pod shares its normal network namespace. Public ingress/health port 8080 lives
-on Channels in distributed mode. No internal Services, HMAC keys,
-service-account token or extra RBAC.
-Retain restricted security contexts and separate PID namespaces.</p>
-<p>Recommended pod setting: <code>enableServiceLinks: false</code>, to suppress automatic
-Service environment variables. Explicit environment and DNS-based Service access
-remain the intended discovery mechanisms; this is not a network isolation control.
-See <a href="https://kubernetes.io/docs/concepts/services-networking/service/#environment-variables">Kubernetes Service discovery</a>.</p>
-<h2 id="probes">Probes</h2>
-<p>Use ordinary Kubernetes <code>httpGet</code> probes for every container. No exec probe,
-image healthcheck command or Unix-socket client is required.</p>
-<table>
-<thead>
-<tr>
-<th>Role</th>
-<th>HTTP port</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Channels</td>
-<td>8080</td>
-</tr>
-<tr>
-<td>Harness</td>
-<td>8090</td>
-</tr>
-<tr>
-<td>Engine</td>
-<td>8081</td>
-</tr>
-</tbody>
-</table>
-<p>ACH Agent binds the health listeners to <code>0.0.0.0</code>. The new Harness/Engine TCP
-listeners expose health endpoints only; application traffic keeps using Unix
-sockets. No additional Service or operator-injected environment is needed.</p>
-<p>Use <code>/readyz</code> for startup/readiness and <code>/healthz</code> for liveness:</p>
-<table>
-<thead>
-<tr>
-<th>Probe</th>
-<th>Initial delay</th>
-<th>Period</th>
-<th>Timeout</th>
-<th>Failure threshold</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Startup</td>
-<td>15s</td>
-<td>5s</td>
-<td>3s</td>
-<td>6</td>
-</tr>
-<tr>
-<td>Readiness</td>
-<td>0s</td>
-<td>10s</td>
-<td>3s</td>
-<td>3</td>
-</tr>
-<tr>
-<td>Liveness</td>
-<td>0s</td>
-<td>20s</td>
-<td>3s</td>
-<td>3</td>
-</tr>
-</tbody>
-</table>
-<p>Standalone retains its existing configured HTTP port and the same endpoints.
-Readiness has the same semantics in both placements: initialization must finish,
-including hydration copy, native configuration and directory preparation, before
-readiness succeeds. This happens at startup, without waiting for an event. Harness
-and Channels readiness reflects required downstream readiness, including engine
-loss after startup. ACH Agent owns this logic; the operator only renders probes.
-Profile resources apply to each container; document the resulting total pod requests.</p>
-<h2 id="responsibility-and-acceptance">Responsibility and acceptance</h2>
-<p>ACH Agent is responsible for internal path resolution and retaining existing
-native data during supported upgrades. Do not implement tool-specific migration,
-Git preparation or file copying in the operator.</p>
-<p>Validate standalone output unchanged; distributed container/env/mount shape;
-persistent and temporary startup; one real channel turn with Harness-side prepare;
-a second turn reusing its session; and Engine unable to read Harness-private files.</p>
-<p>Track deployment rendering, startup readiness and real invocation evidence
-separately. <code>WorkloadApplied=True</code> proves neither successful hydration nor Pod
-readiness. Kind can exercise runtime startup and channel/session behavior when
-configured with reachable ACH and model endpoints; a live-model cluster run
-remains a separate integration check. Existing Compose evidence does not replace
-operator-rendered Kubernetes coverage.</p>
-<p>The operator team reports that the current e2e fixture uses
-<code>ACH_BASE_URL=http://localhost:8080</code>. From an agent pod this targets the agent pod
-itself, not ACH. Fix the fixture's advertised/download URLs to addresses reachable
-from agent pods before requiring Pod Ready; preserve any host-facing login/callback
-requirements separately. Do not bypass hydration or weaken readiness to pass e2e.</p>
-<p>Separate Deployments, new queues and autoscaling are not part of this renderer change.</p>
+<h2 id="limits-and-follow-ups">Limits and follow-ups</h2>
+<p>This proves one real channel invocation through the operator-rendered split,
+including preparation, shared workspace access, model/MCP proxying, final result
+and cleanup. It does not prove native session reuse across two separate events.</p>
+<p>The partial clone's historical <code>git show</code> attempted a lazy fetch and failed
+because Engine had no forge credential. The agent continued and completed the
+task. This is a prepare/available-content limitation, not a reason to expose the
+Harness credential to Engine.</p>
+<p>Hydration reported that <code>ach-memory</code> was absent from the manifest, so this run
+did not validate memory integration.</p>
 
 
 

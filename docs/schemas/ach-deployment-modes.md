@@ -4,7 +4,7 @@ This supersedes the previous storage proposal. ACH renders placement, environmen
 and generic storage. ACH Agent owns the contents, native tool paths and compatibility.
 Do not add renderer branches for codemem, OpenCode, Pi, skills or hydration artifacts.
 
-Status: `ghcr.io/ackstorm/ach-agent:v0.16.3` is published for linux/amd64 and linux/arm64.
+Status: `ghcr.io/ackstorm/ach-agent:v0.16.4` is published for linux/amd64 and linux/arm64.
 It supersedes v0.16.2's command-based probes. Kubernetes operator integration still
 needs joint cluster e2e.
 
@@ -127,6 +127,14 @@ Profile resources apply to each container; document the resulting total pod requ
 ACH Agent is responsible for internal path resolution and retaining existing
 native data during supported upgrades. Do not implement tool-specific migration,
 Git preparation or file copying in the operator.
+
+Existing-PVC placement changes are not yet validated as transparent upgrades.
+On v0.16.4, switching an OpenCode agent from the default standalone layout to
+distributed preserves files and session IDs, but the native session retains its
+old workspace path and the resumed invocation times out. See the
+[live transition report](../reports/2026-09-15-pvc-placement-transition.md).
+Do not treat successful readiness as proof of conversation continuity across
+that switch.
 
 Validate standalone output unchanged; distributed container/env/mount shape;
 persistent and temporary startup; one real channel turn with Harness-side prepare;

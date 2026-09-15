@@ -18,7 +18,7 @@
     
     
       
-        <title>Stable workspace placement validation — 2026-09-15 - ach-agent</title>
+        <title>ACH v0.8.15 / ach-agent v0.16.5 — EKS acceptance - ach-agent</title>
       
     
     
@@ -70,7 +70,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#stable-workspace-placement-validation-2026-09-15" class="md-skip">
+        <a href="#ach-v0815-ach-agent-v0165-eks-acceptance" class="md-skip">
           Skip to content
         </a>
       
@@ -106,7 +106,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Stable workspace placement validation — 2026-09-15
+              ACH v0.8.15 / ach-agent v0.16.5 — EKS acceptance
             
           </span>
         </div>
@@ -315,27 +315,42 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#implementation-and-contract" class="md-nav__link">
+  <a href="#environment-and-method" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation and contract
+      Environment and method
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#verification" class="md-nav__link">
+  <a href="#results" class="md-nav__link">
     <span class="md-ellipsis">
-      Verification
+      Results
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#identifiers-and-terminal-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      Identifiers and terminal evidence
     </span>
   </a>
   
 </li>
+        
+      </ul>
+    </nav>
+  
+</li>
       
         <li class="md-nav__item">
-  <a href="#native-persistent-transition" class="md-nav__link">
+  <a href="#gitops-and-scope" class="md-nav__link">
     <span class="md-ellipsis">
-      Native persistent transition
+      GitOps and scope
     </span>
   </a>
   
@@ -359,39 +374,35 @@
   
 
 
-<h1 id="stable-workspace-placement-validation-2026-09-15">Stable workspace placement validation — 2026-09-15</h1>
-<p>The earlier <a href="../2026-09-15-pvc-placement-transition/">live transition report</a>
-records the failure on v0.16.4. This correction preserves the original persistent
-workspace directory rather than relocating native sessions.</p>
-<h2 id="implementation-and-contract">Implementation and contract</h2>
-<p>Persistent standalone and distributed resolve the default workspace to
-<code>&lt;mountPath&gt;/home/workspace</code>. Standalone defaults are unchanged. The obsolete
-workspace-copy helper and its startup call are removed. Native engine adapters,
-session mappings and the configuration schema are unchanged.</p>
-<p>The operator must mount PVC subPath <code>home/workspace</code> at that path in Harness.
-Engine mounts subPath <code>home</code> and sees the same physical workspace through it.
-Harness never receives the whole Engine home. Image and renderer must be rolled
-out together; the old distributed <code>workspace</code> subPath is not equivalent.</p>
-<p>The Compose examples use separate home/workspace volumes, mounting the workspace
-at the same nested path in Engine and Harness. The persistent transition fixture
-instead uses a single host data tree to reproduce the existing-PVC layout.</p>
-<h2 id="verification">Verification</h2>
+<h1 id="ach-v0815-ach-agent-v0165-eks-acceptance">ACH v0.8.15 / ach-agent v0.16.5 — EKS acceptance</h1>
+<p>On 2026-09-15, OpenCode and Pi each completed a real standalone invocation,
+changed to distributed placement on the same EBS volume, and completed a second
+invocation using the same native session. The earlier workspace relocation
+failure is resolved for the standard persistent layout.</p>
+<h2 id="environment-and-method">Environment and method</h2>
 <ul>
-<li>Regression proof: the new persistent path-equality test fails for both Pi and
-  OpenCode when executed against the baseline resolver from <code>a18489c</code>.</li>
-<li>Fixed full suite: <strong>1,215 passed, 3 skipped</strong>.</li>
-<li>Conformance: <strong>18 passed</strong>.</li>
-<li>Ruff, formatting, strict mypy and strict documentation build pass.</li>
-<li>No schema/config-model diff against <code>a18489c</code>.</li>
-<li>Real <code>scripts/test-split.sh</code>: OpenCode and Pi completed two turns, reused their
-  native session, passed environment/hook checks, and failed readiness after
-  controller loss while Harness exited for supervisor restart. Exit status 0.</li>
+<li>EKS <code>pro-ack-ai-platform</code>, namespace <code>ach</code>, operator <code>v0.8.15</code> verified live.</li>
+<li>Both test agents pinned <code>ghcr.io/ackstorm/ach-agent:v0.16.5</code>; every observed
+  container used image digest
+  <code>sha256:9ef89f09eed0b33ceb77cb7a35f90dadd3141d10a864460674cf5f5d429f45ec</code>.</li>
+<li>Real <code>gemini-flash-latest</code> calls through ACH; native OpenCode and Pi binaries.</li>
+<li>Dedicated 1 GiB gp3 EBS volumes, <code>ebs.csi.aws.com</code>, Delete reclaim policy.</li>
+<li>No pod securityContext override: UID, GID and fsGroup 10001 came from ACH.</li>
+<li>Temporary webhook agents were installed through GitOps and Flux. Ingress was
+  exercised internally with synthetic GitHub-shaped payloads, not a public
+  GitHub delivery. No production review or forge mutation was triggered.</li>
 </ul>
-<h2 id="native-persistent-transition">Native persistent transition</h2>
-<p>Root independently ran <code>scripts/test-pvc-transition.sh</code> for both engines against
-the locally built combined image <code>ach-agent:pvc-stable-review</code>. Both runs exited
-<strong>0</strong>, including cleanup. This uses real native binaries and a deterministic local
-model fixture, not a live model provider.</p>
+<p>Both requests used repository <code>tests/pvc-transition</code>, number <code>1</code>, channel
+<code>persistence-check</code>, <code>session: auto</code>, and distinct event IDs. The first request
+asked the engine to remember <code>amber lighthouse</code> and write <code>PVC_MARKER_20260915</code>
+to <code>pvc-probe.txt</code>. Actual Harness terminal response and summary logs were
+observed before proceeding; HTTP 202 alone was not used as completion evidence.</p>
+<p>The only fixture change between invocations was <code>placement: standalone</code> to
+<code>placement: distributed</code>. After the rollout, Harness overwrote that same file
+with <code>DISTRIBUTED_EBS_MARKER_20260915</code>. The second prompt supplied neither the
+remembered phrase nor the new marker. Both native bash tools read the new marker,
+and both terminal results contained the remembered phrase and new file contents.</p>
+<h2 id="results">Results</h2>
 <table>
 <thead>
 <tr>
@@ -402,54 +413,123 @@ model fixture, not a live model provider.</p>
 </thead>
 <tbody>
 <tr>
-<td>Standalone Harness terminal response and summary observed</td>
+<td>Fresh persistent standalone Ready and native tool write as UID/GID 10001</td>
 <td>Pass</td>
 <td>Pass</td>
 </tr>
 <tr>
-<td>Native session reference unchanged after split</td>
+<td>Same PVC UID and PV across placement change</td>
 <td>Pass</td>
 <td>Pass</td>
 </tr>
 <tr>
-<td>Prior standalone history present in distributed provider requests</td>
+<td>Workspace path and file hash unchanged immediately after rollout</td>
 <td>Pass</td>
 <td>Pass</td>
 </tr>
 <tr>
-<td>Native tool reads <code>distributed-marker</code> written through Harness</td>
+<td>Native session mapping identical before and after second invocation</td>
 <td>Pass</td>
 <td>Pass</td>
 </tr>
 <tr>
-<td>Distributed invocation has actual completed result</td>
+<td>Three distributed containers Ready, zero container restarts</td>
 <td>Pass</td>
 <td>Pass</td>
 </tr>
 <tr>
-<td>Harness cannot access Engine session storage</td>
+<td>Harness sees only workspace beneath engine home</td>
+<td>Pass</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Engine cannot see Harness state marker or private config.json</td>
+<td>Pass</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Harness write visible to native tool at original workspace path</td>
+<td>Pass</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Second invocation reports completed, without error</td>
+<td>Pass</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Second response recalls first-turn phrase</td>
 <td>Pass</td>
 <td>Pass</td>
 </tr>
 </tbody>
 </table>
-<p>OpenCode retained <code>ses_f5b7603f1ffeeaRqBbIZd3LqZ0</code>. Pi retained the same JSONL
-session file ending in <code>01a0a489-fd5a-77c3-b4d7-ff7ce9a254a2.jsonl</code>.
-Both distributed upstream fixtures recorded message counts <code>[6, 8]</code>,
-<code>prior_history_seen=2</code> and a tool result containing <code>distributed-marker</code>.
-The upstream fixtures restart between placements; this history comes from native
-session storage. Neither fixture places marker values in the submitted prompt.</p>
-<p>The standalone completion assertion checks real Harness response/summary logs;
-upstream traffic alone does not count as completed work. Distributed completion
-uses the existing event-result API. Failed fixture iterations exposed test wiring,
-log-pipeline and temporary-file cleanup errors; these were corrected before the
-independent final runs.</p>
-<p>The corrected operator-rendered transition subsequently passed on EKS with both
-native engines and a live model; see the
-<a href="../2026-09-15-operator-v815-eks-acceptance/">EKS acceptance report</a>.
-Neither run validates custom layouts or already-populated distributed
-<code>base/workspace</code> volumes. The live GitLab reviewer has not been changed by these
-acceptance tests.</p>
+<p>The workspace file remained <code>/var/lib/ach-agent/home/workspace/pvc-probe.txt</code>.
+Harness mounts PVC subPath <code>home/workspace</code>; Engine sees it beneath its <code>home</code>
+subPath mount. There was no session migration, copied workspace or mapping reset.</p>
+<h3 id="identifiers-and-terminal-evidence">Identifiers and terminal evidence</h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>OpenCode</th>
+<th>Pi</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PVC UID</td>
+<td><code>73f13904-6b1d-479c-aaf8-f613370f21a4</code></td>
+<td><code>1433034b-b072-4b44-b35f-5379767efe4b</code></td>
+</tr>
+<tr>
+<td>EBS volume</td>
+<td><code>vol-02a8c68e26e93f375</code></td>
+<td><code>vol-033a3ad33b54841d8</code></td>
+</tr>
+<tr>
+<td>First terminal response, UTC</td>
+<td>13:44:10</td>
+<td>13:44:00</td>
+</tr>
+<tr>
+<td>Second invocation ID</td>
+<td><code>8367588194974db0a53bfe48219fc639</code></td>
+<td><code>e59eac557ea34657942735a6514c3b13</code></td>
+</tr>
+<tr>
+<td>Second result state</td>
+<td><code>completed</code></td>
+<td><code>completed</code></td>
+</tr>
+</tbody>
+</table>
+<p>OpenCode retained <code>ses_f5ab0abd8ffeTVMgH3tgdGepRP</code> under mapping
+<code>opencode:tests/pvc-transition:1</code>.</p>
+<p>Pi retained this exact native reference under <code>pi:tests/pvc-transition:1</code>:</p>
+<div class="highlight"><pre><span></span><code>/var/lib/ach-agent/home/pi/_tests_pvc-transition_1-cc1b234b/sessions/2026-09-15T13-43-55-478Z_01a0a54f-5756-77d5-9698-be778d8de264.jsonl
+</code></pre></div>
+<p>Distributed completion was independently retrieved through the existing channel
+completion API. OpenCode returned <code>amber lighthouse\nDISTRIBUTED_EBS_MARKER_20260915</code>;
+Pi returned <code>Remembered phrase: amber lighthouse. Current file contents:
+DISTRIBUTED_EBS_MARKER_20260915</code>. Both results had <code>action: none</code>, <code>error: null</code>.
+Engine tool logs also confirmed the live file read, rather than relying only on
+model claims.</p>
+<h2 id="gitops-and-scope">GitOps and scope</h2>
+<p>Test fixture: <code>2e99ef5</code>; placement-only change: <code>cb968d2</code>; fixture removal:
+<code>7a3c03d</code>, in <code>gitops-genai-blueprint</code>. YAML server dry-run and Kustomize rendering
+passed. Flux dependency ordering was retained throughout.</p>
+<p>Cleanup completed through Flux: both test ACHAgents and their Deployments, pods,
+Services and PVCs were removed, along with the temporary profile and StorageClass.
+Both PVs disappeared after CSI detach, and AWS <code>describe-volumes</code> filtered to the
+two recorded EBS IDs returned an empty list. No pre-existing PVC was removed.
+The production GitLab reviewer remained three containers Ready, zero restarts,
+on the same v0.16.5 digest. The documentation build passed with <code>make docs-build</code>.</p>
+<p>This closes the live EBS permission and native-session transition checks left
+open by the operator's kind report. It does not test custom paths, older
+distributed <code>base/workspace</code> data, channel prepare scripts, or a public webhook
+round trip. Those are distinct from this placement continuity check. No new
+operator checks, engine-specific mounts or application code changes were needed.</p>
 
 
 

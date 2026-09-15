@@ -70,8 +70,8 @@ wait_completion() {
   if [ "$mode" = standalone ]; then
     for _ in $(seq 1 60); do
       logs="$(docker compose -p "$compose_name" -f "$file" logs --no-color standalone 2>/dev/null || true)"
-      if printf '%s\n' "$logs" | grep 'engine: response' | grep -q 'standalone-marker' && \
-         printf '%s\n' "$logs" | grep -q 'engine: summary'; then
+      if grep -q 'engine: response.*standalone-marker' <<<"$logs" && \
+         grep -q 'engine: summary' <<<"$logs"; then
         echo "standalone harness terminal response observed: active-marker=standalone-marker"
         return 0
       fi

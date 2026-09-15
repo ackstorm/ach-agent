@@ -4,9 +4,10 @@ This supersedes the previous storage proposal. ACH renders placement, environmen
 and generic storage. ACH Agent owns the contents, native tool paths and compatibility.
 Do not add renderer branches for codemem, OpenCode, Pi, skills or hydration artifacts.
 
-Status: `ghcr.io/ackstorm/ach-agent:v0.16.4` is published for linux/amd64 and linux/arm64.
-It supersedes v0.16.2's command-based probes. Kubernetes operator integration still
-needs joint cluster e2e.
+Runtime version for this storage contract: `ghcr.io/ackstorm/ach-agent:v0.16.5`.
+Use the matching operator mounts below. The corrected existing-PVC transition
+still needs joint Kubernetes e2e; local evidence is recorded in the
+[stable workspace validation report](../reports/2026-09-15-stable-workspace-validation.md).
 
 ## Placement and image
 
@@ -149,6 +150,4 @@ readiness. Kind can exercise runtime startup and channel/session behavior when
 configured with reachable ACH and model endpoints; a live-model cluster run
 remains a separate integration check. Existing Compose evidence does not replace
 operator-rendered Kubernetes coverage.
-
-
 Separate Deployments, new queues and autoscaling are not part of this renderer change.

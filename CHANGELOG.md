@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.16.5] - 2026-09-15
+
+### Fixed
+
+- Distributed execution keeps the original persistent workspace at
+  `<mountPath>/home/workspace`, preserving the directory used by native sessions
+  when switching from standalone. The obsolete workspace-copy step is removed;
+  no native session export, import or reset is introduced.
+- Deploy this change with the matching ACH operator mounts: Harness mounts PVC
+  subPath `home/workspace`, Engine mounts `home`. The previous distributed
+  `workspace` subPath is not interchangeable; already-populated distributed or
+  custom layouts require separate transition validation.
+
 ## [0.16.4] - 2026-09-15
 
 ### Fixed

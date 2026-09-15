@@ -1,4 +1,5 @@
 """Credential-free model fixture for the standalone-to-distributed acceptance."""
+
 from __future__ import annotations
 
 import json
@@ -28,10 +29,12 @@ async def hydrate(request: Request) -> JSONResponse:
         return JSONResponse({"detail": "unauthorized"}, status_code=401)
     counts["hydrate"] += 1
     base = str(request.base_url).rstrip("/")
-    return JSONResponse({
-        "environment": "pvc-transition",
-        "runtime": {"models": [{"id": "test-model", "endpoint": f"{base}/v1"}]},
-    })
+    return JSONResponse(
+        {
+            "environment": "pvc-transition",
+            "runtime": {"models": [{"id": "test-model", "endpoint": f"{base}/v1"}]},
+        }
+    )
 
 
 def _has_tool_result(body: dict[str, Any]) -> tuple[bool, str]:
@@ -40,8 +43,22 @@ def _has_tool_result(body: dict[str, Any]) -> tuple[bool, str]:
         messages = body.get("input", [])
     if not isinstance(messages, list):
         messages = []
-    last_user = max((i for i, item in enumerate(messages) if isinstance(item, dict) and item.get("role") == "user"), default=-1)
-    last_tool = max((i for i, item in enumerate(messages) if isinstance(item, dict) and item.get("role") == "tool"), default=-1)
+    last_user = max(
+        (
+            i
+            for i, item in enumerate(messages)
+            if isinstance(item, dict) and item.get("role") == "user"
+        ),
+        default=-1,
+    )
+    last_tool = max(
+        (
+            i
+            for i, item in enumerate(messages)
+            if isinstance(item, dict) and item.get("role") == "tool"
+        ),
+        default=-1,
+    )
     if last_tool > last_user:
         for item in reversed(messages):
             if not isinstance(item, dict) or item.get("role") != "tool":
@@ -58,22 +75,38 @@ def _chat_response(*, tool: bool, marker: str) -> StreamingResponse:
     if tool:
         message: dict[str, Any] = {
             "role": "assistant",
-            "tool_calls": [{
-                "id": "pvc-read-marker",
-                "type": "function",
-                "function": {"name": "bash", "arguments": '{"command":"cat active-marker"}'},
-            }],
+            "tool_calls": [
+                {
+                    "id": "pvc-read-marker",
+                    "type": "function",
+                    "function": {"name": "bash", "arguments": '{"command":"cat active-marker"}'},
+                }
+            ],
         }
     else:
-        message = {"role": "assistant", "content": json.dumps({
-            "action": "none", "text": f"marker={marker}"
-        })}
+        message = {
+            "role": "assistant",
+            "content": json.dumps({"action": "none", "text": f"marker={marker}"}),
+        }
 
     async def stream() -> Any:
-        yield ("data: " + json.dumps({
-            "id": "pvc-transition", "object": "chat.completion.chunk",
-            "choices": [{"index": 0, "delta": message, "finish_reason": "tool_calls" if tool else "stop"}],
-        }) + "\n\n").encode()
+        yield (
+            "data: "
+            + json.dumps(
+                {
+                    "id": "pvc-transition",
+                    "object": "chat.completion.chunk",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": message,
+                            "finish_reason": "tool_calls" if tool else "stop",
+                        }
+                    ],
+                }
+            )
+            + "\n\n"
+        ).encode()
         yield b"data: [DONE]\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream")

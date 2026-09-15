@@ -261,7 +261,7 @@ async def test_usage_is_stored_in_stats() -> None:
     assert mapped.cost == 0.42
 
 
-async def test_model_generation_logs_only_completed_message_end_without_ids(capfd) -> None:
+async def test_model_generation_logs_only_completed_message_end_without_ids() -> None:
     usage = {"input": 1, "output": 2}
     client = _ScriptedClient(
         [
@@ -272,12 +272,15 @@ async def test_model_generation_logs_only_completed_message_end_without_ids(capf
             {"type": EV_AGENT_SETTLED},
         ]
     )
-    await PiDriver().run_turn(
-        _Server(client), conv_key="generation", prompt="p", reuse=True, sessions={},
-        on_text=None, on_tool=None, max_tool_calls=0, stats={},
-    )
-    output = capfd.readouterr().out
-    assert output.count("engine: model generation") == 2
+    with patch("ach_agent.engine.pi.driver.log") as pi_log:
+        await PiDriver().run_turn(
+            _Server(client), conv_key="generation", prompt="p", reuse=True, sessions={},
+            on_text=None, on_tool=None, max_tool_calls=0, stats={},
+        )
+    generations = [
+        call for call in pi_log.info.call_args_list if call.args == ("engine: model generation",)
+    ]
+    assert len(generations) == 2
 
 
 async def test_agent_end_will_retry_is_not_terminal() -> None:

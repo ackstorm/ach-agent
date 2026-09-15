@@ -271,7 +271,7 @@ async def test_consume_streams_suffix_separates_parts_and_emits_tools() -> None:
     assert tools[0].tool_name == "mcp-x_auth_wait"
 
 
-async def test_consume_filters_events_from_other_sessions(capfd) -> None:
+async def test_consume_filters_events_from_other_sessions() -> None:
     """finding 4: a shared opencode server multiplexes several sessions' SSE
     traffic onto one stream. A child session's full event lifecycle — text,
     tool, usage, error, AND idle — must never count toward or terminate the
@@ -316,14 +316,20 @@ async def test_consume_filters_events_from_other_sessions(capfd) -> None:
     client.send_message = AsyncMock()  # type: ignore[method-assign]
 
     tools: list[OpenCodeToolUpdate] = []
-    with patch.object(ev, "_consume_events_from_response", new=fake_consume):
+    with patch.object(ev, "_consume_events_from_response", new=fake_consume), patch(
+        "ach_agent.engine.lifecycle.log"
+    ) as lifecycle_log:
         text = await consume_sse_after_send(client, "ses", "hi", on_tool=tools.append)
 
     assert text == "parent text", "only the requested session's text is accumulated"
     assert tools == [], "child session's tool update must not count toward the parent's turn"
-    output = capfd.readouterr().out
-    assert output.count("engine: model generation") == 2
-    assert "message_id=m1" in output and "message_id=m2" in output
+    generations = [
+        call
+        for call in lifecycle_log.info.call_args_list
+        if call.args == ("engine: model generation",)
+    ]
+    assert len(generations) == 2
+    assert {call.kwargs["message_id"] for call in generations} == {"m1", "m2"}
     # call_count (not await_count): the send is fired via asyncio.create_task and this
     # test's queue is pre-filled, so the loop can reach the parent's idle and return
     # before the event loop happens to schedule that task to completion — the dispatch

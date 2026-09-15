@@ -5,6 +5,7 @@ import contextlib
 import sys
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
@@ -264,7 +265,7 @@ async def test_turn_done_stats_normalize_native_usage_dataclass(fake_driver, cap
 
 
 @pytest.mark.asyncio
-async def test_engine_logs_each_tool_and_forwards_it_once(fake_driver, capfd):
+async def test_engine_logs_each_tool_and_forwards_it_once(fake_driver):
     update = OpenCodeToolUpdate(
         session_id="native-session",
         part_id="part-1",
@@ -284,25 +285,24 @@ async def test_engine_logs_each_tool_and_forwards_it_once(fake_driver, capfd):
     fake_driver.tool_updates = [update, completed]
     service = ExecutionService(fake_driver, {})
     handle = await service.acquire(_acquire())
-    events = [
-        event
-        async for event in service.turn(
-            TurnRequest(
-                controller_id="controller",
-                execution_id=handle.execution_id,
-                invocation_id="inv",
-                turn_id="turn-1",
-                prompt="p",
-                max_tool_calls=0,
+    with patch("ach_agent.execution.service.log_engine_tool") as engine_log:
+        events = [
+            event
+            async for event in service.turn(
+                TurnRequest(
+                    controller_id="controller",
+                    execution_id=handle.execution_id,
+                    invocation_id="inv",
+                    turn_id="turn-1",
+                    prompt="p",
+                    max_tool_calls=0,
+                )
             )
-        )
-    ]
+        ]
     tool_events = [event for event in events if event.kind == "tool"]
     assert len(tool_events) == 2
-    captured = capfd.readouterr()
-    output = captured.out + captured.err
-    assert output.count("engine: tool") == 1
-    assert "execution_id=" + handle.execution_id in output
+    assert engine_log.call_count == 2
+    assert engine_log.call_args_list[1].kwargs["execution_id"] == handle.execution_id
     await service.release(
         ReleaseRequest(
             controller_id="controller",

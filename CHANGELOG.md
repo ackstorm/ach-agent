@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   duplicating tool logs. Streaming and tool statistics are preserved.
 - Harness HTTP forwarding diagnostics use explicit `proxy: model forward` and
   `proxy: mcp forward` names to distinguish transport from native engine activity.
+- A lost engine controller now shuts down Harness through its normal cleanup path,
+  allowing Kubernetes to restart it and initialize a fresh engine connection.
+  Transient readiness failures do not restart Harness or replay work.
 
 ## [0.16.3] - 2026-09-14
 

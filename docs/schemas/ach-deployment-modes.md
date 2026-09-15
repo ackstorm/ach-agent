@@ -4,14 +4,16 @@ This supersedes the previous storage proposal. ACH renders placement, environmen
 and generic storage. ACH Agent owns the contents, native tool paths and compatibility.
 Do not add renderer branches for codemem, OpenCode, Pi, skills or hydration artifacts.
 
-Status: the HTTP probe contract below targets `ghcr.io/ackstorm/ach-agent:v0.16.3`.
-It supersedes v0.16.2's command-based probes. Use the new image after its release
-workflow publishes it. Kubernetes operator integration still needs joint cluster e2e.
+Status: `ghcr.io/ackstorm/ach-agent:v0.16.3` is published for linux/amd64 and linux/arm64.
+It supersedes v0.16.2's command-based probes. Kubernetes operator integration still
+needs joint cluster e2e.
 
 ## Placement and image
 
-Keep `AgentProfile.spec.placement`, optional enum `standalone | distributed`,
-default `standalone`. Profile-only; never render it into `config.json`.
+Placement is operator configuration: `AgentProfile.spec.achagent.placement` and
+`ACHAgent.spec.placement`, with values `standalone | distributed` and default
+`standalone`, as reported by the ACH operator team. The operator owns resolution
+between the two fields. Never render placement into Agent's `config.json`.
 
 - Standalone: existing Deployment with one container and no role arguments.
 - Distributed: one Deployment, one replica, three ordinary containers in one pod.
@@ -84,6 +86,11 @@ on Channels in distributed mode. No internal Services, HMAC keys,
 service-account token or extra RBAC.
 Retain restricted security contexts and separate PID namespaces.
 
+Recommended pod setting: `enableServiceLinks: false`, to suppress automatic
+Service environment variables. Explicit environment and DNS-based Service access
+remain the intended discovery mechanisms; this is not a network isolation control.
+See [Kubernetes Service discovery](https://kubernetes.io/docs/concepts/services-networking/service/#environment-variables).
+
 ## Probes
 
 Use ordinary Kubernetes `httpGet` probes for every container. No exec probe,
@@ -125,5 +132,17 @@ Validate standalone output unchanged; distributed container/env/mount shape;
 persistent and temporary startup; one real channel turn with Harness-side prepare;
 a second turn reusing its session; and Engine unable to read Harness-private files.
 
-Separate Deployments, new queues, autoscaling and release publication are not part
-of this renderer change. We will provide the validated image before joint e2e.
+Track deployment rendering, startup readiness and real invocation evidence
+separately. `WorkloadApplied=True` proves neither successful hydration nor Pod
+readiness. Kind can exercise runtime startup and channel/session behavior when
+configured with reachable ACH and model endpoints; a live-model cluster run
+remains a separate integration check. Existing Compose evidence does not replace
+operator-rendered Kubernetes coverage.
+
+The operator team reports that the current e2e fixture uses
+`ACH_BASE_URL=http://localhost:8080`. From an agent pod this targets the agent pod
+itself, not ACH. Fix the fixture's advertised/download URLs to addresses reachable
+from agent pods before requiring Pod Ready; preserve any host-facing login/callback
+requirements separately. Do not bypass hydration or weaken readiness to pass e2e.
+
+Separate Deployments, new queues and autoscaling are not part of this renderer change.

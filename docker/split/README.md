@@ -103,3 +103,18 @@ Standalone deployments retain their explicit path compatibility.
 `ach-agent-secrets`. Production ACH must render those objects, images, generic
 data roots, and secret references. Adding these
 examples does not mutate a cluster or complete that separate repository handoff.
+
+## Logs by role
+
+- Channels logs inbound events and delivery.
+- Harness logs hydration, prepare/cleanup, invocation lifecycle, final responses
+  and usage summaries. Its proxy diagnostics describe upstream HTTP forwarding.
+- Engine logs prompts, native model activity and tool actions/results. It still
+  streams events to Harness for UI delivery and statistics; Harness does not log
+  a second copy of each tool action.
+
+Native model activity and proxy diagnostics describe different observations:
+the engine sees the native agent's generation events; the harness sees upstream
+HTTP status and transport failures. Neither requires forwarding log lines across
+the control socket. In standalone mode these responsibilities stay the same,
+with the local mini-harness child sharing the application's output destination.

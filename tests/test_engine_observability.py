@@ -104,3 +104,26 @@ def test_usage_round_trips_through_stats_for_summary(capfd):
     assert usage.output_tokens == 40
     assert usage.cost == 0.0031
     assert usage.duration_ms == 1200
+
+
+def test_harness_records_tools_without_logging_activity():
+    from structlog.testing import capture_logs
+
+    from ach_agent.boot.tooling import make_tool_recorder
+    from ach_agent.channels.message_event import MessageEvent
+    from ach_agent.stats.sink import StatsSink
+
+    recorded = []
+    sink = StatsSink(None, on_record=recorded.append)
+    event = MessageEvent(
+        idempotency_key="event", session_key="lane", channel_name="webhook", payload={}
+    )
+    recorder = make_tool_recorder(None, sink, event, "test-model")
+    common = dict(session_id="native", part_id="part", message_id="message", call_id="call")
+    with capture_logs() as logs:
+        recorder(OpenCodeToolUpdate(tool_name="bash", state=ToolStateRunning(), **common))
+        recorder(OpenCodeToolUpdate(
+            tool_name="bash", state=ToolStateCompleted(output="result"), **common
+        ))
+    assert len(recorded) == 1
+    assert not any(record["event"] == "engine: tool" for record in logs)

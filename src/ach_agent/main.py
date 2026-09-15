@@ -326,6 +326,11 @@ async def _refresh_engine_readiness(client: Any, state: HealthState) -> None:
         state.ready = False
 
 
+def _controller_loss_requires_shutdown(client: Any, state: HealthState) -> bool:
+    """Return true only for an irreversible loss outside intentional drain."""
+    return bool(client.controller_lost and not state.draining)
+
+
 def _graceful_stop_timeout(cfg: AgentConfig) -> float:
     """Bound normal E cleanup by the longest configured workspace hook."""
     hook_seconds = [
@@ -1037,10 +1042,18 @@ async def _run_harness(
     state: HealthState = app.extra["state"]
     readiness_task: asyncio.Task[None] | None = None
     state.ready = False
+    # A controller stream is a one-lifetime ownership boundary.  If E disappears
+    # after H has claimed it, this process cannot safely replay or reclaim the
+    # controller; the supervisor must restart H for a fresh hydration/claim cycle.
+    shutdown_event: asyncio.Event = asyncio.Event()
 
     async def watch_engine_readiness() -> None:
         while True:
             await _refresh_engine_readiness(client, state)
+            if _controller_loss_requires_shutdown(client, state):
+                log.error("execution controller lost; restarting harness")
+                shutdown_event.set()
+                return
             await asyncio.sleep(0.5)
 
     readiness_task = asyncio.create_task(watch_engine_readiness())
@@ -1120,8 +1133,6 @@ async def _run_harness(
     # Install SIGTERM handler via loop.add_signal_handler (NOT signal.signal).
     # RESEARCH Pitfall 2: uvicorn uses signal.signal() inside capture_signals() —
     # loop.add_signal_handler uses signalfd on Linux and coexists with signal.signal.
-    shutdown_event: asyncio.Event = asyncio.Event()
-
     def _on_sigterm() -> None:
         # Idempotent: a repeat SIGTERM/SIGINT during drain (or a late handler
         # invocation as uvicorn restores its own signal handlers on shutdown) must

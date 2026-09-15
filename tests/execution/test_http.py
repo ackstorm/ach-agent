@@ -21,7 +21,7 @@ from ach_agent.execution.app import (
 )
 from ach_agent.execution.service import ExecutionService
 from ach_agent.execution.wire import AcquireRequest, PublicEngineConfig, TurnRequest
-from ach_agent.main import _refresh_engine_readiness
+from ach_agent.main import _controller_loss_requires_shutdown, _refresh_engine_readiness
 
 
 def _client(app):
@@ -201,6 +201,17 @@ async def test_refresh_engine_readiness_fails_closed(
     state = HealthState(ready=True)
     await _refresh_engine_readiness(client, state)
     assert state.ready is False
+
+
+@pytest.mark.parametrize(
+    "controller_lost, draining, expected",
+    [(True, False, True), (True, True, False), (False, False, False)],
+)
+def test_controller_loss_shutdown_only_applies_outside_intentional_drain(
+    controller_lost: bool, draining: bool, expected: bool
+) -> None:
+    client = type("Client", (), {"controller_lost": controller_lost})()
+    assert _controller_loss_requires_shutdown(client, HealthState(draining=draining)) is expected
 
 
 @pytest.mark.asyncio

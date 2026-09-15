@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.16.4] - 2026-09-15
+
+### Fixed
+
+- Engine now owns prompt, native model-generation and tool activity logs. Harness
+  retains preparation, lifecycle, final responses and usage summaries without
+  duplicating tool logs. Streaming and tool statistics are preserved.
+- Harness HTTP forwarding diagnostics use explicit `proxy: model forward` and
+  `proxy: mcp forward` names to distinguish transport from native engine activity.
+
 ## [0.16.3] - 2026-09-14
 
 ### Fixed

@@ -17,7 +17,9 @@ export ACH_CONFIG_FILE="$ROOT_DIR/tests/integration/fixtures/pvc-transition-conf
 cleanup() {
   "${STANDALONE[@]}" down --remove-orphans >/dev/null 2>&1 || true
   "${DISTRIBUTED[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
-  docker run --rm --user 0 -v "$PVC_DIR:/base" "$IMAGE" chmod -R u+rwx /base >/dev/null 2>&1 || true
+  docker run --rm --user 0 --entrypoint python -v "$PVC_DIR:/data" "$IMAGE" -c \
+    'from pathlib import Path; import shutil; root=Path("/data"); [shutil.rmtree(p) if p.is_dir() and not p.is_symlink() else p.unlink() for p in root.iterdir()]' \
+    >/dev/null 2>&1 || true
   rm -rf "$PVC_DIR"
 }
 trap cleanup EXIT INT TERM
@@ -41,7 +43,7 @@ wait_ingress() {
   local port=""
   for _ in $(seq 1 60); do
     port="$(docker compose -p "${PROJECT}-${mode}" -f "$file" port "$service" 8080 2>/dev/null | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p' | head -1 || true)"
-    if [ -n "$port" ] && curl -fsS "http://127.0.0.1:${port}/healthz" >/dev/null 2>&1; then
+    if [ -n "$port" ] && curl -fsS "http://127.0.0.1:${port}/readyz" >/dev/null 2>&1; then
       INGRESS_PORT="$port"
       return 0
     fi
@@ -67,14 +69,10 @@ wait_completion() {
   local file="$ROOT_DIR/docker/split/compose-pvc-transition-${mode}.yaml"
   if [ "$mode" = standalone ]; then
     for _ in $(seq 1 60); do
-      if docker compose -p "$compose_name" -f "$file" exec -T pvc-upstream python - <<'PY' >/dev/null 2>&1
-import json, urllib.request
-with urllib.request.urlopen("http://127.0.0.1:9080/health") as r:
-    stats = json.load(r)
-    raise SystemExit(0 if stats["counts"].get("tool_turn", 0) >= 1 and "standalone-marker" in stats["marker_results"] else 1)
-PY
-      then
-        echo "standalone native tool evidence: active-marker=standalone-marker"
+      logs="$(docker compose -p "$compose_name" -f "$file" logs --no-color standalone 2>/dev/null || true)"
+      if printf '%s\n' "$logs" | grep 'engine: response' | grep -q 'standalone-marker' && \
+         printf '%s\n' "$logs" | grep -q 'engine: summary'; then
+        echo "standalone harness terminal response observed: active-marker=standalone-marker"
         return 0
       fi
       sleep 1
@@ -84,20 +82,14 @@ PY
   fi
   docker compose -p "$compose_name" -f "$file" exec -T "$service" python - "$id" "$mode" <<'PY'
 import asyncio, sys
-import httpx
 from ach_agent.channels.client import ChannelsClient
 from ach_agent.channels.envelopes import EventRef
 
 async def main() -> None:
     event_id, mode = sys.argv[1:]
-    if mode == "standalone":
-        client = ChannelsClient(socket_path="/dev/null", http_client=httpx.AsyncClient(base_url="http://127.0.0.1:8080", timeout=30), poll_interval=0.2, wait_timeout=25)
-        client.agent = "pvc-transition"
-    else:
-        client = ChannelsClient("/run/ach-agent/channels/channel.sock", poll_interval=0.2, wait_timeout=25)
+    client = ChannelsClient("/run/ach-agent/channels/channel.sock", poll_interval=0.2, wait_timeout=25)
     try:
-        if mode != "standalone":
-            client.agent = (await client.fetch_config()).agent_name
+        client.agent = (await client.fetch_config()).agent_name
         result = await client.wait(EventRef(agent=client.agent, channel_name="acceptance", idempotency_key=event_id))
         print(result.model_dump_json())
         if result.state != "completed":

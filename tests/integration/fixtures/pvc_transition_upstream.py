@@ -79,52 +79,6 @@ def _chat_response(*, tool: bool, marker: str) -> StreamingResponse:
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
-def _responses_response(*, tool: bool, marker: str) -> StreamingResponse:
-    item_id = "pvc-read-marker"
-    response_id = "pvc-response"
-    if tool:
-        events = [
-            {"type": "response.output_item.added", "response_id": response_id, "output_index": 0,
-             "item": {"id": item_id, "type": "function_call", "name": "bash", "call_id": item_id,
-                       "arguments": ""}},
-            {"type": "response.function_call_arguments.delta", "item_id": item_id,
-             "delta": '{"command":"cat active-marker"}'},
-            {"type": "response.output_item.done", "response_id": response_id, "output_index": 0,
-             "item": {"id": item_id, "type": "function_call", "name": "bash", "call_id": item_id,
-                       "arguments": '{"command":"cat active-marker"}'}},
-        ]
-    else:
-        text = json.dumps({"action": "none", "text": f"marker={marker}"})
-        events = [{"type": "response.output_text.delta", "delta": text},
-                  {"type": "response.output_text.done", "text": text}]
-
-    async def stream() -> Any:
-        for event in events:
-            yield ("data: " + json.dumps(event) + "\n\n").encode()
-        yield b"data: [DONE]\n\n"
-    return StreamingResponse(stream(), media_type="text/event-stream")
-
-
-@app.post("/v1/responses", response_model=None)
-async def responses(request: Request) -> StreamingResponse | JSONResponse:
-    if not _auth(request):
-        return JSONResponse({"detail": "unauthorized"}, status_code=401)
-    body = await request.json()
-    counts["model"] += 1
-    items = body.get("input", [])
-    if not isinstance(items, list):
-        items = []
-    body_for_scan = {"messages": items}
-    has_result, marker = _has_tool_result(body_for_scan)
-    if "standalone-marker" in json.dumps(items):
-        counts["prior_history_seen"] += 1
-    if has_result:
-        counts["tool_turn"] += 1
-        if marker:
-            marker_results.append(marker)
-    return _responses_response(tool=not has_result, marker=marker or "unknown")
-
-
 @app.post("/v1/chat/completions", response_model=None)
 async def chat(request: Request) -> StreamingResponse | JSONResponse:
     if not _auth(request):

@@ -102,34 +102,39 @@ PY
   cancel_task="$(submit_channel cancel "$cancel_id")"
   [ -n "$cancel_task" ] || { echo "cancel admission had no task id" >&2; return 1; }
   wait_cancel_started
+  harness_id="$(${COMPOSE[@]} ps -aq harness)"
+  [ -n "$harness_id" ] || { echo "harness container id unavailable" >&2; return 1; }
   cancel_started="$(date +%s)"
   "${COMPOSE[@]}" kill engine >/dev/null
-  echo "$target cancellation seconds: $(( $(date +%s) - cancel_started ))"
 
   # E failure is observed by H's controller monitor. H exits cleanly; this compose
   # acceptance project has no restart policy, so the stopped container is evidence.
   for _ in $(seq 1 30); do
-    harness_id="$(${COMPOSE[@]} ps -q harness)"
-    if [ -n "$harness_id" ] && [ "$(docker inspect -f '{{.State.Running}}' "$harness_id")" = false ]; then
+    if [ "$(docker inspect -f '{{.State.Running}}' "$harness_id")" = false ]; then
       echo "$target controller loss: harness exited for supervisor restart"
       break
     fi
     sleep 1
   done
-  [ -n "${harness_id:-}" ] && [ "$(docker inspect -f '{{.State.Running}}' "$harness_id")" = false ] || {
+  [ "$(docker inspect -f '{{.State.Running}}' "$harness_id")" = false ] \
+    && [ "$(docker inspect -f '{{.State.ExitCode}}' "$harness_id")" = 0 ] || {
     echo "$target harness did not exit after controller loss" >&2
     "${COMPOSE[@]}" logs --no-color harness engine >&2 || true
     return 1
   }
+  echo "$target cancellation seconds: $(( $(date +%s) - cancel_started ))"
 
   # Channels shares H's network namespace, so probe its private listener from C.
   for _ in $(seq 1 30); do
     if "${COMPOSE[@]}" exec -T channels python - <<'PY' >/dev/null 2>&1
+import urllib.error
 import urllib.request
 
 try:
     response = urllib.request.urlopen("http://127.0.0.1:8080/readyz", timeout=2)
-except Exception:
+except urllib.error.HTTPError as error:
+    raise SystemExit(0 if error.code == 503 else 1)
+except urllib.error.URLError:
     raise SystemExit(1)
 raise SystemExit(0 if response.status == 503 else 1)
 PY

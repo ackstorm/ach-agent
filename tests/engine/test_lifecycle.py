@@ -271,7 +271,7 @@ async def test_consume_streams_suffix_separates_parts_and_emits_tools() -> None:
     assert tools[0].tool_name == "mcp-x_auth_wait"
 
 
-async def test_consume_filters_events_from_other_sessions() -> None:
+async def test_consume_filters_events_from_other_sessions(capfd) -> None:
     """finding 4: a shared opencode server multiplexes several sessions' SSE
     traffic onto one stream. A child session's full event lifecycle — text,
     tool, usage, error, AND idle — must never count toward or terminate the
@@ -300,6 +300,9 @@ async def test_consume_filters_events_from_other_sessions() -> None:
         OpenCodeSessionError("child", "boom", "child blew up"),
         OpenCodeSessionIdle("child"),
         # The requested (parent) session's real turn.
+        OpenCodeUsage("ses", "m1", 1, 2, 0, 0, 0.0, 1),
+        OpenCodeUsage("ses", "m1", 1, 2, 0, 0, 0.0, 1),  # reconnect snapshot
+        OpenCodeUsage("ses", "m2", 2, 3, 0, 0, 0.0, 2),
         OpenCodeTextUpdate("ses", "pp", "pm", "parent text"),
         OpenCodeSessionIdle("ses"),
     ]
@@ -318,6 +321,9 @@ async def test_consume_filters_events_from_other_sessions() -> None:
 
     assert text == "parent text", "only the requested session's text is accumulated"
     assert tools == [], "child session's tool update must not count toward the parent's turn"
+    output = capfd.readouterr().out
+    assert output.count("engine: model generation") == 2
+    assert "message_id=m1" in output and "message_id=m2" in output
     # call_count (not await_count): the send is fired via asyncio.create_task and this
     # test's queue is pre-filled, so the loop can reach the parent's idle and return
     # before the event loop happens to schedule that task to completion — the dispatch

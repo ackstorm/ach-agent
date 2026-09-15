@@ -253,9 +253,6 @@ async def test_turn_done_stats_normalize_native_usage_dataclass(fake_driver, cap
     assert done.kind == "turn_done"
     assert done.payload["stats"]["usage"]["input_tokens"] == 11
     assert done.payload["stats"]["usage"]["duration_ms"] == 42
-    captured = capfd.readouterr()
-    assert "engine: model usage" in captured.out + captured.err
-    assert "message_id=message" in captured.out + captured.err
     await service.release(
         ReleaseRequest(
             controller_id="controller",

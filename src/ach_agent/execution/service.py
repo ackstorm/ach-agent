@@ -1358,21 +1358,6 @@ class ExecutionService:
             inv.cached_ref_pending = False
             stats.pop("on_session_resolved", None)
             if stats.get("usage") is not None:
-                usage = stats["usage"]
-                # Usage is emitted by the native parser with a message id.  Keep this as
-                # a usage event rather than calling it a request/generation: one native
-                # turn may contain retries or multiple model messages.
-                log.info(
-                    "engine: model usage",
-                    execution_id=inv.handle.execution_id,
-                    invocation_id=inv.handle.invocation_id,
-                    turn_id=request.turn_id,
-                    session_id=getattr(usage, "session_id", inv.current_ref or ""),
-                    message_id=getattr(usage, "message_id", ""),
-                    input_tokens=getattr(usage, "input_tokens", 0),
-                    output_tokens=getattr(usage, "output_tokens", 0),
-                    duration_ms=getattr(usage, "duration_ms", 0),
-                )
                 usage_event = ExecutionEvent(
                     kind="usage",
                     execution_id=inv.handle.execution_id,

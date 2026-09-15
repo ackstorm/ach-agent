@@ -269,6 +269,7 @@ class PiDriver:
 
         text_parts: list[str] = []
         tool_ids: set[str] = set()
+        generation_ids: set[tuple[str, str]] = set()
         aborted = False
         try:
             while True:
@@ -295,6 +296,17 @@ class PiDriver:
                 usage = pe.pi_usage(event, ref)
                 if usage is not None:
                     stats["usage"] = usage
+                    key = (usage.session_id, usage.message_id)
+                    if not usage.message_id or key not in generation_ids:
+                        generation_ids.add(key)
+                        log.info(
+                            "engine: model generation",
+                            session_id=usage.session_id,
+                            message_id=usage.message_id,
+                            input_tokens=usage.input_tokens,
+                            output_tokens=usage.output_tokens,
+                            duration_ms=usage.duration_ms,
+                        )
                     continue
                 if pe.is_settled(event) or (
                     event.get("type") == EV_AGENT_END and not event.get("willRetry", False)

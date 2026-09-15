@@ -917,6 +917,7 @@ async def consume_sse_after_send(
     tool_call_ids: set[str] = set()
     aborted = False
     user_message_ids: set[str] = set()
+    generation_seen: set[tuple[str, str]] = set()
     result_queue: asyncio.Queue = asyncio.Queue()  # type: ignore[type-arg]
     send_task: asyncio.Task[None] | None = None
     sent = False
@@ -1050,6 +1051,21 @@ async def consume_sse_after_send(
                             # keep consuming — session.idle arrives after the abort
                     elif isinstance(event, OpenCodeUsage):
                         acc.add_usage(event)
+                        key = (event.session_id, event.message_id)
+                        if (
+                            event.message_id
+                            and event.duration_ms > 0
+                            and key not in generation_seen
+                        ):
+                            generation_seen.add(key)
+                            log.info(
+                                "engine: model generation",
+                                session_id=event.session_id,
+                                message_id=event.message_id,
+                                input_tokens=event.input_tokens,
+                                output_tokens=event.output_tokens,
+                                duration_ms=event.duration_ms,
+                            )
                     elif isinstance(event, OpenCodeSessionIdle):
                         log.debug("session.idle received", session_id=session_id)
                         if stats is not None:

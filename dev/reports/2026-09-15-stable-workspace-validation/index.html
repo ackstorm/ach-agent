@@ -18,7 +18,7 @@
     
     
       
-        <title>ACH operator handoff: distributed placement - ach-agent</title>
+        <title>Stable workspace placement validation — 2026-09-15 - ach-agent</title>
       
     
     
@@ -70,7 +70,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#ach-operator-handoff-distributed-placement" class="md-skip">
+        <a href="#stable-workspace-placement-validation-2026-09-15" class="md-skip">
           Skip to content
         </a>
       
@@ -106,7 +106,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ACH operator handoff: distributed placement
+              Stable workspace placement validation — 2026-09-15
             
           </span>
         </div>
@@ -315,54 +315,27 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#placement-and-image" class="md-nav__link">
+  <a href="#implementation-and-contract" class="md-nav__link">
     <span class="md-ellipsis">
-      Placement and image
+      Implementation and contract
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#environment-and-configuration" class="md-nav__link">
+  <a href="#verification" class="md-nav__link">
     <span class="md-ellipsis">
-      Environment and configuration
+      Verification
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#distributed-data-mounts" class="md-nav__link">
+  <a href="#native-persistent-transition" class="md-nav__link">
     <span class="md-ellipsis">
-      Distributed data mounts
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#ipc-and-networking" class="md-nav__link">
-    <span class="md-ellipsis">
-      IPC and networking
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#probes" class="md-nav__link">
-    <span class="md-ellipsis">
-      Probes
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#responsibility-and-acceptance" class="md-nav__link">
-    <span class="md-ellipsis">
-      Responsibility and acceptance
+      Native persistent transition
     </span>
   </a>
   
@@ -386,216 +359,94 @@
   
 
 
-<h1 id="ach-operator-handoff-distributed-placement">ACH operator handoff: distributed placement</h1>
-<p>This supersedes the previous storage proposal. ACH renders placement, environment
-and generic storage. ACH Agent owns the contents, native tool paths and compatibility.
-Do not add renderer branches for codemem, OpenCode, Pi, skills or hydration artifacts.</p>
-<p>Runtime version for this storage contract: <code>ghcr.io/ackstorm/ach-agent:v0.16.5</code>.
-Use the matching operator mounts below. The corrected existing-PVC transition
-still needs joint Kubernetes e2e; local evidence is recorded in the
-<a href="../../reports/2026-09-15-stable-workspace-validation/">stable workspace validation report</a>.</p>
-<h2 id="placement-and-image">Placement and image</h2>
-<p>Placement is operator configuration: <code>AgentProfile.spec.achagent.placement</code> and
-<code>ACHAgent.spec.placement</code>, with values <code>standalone | distributed</code> and default
-<code>standalone</code>, as reported by the ACH operator team. The operator owns resolution
-between the two fields. Never render placement into Agent's <code>config.json</code>.</p>
+<h1 id="stable-workspace-placement-validation-2026-09-15">Stable workspace placement validation — 2026-09-15</h1>
+<p>The earlier <a href="../2026-09-15-pvc-placement-transition/">live transition report</a>
+records the failure on v0.16.4. This correction preserves the original persistent
+workspace directory rather than relocating native sessions.</p>
+<h2 id="implementation-and-contract">Implementation and contract</h2>
+<p>Persistent standalone and distributed resolve the default workspace to
+<code>&lt;mountPath&gt;/home/workspace</code>. Standalone defaults are unchanged. The obsolete
+workspace-copy helper and its startup call are removed. Native engine adapters,
+session mappings and the configuration schema are unchanged.</p>
+<p>The operator must mount PVC subPath <code>home/workspace</code> at that path in Harness.
+Engine mounts subPath <code>home</code> and sees the same physical workspace through it.
+Harness never receives the whole Engine home. Image and renderer must be rolled
+out together; the old distributed <code>workspace</code> subPath is not equivalent.</p>
+<p>The Compose examples use separate home/workspace volumes, mounting the workspace
+at the same nested path in Engine and Harness. The persistent transition fixture
+instead uses a single host data tree to reproduce the existing-PVC layout.</p>
+<h2 id="verification">Verification</h2>
 <ul>
-<li>Standalone: existing Deployment with one container and no role arguments.</li>
-<li>Distributed: one Deployment, one replica, three ordinary containers in one pod.</li>
-<li>Same combined image for all containers. Preserve the image entrypoint (tini is
-  already included); set only <code>args: ["--role", "channels"]</code> (or <code>harness</code>, <code>engine</code>).</li>
-<li>Keep Recreate, the existing scheduling/resource settings and public Service.</li>
+<li>Regression proof: the new persistent path-equality test fails for both Pi and
+  OpenCode when executed against the baseline resolver from <code>a18489c</code>.</li>
+<li>Fixed full suite: <strong>1,215 passed, 3 skipped</strong>.</li>
+<li>Conformance: <strong>18 passed</strong>.</li>
+<li>Ruff, formatting, strict mypy and strict documentation build pass.</li>
+<li>No schema/config-model diff against <code>a18489c</code>.</li>
+<li>Real <code>scripts/test-split.sh</code>: OpenCode and Pi completed two turns, reused their
+  native session, passed environment/hook checks, and failed readiness after
+  controller loss while Harness exited for supervisor restart. Exit status 0.</li>
 </ul>
-<h2 id="environment-and-configuration">Environment and configuration</h2>
-<p>For this increment Channels and Harness receive the same existing operator-supplied
-environment. Both are trusted components. Engine receives only the environment
-entries explicitly selected by <code>engine.forwardEnv</code>, resolved by the operator from
-that same environment. Do not copy unrestricted <code>envFrom</code> into Engine.</p>
-<p>Mount the complete configuration only in Harness and retain
-<code>ACH_CONFIG_PATH=/etc/ach-agent/config.json</code> there when using that path.
-Channels obtains its source configuration from Harness. Engine obtains only its
-public launch inputs.</p>
-<p>Keep the existing <code>engine.forwardEnv</code> configuration field. The mini-harness passes
-the selected environment to native children. ACH does not generate native
-configuration or bootstrap files.</p>
-<h2 id="distributed-data-mounts">Distributed data mounts</h2>
-<p>Resolve one base path:</p>
-<div class="highlight"><pre><span></span><code>persistent:     base = persistence.mountPath
-nonpersistent:  base = /tmp/ach-agent
-</code></pre></div>
-<p>Mount exactly these generic data directories:</p>
+<h2 id="native-persistent-transition">Native persistent transition</h2>
+<p>Root independently ran <code>scripts/test-pvc-transition.sh</code> for both engines against
+the locally built combined image <code>ach-agent:pvc-stable-review</code>. Both runs exited
+<strong>0</strong>, including cleanup. This uses real native binaries and a deterministic local
+model fixture, not a live model provider.</p>
 <table>
 <thead>
 <tr>
-<th>Directory</th>
-<th>Harness</th>
-<th>Engine</th>
-<th>Channels</th>
+<th>Check</th>
+<th>OpenCode</th>
+<th>Pi</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>base/state</code></td>
-<td>Read/write</td>
-<td>Absent</td>
-<td>Absent</td>
+<td>Standalone Harness terminal response and summary observed</td>
+<td>Pass</td>
+<td>Pass</td>
 </tr>
 <tr>
-<td><code>base/home</code></td>
-<td>Absent</td>
-<td>Read/write</td>
-<td>Absent</td>
+<td>Native session reference unchanged after split</td>
+<td>Pass</td>
+<td>Pass</td>
 </tr>
 <tr>
-<td><code>base/home/workspace</code></td>
-<td>Read/write</td>
-<td>Read/write through <code>base/home</code></td>
-<td>Absent</td>
+<td>Prior standalone history present in distributed provider requests</td>
+<td>Pass</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Native tool reads <code>distributed-marker</code> written through Harness</td>
+<td>Pass</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Distributed invocation has actual completed result</td>
+<td>Pass</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Harness cannot access Engine session storage</td>
+<td>Pass</td>
+<td>Pass</td>
 </tr>
 </tbody>
 </table>
-<p>Use these exact subpaths on the existing PVC when persistent: <code>state</code>, <code>home</code>, and
-<code>home/workspace</code>. Harness mounts <code>home/workspace</code>; Engine mounts <code>home</code>, with the
-same <code>home/workspace</code> subpath visible at its historical absolute path. For
-temporary deployments, <code>emptyDir</code> backing with the same three-directory ownership
-is sufficient.
-Do not expose the entire base volume to every container. Each container also gets
-its own writable <code>/tmp</code>.</p>
-<p>These directories are opaque to ACH. ACH Agent places native HOME, sessions, tool
-databases and workspaces within them. The renderer must not derive
-extra mounts from <code>engine.home</code>, <code>engine.workDir</code>, memory settings or the selected
-engine. Standalone keeps its existing storage/configuration behavior.</p>
-<p>Additionally mount one separate <code>emptyDir</code> at <code>/run/ach-agent/transfer</code>, read/write
-in Harness and Engine, absent in Channels. This is temporary startup handoff
-storage, including when persistence is enabled. ACH Agent creates and removes its
-own download batches there; the operator does not manage their contents.</p>
-<h2 id="ipc-and-networking">IPC and networking</h2>
-<p>Keep two separate IPC directories:</p>
-<table>
-<thead>
-<tr>
-<th>Mount</th>
-<th>Harness</th>
-<th>Engine</th>
-<th>Channels</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>/run/ach-agent/channels</code></td>
-<td>Read/write</td>
-<td>Absent</td>
-<td>Read-only</td>
-</tr>
-<tr>
-<td><code>/run/ach-agent/engine</code></td>
-<td>Read-only</td>
-<td>Read/write</td>
-<td>Absent</td>
-</tr>
-</tbody>
-</table>
-<p>Mount directories, not individual socket files. Use UID/GID 10001 and
-<code>fsGroup: 10001</code>; verify fresh volume/subpath writability in e2e.</p>
-<p>The pod shares its normal network namespace. Public ingress/health port 8080 lives
-on Channels in distributed mode. No internal Services, HMAC keys,
-service-account token or extra RBAC.
-Retain restricted security contexts and separate PID namespaces.</p>
-<p>Recommended pod setting: <code>enableServiceLinks: false</code>, to suppress automatic
-Service environment variables. Explicit environment and DNS-based Service access
-remain the intended discovery mechanisms; this is not a network isolation control.
-See <a href="https://kubernetes.io/docs/concepts/services-networking/service/#environment-variables">Kubernetes Service discovery</a>.</p>
-<h2 id="probes">Probes</h2>
-<p>Use ordinary Kubernetes <code>httpGet</code> probes for every container. No exec probe,
-image healthcheck command or Unix-socket client is required.</p>
-<table>
-<thead>
-<tr>
-<th>Role</th>
-<th>HTTP port</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Channels</td>
-<td>8080</td>
-</tr>
-<tr>
-<td>Harness</td>
-<td>8090</td>
-</tr>
-<tr>
-<td>Engine</td>
-<td>8081</td>
-</tr>
-</tbody>
-</table>
-<p>ACH Agent binds the health listeners to <code>0.0.0.0</code>. The new Harness/Engine TCP
-listeners expose health endpoints only; application traffic keeps using Unix
-sockets. No additional Service or operator-injected environment is needed.</p>
-<p>Use <code>/readyz</code> for startup/readiness and <code>/healthz</code> for liveness:</p>
-<table>
-<thead>
-<tr>
-<th>Probe</th>
-<th>Initial delay</th>
-<th>Period</th>
-<th>Timeout</th>
-<th>Failure threshold</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Startup</td>
-<td>15s</td>
-<td>5s</td>
-<td>3s</td>
-<td>6</td>
-</tr>
-<tr>
-<td>Readiness</td>
-<td>0s</td>
-<td>10s</td>
-<td>3s</td>
-<td>3</td>
-</tr>
-<tr>
-<td>Liveness</td>
-<td>0s</td>
-<td>20s</td>
-<td>3s</td>
-<td>3</td>
-</tr>
-</tbody>
-</table>
-<p>Standalone retains its existing configured HTTP port and the same endpoints.
-Readiness has the same semantics in both placements: initialization must finish,
-including hydration copy, native configuration and directory preparation, before
-readiness succeeds. This happens at startup, without waiting for an event. Harness
-and Channels readiness reflects required downstream readiness, including engine
-loss after startup. ACH Agent owns this logic; the operator only renders probes.
-Profile resources apply to each container; document the resulting total pod requests.</p>
-<h2 id="responsibility-and-acceptance">Responsibility and acceptance</h2>
-<p>ACH Agent is responsible for internal path resolution and retaining existing
-native data during supported upgrades. Do not implement tool-specific migration,
-Git preparation or file copying in the operator.</p>
-<p>The stable workspace path requires a coordinated image and mount rollout.
-<code>v0.16.4</code> used the old distributed default (<code>base/workspace</code>) and is not
-compatible with the corrected persistent mount contract. Roll out an image that
-uses <code>base/home/workspace</code> together with the operator's <code>state</code>, <code>home</code>, and
-<code>home/workspace</code> subpaths; do not pair the corrected mounts with an older image.
-The original placement failure and its evidence remain in the
-<a href="../../reports/2026-09-15-pvc-placement-transition/">live transition report</a>.</p>
-<p>Validate standalone output unchanged; distributed container/env/mount shape;
-persistent and temporary startup; one real channel turn with Harness-side prepare;
-a second turn reusing its session; and Engine unable to read Harness-private files.</p>
-<p>Track deployment rendering, startup readiness and real invocation evidence
-separately. <code>WorkloadApplied=True</code> proves neither successful hydration nor Pod
-readiness. Kind can exercise runtime startup and channel/session behavior when
-configured with reachable ACH and model endpoints; a live-model cluster run
-remains a separate integration check. Existing Compose evidence does not replace
-operator-rendered Kubernetes coverage.
-Separate Deployments, new queues and autoscaling are not part of this renderer change.</p>
+<p>OpenCode retained <code>ses_f5b7603f1ffeeaRqBbIZd3LqZ0</code>. Pi retained the same JSONL
+session file ending in <code>01a0a489-fd5a-77c3-b4d7-ff7ce9a254a2.jsonl</code>.
+Both distributed upstream fixtures recorded message counts <code>[6, 8]</code>,
+<code>prior_history_seen=2</code> and a tool result containing <code>distributed-marker</code>.
+The upstream fixtures restart between placements; this history comes from native
+session storage. Neither fixture places marker values in the submitted prompt.</p>
+<p>The standalone completion assertion checks real Harness response/summary logs;
+upstream traffic alone does not count as completed work. Distributed completion
+uses the existing event-result API. Failed fixture iterations exposed test wiring,
+log-pipeline and temporary-file cleanup errors; these were corrected before the
+independent final runs.</p>
+<p>No corrected operator-rendered Kubernetes transition has been run yet. This does
+not validate custom layouts or already-populated distributed <code>base/workspace</code>
+volumes. The live GitLab reviewer has not been changed by this work.</p>
 
 
 

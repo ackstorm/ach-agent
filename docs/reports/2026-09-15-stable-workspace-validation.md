@@ -61,6 +61,9 @@ uses the existing event-result API. Failed fixture iterations exposed test wirin
 log-pipeline and temporary-file cleanup errors; these were corrected before the
 independent final runs.
 
-No corrected operator-rendered Kubernetes transition has been run yet. This does
-not validate custom layouts or already-populated distributed `base/workspace`
-volumes. The live GitLab reviewer has not been changed by this work.
+The corrected operator-rendered transition subsequently passed on EKS with both
+native engines and a live model; see the
+[EKS acceptance report](2026-09-15-operator-v815-eks-acceptance.md).
+Neither run validates custom layouts or already-populated distributed
+`base/workspace` volumes. The live GitLab reviewer has not been changed by these
+acceptance tests.

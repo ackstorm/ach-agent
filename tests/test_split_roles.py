@@ -159,8 +159,7 @@ def test_local_mcp_reference_cannot_readd_config_secret(
                 "name": "cron",
                 "type": "cron",
                 "cron": {"schedule": "* * * * *"},
-                "prepare": {"script": "true"},
-                "cleanup": {
+                "handoff": {
                     "script": "true",
                     "secretEnv": {"TOKEN": {"env": "GITLAB_TOKEN"}},
                 },

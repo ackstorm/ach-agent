@@ -63,24 +63,23 @@ def test_strip_removes_secret_from_forward_env(cfg_secret_also_forwarded):
     assert "SAFE_VAR" in cleaned
 
 
-def test_cleanup_secret_is_redacted_and_stripped_from_engine() -> None:
+def test_handoff_secret_is_redacted_and_stripped_from_engine() -> None:
     channel = ChannelConfig.model_validate(
         {
-            "name": "cleanup",
+            "name": "handoff",
             "type": "cron",
             "cron": {"schedule": "* * * * *"},
-            "prepare": {"script": "true"},
-            "cleanup": {
+            "handoff": {
                 "script": "true",
-                "secretEnv": {"TOKEN": {"env": "ACH_SECRET_CLEANUP_TOKEN"}},
+                "secretEnv": {"TOKEN": {"env": "ACH_SECRET_HANDOFF_TOKEN"}},
             },
         }
     )
     cfg = AgentConfig(
         channels=[channel],
-        engine=EngineBlock(forward_env=["SAFE_VAR", "ACH_SECRET_CLEANUP_TOKEN"]),
+        engine=EngineBlock(forward_env=["SAFE_VAR", "ACH_SECRET_HANDOFF_TOKEN"]),
         **_base_kwargs(),
     )
 
-    assert "ACH_SECRET_CLEANUP_TOKEN" in collect_secret_env_names(cfg)
+    assert "ACH_SECRET_HANDOFF_TOKEN" in collect_secret_env_names(cfg)
     assert strip_forwarded_secrets(cfg) == ["SAFE_VAR"]

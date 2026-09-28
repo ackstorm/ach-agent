@@ -182,10 +182,9 @@ def test_acceptance_fixtures_cover_harness_hooks_and_selected_env() -> None:
             yaml.safe_load((FIXTURES / name).read_text(encoding="utf-8"))
         )
         acceptance = next(channel for channel in cfg.channels if channel.name == "acceptance")
-        assert acceptance.prepare is not None
-        assert acceptance.cleanup is not None
-        assert acceptance.prepare.secret_env["TOKEN"].env == "SPLIT_PREPARE_TOKEN"
-        assert "SPLIT_PREPARE_TOKEN" not in acceptance.prepare.script
+        assert acceptance.handoff is not None
+        assert acceptance.handoff.secret_env["TOKEN"].env == "SPLIT_PREPARE_TOKEN"
+        assert "SPLIT_PREPARE_TOKEN" not in acceptance.handoff.script
     compose = (SPLIT / "compose-acceptance.yaml").read_text(encoding="utf-8")
     assert "SPLIT_PREPARE_TOKEN: synthetic" in compose
     engine = compose.split("\n  engine:", 1)[1]

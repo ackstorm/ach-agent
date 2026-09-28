@@ -57,50 +57,18 @@ def test_empty_script_and_env_clash_rejected() -> None:
         _block(env={"T": "a"}, secretEnv={"T": {"env": "ACH_SECRET_T"}})
 
 
-def test_prepare_allowed_on_any_channel_type() -> None:
-    """A cron channel may want a workspace too — prepare is outside the type↔block check."""
+def test_handoff_allowed_on_any_channel_type() -> None:
+    """A cron channel may want a workspace too — handoff is outside the type↔block check."""
     ch = ChannelConfig.model_validate(
         {
             "name": "nightly",
             "type": "cron",
             "cron": {"schedule": "0 8 * * *"},
-            "prepare": {"script": "true"},
+            "handoff": {"script": "true"},
         }
     )
-    assert ch.prepare is not None
-
-
-def test_cleanup_uses_prepare_shape() -> None:
-    ch = ChannelConfig.model_validate(
-        {
-            "name": "review",
-            "type": "cron",
-            "cron": {"schedule": "* * * * *"},
-            "prepare": {"script": "true"},
-            "cleanup": {
-                "script": 'rm -rf -- "$ACH_WORKSPACE"',
-                "env": {"MODE": "review"},
-                "secretEnv": {"TOKEN": {"env": "CLEANUP_TOKEN"}},
-                "timeoutSeconds": 30,
-            },
-        }
-    )
-    assert ch.cleanup is not None
-    assert ch.cleanup.env == {"MODE": "review"}
-    assert ch.cleanup.secret_env["TOKEN"].env == "CLEANUP_TOKEN"
-    assert ch.cleanup.timeout_seconds == 30
-
-
-def test_cleanup_requires_prepare() -> None:
-    with pytest.raises(ValidationError, match="cleanup.*requires.*prepare"):
-        ChannelConfig.model_validate(
-            {
-                "name": "review",
-                "type": "cron",
-                "cron": {"schedule": "* * * * *"},
-                "cleanup": {"script": "true"},
-            }
-        )
+    assert ch.handoff is not None
+    assert ch.handoff.scope == "event"
 
 
 # ------------------------------------------------------------------- env / trust boundary
@@ -387,7 +355,7 @@ def test_prepare_secrets_are_stripped_from_forward_env() -> None:
                     "name": "c",
                     "type": "cron",
                     "cron": {"schedule": "0 8 * * *"},
-                    "prepare": {
+                    "handoff": {
                         "script": "true",
                         "secretEnv": {"GITLAB_TOKEN": {"env": "ACH_SECRET_CLONE"}},
                     },

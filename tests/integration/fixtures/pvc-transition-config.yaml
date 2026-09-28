@@ -41,7 +41,7 @@ channels:
     webhook:
       auth:
         type: none
-    prepare:
+    handoff:
       script: >-
         test "$PWD" = "$ACH_WORKSPACE" &&
         { test -f active-marker || printf standalone-marker > active-marker; }

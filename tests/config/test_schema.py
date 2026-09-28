@@ -379,7 +379,7 @@ def test_webhook_script_channel_rejects_agent_lifecycle_blocks() -> None:
 
     from ach_agent.config.schema import ChannelConfig
 
-    with pytest.raises(ValidationError, match="forbids.*prepare"):
+    with pytest.raises(ValidationError, match="forbids.*handoff"):
         ChannelConfig.model_validate(
             {
                 "name": "gitlab-register",
@@ -387,7 +387,7 @@ def test_webhook_script_channel_rejects_agent_lifecycle_blocks() -> None:
                 "source": "gitlab",
                 "webhook": {"auth": {"type": "none"}},
                 "script": {"script": "true"},
-                "prepare": {"script": "true"},
+                "handoff": {"script": "true"},
             }
         )
 

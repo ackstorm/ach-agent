@@ -371,7 +371,7 @@ async def test_prepare_debug_log_contains_script_output(tmp_path: Path) -> None:
     with capture_logs() as logs:
         await run_prepare(_block("printf ready; printf warning >&2"), _event(), ws)
 
-    output = next(e for e in logs if e["event"] == "prepare: script output")
+    output = next(e for e in logs if e["event"] == "handoff: script output")
     assert output["log_level"] == "debug"
     assert output["stdout"] == "ready"
     assert output["stderr"] == "warning"
@@ -387,13 +387,13 @@ async def test_prepare_logs_safe_start_and_success(tmp_path: Path) -> None:
 
     start, success = (entry for entry in logs if entry["log_level"] == "info")
     assert start == {
-        "event": "prepare: script running",
+        "event": "handoff: script running",
         "log_level": "info",
         "session_key": "42:7",
         "workspace": str(ws),
         "timeout_seconds": 120,
     }
-    assert success["event"] == "prepare: workspace ready"
+    assert success["event"] == "handoff: workspace ready"
     assert success["log_level"] == "info"
     assert success["session_key"] == "42:7"
     assert success["workspace"] == str(ws)

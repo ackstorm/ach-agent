@@ -308,7 +308,7 @@ async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
     started = asyncio.get_running_loop().time()
     try:
         log.info(
-            "prepare: script running",
+            "handoff: script running",
             session_key=event.session_key,
             workspace=str(workspace),
             timeout_seconds=cfg.timeout_seconds,
@@ -321,19 +321,19 @@ async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
         )
     except _HookSpawnFailed as exc:
         PREPARE_FAILURES.labels(reason="spawn").inc()
-        raise PrepareFailed(f"prepare script could not be started: {exc}") from exc
+        raise PrepareFailed(f"handoff script could not be started: {exc}") from exc
     except _HookTimedOut:
         PREPARE_FAILURES.labels(reason="timeout").inc()
-        raise PrepareFailed(f"prepare script timed out after {cfg.timeout_seconds}s") from None
+        raise PrepareFailed(f"handoff script timed out after {cfg.timeout_seconds}s") from None
 
-    _log_hook_output("prepare", event, returncode, stdout, stderr, truncated)
+    _log_hook_output("handoff", event, returncode, stdout, stderr, truncated)
 
     if returncode != 0:
         PREPARE_FAILURES.labels(reason="exit").inc()
-        raise PrepareFailed(f"prepare script exited {returncode}: {_stderr_tail(stderr)}")
+        raise PrepareFailed(f"handoff script exited {returncode}: {_stderr_tail(stderr)}")
 
     log.info(
-        "prepare: workspace ready",
+        "handoff: workspace ready",
         session_key=event.session_key,
         workspace=str(workspace),
         returncode=returncode,

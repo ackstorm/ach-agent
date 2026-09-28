@@ -91,3 +91,12 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = ["croniter", "gateway.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# mitmproxy ships no py.typed marker; its public API (addons.add/get, options.update,
+# DumpMaster.shutdown) is untyped, so every call into it surfaces as Any under strict
+# mode. disallow_untyped_calls is about the CALLING module, so the override targets
+# the code that calls mitmproxy, not mitmproxy itself.
+module = ["ach_agent.egress.proxy"]
+disallow_untyped_calls = false
+warn_return_any = false

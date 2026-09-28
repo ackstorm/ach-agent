@@ -26,7 +26,6 @@ def _prepare(tmp_path: Path, **changes: object) -> WorkspacePrepareRequest:
         "event_id": "event-1",
         "home": str(tmp_path / "home"),
         "work_dir": str(tmp_path / "work"),
-        "notify_on_stop": False,
         "remaining_seconds": 5,
     }
     values.update(changes)

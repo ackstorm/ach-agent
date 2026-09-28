@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ach_agent.boot.prepare import run_cleanup, run_prepare, run_webhook_script, workspace_dir
+from ach_agent.boot.prepare import run_prepare, run_webhook_script, workspace_dir
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import PrepareBlock
 
@@ -46,51 +46,6 @@ async def test_credentialed_prepare_keeps_original_workspace(
 
     assert (ws / "retained").read_text() == "original checkout"
     assert (ws / "runs").read_text() == "okok"
-
-
-@pytest.mark.asyncio
-async def test_cleanup_runs_from_workspace_parent_with_original_environment(
-    tmp_path: Path,
-) -> None:
-    ws = workspace_dir(str(tmp_path), "repo:42")
-    ws.mkdir(parents=True)
-    block = PrepareBlock.model_validate(
-        {
-            "script": (
-                "set -eu; "
-                'test "$PWD" = "$(dirname "$ACH_WORKSPACE")"; '
-                'test "$HOME" != "$ACH_WORKSPACE"; '
-                'printf cleaned > "$ACH_WORKSPACE/cleanup-marker"'
-            )
-        }
-    )
-
-    await run_cleanup(block, _event(), ws)
-
-    assert (ws / "cleanup-marker").read_text() == "cleaned"
-
-
-@pytest.mark.asyncio
-async def test_cleanup_is_best_effort_after_validated_sentinel(tmp_path: Path) -> None:
-    ws = workspace_dir(str(tmp_path), "repo:42")
-    ws.mkdir(parents=True)
-    block = PrepareBlock.model_validate(
-        {
-            "script": (
-                "set -eu; "
-                'test "$PWD" = "$(dirname "$ACH_WORKSPACE")"; '
-                'test "$HOME" != "$ACH_WORKSPACE"; '
-                'printf attempted > "$ACH_WORKSPACE/cleanup-sentinel"; '
-                "exit 7"
-            )
-        }
-    )
-
-    # Cleanup failures are deliberately best-effort: the sentinel proves the validated
-    # commands ran, and run_cleanup must return without replacing the caller's result.
-    await run_cleanup(block, _event(), ws)
-
-    assert (ws / "cleanup-sentinel").read_text() == "attempted"
 
 
 @pytest.mark.asyncio

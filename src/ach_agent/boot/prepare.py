@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Channel prepare/cleanup hooks and their public workspace contract.
+"""Channel handoff/script hooks and their public workspace contract.
 
-Hooks run directly against the shared session workspace owned by the harness. The
-webhook-script form uses a short-lived directory under the configured work directory.
+Hooks run directly against the shared session workspace owned by the harness (`handoff`
+writes into its staging dir before import; `webhook-script` uses a short-lived directory
+under the configured work directory).
 
 The serializable split-role envelope carries validated data only; it contains no Python
 callables. Event values travel as environment variables, which avoids interpolating
@@ -31,7 +32,6 @@ from ach_agent.boot.paths import link_ach_state
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import PrepareBlock, resolve_secret
 from ach_agent.engine.metrics import (
-    CLEANUP_FAILURES,
     PREPARE_FAILURES,
     WEBHOOK_SCRIPT_FAILURES,
     WEBHOOK_SCRIPT_RUNS,
@@ -402,53 +402,3 @@ async def run_webhook_script(cfg: PrepareBlock, event: MessageEvent, work_dir: s
         # of blocking syscalls on the same loop that serves uvicorn, every other lane and the
         # SSE readers. onexc (not ignore_errors) so a directory left behind is visible.
         await asyncio.to_thread(shutil.rmtree, workspace, onexc=_rmtree_failed)
-
-
-async def run_cleanup(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -> None:
-    """Run the best-effort cleanup hook when a reserved session is torn down."""
-    env = build_prepare_env(cfg, event, workspace)
-    started = asyncio.get_running_loop().time()
-    try:
-        log.info(
-            "cleanup: script running",
-            session_key=event.session_key,
-            workspace=str(workspace),
-            timeout_seconds=cfg.timeout_seconds,
-        )
-        returncode, stdout, stderr, truncated = await _execute_hook(
-            cfg.script,
-            cfg.timeout_seconds,
-            cwd=workspace.parent,
-            env=env,
-        )
-    except _HookSpawnFailed as exc:
-        CLEANUP_FAILURES.labels(reason="spawn").inc()
-        log.warning("cleanup: script could not be started", error=str(exc))
-        return
-    except _HookTimedOut:
-        CLEANUP_FAILURES.labels(reason="timeout").inc()
-        log.warning(
-            "cleanup: script timed out",
-            session_key=event.session_key,
-            timeout_seconds=cfg.timeout_seconds,
-        )
-        return
-
-    _log_hook_output("cleanup", event, returncode, stdout, stderr, truncated)
-
-    if returncode != 0:
-        CLEANUP_FAILURES.labels(reason="exit").inc()
-        log.warning(
-            "cleanup: script exited nonzero",
-            session_key=event.session_key,
-            returncode=returncode,
-        )
-        return
-
-    log.info(
-        "cleanup: workspace hook complete",
-        session_key=event.session_key,
-        workspace=str(workspace),
-        returncode=returncode,
-        duration_ms=int((asyncio.get_running_loop().time() - started) * 1000),
-    )

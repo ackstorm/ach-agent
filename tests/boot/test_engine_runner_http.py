@@ -140,7 +140,7 @@ async def test_runner_executes_prepare_in_h_after_e_reservation(
                     "name": "chat",
                     "type": "cron",
                     "cron": {"schedule": "* * * * *"},
-                    "prepare": {"script": "printf prepared > h-marker"},
+                    "handoff": {"script": "printf prepared > h-marker"},
                 }
             )
         },
@@ -190,7 +190,7 @@ async def test_runner_carries_one_deadline_through_memory_and_prepare(
                     "name": "chat",
                     "type": "cron",
                     "cron": {"schedule": "* * * * *"},
-                    "prepare": {"script": "true"},
+                    "handoff": {"script": "true"},
                 }
             )
         },
@@ -398,8 +398,7 @@ async def test_runner_rotate_discards_then_forgets_and_gets_fresh_native_session
 
 
 @pytest.mark.asyncio
-async def test_prepare_failure_is_acknowledged_and_client_stays_usable(
-    monkeypatch: Any,
+async def test_handoff_failure_is_fail_closed_and_client_stays_usable(
     tmp_path: Any,
 ) -> None:
     from ach_agent.boot.execution_client import ExecutionClient
@@ -410,23 +409,13 @@ async def test_prepare_failure_is_acknowledged_and_client_stays_usable(
     from tests.execution.conftest import FakeDriver
     from tests.execution.test_http import _running_server
 
-    cleanup_calls: list[str] = []
-
-    async def fake_cleanup(cfg: Any, event: MessageEvent, workspace: Any) -> None:
-        cleanup_calls.append(event.idempotency_key)
-
-    monkeypatch.setattr("ach_agent.boot.prepare.run_cleanup", fake_cleanup)
-    private_channel = ChannelConfig.model_validate(
+    failing_channel = ChannelConfig.model_validate(
         {
-            "name": "private",
+            "name": "failing",
             "type": "cron",
             "cron": {"schedule": "* * * * *"},
-            "prepare": {
+            "handoff": {
                 "script": "exit 17",
-                "secretEnv": {"TOKEN": {"env": "TOKEN"}},
-            },
-            "cleanup": {
-                "script": "true",
                 "secretEnv": {"TOKEN": {"env": "TOKEN"}},
             },
         }
@@ -450,23 +439,22 @@ async def test_prepare_failure_is_acknowledged_and_client_stays_usable(
                 home=str(tmp_path / "home"), work_dir=str(tmp_path / "workspace")
             ),
             max_invocation_seconds=10,
-            channels_by_name={"private": private_channel, "plain": plain_channel},
+            channels_by_name={"failing": failing_channel, "plain": plain_channel},
         )
         try:
             with pytest.raises(PrepareFailed, match="exited 17"):
                 await runner(
                     MessageEvent(
-                        idempotency_key="private-failure",
-                        session_key="private-lane",
-                        channel_name="private",
+                        idempotency_key="handoff-failure",
+                        session_key="failing-lane",
+                        channel_name="failing",
                         payload={},
                     ),
                     lambda: None,
                 )
-            assert cleanup_calls == ["private-failure"]
             result = await runner(
                 MessageEvent(
-                    idempotency_key="after-private-failure",
+                    idempotency_key="after-handoff-failure",
                     session_key="plain-lane",
                     channel_name="plain",
                     payload={},
@@ -480,7 +468,7 @@ async def test_prepare_failure_is_acknowledged_and_client_stays_usable(
 
 
 @pytest.mark.asyncio
-async def test_public_workspace_hooks_do_not_accumulate_unconsumed_stop_events(
+async def test_handoff_only_channel_runs_end_to_end(
     tmp_path: Any,
 ) -> None:
     from ach_agent.boot.execution_client import ExecutionClient
@@ -492,63 +480,10 @@ async def test_public_workspace_hooks_do_not_accumulate_unconsumed_stop_events(
 
     channel = ChannelConfig.model_validate(
         {
-            "name": "public-hooks",
+            "name": "handoff-only",
             "type": "cron",
             "cron": {"schedule": "* * * * *"},
-            "prepare": {"script": "true"},
-            "cleanup": {"script": "true"},
-        }
-    )
-    fake_driver = FakeDriver()
-    service = ExecutionService(fake_driver, {})
-    service.controller_required = True
-    async with _running_server(create_execution_app(service)) as base_url:
-        client = ExecutionClient(base_url, controller_id="controller", timeout=2)
-        await client.connect()
-        runner = make_engine_runner(
-            client=client,
-            engine_cfg=PublicEngineConfig(
-                home=str(tmp_path / "home"), work_dir=str(tmp_path / "workspace")
-            ),
-            max_invocation_seconds=10,
-            channels_by_name={"public-hooks": channel},
-        )
-        try:
-            for index in range(65):
-                result = await runner(
-                    MessageEvent(
-                        idempotency_key=f"public-{index}",
-                        session_key=f"public-lane-{index}",
-                        channel_name="public-hooks",
-                        payload={},
-                    ),
-                    lambda: None,
-                )
-                assert result == {"action": "none", "text": "reply"}
-            assert client._controller_events.empty()
-            assert not service._unhealthy
-        finally:
-            await runner.close()
-            await client.close()
-
-
-@pytest.mark.asyncio
-async def test_prepare_only_workspace_release_does_not_wait_for_cleanup_ack(
-    tmp_path: Any,
-) -> None:
-    from ach_agent.boot.execution_client import ExecutionClient
-    from ach_agent.config.schema import ChannelConfig
-    from ach_agent.execution.app import create_execution_app
-    from ach_agent.execution.service import ExecutionService
-    from tests.execution.conftest import FakeDriver
-    from tests.execution.test_http import _running_server
-
-    channel = ChannelConfig.model_validate(
-        {
-            "name": "prepare-only",
-            "type": "cron",
-            "cron": {"schedule": "* * * * *"},
-            "prepare": {"script": "true"},
+            "handoff": {"script": "true"},
         }
     )
     fake_driver = FakeDriver()
@@ -563,21 +498,20 @@ async def test_prepare_only_workspace_release_does_not_wait_for_cleanup_ack(
                 home=str(tmp_path / "home"), work_dir=str(tmp_path / "workspace")
             ),
             max_invocation_seconds=5,
-            channel_ttl={"prepare-only": 0},
-            channels_by_name={"prepare-only": channel},
+            channel_ttl={"handoff-only": 0},
+            channels_by_name={"handoff-only": channel},
         )
         try:
             result = await runner(
                 MessageEvent(
-                    idempotency_key="prepare-only-release",
-                    session_key="prepare-only-lane",
-                    channel_name="prepare-only",
+                    idempotency_key="handoff-only-release",
+                    session_key="handoff-only-lane",
+                    channel_name="handoff-only",
                     payload={},
                 ),
                 lambda: None,
             )
             assert result == {"action": "none", "text": "reply"}
-            assert client._controller_events.empty()
             assert not service._unhealthy
         finally:
             await runner.close()

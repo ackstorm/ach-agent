@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Removed
+
+- The `channel.cleanup` machinery: the `ach_agent_cleanup_failures_total` metric is gone.
+  `channel.prepare`/`channel.cleanup` are replaced by `channel.handoff` and agent-level
+  `hooks.sessionStart`/`hooks.sessionSuspend`.
+
 ## [0.16.5] - 2026-09-15
 
 ### Fixed

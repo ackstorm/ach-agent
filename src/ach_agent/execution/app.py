@@ -38,7 +38,6 @@ from ach_agent.execution.wire import (
     SessionReadyRequest,
     TurnRequest,
     WorkspaceCancelRequest,
-    WorkspaceCleanupAckRequest,
     WorkspacePrepareRequest,
     WorkspaceSessionStartRequest,
 )
@@ -208,20 +207,12 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
         async def held() -> AsyncIterator[bytes]:
             try:
                 yield _json_line(response_hello.model_dump(mode="json"))
-                events = service.controller_events()
                 while (
                     service.controller_id == hello.controller_id
                     and not service.shutdown_requested
                     and not await request.is_disconnected()
                 ):
-                    if events is None:
-                        await asyncio.sleep(0.05)
-                        continue
-                    try:
-                        event = await asyncio.wait_for(events.get(), timeout=0.05)
-                    except TimeoutError:
-                        continue
-                    yield _json_line(event.model_dump(mode="json"))
+                    await asyncio.sleep(0.05)
             except asyncio.CancelledError:
                 raise
             finally:
@@ -300,20 +291,6 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
             return _invalid(str(exc))
         try:
             await service.session_start(body)
-        except Exception as exc:
-            return service_error(exc)
-        return JSONResponse({"status": "ok"})
-
-    @app.post("/execution/v1/workspace/cleanup-ack")
-    async def workspace_cleanup_ack(request: Request) -> JSONResponse:
-        try:
-            body = WorkspaceCleanupAckRequest.model_validate(await _request_json(request))
-        except _BodyTooLarge:
-            return JSONResponse({"detail": "request body too large"}, status_code=413)
-        except (_InvalidBody, ValidationError) as exc:
-            return _invalid(str(exc))
-        try:
-            await service.ack_workspace_cleanup(body)
         except Exception as exc:
             return service_error(exc)
         return JSONResponse({"status": "ok"})

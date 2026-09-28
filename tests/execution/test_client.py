@@ -700,7 +700,7 @@ async def test_real_http_duplicate_turn_rejection_preserves_active_invocation(fa
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["cancel", "release", "session-ready"])
-async def test_client_requires_exact_cleanup_ack(operation: str) -> None:
+async def test_client_requires_exact_handle_identity(operation: str) -> None:
     from ach_agent.boot.execution_client import ExecutionClient, ExecutionClientError
 
     handle = ExecutionHandle(

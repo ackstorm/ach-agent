@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.17.0] - 2026-09-28
+
+**Breaking:** `channels[].prepare`/`cleanup` are rejected at boot. Deploy only with ACH
+operator ≥ the release that renders `handoff`/`hooks`, after migrating agent manifests.
+A handoff always starts in an empty directory: scripts that fetched into an existing clone
+must clone from scratch.
+
 ### Added
 
 - `channel.handoff` runs at the configured cadence (`scope: event` default, or `session`

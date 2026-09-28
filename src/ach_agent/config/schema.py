@@ -522,6 +522,128 @@ def resolve_secret(src: SecretSource) -> str | None:
     return val.strip() if val is not None else None
 
 
+# ---------------------------------------------------------------------------
+# Egress block — authenticated proxy credential substitution (design doc
+# 2026-09-28-authenticated-egress-proxy-design.md §4). No unauthenticated-
+# destination allow/deny filtering in this version.
+# ---------------------------------------------------------------------------
+
+_FORBIDDEN_AUTH_HEADERS = frozenset(
+    {"host", "content-length", "transfer-encoding", "connection", "cookie", "proxy-authorization"}
+)
+# Names that must never be usable as auth.placeholderEnv — collide with protected ACH
+# variables, proxy/trust configuration, or managed secrets (design §4).
+_PROTECTED_PLACEHOLDER_NAMES = frozenset({"ACH_TOKEN", "ACH_API_KEY", "GITLAB_TOKEN"})
+_EGRESS_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
+
+
+class EgressServiceAuth(BaseModel):
+    """design §4 auth block — one upstream header credential per service."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    header: str
+    prefix: str = ""
+    secret: SecretSource
+    placeholder_env: str = Field(default="", alias="placeholderEnv")
+
+    @model_validator(mode="after")
+    def _validate(self) -> EgressServiceAuth:
+        if self.header.strip().lower() in _FORBIDDEN_AUTH_HEADERS:
+            raise ValueError(f"auth.header {self.header!r} controls routing/framing/transport — forbidden")
+        if any(ch in self.prefix for ch in ("\r", "\n", "\x00")):
+            raise ValueError("auth.prefix must not contain CR, LF, or NUL")
+        if self.placeholder_env:
+            if not _ENV_NAME_RE.match(self.placeholder_env):
+                raise ValueError(f"placeholderEnv is not a valid environment variable name: {self.placeholder_env!r}")
+            if self.placeholder_env in _PROTECTED_PLACEHOLDER_NAMES:
+                raise ValueError(f"placeholderEnv {self.placeholder_env!r} collides with a protected ACH variable")
+        return self
+
+
+class EgressAccessRule(BaseModel):
+    """design §4 access.allow[] entry — method + exactly one of pathExact/pathPrefix."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    methods: list[str]
+    path_exact: str = Field(default="", alias="pathExact")
+    path_prefix: str = Field(default="", alias="pathPrefix")
+
+    @model_validator(mode="after")
+    def _validate(self) -> EgressAccessRule:
+        if not self.methods:
+            raise ValueError("allow[].methods must be non-empty")
+        if any(m not in _EGRESS_METHODS for m in self.methods):
+            raise ValueError(f"allow[].methods must be exact uppercase HTTP methods, got {self.methods!r}")
+        has_exact = bool(self.path_exact)
+        has_prefix = bool(self.path_prefix)
+        if has_exact == has_prefix:
+            raise ValueError("exactly one of pathExact/pathPrefix is required")
+        if has_prefix and not self.path_prefix.endswith("/"):
+            raise ValueError("pathPrefix must end in '/'")
+        return self
+
+
+class EgressServiceAccess(BaseModel):
+    """design §4 access block — absent means unrestricted at the declared origin."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    default_action: Literal["deny"] = Field(default="deny", alias="defaultAction")
+    allow: list[EgressAccessRule] = Field(default_factory=list)
+
+
+_EGRESS_ORIGIN_RE = re.compile(
+    r"^https://(?P<host>[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+)(?::(?P<port>\d+))?$"
+)
+_IP_LITERAL_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+
+
+class EgressServiceBlock(BaseModel):
+    """design §4 services[] entry."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    name: str
+    origin: str
+    auth: EgressServiceAuth
+    access: EgressServiceAccess | None = None
+
+    @model_validator(mode="after")
+    def _validate(self) -> EgressServiceBlock:
+        if not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?", self.name):
+            raise ValueError(f"services[].name must be a lowercase DNS-label-style name: {self.name!r}")
+        m = _EGRESS_ORIGIN_RE.match(self.origin)
+        if not m:
+            raise ValueError(f"origin must be an exact https://<hostname>[:port] with no path/query/userinfo: {self.origin!r}")
+        if _IP_LITERAL_RE.match(m.group("host")):
+            raise ValueError(f"origin must be a DNS hostname, not an IP literal: {self.origin!r}")
+        return self
+
+
+class EgressBlock(BaseModel):
+    """design §4 top-level egress block. Absent on AgentConfig = feature disabled."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    default_action: Literal["deny"] = Field(default="deny", alias="defaultAction")
+    services: list[EgressServiceBlock] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate(self) -> EgressBlock:
+        names = [s.name for s in self.services]
+        if len(names) != len(set(names)):
+            raise ValueError("services[].name must be unique")
+        origins = [s.origin.lower() for s in self.services]
+        if len(origins) != len(set(origins)):
+            raise ValueError("services[].origin must be unique (one credential per canonical origin)")
+        placeholders = [s.auth.placeholder_env for s in self.services if s.auth.placeholder_env]
+        if len(placeholders) != len(set(placeholders)):
+            raise ValueError("auth.placeholderEnv must be unique across services")
+        return self
+
+
 class WebhookAuthBlock(BaseModel):
     """Operator contract §2 webhook.auth sub-block."""
 
@@ -997,6 +1119,7 @@ class AgentConfig(BaseModel):
     health: HealthBlock = Field(default_factory=HealthBlock)
     channels: list[ChannelConfig] = Field(default_factory=list)
     hooks: HooksBlock = Field(default_factory=HooksBlock)
+    egress: EgressBlock | None = None
 
     @model_validator(mode="after")
     def _hook_timeouts_fit_the_lane(self) -> AgentConfig:

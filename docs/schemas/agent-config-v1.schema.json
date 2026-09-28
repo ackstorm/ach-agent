@@ -513,6 +513,140 @@
       "title": "CronBlock",
       "type": "object"
     },
+    "EgressAccessRule": {
+      "additionalProperties": false,
+      "description": "design §4 access.allow[] entry — method + exactly one of pathExact/pathPrefix.",
+      "properties": {
+        "methods": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Methods",
+          "type": "array"
+        },
+        "pathExact": {
+          "default": "",
+          "title": "Pathexact",
+          "type": "string"
+        },
+        "pathPrefix": {
+          "default": "",
+          "title": "Pathprefix",
+          "type": "string"
+        }
+      },
+      "required": [
+        "methods"
+      ],
+      "title": "EgressAccessRule",
+      "type": "object"
+    },
+    "EgressBlock": {
+      "additionalProperties": false,
+      "description": "design §4 top-level egress block. Absent on AgentConfig = feature disabled.",
+      "properties": {
+        "defaultAction": {
+          "const": "deny",
+          "default": "deny",
+          "title": "Defaultaction",
+          "type": "string"
+        },
+        "services": {
+          "items": {
+            "$ref": "#/$defs/EgressServiceBlock"
+          },
+          "title": "Services",
+          "type": "array"
+        }
+      },
+      "title": "EgressBlock",
+      "type": "object"
+    },
+    "EgressServiceAccess": {
+      "additionalProperties": false,
+      "description": "design §4 access block — absent means unrestricted at the declared origin.",
+      "properties": {
+        "allow": {
+          "items": {
+            "$ref": "#/$defs/EgressAccessRule"
+          },
+          "title": "Allow",
+          "type": "array"
+        },
+        "defaultAction": {
+          "const": "deny",
+          "default": "deny",
+          "title": "Defaultaction",
+          "type": "string"
+        }
+      },
+      "title": "EgressServiceAccess",
+      "type": "object"
+    },
+    "EgressServiceAuth": {
+      "additionalProperties": false,
+      "description": "design §4 auth block — one upstream header credential per service.",
+      "properties": {
+        "header": {
+          "title": "Header",
+          "type": "string"
+        },
+        "placeholderEnv": {
+          "default": "",
+          "title": "Placeholderenv",
+          "type": "string"
+        },
+        "prefix": {
+          "default": "",
+          "title": "Prefix",
+          "type": "string"
+        },
+        "secret": {
+          "$ref": "#/$defs/SecretSource"
+        }
+      },
+      "required": [
+        "header",
+        "secret"
+      ],
+      "title": "EgressServiceAuth",
+      "type": "object"
+    },
+    "EgressServiceBlock": {
+      "additionalProperties": false,
+      "description": "design §4 services[] entry.",
+      "properties": {
+        "access": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EgressServiceAccess"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "auth": {
+          "$ref": "#/$defs/EgressServiceAuth"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "origin": {
+          "title": "Origin",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "origin",
+        "auth"
+      ],
+      "title": "EgressServiceBlock",
+      "type": "object"
+    },
     "EngineBlock": {
       "additionalProperties": false,
       "description": "Engine runtime knobs (harness-local; operator-optional).\n\nCarries \"how we run opencode\": its working directory, startup deadline, and the\nenv-forwarding allowlist. opencode's subprocess env is built clean-slate from a small\nbase allowlist (engine.lifecycle.build_opencode_env); ``forward_env`` lists extra var\nNAMES to forward — never the ek_ (ACH_TOKEN/ACH_API_KEY).",
@@ -1268,6 +1402,17 @@
     },
     "cost": {
       "$ref": "#/$defs/CostBlock"
+    },
+    "egress": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EgressBlock"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "engine": {
       "$ref": "#/$defs/EngineBlock"

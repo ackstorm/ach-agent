@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Added
+
+- `channel.handoff` runs at the configured cadence (`scope: event` default, or `session`
+  for new sessions only), staged in the harness and shipped into the engine's workspace
+  as a tar.gz import. `hooks.sessionStart` runs once per new session immediately after;
+  `hooks.sessionSuspend` runs before every native engine stop. Identical across placements.
+
+### Removed
+
+- The `channel.cleanup` machinery: the `ach_agent_cleanup_failures_total` metric is gone.
+  `channel.prepare`/`channel.cleanup` are replaced by `channel.handoff` and agent-level
+  `hooks.sessionStart`/`hooks.sessionSuspend`.
+
 ## [0.16.5] - 2026-09-15
 
 ### Fixed

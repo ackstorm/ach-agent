@@ -14,6 +14,7 @@ import contextlib
 import itertools
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -44,10 +45,9 @@ from ach_agent.execution.wire import (
     SessionReadyRequest,
     TurnRequest,
     WorkspaceCancelRequest,
-    WorkspaceCleanupAckRequest,
     WorkspaceOperationFailure,
     WorkspacePrepareRequest,
-    WorkspaceStoppedEvent,
+    WorkspaceSessionStartRequest,
 )
 
 # Cancellation is a control-plane operation and must retain a finite safety bound
@@ -261,10 +261,10 @@ class ExecutionClient:
         # runner finalizes the same already-acquired handle.
         self._confirmed_cancellations: dict[str, ExecutionHandle] = {}
         self._active_turns: set[str] = set()
-        self._controller_events: asyncio.Queue[WorkspaceStoppedEvent] = asyncio.Queue(maxsize=64)
-        self._controller_event_waiters: set[asyncio.Future[WorkspaceStoppedEvent]] = set()
         self._handles: dict[str, ExecutionHandle] = {}
-        self._cleanup_budgets: dict[str, float] = {}
+        # Invocations with a live workspace reservation or acquired handle — a
+        # "preparation/cleanup in flight" guard, not a timeout budget.
+        self._reserved_invocations: set[str] = set()
         self._turn_ids: dict[str, itertools.count[int]] = {}
         self._closed = False
 
@@ -334,34 +334,14 @@ class ExecutionClient:
         return hello
 
     async def _monitor_controller(self, iterator: AsyncIterator[bytes]) -> None:
+        """Watch the held controller stream for EOF/loss — the liveness channel.
+
+        No further lines are expected after the initial hello (E sends none); this loop
+        exists only to detect the stream closing, which means the controller was lost.
+        """
         try:
-            async for line in iterator:
-                if not line:
-                    continue
-                try:
-                    event = WorkspaceStoppedEvent.model_validate(json.loads(line))
-                except (TypeError, ValueError) as exc:
-                    raise ExecutionClientError("invalid controller event") from exc
-                if (
-                    event.controller_id != self.controller_id
-                    or event.instance_id != self.instance_id
-                ):
-                    raise ExecutionClientError("controller event identity mismatch")
-                delivered = False
-                while self._controller_event_waiters:
-                    waiter = next(iter(self._controller_event_waiters))
-                    self._controller_event_waiters.remove(waiter)
-                    if waiter.done():
-                        continue
-                    waiter.set_result(event)
-                    delivered = True
-                    break
-                if delivered:
-                    continue
-                try:
-                    self._controller_events.put_nowait(event)
-                except asyncio.QueueFull as exc:
-                    raise ExecutionClientError("controller event buffer is full") from exc
+            async for _line in iterator:
+                continue
         except asyncio.CancelledError:
             return
         except BaseException as exc:
@@ -405,21 +385,6 @@ class ExecutionClient:
     @property
     def controller_lost(self) -> bool:
         return self._controller_lost or self._failed
-
-    async def next_controller_event(self) -> WorkspaceStoppedEvent:
-        """Wait for a correlated engine lifecycle event from the held controller stream."""
-        self._assert_controller_live()
-        try:
-            return self._controller_events.get_nowait()
-        except asyncio.QueueEmpty:
-            waiter: asyncio.Future[WorkspaceStoppedEvent] = (
-                asyncio.get_running_loop().create_future()
-            )
-            self._controller_event_waiters.add(waiter)
-            try:
-                return await waiter
-            finally:
-                self._controller_event_waiters.discard(waiter)
 
     async def _json_request(
         self,
@@ -573,12 +538,7 @@ class ExecutionClient:
                     ).model_dump(mode="json", exclude_none=True),
                     timeout=max(
                         WORKSPACE_CANCEL_TIMEOUT_SECONDS,
-                        timeout
-                        or (
-                            NATIVE_CLEANUP_TIMEOUT_SECONDS
-                            + self._cleanup_budgets.get(invocation_id, 0.0)
-                            + HOOK_CLEANUP_MARGIN_SECONDS
-                        ),
+                        timeout or (NATIVE_CLEANUP_TIMEOUT_SECONDS + HOOK_CLEANUP_MARGIN_SECONDS),
                     ),
                 ),
             )
@@ -702,18 +662,9 @@ class ExecutionClient:
         self._failed = True
         self._controller_lost = True
         self._failure_reason = str(reason)
-        error = reason if isinstance(reason, BaseException) else ExecutionClientError(str(reason))
-        self._wake_controller_waiters(error)
         if self._controller_response is not None:
             with contextlib.suppress(BaseException):
                 await self._controller_response.aclose()
-
-    def _wake_controller_waiters(self, error: BaseException) -> None:
-        waiters = tuple(self._controller_event_waiters)
-        self._controller_event_waiters.clear()
-        for waiter in waiters:
-            if not waiter.done():
-                waiter.set_exception(error)
 
     async def _close_owned_transport(self) -> None:
         responses = tuple(
@@ -790,15 +741,15 @@ class ExecutionClient:
         self._turn_ids.setdefault(handle.invocation_id, itertools.count(1))
         return handle
 
-    async def prepare_workspace(self, request: WorkspacePrepareRequest) -> dict[str, str]:
+    async def prepare_workspace(self, request: WorkspacePrepareRequest) -> dict[str, Any]:
         """Prepare a public workspace before native acquisition."""
-        if request.invocation_id in self._cleanup_budgets:
+        if request.invocation_id in self._reserved_invocations:
             raise ExecutionClientError("workspace preparation is already active")
-        self._cleanup_budgets[request.invocation_id] = request.cleanup_budget_seconds
+        self._reserved_invocations.add(request.invocation_id)
         try:
             result = await self._workspace_json_request("/execution/v1/workspace/prepare", request)
         except BaseException:
-            self._cleanup_budgets.pop(request.invocation_id, None)
+            self._reserved_invocations.discard(request.invocation_id)
             raise
         expected = str(workspace_dir(request.work_dir, request.session_key))
         if (
@@ -806,32 +757,51 @@ class ExecutionClient:
             or result.get("status") != "ok"
             or not isinstance(result.get("workspace"), str)
             or result["workspace"] != expected
+            or not isinstance(result.get("new_session"), bool)
         ):
             await self._confirm_workspace_cancel(request.controller_id, request.invocation_id)
-            self._cleanup_budgets.pop(request.invocation_id, None)
+            self._reserved_invocations.discard(request.invocation_id)
             raise WorkspaceOperationFailed(
                 "invalid workspace prepare response; reservation canceled", confirmed=True
             )
-        return {"status": "ok", "workspace": expected}
+        return {"status": "ok", "workspace": expected, "new_session": result["new_session"]}
 
-    async def ack_workspace_cleanup(self, event: WorkspaceStoppedEvent) -> None:
-        """Acknowledge private cleanup after the correlated controller event completes."""
+    async def import_handoff(self, path: Path, invocation_id: str) -> None:
+        """Stream a packed tar.gz handoff archive to the live reservation for invocation_id."""
+        self._assert_controller_live()
+
+        async def chunks() -> AsyncIterator[bytes]:
+            with path.open("rb") as fh:
+                while chunk := await asyncio.to_thread(fh.read, 262_144):
+                    yield chunk
+
+        try:
+            response = await self.acquire_client.put(
+                "/execution/v1/workspace/handoff",
+                params={"controller_id": self.controller_id, "invocation_id": invocation_id},
+                content=chunks(),
+            )
+        except httpx.HTTPError as exc:
+            await self._fail_admission(exc)
+            raise ExecutionClientError(f"handoff import failed: {exc}") from exc
+        if response.status_code < 200 or response.status_code >= 300:
+            error = ExecutionClientError(
+                f"handoff import failed: {response.text[:512]}", status_code=response.status_code
+            )
+            await self._fail_admission(error)
+            raise error
+
+    async def start_session(self, controller_id: str, invocation_id: str) -> None:
+        """Run `hooks.sessionStart` once for a new session's live reservation."""
         self._assert_controller_live()
         result = await self._json_request(
             "POST",
-            "/execution/v1/workspace/cleanup-ack",
-            WorkspaceCleanupAckRequest(
-                controller_id=event.controller_id,
-                instance_id=event.instance_id,
-                session_key=event.session_key,
-                event_id=event.event_id,
-                invocation_id=event.invocation_id,
+            "/execution/v1/workspace/session-start",
+            WorkspaceSessionStartRequest(
+                controller_id=controller_id, invocation_id=invocation_id
             ).model_dump(mode="json"),
-            # ACKs stay on the small priority pool so long release/cancel responses
-            # cannot consume both short control slots while waiting for this barrier.
-            client=self.priority_client,
         )
-        await self._require_ok(result, "workspace cleanup")
+        await self._require_ok(result, "session-start")
 
     async def _ack_session(self, request: TurnRequest, event: ExecutionEvent) -> None:
         handle = self._validate_handle(
@@ -1045,11 +1015,7 @@ class ExecutionClient:
     async def release(self, request: ReleaseRequest) -> None:
         self._assert_controller_live()
         self._validate_handle(request.controller_id, request.execution_id, request.invocation_id)
-        timeout = (
-            NATIVE_CLEANUP_TIMEOUT_SECONDS
-            + self._cleanup_budgets.get(request.invocation_id, 0.0)
-            + HOOK_CLEANUP_MARGIN_SECONDS
-        )
+        timeout = NATIVE_CLEANUP_TIMEOUT_SECONDS + HOOK_CLEANUP_MARGIN_SECONDS
         try:
             result = await asyncio.wait_for(
                 self._json_request(
@@ -1068,7 +1034,7 @@ class ExecutionClient:
         if handle is not None:
             trace.drop(handle.proxy_route)
         self._turn_ids.pop(request.invocation_id, None)
-        self._cleanup_budgets.pop(request.invocation_id, None)
+        self._reserved_invocations.discard(request.invocation_id)
 
     async def cancel(self, controller_id: str, invocation_id: str) -> None:
         await self._cancel_owned(controller_id, invocation_id, retain_confirmation=False)
@@ -1100,7 +1066,7 @@ class ExecutionClient:
             if retain_confirmation:
                 self._confirmed_cancellations[invocation_id] = handle
         self._turn_ids.pop(invocation_id, None)
-        self._cleanup_budgets.pop(invocation_id, None)
+        self._reserved_invocations.discard(invocation_id)
         if not active:
             self._cancelled_invocations.discard(invocation_id)
 
@@ -1142,7 +1108,6 @@ class ExecutionClient:
 
     async def close(self) -> None:
         self._closed = True
-        self._wake_controller_waiters(ExecutionClientError("execution client is closed"))
         monitor = self._controller_monitor
         self._controller_monitor = None
         if monitor is not None:
@@ -1169,13 +1134,10 @@ class ExecutionClient:
             trace.drop(handle.proxy_route)
         self._handles.clear()
         self._turn_ids.clear()
-        self._cleanup_budgets.clear()
+        self._reserved_invocations.clear()
         self._cancelled_invocations.clear()
         self._confirmed_cancellations.clear()
         self._active_turns.clear()
-        while not self._controller_events.empty():
-            with contextlib.suppress(asyncio.QueueEmpty):
-                self._controller_events.get_nowait()
         await self.stream_client.aclose()
         await self.acquire_client.aclose()
         await self.cleanup_client.aclose()

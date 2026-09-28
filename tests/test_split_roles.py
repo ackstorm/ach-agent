@@ -159,8 +159,7 @@ def test_local_mcp_reference_cannot_readd_config_secret(
                 "name": "cron",
                 "type": "cron",
                 "cron": {"schedule": "* * * * *"},
-                "prepare": {"script": "true"},
-                "cleanup": {
+                "handoff": {
                     "script": "true",
                     "secretEnv": {"TOKEN": {"env": "GITLAB_TOKEN"}},
                 },
@@ -179,6 +178,29 @@ def test_local_mcp_reference_cannot_readd_config_secret(
     assert public["engineEnvNames"] == ["SAFE_OPERATOR", "MCP_OPERATOR"]
 
 
+def test_build_role_configs_projects_session_hooks_into_public_config() -> None:
+    from ach_agent.boot.roles import build_role_configs
+
+    cfg = _cfg(
+        hooks={
+            "sessionStart": {"script": "echo start", "timeoutSeconds": 45},
+            "sessionSuspend": {"script": "echo suspend"},
+        }
+    )
+
+    _channels, public = build_role_configs(cfg, split_mode=False)
+    assert public["hookSessionStart"] == {"script": "echo start", "timeoutSeconds": 45}
+    assert public["hookSessionSuspend"] == {"script": "echo suspend", "timeoutSeconds": 120}
+
+
+def test_build_role_configs_omits_unconfigured_session_hooks() -> None:
+    from ach_agent.boot.roles import build_role_configs
+
+    _channels, public = build_role_configs(_cfg(), split_mode=False)
+    assert "hookSessionStart" not in public
+    assert "hookSessionSuspend" not in public
+
+
 def test_public_engine_rejects_harness_managed_env_names() -> None:
     from ach_agent.execution.wire import PublicEngineConfig
 
@@ -188,8 +210,7 @@ def test_public_engine_rejects_harness_managed_env_names() -> None:
 
 @pytest.mark.parametrize("terminal_mode", [False, True])
 def test_local_child_uses_ephemeral_health_port(
-    terminal_mode: bool,
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    terminal_mode: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from ach_agent.boot.local import LocalEngineProcess
 

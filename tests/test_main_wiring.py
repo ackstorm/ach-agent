@@ -81,8 +81,7 @@ def _hook_channel() -> ChannelConfig:
             "name": "hooks",
             "type": "cron",
             "cron": {"schedule": "* * * * *"},
-            "prepare": {"script": "true"},
-            "cleanup": {"script": "true"},
+            "handoff": {"script": "true"},
         }
     )
 

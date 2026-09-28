@@ -36,7 +36,7 @@ def _cfg(**updates: object) -> AgentConfig:
                 "source": "gitlab",
                 "webhook": {"auth": {"type": "none"}},
                 "prompt": "Review this",
-                "prepare": {"script": "echo prepare"},
+                "handoff": {"script": "echo prepare"},
             },
         ],
     }
@@ -55,7 +55,7 @@ def test_source_projection_drops_execution_fields_but_accepts_webhook_script() -
     assert source["type"] == "webhook-script"
     assert "script" not in source
     assert "prompt" not in source
-    assert "prepare" not in source
+    assert "handoff" not in source
     assert "session" not in source
     ChannelSourceConfig.model_validate(source)
     assert public["agentName"] == "agent-a"

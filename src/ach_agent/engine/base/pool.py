@@ -257,6 +257,7 @@ class EnginePool:
         *,
         accountant: CostAccountant | None = None,
         strict_cleanup: bool = False,
+        on_stop: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         from ach_agent.engine.opencode.driver import OpencodeDriver
 
@@ -269,6 +270,10 @@ class EnginePool:
         self._driver: EngineDriver = driver if driver is not None else OpencodeDriver()
         self._accountant = accountant
         self._strict_cleanup = strict_cleanup
+        # hooks.sessionSuspend: runs for the session's workspace before the native stop
+        # (idle TTL, discard, stop_all alike). Best-effort — a raising callback must not
+        # break the stop, so _stop_locked awaits it and only logs on failure.
+        self._on_stop = on_stop
 
         # Pool-owned session store, wrapped in a per-engine-type namespaced view (SP1 §5.4).
         # `sessions_map` is the raw backing store (SQLite when persistence.enabled, else the
@@ -548,6 +553,15 @@ class EnginePool:
         stop_failed = False
         try:
             if server is not None:
+                if self._on_stop is not None:
+                    try:
+                        await self._on_stop(session_key)
+                    except Exception:  # noqa: BLE001
+                        log.warning(
+                            "EnginePool: on_stop hook failed",
+                            session_key=session_key,
+                            exc_info=True,
+                        )
                 self._drop_token(server)
                 try:
                     await self._stop_native(server, native_timeout_seconds)

@@ -698,7 +698,7 @@ class SessionBlock(BaseModel):
 # Env names boot/prepare.py pins itself for every prepare script. Operator config may not
 # set them: the harness writes them last, so a config entry would be silently discarded.
 RESERVED_PREPARE_ENV: frozenset[str] = frozenset(
-    {"ACH_WORKSPACE", "ACH_SESSION_KEY", "ACH_EVENT_ID", "ACH_CHANNEL", "HOME"}
+    {"ACH_WORKSPACE", "ACH_HANDOFF_DIR", "ACH_SESSION_KEY", "ACH_EVENT_ID", "ACH_CHANNEL", "HOME"}
 )
 # Reserved namespace for the event's normalized fields (ACH_EVENT_PROJECT_PATH, …).
 RESERVED_PREPARE_ENV_PREFIX = "ACH_EVENT_"
@@ -707,14 +707,9 @@ RESERVED_PREPARE_ENV_PREFIX = "ACH_EVENT_"
 class PrepareBlock(BaseModel):
     """Operator contract §2 static channel script block.
 
-    `prepare` runs on the lane before the session engine is acquired or reused for each
-    invocation and is fail-closed. `cleanup` is best-effort when the reserved session is
-    torn down: after an acquired engine stops, or after prepare/engine-acquire failure
-    before acquisition completes. Prepare and engine cwd are `ACH_WORKSPACE`; cleanup cwd
-    is its parent. Graceful shutdown attempts cleanup, but abrupt loss cannot guarantee it.
-
-    `webhook-script` uses the same validated block but receives normalized webhook JSON on
-    stdin, runs in a temporary workspace, and never acquires or invokes an engine.
+    Base shape shared by `channel.script` (webhook-script's stdin handler, receiving
+    normalized webhook JSON, running in a temporary workspace, never acquiring an engine)
+    and `channel.handoff` (`HandoffBlock` below).
 
     `script` is STATIC text — `{{ }}` templating is deliberately unsupported. Event data
     reaches the script only as environment variables, which is what makes a shell hook safe
@@ -748,6 +743,52 @@ class PrepareBlock(BaseModel):
         return self
 
 
+class HandoffBlock(PrepareBlock):
+    """`channel.handoff` — credentialed harness script, replaces `channel.prepare`.
+
+    Runs in the harness, in an empty `$ACH_HANDOFF_DIR`; its output wholesale-replaces
+    `<session workspace>/handoff` (content-agnostic — a repo clone, a DB extract, arbitrary
+    files). `scope` controls cadence: 'event' (default, every invocation — today's `prepare`
+    cadence) or 'session' (new sessions only). Identical in every placement.
+    """
+
+    scope: Literal["event", "session"] = "event"
+
+
+class HookBlock(BaseModel):
+    """Agent-level session hook (`hooks.sessionStart` / `hooks.sessionSuspend`).
+
+    Runs INSIDE the mini-harness (sandboxed or standalone) with only `engine.forwardEnv`
+    variables — no `secretEnv`, by construction: these run co-resident with the untrusted
+    engine, unlike `handoff`, which runs in the harness.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    script: str
+    timeout_seconds: int = Field(default=120, alias="timeoutSeconds", gt=0, le=3600)
+
+    @model_validator(mode="after")
+    def _check(self) -> HookBlock:
+        if not self.script.strip():
+            raise ValueError("hook: 'script' must not be empty")
+        return self
+
+
+class HooksBlock(BaseModel):
+    """`AgentConfig.hooks` — agent-level sandbox session hooks.
+
+    `sessionStart` runs once per session, after `handoff`, before the first turn
+    (fail-closed). `sessionSuspend` runs every time the session's engine stops, before any
+    HOME archive (best-effort, may run many times). Same in every placement.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    session_start: HookBlock | None = Field(default=None, alias="sessionStart")
+    session_suspend: HookBlock | None = Field(default=None, alias="sessionSuspend")
+
+
 class ChannelConfig(BaseModel):
     """Operator contract §2 channel entry. extra=forbid catches unknown channel-level keys."""
 
@@ -756,16 +797,6 @@ class ChannelConfig(BaseModel):
         populate_by_name=True,
         json_schema_extra={
             "allOf": [
-                {
-                    "if": {
-                        "required": ["cleanup"],
-                        "properties": {"cleanup": {"not": {"type": "null"}}},
-                    },
-                    "then": {
-                        "required": ["prepare"],
-                        "properties": {"prepare": {"not": {"type": "null"}}},
-                    },
-                },
                 {
                     "if": {
                         "required": ["type"],
@@ -782,8 +813,7 @@ class ChannelConfig(BaseModel):
                             "webhook": {"not": {"type": "null"}},
                             "script": {"not": {"type": "null"}},
                             "prompt": {"type": "null"},
-                            "prepare": {"type": "null"},
-                            "cleanup": {"type": "null"},
+                            "handoff": {"type": "null"},
                         },
                     },
                     "else": {"properties": {"script": {"type": "null"}}},
@@ -799,8 +829,7 @@ class ChannelConfig(BaseModel):
     session: SessionBlock = Field(default_factory=SessionBlock)
     # Optional for every channel type (a cron channel may want a workspace too), hence
     # outside the type↔block coherence check below.
-    prepare: PrepareBlock | None = None
-    cleanup: PrepareBlock | None = None
+    handoff: HandoffBlock | None = None
     script: PrepareBlock | None = None
     source: Literal["gitlab", "github", "generic"] | None = None
     webhook: WebhookBlock | None = None
@@ -827,8 +856,6 @@ class ChannelConfig(BaseModel):
         its script handler. Every unrelated block is forbidden. HTTP channels require
         'source'. Raises ValueError (wrapped by Pydantic into ValidationError → sys.exit(1)).
         """
-        if self.cleanup is not None and self.prepare is None:
-            raise ValueError("channel cleanup requires channel prepare")
         t = self.type
         if t == "webhook-script":
             if self.webhook is None:
@@ -839,7 +866,7 @@ class ChannelConfig(BaseModel):
                 raise ValueError(
                     f"channel '{self.name}': type='webhook-script' requires a script block"
                 )
-            for field in ("prompt", "prepare", "cleanup"):
+            for field in ("prompt", "handoff"):
                 if getattr(self, field) is not None:
                     raise ValueError(
                         f"channel '{self.name}': type='webhook-script' forbids '{field}' block"
@@ -969,26 +996,35 @@ class AgentConfig(BaseModel):
     persistence: PersistenceBlock = Field(default_factory=PersistenceBlock)
     health: HealthBlock = Field(default_factory=HealthBlock)
     channels: list[ChannelConfig] = Field(default_factory=list)
+    hooks: HooksBlock = Field(default_factory=HooksBlock)
 
     @model_validator(mode="after")
     def _hook_timeouts_fit_the_lane(self) -> AgentConfig:
-        """prepare/script run INSIDE the lane's maxInvocationSeconds deadline.
+        """handoff/script/sessionStart run INSIDE the lane's maxInvocationSeconds deadline.
 
         A hook timeout above that deadline can never fire: the lane cancels the invocation
         first, which counts an engine watchdog kill (on a webhook-script channel that never
         launches an engine) and leaves `*_failures_total{reason="timeout"}` — the counter the
         docs tell operators to alert on — at zero. Both values are individually valid, so the
-        mismatch is only visible here.
+        mismatch is only visible here. `sessionSuspend` runs outside any lane (at sandbox/
+        engine stop) — no check.
         """
         limit = self.limits.max_invocation_seconds
         for channel in self.channels:
-            for field in ("prepare", "script"):
+            for field in ("handoff", "script"):
                 block = getattr(channel, field)
                 if block is not None and block.timeout_seconds > limit:
                     raise ValueError(
                         f"channel '{channel.name}': {field}.timeoutSeconds "
                         f"({block.timeout_seconds}) exceeds limits.maxInvocationSeconds ({limit})"
                     )
+        start_hook = self.hooks.session_start
+        if start_hook is not None and start_hook.timeout_seconds > limit:
+            raise ValueError(
+                "hooks.sessionStart.timeoutSeconds "
+                f"({start_hook.timeout_seconds}) exceeds "
+                f"limits.maxInvocationSeconds ({limit})"
+            )
         return self
 
 

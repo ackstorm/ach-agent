@@ -7,7 +7,7 @@ import math
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from ach_agent.config.schema import LocalMcpServer, RemoteMcpServer
 
@@ -34,6 +34,17 @@ class _WireModel(BaseModel):
         populate_by_name=True,
         hide_input_in_errors=True,
     )
+
+
+class HookSpec(_WireModel):
+    """One agent-level session hook (`hooks.sessionStart` / `hooks.sessionSuspend`).
+
+    Credential-free by construction (config.schema.HookBlock forbids secretEnv) — this
+    crosses into the mini-harness, which runs it co-resident with the untrusted engine.
+    """
+
+    script: str
+    timeout_seconds: int = Field(default=120, alias="timeoutSeconds", gt=0, le=3600)
 
 
 class PublicEngineConfig(_WireModel):
@@ -73,6 +84,10 @@ class PublicEngineConfig(_WireModel):
     trace_token: str = Field(default="", alias="traceToken")
     trace_parent: str = Field(default="", alias="traceParent")
     trace_session_id: str = Field(default="", alias="traceSessionId")
+    # Agent-level session hooks (config.schema.HooksBlock), run by the mini-harness itself —
+    # never by the harness-side runner, since a sandboxed engine has no runner co-located.
+    hook_session_start: HookSpec | None = Field(default=None, alias="hookSessionStart")
+    hook_session_suspend: HookSpec | None = Field(default=None, alias="hookSessionSuspend")
 
     _params_finite = field_validator("params", "mcp_templates")(_finite_json)
 
@@ -231,9 +246,6 @@ class WorkspacePrepareRequest(_WireModel):
     event_id: str
     home: str
     work_dir: str
-    notify_on_stop: bool = True
-    cleanup_ack_required: bool = False
-    cleanup_timeout_seconds: float = Field(default=120.0, gt=0, le=3600)
     remaining_seconds: float = Field(gt=0)
 
     @field_validator("remaining_seconds")
@@ -243,45 +255,12 @@ class WorkspacePrepareRequest(_WireModel):
             raise ValueError("remaining_seconds must be finite")
         return value
 
-    @field_validator("cleanup_timeout_seconds")
-    @classmethod
-    def finite_cleanup_timeout_seconds(cls, value: float) -> float:
-        if not math.isfinite(value):
-            raise ValueError("cleanup_timeout_seconds must be finite")
-        return value
 
-    @model_validator(mode="after")
-    def ack_requires_notification(self) -> WorkspacePrepareRequest:
-        if self.cleanup_ack_required and not self.notify_on_stop:
-            raise ValueError("cleanup_ack_required requires notify_on_stop")
-        return self
-
-    @property
-    def cleanup_budget_seconds(self) -> float:
-        """Allowance for the correlated cleanup acknowledgement barrier."""
-        return self.cleanup_timeout_seconds if self.cleanup_ack_required else 0.0
-
-
-class WorkspaceCleanupAckRequest(_WireModel):
-    """Correlated acknowledgement after harness-private cleanup has completed."""
+class WorkspaceSessionStartRequest(_WireModel):
+    """Run `hooks.sessionStart` once for a new session's live reservation."""
 
     controller_id: str
-    instance_id: str
-    session_key: str
-    event_id: str
     invocation_id: str
-
-
-class WorkspaceStoppedEvent(_WireModel):
-    """Correlated notification that native/public workspace cleanup has completed."""
-
-    kind: Literal["workspace_stopped"] = "workspace_stopped"
-    controller_id: str
-    instance_id: str
-    session_key: str
-    event_id: str
-    invocation_id: str
-    workspace: str
 
 
 class WorkspaceOperationFailure(_WireModel):

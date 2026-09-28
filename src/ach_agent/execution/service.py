@@ -41,11 +41,11 @@ from ach_agent.execution.wire import (
     SessionOperation,
     SessionReadyRequest,
     TurnRequest,
-    WorkspaceCleanupAckRequest,
     WorkspacePrepareRequest,
-    WorkspaceStoppedEvent,
+    WorkspaceSessionStartRequest,
 )
 from ach_agent.memory.common import inc_memory_degraded
+from ach_agent.sandbox.archive import ArchiveTooLarge, extract, write_capped
 
 log = structlog.get_logger(__name__)
 
@@ -79,7 +79,6 @@ class _Invocation:
     event_queue: asyncio.Queue[Any] | None = None
     cleanup_deadline: float | None = None
     session_ready: tuple[str, str, asyncio.Event] | None = None
-    workspace_cleanup_timeout_seconds: float = 0.0
 
 
 @dataclass
@@ -87,22 +86,21 @@ class _WorkspaceReservation:
     request: WorkspacePrepareRequest
     workspace: Path
     deadline: float
+    new_session: bool = False
     acquiring: bool = False
     cancel_requested: bool = False
     cleanup_task: asyncio.Task[None] | None = None
     cleanup_owner: asyncio.Task[Any] | None = None
     skip_operation: asyncio.Task[Any] | None = None
-
-
-@dataclass
-class _WorkspaceCleanupBarrier:
-    event: WorkspaceStoppedEvent
-    acknowledged: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)
-    failed: bool = False
+    session_started: bool = False
 
 
 class OutputLimitExceeded(RuntimeError):
     """The client stream exceeded one of the bounded NDJSON output limits."""
+
+
+class SessionHookFailed(RuntimeError):
+    """`hooks.sessionStart` exited non-zero, timed out, or could not be started."""
 
 
 MAX_NDJSON_RECORD_BYTES = 1 * 1024 * 1024
@@ -111,6 +109,10 @@ MAX_INVOCATION_STREAM_BYTES = 4 * 1024 * 1024
 MAX_AGGREGATE_QUEUED_BYTES = 32 * 1024 * 1024
 CLEANUP_DEADLINE_SECONDS = 10.0
 CLEANUP_PROCESS_MARGIN_SECONDS = 5.0
+# channel.handoff tar.gz cap (compressed stream and expanded size alike). Placeholder —
+# Task 10 (Part B) adds sandbox.maxArchiveBytes as an operator-configurable value; revisit
+# whether this constant should become that same config knob instead.
+MAX_HANDOFF_ARCHIVE_BYTES = 512 * 1024 * 1024
 
 
 def _engine_config(public: Any) -> EngineConfig:
@@ -126,6 +128,10 @@ def _engine_config(public: Any) -> EngineConfig:
             "trace_token",
             "trace_parent",
             "trace_session_id",
+            # Agent-level session hooks are consumed directly by ExecutionService
+            # (import_handoff/session_start/pool on_stop) — never by the native driver.
+            "hook_session_start",
+            "hook_session_suspend",
         }
     )
     values["extra_mcp_servers"] = {
@@ -179,7 +185,12 @@ class ExecutionService:
         sessions_map: MutableMapping[str, str] | None = None,
     ) -> None:
         self.driver = driver
-        self.pool = EnginePool(driver=driver, sessions_map=sessions_map, strict_cleanup=True)
+        self.pool = EnginePool(
+            driver=driver,
+            sessions_map=sessions_map,
+            strict_cleanup=True,
+            on_stop=self._run_session_suspend,
+        )
         self._configured = driver is not None
         # A directly injected driver is the explicit seam used by unit tests and
         # in-process callers. Production (driver=None) remains pre-init until the
@@ -208,14 +219,11 @@ class ExecutionService:
         self.controller_cleanup_error: str | None = None
         self._ttl_watchers: set[asyncio.Task[None]] = set()
         self._controller_cleanup_task: asyncio.Task[None] | None = None
-        self._warm_cleanup_budget_seconds = 0.0
         self._workspace_tasks: dict[str, asyncio.Task[Any]] = {}
         self._workspace_reservations: dict[str, _WorkspaceReservation] = {}
         self._workspace_cancelled: set[str] = set()
         self._completed_cancellations: dict[str, str] = {}
         self.workspace_cleanup_errors: list[str] = []
-        self._controller_events: asyncio.Queue[WorkspaceStoppedEvent] | None = None
-        self._workspace_barriers: dict[str, _WorkspaceCleanupBarrier] = {}
 
     @property
     def can_accept_controller(self) -> bool:
@@ -322,7 +330,10 @@ class ExecutionService:
                         self._sessions_map = _LRUSessionMap()
                 self.driver = driver
                 self.pool = EnginePool(
-                    driver=driver, sessions_map=self._sessions_map, strict_cleanup=True
+                    driver=driver,
+                    sessions_map=self._sessions_map,
+                    strict_cleanup=True,
+                    on_stop=self._run_session_suspend,
                 )
             except BaseException:
                 self._mark_unhealthy()
@@ -365,7 +376,6 @@ class ExecutionService:
                 raise RuntimeError("execution service is not initialized")
             self._controller_id = controller_id
             self._admission_open = True
-            self._controller_events = asyncio.Queue(maxsize=64)
 
     async def import_legacy_sessions(self, request: SessionImportRequest) -> int:
         """Import H-exported rows once before the first engine acquisition.
@@ -409,9 +419,6 @@ class ExecutionService:
         self._unhealthy = True
         self.shutdown_requested = True
         self._admission_open = False
-        for barrier in self._workspace_barriers.values():
-            barrier.failed = True
-            barrier.acknowledged.set()
 
     @staticmethod
     def _observe_task(task: asyncio.Task[Any]) -> None:
@@ -428,14 +435,11 @@ class ExecutionService:
         close_admission: bool = True,
     ) -> None:
         """Close admission and finish all owned cleanup before another controller."""
+        del fail_barriers  # kept for call-site compatibility; no barriers remain to fail
         if self._controller_id != controller_id:
             return
         if close_admission:
             self._admission_open = False
-        if fail_barriers:
-            for barrier in self._workspace_barriers.values():
-                barrier.failed = True
-                barrier.acknowledged.set()
         reserved_acquisitions = {
             invocation_id
             for invocation_id, reservation in self._workspace_reservations.items()
@@ -471,19 +475,10 @@ class ExecutionService:
 
         cleanup_task = asyncio.create_task(cleanup_all())
         self._controller_cleanup_task = cleanup_task
-        cleanup_budget = max(
-            [
-                reservation.request.cleanup_budget_seconds
-                for reservation in self._workspace_reservations.values()
-            ]
-            + [inv.workspace_cleanup_timeout_seconds for inv in self._invocations.values()]
-            + [self._warm_cleanup_budget_seconds]
-            + [0.0]
-        )
         try:
             await asyncio.wait_for(
                 asyncio.shield(cleanup_task),
-                timeout=CLEANUP_DEADLINE_SECONDS + cleanup_budget + CLEANUP_PROCESS_MARGIN_SECONDS,
+                timeout=CLEANUP_DEADLINE_SECONDS + CLEANUP_PROCESS_MARGIN_SECONDS,
             )
         except BaseException as exc:
             self._mark_unhealthy()
@@ -499,47 +494,14 @@ class ExecutionService:
         self._workspace_reservations.clear()
         self._workspace_cancelled.clear()
         self._completed_cancellations.clear()
-        self._controller_events = None
-        self._workspace_barriers.clear()
         # A fresh controller bootstrap may repeat the idempotent legacy import.
         # Keep the acquisition guard active for the current controller until this
         # cleanup completes, so a late import after release is still rejected.
         self._execution_started = False
-        self._warm_cleanup_budget_seconds = 0.0
 
     async def graceful_stop_controller(self, controller_id: str) -> None:
         """Drain normal work and run private cleanup hooks before controller close."""
         await self.release_controller(controller_id, fail_barriers=False, close_admission=False)
-
-    def controller_events(self) -> asyncio.Queue[WorkspaceStoppedEvent] | None:
-        """Return the finite event queue held by the current controller stream."""
-        return self._controller_events
-
-    def _emit_controller_event(self, event: WorkspaceStoppedEvent) -> None:
-        queue = self._controller_events
-        if queue is None:
-            return
-        try:
-            queue.put_nowait(event)
-        except asyncio.QueueFull as exc:
-            self._mark_unhealthy()
-            raise RuntimeError("controller event buffer is full") from exc
-
-    async def ack_workspace_cleanup(self, request: WorkspaceCleanupAckRequest) -> None:
-        """Release one callback only after its correlated private cleanup completed."""
-        self._assert_controller(request.controller_id)
-        barrier = self._workspace_barriers.get(request.invocation_id)
-        if barrier is None:
-            raise ValueError("unknown workspace cleanup event")
-        event = barrier.event
-        if (
-            request.instance_id != event.instance_id
-            or request.session_key != event.session_key
-            or request.event_id != event.event_id
-            or request.controller_id != event.controller_id
-        ):
-            raise ValueError("workspace cleanup acknowledgement mismatch")
-        barrier.acknowledged.set()
 
     def _record_workspace_failure(
         self, *, phase: str, invocation_id: str, error: BaseException
@@ -590,8 +552,7 @@ class ExecutionService:
         self, invocation_id: str, reservation: _WorkspaceReservation
     ) -> None:
         native_deadline = asyncio.get_running_loop().time() + CLEANUP_DEADLINE_SECONDS
-        deadline = native_deadline
-        deadline += reservation.request.cleanup_budget_seconds + CLEANUP_PROCESS_MARGIN_SECONDS
+        deadline = native_deadline + CLEANUP_PROCESS_MARGIN_SECONDS
         operation = self._workspace_tasks.get(invocation_id)
         if operation is None:
             operation = self._acquire_tasks.get(invocation_id)
@@ -645,7 +606,7 @@ class ExecutionService:
         if operation_error is not None:
             raise operation_error
 
-    async def prepare_workspace(self, request: WorkspacePrepareRequest) -> dict[str, str]:
+    async def prepare_workspace(self, request: WorkspacePrepareRequest) -> dict[str, Any]:
         """Run the public hook and register its latest cleanup before native acquire."""
         self._assert_controller(request.controller_id)
         self._workspace_cancelled.discard(request.invocation_id)
@@ -666,61 +627,20 @@ class ExecutionService:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + request.remaining_seconds
         workspace = workspace_dir(request.work_dir, request.session_key)
-        reservation = _WorkspaceReservation(request, workspace, deadline)
+        new_session = not workspace.exists()
+        reservation = _WorkspaceReservation(request, workspace, deadline, new_session=new_session)
         self._workspace_reservations[request.invocation_id] = reservation
         completed = False
 
-        async def cleanup() -> None:
-            if request.notify_on_stop:
-                event = WorkspaceStoppedEvent(
-                    controller_id=request.controller_id,
-                    instance_id=self.instance_id,
-                    session_key=request.session_key,
-                    event_id=request.event_id,
-                    invocation_id=request.invocation_id,
-                    workspace=str(workspace),
-                )
-                barrier = _WorkspaceCleanupBarrier(event)
-                if request.cleanup_ack_required:
-                    if not self._admission_open or self._controller_id != request.controller_id:
-                        barrier.failed = True
-                        raise RuntimeError("workspace cleanup controller is unavailable")
-                    self._workspace_barriers[request.invocation_id] = barrier
-                try:
-                    self._emit_controller_event(event)
-                    if request.cleanup_ack_required:
-                        ack_wait = asyncio.create_task(barrier.acknowledged.wait())
-                        try:
-                            await asyncio.wait_for(
-                                ack_wait,
-                                request.cleanup_timeout_seconds + CLEANUP_PROCESS_MARGIN_SECONDS,
-                            )
-                        except TimeoutError as exc:
-                            barrier.failed = True
-                            raise RuntimeError(
-                                "workspace cleanup acknowledgement timed out"
-                            ) from exc
-                        finally:
-                            if not ack_wait.done():
-                                ack_wait.cancel()
-                            await asyncio.gather(ack_wait, return_exceptions=True)
-                        if barrier.failed:
-                            raise RuntimeError("workspace cleanup acknowledgement unavailable")
-                finally:
-                    if request.cleanup_ack_required:
-                        self._workspace_barriers.pop(request.invocation_id, None)
-
         try:
-            await self.pool.begin_session(
-                request.session_key, cleanup if request.notify_on_stop else None
-            )
+            await self.pool.begin_session(request.session_key, None)
             workspace = prepare_workspace(request.home, request.work_dir, request.session_key)
             remaining = deadline - loop.time()
             if remaining <= 0:
                 raise TimeoutError("workspace preparation deadline expired")
             reservation.workspace = workspace
             completed = True
-            return {"status": "ok", "workspace": str(workspace)}
+            return {"status": "ok", "workspace": str(workspace), "new_session": new_session}
         except asyncio.CancelledError:
             if reservation.cleanup_task is not None:
                 raise
@@ -764,6 +684,138 @@ class ExecutionService:
             self._workspace_tasks.pop(request.invocation_id, None)
             if not completed and not reservation.cancel_requested:
                 self._workspace_reservations.pop(request.invocation_id, None)
+
+    async def import_handoff(
+        self, controller_id: str, invocation_id: str, chunks: AsyncIterator[bytes]
+    ) -> None:
+        """Extract a tar.gz handoff archive, then swap it in as `<workspace>/handoff`.
+
+        Streamed to a sibling temp file first (capped), extracted into a sibling temp
+        directory (capped, `data` filter — spec §5: this is agent-adjacent staging content
+        the harness itself just wrote, but the same safe-extract discipline applies), then
+        atomically replaces any previous `handoff` directory. Requires a live reservation
+        for this invocation — handoff always lands before acquire.
+        """
+        self._assert_controller(controller_id)
+        reservation = self._workspace_reservation_for(invocation_id)
+        workspace = reservation.workspace
+        archive = workspace.parent / f".{invocation_id}-handoff.tar.gz"
+        staged = workspace.parent / f".{invocation_id}-handoff-staged"
+        try:
+            await write_capped(chunks, archive, max_bytes=MAX_HANDOFF_ARCHIVE_BYTES)
+            await asyncio.to_thread(
+                extract, archive, staged, max_expanded_bytes=MAX_HANDOFF_ARCHIVE_BYTES
+            )
+            target = workspace / "handoff"
+            previous = workspace / f".{invocation_id}-handoff-previous"
+            if target.exists() or target.is_symlink():
+                target.replace(previous)
+            try:
+                staged.replace(target)
+            except BaseException:
+                if previous.exists():
+                    previous.replace(target)
+                raise
+            if previous.exists():
+                await asyncio.to_thread(shutil.rmtree, previous, ignore_errors=True)
+        except ArchiveTooLarge:
+            raise
+        finally:
+            archive.unlink(missing_ok=True)
+            if staged.exists():
+                await asyncio.to_thread(shutil.rmtree, staged, ignore_errors=True)
+
+    async def session_start(self, request: WorkspaceSessionStartRequest) -> None:
+        """Run `hooks.sessionStart` once for this reservation's new session; no-op without one."""
+        self._assert_controller(request.controller_id)
+        reservation = self._workspace_reservation_for(request.invocation_id)
+        if reservation.session_started:
+            raise ValueError("sessionStart already ran for this reservation")
+        reservation.session_started = True
+        hook = self._public_config.hook_session_start if self._public_config is not None else None
+        if hook is None:
+            return
+        from ach_agent.boot.prepare import (
+            _execute_hook,
+            _HookSpawnFailed,
+            _HookTimedOut,
+            _stderr_tail,
+        )
+
+        env = {
+            name: os.environ[name]
+            for name in (self._public_config.engine_env_names if self._public_config else [])
+            if name in os.environ
+        }
+        env["ACH_WORKSPACE"] = str(reservation.workspace)
+        env["ACH_HANDOFF_DIR"] = str(reservation.workspace / "handoff")
+        env["ACH_SESSION_KEY"] = reservation.request.session_key
+        try:
+            returncode, _stdout, stderr, _truncated = await _execute_hook(
+                hook.script, hook.timeout_seconds, cwd=reservation.workspace, env=env
+            )
+        except _HookSpawnFailed as exc:
+            raise SessionHookFailed(f"sessionStart could not be started: {exc}") from exc
+        except _HookTimedOut:
+            raise SessionHookFailed(
+                f"sessionStart timed out after {hook.timeout_seconds}s"
+            ) from None
+        if returncode != 0:
+            raise SessionHookFailed(
+                f"sessionStart failed: exited {returncode}: {_stderr_tail(stderr)}"
+            )
+
+    async def _run_session_suspend(self, session_key: str) -> None:
+        """Run `hooks.sessionSuspend` for `session_key`'s workspace; no-op without a hook.
+
+        Passed as ``EnginePool(on_stop=...)``: called for every native stop (idle TTL,
+        discard, stop_all), before that stop. Best-effort by contract — the pool itself
+        catches and logs any exception raised here, so failures never block the stop.
+        """
+        hook = self._public_config.hook_session_suspend if self._public_config is not None else None
+        if hook is None or self._public_config is None:
+            return
+        workspace = workspace_dir(self._public_config.work_dir, session_key)
+        if not workspace.is_dir():
+            return
+        from ach_agent.boot.prepare import (
+            _execute_hook,
+            _HookSpawnFailed,
+            _HookTimedOut,
+            _stderr_tail,
+        )
+
+        env = {
+            name: os.environ[name]
+            for name in self._public_config.engine_env_names
+            if name in os.environ
+        }
+        env["ACH_WORKSPACE"] = str(workspace)
+        env["ACH_HANDOFF_DIR"] = str(workspace / "handoff")
+        env["ACH_SESSION_KEY"] = session_key
+        try:
+            returncode, _stdout, stderr, _truncated = await _execute_hook(
+                hook.script, hook.timeout_seconds, cwd=workspace, env=env
+            )
+        except _HookSpawnFailed as exc:
+            log.warning(
+                "hooks.sessionSuspend: could not start", session_key=session_key, error=str(exc)
+            )
+            return
+        except _HookTimedOut:
+            log.warning(
+                "hooks.sessionSuspend: timed out",
+                session_key=session_key,
+                timeout_seconds=hook.timeout_seconds,
+            )
+            return
+        if returncode != 0:
+            log.warning(
+                "hooks.sessionSuspend: script failed",
+                session_key=session_key,
+                returncode=returncode,
+                stderr=_stderr_tail(stderr),
+            )
 
     async def acquire(self, request: AcquireRequest) -> ExecutionHandle:
         self._assert_controller(request.controller_id)
@@ -863,9 +915,6 @@ class ExecutionService:
             reuse=request.reuse,
             server=server,
             deadline=deadline,
-            workspace_cleanup_timeout_seconds=(
-                reservation.request.cleanup_budget_seconds if reservation is not None else 0.0
-            ),
         )
         self._invocations[request.invocation_id] = inv
         if reservation is not None:
@@ -907,7 +956,6 @@ class ExecutionService:
             inv.cleanup_deadline = (
                 asyncio.get_running_loop().time()
                 + CLEANUP_DEADLINE_SECONDS
-                + inv.workspace_cleanup_timeout_seconds
                 + CLEANUP_PROCESS_MARGIN_SECONDS
             )
         inv.cleanup_task = asyncio.create_task(
@@ -1054,7 +1102,6 @@ class ExecutionService:
         deadline = inv.cleanup_deadline
         if deadline is None:
             deadline = asyncio.get_running_loop().time() + CLEANUP_DEADLINE_SECONDS
-            deadline += inv.workspace_cleanup_timeout_seconds
             deadline += CLEANUP_PROCESS_MARGIN_SECONDS
             inv.cleanup_deadline = deadline
 
@@ -1464,11 +1511,6 @@ class ExecutionService:
             or (inv.task is not None and not inv.task.done())
         ):
             raise ValueError("cannot release an active invocation")
-        if request.idle_ttl_seconds > 0:
-            self._warm_cleanup_budget_seconds = max(
-                self._warm_cleanup_budget_seconds,
-                inv.workspace_cleanup_timeout_seconds,
-            )
         cleanup = self._start_cleanup(inv, release=True, idle_ttl_seconds=request.idle_ttl_seconds)
         await self._await_cleanup(cleanup, inv)
         if inv.cleanup_error is not None:

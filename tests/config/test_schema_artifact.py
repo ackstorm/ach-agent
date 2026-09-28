@@ -47,12 +47,11 @@ def test_artifact_is_valid_json_schema() -> None:
     Draft202012Validator.check_schema(schema)
 
 
-def test_cleanup_uses_the_prepare_block_schema() -> None:
-    """Cleanup and prepare expose the same validated hook shape."""
+def test_handoff_extends_the_prepare_block_schema() -> None:
+    """handoff (HandoffBlock) is the same validated hook shape as script (PrepareBlock)."""
     schema = json.loads(_ARTIFACT.read_text(encoding="utf-8"))
-    hook = {"$ref": "#/$defs/PrepareBlock"}
-    assert hook in schema["$defs"]["ChannelConfig"]["properties"]["cleanup"]["anyOf"]
-    assert hook in schema["$defs"]["ChannelConfig"]["properties"]["prepare"]["anyOf"]
+    hook = {"$ref": "#/$defs/HandoffBlock"}
+    assert hook in schema["$defs"]["ChannelConfig"]["properties"]["handoff"]["anyOf"]
 
 
 def test_webhook_script_contract_is_published() -> None:
@@ -93,8 +92,7 @@ def test_artifact_accepts_the_explicit_nulls_the_loader_accepts() -> None:
             "webhook": {"auth": {"type": "none"}, "gitlabEvents": ["push"]},
             "script": {"script": "true"},
             "prompt": None,
-            "prepare": None,
-            "cleanup": None,
+            "handoff": None,
             "cron": None,
             "queue": None,
             "a2a": None,
@@ -112,13 +110,22 @@ def test_artifact_accepts_the_explicit_nulls_the_loader_accepts() -> None:
     AgentConfig.model_validate(instance)
 
 
-def test_cleanup_requires_prepare() -> None:
-    """The artifact rejects cleanup-only channel hooks before deployment."""
+def test_webhook_script_artifact_rejects_handoff() -> None:
+    """The artifact rejects a handoff block on webhook-script channels before deployment."""
     schema = json.loads(_ARTIFACT.read_text(encoding="utf-8"))
     instance = json.loads(_FIXTURES[0].read_text(encoding="utf-8"))
-    instance["channels"][0]["cleanup"] = {"script": "true"}
+    instance["channels"] = [
+        {
+            "name": "register",
+            "type": "webhook-script",
+            "source": "gitlab",
+            "webhook": {"auth": {"type": "none"}, "gitlabEvents": ["push"]},
+            "script": {"script": "true"},
+            "handoff": {"script": "true"},
+        }
+    ]
 
-    with pytest.raises(ValidationError, match="prepare"):
+    with pytest.raises(ValidationError, match="handoff"):
         Draft202012Validator(schema).validate(instance)
 
 

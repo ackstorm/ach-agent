@@ -253,32 +253,6 @@
       "additionalProperties": false,
       "allOf": [
         {
-          "if": {
-            "properties": {
-              "cleanup": {
-                "not": {
-                  "type": "null"
-                }
-              }
-            },
-            "required": [
-              "cleanup"
-            ]
-          },
-          "then": {
-            "properties": {
-              "prepare": {
-                "not": {
-                  "type": "null"
-                }
-              }
-            },
-            "required": [
-              "prepare"
-            ]
-          }
-        },
-        {
           "else": {
             "properties": {
               "script": {
@@ -298,10 +272,7 @@
           },
           "then": {
             "properties": {
-              "cleanup": {
-                "type": "null"
-              },
-              "prepare": {
+              "handoff": {
                 "type": "null"
               },
               "prompt": {
@@ -344,17 +315,6 @@
           ],
           "default": null
         },
-        "cleanup": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/PrepareBlock"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "concurrency": {
           "default": 1,
           "title": "Concurrency",
@@ -371,20 +331,20 @@
           ],
           "default": null
         },
-        "name": {
-          "title": "Name",
-          "type": "string"
-        },
-        "prepare": {
+        "handoff": {
           "anyOf": [
             {
-              "$ref": "#/$defs/PrepareBlock"
+              "$ref": "#/$defs/HandoffBlock"
             },
             {
               "type": "null"
             }
           ],
           "default": null
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
         },
         "prompt": {
           "anyOf": [
@@ -615,6 +575,51 @@
       "title": "EngineBlock",
       "type": "object"
     },
+    "HandoffBlock": {
+      "additionalProperties": false,
+      "description": "`channel.handoff` — credentialed harness script, replaces `channel.prepare`.\n\nRuns in the harness, in an empty `$ACH_HANDOFF_DIR`; its output wholesale-replaces\n`<session workspace>/handoff` (content-agnostic — a repo clone, a DB extract, arbitrary\nfiles). `scope` controls cadence: 'event' (default, every invocation — today's `prepare`\ncadence) or 'session' (new sessions only). Identical in every placement.",
+      "properties": {
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Env",
+          "type": "object"
+        },
+        "scope": {
+          "default": "event",
+          "enum": [
+            "event",
+            "session"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "script": {
+          "title": "Script",
+          "type": "string"
+        },
+        "secretEnv": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SecretSource"
+          },
+          "title": "Secretenv",
+          "type": "object"
+        },
+        "timeoutSeconds": {
+          "default": 120,
+          "exclusiveMinimum": 0,
+          "maximum": 3600,
+          "title": "Timeoutseconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "script"
+      ],
+      "title": "HandoffBlock",
+      "type": "object"
+    },
     "HealthBlock": {
       "additionalProperties": false,
       "description": "CONTRACT §2 health block.",
@@ -631,6 +636,58 @@
         }
       },
       "title": "HealthBlock",
+      "type": "object"
+    },
+    "HookBlock": {
+      "additionalProperties": false,
+      "description": "Agent-level session hook (`hooks.sessionStart` / `hooks.sessionSuspend`).\n\nRuns INSIDE the mini-harness (sandboxed or standalone) with only `engine.forwardEnv`\nvariables — no `secretEnv`, by construction: these run co-resident with the untrusted\nengine, unlike `handoff`, which runs in the harness.",
+      "properties": {
+        "script": {
+          "title": "Script",
+          "type": "string"
+        },
+        "timeoutSeconds": {
+          "default": 120,
+          "exclusiveMinimum": 0,
+          "maximum": 3600,
+          "title": "Timeoutseconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "script"
+      ],
+      "title": "HookBlock",
+      "type": "object"
+    },
+    "HooksBlock": {
+      "additionalProperties": false,
+      "description": "`AgentConfig.hooks` — agent-level sandbox session hooks.\n\n`sessionStart` runs once per session, after `handoff`, before the first turn\n(fail-closed). `sessionSuspend` runs every time the session's engine stops, before any\nHOME archive (best-effort, may run many times). Same in every placement.",
+      "properties": {
+        "sessionStart": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HookBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sessionSuspend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HookBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "HooksBlock",
       "type": "object"
     },
     "LimitsBlock": {
@@ -790,7 +847,7 @@
     },
     "PrepareBlock": {
       "additionalProperties": false,
-      "description": "Operator contract §2 static channel script block.\n\n`prepare` runs on the lane before the session engine is acquired or reused for each\ninvocation and is fail-closed. `cleanup` is best-effort when the reserved session is\ntorn down: after an acquired engine stops, or after prepare/engine-acquire failure\nbefore acquisition completes. Prepare and engine cwd are `ACH_WORKSPACE`; cleanup cwd\nis its parent. Graceful shutdown attempts cleanup, but abrupt loss cannot guarantee it.\n\n`webhook-script` uses the same validated block but receives normalized webhook JSON on\nstdin, runs in a temporary workspace, and never acquires or invokes an engine.\n\n`script` is STATIC text — `{{ }}` templating is deliberately unsupported. Event data\nreaches the script only as environment variables, which is what makes a shell hook safe\nto hand a webhook payload (see boot/prepare.py).",
+      "description": "Operator contract §2 static channel script block.\n\nBase shape shared by `channel.script` (webhook-script's stdin handler, receiving\nnormalized webhook JSON, running in a temporary workspace, never acquiring an engine)\nand `channel.handoff` (`HandoffBlock` below).\n\n`script` is STATIC text — `{{ }}` templating is deliberately unsupported. Event data\nreaches the script only as environment variables, which is what makes a shell hook safe\nto hand a webhook payload (see boot/prepare.py).",
       "properties": {
         "env": {
           "additionalProperties": {
@@ -1217,6 +1274,9 @@
     },
     "health": {
       "$ref": "#/$defs/HealthBlock"
+    },
+    "hooks": {
+      "$ref": "#/$defs/HooksBlock"
     },
     "limits": {
       "$ref": "#/$defs/LimitsBlock"

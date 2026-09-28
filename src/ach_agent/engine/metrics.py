@@ -44,12 +44,6 @@ PREPARE_FAILURES: prometheus_client.Counter = prometheus_client.Counter(
     ["reason"],
 )
 
-CLEANUP_FAILURES: prometheus_client.Counter = prometheus_client.Counter(
-    "ach_agent_cleanup_failures_total",
-    "channel.cleanup scripts that failed during reserved-session teardown",
-    ["reason"],
-)
-
 WEBHOOK_SCRIPT_FAILURES: prometheus_client.Counter = prometheus_client.Counter(
     "ach_agent_webhook_script_failures_total",
     "webhook-script handlers that failed after the event was admitted",

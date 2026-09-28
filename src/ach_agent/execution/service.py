@@ -115,6 +115,60 @@ CLEANUP_PROCESS_MARGIN_SECONDS = 5.0
 MAX_HANDOFF_ARCHIVE_BYTES = 512 * 1024 * 1024
 
 
+# Loopback traffic (model proxy, MCP proxies, memory/a2a facades) must never route
+# through the egress proxy — every one of them is 127.0.0.1 (design §9: "Ensure generic
+# proxy environment changes cannot create recursive proxying").
+_EGRESS_NO_PROXY = "127.0.0.1,localhost,::1"
+# design §8b: a non-secret placeholder — literal, not random or token-shaped, so it
+# reads unambiguously as "not a real credential" in a log line or an accidental echo.
+_EGRESS_PLACEHOLDER_VALUE = "non-secret"
+_SYSTEM_CA_BUNDLE_PATHS = ("/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.pem")
+_EGRESS_CAPABILITY_USER = "ach-egress"
+
+
+def _system_ca_bundle() -> str:
+    for path in _SYSTEM_CA_BUNDLE_PATHS:
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                return f.read()
+    return ""
+
+
+def _egress_env(public: Any, home: str) -> dict[str, str]:
+    """Project the egress proxy into engine-visible proxy/trust/placeholder env vars.
+
+    Engine-wide: opencode/pi's own process, and every child (bun/node, gh, glab)
+    inherit these. HTTP(S)_PROXY routes declared-service traffic through H's proxy;
+    NO_PROXY keeps loopback traffic (model/MCP proxies) out of it; SSL_CERT_FILE adds
+    the proxy's CA to the system trust store so TLS interception verifies. Absent when
+    egress is unset — no proxy/trust/placeholder env is set at all (design §9).
+    """
+    if not public.egress_proxy_url:
+        return {}
+    # egress_proxy_url is "http://127.0.0.1:<port>" (EgressProxy.start()) — insert the
+    # capability as HTTP proxy userinfo per proxyauth's expected form.
+    authority = public.egress_proxy_url.removeprefix("http://")
+    proxy_url = f"http://{_EGRESS_CAPABILITY_USER}:{public.egress_proxy_capability}@{authority}"
+
+    ca_bundle = _system_ca_bundle() + "\n" + public.egress_ca_cert
+    ca_path = Path(home) / ".ach-egress-ca-bundle.pem"
+    ca_path.write_text(ca_bundle, encoding="utf-8")
+    ca_path.chmod(0o644)
+
+    env = {
+        "HTTP_PROXY": proxy_url,
+        "HTTPS_PROXY": proxy_url,
+        "http_proxy": proxy_url,
+        "https_proxy": proxy_url,
+        "NO_PROXY": _EGRESS_NO_PROXY,
+        "no_proxy": _EGRESS_NO_PROXY,
+        "SSL_CERT_FILE": str(ca_path),
+    }
+    for name in public.egress_placeholder_env:
+        env[name] = _EGRESS_PLACEHOLDER_VALUE
+    return env
+
+
 def _engine_config(public: Any) -> EngineConfig:
     """Copy the approved wire fields into the native driver's config type."""
     values = public.model_dump(
@@ -150,6 +204,7 @@ def _engine_config(public: Any) -> EngineConfig:
     values["engine_env"] = {
         name: os.environ[name] for name in public.engine_env_names if name in os.environ
     }
+    values["engine_env"].update(_egress_env(public, public.home))
     # Codemem is an engine-local executable.  H supplies only the approved path and
     # project; E decides whether its own image can provide the optional backend.
     if values.get("codemem_db_path") and shutil.which("codemem") is None:

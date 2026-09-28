@@ -536,18 +536,32 @@ _FORBIDDEN_AUTH_HEADERS = frozenset(
 # (or would override the proxy/trust setup) — reject instead (design §4).
 EGRESS_ENGINE_ENV_NAMES = frozenset(
     {
-        "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
-        "http_proxy", "https_proxy", "no_proxy", "all_proxy",
-        "SSL_CERT_FILE", "SSL_CERT_DIR",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+        "all_proxy",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
     }
 )
 # Names that must never be usable as auth.placeholderEnv — collide with protected ACH
 # variables, proxy/trust configuration, or managed secrets (design §4).
 _PROTECTED_PLACEHOLDER_NAMES = EGRESS_ENGINE_ENV_NAMES | {
-    "ACH_TOKEN", "ACH_API_KEY", "GITLAB_TOKEN",
+    "ACH_TOKEN",
+    "ACH_API_KEY",
+    "GITLAB_TOKEN",
     # pinned by build_opencode_env / build_pi_env
-    "HOME", "TMPDIR", "PATH", "GIT_TERMINAL_PROMPT", "OPENCODE_CONFIG",
-    "PI_CODING_AGENT_DIR", "PI_LOCAL_PROXY_API_KEY",
+    "HOME",
+    "TMPDIR",
+    "PATH",
+    "GIT_TERMINAL_PROMPT",
+    "OPENCODE_CONFIG",
+    "PI_CODING_AGENT_DIR",
+    "PI_LOCAL_PROXY_API_KEY",
 }
 
 
@@ -564,14 +578,20 @@ class EgressServiceAuth(BaseModel):
     @model_validator(mode="after")
     def _validate(self) -> EgressServiceAuth:
         if self.header.strip().lower() in _FORBIDDEN_AUTH_HEADERS:
-            raise ValueError(f"auth.header {self.header!r} controls routing/framing/transport — forbidden")
+            raise ValueError(
+                f"auth.header {self.header!r} controls routing/framing/transport — forbidden"
+            )
         if any(ch in self.prefix for ch in ("\r", "\n", "\x00")):
             raise ValueError("auth.prefix must not contain CR, LF, or NUL")
         if self.placeholder_env:
             if not _ENV_NAME_RE.match(self.placeholder_env):
-                raise ValueError(f"placeholderEnv is not a valid environment variable name: {self.placeholder_env!r}")
+                raise ValueError(
+                    f"placeholderEnv is not a valid env var name: {self.placeholder_env!r}"
+                )
             if self.placeholder_env in _PROTECTED_PLACEHOLDER_NAMES:
-                raise ValueError(f"placeholderEnv {self.placeholder_env!r} collides with a protected ACH variable")
+                raise ValueError(
+                    f"placeholderEnv {self.placeholder_env!r} collides with a protected name"
+                )
         return self
 
 
@@ -599,10 +619,15 @@ class EgressServiceBlock(BaseModel):
     @model_validator(mode="after")
     def _validate(self) -> EgressServiceBlock:
         if not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?", self.name):
-            raise ValueError(f"services[].name must be a lowercase DNS-label-style name: {self.name!r}")
+            raise ValueError(
+                f"services[].name must be a lowercase DNS-label-style name: {self.name!r}"
+            )
         m = _EGRESS_ORIGIN_RE.match(self.origin)
         if not m:
-            raise ValueError(f"origin must be an exact https://<hostname>[:port] with no path/query/userinfo: {self.origin!r}")
+            raise ValueError(
+                f"origin must be an exact https://<hostname>[:port] with no "
+                f"path/query/userinfo: {self.origin!r}"
+            )
         if _IP_LITERAL_RE.match(m.group("host")):
             raise ValueError(f"origin must be a DNS hostname, not an IP literal: {self.origin!r}")
         return self
@@ -622,7 +647,9 @@ class EgressBlock(BaseModel):
             raise ValueError("services[].name must be unique")
         origins = [s.origin.lower() for s in self.services]
         if len(origins) != len(set(origins)):
-            raise ValueError("services[].origin must be unique (one credential per canonical origin)")
+            raise ValueError(
+                "services[].origin must be unique (one credential per canonical origin)"
+            )
         placeholders = [s.auth.placeholder_env for s in self.services if s.auth.placeholder_env]
         if len(placeholders) != len(set(placeholders)):
             raise ValueError("auth.placeholderEnv must be unique across services")
@@ -1139,7 +1166,9 @@ class AgentConfig(BaseModel):
             }
             clash = reserved & set(self.engine.forward_env)
             if clash:
-                raise ValueError(f"engine.forwardEnv collides with egress-managed env: {sorted(clash)}")
+                raise ValueError(
+                    f"engine.forwardEnv collides with egress-managed env: {sorted(clash)}"
+                )
         return self
 
 

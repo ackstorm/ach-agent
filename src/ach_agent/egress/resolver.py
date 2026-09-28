@@ -22,7 +22,9 @@ def resolve_services(egress: EgressBlock) -> list[ResolvedService]:
         if not value:
             raise EgressConfigError(f"egress service {svc.name!r}: secret.env is unset or empty")
         if any(ch in value for ch in ("\r", "\n", "\x00")):
-            raise EgressConfigError(f"egress service {svc.name!r}: secret has invalid header characters")
+            raise EgressConfigError(
+                f"egress service {svc.name!r}: secret has invalid header characters"
+            )
         # origin validated as https://<host>[:port] at config load (Task 1).
         host, _, port = svc.origin.removeprefix("https://").partition(":")
         resolved.append(

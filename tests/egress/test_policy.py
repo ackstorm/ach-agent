@@ -5,8 +5,13 @@ from ach_agent.egress.policy import ResolvedService, match_service
 
 def _svc(name: str, host: str) -> ResolvedService:
     return ResolvedService(
-        name=name, host=host, port=443, header="Authorization", prefix="Bearer ",
-        secret="x", placeholder_env="",
+        name=name,
+        host=host,
+        port=443,
+        header="Authorization",
+        prefix="Bearer ",
+        secret="x",
+        placeholder_env="",
     )
 
 

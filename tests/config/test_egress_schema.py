@@ -48,21 +48,33 @@ def test_service_origin_rejects_wildcard_and_ip_literal() -> None:
 def test_duplicate_service_names_rejected() -> None:
     with pytest.raises(ValidationError):
         EgressBlock.model_validate(
-            {"services": [_base_service(name="github"), _base_service(name="github", origin="https://other.example.com:443")]}
+            {
+                "services": [
+                    _base_service(name="github"),
+                    _base_service(name="github", origin="https://other.example.com:443"),
+                ]
+            }
         )
 
 
 def test_duplicate_origins_rejected() -> None:
     with pytest.raises(ValidationError):
-        EgressBlock.model_validate(
-            {"services": [_base_service(name="a"), _base_service(name="b")]}
-        )
+        EgressBlock.model_validate({"services": [_base_service(name="a"), _base_service(name="b")]})
 
 
 def test_forbidden_auth_header_rejected() -> None:
-    for header in ("Host", "Content-Length", "Transfer-Encoding", "Connection", "Cookie", "Proxy-Authorization"):
+    for header in (
+        "Host",
+        "Content-Length",
+        "Transfer-Encoding",
+        "Connection",
+        "Cookie",
+        "Proxy-Authorization",
+    ):
         with pytest.raises(ValidationError):
-            EgressServiceBlock.model_validate(_base_service(auth={**_base_service()["auth"], "header": header}))
+            EgressServiceBlock.model_validate(
+                _base_service(auth={**_base_service()["auth"], "header": header})
+            )
 
 
 def test_placeholder_env_collides_with_forwarded_env_rejected() -> None:
@@ -75,8 +87,20 @@ def test_placeholder_env_collides_with_forwarded_env_rejected() -> None:
 
 @pytest.mark.parametrize(
     "name",
-    ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "NO_PROXY", "no_proxy", "ALL_PROXY",
-     "SSL_CERT_FILE", "SSL_CERT_DIR", "HOME", "PATH", "TMPDIR", "OPENCODE_CONFIG"],
+    [
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "NO_PROXY",
+        "no_proxy",
+        "ALL_PROXY",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "HOME",
+        "PATH",
+        "TMPDIR",
+        "OPENCODE_CONFIG",
+    ],
 )
 def test_placeholder_env_rejects_proxy_trust_and_pinned_names(name: str) -> None:
     with pytest.raises(ValidationError):
@@ -106,7 +130,10 @@ def test_agent_config_rejects_unknown_egress_field() -> None:
                 "schemaVersion": "1",
                 "agent": {"name": "a"},
                 "model": {"name": "m", "type": "openai"},
-                "capability": {"type": "ach", "ach": {"baseUrl": "https://x", "environment": "prod"}},
+                "capability": {
+                    "type": "ach",
+                    "ach": {"baseUrl": "https://x", "environment": "prod"},
+                },
                 "egress": {"services": [], "bogusField": True},
             }
         )

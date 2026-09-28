@@ -7,21 +7,33 @@ from ach_agent.egress.resolver import EgressConfigError, resolve_services
 
 
 def _cfg(origin: str = "https://API.github.com:443") -> EgressBlock:
-    return EgressBlock.model_validate({
-        "services": [{
-            "name": "github",
-            "origin": origin,
-            "auth": {"header": "Authorization", "prefix": "Bearer ",
-                     "secret": {"env": "TEST_EGRESS_SECRET_0"}, "placeholderEnv": "GH_TOKEN"},
-        }]
-    })
+    return EgressBlock.model_validate(
+        {
+            "services": [
+                {
+                    "name": "github",
+                    "origin": origin,
+                    "auth": {
+                        "header": "Authorization",
+                        "prefix": "Bearer ",
+                        "secret": {"env": "TEST_EGRESS_SECRET_0"},
+                        "placeholderEnv": "GH_TOKEN",
+                    },
+                }
+            ]
+        }
+    )
 
 
 def test_resolve_services_reads_env_and_parses_origin(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TEST_EGRESS_SECRET_0", "s3cr3t-value")
     [r] = resolve_services(_cfg())
     assert (r.name, r.host, r.port, r.secret, r.placeholder_env) == (
-        "github", "api.github.com", 443, "s3cr3t-value", "GH_TOKEN"
+        "github",
+        "api.github.com",
+        443,
+        "s3cr3t-value",
+        "GH_TOKEN",
     )
     assert "s3cr3t-value" not in repr(r)
 

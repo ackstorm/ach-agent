@@ -7,7 +7,7 @@ name = "ach-agent"
 version = "0.17.0"
 description = "ACH Agent — execution plane harness for the ACH ecosystem"
 readme = "README.md"
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.13,<3.14"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "ACKstorm", email = "juancarlos.moreno@ackstorm.com" }]
@@ -17,7 +17,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
@@ -37,6 +36,7 @@ dependencies = [
     # asyncio loop + h11 are plenty for the webhook/a2a/health surface.
     "uvicorn==0.50.2",
     "pyyaml>=6,<7",
+    "mitmproxy==12.2.3",
 ]
 
 [project.urls]

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from ach_agent.config.schema import AgentConfig, EgressBlock, EgressServiceAccess, EgressServiceBlock
+from ach_agent.config.schema import AgentConfig, EgressBlock, EgressServiceBlock
 
 
 def _base_service(**overrides: object) -> dict:
@@ -97,28 +97,6 @@ def test_forward_env_colliding_with_egress_env_rejected() -> None:
         AgentConfig.model_validate({**cfg_kwargs, "engine": {"forwardEnv": ["GH_TOKEN"]}})
     with pytest.raises(ValidationError):
         AgentConfig.model_validate({**cfg_kwargs, "engine": {"forwardEnv": ["HTTPS_PROXY"]}})
-
-
-def test_access_default_deny_empty_allow_denies_everything() -> None:
-    access = EgressServiceAccess.model_validate({"allow": []})
-    assert access.default_action == "deny"
-    assert access.allow == []
-
-
-def test_access_path_prefix_must_end_in_slash() -> None:
-    with pytest.raises(ValidationError):
-        EgressServiceAccess.model_validate(
-            {"allow": [{"methods": ["GET"], "pathPrefix": "/api/v4/projects/123"}]}
-        )
-
-
-def test_access_rule_requires_exactly_one_of_path_exact_or_prefix() -> None:
-    with pytest.raises(ValidationError):
-        EgressServiceAccess.model_validate(
-            {"allow": [{"methods": ["GET"], "pathPrefix": "/a/", "pathExact": "/b"}]}
-        )
-    with pytest.raises(ValidationError):
-        EgressServiceAccess.model_validate({"allow": [{"methods": ["GET"]}]})
 
 
 def test_agent_config_rejects_unknown_egress_field() -> None:

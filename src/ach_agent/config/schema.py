@@ -549,7 +549,6 @@ _PROTECTED_PLACEHOLDER_NAMES = EGRESS_ENGINE_ENV_NAMES | {
     "HOME", "TMPDIR", "PATH", "GIT_TERMINAL_PROMPT", "OPENCODE_CONFIG",
     "PI_CODING_AGENT_DIR", "PI_LOCAL_PROXY_API_KEY",
 }
-_EGRESS_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
 
 
 class EgressServiceAuth(BaseModel):
@@ -576,39 +575,6 @@ class EgressServiceAuth(BaseModel):
         return self
 
 
-class EgressAccessRule(BaseModel):
-    """design §4 access.allow[] entry — method + exactly one of pathExact/pathPrefix."""
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    methods: list[str]
-    path_exact: str = Field(default="", alias="pathExact")
-    path_prefix: str = Field(default="", alias="pathPrefix")
-
-    @model_validator(mode="after")
-    def _validate(self) -> EgressAccessRule:
-        if not self.methods:
-            raise ValueError("allow[].methods must be non-empty")
-        if any(m not in _EGRESS_METHODS for m in self.methods):
-            raise ValueError(f"allow[].methods must be exact uppercase HTTP methods, got {self.methods!r}")
-        has_exact = bool(self.path_exact)
-        has_prefix = bool(self.path_prefix)
-        if has_exact == has_prefix:
-            raise ValueError("exactly one of pathExact/pathPrefix is required")
-        if has_prefix and not self.path_prefix.endswith("/"):
-            raise ValueError("pathPrefix must end in '/'")
-        return self
-
-
-class EgressServiceAccess(BaseModel):
-    """design §4 access block — absent means unrestricted at the declared origin."""
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    default_action: Literal["deny"] = Field(default="deny", alias="defaultAction")
-    allow: list[EgressAccessRule] = Field(default_factory=list)
-
-
 _EGRESS_ORIGIN_RE = re.compile(
     r"^https://(?P<host>[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+)(?::(?P<port>\d+))?$"
 )
@@ -623,7 +589,6 @@ class EgressServiceBlock(BaseModel):
     name: str
     origin: str
     auth: EgressServiceAuth
-    access: EgressServiceAccess | None = None
 
     @field_validator("origin", mode="before")
     @classmethod
@@ -648,7 +613,6 @@ class EgressBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    default_action: Literal["deny"] = Field(default="deny", alias="defaultAction")
     services: list[EgressServiceBlock] = Field(min_length=1)
 
     @model_validator(mode="after")

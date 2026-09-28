@@ -34,7 +34,6 @@ def resolve_services(egress: EgressBlock) -> list[ResolvedService]:
                 prefix=svc.auth.prefix,
                 secret=value,
                 placeholder_env=svc.auth.placeholder_env,
-                access=svc.access,
             )
         )
     return resolved

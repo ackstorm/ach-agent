@@ -185,7 +185,12 @@ class ExecutionService:
         sessions_map: MutableMapping[str, str] | None = None,
     ) -> None:
         self.driver = driver
-        self.pool = EnginePool(driver=driver, sessions_map=sessions_map, strict_cleanup=True)
+        self.pool = EnginePool(
+            driver=driver,
+            sessions_map=sessions_map,
+            strict_cleanup=True,
+            on_stop=self._run_session_suspend,
+        )
         self._configured = driver is not None
         # A directly injected driver is the explicit seam used by unit tests and
         # in-process callers. Production (driver=None) remains pre-init until the
@@ -325,7 +330,10 @@ class ExecutionService:
                         self._sessions_map = _LRUSessionMap()
                 self.driver = driver
                 self.pool = EnginePool(
-                    driver=driver, sessions_map=self._sessions_map, strict_cleanup=True
+                    driver=driver,
+                    sessions_map=self._sessions_map,
+                    strict_cleanup=True,
+                    on_stop=self._run_session_suspend,
                 )
             except BaseException:
                 self._mark_unhealthy()
@@ -755,6 +763,58 @@ class ExecutionService:
         if returncode != 0:
             raise SessionHookFailed(
                 f"sessionStart failed: exited {returncode}: {_stderr_tail(stderr)}"
+            )
+
+    async def _run_session_suspend(self, session_key: str) -> None:
+        """Run `hooks.sessionSuspend` for `session_key`'s workspace; no-op without a hook.
+
+        Passed as ``EnginePool(on_stop=...)``: called for every native stop (idle TTL,
+        discard, stop_all), before that stop. Best-effort by contract — the pool itself
+        catches and logs any exception raised here, so failures never block the stop.
+        """
+        hook = self._public_config.hook_session_suspend if self._public_config is not None else None
+        if hook is None or self._public_config is None:
+            return
+        workspace = workspace_dir(self._public_config.work_dir, session_key)
+        if not workspace.is_dir():
+            return
+        from ach_agent.boot.prepare import (
+            _execute_hook,
+            _HookSpawnFailed,
+            _HookTimedOut,
+            _stderr_tail,
+        )
+
+        env = {
+            name: os.environ[name]
+            for name in self._public_config.engine_env_names
+            if name in os.environ
+        }
+        env["ACH_WORKSPACE"] = str(workspace)
+        env["ACH_HANDOFF_DIR"] = str(workspace / "handoff")
+        env["ACH_SESSION_KEY"] = session_key
+        try:
+            returncode, _stdout, stderr, _truncated = await _execute_hook(
+                hook.script, hook.timeout_seconds, cwd=workspace, env=env
+            )
+        except _HookSpawnFailed as exc:
+            log.warning(
+                "hooks.sessionSuspend: could not start", session_key=session_key, error=str(exc)
+            )
+            return
+        except _HookTimedOut:
+            log.warning(
+                "hooks.sessionSuspend: timed out",
+                session_key=session_key,
+                timeout_seconds=hook.timeout_seconds,
+            )
+            return
+        if returncode != 0:
+            log.warning(
+                "hooks.sessionSuspend: script failed",
+                session_key=session_key,
+                returncode=returncode,
+                stderr=_stderr_tail(stderr),
             )
 
     async def acquire(self, request: AcquireRequest) -> ExecutionHandle:

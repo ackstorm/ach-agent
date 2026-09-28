@@ -231,6 +231,13 @@ def build_role_configs(
         for name, spec in cfg.mcp_servers.items()
         if isinstance(spec, (LocalMcpServer, RemoteMcpServer))
     }
+    from ach_agent.execution.wire import HookSpec
+
+    def _hook_spec(block: Any) -> HookSpec | None:
+        if block is None:
+            return None
+        return HookSpec(script=block.script, timeout_seconds=block.timeout_seconds)
+
     public = PublicEngineConfig(
         agent_name=cfg.agent.name,
         engine_type=cfg.engine.type,
@@ -258,6 +265,8 @@ def build_role_configs(
         pi_mcp_adapter_path=cfg.engine.pi.mcp_adapter_path
         if cfg.engine.type == "pi" and cfg.engine.pi
         else "",
+        hook_session_start=_hook_spec(cfg.hooks.session_start),
+        hook_session_suspend=_hook_spec(cfg.hooks.session_suspend),
     )
     return channels, _json_model(public)
 

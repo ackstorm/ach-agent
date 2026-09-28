@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from ach_agent.engine.base.driver import EngineConfig
 from ach_agent.execution.service import ExecutionService, SessionHookFailed
 from ach_agent.execution.wire import (
     HookSpec,
@@ -16,6 +17,10 @@ from ach_agent.execution.wire import (
     WorkspacePrepareRequest,
     WorkspaceSessionStartRequest,
 )
+
+
+def _engine_config() -> EngineConfig:
+    return EngineConfig(model_base_url="http://127.0.0.1:9/v1", engine_type="opencode")
 
 
 def _prepare(tmp_path: Path, **changes: object) -> WorkspacePrepareRequest:
@@ -212,3 +217,40 @@ async def test_session_start_rejects_a_second_call(fake_driver, tmp_path: Path) 
                 controller_id="controller", invocation_id=request.invocation_id
             )
         )
+
+
+# --------------------------------------------------------------------------- sessionSuspend
+
+
+async def test_session_suspend_runs_before_native_stop_on_discard(
+    fake_driver, tmp_path: Path
+) -> None:
+    marker = tmp_path / "suspend-marker.txt"
+    work_dir = tmp_path / "work"
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+    await service.configure(
+        PublicEngineConfig(
+            work_dir=str(work_dir),
+            hook_session_suspend=HookSpec(script=f'printf "%s" "$ACH_SESSION_KEY" > {marker}'),
+        )
+    )
+    request = _prepare(tmp_path, work_dir=str(work_dir))
+    await service.prepare_workspace(request)
+
+    await service.pool.acquire(request.session_key, _engine_config())
+    await service.pool.discard(request.session_key)
+
+    assert marker.read_text() == request.session_key
+
+
+async def test_session_suspend_is_a_no_op_without_a_hook(fake_driver, tmp_path: Path) -> None:
+    work_dir = tmp_path / "work"
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+    await service.configure(PublicEngineConfig(work_dir=str(work_dir)))
+    request = _prepare(tmp_path, work_dir=str(work_dir))
+    await service.prepare_workspace(request)
+
+    await service.pool.acquire(request.session_key, _engine_config())
+    await service.pool.discard(request.session_key)

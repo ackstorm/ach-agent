@@ -919,6 +919,7 @@ async def _run_harness(
         cost_source=cfg.cost.source,
         completion_registry=completion_registry,
         conversation_locks=conversation_locks,
+        handoff_staging_root=role_paths.harness_state / "handoff-staging",
     )
 
     # Step 6 (cont.): construct Router with all limits from config (RTR-03/04)

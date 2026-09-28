@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import shutil
+import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -33,8 +35,10 @@ from ach_agent.config.schema import (
 from ach_agent.engine import trace
 from ach_agent.engine.cost import CostAccountant
 from ach_agent.engine.metrics import ENGINE_LAUNCH_FAILURES
+from ach_agent.execution.service import MAX_HANDOFF_ARCHIVE_BYTES
 from ach_agent.execution.wire import PublicEngineConfig
 from ach_agent.memory.ach_memory import prepare_ach_memory
+from ach_agent.sandbox.archive import pack
 from ach_agent.stats.sink import StatsSink
 from ach_agent.templating import build_template_context, render_template
 
@@ -83,6 +87,7 @@ def make_engine_runner(
     cost_source: str = "engine",
     completion_registry: CompletionRegistry | None = None,
     conversation_locks: ConversationLocks | None = None,
+    handoff_staging_root: Path | None = None,
 ) -> Callable[..., Any]:
     """Build the router runner using one concrete ExecutionClient."""
     from ach_agent.engine.base.terminal import run_contract_turn
@@ -100,6 +105,8 @@ def make_engine_runner(
         conversation_locks = ConversationLocks()
     if not isinstance(engine_cfg, PublicEngineConfig):
         raise TypeError("make_engine_runner requires credential-free PublicEngineConfig")
+    staging_root = Path(handoff_staging_root or tempfile.gettempdir())
+    staging_root.mkdir(parents=True, exist_ok=True)
 
     async def close_runner() -> None:
         return
@@ -174,17 +181,13 @@ def make_engine_runner(
             async with asyncio.timeout_at(deadline):
                 await lock_context.__aenter__()
                 lock_entered = True
-                # TODO(Task 4): handoff runs in the harness into a staging dir, gets
-                # tar.gz-packed, and reaches the workspace via client.import_handoff;
-                # hooks.sessionStart runs via client.start_session for a new session.
-                # This still runs the handoff script directly in the shared workspace,
-                # matching the old channel.prepare behavior, as an interim bridge.
                 handoff_cfg = getattr(ch_cfg, "handoff", None) if ch_cfg is not None else None
+                has_hooks = engine_cfg.hook_session_start is not None
                 workspace = Path(invocation_engine_cfg.work_dir)
                 expected_workspace = workspace_dir(
                     invocation_engine_cfg.work_dir, event.session_key
                 )
-                if handoff_cfg is not None:
+                if handoff_cfg is not None or has_hooks:
                     prep_request = WorkspacePrepareRequest(
                         controller_id=client.controller_id,
                         invocation_id=invocation_id,
@@ -201,7 +204,21 @@ def make_engine_runner(
                         raise RuntimeError("execution returned an unexpected workspace path")
                     workspace = expected_workspace
                     reservation_active = True
-                    await run_prepare(handoff_cfg, event, workspace)
+                    new_session = bool(result.get("new_session"))
+                    if handoff_cfg is not None and (handoff_cfg.scope == "event" or new_session):
+                        staged = Path(tempfile.mkdtemp(dir=str(staging_root)))
+                        tmp_archive = staged.with_suffix(".tar.gz")
+                        try:
+                            await run_prepare(handoff_cfg, event, staged)
+                            await asyncio.to_thread(
+                                pack, staged, tmp_archive, max_bytes=MAX_HANDOFF_ARCHIVE_BYTES
+                            )
+                            await client.import_handoff(tmp_archive, invocation_id)
+                        finally:
+                            await asyncio.to_thread(shutil.rmtree, staged, ignore_errors=True)
+                            tmp_archive.unlink(missing_ok=True)
+                    if new_session:
+                        await client.start_session(client.controller_id, invocation_id)
 
                 wire_cfg = invocation_engine_cfg.model_copy(update={"work_dir": str(workspace)})
                 from ach_agent.execution.wire import AcquireRequest

@@ -51,19 +51,20 @@ class _FakeClient:
     async def cancel_handle(self, handle: ExecutionHandle) -> None:
         await self.cancel(handle.controller_id, handle.invocation_id)
 
-    async def prepare_workspace(self, request: Any) -> dict[str, str]:
+    async def prepare_workspace(self, request: Any) -> dict[str, Any]:
         from ach_agent.engine.workspace import workspace_dir
 
         workspace = workspace_dir(request.work_dir, request.session_key)
+        new_session = not workspace.exists()
         workspace.mkdir(parents=True, exist_ok=True)
         self.calls.append(("prepare", request))
-        return {"status": "ok", "workspace": str(workspace)}
+        return {"status": "ok", "workspace": str(workspace), "new_session": new_session}
 
-    async def handoff_workspace(self, request: Any) -> dict[str, str]:
-        from ach_agent.engine.workspace import workspace_dir
+    async def import_handoff(self, path: Any, invocation_id: str) -> None:
+        self.calls.append(("import_handoff", (path, invocation_id)))
 
-        workspace = workspace_dir(request.work_dir, request.session_key)
-        return {"status": "ok", "workspace": str(workspace)}
+    async def start_session(self, controller_id: str, invocation_id: str) -> None:
+        self.calls.append(("start_session", (controller_id, invocation_id)))
 
 
 @pytest.mark.asyncio
@@ -112,7 +113,7 @@ async def test_runner_uses_execution_client_and_releases_handle(monkeypatch: Any
 
 
 @pytest.mark.asyncio
-async def test_runner_executes_prepare_in_h_after_e_reservation(
+async def test_runner_stages_handoff_and_imports_it_before_acquire(
     monkeypatch: Any, tmp_path: Any
 ) -> None:
     import ach_agent.engine.base.terminal as terminal
@@ -130,6 +131,7 @@ async def test_runner_executes_prepare_in_h_after_e_reservation(
 
     monkeypatch.setattr(terminal, "run_contract_turn", fake_contract)
     client = _FakeClient()
+    staging_root = tmp_path / "staging"
     runner = make_engine_runner(
         client=client,
         engine_cfg=PublicEngineConfig(work_dir=str(tmp_path / "workspace")),
@@ -144,6 +146,7 @@ async def test_runner_executes_prepare_in_h_after_e_reservation(
                 }
             )
         },
+        handoff_staging_root=staging_root,
     )
 
     await runner(
@@ -157,12 +160,72 @@ async def test_runner_executes_prepare_in_h_after_e_reservation(
     )
 
     names = [name for name, _ in client.calls]
-    assert names[:3] == ["prepare", "acquire", "turn"]
+    assert names[:5] == ["prepare", "import_handoff", "start_session", "acquire", "turn"]
     assert names[-1] == "release"
-    workspace = client.calls[0][1].work_dir
-    from ach_agent.engine.workspace import workspace_dir
+    import_path, import_invocation_id = dict(client.calls)["import_handoff"]
+    assert not import_path.exists(), "the temp archive must be cleaned up in finally"
+    assert import_invocation_id
+    assert not any(staging_root.iterdir()), "the staging dir must be removed"
 
-    assert (workspace_dir(workspace, "session-prepare") / "h-marker").read_text() == "prepared"
+
+@pytest.mark.asyncio
+async def test_runner_packs_handoff_archive_before_cleanup(monkeypatch: Any, tmp_path: Any) -> None:
+    import tarfile
+
+    import ach_agent.engine.base.terminal as terminal
+    from ach_agent.config.schema import ChannelConfig
+
+    async def fake_contract(run_turn: Any, **kwargs: Any) -> dict[str, str]:
+        result = await run_turn(
+            prompt=kwargs["prompt"],
+            max_tool_calls=kwargs["max_tool_calls"],
+            on_text=kwargs["on_text"],
+            on_tool=kwargs["on_tool"],
+            stats=kwargs["stats"],
+        )
+        return {"action": "none", "text": result.text}
+
+    monkeypatch.setattr(terminal, "run_contract_turn", fake_contract)
+    captured: dict[str, Any] = {}
+
+    class _CapturingClient(_FakeClient):
+        async def import_handoff(self, path: Any, invocation_id: str) -> None:
+            with tarfile.open(path, "r:gz") as tar:
+                captured["names"] = tar.getnames()
+                captured["content"] = tar.extractfile("./h-marker").read()  # type: ignore[union-attr]
+            await super().import_handoff(path, invocation_id)
+
+    monkeypatch.setattr(terminal, "run_contract_turn", fake_contract)
+    client = _CapturingClient()
+    runner = make_engine_runner(
+        client=client,
+        engine_cfg=PublicEngineConfig(work_dir=str(tmp_path / "workspace")),
+        max_invocation_seconds=30,
+        channels_by_name={
+            "chat": ChannelConfig.model_validate(
+                {
+                    "name": "chat",
+                    "type": "cron",
+                    "cron": {"schedule": "* * * * *"},
+                    "handoff": {"script": "printf prepared > h-marker"},
+                }
+            )
+        },
+        handoff_staging_root=tmp_path / "staging",
+    )
+
+    await runner(
+        MessageEvent(
+            idempotency_key="event-prepare",
+            session_key="session-prepare",
+            channel_name="chat",
+            payload={},
+        ),
+        lambda: None,
+    )
+
+    assert "./h-marker" in captured["names"]
+    assert captured["content"] == b"prepared"
 
 
 @pytest.mark.asyncio

@@ -101,11 +101,18 @@ class RunnerClient:
     async def cancel_handle(self, handle: ExecutionHandle) -> None:
         await self.cancel(handle.controller_id, handle.invocation_id)
 
-    async def prepare_workspace(self, request: Any) -> dict[str, str]:
+    async def prepare_workspace(self, request: Any) -> dict[str, Any]:
         workspace = workspace_dir(request.work_dir, request.session_key)
+        new_session = not workspace.exists()
         workspace.mkdir(parents=True, exist_ok=True)
-        return {"status": "ok", "workspace": str(workspace)}
+        return {"status": "ok", "workspace": str(workspace), "new_session": new_session}
 
     async def handoff_workspace(self, request: Any) -> dict[str, str]:
         workspace = workspace_dir(request.work_dir, request.session_key)
         return {"status": "ok", "workspace": str(workspace)}
+
+    async def import_handoff(self, path: Any, invocation_id: str) -> None:
+        pass
+
+    async def start_session(self, controller_id: str, invocation_id: str) -> None:
+        pass

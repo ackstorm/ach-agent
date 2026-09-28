@@ -208,6 +208,7 @@ def build_prepare_env(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
             env[f"ACH_EVENT_{key.upper()}"] = text
 
     env["ACH_WORKSPACE"] = str(workspace)
+    env["ACH_HANDOFF_DIR"] = str(workspace)
     env["ACH_SESSION_KEY"] = event.session_key
     env["ACH_EVENT_ID"] = event.idempotency_key
     env["ACH_CHANNEL"] = event.channel_name

@@ -698,7 +698,7 @@ class SessionBlock(BaseModel):
 # Env names boot/prepare.py pins itself for every prepare script. Operator config may not
 # set them: the harness writes them last, so a config entry would be silently discarded.
 RESERVED_PREPARE_ENV: frozenset[str] = frozenset(
-    {"ACH_WORKSPACE", "ACH_SESSION_KEY", "ACH_EVENT_ID", "ACH_CHANNEL", "HOME"}
+    {"ACH_WORKSPACE", "ACH_HANDOFF_DIR", "ACH_SESSION_KEY", "ACH_EVENT_ID", "ACH_CHANNEL", "HOME"}
 )
 # Reserved namespace for the event's normalized fields (ACH_EVENT_PROJECT_PATH, …).
 RESERVED_PREPARE_ENV_PREFIX = "ACH_EVENT_"

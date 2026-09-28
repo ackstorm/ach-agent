@@ -88,6 +88,14 @@ class PublicEngineConfig(_WireModel):
     # never by the harness-side runner, since a sandboxed engine has no runner co-located.
     hook_session_start: HookSpec | None = Field(default=None, alias="hookSessionStart")
     hook_session_suspend: HookSpec | None = Field(default=None, alias="hookSessionSuspend")
+    # Authenticated egress proxy projection (design doc
+    # 2026-09-28-authenticated-egress-proxy-design.md §6). Empty when egress is unset —
+    # the real secret never crosses this boundary; only the loopback endpoint, the local
+    # access capability, the public CA cert, and the non-secret placeholder NAMES do.
+    egress_proxy_url: str = Field(default="", alias="egressProxyUrl")
+    egress_proxy_capability: str = Field(default="", alias="egressProxyCapability")
+    egress_ca_cert: str = Field(default="", alias="egressCaCert")
+    egress_placeholder_env: list[str] = Field(default_factory=list, alias="egressPlaceholderEnv")
 
     _params_finite = field_validator("params", "mcp_templates")(_finite_json)
 

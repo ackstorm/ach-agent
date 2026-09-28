@@ -132,6 +132,12 @@ def _engine_config(public: Any) -> EngineConfig:
             # (import_handoff/session_start/pool on_stop) — never by the native driver.
             "hook_session_start",
             "hook_session_suspend",
+            # Egress projection: consumed here to build engine_env (proxy/trust/
+            # placeholder vars), never passed through to EngineConfig itself.
+            "egress_proxy_url",
+            "egress_proxy_capability",
+            "egress_ca_cert",
+            "egress_placeholder_env",
         }
     )
     values["extra_mcp_servers"] = {

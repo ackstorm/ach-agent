@@ -460,6 +460,11 @@ async def _run_harness(
     price_table: PriceTable | None = None
     accountant: CostAccountant | None = None
     manifest = None
+    # Hoisted from its original construction point (below, alongside watch_engine_
+    # readiness) so the egress proxy's on_failure callback — wired further down, well
+    # before HealthState/state exist — can drive the same graceful-drain path a lost
+    # execution controller already does.
+    shutdown_event: asyncio.Event = asyncio.Event()
     if ek:
         manifest = await hydrate(
             cfg.capability.ach.base_url,
@@ -598,6 +603,41 @@ async def _run_harness(
         )
         sys.exit(1)
 
+    # Authenticated egress proxy (design doc 2026-09-28-authenticated-egress-proxy-
+    # design.md §6, §8). Deliberately outside the `if ek:` block above: egress doesn't
+    # depend on the ek_, and nesting it under an unrelated credential would silently
+    # disable it the day the ek_ requirement relaxes.
+    #
+    # Fail-closed by the SAME pattern as McpProxy/A2AEgressFacade above: no try/except
+    # at this call site. resolve_services raises EgressConfigError on a bad secret;
+    # EgressProxy.start() raises EgressStartupError on a bad boot. Both propagate out of
+    # asyncio.run(...) and crash the process nonzero — this only holds because
+    # EgressProxy._run() converts SystemExit inside the task itself (see egress/proxy.py).
+    egress_proxy: Any = None
+    egress_update: dict[str, object] = {}
+    if cfg.egress is not None:
+        from ach_agent.egress.proxy import EgressProxy
+        from ach_agent.egress.resolver import resolve_services
+
+        egress_resolved = resolve_services(cfg.egress)
+        # design §8: proxy task dying later → agent unready. Drive the same graceful
+        # drain path a lost execution controller already triggers.
+        egress_proxy = EgressProxy(egress_resolved, on_failure=shutdown_event.set)
+        egress_url, egress_capability, egress_ca_pem = await egress_proxy.start()
+        egress_update = {
+            "egress_proxy_url": egress_url,
+            "egress_proxy_capability": egress_capability,
+            "egress_ca_cert": egress_ca_pem,
+            "egress_placeholder_env": [
+                r.placeholder_env for r in egress_resolved if r.placeholder_env
+            ],
+        }
+        log.info(
+            "egress: proxy started",
+            service_count=len(egress_resolved),
+            services=[r.name for r in egress_resolved],
+        )
+
     # Step 5: connect over the same HTTP execution API used by the separated
     # deployment. Native drivers are constructed only by the engine role.
     from ach_agent.boot.execution_client import ExecutionClient
@@ -629,6 +669,7 @@ async def _run_harness(
             "pi_mcp_adapter_path": cfg.engine.pi.mcp_adapter_path
             if cfg.engine.type == "pi" and cfg.engine.pi
             else "",
+            **egress_update,
         }
     )
     local_engine_env = {
@@ -723,6 +764,8 @@ async def _run_harness(
                     await memory_facade.stop()
                 if a2a_facade is not None:
                     await a2a_facade.stop()
+                if egress_proxy is not None:
+                    await egress_proxy.stop()
         log.info("ach-agent: native terminal session ended")
         return
     if isolated_harness:
@@ -743,6 +786,8 @@ async def _run_harness(
             await memory_facade.stop()
         if a2a_facade is not None:
             await a2a_facade.stop()
+        if egress_proxy is not None:
+            await egress_proxy.stop()
         raise
     if hasattr(session_store, "close"):
         session_store.close()
@@ -775,6 +820,8 @@ async def _run_harness(
                 await memory_facade.stop()
             if a2a_facade is not None:
                 await a2a_facade.stop()
+            if egress_proxy is not None:
+                await egress_proxy.stop()
             raise
     engine_socket = (
         str(engine_socket_path(local_runtime_dir))
@@ -828,6 +875,8 @@ async def _run_harness(
                     await memory_facade.stop()
                 if a2a_facade is not None:
                     await a2a_facade.stop()
+                if egress_proxy is not None:
+                    await egress_proxy.stop()
                 raise
             await asyncio.sleep(0.25)
     if cfg.persistence.enabled:
@@ -849,6 +898,8 @@ async def _run_harness(
                 await memory_facade.stop()
             if a2a_facade is not None:
                 await a2a_facade.stop()
+            if egress_proxy is not None:
+                await egress_proxy.stop()
             raise
 
     # Best-effort stats sink (harness-local, ACH_STATS_* — never part of operator contract).
@@ -980,6 +1031,8 @@ async def _run_harness(
                 await memory_facade.stop()
             if a2a_facade is not None:
                 await a2a_facade.stop()
+            if egress_proxy is not None:
+                await egress_proxy.stop()
             if hasattr(dedup_store, "close"):
                 dedup_store.close()
             await stats_sink.stop()
@@ -1048,10 +1101,11 @@ async def _run_harness(
     state: HealthState = app.extra["state"]
     readiness_task: asyncio.Task[None] | None = None
     state.ready = False
-    # A controller stream is a one-lifetime ownership boundary.  If E disappears
-    # after H has claimed it, this process cannot safely replay or reclaim the
-    # controller; the supervisor must restart H for a fresh hydration/claim cycle.
-    shutdown_event: asyncio.Event = asyncio.Event()
+    # shutdown_event is constructed earlier now (see hoist note above `if ek:`) so the
+    # egress proxy's on_failure callback can share it. A controller stream is a
+    # one-lifetime ownership boundary: if E disappears after H has claimed it, this
+    # process cannot safely replay or reclaim the controller; the supervisor must
+    # restart H for a fresh hydration/claim cycle.
 
     async def watch_engine_readiness() -> None:
         while True:
@@ -1204,6 +1258,8 @@ async def _run_harness(
             await memory_facade.stop()
         if a2a_facade is not None:
             await a2a_facade.stop()
+        if egress_proxy is not None:
+            await egress_proxy.stop()
         await stats_sink.stop()
         await tool_sink.stop()
         if channel_listener is not None:
@@ -1247,6 +1303,8 @@ async def _run_harness(
             await memory_facade.stop()
         if a2a_facade is not None:
             await a2a_facade.stop()
+        if egress_proxy is not None:
+            await egress_proxy.stop()
         await stats_sink.stop()
         await tool_sink.stop()
         if channel_listener is not None:

@@ -83,3 +83,29 @@ def test_handoff_secret_is_redacted_and_stripped_from_engine() -> None:
 
     assert "ACH_SECRET_HANDOFF_TOKEN" in collect_secret_env_names(cfg)
     assert strip_forwarded_secrets(cfg) == ["SAFE_VAR"]
+
+
+def test_collect_secret_env_names_includes_egress_secrets() -> None:
+    cfg = AgentConfig.model_validate(
+        {
+            "schemaVersion": "1",
+            "agent": {"name": "a"},
+            "model": {"name": "m", "type": "openai"},
+            "capability": {"type": "ach", "ach": {"baseUrl": "https://x", "environment": "prod"}},
+            "egress": {
+                "services": [
+                    {
+                        "name": "github",
+                        "origin": "https://api.github.com:443",
+                        "auth": {
+                            "header": "Authorization",
+                            "prefix": "Bearer ",
+                            "secret": {"env": "ACH_SECRET_EGRESS_0"},
+                        },
+                    }
+                ]
+            },
+        }
+    )
+    names = collect_secret_env_names(cfg)
+    assert "ACH_SECRET_EGRESS_0" in names

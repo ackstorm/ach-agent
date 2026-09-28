@@ -42,6 +42,8 @@ def collect_secret_env_names(cfg: AgentConfig) -> list[str]:
         auth = mem.ach_memory.auth
         if auth is not None and auth.type == "bearer" and auth.env:
             names.append(auth.env)
+    if cfg.egress is not None:
+        names.extend(s.auth.secret.env for s in cfg.egress.services)
     return names
 
 

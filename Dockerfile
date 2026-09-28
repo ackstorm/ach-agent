@@ -47,7 +47,7 @@ RUN npm install -g --ignore-scripts --prefix /opt/pi \
  && test -f /opt/pi-mcp-adapter/node_modules/pi-mcp-adapter/package.json
 
 # ── Builder stage ────────────────────────────────────────────────────────────
-FROM python:3.12-slim AS builder
+FROM python:3.13-slim AS builder
 WORKDIR /app
 
 # uv as a prebuilt static binary from the official image (pip-installing uv is
@@ -70,7 +70,7 @@ RUN uv pip install --system --no-cache-dir --target=/app/deps . \
  && find /app/deps -name "*.pyi" -delete
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────
-FROM python:3.12-slim AS combined
+FROM python:3.13-slim AS combined
 WORKDIR /app
 
 # PYTHONPATH points at the install target so deps are version-agnostic.
@@ -80,7 +80,7 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/app/deps
 # fetches a pinned musl build from GitHub on first use — slow, and re-fetched every
 # invocation (each opencode runs under a fresh ephemeral HOME). Baking it avoids the
 # download (and works offline). Calendar-only agents rarely hit it, but code agents do.
-# libatomic1: Node 26 (codemem-bin) links against it; python:3.12-slim doesn't ship it.
+# libatomic1: Node 26 (codemem-bin) links against it; python:3.13-slim doesn't ship it.
 # git + openssh-client + ca-certificates: channel.prepare scripts clone the repo an event
 # names (HTTPS or SSH) before the turn starts. Without git in the image a prepare hook
 # fails on every invocation, and the agent reviews nothing.
@@ -102,7 +102,7 @@ RUN opencode --version
 COPY --from=codemem-bin /usr/local/bin/node /usr/local/bin/node
 COPY --from=codemem-bin /opt/codemem /opt/codemem
 ENV PATH="/opt/codemem/bin:${PATH}"
-# Runtime smoke: prove codemem actually EXECUTES in the final image (python:3.12-slim libs),
+# Runtime smoke: prove codemem actually EXECUTES in the final image (python:3.13-slim libs),
 # not just that the binary is present. prepare_codemem probes PATH only (shutil.which), so a
 # present-but-broken codemem would pass the probe and crash opencode's stdio child at runtime.
 # Failing the build here closes the "broken (not missing)" half of the fail-open invariant.
@@ -113,7 +113,7 @@ RUN codemem --version
 COPY --from=pi-bin /opt/pi /opt/pi
 COPY --from=pi-bin /opt/pi-mcp-adapter /opt/pi-mcp-adapter
 ENV PATH="/opt/pi/bin:${PATH}"
-# Runtime smoke: prove pi EXECUTES in the final image (python:3.12-slim libs, not the build
+# Runtime smoke: prove pi EXECUTES in the final image (python:3.13-slim libs, not the build
 # stage) and the adapter package is present — closes the "present-but-broken" fail-open half,
 # same as codemem's `--version` gate above.
 RUN pi --version \
@@ -153,7 +153,7 @@ ENTRYPOINT ["/usr/bin/tini", "--", "python", "-m", "ach_agent.main"]
 # Split roles share the dependency layer while keeping native binaries and
 # preparation tooling scoped to their owner. The combined stage above remains
 # the default local image contract.
-FROM python:3.12-slim AS split-runtime
+FROM python:3.13-slim AS split-runtime
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/app/deps
 RUN apt-get update -qq \

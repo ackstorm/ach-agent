@@ -1,0 +1,837 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>Unix split validation — 2026-09-14 - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#unix-split-validation-2026-09-14" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Unix split validation — 2026-09-14
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#startup-hydration-and-generic-operator-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      Startup hydration and generic operator storage
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#main-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Main integration
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bounded-cleanup-follow-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      Bounded cleanup follow-up
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#earlier-split-implementation-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      Earlier split implementation evidence
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#automated-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      Automated gates
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#three-container-acceptance" class="md-nav__link">
+    <span class="md-ellipsis">
+      Three-container acceptance
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#real-native-tui-acceptance" class="md-nav__link">
+    <span class="md-ellipsis">
+      Real native TUI acceptance
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#review-corrections-and-deletion-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      Review corrections and deletion audit
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-and-deployment-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration and deployment limits
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#http-probes-correction-2026-09-14" class="md-nav__link">
+    <span class="md-ellipsis">
+      HTTP probes correction — 2026-09-14
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="unix-split-validation-2026-09-14">Unix split validation — 2026-09-14</h1>
+<h2 id="startup-hydration-and-generic-operator-storage">Startup hydration and generic operator storage</h2>
+<p>Branch <code>feat/operator-storage</code>, based on <code>1b240ef</code>. Luna implementers completed
+the startup/storage plan; root reviewed the diffs, requested corrections, and ran
+the final verification independently. The public agent schema is unchanged.</p>
+<p>The harness now downloads into a temporary shared batch. The mini-harness installs
+and validates files in Engine home, deletes the batch and only then becomes ready.
+The execution API carries selected environment names; the operator or local launcher
+supplies their values to Engine. Channel hooks keep shared workspace access and
+their separate Harness HOME. Supported legacy workspace/native database data is
+preserved by agent code, without tool-specific operator mounts.</p>
+<p>Fresh verification:</p>
+<ul>
+<li>Full Docker pytest: <strong>1,230 passed, 4 skipped</strong>, 169 existing dependency warnings.</li>
+<li>Ruff check/format and strict mypy: passed for all <strong>97 source files</strong>.</li>
+<li>Generated schema check passed; schema/model diff against <code>1b240ef</code> is empty.</li>
+<li>MkDocs strict build and whitespace checks passed.</li>
+<li>Combined image built successfully. Final runtime image:
+  <code>sha256:c2dd270ef2953a82920cda4e56fa491c74bd24edfee3dda4a1c1f1b33e108555</code>.</li>
+<li>On that image, real OpenCode and Pi each completed two events with the same
+  native session, selected environment values and shared workspace hooks.
+  Startup checks verified installed skills and consumed transfer batches before
+  the first event. Killing Engine during a model request produced a failed result
+  and Harness readiness 503; cancellation took two seconds for Pi.
+  The final run used <code>scripts/test-split.sh</code> assertions with its build step omitted
+  after tagging the already-built image for all roles.</li>
+<li>Harness-process restart passed with Channels/Engine container IDs unchanged,
+  the new startup batch consumed, and a second event reusing native session
+  <code>ses_f5ed2b7baffe1GCSbjvHqexkcT</code>. A test-only shell supervisor preserved Docker's
+  shared network namespace while restarting the Harness Python process.</li>
+<li>A real Engine-role container rejected an unavailable native binary before any
+  invocation and exited with status <strong>1</strong>. Discovery worked before init while
+  public health returned 503.</li>
+<li>The nonpersistent Compose profile completed two events and passed role health
+  checks and transfer cleanup. Native Pi and OpenCode TUI each completed two typed
+  prompts in a PTY, resized and exited with status <strong>0</strong>; their stored native
+  conversations contain two user and two assistant messages each.</li>
+</ul>
+<p>Temporary-storage and TUI checks used image
+<code>sha256:9e29ed4bcf343dd72864cb2febe032451466b2f39070deb2a0da8d7761780132</code>.
+The only subsequent runtime change preserved top-level directory symlinks during
+legacy workspace migration; this is covered by the final tests and does not run
+on those fresh/standalone paths.</p>
+<p>Root review also caught and corrected concurrent controller takeover during init,
+empty hydration batches on retry, stale env/path assertions, migration markers
+outside Engine mounts, and accidental dereferencing of repository symlinks.
+One verification attempt ran out of disk; disposable ACH build images/cache were
+removed and the full gate was rerun successfully. No data volumes were pruned.</p>
+<p>Local logs: <code>/tmp/ach-startup-full-tests.log</code>, <code>/tmp/ach-startup-lint.log</code>,
+<code>/tmp/ach-startup-compose-final.log</code>, <code>/tmp/ach-startup-restart.log</code>, and
+<code>/tmp/ach-startup-tui-{pi,opencode}.log</code>.</p>
+<p>No Kubernetes cluster rollout, live external model/MCP test, release or remote push
+was performed. Native engines used controlled synthetic ACH/model endpoints.
+Fresh PVC subpath creation and permissions remain a joint operator e2e check.</p>
+<h2 id="main-integration">Main integration</h2>
+<p>On 2026-09-14, local <code>main</code> fast-forwarded from <code>462912f</code> to <code>36f0304</code>, including
+all 117 split-branch commits without conflicts. Two untracked older draft files
+that occupied incoming paths were preserved under <code>/tmp/ach-main-premerge.ov8tnk/</code>;
+other untracked files were left untouched. No remote push was performed.</p>
+<p>Fresh verification after integration in the main checkout: <strong>1,178 passed,
+3 skipped</strong>, Ruff check/format and strict mypy passed. Runtime behavior matches
+the previously tested branch tree. The new operator mode document is a handoff
+proposal; no ACH renderer or CR implementation was changed here.</p>
+<h2 id="bounded-cleanup-follow-up">Bounded cleanup follow-up</h2>
+<p>Runtime revision: <code>d87894f</code>, following the previously validated <code>5b2e9e5</code> tree.
+The <a href="../../references/2026-09-14-three-role-split/">current split contract</a> replaces
+the historical proposals linked below.</p>
+<p>Changes: hooks use a lazy process-owned temporary HOME (mode 0700), distinct
+from engine home and workspace. Prepare/cleanup working directories and lifecycle
+remain unchanged. Retention is an internal 300-second constant; the frozen public
+schema now matches original v0.16.1 exactly. The cleanup registry was renamed and
+acceptance-only fixtures moved under <code>tests/integration/fixtures/split/</code>.
+Session migration, session-ready acknowledgement, controller ownership and the
+existing execution API remain intact.</p>
+<p>Fresh verification on this runtime tree:</p>
+<ul>
+<li>Full Docker pytest suite: <strong>1,178 passed, 3 skipped</strong>, 161 dependency deprecation
+  warnings. Command: <code>scripts/dev.sh uv run pytest tests/ -q --ignore=tests/e2e</code>.</li>
+<li>Ruff check/format and strict mypy: passed for all 96 source files.</li>
+<li><code>scripts/gen_schema.py --check</code>: passed; diff of the frozen schema against
+  <code>462912f</code> is empty.</li>
+<li><code>scripts/test-split.sh</code>: passed with real OpenCode and Pi in three containers,
+  controlled upstreams, two turns and native-session reuse, selected environment
+  values, shared workspace hooks using the new HOME, active cancellation and
+  engine failure. Cancellation took two seconds for each engine. Private mount
+  assertions passed. Detailed local log: <code>/tmp/ach-split-cleanup-acceptance.log</code>.</li>
+<li>Persistent/ephemeral/acceptance Compose configuration checks, shell syntax,
+  MkDocs strict build and whitespace checks passed.</li>
+<li>Gitleaks scan of the staged tracked-file snapshot: no findings.
+  An initial whole-directory scan also included ignored dependency caches and
+  archived local test artifacts, reporting 40 findings there (including an old
+  local kind kubeconfig). Those files are not part of the tracked release tree.</li>
+</ul>
+<p>Native TUI and harness restart were not rerun for this bounded cleanup; their
+earlier revision-specific evidence remains below. No image publication, merge,
+push or Kubernetes rollout was performed.</p>
+<h2 id="earlier-split-implementation-evidence">Earlier split implementation evidence</h2>
+<p>Branch: <code>feat/phase1-split</code>, worktree <code>.worktrees/phase1-split</code>.
+Behavioral reference: v0.16.1 (<code>462912f</code>). Scope: complete the approved
+<a href="../../superpowers/plans/2026-09-14-preserve-behavior-simplify-split/">preserve-behavior simplification plan</a>.
+Luna agents implemented the changes; the root agent reviewed the diffs, requested
+corrections and ran the final gate and native terminal acceptance independently.</p>
+<h2 id="automated-gates">Automated gates</h2>
+<p>Source <code>4869d98</code>, clean local clone on the project filesystem:</p>
+<div class="highlight"><pre><span></span><code>rtk<span class="w"> </span>proxy<span class="w"> </span>bash<span class="w"> </span>-c<span class="w"> </span><span class="s1">'PRE_PUSH_BASE_REF=462912f bash scripts/pre-push-check.sh'</span>
+</code></pre></div>
+<p>The script was not modified. Exit status 0:</p>
+<ul>
+<li>Ruff check and format: passed, 96 source files.</li>
+<li>Strict mypy: passed, 96 source files.</li>
+<li>Main suite: <strong>1176 passed, 3 skipped</strong>, 59.31 seconds.</li>
+<li>Separate conformance run: <strong>18 passed</strong>, 1.71 seconds.</li>
+<li>Gitleaks: no leaks in the branch's commit range.</li>
+<li>Tracked file size, sensitive filename and SPDX checks passed.</li>
+</ul>
+<p>The gate intentionally excludes <code>tests/e2e</code>, as before. Native/container evidence
+below was run separately with a controlled upstream. Existing deprecation warnings
+remain; the local clone's non-GitHub origin produces the script's expected warning.</p>
+<p>The original-behavior focused command passed <strong>86 tests</strong> on <code>4869d98</code>:</p>
+<div class="highlight"><pre><span></span><code>rtk<span class="w"> </span>proxy<span class="w"> </span>./scripts/dev.sh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/compat/test_original_split_behavior.py<span class="w"> </span>tests/test_prepare.py<span class="w"> </span>tests/router<span class="w"> </span>-q
+</code></pre></div>
+<p>The same characterization module was first checked against <code>462912f</code>; its original
+focused suite passed 81 tests. The <a href="../unix-split-behavior-matrix/">behavior matrix</a>
+separates original invariants from the new IPC failure modes.</p>
+<h2 id="three-container-acceptance">Three-container acceptance</h2>
+<p>The complete <code>scripts/test-split.sh</code> acceptance passed on pinned source <code>4869d98</code>
+with <strong>real OpenCode 1.17.11 and Pi 0.82.0</strong>, using the synthetic ACH/model fixture
+in <code>tests/integration/fixtures/upstream.py</code>. The fixture does not contact a real
+provider or use production credentials.</p>
+<div class="highlight"><pre><span></span><code>rtk<span class="w"> </span>proxy<span class="w"> </span>bash<span class="w"> </span>scripts/test-split.sh
+</code></pre></div>
+<p>For each engine, the run verified:</p>
+<ul>
+<li>C/H/E startup and readiness using the actual mounted Unix sockets.</li>
+<li>C can connect through its read-only IPC mount but cannot unlink H's socket;
+  C cannot see <code>agent.sock</code>, and E cannot see <code>channel.sock</code>.</li>
+<li>Two distinct events with the same logical workspace key and configured custom
+  conversation key complete with <code>PHASE1_SPLIT_REPLY</code>.</li>
+<li>The native session reference is identical across those events; upstream message
+  history grows on the second turn.</li>
+<li>H's prepare runs twice with the expected cwd, HOME and synthetic credential;
+  H and E observe the same retained workspace file and <code>xx</code> counter.</li>
+<li>Native child processes receive H-selected <code>forwardEnv</code> values that are absent
+  from E's ambient environment.</li>
+<li>Model calls are authorized by H's proxy; the fixture records no unauthorized call.</li>
+<li>Killing E during a deliberately held model request yields a failed invocation
+  and H readiness 503. Measured cancellation took 2 seconds for OpenCode and
+  1 second for Pi.</li>
+</ul>
+<p>Measured startup was 6 seconds for each engine on this host.
+These measurements are observations, not performance guarantees.</p>
+<table>
+<thead>
+<tr>
+<th>Image from source <code>4869d98</code></th>
+<th>Local content digest</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>H</td>
+<td><code>sha256:37304a5995732b4fcde4f7c0da1dfb88400c5dce2af93149b54b2f80588b839b</code></td>
+</tr>
+<tr>
+<td>C</td>
+<td><code>sha256:2262d11cf31351d5ea17c2a2e8474475bbef67c32db6d965907dbd57bf24a524</code></td>
+</tr>
+<tr>
+<td>E OpenCode</td>
+<td><code>sha256:b5178233664ed15795a4af6aa0b7cf051bc1596673a0c624f9455c71de89526c</code></td>
+</tr>
+<tr>
+<td>E Pi</td>
+<td><code>sha256:333d1329c3e375d2dc27ad5333920b02aec84dc8d748947d259a532ccdbb1d57</code></td>
+</tr>
+</tbody>
+</table>
+<p>Test-only commit <code>ad1eabe</code> adds actual private-mount assertions to the same
+acceptance script. Its full Pi/OpenCode rerun also passed: H's private-state
+sentinel is absent in E, E's native-home sentinel is absent in H, E has no full
+config or ambient <code>ACH_TOKEN</code>, and E cannot write the shared public context.
+The script still proves the workspace is genuinely shared using the H-created
+retained file and prepare counter. No runtime code or manifest changed in this
+test-only follow-up; its evidence is <code>acceptance-ad1eabe.log</code>.</p>
+<p>The ephemeral profile was also built from <code>4869d98</code> with an explicit OpenCode
+target before startup. C/H/E started with the <code>/tmp</code> workspace/public-context
+mounts and one real model event (<code>ephemeral-one</code>) completed. No service was
+replaced during that check. The project and its volumes were then removed.
+Its log records the actual image digests and completed state in
+<code>ephemeral-4869d98.log</code>.</p>
+<p>H process restart also passed with C and E kept alive. A test-only shell supervisor
+restarted <code>python -m ach_agent.main --role harness</code> inside the same H container;
+the test sent SIGTERM to that Python process, not to Docker's network owner.
+The definitive OpenCode run (<code>acceptance-h-restart-pid.log</code>) asserts:</p>
+<ul>
+<li>H's PID file changed from <strong>7 to 64</strong>, and upstream hydration count reached 2
+  before polling the new H readiness endpoint.</li>
+<li>C and E container IDs were unchanged before/after restart.</li>
+<li>A second event completed using native session
+  <code>ses_f60ce02d1ffegmG1lcJeh27TGG</code>, the same reference as the first event.</li>
+<li>The subsequent held-call/E-kill check still produced failed work and H readiness 503.</li>
+</ul>
+<p>An earlier run (<code>acceptance-h-restart.log</code>) also completed two-turn restart flows
+for OpenCode and Pi with two hydrations and reused native references; the explicit
+PID/container-ID assertions above were then added for the final OpenCode check.
+The temporary supervisor helper and all of its Compose resources were removed.</p>
+<h2 id="real-native-tui-acceptance">Real native TUI acceptance</h2>
+<p>The root agent built the combined image from <code>3cc9be8</code>, digest
+<code>sha256:32558c55aab5d3a2bc38a0b0dbd1195855cfa10b81b8c57eacf6fe6d793f0a1a</code>.
+Both tests used <code>docker run -it ... --tui</code> in an actual PTY, not piped input,
+with the same synthetic upstream and separate engine-specific configurations.</p>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>Pi</th>
+<th>OpenCode</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Two typed prompts and streamed replies</td>
+<td>Both returned <code>PHASE1_SPLIT_REPLY</code></td>
+<td>Both returned <code>PHASE1_SPLIT_REPLY</code></td>
+</tr>
+<tr>
+<td>Resize</td>
+<td><code>stty -F /dev/pts/0 rows 32 cols 100</code>, interface reflowed</td>
+<td>Same, interface reflowed</td>
+</tr>
+<tr>
+<td>Native continuity</td>
+<td>One JSONL contains two user and two assistant messages</td>
+<td>SQLite contains two user and two completed assistant messages under one session ID</td>
+</tr>
+<tr>
+<td>Native reference</td>
+<td><code>01a09f20-ecaf-7e63-9398-e078979b9091</code></td>
+<td><code>ses_f60de58e1ffeBYaOZz8xX6kGlI</code></td>
+</tr>
+<tr>
+<td>PID 1</td>
+<td><code>/usr/bin/tini -- python -m ach_agent.main --tui</code></td>
+<td>Same</td>
+</tr>
+<tr>
+<td>Exit</td>
+<td>Ctrl-D, container exit 0</td>
+<td>Ctrl-C, container exit 0</td>
+</tr>
+</tbody>
+</table>
+<p>The upstream recorded two hydrations, five authorized model calls (including
+OpenCode's title request) and zero unauthorized calls. The later changes covered
+by the final automated gate remove unused scratch plumbing, narrow configured
+driver typing, correct source-config construction and update tests/fixtures;
+they do not change the native terminal code exercised here.</p>
+<h2 id="review-corrections-and-deletion-audit">Review corrections and deletion audit</h2>
+<p>Review and real execution found and corrected stale bootstrap startup, incorrect
+probe destinations, root-owned socket-directory chmod, missing C startup retry,
+the cross-container <code>.ach-state</code> link, an orphan cleanup acknowledgement for
+prepare-only channels, deferred configuration typing and terminal failure/exit
+handling. One failed native reuse run was a test fixture error: it sent different
+workspace keys while claiming same-key reuse. The fixture now supplies stable
+repository/issue identity and distinct event IDs; session policy was not changed.</p>
+<table>
+<thead>
+<tr>
+<th>Removed</th>
+<th>Preserved responsibility</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>boot/bootstrap.py</code> and role artifact readers/writers</td>
+<td>Allowlisted public projection, typed controller-open initialization, config bounds and secret tests</td>
+</tr>
+<tr>
+<td>Internal <code>channels/signing.py</code>, nonce/MAC machinery</td>
+<td>Source webhook authentication, event/result IDs, bounded retention and retry semantics</td>
+</tr>
+<tr>
+<td>Ordinary internal TCP selection</td>
+<td>Existing HTTP JSON/NDJSON API on two Unix endpoints; separate cancellation/stream/cleanup connections</td>
+</tr>
+<tr>
+<td>E-side prepare/cleanup payloads and bundle import/export</td>
+<td>All original hooks execute in H on the shared workspace</td>
+</tr>
+<tr>
+<td>Mandatory private Git/clone handoff and unused scratch mount</td>
+<td>Useful cleanup registry, stop notifications/ACKs and warm-expiry ordering</td>
+</tr>
+</tbody>
+</table>
+<p>Tests tied only to deleted signing/bootstrap/bundle mechanics were removed or
+replaced. Substantive lifecycle tests were retained or migrated to the current
+boundary, including real HTTP slow-cleanup, cancellation, waiter and warm-expiry
+tests. No production Router or Redis consumer policy changes were made by this
+simplification. The original-branch Router additions are result notification across
+the new C/H boundary, not a new queue or scheduler.</p>
+<h2 id="configuration-and-deployment-limits">Configuration and deployment limits</h2>
+<ul>
+<li>No public schema change relative to the pre-simplification split (<code>929397a</code>),
+  verified by diff of <code>config/schema.py</code> and the frozen JSON schema. Relative to
+  original v0.16.1, the earlier split already added optional
+  <code>limits.resultRetentionSeconds</code> (default 300); existing configs remain valid.</li>
+<li>H alone mounts the full config. C resolves its source credential references
+  from C's environment. H sends only selected eligible engine env values to E.</li>
+<li>Native home and H state remain private; workspace is shared read/write and
+  public hydration context is H-write/E-read. Existing credential-bearing hooks
+  still trust the shared checkout; this refactor does not harden Git hooks/config.</li>
+<li>One active pod/replica, open shared egress, in-memory acceptance/results. No
+  durable queue, exactly-once effects, per-session security boundary or masking
+  was added. MCP integration is covered by the adapter/proxy tests; the real
+  native runs above exercise the model proxy, not a live external MCP service.</li>
+<li>The Kubernetes manifest was checked structurally; no actual cluster rollout,
+  external ACH operator change or image publication was performed.</li>
+</ul>
+<p>Local detailed logs are retained under
+<code>.superpowers/sdd/2026-09-14-preserve-behavior-simplify-split/</code>, including
+<code>root-gate-4869d98.log</code>, <code>acceptance-4869d98.log</code>, <code>ephemeral-4869d98.log</code>,
+<code>acceptance-h-restart-pid.log</code>, <code>root-native-pi.log</code> and <code>root-native-opencode.log</code>.
+Native session artifacts were retained for review. All task-owned runtime
+containers, networks and volumes were removed; unrelated memory services were
+left running. The working branch and evidence directories are preserved.</p>
+<p>README diagrams, the specification, behavior matrix and the self-contained operator
+handoff have been updated. <code>/tmp/to-ach.md</code> is a copy of that handoff for the other
+host. <code>mkdocs build --strict</code> and <code>git diff --check</code> pass. Documentation-only closure
+commits do not alter the runtime tree tested at <code>4869d98</code>.</p>
+<h2 id="http-probes-correction-2026-09-14">HTTP probes correction — 2026-09-14</h2>
+<p>The v0.16.3 correction replaces command probes with HTTP on C8080/H8090/E8081.
+H/E TCP apps expose health routes only; internal APIs stay on Unix sockets.
+Both placements require startup hydration installation and track engine loss.</p>
+<p>Root verification, after Luna implementation and root review:</p>
+<ul>
+<li>Full suite: 1,225 passed, 4 skipped. Strict Ruff/format/mypy: 96 source files passed.</li>
+<li>Manifest contract: 11 passed. Schema unchanged; strict MkDocs build passed.</li>
+<li>Real Pi and OpenCode, three containers: two events reuse one native session;
+  hydration installed and transfer batch removed before work; selected environment
+  and shared-workspace hooks preserved. Health HTTP was queried from the mock
+  upstream's separate network namespace. Private API paths on H/E health ports
+  returned 404. Killing E made H and C readiness return 503 (1–2s cancellation).</li>
+<li>Engine before init: <code>/healthz</code> and <code>/readyz</code> return 503; private API over TCP
+  returns 404. SIGTERM closes the role with exit 0.</li>
+<li>Final combined test image: <code>sha256:3482565d380123cf22c7573274d51cb4183600e3cf5624c7671b39747f578b2b</code>.
+  Two standalone launchers shared a network with distinct public ports, both
+  hydrated successfully, and their child health ports did not collide. Killing
+  the engine child changed standalone readiness to 503 while liveness stayed 200.</li>
+<li>Real native Pi and OpenCode TUIs each received a model response and exited with
+  code 0; the new listener did not hang shutdown.</li>
+</ul>
+<p>Evidence logs: <code>/tmp/ach-http-health-tests-final.log</code>,
+<code>/tmp/ach-http-health-lint-final.log</code>, <code>/tmp/ach-http-health-compose.log</code>,
+<code>/tmp/ach-http-standalone-final.log</code>, <code>/tmp/ach-http-tui-pi.log</code>, and
+<code>/tmp/ach-http-tui-opencode.log</code>. These tests use controlled synthetic ACH/model
+upstreams. They do not establish Kubernetes rollout success. The operator must
+validate its rendered probes and storage in its cluster.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

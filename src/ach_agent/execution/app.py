@@ -24,6 +24,7 @@ from ach_agent.execution.service import (
     MAX_NDJSON_RECORD_BYTES,
     ExecutionService,
     OutputLimitExceeded,
+    SessionHookFailed,
 )
 from ach_agent.execution.wire import (
     AcquireRequest,
@@ -39,7 +40,9 @@ from ach_agent.execution.wire import (
     WorkspaceCancelRequest,
     WorkspaceCleanupAckRequest,
     WorkspacePrepareRequest,
+    WorkspaceSessionStartRequest,
 )
+from ach_agent.sandbox.archive import ArchiveTooLarge
 
 EXECUTION_API_VERSION = 1
 MAX_REQUEST_BODY_BYTES = 1 * 1024 * 1024
@@ -128,6 +131,10 @@ def _error_response(exc: Exception, *, workspace_confirmed: bool = True) -> JSON
         return JSONResponse({"type": "LaunchFailed", "message": str(exc)}, status_code=502)
     if isinstance(exc, OutputLimitExceeded):
         return JSONResponse({"type": "OutputLimitExceeded", "message": str(exc)}, status_code=507)
+    if isinstance(exc, ArchiveTooLarge):
+        return JSONResponse({"detail": str(exc)}, status_code=413)
+    if isinstance(exc, SessionHookFailed):
+        return JSONResponse({"detail": str(exc)}, status_code=500)
     if isinstance(exc, ValueError):
         status = 409 if ("controller" in str(exc) or "turn" in str(exc)) else 404
         return JSONResponse({"detail": str(exc)}, status_code=status)
@@ -270,6 +277,32 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
         except Exception as exc:
             return service_error(exc)
         return JSONResponse(result)
+
+    @app.put("/execution/v1/workspace/handoff")
+    async def workspace_handoff(request: Request) -> JSONResponse:
+        controller_id = request.query_params.get("controller_id", "")
+        invocation_id = request.query_params.get("invocation_id", "")
+        if not controller_id or not invocation_id:
+            return _invalid("controller_id and invocation_id query params are required")
+        try:
+            await service.import_handoff(controller_id, invocation_id, request.stream())
+        except Exception as exc:
+            return service_error(exc)
+        return JSONResponse({"status": "ok"})
+
+    @app.post("/execution/v1/workspace/session-start")
+    async def workspace_session_start(request: Request) -> JSONResponse:
+        try:
+            body = WorkspaceSessionStartRequest.model_validate(await _request_json(request))
+        except _BodyTooLarge:
+            return JSONResponse({"detail": "request body too large"}, status_code=413)
+        except (_InvalidBody, ValidationError) as exc:
+            return _invalid(str(exc))
+        try:
+            await service.session_start(body)
+        except Exception as exc:
+            return service_error(exc)
+        return JSONResponse({"status": "ok"})
 
     @app.post("/execution/v1/workspace/cleanup-ack")
     async def workspace_cleanup_ack(request: Request) -> JSONResponse:

@@ -43,9 +43,11 @@ from ach_agent.execution.wire import (
     TurnRequest,
     WorkspaceCleanupAckRequest,
     WorkspacePrepareRequest,
+    WorkspaceSessionStartRequest,
     WorkspaceStoppedEvent,
 )
 from ach_agent.memory.common import inc_memory_degraded
+from ach_agent.sandbox.archive import ArchiveTooLarge, extract, write_capped
 
 log = structlog.get_logger(__name__)
 
@@ -87,11 +89,13 @@ class _WorkspaceReservation:
     request: WorkspacePrepareRequest
     workspace: Path
     deadline: float
+    new_session: bool = False
     acquiring: bool = False
     cancel_requested: bool = False
     cleanup_task: asyncio.Task[None] | None = None
     cleanup_owner: asyncio.Task[Any] | None = None
     skip_operation: asyncio.Task[Any] | None = None
+    session_started: bool = False
 
 
 @dataclass
@@ -105,12 +109,20 @@ class OutputLimitExceeded(RuntimeError):
     """The client stream exceeded one of the bounded NDJSON output limits."""
 
 
+class SessionHookFailed(RuntimeError):
+    """`hooks.sessionStart` exited non-zero, timed out, or could not be started."""
+
+
 MAX_NDJSON_RECORD_BYTES = 1 * 1024 * 1024
 MAX_STREAM_EVENTS = 256
 MAX_INVOCATION_STREAM_BYTES = 4 * 1024 * 1024
 MAX_AGGREGATE_QUEUED_BYTES = 32 * 1024 * 1024
 CLEANUP_DEADLINE_SECONDS = 10.0
 CLEANUP_PROCESS_MARGIN_SECONDS = 5.0
+# channel.handoff tar.gz cap (compressed stream and expanded size alike). Placeholder —
+# Task 10 (Part B) adds sandbox.maxArchiveBytes as an operator-configurable value; revisit
+# whether this constant should become that same config knob instead.
+MAX_HANDOFF_ARCHIVE_BYTES = 512 * 1024 * 1024
 
 
 def _engine_config(public: Any) -> EngineConfig:
@@ -126,6 +138,10 @@ def _engine_config(public: Any) -> EngineConfig:
             "trace_token",
             "trace_parent",
             "trace_session_id",
+            # Agent-level session hooks are consumed directly by ExecutionService
+            # (import_handoff/session_start/pool on_stop) — never by the native driver.
+            "hook_session_start",
+            "hook_session_suspend",
         }
     )
     values["extra_mcp_servers"] = {
@@ -645,7 +661,7 @@ class ExecutionService:
         if operation_error is not None:
             raise operation_error
 
-    async def prepare_workspace(self, request: WorkspacePrepareRequest) -> dict[str, str]:
+    async def prepare_workspace(self, request: WorkspacePrepareRequest) -> dict[str, Any]:
         """Run the public hook and register its latest cleanup before native acquire."""
         self._assert_controller(request.controller_id)
         self._workspace_cancelled.discard(request.invocation_id)
@@ -666,7 +682,8 @@ class ExecutionService:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + request.remaining_seconds
         workspace = workspace_dir(request.work_dir, request.session_key)
-        reservation = _WorkspaceReservation(request, workspace, deadline)
+        new_session = not workspace.exists()
+        reservation = _WorkspaceReservation(request, workspace, deadline, new_session=new_session)
         self._workspace_reservations[request.invocation_id] = reservation
         completed = False
 
@@ -720,7 +737,7 @@ class ExecutionService:
                 raise TimeoutError("workspace preparation deadline expired")
             reservation.workspace = workspace
             completed = True
-            return {"status": "ok", "workspace": str(workspace)}
+            return {"status": "ok", "workspace": str(workspace), "new_session": new_session}
         except asyncio.CancelledError:
             if reservation.cleanup_task is not None:
                 raise
@@ -764,6 +781,86 @@ class ExecutionService:
             self._workspace_tasks.pop(request.invocation_id, None)
             if not completed and not reservation.cancel_requested:
                 self._workspace_reservations.pop(request.invocation_id, None)
+
+    async def import_handoff(
+        self, controller_id: str, invocation_id: str, chunks: AsyncIterator[bytes]
+    ) -> None:
+        """Extract a tar.gz handoff archive, then swap it in as `<workspace>/handoff`.
+
+        Streamed to a sibling temp file first (capped), extracted into a sibling temp
+        directory (capped, `data` filter — spec §5: this is agent-adjacent staging content
+        the harness itself just wrote, but the same safe-extract discipline applies), then
+        atomically replaces any previous `handoff` directory. Requires a live reservation
+        for this invocation — handoff always lands before acquire.
+        """
+        self._assert_controller(controller_id)
+        reservation = self._workspace_reservation_for(invocation_id)
+        workspace = reservation.workspace
+        archive = workspace.parent / f".{invocation_id}-handoff.tar.gz"
+        staged = workspace.parent / f".{invocation_id}-handoff-staged"
+        try:
+            await write_capped(chunks, archive, max_bytes=MAX_HANDOFF_ARCHIVE_BYTES)
+            await asyncio.to_thread(
+                extract, archive, staged, max_expanded_bytes=MAX_HANDOFF_ARCHIVE_BYTES
+            )
+            target = workspace / "handoff"
+            previous = workspace / f".{invocation_id}-handoff-previous"
+            if target.exists() or target.is_symlink():
+                target.replace(previous)
+            try:
+                staged.replace(target)
+            except BaseException:
+                if previous.exists():
+                    previous.replace(target)
+                raise
+            if previous.exists():
+                await asyncio.to_thread(shutil.rmtree, previous, ignore_errors=True)
+        except ArchiveTooLarge:
+            raise
+        finally:
+            archive.unlink(missing_ok=True)
+            if staged.exists():
+                await asyncio.to_thread(shutil.rmtree, staged, ignore_errors=True)
+
+    async def session_start(self, request: WorkspaceSessionStartRequest) -> None:
+        """Run `hooks.sessionStart` once for this reservation's new session; no-op without one."""
+        self._assert_controller(request.controller_id)
+        reservation = self._workspace_reservation_for(request.invocation_id)
+        if reservation.session_started:
+            raise ValueError("sessionStart already ran for this reservation")
+        reservation.session_started = True
+        hook = self._public_config.hook_session_start if self._public_config is not None else None
+        if hook is None:
+            return
+        from ach_agent.boot.prepare import (
+            _execute_hook,
+            _HookSpawnFailed,
+            _HookTimedOut,
+            _stderr_tail,
+        )
+
+        env = {
+            name: os.environ[name]
+            for name in (self._public_config.engine_env_names if self._public_config else [])
+            if name in os.environ
+        }
+        env["ACH_WORKSPACE"] = str(reservation.workspace)
+        env["ACH_HANDOFF_DIR"] = str(reservation.workspace / "handoff")
+        env["ACH_SESSION_KEY"] = reservation.request.session_key
+        try:
+            returncode, _stdout, stderr, _truncated = await _execute_hook(
+                hook.script, hook.timeout_seconds, cwd=reservation.workspace, env=env
+            )
+        except _HookSpawnFailed as exc:
+            raise SessionHookFailed(f"sessionStart could not be started: {exc}") from exc
+        except _HookTimedOut:
+            raise SessionHookFailed(
+                f"sessionStart timed out after {hook.timeout_seconds}s"
+            ) from None
+        if returncode != 0:
+            raise SessionHookFailed(
+                f"sessionStart failed: exited {returncode}: {_stderr_tail(stderr)}"
+            )
 
     async def acquire(self, request: AcquireRequest) -> ExecutionHandle:
         self._assert_controller(request.controller_id)

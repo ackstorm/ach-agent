@@ -332,13 +332,18 @@ def _controller_loss_requires_shutdown(client: Any, state: HealthState) -> bool:
 
 
 def _graceful_stop_timeout(cfg: AgentConfig) -> float:
-    """Bound normal E cleanup by the longest configured workspace hook."""
+    """Bound normal E cleanup by the longest configured workspace/session hook."""
     hook_seconds = [
         float(hook.timeout_seconds)
         for channel in cfg.channels
-        for hook in (channel.prepare, channel.cleanup, channel.script)
+        for hook in (channel.handoff, channel.script)
         if hook is not None
     ]
+    hook_seconds.extend(
+        float(hook.timeout_seconds)
+        for hook in (cfg.hooks.session_start, cfg.hooks.session_suspend)
+        if hook is not None
+    )
     return max(15.0, (max(hook_seconds) if hook_seconds else 0.0) + 15.0)
 
 

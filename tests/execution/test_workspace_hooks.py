@@ -79,7 +79,7 @@ async def test_reserves_exact_shared_workspace_path(fake_driver, tmp_path: Path)
     result = await service.prepare_workspace(request)
 
     expected = workspace_dir(str(tmp_path / "work"), request.session_key)
-    assert result == {"status": "ok", "workspace": str(expected)}
+    assert result == {"status": "ok", "workspace": str(expected), "new_session": True}
     assert expected.is_dir()
     assert (expected / ".ach-state").is_symlink()
     await service.release_controller("controller")

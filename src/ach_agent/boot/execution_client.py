@@ -14,6 +14,7 @@ import contextlib
 import itertools
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -47,6 +48,7 @@ from ach_agent.execution.wire import (
     WorkspaceCleanupAckRequest,
     WorkspaceOperationFailure,
     WorkspacePrepareRequest,
+    WorkspaceSessionStartRequest,
     WorkspaceStoppedEvent,
 )
 
@@ -790,7 +792,7 @@ class ExecutionClient:
         self._turn_ids.setdefault(handle.invocation_id, itertools.count(1))
         return handle
 
-    async def prepare_workspace(self, request: WorkspacePrepareRequest) -> dict[str, str]:
+    async def prepare_workspace(self, request: WorkspacePrepareRequest) -> dict[str, Any]:
         """Prepare a public workspace before native acquisition."""
         if request.invocation_id in self._cleanup_budgets:
             raise ExecutionClientError("workspace preparation is already active")
@@ -806,13 +808,51 @@ class ExecutionClient:
             or result.get("status") != "ok"
             or not isinstance(result.get("workspace"), str)
             or result["workspace"] != expected
+            or not isinstance(result.get("new_session"), bool)
         ):
             await self._confirm_workspace_cancel(request.controller_id, request.invocation_id)
             self._cleanup_budgets.pop(request.invocation_id, None)
             raise WorkspaceOperationFailed(
                 "invalid workspace prepare response; reservation canceled", confirmed=True
             )
-        return {"status": "ok", "workspace": expected}
+        return {"status": "ok", "workspace": expected, "new_session": result["new_session"]}
+
+    async def import_handoff(self, path: Path, invocation_id: str) -> None:
+        """Stream a packed tar.gz handoff archive to the live reservation for invocation_id."""
+        self._assert_controller_live()
+
+        async def chunks() -> AsyncIterator[bytes]:
+            with path.open("rb") as fh:
+                while chunk := await asyncio.to_thread(fh.read, 262_144):
+                    yield chunk
+
+        try:
+            response = await self.acquire_client.put(
+                "/execution/v1/workspace/handoff",
+                params={"controller_id": self.controller_id, "invocation_id": invocation_id},
+                content=chunks(),
+            )
+        except httpx.HTTPError as exc:
+            await self._fail_admission(exc)
+            raise ExecutionClientError(f"handoff import failed: {exc}") from exc
+        if response.status_code < 200 or response.status_code >= 300:
+            error = ExecutionClientError(
+                f"handoff import failed: {response.text[:512]}", status_code=response.status_code
+            )
+            await self._fail_admission(error)
+            raise error
+
+    async def start_session(self, controller_id: str, invocation_id: str) -> None:
+        """Run `hooks.sessionStart` once for a new session's live reservation."""
+        self._assert_controller_live()
+        result = await self._json_request(
+            "POST",
+            "/execution/v1/workspace/session-start",
+            WorkspaceSessionStartRequest(
+                controller_id=controller_id, invocation_id=invocation_id
+            ).model_dump(mode="json"),
+        )
+        await self._require_ok(result, "session-start")
 
     async def ack_workspace_cleanup(self, event: WorkspaceStoppedEvent) -> None:
         """Acknowledge private cleanup after the correlated controller event completes."""

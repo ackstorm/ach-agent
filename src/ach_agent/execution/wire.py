@@ -36,6 +36,17 @@ class _WireModel(BaseModel):
     )
 
 
+class HookSpec(_WireModel):
+    """One agent-level session hook (`hooks.sessionStart` / `hooks.sessionSuspend`).
+
+    Credential-free by construction (config.schema.HookBlock forbids secretEnv) — this
+    crosses into the mini-harness, which runs it co-resident with the untrusted engine.
+    """
+
+    script: str
+    timeout_seconds: int = Field(default=120, alias="timeoutSeconds", gt=0, le=3600)
+
+
 class PublicEngineConfig(_WireModel):
     """Allowlisted engine input with managed secret fields excluded by construction."""
 
@@ -73,6 +84,10 @@ class PublicEngineConfig(_WireModel):
     trace_token: str = Field(default="", alias="traceToken")
     trace_parent: str = Field(default="", alias="traceParent")
     trace_session_id: str = Field(default="", alias="traceSessionId")
+    # Agent-level session hooks (config.schema.HooksBlock), run by the mini-harness itself —
+    # never by the harness-side runner, since a sandboxed engine has no runner co-located.
+    hook_session_start: HookSpec | None = Field(default=None, alias="hookSessionStart")
+    hook_session_suspend: HookSpec | None = Field(default=None, alias="hookSessionSuspend")
 
     _params_finite = field_validator("params", "mcp_templates")(_finite_json)
 
@@ -260,6 +275,13 @@ class WorkspacePrepareRequest(_WireModel):
     def cleanup_budget_seconds(self) -> float:
         """Allowance for the correlated cleanup acknowledgement barrier."""
         return self.cleanup_timeout_seconds if self.cleanup_ack_required else 0.0
+
+
+class WorkspaceSessionStartRequest(_WireModel):
+    """Run `hooks.sessionStart` once for a new session's live reservation."""
+
+    controller_id: str
+    invocation_id: str
 
 
 class WorkspaceCleanupAckRequest(_WireModel):

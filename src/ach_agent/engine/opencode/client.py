@@ -215,7 +215,7 @@ class OpenCodeClient:
     @staticmethod
     async def iter_sse_events(
         response: aiohttp.ClientResponse,
-    ) -> AsyncGenerator[OpenCodeEvent, None]:
+    ) -> AsyncGenerator[OpenCodeEvent]:
         """Parse SSE events from an aiohttp streaming response.
 
         H-06: Uses bytearray buffer to accumulate raw bytes and split on b"\\n"

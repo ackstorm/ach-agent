@@ -21,10 +21,9 @@ def _base_service(**overrides: object) -> dict:
     return base
 
 
-def test_egress_absent_is_valid() -> None:
-    block = EgressBlock.model_validate({"services": []})
-    assert block.default_action == "deny"
-    assert block.services == []
+def test_egress_services_must_be_non_empty() -> None:
+    with pytest.raises(ValidationError):
+        EgressBlock.model_validate({"services": []})
 
 
 def test_service_requires_https_origin() -> None:
@@ -69,7 +68,35 @@ def test_forbidden_auth_header_rejected() -> None:
 def test_placeholder_env_collides_with_forwarded_env_rejected() -> None:
     # ACH_TOKEN is a protected/managed name — must be rejected as a placeholderEnv.
     with pytest.raises(ValidationError):
-        EgressServiceBlock.model_validate(_base_service(placeholderEnv="ACH_TOKEN"))
+        EgressServiceBlock.model_validate(
+            _base_service(auth={**_base_service()["auth"], "placeholderEnv": "ACH_TOKEN"})
+        )
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "NO_PROXY", "no_proxy", "ALL_PROXY",
+     "SSL_CERT_FILE", "SSL_CERT_DIR", "HOME", "PATH", "TMPDIR", "OPENCODE_CONFIG"],
+)
+def test_placeholder_env_rejects_proxy_trust_and_pinned_names(name: str) -> None:
+    with pytest.raises(ValidationError):
+        EgressServiceBlock.model_validate(
+            _base_service(auth={**_base_service()["auth"], "placeholderEnv": name})
+        )
+
+
+def test_forward_env_colliding_with_egress_env_rejected() -> None:
+    cfg_kwargs = {
+        "schemaVersion": "1",
+        "agent": {"name": "a"},
+        "model": {"name": "m", "type": "openai"},
+        "capability": {"type": "ach", "ach": {"baseUrl": "https://x", "environment": "prod"}},
+        "egress": {"services": [_base_service()]},
+    }
+    with pytest.raises(ValidationError):
+        AgentConfig.model_validate({**cfg_kwargs, "engine": {"forwardEnv": ["GH_TOKEN"]}})
+    with pytest.raises(ValidationError):
+        AgentConfig.model_validate({**cfg_kwargs, "engine": {"forwardEnv": ["HTTPS_PROXY"]}})
 
 
 def test_access_default_deny_empty_allow_denies_everything() -> None:

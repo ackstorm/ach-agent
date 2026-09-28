@@ -555,10 +555,14 @@
           "items": {
             "$ref": "#/$defs/EgressServiceBlock"
           },
+          "minItems": 1,
           "title": "Services",
           "type": "array"
         }
       },
+      "required": [
+        "services"
+      ],
       "title": "EgressBlock",
       "type": "object"
     },

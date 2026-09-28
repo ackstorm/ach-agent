@@ -531,9 +531,24 @@ def resolve_secret(src: SecretSource) -> str | None:
 _FORBIDDEN_AUTH_HEADERS = frozenset(
     {"host", "content-length", "transfer-encoding", "connection", "cookie", "proxy-authorization"}
 )
+# Engine-side names the egress bootstrap (Task 8b) sets or the engine builders pin. A
+# placeholder or forwardEnv entry with one of these names would be silently overridden
+# (or would override the proxy/trust setup) — reject instead (design §4).
+EGRESS_ENGINE_ENV_NAMES = frozenset(
+    {
+        "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+        "http_proxy", "https_proxy", "no_proxy", "all_proxy",
+        "SSL_CERT_FILE", "SSL_CERT_DIR",
+    }
+)
 # Names that must never be usable as auth.placeholderEnv — collide with protected ACH
 # variables, proxy/trust configuration, or managed secrets (design §4).
-_PROTECTED_PLACEHOLDER_NAMES = frozenset({"ACH_TOKEN", "ACH_API_KEY", "GITLAB_TOKEN"})
+_PROTECTED_PLACEHOLDER_NAMES = EGRESS_ENGINE_ENV_NAMES | {
+    "ACH_TOKEN", "ACH_API_KEY", "GITLAB_TOKEN",
+    # pinned by build_opencode_env / build_pi_env
+    "HOME", "TMPDIR", "PATH", "GIT_TERMINAL_PROMPT", "OPENCODE_CONFIG",
+    "PI_CODING_AGENT_DIR", "PI_LOCAL_PROXY_API_KEY",
+}
 _EGRESS_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
 
 
@@ -610,6 +625,12 @@ class EgressServiceBlock(BaseModel):
     auth: EgressServiceAuth
     access: EgressServiceAccess | None = None
 
+    @field_validator("origin", mode="before")
+    @classmethod
+    def _lowercase_origin(cls, v: object) -> object:
+        # design §4: origin is normalized to lowercase before validation/matching.
+        return v.lower() if isinstance(v, str) else v
+
     @model_validator(mode="after")
     def _validate(self) -> EgressServiceBlock:
         if not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?", self.name):
@@ -628,7 +649,7 @@ class EgressBlock(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     default_action: Literal["deny"] = Field(default="deny", alias="defaultAction")
-    services: list[EgressServiceBlock] = Field(default_factory=list)
+    services: list[EgressServiceBlock] = Field(min_length=1)
 
     @model_validator(mode="after")
     def _validate(self) -> EgressBlock:
@@ -1148,6 +1169,13 @@ class AgentConfig(BaseModel):
                 f"({start_hook.timeout_seconds}) exceeds "
                 f"limits.maxInvocationSeconds ({limit})"
             )
+        if self.egress is not None:
+            reserved = EGRESS_ENGINE_ENV_NAMES | {
+                s.auth.placeholder_env for s in self.egress.services if s.auth.placeholder_env
+            }
+            clash = reserved & set(self.engine.forward_env)
+            if clash:
+                raise ValueError(f"engine.forwardEnv collides with egress-managed env: {sorted(clash)}")
         return self
 
 

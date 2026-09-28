@@ -1,84 +1,72 @@
 from __future__ import annotations
 
-from ach_agent.config.schema import EgressBlock
-from ach_agent.egress.policy import is_authorized, match_service
+import pytest
+
+from ach_agent.config.schema import EgressServiceAccess
+from ach_agent.egress.policy import ResolvedService, is_authorized, match_service
 
 
-def _cfg() -> EgressBlock:
-    return EgressBlock.model_validate({
-        "services": [
-            {
-                "name": "github",
-                "origin": "https://api.github.com:443",
-                "auth": {"header": "Authorization", "prefix": "Bearer ", "secret": {"env": "E0"}},
-            },
-            {
-                "name": "gitlab",
-                "origin": "https://gitlab.example.com:443",
-                "auth": {"header": "PRIVATE-TOKEN", "secret": {"env": "E1"}},
-                "access": {
-                    "allow": [
-                        {"methods": ["GET"], "pathPrefix": "/api/v4/projects/123/"},
-                        {"methods": ["POST"], "pathExact": "/api/v4/projects/123/merge_requests/42/notes"},
-                    ]
-                },
-            },
-        ]
-    })
+def _svc(name: str, host: str, access: EgressServiceAccess | None = None) -> ResolvedService:
+    return ResolvedService(
+        name=name, host=host, port=443, header="Authorization", prefix="Bearer ",
+        secret="x", placeholder_env="", access=access,
+    )
 
 
-def test_match_service_by_exact_origin() -> None:
-    svc = match_service(_cfg(), host="api.github.com", port=443)
-    assert svc is not None
-    assert svc.name == "github"
+_GITLAB_ACCESS = EgressServiceAccess.model_validate({
+    "allow": [
+        {"methods": ["GET"], "pathPrefix": "/api/v4/projects/123/"},
+        {"methods": ["POST"], "pathExact": "/api/v4/projects/123/merge_requests/42/notes"},
+    ]
+})
+_SERVICES = [_svc("github", "api.github.com"), _svc("gitlab", "gitlab.example.com", _GITLAB_ACCESS)]
 
 
-def test_match_service_unmatched_host_returns_none() -> None:
-    assert match_service(_cfg(), host="evil.example.com", port=443) is None
+def test_match_service_exact_origin_case_insensitive_host() -> None:
+    assert match_service(_SERVICES, "API.GitHub.com", 443).name == "github"  # type: ignore[union-attr]
+    assert match_service(_SERVICES, "evil.example.com", 443) is None
+    assert match_service(_SERVICES, "api.github.com", 8443) is None
 
 
-def test_match_service_wrong_port_returns_none() -> None:
-    assert match_service(_cfg(), host="api.github.com", port=8443) is None
+def test_no_access_block_authorizes_every_method_and_safe_path() -> None:
+    assert is_authorized(None, "DELETE", "/anything")
 
 
-def test_match_service_hostname_case_insensitive() -> None:
-    svc = match_service(_cfg(), host="API.GitHub.com", port=443)
-    assert svc is not None and svc.name == "github"
+def test_access_rules() -> None:
+    assert is_authorized(_GITLAB_ACCESS, "GET", "/api/v4/projects/123/issues")
+    assert is_authorized(_GITLAB_ACCESS, "POST", "/api/v4/projects/123/merge_requests/42/notes")
+    assert not is_authorized(_GITLAB_ACCESS, "DELETE", "/api/v4/projects/123/issues")
+    assert not is_authorized(_GITLAB_ACCESS, "GET", "/api/v4/projects/999/issues")
+    assert not is_authorized(_GITLAB_ACCESS, "POST", "/api/v4/projects/123/merge_requests/99/notes")
 
 
-def test_no_access_block_authorizes_every_method_and_path() -> None:
-    svc = match_service(_cfg(), host="api.github.com", port=443)
-    assert svc is not None
-    assert is_authorized(svc, method="DELETE", path="/anything")
+def test_path_prefix_matches_subtree_only() -> None:
+    assert not is_authorized(_GITLAB_ACCESS, "GET", "/api/v4/projects/123")
+    assert not is_authorized(_GITLAB_ACCESS, "GET", "/api/v4/projects/1234/")
+    assert is_authorized(_GITLAB_ACCESS, "GET", "/api/v4/projects/123/")
 
 
-def test_access_block_allows_matching_rule() -> None:
-    svc = match_service(_cfg(), host="gitlab.example.com", port=443)
-    assert svc is not None
-    assert is_authorized(svc, method="GET", path="/api/v4/projects/123/issues")
-    assert is_authorized(svc, method="POST", path="/api/v4/projects/123/merge_requests/42/notes")
+def test_query_is_not_an_authorization_input() -> None:
+    # design §7: path evaluated before the query; query is forwarded, not authorized.
+    assert is_authorized(_GITLAB_ACCESS, "POST", "/api/v4/projects/123/merge_requests/42/notes?x=1")
+    assert is_authorized(None, "GET", "/search?q=a//b/../c")
 
 
-def test_access_block_denies_unmatched_method_or_path() -> None:
-    svc = match_service(_cfg(), host="gitlab.example.com", port=443)
-    assert svc is not None
-    assert not is_authorized(svc, method="DELETE", path="/api/v4/projects/123/issues")
-    assert not is_authorized(svc, method="GET", path="/api/v4/projects/999/issues")
-    assert not is_authorized(svc, method="POST", path="/api/v4/projects/123/merge_requests/99/notes")
-
-
-def test_access_path_prefix_matches_subtree_only() -> None:
-    svc = match_service(_cfg(), host="gitlab.example.com", port=443)
-    assert svc is not None
-    # "/api/v4/projects/123" (no trailing slash, a sibling-like prefix) must NOT match
-    # "/api/v4/projects/123/" — design §7 path handling.
-    assert not is_authorized(svc, method="GET", path="/api/v4/projects/123")
-    assert is_authorized(svc, method="GET", path="/api/v4/projects/123/")
-
-
-def test_dot_segments_and_encoded_slashes_rejected() -> None:
-    svc = match_service(_cfg(), host="gitlab.example.com", port=443)
-    assert svc is not None
-    assert not is_authorized(svc, method="GET", path="/api/v4/projects/123/../456/issues")
-    assert not is_authorized(svc, method="GET", path="/api/v4/projects/123%2f..%2f456")
-    assert not is_authorized(svc, method="GET", path="/api/v4/projects//123/issues")
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v4/projects/123/../456/issues",
+        "/api/v4/projects/123/./issues",
+        "/api/v4/projects/123/%2e%2e/456",
+        "/api/v4/projects/123/%2E/x",
+        "/api/v4/projects/123%2f..%2f456",
+        "/api/v4/projects/123/%5cx",
+        "/api/v4/projects/123/%252e%252e/456",  # double-encoded
+        "/api/v4/projects//123/issues",
+        "/api/v4/projects/123/a\\b",  # single backslash
+        "/api/v4/projects/123/%zz",  # invalid escape
+        "relative/path",
+    ],
+)
+def test_unsafe_paths_rejected(path: str) -> None:
+    assert not is_authorized(None, "GET", path)

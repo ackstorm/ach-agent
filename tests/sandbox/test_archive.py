@@ -67,3 +67,16 @@ async def test_write_capped(tmp_path: Path) -> None:
     with pytest.raises(ArchiveTooLarge):
         await write_capped(chunks(), tmp_path / "y", max_bytes=11)
     assert not (tmp_path / "y").exists()
+
+
+def test_home_roundtrip_keeps_absolute_symlink(tmp_path: Path) -> None:
+    src = tmp_path / "home"
+    (src / ".venv" / "bin").mkdir(parents=True)
+    (src / ".venv" / "bin" / "python").symlink_to("/usr/bin/python3")
+    archive = tmp_path / "a.tar.gz"
+    pack(src, archive, max_bytes=10_000_000)
+    dest = tmp_path / "out"
+    extract(archive, dest, max_expanded_bytes=10_000_000, filter="tar")
+    assert (dest / ".venv" / "bin" / "python").readlink() == Path("/usr/bin/python3")
+    with pytest.raises(tarfile.TarError):
+        extract(archive, tmp_path / "strict", max_expanded_bytes=10_000_000)

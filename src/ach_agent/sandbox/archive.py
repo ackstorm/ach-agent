@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Session archives: tar.gz pack, capped receive, safe extract.
 
-Extraction uses tarfile's ``data`` filter (PEP 706): absolute paths, ``..``, links that
-escape the destination, devices and FIFOs are refused. It runs only inside the sandbox —
-the harness never extracts an agent-written archive, it only moves the bytes (spec §5).
+Extraction defaults to tarfile's ``data`` filter (PEP 706): absolute paths, ``..``, links
+that escape the destination, devices and FIFOs are refused. The sandbox restores its own
+HOME with ``tar`` instead (absolute symlinks such as ``.venv/bin/python`` survive; member
+paths are still confined). It runs only inside the sandbox — the harness never extracts an
+agent-written archive, it only moves the bytes (spec §5).
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 import tarfile
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Literal
 
 
 class ArchiveTooLarge(ValueError):
@@ -46,8 +49,14 @@ async def write_capped(chunks: AsyncIterator[bytes], dest: Path, *, max_bytes: i
     return total
 
 
-def extract(archive: Path, dest: Path, *, max_expanded_bytes: int) -> None:
-    """Extract ``archive`` into ``dest`` with the ``data`` filter and an expansion cap."""
+def extract(
+    archive: Path,
+    dest: Path,
+    *,
+    max_expanded_bytes: int,
+    filter: Literal["data", "tar"] = "data",  # noqa: A002
+) -> None:
+    """Extract ``archive`` into ``dest`` with ``filter`` and an expansion cap."""
     with tarfile.open(archive, "r:gz") as tar:
         members = tar.getmembers()
         # The `data` filter strips a leading "/" instead of rejecting it (safe, but
@@ -58,4 +67,4 @@ def extract(archive: Path, dest: Path, *, max_expanded_bytes: int) -> None:
         if sum(m.size for m in members) > max_expanded_bytes:
             raise ArchiveTooLarge("archive expands past the cap")
         dest.mkdir(parents=True, exist_ok=True)
-        tar.extractall(dest, filter="data")
+        tar.extractall(dest, filter=filter)

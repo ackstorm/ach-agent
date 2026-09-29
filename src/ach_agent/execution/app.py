@@ -16,7 +16,7 @@ import tarfile
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 from fastapi import FastAPI, Request
@@ -517,13 +517,17 @@ def create_execution_app(service: ExecutionService, *, verify_key: str | None = 
 def _register_sandbox_routes(app: FastAPI, service: ExecutionService) -> None:
     max_bytes = int(os.environ.get("ACH_SANDBOX_MAX_ARCHIVE_BYTES", str(2 * 1024**3)))
 
-    async def receive(request: Request, dest: Path) -> JSONResponse | None:
+    async def receive(
+        request: Request, dest: Path, *, filter: Literal["data", "tar"] = "data"  # noqa: A002
+    ) -> JSONResponse | None:
         if service.configured:
             return JSONResponse({"detail": "sandbox already configured"}, status_code=409)
         archive = Path(f"/tmp/ach-sandbox-in-{uuid.uuid4().hex}.tar.gz")
         try:
             await write_capped(request.stream(), archive, max_bytes=max_bytes)
-            await asyncio.to_thread(extract, archive, dest, max_expanded_bytes=8 * max_bytes)
+            await asyncio.to_thread(
+                extract, archive, dest, max_expanded_bytes=8 * max_bytes, filter=filter
+            )
         except Exception as exc:
             if dest.name.startswith(".ach-harness-shared-files-"):
                 shutil.rmtree(dest, ignore_errors=True)
@@ -535,7 +539,8 @@ def _register_sandbox_routes(app: FastAPI, service: ExecutionService) -> None:
     @app.put("/execution/v1/sandbox/archive/home")
     async def archive_home(request: Request) -> JSONResponse:
         home = Path(os.environ.get("ACH_SANDBOX_HOME", "/home/agent"))
-        return await receive(request, home) or JSONResponse({"status": "ok"})
+        # The agent's own files, restored into its own sandbox: keep absolute symlinks.
+        return await receive(request, home, filter="tar") or JSONResponse({"status": "ok"})
 
     @app.put("/execution/v1/sandbox/archive/hydration")
     async def archive_hydration(request: Request) -> JSONResponse:

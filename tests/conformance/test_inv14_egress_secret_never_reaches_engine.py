@@ -71,9 +71,10 @@ def test_egress_secret_not_in_engine_env(monkeypatch: Any, tmp_path: Path) -> No
             "egress_proxy_capability": "cap-value",
             "egress_ca_cert": "-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----",
             "egress_placeholder_env": ["GH_TOKEN"],
+            "home": str(tmp_path),
         }
     )
-    env = _egress_env(public_cfg, str(tmp_path))
+    env = _egress_env(public_cfg)
     assert all(_SECRET not in v for v in env.values())
     assert env["GH_TOKEN"] == "non-secret"
 

@@ -170,3 +170,22 @@ async def test_second_controller_is_rejected_during_owned_startup(tmp_path: Path
         await second
     await service.release_controller("first")
     await service.close()
+
+
+@pytest.mark.asyncio
+async def test_configure_with_egress_and_missing_home_writes_ca_bundle(tmp_path: Path) -> None:
+    # Regression: the bundle was written from _engine_config before home.mkdir, so a
+    # first configure against a not-yet-existing home raised FileNotFoundError.
+    home = tmp_path / "home"
+    assert not home.exists()
+    public = _public(tmp_path, _batch(tmp_path)).model_copy(
+        update={
+            "egress_proxy_url": "http://127.0.0.1:5555",
+            "egress_proxy_capability": "cap",
+            "egress_ca_cert": "-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----\n",
+        }
+    )
+    service = ExecutionService(None, None)
+    await service.configure(public)
+    assert service.initialized
+    assert "abc" in (home / ".ach-egress-ca-bundle.pem").read_text()

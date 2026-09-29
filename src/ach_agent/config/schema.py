@@ -545,6 +545,7 @@ EGRESS_ENGINE_ENV_NAMES = frozenset(
         "no_proxy",
         "all_proxy",
         "SSL_CERT_FILE",
+        "NODE_EXTRA_CA_CERTS",
         "SSL_CERT_DIR",
     }
 )

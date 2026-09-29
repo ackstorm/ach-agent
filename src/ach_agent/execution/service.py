@@ -124,6 +124,8 @@ _EGRESS_NO_PROXY = "127.0.0.1,localhost,::1"
 _EGRESS_PLACEHOLDER_VALUE = "non-secret"
 _SYSTEM_CA_BUNDLE_PATHS = ("/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.pem")
 _EGRESS_CAPABILITY_USER = "ach-egress"
+_EGRESS_CA_BUNDLE_NAME = ".ach-egress-ca-bundle.pem"
+_DEFAULT_ENGINE_HOME = "/tmp/ach-home"
 
 
 def _system_ca_bundle() -> str:
@@ -134,14 +136,34 @@ def _system_ca_bundle() -> str:
     return ""
 
 
-def _egress_env(public: Any, home: str) -> dict[str, str]:
+def _egress_ca_path(public: Any) -> Path:
+    return Path(public.home or _DEFAULT_ENGINE_HOME) / _EGRESS_CA_BUNDLE_NAME
+
+
+def _write_egress_ca_bundle(public: Any) -> None:
+    """Write system roots + proxy CA once, at configure time, after home exists.
+
+    Atomic (temp + os.replace): a gh/glab TLS handshake in another session never reads
+    a truncated bundle. Not called from _engine_config, which runs on every acquire.
+    """
+    if not public.egress_proxy_url:
+        return
+    ca_path = _egress_ca_path(public)
+    tmp = ca_path.with_name(f"{ca_path.name}.tmp")
+    tmp.write_text(_system_ca_bundle() + "\n" + public.egress_ca_cert, encoding="utf-8")
+    tmp.chmod(0o644)
+    os.replace(tmp, ca_path)
+
+
+def _egress_env(public: Any) -> dict[str, str]:
     """Project the egress proxy into engine-visible proxy/trust/placeholder env vars.
 
     Engine-wide: opencode/pi's own process, and every child (bun/node, gh, glab)
     inherit these. HTTP(S)_PROXY routes declared-service traffic through H's proxy;
-    NO_PROXY keeps loopback traffic (model/MCP proxies) out of it; SSL_CERT_FILE adds
-    the proxy's CA to the system trust store so TLS interception verifies. Absent when
-    egress is unset — no proxy/trust/placeholder env is set at all (design §9).
+    NO_PROXY keeps loopback traffic (model/MCP proxies) out of it. The CA bundle goes
+    in SSL_CERT_FILE (Go: gh/glab; Bun) and NODE_EXTRA_CA_CERTS (Node ignores
+    SSL_CERT_FILE) — verified 2026-09-29. Pure: the bundle file is written by
+    _write_egress_ca_bundle. Absent when egress is unset (design §9).
     """
     if not public.egress_proxy_url:
         return {}
@@ -150,11 +172,7 @@ def _egress_env(public: Any, home: str) -> dict[str, str]:
     authority = public.egress_proxy_url.removeprefix("http://")
     proxy_url = f"http://{_EGRESS_CAPABILITY_USER}:{public.egress_proxy_capability}@{authority}"
 
-    ca_bundle = _system_ca_bundle() + "\n" + public.egress_ca_cert
-    ca_path = Path(home) / ".ach-egress-ca-bundle.pem"
-    ca_path.write_text(ca_bundle, encoding="utf-8")
-    ca_path.chmod(0o644)
-
+    ca_path = str(_egress_ca_path(public))
     env = {
         "HTTP_PROXY": proxy_url,
         "HTTPS_PROXY": proxy_url,
@@ -162,7 +180,8 @@ def _egress_env(public: Any, home: str) -> dict[str, str]:
         "https_proxy": proxy_url,
         "NO_PROXY": _EGRESS_NO_PROXY,
         "no_proxy": _EGRESS_NO_PROXY,
-        "SSL_CERT_FILE": str(ca_path),
+        "SSL_CERT_FILE": ca_path,
+        "NODE_EXTRA_CA_CERTS": ca_path,
     }
     for name in public.egress_placeholder_env:
         env[name] = _EGRESS_PLACEHOLDER_VALUE
@@ -204,7 +223,7 @@ def _engine_config(public: Any) -> EngineConfig:
     values["engine_env"] = {
         name: os.environ[name] for name in public.engine_env_names if name in os.environ
     }
-    values["engine_env"].update(_egress_env(public, public.home))
+    values["engine_env"].update(_egress_env(public))
     # Codemem is an engine-local executable.  H supplies only the approved path and
     # project; E decides whether its own image can provide the optional backend.
     if values.get("codemem_db_path") and shutil.which("codemem") is None:
@@ -312,10 +331,11 @@ class ExecutionService:
 
         try:
             cfg = _engine_config(public)
-            home = Path(public.home or "/tmp/ach-home")
+            home = Path(public.home or _DEFAULT_ENGINE_HOME)
             work_dir = Path(public.work_dir or home / "workspace")
             home.mkdir(parents=True, exist_ok=True)
             work_dir.mkdir(parents=True, exist_ok=True)
+            _write_egress_ca_bundle(public)
             hydration = getattr(public, "hydration_dir", "")
             if hydration:
                 install_hydration(hydration, home, driver.skills_dir(home))

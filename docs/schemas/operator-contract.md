@@ -1,13 +1,6 @@
 # ACH Agent Runtime — Operator Contract (the seam)
 
-> **Deployment proposal, 2026-09-14:** the self-contained
-> [standalone/distributed handoff](ach-deployment-modes.md) defines the proposed ACH
-> placement selector and the locally validated startup/mount update in ACH Agent. The CR selector
-> requires implementation in ACH; it does not alter the frozen agent configuration schema.
-> For distributed placement, that handoff supersedes the historical single-process
-> ownership and mount descriptions below. Harness downloads; the mini-harness installs
-> into its private home before readiness. Selected `engine.forwardEnv` values are supplied
-> by the operator to Engine, rather than sent over the execution API.
+> **Placements:** see the [placement note](ach-deployment-modes.md). `distributed` was removed in v0.18.0.
 
 > **Pinned contract revision: v3.** This file was named `CONTRACT_v3.md` until 2026-07-27;
 > the revision it pins now lives here in the header instead of in the filename, so the
@@ -64,16 +57,6 @@ Spec reference: `ach-agent-runtime-spec-v1_4_7.md` (API group `runtime.ackstorm.
 >
 > The router (§6) — dedup → backpressure → lane, the three finite bounds — is **unchanged**. It is
 > the repo's IP. Harness language stays **Python**.
-
-### Phase 1 split deployment acceptance
-
-Local validation has passed for the task-owned Unix split Compose manifest. The target is
-one pod with three ordinary tini containers and one active replica: channels (C),
-harness (H), and engine (E). H reads the full rendered config; C and E receive only
-the inputs required through the two Unix sockets. The fixture's synthetic upstream
-and credentials are test values only. See [`unix-split-validation.md`](../reports/unix-split-validation.md)
-for current measured acceptance and its limits. The self-contained operator handoff
-is [the standalone/distributed deployment contract](ach-deployment-modes.md).
 
 ---
 
@@ -1052,37 +1035,3 @@ with proxy/trust names (`*_PROXY`, `SSL_CERT_*`) — rejected at load. E receive
 with a per-lifetime capability, `NO_PROXY` for loopback, and a CA bundle (public cert only).
 Rotation = restart. Spec: `docs/superpowers/specs/2026-09-28-authenticated-egress-proxy-design.md`.
 
-## Phase 1 split role packaging
-
-The target uses three ordinary containers from the image targets `harness`, `channels`,
-and `engine-opencode` or `engine-pi`. Every role uses the image entrypoint
-`[/usr/bin/tini, --, python, -m, ach_agent.main]` with `--role harness`, `--role channels`,
-or `--role engine`. Run one active replica in one pod. H alone receives the full
-`ACH_CONFIG_PATH` configuration and managed credentials. C and E receive no full config,
-bootstrap artifact, internal control URL, generated HMAC key, or duplicated managed secret.
-
-Use two separate IPC directory volumes, mounted at the same paths in every participant:
-
-| Endpoint | Owner | Mounts | Purpose |
-| --- | --- | --- | --- |
-| `/run/ach-agent/channels/channel.sock` | H | H read/write; C read-only; absent E | C fetches source-only `ChannelInputs` and submits events/results over HTTP |
-| `/run/ach-agent/engine/agent.sock` | E | E read/write; H read-only; absent C | H opens the existing controller with `PublicEngineConfig`, then sends turns and lifecycle requests |
-
-Mount directories rather than individual socket files. Use UID/GID and fsGroup 10001;
-socket mode is 0600. H/E socket probes are HTTP requests over their Unix endpoints.
-There are no operator control ports or mandatory internal URL/host/port environment
-variables. C's public ingress remains `0.0.0.0:8080`; model, MCP and native OpenCode
-HTTP endpoints remain where their existing clients need them.
-
-H hydrates the full config, starts the existing proxies and runs all prepare/cleanup hooks
-in H on the shared workspace. E owns native engine home, adapters, sessions and process
-lifecycle. H sends explicit values selected by `engine.forwardEnv`; E does not depend on
-ambient duplicate environment. The workspace and public context retain their existing
-logical paths. H state remains private, E home remains private, and the shared workspace
-is mounted read/write by H and E. No new scheduler, queue, lease, heartbeat or CR schema
-field is introduced.
-
-These repository manifests and this section are contract examples and validation fixtures.
-Production ACH owns dynamic path, PVC, full-config ConfigMap and Secret rendering. Future
-two-Deployment operation, including separate channel and H+E replicas, is deferred; it
-is not part of this one-pod target.

@@ -14,10 +14,6 @@ def _runtime_root(root: Path | None) -> Path:
     return Path(os.environ.get("ACH_RUNTIME_DIR", "/run/ach-agent")) if root is None else Path(root)
 
 
-def channel_socket_path(root: Path | None = None) -> Path:
-    return _runtime_root(root) / "channels" / "channel.sock"
-
-
 def engine_socket_path(root: Path | None = None) -> Path:
     return _runtime_root(root) / "engine" / "agent.sock"
 

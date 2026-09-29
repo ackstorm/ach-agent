@@ -2,18 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from datetime import UTC, datetime
 
 import httpx
 import pytest
 import uvicorn
 
-from ach_agent.boot.channels_api import create_channels_app
-from ach_agent.boot.completions import CompletionRegistry
 from ach_agent.boot.execution_client import ExecutionClient, ExecutionClientError
 from ach_agent.boot.health import HealthState
-from ach_agent.channels.client import ChannelsClient, SubmissionFailed
-from ach_agent.channels.envelopes import EventEnvelope
 from ach_agent.execution.app import (
     EXECUTION_API_VERSION,
     _BoundedStreamingResponse,
@@ -114,54 +109,6 @@ async def test_unconfigured_execution_service_accepts_config_on_controller_open(
                 assert response.status_code == 200
                 assert await response.aiter_lines().__anext__()
                 await response.aclose()
-
-
-@pytest.mark.asyncio
-async def test_h_e_readiness_and_signed_c_probe_share_instance(fake_driver) -> None:
-    service = ExecutionService(fake_driver, {})
-    e_app = create_execution_app(service)
-    async with _running_server(e_app) as e_url:
-        execution = ExecutionClient(e_url, controller_id="harness-test")
-        await execution.connect()
-        h_state = HealthState()
-        try:
-            await _refresh_engine_readiness(execution, h_state)
-            assert h_state.ready
-
-            async def admit(_event):
-                from ach_agent.router.router import RouterAdmitResult
-
-                return RouterAdmitResult.ACCEPTED
-
-            registry = CompletionRegistry(admit, agent="agent-a")
-            h_app = create_channels_app(registry, agent="agent-a", channels={"queue"})
-            c_http = httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=h_app), base_url="http://harness"
-            )
-            channels = ChannelsClient(agent="agent-a", http_client=c_http)
-            try:
-                assert await channels.probe_harness()
-                h_app.extra["state"].draining = True
-                with pytest.raises(SubmissionFailed, match="draining"):
-                    await channels.submit(
-                        EventEnvelope(
-                            idempotency_key="r2",
-                            session_key="lane",
-                            channel_name="queue",
-                            payload={"text": "hi"},
-                            source_trait="sync",
-                            received_at=datetime.now(UTC),
-                        )
-                    )
-            finally:
-                await channels.close()
-            h_state.draining = True
-            await _refresh_engine_readiness(execution, h_state)
-            assert not h_state.ready
-        finally:
-            with contextlib.suppress(Exception):
-                await execution.graceful_stop()
-            await execution.close()
 
 
 @pytest.mark.asyncio

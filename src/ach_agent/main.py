@@ -35,7 +35,7 @@ import uvicorn
 from ach_agent.boot.completions import CompletionHandler, CompletionRegistry
 from ach_agent.boot.engine_runner import make_engine_runner
 from ach_agent.boot.health import HealthState
-from ach_agent.boot.ipc import bind_listener, channel_socket_path, engine_socket_path
+from ach_agent.boot.ipc import engine_socket_path
 from ach_agent.boot.paths import (
     harness_log_dir,
     write_pid_file,
@@ -74,14 +74,12 @@ from ach_agent.engine.mcp_passthrough import to_engine_entry
 from ach_agent.engine.mcp_proxy import McpProxy, start_model_proxy, stop_model_proxies
 from ach_agent.engine.metrics import DRAIN_COMPLETED
 from ach_agent.engine.sanitized_env import add_secret_redaction, configure_logging
-from ach_agent.http.app import create_app, create_health_app
+from ach_agent.http.app import create_app
 from ach_agent.memory.ach_memory import excluded_mcp_server
 from ach_agent.memory.ach_memory_facade import AchMemoryFacade
 from ach_agent.router import Router
 from ach_agent.security.preflight import run_preflight
 
-DEFAULT_HARNESS_HOST = "127.0.0.1"
-DEFAULT_HARNESS_PORT = 8090
 _COMPLETION_RETENTION_SECONDS = 300.0
 
 # configure_logging() is called at module TOP (not in main()) so that any
@@ -352,7 +350,6 @@ async def _run_harness(
     one_shot_prompt: str | None = None,
     debug_mode: bool = False,
     cfg: AgentConfig | None = None,
-    role_mode: str = "local",
 ) -> None:
     """Async entrypoint: load config, boot router, start channel adapters + uvicorn.
 
@@ -374,8 +371,6 @@ async def _run_harness(
 
     # Step 2: load config (hard-fail on schema mismatch — CFG-02)
     cfg = cfg if cfg is not None else load_config(config_path)
-    isolated_harness = role_mode == "harness"
-    configured_engine_url = ""
     try:
         validate_cost_source(cfg.cost.source, cfg.model.type)
     except ValueError as exc:
@@ -396,22 +391,20 @@ async def _run_harness(
     add_secret_redaction(collect_secret_env_names(cfg))
     from ach_agent.boot.paths import resolve_role_paths
 
-    local_mode = not isolated_harness
-    role_paths = resolve_role_paths(cfg, split_mode=not local_mode)
+    role_paths = resolve_role_paths(cfg)
     engine_home = str(role_paths.engine_home)
     engine_work_dir = str(role_paths.work_dir)
     from ach_agent.boot.roles import build_role_configs
     from ach_agent.execution.wire import PublicEngineConfig
 
-    channels_projection, public_projection = build_role_configs(cfg, split_mode=not local_mode)
+    channels_projection, public_projection = build_role_configs(cfg)
     public_cfg = PublicEngineConfig.model_validate(public_projection).model_copy(
         update={"home": engine_home, "work_dir": engine_work_dir}
     )
-    from ach_agent.boot.paths import new_hydration_batch, stage_legacy_codemem
+    from ach_agent.boot.paths import new_hydration_batch
 
     hydration_batch = new_hydration_batch(role_paths.transfer_root)
     state_dir = hydration_batch
-    stage_legacy_codemem(cfg, role_paths, hydration_batch, split_mode=not local_mode)
 
     # Step 3: D-02 gate — reject unwired channel types before serving.
     # Skipped under --tui/--prompt: configured channels are ignored in console mode.
@@ -701,13 +694,11 @@ async def _run_harness(
     # correlation token and E only adopts it; this keeps native terminal
     # attachment on the same role seam as the HTTP execution path.
     native_tui_child = (
-        local_mode
-        and tui_mode
+        tui_mode
         and sys.stdin.isatty()
         and sys.stdout.isatty()
         and not debug_mode
         and one_shot_prompt is None
-        and not configured_engine_url
     )
     if native_tui_child:
         from ach_agent.engine import trace
@@ -768,10 +759,6 @@ async def _run_harness(
                     await egress_proxy.stop()
         log.info("ach-agent: native terminal session ended")
         return
-    if isolated_harness:
-        # H sends the typed public configuration during controller-open over the
-        # engine/channel UDS seams.
-        pass
     # D-03/D-04: dedup store first — it opens/repairs state.db (fail-closed on a bad
     # mount). Native session ownership stays in E; only the bounded legacy map
     # export is sent through the startup import operation below.
@@ -792,37 +779,36 @@ async def _run_harness(
     if hasattr(session_store, "close"):
         session_store.close()
 
-    engine_url = (configured_engine_url or "http://ach-internal").rstrip("/")
+    engine_url = "http://ach-internal"
     local_engine: LocalEngineProcess | None = None
     local_runtime_dir: Path | None = None
-    if local_mode and not configured_engine_url:
-        local_runtime_dir = Path(tempfile.mkdtemp(prefix="ach-runtime-", dir="/tmp"))
-        local_socket_env = {
-            **local_engine_env,
-            "ACH_RUNTIME_DIR": str(local_runtime_dir),
-        }
-        try:
-            local_engine = await LocalEngineProcess.start(env=local_socket_env)
-            await local_engine.wait_ready(
-                engine_url,
-                timeout=float(cfg.engine.startup_timeout_seconds),
-                socket_path=str(engine_socket_path(local_runtime_dir)),
-            )
-        except BaseException:
-            if local_engine is not None:
-                await local_engine.close()
-            else:
-                shutil.rmtree(local_runtime_dir, ignore_errors=True)
-            await stop_model_proxies()
-            if mcp_proxy is not None:
-                await mcp_proxy.stop()
-            if memory_facade is not None:
-                await memory_facade.stop()
-            if a2a_facade is not None:
-                await a2a_facade.stop()
-            if egress_proxy is not None:
-                await egress_proxy.stop()
-            raise
+    local_runtime_dir = Path(tempfile.mkdtemp(prefix="ach-runtime-", dir="/tmp"))
+    local_socket_env = {
+        **local_engine_env,
+        "ACH_RUNTIME_DIR": str(local_runtime_dir),
+    }
+    try:
+        local_engine = await LocalEngineProcess.start(env=local_socket_env)
+        await local_engine.wait_ready(
+            engine_url,
+            timeout=float(cfg.engine.startup_timeout_seconds),
+            socket_path=str(engine_socket_path(local_runtime_dir)),
+        )
+    except BaseException:
+        if local_engine is not None:
+            await local_engine.close()
+        else:
+            shutil.rmtree(local_runtime_dir, ignore_errors=True)
+        await stop_model_proxies()
+        if mcp_proxy is not None:
+            await mcp_proxy.stop()
+        if memory_facade is not None:
+            await memory_facade.stop()
+        if a2a_facade is not None:
+            await a2a_facade.stop()
+        if egress_proxy is not None:
+            await egress_proxy.stop()
+        raise
     engine_socket = (
         str(engine_socket_path(local_runtime_dir))
         if local_runtime_dir
@@ -849,12 +835,6 @@ async def _run_harness(
                             ek,
                             hydration_batch,
                             hydration_batch / "skills",
-                        )
-                        stage_legacy_codemem(
-                            cfg,
-                            role_paths,
-                            hydration_batch,
-                            split_mode=not local_mode,
                         )
                     public_cfg = public_cfg.model_copy(
                         update={"hydration_dir": str(hydration_batch)}
@@ -1040,17 +1020,9 @@ async def _run_harness(
         log.info("ach-agent: session ended")
         return
 
-    # In an isolated deployment C owns ingress. H exposes only its authenticated
-    # serializable channels API; the local parent keeps the legacy adapters.
-    webhook_channels = (
-        []
-        if isolated_harness
-        else [
-            source_configs[ch.name]
-            for ch in cfg.channels
-            if ch.type in ("webhook", "webhook-script")
-        ]
-    )
+    webhook_channels = [
+        source_configs[ch.name] for ch in cfg.channels if ch.type in ("webhook", "webhook-script")
+    ]
 
     # Build A2A bridges and sub-apps (topology A: mounted under the same FastAPI/uvicorn socket).
     # W9: engine_runner must NOT import channels.a2a or hold a bridge reference.
@@ -1059,7 +1031,7 @@ async def _run_harness(
     a2a_bridges: list[A2AAgentExecutorBridge] = []
     a2a_mounts: list[tuple[str, Any]] = []
 
-    for channel in [] if isolated_harness else cfg.channels:
+    for channel in cfg.channels:
         if channel.type != "a2a":
             continue
 
@@ -1081,22 +1053,12 @@ async def _run_harness(
 
     # 6c. Create FastAPI app with all webhook channels.
     # a2a_mounts threads the A2A sub-apps under the same socket (topology A).
-    if isolated_harness:
-        from ach_agent.boot.channels_api import create_channels_app
-
-        app = create_channels_app(
-            completion_registry,
-            agent=cfg.agent.name,
-            channels=(channel.name for channel in cfg.channels),
-            source_configs=(source_configs[channel.name] for channel in cfg.channels),
-        )
-    else:
-        app = create_app(
-            channels=webhook_channels,
-            handler=channel_handler,
-            a2a_mounts=a2a_mounts,
-            lifespan_ready=False,
-        )
+    app = create_app(
+        channels=webhook_channels,
+        handler=channel_handler,
+        a2a_mounts=a2a_mounts,
+        lifespan_ready=False,
+    )
     # Expose state so _drain can flip draining/ready (same ref as app.extra['state'])
     state: HealthState = app.extra["state"]
     readiness_task: asyncio.Task[None] | None = None
@@ -1124,11 +1086,7 @@ async def _run_harness(
 
     # D-08/SC#3: collect all cron channels and construct exactly ONE CronScheduler.
     # Pitfall 9 (one task per channel) is superseded by D-08 (one scheduler for all).
-    cron_channels = (
-        []
-        if isolated_harness
-        else [source_configs[ch.name] for ch in cfg.channels if ch.type == "cron"]
-    )
+    cron_channels = [source_configs[ch.name] for ch in cfg.channels if ch.type == "cron"]
     cron_scheduler: CronScheduler | None = None
     if cron_channels:
         cron_scheduler = CronScheduler(cron_channels, handler=channel_handler)
@@ -1141,7 +1099,7 @@ async def _run_harness(
 
     # Queue channels (redis Streams, ackMode:onComplete): one QueueConsumer each.
     # Each consumer owns a single asyncio consume task; stopped in the drain branch.
-    queue_channels = [] if isolated_harness else [ch for ch in cfg.channels if ch.type == "queue"]
+    queue_channels = [ch for ch in cfg.channels if ch.type == "queue"]
     queue_consumers: list[QueueConsumer] = []
     for channel in queue_channels:
         consumer = QueueConsumer(source_configs[channel.name], handler=channel_handler)
@@ -1157,23 +1115,8 @@ async def _run_harness(
     # channels additionally serve their routes on this same socket (topology A).
     # uvicorn shares the SAME event loop as the cron tasks — no thread pool,
     # single-process topology (spec §15 topology A).
-    health_server: Any = None
-    if isolated_harness:
-        host = os.environ.get("ACH_HARNESS_HOST", "0.0.0.0")
-        port = int(os.environ.get("ACH_HARNESS_PORT", str(DEFAULT_HARNESS_PORT)))
-        health_server = uvicorn.Server(
-            uvicorn.Config(
-                app=create_health_app(state),
-                host=host,
-                port=port,
-                log_level="warning",
-            )
-        )
-    else:
-        host = cfg.health.host
-        port = cfg.health.port
-    channel_socket = str(channel_socket_path()) if isolated_harness else ""
-    channel_listener = bind_listener(Path(channel_socket)) if channel_socket else None
+    host = cfg.health.host
+    port = cfg.health.port
     uv_config = uvicorn.Config(
         app=app,
         host=host,
@@ -1181,14 +1124,8 @@ async def _run_harness(
         log_level="warning",  # uvicorn internal logs; harness uses structlog
     )
     uv_server = uvicorn.Server(uv_config)
-    log.info("uvicorn starting", host=host, port=port, socket=channel_socket or None)
-    tasks.append(
-        asyncio.create_task(
-            uv_server.serve(sockets=[channel_listener] if channel_listener is not None else None)
-        )
-    )
-    if health_server is not None:
-        tasks.append(asyncio.create_task(health_server.serve()))
+    log.info("uvicorn starting", host=host, port=port)
+    tasks.append(asyncio.create_task(uv_server.serve()))
 
     # Install SIGTERM handler via loop.add_signal_handler (NOT signal.signal).
     # RESEARCH Pitfall 2: uvicorn uses signal.signal() inside capture_signals() —
@@ -1235,8 +1172,6 @@ async def _run_harness(
             router=router,
             dedup_store=dedup_store,
         )
-        if health_server is not None:
-            health_server.should_exit = True
         for bridge in a2a_bridges:
             await bridge.shutdown()
         if readiness_task is not None:
@@ -1262,9 +1197,6 @@ async def _run_harness(
             await egress_proxy.stop()
         await stats_sink.stop()
         await tool_sink.stop()
-        if channel_listener is not None:
-            channel_listener.close()
-            Path(channel_socket).unlink(missing_ok=True)
         # uvicorn's serve() task returns on its own once should_exit=True; await it
         # so its lifespan shutdown completes before asyncio.run tears the loop down.
         # This avoids the force-cancel CancelledError traceback the old sys.exit(0)
@@ -1281,8 +1213,6 @@ async def _run_harness(
             router=router,
             dedup_store=dedup_store,
         )
-        if health_server is not None:
-            health_server.should_exit = True
         for bridge in a2a_bridges:
             await bridge.shutdown()
         if readiness_task is not None:
@@ -1307,9 +1237,6 @@ async def _run_harness(
             await egress_proxy.stop()
         await stats_sink.stop()
         await tool_sink.stop()
-        if channel_listener is not None:
-            channel_listener.close()
-            Path(channel_socket).unlink(missing_ok=True)
         await asyncio.gather(*tasks, return_exceptions=True)
         log.info("ach-agent shutdown complete")
 
@@ -1322,7 +1249,7 @@ def _parse_cli(argv: list[str]) -> tuple[str | None, bool, str | None, bool]:
     then exit. All ignore configured channels; precedence is `--prompt` > `--debug` > `--tui`.
     """
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--role", choices=("harness", "channels", "engine"))
+    parser.add_argument("--role", choices=("engine",))
     parser.add_argument("--tui", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--prompt")
@@ -1346,19 +1273,10 @@ async def main(
         )
         return
 
-    from ach_agent.boot.roles import run_channels, run_engine, run_harness
+    from ach_agent.boot.roles import run_engine
 
     if role == "engine":
         await run_engine(terminal_mode=tui_mode)
-    elif role == "channels":
-        await run_channels()
-    elif role == "harness":
-        await run_harness(
-            load_config(os.environ.get(CONFIG_PATH_ENV, DEFAULT_CONFIG_PATH)),
-            tui_mode=tui_mode,
-            one_shot_prompt=one_shot_prompt,
-            debug_mode=debug_mode,
-        )
     else:  # pragma: no cover - argparse constrains CLI values
         raise SystemExit(f"unknown role: {role}")
 

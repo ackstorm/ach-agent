@@ -22,7 +22,7 @@ from typing import Any, cast
 import uvicorn
 from pydantic import JsonValue
 
-from ach_agent.boot.ipc import bind_listener, channel_socket_path, engine_socket_path
+from ach_agent.boot.ipc import bind_listener, engine_socket_path
 from ach_agent.boot.paths import harness_log_dir, resolve_role_paths
 from ach_agent.boot.secrets import collect_secret_env_names, strip_forwarded_secrets
 from ach_agent.config.schema import (
@@ -36,8 +36,6 @@ from ach_agent.execution.app import create_execution_app, create_execution_healt
 from ach_agent.execution.service import ExecutionService
 from ach_agent.execution.wire import PublicEngineConfig
 
-DEFAULT_CHANNELS_HOST = "0.0.0.0"
-DEFAULT_CHANNELS_PORT = 8080
 DEFAULT_ENGINE_HOST = "0.0.0.0"
 DEFAULT_ENGINE_PORT = 8081
 
@@ -120,8 +118,6 @@ _MANAGED_ENV_NAMES = frozenset(
         "ACH_TOKEN",
         "ACH_API_KEY",
         "ACH_MODEL_TOKEN",
-        "ACH_CHANNELS_HMAC_KEY",
-        "ACH_HARNESS_URL",
         "ACH_ENGINE_URL",
         "ACH_MODEL_BASE_URL",
         "ACH_MODEL_HEADER",
@@ -155,7 +151,7 @@ def _source_projection(cfg: AgentConfig) -> list[dict[str, JsonValue]]:
     return projected
 
 
-def _codemem_bootstrap(cfg: AgentConfig, *, split_mode: bool = True) -> tuple[str, str]:
+def _codemem_bootstrap(cfg: AgentConfig) -> tuple[str, str]:
     """Return codemem path/project without probing the E image from H."""
     memory = cfg.memory
     if not isinstance(memory, CodememMemory):
@@ -163,27 +159,11 @@ def _codemem_bootstrap(cfg: AgentConfig, *, split_mode: bool = True) -> tuple[st
     params = memory.codemem
     if params.db_path:
         db_path = str(Path(params.db_path).expanduser().resolve())
-        if split_mode:
-            paths = resolve_role_paths(cfg, split_mode=True)
-            try:
-                Path(db_path).relative_to(paths.engine_home)
-            except ValueError as exc:
-                raise ValueError(
-                    "memory.codemem.dbPath must be within engine.home in distributed mode"
-                ) from exc
     elif cfg.persistence.enabled:
-        if split_mode:
-            paths = resolve_role_paths(cfg, split_mode=True)
-            db_path = str(paths.engine_home / "state" / "codemem.db")
-        else:
-            db_path = str(Path(cfg.persistence.mount_path) / "state" / "codemem.db")
+        db_path = str(Path(cfg.persistence.mount_path) / "state" / "codemem.db")
     else:
-        if split_mode:
-            paths = resolve_role_paths(cfg, split_mode=True)
-            db_path = str(paths.engine_home / "state" / "codemem.db")
-        else:
-            # Keep the standalone volatile location stable.
-            db_path = "/tmp/ach-home/state/codemem.db"
+        # Keep the standalone volatile location stable.
+        db_path = "/tmp/ach-home/state/codemem.db"
     return db_path, params.project
 
 
@@ -211,7 +191,7 @@ def _engine_env_names(cfg: AgentConfig) -> list[str]:
 
 
 def build_role_configs(
-    cfg: AgentConfig, *, split_mode: bool = True
+    cfg: AgentConfig,
 ) -> tuple[dict[str, JsonValue], dict[str, JsonValue]]:
     """Build the channels projection and public engine configuration.
 
@@ -220,12 +200,12 @@ def build_role_configs(
     to the engine during controller-open.
     """
     engine_env_names = _engine_env_names(cfg)
-    paths = resolve_role_paths(cfg, split_mode=split_mode)
+    paths = resolve_role_paths(cfg)
     channels: dict[str, JsonValue] = {
         "schemaVersion": "1",
         "channels": cast(JsonValue, _source_projection(cfg)),
     }
-    codemem_db_path, codemem_project = _codemem_bootstrap(cfg, split_mode=split_mode)
+    codemem_db_path, codemem_project = _codemem_bootstrap(cfg)
     templates = {
         name: spec
         for name, spec in cfg.mcp_servers.items()
@@ -368,161 +348,3 @@ async def run_engine(
         raise watcher_error
     if service.shutdown_requested or service.controller_cleanup_error:
         raise RuntimeError("engine role shutdown requested after unreliable cleanup")
-
-
-async def run_harness(
-    cfg: AgentConfig,
-    *,
-    tui_mode: bool = False,
-    one_shot_prompt: str | None = None,
-    debug_mode: bool = False,
-) -> None:
-    """Run the harness role while keeping the legacy local entrypoint stable."""
-    # Import lazily: ``main`` imports this module while constructing the role
-    # projections, and the role entrypoint must not create a second boot graph.
-    from ach_agent.main import _run_harness
-
-    await _run_harness(
-        tui_mode=tui_mode,
-        one_shot_prompt=one_shot_prompt,
-        debug_mode=debug_mode,
-        cfg=cfg,
-        role_mode="harness",
-    )
-
-
-async def run_channels(channel_config: JsonValue | None = None) -> None:
-    """Start source adapters from the harness-owned channel socket projection."""
-    fetched_agent_name = ""
-    if channel_config is None:
-        from ach_agent.channels.client import ChannelsClient
-
-        config_client = ChannelsClient(socket_path=str(channel_socket_path()))
-        try:
-            deadline = asyncio.get_running_loop().time() + 30.0
-            while True:
-                try:
-                    inputs = await config_client.fetch_config()
-                    break
-                except Exception as exc:
-                    if asyncio.get_running_loop().time() >= deadline:
-                        raise SplitRoleConfigError(
-                            "channel configuration did not become available"
-                        ) from exc
-                    await asyncio.sleep(0.5)
-        finally:
-            await config_client.close()
-        fetched_agent_name = inputs.agent_name
-        channel_config = {
-            "schemaVersion": "1",
-            "channels": cast(
-                JsonValue,
-                [item.model_dump(mode="json", by_alias=True) for item in inputs.channels],
-            ),
-        }
-    if not isinstance(channel_config, dict):
-        raise SplitRoleConfigError("channels role requires an object configuration")
-    if channel_config.get("schemaVersion") != "1":
-        raise SplitRoleConfigError("invalid channels role configuration")
-    sources = channel_config.get("channels")
-    if not isinstance(sources, list):
-        raise SplitRoleConfigError("channels role configuration must contain channels")
-    raw_sources = sources
-    channel_socket = str(channel_socket_path())
-    from ach_agent import identity
-
-    agent_name = os.environ.get("ACH_AGENT_NAME", "").strip()
-    if fetched_agent_name:
-        agent_name = fetched_agent_name
-    identity.configure(agent_name, os.environ.get("ACH_ENVIRONMENT", ""))
-    for source in raw_sources:
-        ChannelSourceConfig.model_validate(source)
-    from ach_agent.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a2a_agent_card
-    from ach_agent.channels.client import ChannelsClient
-    from ach_agent.channels.cron import CronScheduler
-    from ach_agent.channels.queue import QueueConsumer
-    from ach_agent.http.app import create_app
-
-    source_configs: list[ChannelSourceConfig] = [
-        ChannelSourceConfig.model_validate(source) for source in raw_sources
-    ]
-    if not agent_name:
-        raise SplitRoleConfigError("ACH_AGENT_NAME is required for a separated channels role")
-    client = ChannelsClient(
-        agent=agent_name,
-        poll_interval=2.0,
-        socket_path=channel_socket or None,
-    )
-    probe_deadline = asyncio.get_running_loop().time() + 30.0
-    probe_channel = source_configs[0].name if source_configs else ""
-    while True:
-        try:
-            if await client.probe_harness(probe_channel):
-                break
-        except Exception:
-            pass
-        if asyncio.get_running_loop().time() >= probe_deadline:
-            await client.close()
-            raise SplitRoleConfigError("harness connectivity did not become ready")
-        await asyncio.sleep(0.5)
-    a2a_mounts: list[tuple[str, Any]] = []
-    a2a_bridges: list[A2AAgentExecutorBridge] = []
-    for source_cfg in source_configs:
-        if source_cfg.type != "a2a":
-            continue
-        bridge = A2AAgentExecutorBridge(
-            handler=client,
-            channel_cfg=source_cfg,
-            completion_port=client,
-        )
-        a2a_bridges.append(bridge)
-        a2a_mounts.append(
-            (
-                f"/a2a/{source_cfg.name}",
-                build_a2a_app(make_a2a_agent_card(source_cfg.name), bridge),
-            )
-        )
-    http_sources = [
-        source for source in source_configs if source.type in ("webhook", "webhook-script")
-    ]
-    app = create_app(http_sources, client, a2a_mounts=a2a_mounts, lifespan_ready=False)
-    state = app.extra["state"]
-    state.ready = False
-    host = os.environ.get("ACH_CHANNELS_HOST", DEFAULT_CHANNELS_HOST)
-    try:
-        port = int(os.environ.get("ACH_CHANNELS_PORT", str(DEFAULT_CHANNELS_PORT)))
-    except ValueError as exc:
-        await client.close()
-        raise SplitRoleConfigError("ACH_CHANNELS_PORT must be an integer") from exc
-    server = uvicorn.Server(uvicorn.Config(app=app, host=host, port=port, log_level="warning"))
-    cron = CronScheduler(
-        [source for source in source_configs if source.type == "cron"], handler=client
-    )
-    queues: list[QueueConsumer] = []
-    for source_cfg in source_configs:
-        if source_cfg.type == "queue":
-            queues.append(QueueConsumer(source_cfg, handler=client))
-
-    async def watch_harness_readiness() -> None:
-        while not server.should_exit:
-            try:
-                state.ready = await client.probe_harness(probe_channel)
-            except Exception:
-                state.ready = False
-            await asyncio.sleep(0.5)
-
-    readiness_task = asyncio.create_task(watch_harness_readiness())
-    try:
-        await cron.start()
-        for queue in queues:
-            await queue.start()
-        await server.serve()
-    finally:
-        readiness_task.cancel()
-        await asyncio.gather(readiness_task, return_exceptions=True)
-        for bridge in a2a_bridges:
-            await bridge.shutdown()
-        for queue in queues:
-            await queue.stop()
-        await cron.stop()
-        await client.close()

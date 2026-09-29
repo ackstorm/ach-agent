@@ -24,56 +24,10 @@ use. Its behavior is pinned by an authoritative conformance suite (`make conform
 
 ## How it works
 
-The diagrams below describe the simplified split merged into `main`.
-The [validation report](docs/reports/unix-split-validation.md) records the full gate,
-real three-container runs and native TUI checks. Image publication and the external
-ACH operator rollout are separate from this implementation.
-
-The proposed ACH deployment modes are **standalone** (one combined container, no
-role arguments) and **distributed** (one pod containing channels, harness and
-engine with explicit role arguments). Both use the existing agent configuration;
-the choice belongs to the operator. See the
-[self-contained ACH handoff](docs/schemas/ach-deployment-modes.md).
-
-**Behavioral reference: the original agent, v0.16.1 (`462912f`), before the split.**
-The goal is to preserve its behavior while separating processes and simplifying our
-added transport/bootstrap code. Workspace selection, hook semantics, session reuse,
-prompts and queue policy are not new features or redesign opportunities.
-
-```mermaid
-flowchart LR
-    subgraph Pod[One pod - three ordinary containers]
-        C[Channels: receive and normalize events]
-        subgraph H[Harness container]
-            Q[Admission and bounded RAM queues]
-            W[Consumers: existing FIFO lanes]
-            HN[Prepare, prompts and execution coordination]
-            PX[Model / MCP / A2A proxies]
-            CFG[Private agent config and managed credentials]
-            Q --> W --> HN
-            CFG --> HN
-            CFG --> PX
-        end
-        subgraph E[Engine container]
-            MH[Mini-harness: native adapter and process lifecycle]
-            N[OpenCode / Pi]
-            HOME[Engine home: native config, sessions and caches]
-            MH --> N
-            MH --> HOME
-        end
-        WS[(Shared workspace volume)]
-        INIT[(Temporary hydration transfer)]
-        HN -->|startup downloads| INIT
-        INIT -->|mini-harness copies to home, then deletes batch| MH
-        C -->|channel.sock: events| Q
-        HN -->|channel.sock: correlated results| C
-        HN <-->|agent.sock: launch inputs, turns and events| MH
-        HN <-->|prepare and cleanup| WS
-        N <-->|work files| WS
-        N --> PX
-    end
-    PX --> UP[Managed upstream services]
-```
+ACH runs an agent in one of two placements: **standalone** (one combined container) and
+**sandboxed** (the harness in the ACHAgent pod, the mini-harness in a claimed agent-sandbox pod).
+Both use the existing agent configuration; the choice belongs to the operator. See the
+[placement note](docs/schemas/ach-deployment-modes.md).
 
 The existing router already owns the in-memory queues and their consumers. No extra
 broker is required now. A future durable handoff can change that transport; existing
@@ -159,30 +113,6 @@ reuse keeps the workspace until its existing lifecycle says to close it; destruc
 cleanup waits for native stop confirmation. Script-only `webhook-script` work runs in
 H under its separate concurrency limit and bypasses engine acquisition.
 
-### What crosses agent.sock
-
-H owns the private config and downloads hydration inputs. It sends explicit native
-launch inputs: model/proxy/MCP settings, workspace, limits, the download batch path
-and environment **names** selected by `engine.forwardEnv`. In distributed placement
-the operator supplies those selected values to E; locally the parent launcher does.
-The mini-harness passes them to native children. No environment values or private
-config document cross the socket. Managed ACH credentials stay in H; an explicitly
-forwarded custom secret is deliberately visible to E.
-
-At startup the mini-harness copies hydration into its own home, prepares and checks
-native configuration, and deletes the download batch. Only then is it healthy and
-ready. No native agent turn starts during initialization. Turns later carry the
-prepared prompt and correlated execution IDs;
-the native configuration is not resent with every prompt. H interprets channel
-configuration; E does not receive channel scripts or need to parse the full channel.
-
-Both internal endpoints use HTTP over Unix sockets with existing request/event types.
-There is no internal HMAC or TCP control port. Socket directories are mounted only
-into their participants. Public ingress and capability proxies keep the networking
-their clients need. Local use keeps the parent-owned launcher and native TUI.
-
-See the [current split contract](docs/references/2026-09-14-three-role-split.md).
-
 ## Quick start (local dev)
 
 All tooling runs inside a content-addressed devtools container — **no host pip/venv**. The only
@@ -256,46 +186,6 @@ never talks to the API server; see [`docs/schemas/operator-contract.md`](docs/sc
 For local/standalone runs use the container directly — see [Getting started](docs/getting-started.md).
 
 Released container images are published to `ghcr.io/ackstorm/ach-agent`.
-
-### Phase 1 split packaging example
-
-The Unix-socket implementation has passed local validation. The repository
-includes a tested three-container contract example in [`docker/split/`](docker/split/):
-channels (C), harness (H), and one engine (E), all ordinary containers in one pod
-with one active replica. Each role uses tini and its role argument; no init container
-or operator control-plane sidecar is required.
-
-H alone reads the full rendered config, hydrates state and starts model/MCP proxies.
-C receives source-only channel inputs over
-`/run/ach-agent/channels/channel.sock`. E receives `PublicEngineConfig` through the
-existing controller request over `/run/ach-agent/engine/agent.sock`. E receives
-selected `engine.forwardEnv` values from the operator or local launcher; managed
-ACH/model/MCP credentials remain H-side. H executes every prepare and cleanup hook
-on the existing shared workspace, preserving cwd and lifecycle, with a separate
-harness-private HOME.
-
-The two IPC directory mounts are separate: H writes the channels directory and C
-connects through its read-only mount; E writes the engine directory and H connects
-through its read-only mount. Kubernetes probes use ordinary HTTP: Channels on
-8080, Harness on 8090 and Engine on 8081. The latter two expose only `/healthz`
-and `/readyz`; their control APIs remain on Unix sockets. Standalone uses its
-configured public health port with the same readiness rules: hydration must be
-installed before ready, and engine loss removes readiness. Native,
-model and MCP HTTP endpoints remain where their existing clients require them. There
-are no mandatory internal control ports, bootstrap files, bootstrap keys or internal
-operator environment variables. These files do not change the CR schema or publish
-an image; production `ach-runtime` rendering remains a separate handoff.
-
-The images are built with `--target harness`, `--target channels`,
-`--target engine-opencode`, and `--target engine-pi`. A build without a target
-continues to produce the combined native image with both Pi and OpenCode and
-the existing `--tui` / `--prompt` launch modifiers. E images include tini as
-PID 1. Production `ach-runtime` rendering remains a separate handoff; these
-files do not apply a cluster or replace operator-generated config and Secret
-objects. See [`docker/split/README.md`](docker/split/README.md) for persistence,
-ephemeral mounts, custom engine paths, and the offline codemem relocation.
-
-The self-contained operator handoff is [`2026-09-14-unix-operator-handoff.md`](docs/superpowers/specs/2026-09-14-unix-operator-handoff.md).
 
 ### Operator contract
 

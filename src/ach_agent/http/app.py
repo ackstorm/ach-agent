@@ -213,27 +213,3 @@ def create_app(
         log.info("a2a: sub-app mounted", path=mount_path)
 
     return app
-
-
-def create_health_app(state: HealthState | None = None) -> FastAPI:
-    """Build the public probe surface without exposing private application routes."""
-    health_state = state or HealthState()
-    app = FastAPI(
-        title="ach-agent-health",
-        docs_url=None,
-        redoc_url=None,
-        openapi_url=None,
-    )
-    app.extra["state"] = health_state
-
-    @app.get("/healthz")
-    async def healthz() -> JSONResponse:
-        return JSONResponse({"status": "ok"}, status_code=200)
-
-    @app.get("/readyz")
-    async def readyz() -> JSONResponse:
-        if not health_state.ready or health_state.draining:
-            return JSONResponse({"status": "not_ready"}, status_code=503)
-        return JSONResponse({"status": "ok"}, status_code=200)
-
-    return app

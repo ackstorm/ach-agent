@@ -4,14 +4,13 @@
 from __future__ import annotations
 
 import os
-import sqlite3
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 import structlog
 
-from ach_agent.config.schema import AgentConfig, CodememMemory
+from ach_agent.config.schema import AgentConfig
 
 log = structlog.get_logger(__name__)
 
@@ -26,15 +25,7 @@ class RolePaths:
     transfer_root: Path
 
 
-def _within(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-    except ValueError:
-        return False
-    return True
-
-
-def resolve_role_paths(cfg: AgentConfig, *, split_mode: bool = True) -> RolePaths:
+def resolve_role_paths(cfg: AgentConfig) -> RolePaths:
     """Resolve the three operator data roots used by the split roles."""
 
     def trusted(path: str | Path) -> Path:
@@ -44,33 +35,16 @@ def resolve_role_paths(cfg: AgentConfig, *, split_mode: bool = True) -> RolePath
         # alias such as /tmp on a platform with a redirected temporary directory.
         return Path(path).expanduser().resolve(strict=False)
 
-    if split_mode:
-        mount = trusted(cfg.persistence.mount_path if cfg.persistence.enabled else "/tmp/ach-agent")
+    # Standalone retains its established defaults and explicit paths.
+    if cfg.persistence.enabled:
+        mount = trusted(cfg.persistence.mount_path)
         harness_state = trusted(mount / "state")
         engine_home = trusted(cfg.engine.home or mount / "home")
-        home_root = trusted(mount / "home")
-        # Keep the historical standalone location inside HOME. Distributed roles
-        # mount this same physical directory separately for Harness, while Engine
-        # receives the parent HOME mount; native session directory identities stay
-        # stable across a placement change.
-        work_dir = trusted(cfg.engine.work_dir or engine_home / "workspace")
-        workspace_root = trusted(mount / "home" / "workspace")
-        if not _within(engine_home, home_root):
-            raise ValueError(f"engine.home must be within {home_root} in distributed mode")
-        if not _within(work_dir, workspace_root):
-            raise ValueError(f"engine.workDir must be within {workspace_root} in distributed mode")
-        transfer_root = trusted("/run/ach-agent/transfer")
     else:
-        # Standalone retains its established defaults and explicit paths.
-        if cfg.persistence.enabled:
-            mount = trusted(cfg.persistence.mount_path)
-            harness_state = trusted(mount / "state")
-            engine_home = trusted(cfg.engine.home or mount / "home")
-        else:
-            harness_state = trusted("/tmp/ach-harness-state")
-            engine_home = trusted(cfg.engine.home or "/tmp/ach-home")
-        work_dir = trusted(cfg.engine.work_dir or engine_home / "workspace")
-        transfer_root = trusted("/tmp/ach-agent-transfer")
+        harness_state = trusted("/tmp/ach-harness-state")
+        engine_home = trusted(cfg.engine.home or "/tmp/ach-home")
+    work_dir = trusted(cfg.engine.work_dir or engine_home / "workspace")
+    transfer_root = trusted("/tmp/ach-agent-transfer")
     return RolePaths(
         harness_state=harness_state,
         engine_home=engine_home,
@@ -83,38 +57,6 @@ def new_hydration_batch(transfer_root: Path) -> Path:
     """Create an empty startup hydration batch without changing path ownership."""
     transfer_root.mkdir(parents=True, exist_ok=True)
     return Path(tempfile.mkdtemp(prefix=".ach-harness-shared-files-", dir=transfer_root))
-
-
-def stage_legacy_codemem(
-    cfg: AgentConfig, paths: RolePaths, batch: Path, *, split_mode: bool
-) -> str:
-    """Back up the historical H-state codemem DB into the one-shot batch."""
-    memory = cfg.memory
-    if not split_mode or not cfg.persistence.enabled or not isinstance(memory, CodememMemory):
-        return ""
-    params = memory.codemem
-    target = (
-        Path(params.db_path).expanduser().resolve()
-        if params.db_path
-        else paths.engine_home / "state" / "codemem.db"
-    )
-    if not _within(target, paths.engine_home):
-        raise ValueError("memory.codemem.dbPath must be within engine.home in distributed mode")
-    if params.db_path:
-        return str(target)
-    source = Path(cfg.persistence.mount_path).expanduser().resolve() / "state" / "codemem.db"
-    if not source.exists() or source == target:
-        return str(target)
-    staged = batch / "codemem.db"
-    staged.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with sqlite3.connect(f"file:{source}?mode=ro", uri=True) as src:
-            with sqlite3.connect(staged) as dst:
-                src.backup(dst)
-    except (OSError, sqlite3.Error) as exc:
-        staged.unlink(missing_ok=True)
-        raise ValueError(f"cannot preserve legacy codemem database {source}: {exc}") from exc
-    return str(target)
 
 
 def write_pid_file(pid_path: Path) -> None:

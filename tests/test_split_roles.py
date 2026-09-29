@@ -125,7 +125,6 @@ def test_local_mcp_refs_are_explicit_engine_env_and_managed_names_are_removed(
             "forwardEnv": [
                 "SAFE_OPERATOR",
                 "ACH_TOKEN",
-                "ACH_CHANNELS_HMAC_KEY",
                 "ACH_MODEL_HEADER",
             ]
         },
@@ -143,7 +142,7 @@ def test_local_mcp_refs_are_explicit_engine_env_and_managed_names_are_removed(
         },
     )
 
-    _channels, public = build_role_configs(cfg, split_mode=False)
+    _channels, public = build_role_configs(cfg)
     assert public["engineEnvNames"] == ["SAFE_OPERATOR", "MCP_OPERATOR", "MCP_REMOTE"]
 
 
@@ -174,7 +173,7 @@ def test_local_mcp_reference_cannot_readd_config_secret(
         },
     )
 
-    _channels, public = build_role_configs(cfg, split_mode=False)
+    _channels, public = build_role_configs(cfg)
     assert public["engineEnvNames"] == ["SAFE_OPERATOR", "MCP_OPERATOR"]
 
 
@@ -188,7 +187,7 @@ def test_build_role_configs_projects_session_hooks_into_public_config() -> None:
         }
     )
 
-    _channels, public = build_role_configs(cfg, split_mode=False)
+    _channels, public = build_role_configs(cfg)
     assert public["hookSessionStart"] == {"script": "echo start", "timeoutSeconds": 45}
     assert public["hookSessionSuspend"] == {"script": "echo suspend", "timeoutSeconds": 120}
 
@@ -196,7 +195,7 @@ def test_build_role_configs_projects_session_hooks_into_public_config() -> None:
 def test_build_role_configs_omits_unconfigured_session_hooks() -> None:
     from ach_agent.boot.roles import build_role_configs
 
-    _channels, public = build_role_configs(_cfg(), split_mode=False)
+    _channels, public = build_role_configs(_cfg())
     assert "hookSessionStart" not in public
     assert "hookSessionSuspend" not in public
 

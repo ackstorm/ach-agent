@@ -6,13 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ach_agent.boot.ipc import bind_listener, channel_socket_path, engine_socket_path
-
-
-def test_socket_paths_are_distinct_under_one_root(tmp_path: Path) -> None:
-    assert channel_socket_path(tmp_path) == tmp_path / "channels" / "channel.sock"
-    assert engine_socket_path(tmp_path) == tmp_path / "engine" / "agent.sock"
-    assert channel_socket_path(tmp_path) != engine_socket_path(tmp_path)
+from ach_agent.boot.ipc import bind_listener, engine_socket_path
 
 
 def test_bind_listener_creates_private_nonblocking_socket(tmp_path: Path) -> None:
@@ -28,7 +22,7 @@ def test_bind_listener_creates_private_nonblocking_socket(tmp_path: Path) -> Non
 
 
 def test_bind_listener_replaces_stale_owned_socket(tmp_path: Path) -> None:
-    path = channel_socket_path(tmp_path)
+    path = engine_socket_path(tmp_path)
     path.parent.mkdir(parents=True)
     old = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     old.bind(str(path))

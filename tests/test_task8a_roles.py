@@ -80,7 +80,7 @@ def test_local_projection_keeps_only_sanitized_forward_env_names() -> None:
 
     from ach_agent.boot.roles import build_role_configs
 
-    _channels, public = build_role_configs(cfg, split_mode=False)
+    _channels, public = build_role_configs(cfg)
     assert public["engineEnvNames"] == ["SAFE_NATIVE_VAR"]
 
 
@@ -108,7 +108,7 @@ def test_default_codemem_path_preserves_existing_layout() -> None:
     from ach_agent.boot.roles import build_role_configs
 
     _channels, public = build_role_configs(_cfg(memory={"type": "codemem", "codemem": {}}))
-    assert public["codemem_db_path"] == "/tmp/ach-agent/home/state/codemem.db"
+    assert public["codemem_db_path"] == "/tmp/ach-home/state/codemem.db"
 
 
 def test_default_codemem_path_stays_stable_with_custom_volatile_home(tmp_path: Path) -> None:
@@ -119,7 +119,6 @@ def test_default_codemem_path_stays_stable_with_custom_volatile_home(tmp_path: P
             memory={"type": "codemem", "codemem": {}},
             engine={"home": str(tmp_path / "custom-home")},
         ),
-        split_mode=False,
     )
     assert public["codemem_db_path"] == "/tmp/ach-home/state/codemem.db"
 
@@ -154,18 +153,6 @@ def test_native_config_drops_public_tui_trace_metadata(
     assert not hasattr(config, "trace_session_id")
 
 
-def test_distributed_paths_use_three_roots_and_transfer_mount(tmp_path: Path) -> None:
-    cfg = _cfg(persistence={"enabled": True, "mountPath": str(tmp_path)})
-
-    from ach_agent.boot.paths import resolve_role_paths
-
-    paths = resolve_role_paths(cfg)
-    assert paths.engine_home == tmp_path / "home"
-    assert paths.work_dir == tmp_path / "home" / "workspace"
-    assert paths.harness_state == tmp_path / "state"
-    assert paths.transfer_root == Path("/run/ach-agent/transfer")
-
-
 def test_role_paths_canonicalize_relative_trusted_roots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -174,7 +161,7 @@ def test_role_paths_canonicalize_relative_trusted_roots(
 
     from ach_agent.boot.paths import resolve_role_paths
 
-    paths = resolve_role_paths(cfg, split_mode=False)
+    paths = resolve_role_paths(cfg)
     assert paths.engine_home == (tmp_path / "engine-home").resolve()
     assert paths.work_dir == (tmp_path / "workspace").resolve()
 

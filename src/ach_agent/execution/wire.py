@@ -119,8 +119,6 @@ class PublicEngineConfig(_WireModel):
             "ACH_TOKEN",
             "ACH_API_KEY",
             "ACH_MODEL_TOKEN",
-            "ACH_CHANNELS_HMAC_KEY",
-            "ACH_HARNESS_URL",
             "ACH_ENGINE_URL",
             "ACH_MODEL_BASE_URL",
             "ACH_MODEL_HEADER",

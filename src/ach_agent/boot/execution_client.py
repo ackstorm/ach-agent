@@ -850,7 +850,9 @@ class ExecutionClient:
         )
         await self._require_ok(result, "session-ready")
 
-    def _workspace_rejection(self, response: httpx.Response, content: bytes, operation: str) -> None:
+    def _workspace_rejection(
+        self, response: httpx.Response, content: bytes, operation: str
+    ) -> None:
         """Raise a per-invocation failure for a typed 4xx; other non-2xx stay fatal (F5)."""
         if 200 <= response.status_code < 300:
             return
@@ -868,7 +870,9 @@ class ExecutionClient:
                     confirmed=True,
                     rejection=True,
                 )
-        raise ExecutionClientError(f"{operation} failed: {detail}", status_code=response.status_code)
+        raise ExecutionClientError(
+            f"{operation} failed: {detail}", status_code=response.status_code
+        )
 
     async def _require_ok(self, result: Any, operation: str) -> None:
         if result != {"status": "ok"}:

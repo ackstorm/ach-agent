@@ -88,6 +88,10 @@ class PublicEngineConfig(_WireModel):
     # never by the harness-side runner, since a sandboxed engine has no runner co-located.
     hook_session_start: HookSpec | None = Field(default=None, alias="hookSessionStart")
     hook_session_suspend: HookSpec | None = Field(default=None, alias="hookSessionSuspend")
+    # Sandbox mode only: where the mini-harness pushes its HOME archive at session end, and
+    # how long it may sit idle before doing so (0 = never; sessionless sandboxes are closed).
+    session_archive_url: str = Field(default="", alias="sessionArchiveUrl")
+    idle_seconds: float = Field(default=0, alias="idleSeconds")
     # Authenticated egress proxy projection (design doc
     # 2026-09-28-authenticated-egress-proxy-design.md §6). Empty when egress is unset —
     # the real secret never crosses this boundary; only the loopback endpoint, the local

@@ -209,6 +209,9 @@ def _engine_config(public: Any) -> EngineConfig:
             # (import_handoff/session_start/pool on_stop) — never by the native driver.
             "hook_session_start",
             "hook_session_suspend",
+            # Sandbox archive push: consumed by ExecutionService.stop_and_push only.
+            "session_archive_url",
+            "idle_seconds",
             # Egress projection: consumed here to build engine_env (proxy/trust/
             # placeholder vars), never passed through to EngineConfig itself.
             "egress_proxy_url",
@@ -300,6 +303,8 @@ class ExecutionService:
         self.controller_required = False
         self._queued_stream_bytes = 0
         self.shutdown_requested = False
+        # Sandbox mode: set once the stop path has run; admission stays closed for good.
+        self.closing = False
         self.controller_cleanup_error: str | None = None
         self._ttl_watchers: set[asyncio.Task[None]] = set()
         self._controller_cleanup_task: asyncio.Task[None] | None = None
@@ -451,6 +456,8 @@ class ExecutionService:
         async with self._controller_lock:
             if self._unhealthy:
                 raise RuntimeError("native cleanup failed; execution service is unhealthy")
+            if self.closing:
+                raise RuntimeError("session closing")
             if self._controller_id is not None:
                 raise RuntimeError("execution service already has a controller")
             if config is not None:
@@ -461,6 +468,70 @@ class ExecutionService:
                 raise RuntimeError("execution service is not initialized")
             self._controller_id = controller_id
             self._admission_open = True
+
+    @property
+    def busy(self) -> bool:
+        return bool(self._invocations or self._acquiring or self._workspace_reservations)
+
+    async def stop_and_push(self) -> None:
+        """Sandbox stop path: close admission, stop engines (sessionSuspend), push HOME."""
+        if self.closing:
+            return
+        self.closing = True
+        self._admission_open = False
+        await self.pool.stop_all()
+        public = self._public_config
+        if public is None or not public.session_archive_url:
+            return
+        from ach_agent.sandbox.archive import pack
+
+        archive = Path(f"/tmp/home-{uuid.uuid4().hex}.tar.gz")
+        try:
+            max_bytes = int(os.environ.get("ACH_SANDBOX_MAX_ARCHIVE_BYTES", str(2 * 1024**3)))
+            await asyncio.to_thread(
+                pack, Path(public.home or _DEFAULT_ENGINE_HOME), archive, max_bytes=max_bytes
+            )
+            await self._push_archive(archive, public.session_archive_url)
+        except Exception as exc:  # noqa: BLE001 — shutdownTime reaps the claim (accepted loss)
+            log.warning("sandbox: session archive not pushed", error=str(exc))
+        finally:
+            archive.unlink(missing_ok=True)
+
+    @staticmethod
+    async def _push_archive(archive: Path, url: str) -> None:
+        import httpx
+
+        async def body() -> AsyncIterator[bytes]:
+            with archive.open("rb") as fh:
+                while chunk := await asyncio.to_thread(fh.read, 262_144):
+                    yield chunk
+
+        async with httpx.AsyncClient(timeout=300) as client:
+            for attempt, delay in enumerate((1, 2, 4)):
+                try:
+                    (await client.put(url, content=body())).raise_for_status()
+                    return
+                except httpx.HTTPError as exc:
+                    if attempt == 2:
+                        raise
+                    log.warning("sandbox: archive push failed, retrying", error=str(exc))
+                    await asyncio.sleep(delay)
+
+    async def idle_watchdog(self, tick: float = 1.0) -> None:
+        """Push and close after `idle_seconds` with no invocation/reservation.
+
+        Runs without a controller (the harness may be gone), so S7 survives a harness restart.
+        """
+        loop = asyncio.get_running_loop()
+        last_active = loop.time()
+        while not self.closing:
+            await asyncio.sleep(tick)
+            public = self._public_config
+            if self.busy or public is None or public.idle_seconds <= 0:
+                last_active = loop.time()
+            elif loop.time() - last_active >= public.idle_seconds:
+                await self.stop_and_push()
+                return
 
     async def import_legacy_sessions(self, request: SessionImportRequest) -> int:
         """Import H-exported rows once before the first engine acquisition.
@@ -906,6 +977,8 @@ class ExecutionService:
             )
 
     async def acquire(self, request: AcquireRequest) -> ExecutionHandle:
+        if self.closing:
+            raise RuntimeError("session closing")
         self._assert_controller(request.controller_id)
         self._execution_started = True
         self._completed_cancellations.pop(request.invocation_id, None)

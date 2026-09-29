@@ -10,8 +10,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
+import shutil
 import tarfile
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -42,7 +46,8 @@ from ach_agent.execution.wire import (
     WorkspacePrepareRequest,
     WorkspaceSessionStartRequest,
 )
-from ach_agent.sandbox.archive import ArchiveTooLarge
+from ach_agent.sandbox.archive import ArchiveTooLarge, extract, write_capped
+from ach_agent.sandbox.tokens import verify_engine_bearer
 
 EXECUTION_API_VERSION = 1
 MAX_REQUEST_BODY_BYTES = 1 * 1024 * 1024
@@ -141,7 +146,7 @@ def _error_response(exc: Exception, *, workspace_confirmed: bool = True) -> JSON
         status = 409 if ("controller" in str(exc) or "turn" in str(exc)) else 404
         return JSONResponse({"detail": str(exc)}, status_code=status)
     if isinstance(exc, RuntimeError):
-        if "already has a controller" in str(exc):
+        if "already has a controller" in str(exc) or str(exc) == "session closing":
             return JSONResponse({"detail": str(exc)}, status_code=409)
         return JSONResponse({"detail": str(exc)}, status_code=503)
     return JSONResponse({"detail": str(exc)}, status_code=500)
@@ -168,10 +173,40 @@ def _register_execution_health_routes(app: FastAPI, service: ExecutionService) -
         return _execution_probe(service, readiness=True)
 
 
-def create_execution_app(service: ExecutionService) -> FastAPI:
-    """Create the versioned mini-harness execution API."""
+class _SandboxAuth:
+    """P7: only the harness holding K can drive this mini-harness; first valid claim pins."""
+
+    def __init__(self, app: Any, verify_key: str, pin: dict[str, str | None]) -> None:
+        self.app = app
+        self.verify_key = verify_key
+        self.pin = pin
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http" and scope["path"] != "/execution/v1/health":
+            header = dict(scope["headers"]).get(b"authorization", b"").decode()
+            bearer = header.removeprefix("Bearer ")
+            claim = verify_engine_bearer(self.verify_key, bearer) if bearer != header else None
+            pinned = self.pin["claim"]
+            if claim is None or (pinned is not None and claim != pinned):
+                await JSONResponse({"detail": "unauthorized"}, status_code=401)(
+                    scope, receive, send
+                )
+                return
+            self.pin["claim"] = claim
+        await self.app(scope, receive, send)
+
+
+def create_execution_app(service: ExecutionService, *, verify_key: str | None = None) -> FastAPI:
+    """Create the versioned mini-harness execution API.
+
+    With ``verify_key`` (sandbox mode) every route but health needs an Ed25519 engine bearer,
+    and the archive-import/close routes exist.
+    """
 
     app = FastAPI(title="ach-agent-execution")
+    pin: dict[str, str | None] = {"claim": None}
+    if verify_key:
+        app.add_middleware(_SandboxAuth, verify_key=verify_key, pin=pin)
     app.state.service = service
     service.controller_required = True
 
@@ -458,15 +493,17 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
 
     @app.get("/execution/v1/health")
     async def execution_health() -> JSONResponse:
-        response = JSONResponse(
-            {
-                "status": "unhealthy" if service._unhealthy else "ok",
-                "version": EXECUTION_API_VERSION,
-                "instance_id": service.instance_id,
-            },
-            status_code=503 if service._unhealthy else 200,
-        )
-        return response
+        body: dict[str, Any] = {
+            "status": "unhealthy" if service._unhealthy else "ok",
+            "version": EXECUTION_API_VERSION,
+            "instance_id": service.instance_id,
+        }
+        if verify_key:
+            body.update(configured=service.configured, closing=service.closing, claim=pin["claim"])
+        return JSONResponse(body, status_code=503 if service._unhealthy else 200)
+
+    if verify_key:
+        _register_sandbox_routes(app, service)
 
     @app.get("/metrics")
     async def metrics() -> Response:
@@ -475,6 +512,44 @@ def create_execution_app(service: ExecutionService) -> FastAPI:
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     return app
+
+
+def _register_sandbox_routes(app: FastAPI, service: ExecutionService) -> None:
+    max_bytes = int(os.environ.get("ACH_SANDBOX_MAX_ARCHIVE_BYTES", str(2 * 1024**3)))
+
+    async def receive(request: Request, dest: Path) -> JSONResponse | None:
+        if service.configured:
+            return JSONResponse({"detail": "sandbox already configured"}, status_code=409)
+        archive = Path(f"/tmp/ach-sandbox-in-{uuid.uuid4().hex}.tar.gz")
+        try:
+            await write_capped(request.stream(), archive, max_bytes=max_bytes)
+            await asyncio.to_thread(extract, archive, dest, max_expanded_bytes=8 * max_bytes)
+        except Exception as exc:
+            if dest.name.startswith("ach-sandbox-hydration-"):
+                shutil.rmtree(dest, ignore_errors=True)
+            return _error_response(exc)
+        finally:
+            archive.unlink(missing_ok=True)
+        return None
+
+    @app.put("/execution/v1/sandbox/archive/home")
+    async def archive_home(request: Request) -> JSONResponse:
+        home = Path(os.environ.get("ACH_SANDBOX_HOME", "/home/agent"))
+        return await receive(request, home) or JSONResponse({"status": "ok"})
+
+    @app.put("/execution/v1/sandbox/archive/hydration")
+    async def archive_hydration(request: Request) -> JSONResponse:
+        dest = Path(f"/tmp/ach-sandbox-hydration-{uuid.uuid4().hex}")
+        return await receive(request, dest) or JSONResponse({"path": str(dest)})
+
+    @app.post("/execution/v1/sandbox/close")
+    async def close() -> JSONResponse:
+        if not service.configured:
+            return JSONResponse({"detail": "sandbox not configured"}, status_code=409)
+        if service.busy:
+            return JSONResponse({"detail": "invocation active"}, status_code=409)
+        await service.stop_and_push()
+        return JSONResponse({"status": "ok"})
 
 
 def create_execution_health_app(service: ExecutionService) -> FastAPI:

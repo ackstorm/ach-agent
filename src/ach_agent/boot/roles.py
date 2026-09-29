@@ -258,7 +258,11 @@ async def run_engine(
     service = ExecutionService(None, None)
     if public_config is not None:
         await service.configure(PublicEngineConfig.model_validate(public_config))
-    app = create_execution_app(service)
+    sandbox_tcp = os.environ.get("ACH_ENGINE_LISTEN") == "tcp"
+    verify_key = os.environ.get("ACH_SANDBOX_VERIFY_KEY", "")
+    if sandbox_tcp and not verify_key:
+        raise SystemExit("ACH_SANDBOX_VERIFY_KEY is required with ACH_ENGINE_LISTEN=tcp")
+    app = create_execution_app(service, verify_key=verify_key if sandbox_tcp else None)
     health_app = create_execution_health_app(service)
     try:
         health_port = int(os.environ.get("ACH_ENGINE_HEALTH_PORT", str(DEFAULT_ENGINE_PORT)))
@@ -266,12 +270,14 @@ async def run_engine(
         raise SplitRoleConfigError("ACH_ENGINE_HEALTH_PORT must be an integer") from exc
     if not 0 <= health_port <= 65535:
         raise SplitRoleConfigError("ACH_ENGINE_HEALTH_PORT must be between 0 and 65535")
-    listener = bind_listener(engine_socket_path())
+    listener = None if sandbox_tcp else bind_listener(engine_socket_path())
     server = uvicorn.Server(
         uvicorn.Config(
             app=app,
             host=DEFAULT_ENGINE_HOST,
-            port=DEFAULT_ENGINE_PORT,
+            port=int(os.environ.get("ACH_ENGINE_EXEC_PORT", "8082"))
+            if sandbox_tcp
+            else DEFAULT_ENGINE_PORT,
             log_level="warning",
         )
     )
@@ -314,9 +320,11 @@ async def run_engine(
 
     watcher = asyncio.create_task(run_terminal() if terminal_mode else stop_on_shutdown())
     serve_tasks: list[asyncio.Task[Any]] = [
-        asyncio.create_task(server.serve(sockets=[listener])),
+        asyncio.create_task(server.serve(sockets=[listener] if listener else None)),
         asyncio.create_task(health_server.serve()),
     ]
+    # Not in serve_tasks: it finishes after the stop path, and the pod must stay up closed.
+    idle_task = asyncio.create_task(service.idle_watchdog()) if sandbox_tcp else None
     watcher_error: BaseException | None = None
     try:
         done, _pending = await asyncio.wait(
@@ -332,6 +340,9 @@ async def run_engine(
             if not task.done():
                 task.cancel()
         await asyncio.gather(*serve_tasks, return_exceptions=True)
+        if idle_task is not None:
+            idle_task.cancel()
+            await asyncio.gather(idle_task, return_exceptions=True)
         if not watcher.done():
             watcher.cancel()
         watcher_result = await asyncio.gather(watcher, return_exceptions=True)
@@ -342,8 +353,9 @@ async def run_engine(
         with contextlib.suppress(Exception):
             await service.release_controller(service.controller_id or "")
         await service.close()
-        listener.close()
-        engine_socket_path().unlink(missing_ok=True)
+        if listener is not None:
+            listener.close()
+            engine_socket_path().unlink(missing_ok=True)
     if watcher_error is not None:
         raise watcher_error
     if service.shutdown_requested or service.controller_cleanup_error:

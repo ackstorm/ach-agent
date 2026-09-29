@@ -428,3 +428,31 @@ def test_engine_config_owns_sandbox_persistence_and_codemem_paths(tmp_path: Path
     assert out.persistence_enabled is True
     assert out.codemem_db_path == "/home/agent/state/codemem.db"
     assert s.engine_config(box, PublicEngineConfig()).codemem_db_path == ""
+
+
+async def test_closing_sandbox_stuck_terminating_is_deleted_and_recreated(tmp_path: Path) -> None:
+    s, _ = make_sessions(tmp_path)
+    name = claim_name("bot", digest("lane"))
+    claims = _claims(s)
+    claims.items[name] = {"metadata": {"name": name, "labels": {}}}
+    orig_init, orig_wait = FakeClient.__init__, FakeClaims.wait_deleted
+
+    def closing(self: FakeClient, *a: Any, **kw: Any) -> None:
+        orig_init(self, *a, **kw)
+        if len(FakeClient.instances) == 2:
+            self.health = {"configured": True, "closing": True}
+
+    async def stuck(self: FakeClaims, name: str, *, timeout: float, interval: float = 0.5) -> None:
+        if name not in self.deleted:
+            raise TimeoutError("still present")
+        self.items.pop(name, None)
+
+    FakeClient.__init__ = closing  # type: ignore[method-assign]
+    FakeClaims.wait_deleted = stuck  # type: ignore[method-assign]
+    try:
+        async with s.lease(_event(), persistent=True):
+            pass
+    finally:
+        FakeClient.__init__ = orig_init  # type: ignore[method-assign]
+        FakeClaims.wait_deleted = orig_wait  # type: ignore[method-assign]
+    assert claims.deleted[0] == name and claims.created == [name]

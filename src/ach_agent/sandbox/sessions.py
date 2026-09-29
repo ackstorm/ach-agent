@@ -218,7 +218,11 @@ class SandboxSessions:
             self._live.add(name)
             return box
         await box.client.close()
-        await self._claims.wait_deleted(name, timeout=self._sb.ready_timeout_seconds)
+        try:
+            await self._claims.wait_deleted(name, timeout=self._sb.ready_timeout_seconds)
+        except TimeoutError:
+            # Closing but never gone (its push failed): clear it so the session can restart.
+            await self._claims.delete(name)
         self._live.discard(name)
         return None
 

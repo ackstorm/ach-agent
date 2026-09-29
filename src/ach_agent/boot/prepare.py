@@ -70,7 +70,7 @@ _hook_home_dir: tempfile.TemporaryDirectory[str] | None = None
 _SCRIPT_TRAMPOLINE = 's="$ACH_SCRIPT"; unset ACH_SCRIPT; eval "$s"'
 
 
-class PrepareFailed(RuntimeError):
+class HandoffFailed(RuntimeError):
     """The prepare script exited non-zero, timed out, or could not be started.
 
     Raised inside engine_runner's try, so it takes the ordinary failure path: the
@@ -297,8 +297,8 @@ def _log_hook_output(
     )
 
 
-async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -> None:
-    """Run the prepare script to completion; raise PrepareFailed on any bad outcome.
+async def run_handoff(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -> None:
+    """Run the prepare script to completion; raise HandoffFailed on any bad outcome.
 
     The script arrives on stdin (`sh -eu -s`) so it never exists as a file the co-resident
     agent could rewrite, and so no part of it is visible in /proc/<pid>/cmdline. `-e` makes
@@ -321,16 +321,16 @@ async def run_prepare(cfg: PrepareBlock, event: MessageEvent, workspace: Path) -
         )
     except _HookSpawnFailed as exc:
         PREPARE_FAILURES.labels(reason="spawn").inc()
-        raise PrepareFailed(f"handoff script could not be started: {exc}") from exc
+        raise HandoffFailed(f"handoff script could not be started: {exc}") from exc
     except _HookTimedOut:
         PREPARE_FAILURES.labels(reason="timeout").inc()
-        raise PrepareFailed(f"handoff script timed out after {cfg.timeout_seconds}s") from None
+        raise HandoffFailed(f"handoff script timed out after {cfg.timeout_seconds}s") from None
 
     _log_hook_output("handoff", event, returncode, stdout, stderr, truncated)
 
     if returncode != 0:
         PREPARE_FAILURES.labels(reason="exit").inc()
-        raise PrepareFailed(f"handoff script exited {returncode}: {_stderr_tail(stderr)}")
+        raise HandoffFailed(f"handoff script exited {returncode}: {_stderr_tail(stderr)}")
 
     log.info(
         "handoff: workspace ready",

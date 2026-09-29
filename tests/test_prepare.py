@@ -13,11 +13,11 @@ from pydantic import ValidationError
 from structlog.testing import capture_logs
 
 from ach_agent.boot.prepare import (
-    PrepareFailed,
+    HandoffFailed,
     WebhookScriptFailed,
     build_prepare_env,
     prepare_workspace,
-    run_prepare,
+    run_handoff,
     run_webhook_script,
     workspace_dir,
 )
@@ -142,7 +142,7 @@ def test_workspace_is_stable_per_session_key_and_separates_keys() -> None:
 
 async def test_script_runs_in_the_workspace(tmp_path) -> None:  # type: ignore[no-untyped-def]
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "42:7")
-    await run_prepare(_block('echo "$ACH_EVENT_MR_IID" > marker'), _event(mr_iid=7), ws)
+    await run_handoff(_block('echo "$ACH_EVENT_MR_IID" > marker'), _event(mr_iid=7), ws)
     assert (ws / "marker").read_text().strip() == "7"
 
 
@@ -155,7 +155,7 @@ async def test_prepare_home_is_private_from_engine_workspace(tmp_path: Path) -> 
         env={"LOCATIONS": str(marker)},
     )
 
-    await run_prepare(cfg, _event(), ws)
+    await run_handoff(cfg, _event(), ws)
 
     cwd, hook_home, workspace = marker.read_text().splitlines()
     assert Path(cwd) == ws
@@ -292,7 +292,7 @@ async def test_payload_text_cannot_escape_into_the_shell(tmp_path) -> None:  # t
     """The injection test: a payload field that looks like shell stays inert, because it is
     only ever an env VALUE — the script text itself is static config."""
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
-    await run_prepare(
+    await run_handoff(
         _block('printf "%s" "$ACH_EVENT_TITLE" > out'),
         _event(title='x"; touch pwned; #'),
         ws,
@@ -303,27 +303,27 @@ async def test_payload_text_cannot_escape_into_the_shell(tmp_path) -> None:  # t
 
 async def test_nonzero_exit_fails_closed(tmp_path) -> None:  # type: ignore[no-untyped-def]
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
-    with pytest.raises(PrepareFailed, match="exited 3"):
-        await run_prepare(_block("echo boom >&2; exit 3"), _event(), ws)
+    with pytest.raises(HandoffFailed, match="exited 3"):
+        await run_handoff(_block("echo boom >&2; exit 3"), _event(), ws)
 
 
 async def test_unset_var_aborts_the_script(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """`sh -u`: a missing credential is loud, never a half-working anonymous clone."""
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
-    with pytest.raises(PrepareFailed):
-        await run_prepare(_block('git clone "$MISSING_TOKEN"'), _event(), ws)
+    with pytest.raises(HandoffFailed):
+        await run_handoff(_block('git clone "$MISSING_TOKEN"'), _event(), ws)
 
 
 async def test_timeout_kills_the_process_group(tmp_path) -> None:  # type: ignore[no-untyped-def]
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
-    with pytest.raises(PrepareFailed, match="timed out"):
-        await run_prepare(_block("sleep 30", timeoutSeconds=1), _event(), ws)
+    with pytest.raises(HandoffFailed, match="timed out"):
+        await run_handoff(_block("sleep 30", timeoutSeconds=1), _event(), ws)
 
 
 async def test_cancellation_kills_the_process_group(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """Lane timeout/shutdown cancellation must not orphan the prepare command."""
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
-    task = asyncio.create_task(run_prepare(_block("echo $$ > pid; exec sleep 30"), _event(), ws))
+    task = asyncio.create_task(run_handoff(_block("echo $$ > pid; exec sleep 30"), _event(), ws))
     async with asyncio.timeout(2):
         while not (ws / "pid").exists():
             await asyncio.sleep(0.01)
@@ -369,7 +369,7 @@ async def test_prepare_debug_log_contains_script_output(tmp_path: Path) -> None:
     ws = prepare_workspace(str(tmp_path / "home"), str(tmp_path / "work"), "k")
 
     with capture_logs() as logs:
-        await run_prepare(_block("printf ready; printf warning >&2"), _event(), ws)
+        await run_handoff(_block("printf ready; printf warning >&2"), _event(), ws)
 
     output = next(e for e in logs if e["event"] == "handoff: script output")
     assert output["log_level"] == "debug"
@@ -383,7 +383,7 @@ async def test_prepare_logs_safe_start_and_success(tmp_path: Path) -> None:
     cfg = _block('printf "%s" "$SECRET_VALUE"', env={"SECRET_VALUE": secret})
 
     with capture_logs() as logs:
-        await run_prepare(cfg, _event(), ws)
+        await run_handoff(cfg, _event(), ws)
 
     start, success = (entry for entry in logs if entry["log_level"] == "info")
     assert start == {

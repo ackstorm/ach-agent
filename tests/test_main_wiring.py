@@ -133,7 +133,7 @@ async def test_engine_runner_runs_h_prepare_after_e_reservation(
     async def h_prepare(*_args: Any, **_kwargs: Any) -> None:
         pool.calls.append("h_prepare")
 
-    monkeypatch.setattr("ach_agent.boot.engine_runner.run_prepare", h_prepare)
+    monkeypatch.setattr("ach_agent.boot.engine_runner.run_handoff", h_prepare)
     runner = make_engine_runner(
         client=_HookRunnerClient(pool, SimpleNamespace()),
         engine_cfg=PublicEngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
@@ -183,14 +183,14 @@ async def test_h_prepare_failure_discards_reserved_cleanup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from ach_agent.boot.engine_runner import make_engine_runner
-    from ach_agent.boot.prepare import PrepareFailed
+    from ach_agent.boot.prepare import HandoffFailed
 
     pool = _HookPool()
 
     async def h_prepare(*_args: Any, **_kwargs: Any) -> None:
-        raise PrepareFailed("broken")
+        raise HandoffFailed("broken")
 
-    monkeypatch.setattr("ach_agent.boot.engine_runner.run_prepare", h_prepare)
+    monkeypatch.setattr("ach_agent.boot.engine_runner.run_handoff", h_prepare)
     runner = make_engine_runner(
         client=_HookRunnerClient(pool, SimpleNamespace()),
         engine_cfg=PublicEngineConfig(home=str(tmp_path / "home"), work_dir=str(tmp_path / "work")),
@@ -198,7 +198,7 @@ async def test_h_prepare_failure_discards_reserved_cleanup(
         channels_by_name={"hooks": _hook_channel()},
     )
     try:
-        with pytest.raises(PrepareFailed, match="broken"):
+        with pytest.raises(HandoffFailed, match="broken"):
             await runner(_hook_event(), lambda: None)
     finally:
         await runner.close()

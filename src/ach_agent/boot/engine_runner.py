@@ -18,7 +18,7 @@ import structlog
 from ach_agent.boot.completions import CompletionRegistry
 from ach_agent.boot.conversations import ConversationLocks
 from ach_agent.boot.execution_client import WorkspaceOperationFailed
-from ach_agent.boot.prepare import PrepareFailed, run_prepare, run_webhook_script
+from ach_agent.boot.prepare import HandoffFailed, run_handoff, run_webhook_script
 from ach_agent.boot.prompt import (
     build_engine_prompt,
     build_output_instructions,
@@ -44,6 +44,7 @@ from ach_agent.templating import build_template_context, render_template
 
 if TYPE_CHECKING:
     from ach_agent.boot.execution_client import ExecutionClient
+    from ach_agent.sandbox.sessions import SandboxSessions
 
 log = structlog.get_logger(__name__)
 
@@ -66,7 +67,7 @@ async def select_memory_wiring_async(
 
 
 def make_engine_runner(
-    client: ExecutionClient,
+    client: ExecutionClient | None,
     engine_cfg: PublicEngineConfig,
     max_invocation_seconds: float,
     terminal_output_retries: int = 1,
@@ -88,8 +89,11 @@ def make_engine_runner(
     completion_registry: CompletionRegistry | None = None,
     conversation_locks: ConversationLocks | None = None,
     handoff_staging_root: Path | None = None,
+    sandboxes: SandboxSessions | None = None,
 ) -> Callable[..., Any]:
-    """Build the router runner using one concrete ExecutionClient."""
+    """Build the router runner over one ExecutionClient, or over sandbox leases."""
+    if (client is None) == (sandboxes is None):
+        raise ValueError("make_engine_runner needs exactly one of client and sandboxes")
     from ach_agent.engine.base.terminal import run_contract_turn
     from ach_agent.engine.workspace import workspace_dir
     from ach_agent.execution.wire import (
@@ -163,279 +167,296 @@ def make_engine_runner(
             else:
                 log.warning("session: template rendered empty — falling back to none")
                 reuse = False
-        lock_context = conversation_locks.hold(
-            getattr(invocation_engine_cfg, "engine_type", "opencode"), conv_key if reuse else None
-        )
-        lock_entered = False
-        handle: Any = None
-        reservation_active = False
-        invocation_failed = False
 
-        def remaining() -> float:
-            value = deadline - asyncio.get_running_loop().time()
-            if value <= 0:
-                raise TimeoutError("invocation deadline expired")
-            return value
+        async def _invoke(
+            client: ExecutionClient, invocation_engine_cfg: PublicEngineConfig
+        ) -> dict[str, object] | None:
+            lock_context = conversation_locks.hold(
+                getattr(invocation_engine_cfg, "engine_type", "opencode"),
+                conv_key if reuse else None,
+            )
+            lock_entered = False
+            handle: Any = None
+            reservation_active = False
+            invocation_failed = False
 
-        try:
-            async with asyncio.timeout_at(deadline):
-                await lock_context.__aenter__()
-                lock_entered = True
-                handoff_cfg = getattr(ch_cfg, "handoff", None) if ch_cfg is not None else None
-                has_hooks = engine_cfg.hook_session_start is not None
-                workspace = Path(invocation_engine_cfg.work_dir)
-                expected_workspace = workspace_dir(
-                    invocation_engine_cfg.work_dir, event.session_key
-                )
-                if handoff_cfg is not None or has_hooks:
-                    prep_request = WorkspacePrepareRequest(
-                        controller_id=client.controller_id,
-                        invocation_id=invocation_id,
+            def remaining() -> float:
+                value = deadline - asyncio.get_running_loop().time()
+                if value <= 0:
+                    raise TimeoutError("invocation deadline expired")
+                return value
+
+            try:
+                async with asyncio.timeout_at(deadline):
+                    await lock_context.__aenter__()
+                    lock_entered = True
+                    handoff_cfg = getattr(ch_cfg, "handoff", None) if ch_cfg is not None else None
+                    has_hooks = engine_cfg.hook_session_start is not None
+                    workspace = Path(invocation_engine_cfg.work_dir)
+                    expected_workspace = workspace_dir(
+                        invocation_engine_cfg.work_dir, event.session_key
+                    )
+                    if handoff_cfg is not None or has_hooks:
+                        prep_request = WorkspacePrepareRequest(
+                            controller_id=client.controller_id,
+                            invocation_id=invocation_id,
+                            session_key=event.session_key,
+                            event_id=event.idempotency_key,
+                            home=str(invocation_engine_cfg.home),
+                            work_dir=str(invocation_engine_cfg.work_dir),
+                            remaining_seconds=remaining(),
+                        )
+                        result = await client.prepare_workspace(prep_request)
+                        # ExecutionClient validates this deterministic path. Keep the path used
+                        # by private preparation derived from harness inputs, never engine data.
+                        if result.get("workspace") != str(expected_workspace):
+                            raise RuntimeError("execution returned an unexpected workspace path")
+                        workspace = expected_workspace
+                        reservation_active = True
+                        new_session = bool(result.get("new_session"))
+                        if handoff_cfg is not None and (
+                            handoff_cfg.scope == "event" or new_session
+                        ):
+                            staged = Path(tempfile.mkdtemp(dir=str(staging_root)))
+                            tmp_archive = staged.with_suffix(".tar.gz")
+                            try:
+                                await run_handoff(handoff_cfg, event, staged)
+                                await asyncio.to_thread(
+                                    pack, staged, tmp_archive, max_bytes=MAX_HANDOFF_ARCHIVE_BYTES
+                                )
+                                await client.import_handoff(tmp_archive, invocation_id)
+                            finally:
+                                await asyncio.to_thread(shutil.rmtree, staged, ignore_errors=True)
+                                tmp_archive.unlink(missing_ok=True)
+                        if new_session:
+                            await client.start_session(client.controller_id, invocation_id)
+
+                    wire_cfg = invocation_engine_cfg.model_copy(update={"work_dir": str(workspace)})
+                    from ach_agent.execution.wire import AcquireRequest
+
+                    handle = await client.acquire(
+                        AcquireRequest(
+                            controller_id=client.controller_id,
+                            invocation_id=invocation_id,
+                            lane_key=event.session_key,
+                            conversation_key=conv_key,
+                            reuse=reuse,
+                            remaining_seconds=remaining(),
+                            config=wire_cfg,
+                        )
+                    )
+                    trace.begin(
+                        handle.proxy_route,
+                        agent_name,
+                        event.channel_name,
+                        event.idempotency_key,
+                    )
+                    if accountant is not None:
+                        accountant.adopt_token(handle.proxy_route)
+                        accountant.begin_turn(handle.proxy_route)
+                    base_prompt = build_engine_prompt(
+                        event, channel_cfg=ch_cfg, agent_name=agent_name, memory_bank=memory_bank
+                    )
+                    full_prompt = (
+                        f"{base_prompt}\n\n{memory_prompt}" if memory_prompt else base_prompt
+                    )
+                    free_form = event.free_form
+                    terminal_action = terminal_action_for(ch_cfg, free_form)
+                    output_instructions = build_output_instructions(ch_cfg, free_form)
+                    if output_instructions:
+                        full_prompt = f"{full_prompt}\n\n{output_instructions}"
+                    on_text = None
+                    on_tool = None
+                    if completion_registry is not None and ref is not None:
+                        on_text, on_tool = completion_registry.sinks(ref)
+                    if tool_sink is not None:
+                        on_tool = make_tool_recorder(
+                            on_tool, tool_sink, event, invocation_engine_cfg.model
+                        )
+                    turn_stats: dict[str, Any] = {}
+                    obj = await run_contract_turn(
+                        client.turn_callable(handle),
+                        prompt=full_prompt,
+                        free_form=free_form,
+                        terminal_action=terminal_action,
+                        terminal_retries=terminal_output_retries,
+                        on_text=on_text,
+                        on_tool=on_tool,
+                        max_tool_calls=max_tool_calls,
+                        stats=turn_stats,
+                    )
+                    text = str(obj.get("text", ""))
+                    log.info(
+                        "engine: response",
+                        channel=event.channel_name,
                         session_key=event.session_key,
-                        event_id=event.idempotency_key,
-                        home=str(invocation_engine_cfg.home),
-                        work_dir=str(invocation_engine_cfg.work_dir),
-                        remaining_seconds=remaining(),
+                        action=obj.get("action"),
+                        text=text,
                     )
-                    result = await client.prepare_workspace(prep_request)
-                    # ExecutionClient validates this deterministic path. Keep the path used
-                    # by private preparation derived from harness inputs, never engine data.
-                    if result.get("workspace") != str(expected_workspace):
-                        raise RuntimeError("execution returned an unexpected workspace path")
-                    workspace = expected_workspace
-                    reservation_active = True
-                    new_session = bool(result.get("new_session"))
-                    if handoff_cfg is not None and (handoff_cfg.scope == "event" or new_session):
-                        staged = Path(tempfile.mkdtemp(dir=str(staging_root)))
-                        tmp_archive = staged.with_suffix(".tar.gz")
-                        try:
-                            await run_prepare(handoff_cfg, event, staged)
-                            await asyncio.to_thread(
-                                pack, staged, tmp_archive, max_bytes=MAX_HANDOFF_ARCHIVE_BYTES
-                            )
-                            await client.import_handoff(tmp_archive, invocation_id)
-                        finally:
-                            await asyncio.to_thread(shutil.rmtree, staged, ignore_errors=True)
-                            tmp_archive.unlink(missing_ok=True)
-                    if new_session:
-                        await client.start_session(client.controller_id, invocation_id)
-
-                wire_cfg = invocation_engine_cfg.model_copy(update={"work_dir": str(workspace)})
-                from ach_agent.execution.wire import AcquireRequest
-
-                handle = await client.acquire(
-                    AcquireRequest(
-                        controller_id=client.controller_id,
-                        invocation_id=invocation_id,
-                        lane_key=event.session_key,
-                        conversation_key=conv_key,
-                        reuse=reuse,
-                        remaining_seconds=remaining(),
-                        config=wire_cfg,
+                    usage = turn_stats.get("usage")
+                    if accountant is not None:
+                        usage = accountant.end_turn(handle.proxy_route, usage)
+                    elif cost_source == "none" and usage is not None:
+                        usage = dataclasses.replace(usage, cost=0.0)
+                    turn_stats["usage"] = usage
+                    log.info(
+                        "engine: summary",
+                        channel=event.channel_name,
+                        session_key=event.session_key,
+                        tools=turn_stats.get("tool_count", 0),
+                        input_tokens=getattr(usage, "input_tokens", 0),
+                        output_tokens=getattr(usage, "output_tokens", 0),
+                        cost_usd=getattr(usage, "cost", 0.0),
+                        duration_ms=getattr(usage, "duration_ms", 0),
                     )
-                )
-                trace.begin(
-                    handle.proxy_route,
-                    agent_name,
-                    event.channel_name,
-                    event.idempotency_key,
-                )
-                if accountant is not None:
-                    accountant.adopt_token(handle.proxy_route)
-                    accountant.begin_turn(handle.proxy_route)
-                base_prompt = build_engine_prompt(
-                    event, channel_cfg=ch_cfg, agent_name=agent_name, memory_bank=memory_bank
-                )
-                full_prompt = f"{base_prompt}\n\n{memory_prompt}" if memory_prompt else base_prompt
-                free_form = event.free_form
-                terminal_action = terminal_action_for(ch_cfg, free_form)
-                output_instructions = build_output_instructions(ch_cfg, free_form)
-                if output_instructions:
-                    full_prompt = f"{full_prompt}\n\n{output_instructions}"
-                on_text = None
-                on_tool = None
-                if completion_registry is not None and ref is not None:
-                    on_text, on_tool = completion_registry.sinks(ref)
-                if tool_sink is not None:
-                    on_tool = make_tool_recorder(
-                        on_tool, tool_sink, event, invocation_engine_cfg.model
-                    )
-                turn_stats: dict[str, Any] = {}
-                obj = await run_contract_turn(
-                    client.turn_callable(handle),
-                    prompt=full_prompt,
-                    free_form=free_form,
-                    terminal_action=terminal_action,
-                    terminal_retries=terminal_output_retries,
-                    on_text=on_text,
-                    on_tool=on_tool,
-                    max_tool_calls=max_tool_calls,
-                    stats=turn_stats,
-                )
-                text = str(obj.get("text", ""))
-                log.info(
-                    "engine: response",
-                    channel=event.channel_name,
-                    session_key=event.session_key,
-                    action=obj.get("action"),
-                    text=text,
-                )
-                usage = turn_stats.get("usage")
-                if accountant is not None:
-                    usage = accountant.end_turn(handle.proxy_route, usage)
-                elif cost_source == "none" and usage is not None:
-                    usage = dataclasses.replace(usage, cost=0.0)
-                turn_stats["usage"] = usage
-                log.info(
-                    "engine: summary",
-                    channel=event.channel_name,
-                    session_key=event.session_key,
-                    tools=turn_stats.get("tool_count", 0),
-                    input_tokens=getattr(usage, "input_tokens", 0),
-                    output_tokens=getattr(usage, "output_tokens", 0),
-                    cost_usd=getattr(usage, "cost", 0.0),
-                    duration_ms=getattr(usage, "duration_ms", 0),
-                )
-                session_ref = str(turn_stats.get("session_ref", ""))
-                operation_names: list[Literal["discard", "compact", "forget"]]
-                if session_ref and not reuse:
-                    operation_names = ["discard"]
-                elif (
-                    session_ref
-                    and session_cfg is not None
-                    and session_cfg.max_tokens is not None
-                    and getattr(usage, "input_tokens", 0) > session_cfg.max_tokens
-                ):
-                    operation_names = [
-                        "compact" if session_cfg.overflow == "compact" else "discard"
-                    ]
-                    if session_cfg.overflow == "rotate":
-                        operation_names.append("forget")
-                else:
-                    operation_names = []
-                for operation in operation_names:
-                    if operation == "compact":
-                        log.info(
-                            "session: maxTokens exceeded — compacting",
-                            session_key=event.session_key,
-                            session_ref=session_ref,
-                            input_tokens=getattr(usage, "input_tokens", 0),
-                            max_tokens=session_cfg.max_tokens if session_cfg is not None else None,
-                        )
+                    session_ref = str(turn_stats.get("session_ref", ""))
+                    operation_names: list[Literal["discard", "compact", "forget"]]
+                    if session_ref and not reuse:
+                        operation_names = ["discard"]
                     elif (
-                        operation == "discard"
+                        session_ref
                         and session_cfg is not None
-                        and session_cfg.overflow == "rotate"
+                        and session_cfg.max_tokens is not None
+                        and getattr(usage, "input_tokens", 0) > session_cfg.max_tokens
                     ):
-                        log.info(
-                            "session: maxTokens exceeded — rotating",
-                            session_key=event.session_key,
-                            session_ref=session_ref,
-                            input_tokens=getattr(usage, "input_tokens", 0),
-                            max_tokens=session_cfg.max_tokens,
+                        operation_names = [
+                            "compact" if session_cfg.overflow == "compact" else "discard"
+                        ]
+                        if session_cfg.overflow == "rotate":
+                            operation_names.append("forget")
+                    else:
+                        operation_names = []
+                    for operation in operation_names:
+                        if operation == "compact":
+                            log.info(
+                                "session: maxTokens exceeded — compacting",
+                                session_key=event.session_key,
+                                session_ref=session_ref,
+                                input_tokens=getattr(usage, "input_tokens", 0),
+                                max_tokens=session_cfg.max_tokens
+                                if session_cfg is not None
+                                else None,
+                            )
+                        elif (
+                            operation == "discard"
+                            and session_cfg is not None
+                            and session_cfg.overflow == "rotate"
+                        ):
+                            log.info(
+                                "session: maxTokens exceeded — rotating",
+                                session_key=event.session_key,
+                                session_ref=session_ref,
+                                input_tokens=getattr(usage, "input_tokens", 0),
+                                max_tokens=session_cfg.max_tokens,
+                            )
+                        await client.session_op(
+                            SessionOperation(
+                                controller_id=handle.controller_id,
+                                execution_id=handle.execution_id,
+                                invocation_id=handle.invocation_id,
+                                operation=operation,
+                            )
                         )
-                    await client.session_op(
-                        SessionOperation(
-                            controller_id=handle.controller_id,
-                            execution_id=handle.execution_id,
-                            invocation_id=handle.invocation_id,
-                            operation=operation,
+                    if stats_sink is not None:
+                        stats_sink.record(
+                            build_session_stat(
+                                event,
+                                obj,
+                                turn_stats,
+                                model=invocation_engine_cfg.model,
+                                ts_ms=int(time.time() * 1000),
+                            )
                         )
-                    )
-                if stats_sink is not None:
-                    stats_sink.record(
-                        build_session_stat(
-                            event,
-                            obj,
-                            turn_stats,
-                            model=invocation_engine_cfg.model,
-                            ts_ms=int(time.time() * 1000),
+                    if completion_registry is not None and ref is not None:
+                        await completion_registry.finish(
+                            ref, {"text": text, "action": obj.get("action")}
                         )
-                    )
+                    return {"text": text, "action": obj.get("action")}
+            except asyncio.CancelledError:
+                invocation_failed = True
                 if completion_registry is not None and ref is not None:
                     await completion_registry.finish(
-                        ref, {"text": text, "action": obj.get("action")}
+                        ref, error=f"invocation timed out after {max_invocation_seconds}s"
                     )
-                return {"text": text, "action": obj.get("action")}
-        except asyncio.CancelledError:
-            invocation_failed = True
-            if completion_registry is not None and ref is not None:
-                await completion_registry.finish(
-                    ref, error=f"invocation timed out after {max_invocation_seconds}s"
-                )
-            raise
-        except TimeoutError:
-            invocation_failed = True
-            if completion_registry is not None and ref is not None:
-                await completion_registry.finish(
-                    ref, error=f"invocation timed out after {max_invocation_seconds}s"
-                )
-            raise
-        except Exception as exc:
-            invocation_failed = True
-            if handle is None:
-                if isinstance(exc, (PrepareFailed, WorkspaceOperationFailed)):
-                    log.warning(
-                        "workspace: preparation failed",
-                        session_key=event.session_key,
-                        error=str(exc),
+                raise
+            except TimeoutError:
+                invocation_failed = True
+                if completion_registry is not None and ref is not None:
+                    await completion_registry.finish(
+                        ref, error=f"invocation timed out after {max_invocation_seconds}s"
                     )
-                else:
-                    ENGINE_LAUNCH_FAILURES.inc()
-                    log.warning(
-                        "engine: launch failed", session_key=event.session_key, error=str(exc)
-                    )
-            if completion_registry is not None and ref is not None:
-                await completion_registry.finish(ref, error=f"engine failure: {exc}")
-            raise
-        finally:
-            try:
-                if handle is not None:
-                    trace.end(handle.proxy_route)
-                    if accountant is not None:
-                        accountant.discard_turn(handle.proxy_route)
-                    try:
+                raise
+            except Exception as exc:
+                invocation_failed = True
+                if handle is None:
+                    if isinstance(exc, (HandoffFailed, WorkspaceOperationFailed)):
+                        log.warning(
+                            "workspace: preparation failed",
+                            session_key=event.session_key,
+                            error=str(exc),
+                        )
+                    else:
+                        ENGINE_LAUNCH_FAILURES.inc()
+                        log.warning(
+                            "engine: launch failed", session_key=event.session_key, error=str(exc)
+                        )
+                if completion_registry is not None and ref is not None:
+                    await completion_registry.finish(ref, error=f"engine failure: {exc}")
+                raise
+            finally:
+                try:
+                    if handle is not None:
+                        trace.end(handle.proxy_route)
+                        if accountant is not None:
+                            accountant.discard_turn(handle.proxy_route)
                         try:
-                            if invocation_failed:
-                                await client.cancel_handle(handle)
-                            else:
-                                ttl = ttl_by_channel.get(event.channel_name, 0.0)
-                                await client.release(
-                                    ReleaseRequest(
-                                        controller_id=handle.controller_id,
-                                        execution_id=handle.execution_id,
-                                        invocation_id=handle.invocation_id,
-                                        idle_ttl_seconds=ttl,
+                            try:
+                                if invocation_failed:
+                                    await client.cancel_handle(handle)
+                                else:
+                                    ttl = ttl_by_channel.get(event.channel_name, 0.0)
+                                    await client.release(
+                                        ReleaseRequest(
+                                            controller_id=handle.controller_id,
+                                            execution_id=handle.execution_id,
+                                            invocation_id=handle.invocation_id,
+                                            idle_ttl_seconds=ttl,
+                                        )
                                     )
+                            except BaseException as cleanup_error:
+                                if not invocation_failed:
+                                    raise
+                                # Preserve the original terminal/error result. The concrete
+                                # client marks itself failed when cancellation is uncertain,
+                                # so later invocations fail closed until the service is rebuilt.
+                                log.error(
+                                    "engine: invocation cleanup failed",
+                                    invocation_id=handle.invocation_id,
+                                    error=str(cleanup_error),
                                 )
+                        finally:
+                            if accountant is not None:
+                                accountant.drop_token(handle.proxy_route)
+                    elif reservation_active:
+                        try:
+                            await client.cancel(client.controller_id, invocation_id)
                         except BaseException as cleanup_error:
                             if not invocation_failed:
                                 raise
-                            # Preserve the original terminal/error result. The concrete
-                            # client marks itself failed when cancellation is uncertain,
-                            # so later invocations fail closed until the service is rebuilt.
                             log.error(
-                                "engine: invocation cleanup failed",
-                                invocation_id=handle.invocation_id,
+                                "engine: workspace cancellation failed",
+                                invocation_id=invocation_id,
                                 error=str(cleanup_error),
                             )
-                    finally:
-                        if accountant is not None:
-                            accountant.drop_token(handle.proxy_route)
-                elif reservation_active:
-                    try:
-                        await client.cancel(client.controller_id, invocation_id)
-                    except BaseException as cleanup_error:
-                        if not invocation_failed:
-                            raise
-                        log.error(
-                            "engine: workspace cancellation failed",
-                            invocation_id=invocation_id,
-                            error=str(cleanup_error),
-                        )
-            finally:
-                if lock_entered:
-                    await lock_context.__aexit__(None, None, None)
+                finally:
+                    if lock_entered:
+                        await lock_context.__aexit__(None, None, None)
+
+        if sandboxes is None:
+            assert client is not None
+            return await _invoke(client, invocation_engine_cfg)
+        async with sandboxes.lease(event, persistent=reuse) as box:
+            return await _invoke(box.client, sandboxes.engine_config(box, invocation_engine_cfg))
 
     setattr(engine_runner, "close", close_runner)
     return engine_runner

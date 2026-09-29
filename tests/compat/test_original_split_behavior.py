@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ach_agent.boot.prepare import run_prepare, run_webhook_script, workspace_dir
+from ach_agent.boot.prepare import run_handoff, run_webhook_script, workspace_dir
 from ach_agent.channels.message_event import MessageEvent
 from ach_agent.config.schema import PrepareBlock
 
@@ -41,8 +41,8 @@ async def test_credentialed_prepare_keeps_original_workspace(
     )
     event = _event()
 
-    await run_prepare(block, event, ws)
-    await run_prepare(block, event, ws)
+    await run_handoff(block, event, ws)
+    await run_handoff(block, event, ws)
 
     assert (ws / "retained").read_text() == "original checkout"
     assert (ws / "runs").read_text() == "okok"

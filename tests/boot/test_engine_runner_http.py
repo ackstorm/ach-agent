@@ -465,7 +465,7 @@ async def test_handoff_failure_is_fail_closed_and_client_stays_usable(
     tmp_path: Any,
 ) -> None:
     from ach_agent.boot.execution_client import ExecutionClient
-    from ach_agent.boot.prepare import PrepareFailed
+    from ach_agent.boot.prepare import HandoffFailed
     from ach_agent.config.schema import ChannelConfig
     from ach_agent.execution.app import create_execution_app
     from ach_agent.execution.service import ExecutionService
@@ -505,7 +505,7 @@ async def test_handoff_failure_is_fail_closed_and_client_stays_usable(
             channels_by_name={"failing": failing_channel, "plain": plain_channel},
         )
         try:
-            with pytest.raises(PrepareFailed, match="exited 17"):
+            with pytest.raises(HandoffFailed, match="exited 17"):
                 await runner(
                     MessageEvent(
                         idempotency_key="handoff-failure",

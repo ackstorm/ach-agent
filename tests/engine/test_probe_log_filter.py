@@ -23,3 +23,9 @@ def test_probe_lines_dropped_below_debug(monkeypatch) -> None:
 def test_probe_lines_kept_at_debug(monkeypatch) -> None:
     monkeypatch.setenv("LOG_LEVEL", "debug")
     assert _ProbeLogFilter().filter(_record("http://ach-internal/readyz"))
+
+
+def test_facade_token_urls_always_dropped(monkeypatch) -> None:
+    monkeypatch.setenv("LOG_LEVEL", "debug")
+    f = _ProbeLogFilter()
+    assert not f.filter(_record("http://bot.ach.svc:8095/s/tok123/session/archive"))

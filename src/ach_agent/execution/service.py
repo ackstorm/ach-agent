@@ -505,7 +505,7 @@ class ExecutionService:
             )
             await self._push_archive(archive, public.session_archive_url)
         except Exception as exc:  # noqa: BLE001 — shutdownTime reaps the claim (accepted loss)
-            log.warning("sandbox: session archive not pushed", error=str(exc))
+            log.warning("sandbox: session archive not pushed", error=type(exc).__name__)
         finally:
             archive.unlink(missing_ok=True)
 
@@ -526,7 +526,8 @@ class ExecutionService:
                 except httpx.HTTPError as exc:
                     if attempt == 2:
                         raise
-                    log.warning("sandbox: archive push failed, retrying", error=str(exc))
+                    # str(exc) embeds the URL, which carries the facade token.
+                    log.warning("sandbox: archive push failed, retrying", error=type(exc).__name__)
                     await asyncio.sleep(delay)
 
     async def idle_watchdog(self, tick: float = 1.0) -> None:

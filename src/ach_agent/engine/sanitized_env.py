@@ -170,12 +170,17 @@ _PROBE_PATHS = ("/execution/v1/health", "/readyz", "/healthz")
 
 
 class _ProbeLogFilter(logging.Filter):
-    """F1: the 0.5 s H→E readiness probe floods the pod log at INFO; keep it for debug."""
+    """F1: the 0.5 s H→E readiness probe floods the pod log at INFO; keep it for debug.
+
+    Gateway URLs (``/s/<facade-token>/…``) carry a bearer-like token: never logged.
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        if "/s/" in message:
+            return False
         if _resolve_log_level() <= logging.DEBUG:
             return True
-        message = record.getMessage()
         return not any(path in message for path in _PROBE_PATHS)
 
 

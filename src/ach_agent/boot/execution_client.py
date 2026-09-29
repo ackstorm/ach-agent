@@ -189,6 +189,7 @@ class ExecutionClient:
         timeout: float | None = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
         socket_path: str | None = None,
+        auth_token: str | None = None,
     ) -> None:
         limits = httpx.Limits(max_connections=8, max_keepalive_connections=8)
         control_limits = httpx.Limits(max_connections=2, max_keepalive_connections=2)
@@ -197,6 +198,8 @@ class ExecutionClient:
         self.instance_id = instance_id
         self.timeout = timeout or 30.0
         self.base_url = "http://ach-internal" if socket_path else base_url.rstrip("/")
+        # Sandbox placement: Ed25519 engine bearer on every internal request.
+        headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
 
         def client_transport() -> httpx.AsyncBaseTransport | None:
             if socket_path is not None:
@@ -208,12 +211,14 @@ class ExecutionClient:
             timeout=None,
             limits=controller_limits,
             transport=client_transport(),
+            headers=headers,
         )
         self.control_client = httpx.AsyncClient(
             base_url=self.base_url,
             timeout=timeout,
             limits=control_limits,
             transport=client_transport(),
+            headers=headers,
         )
         # Long release/cancel responses may wait for native and hook cleanup. Keep
         # them away from both the short priority ACKs and ordinary control calls.
@@ -222,6 +227,7 @@ class ExecutionClient:
             timeout=None,
             limits=httpx.Limits(max_connections=8, max_keepalive_connections=8),
             transport=client_transport(),
+            headers=headers,
         )
         # Keep acknowledgement/cancellation capacity independent of session
         # operations and release calls, which may wait on native cleanup.
@@ -230,6 +236,7 @@ class ExecutionClient:
             timeout=timeout,
             limits=httpx.Limits(max_connections=2, max_keepalive_connections=2),
             transport=client_transport(),
+            headers=headers,
         )
         # Acquisition can wait for a cold native launch.  Keep it out of the two
         # connections reserved for session-ready/cancel/release control traffic.
@@ -238,12 +245,14 @@ class ExecutionClient:
             timeout=None,
             limits=httpx.Limits(max_connections=4, max_keepalive_connections=4),
             transport=client_transport(),
+            headers=headers,
         )
         self.stream_client = httpx.AsyncClient(
             base_url=self.base_url,
             timeout=None,
             limits=limits,
             transport=client_transport(),
+            headers=headers,
         )
         self._controller_response: httpx.Response | None = None
         self._controller_iterator: AsyncIterator[bytes] | None = None
@@ -795,6 +804,44 @@ class ExecutionClient:
         except ExecutionClientError as exc:
             await self._fail_admission(exc)
             raise
+
+    async def import_archive(self, path: Path, kind: str) -> str:
+        """Stream a tar.gz to an unconfigured sandbox (`home` restore or `hydration`).
+
+        Returns the extraction path. No controller exists yet, so none is asserted.
+        """
+
+        async def chunks() -> AsyncIterator[bytes]:
+            with path.open("rb") as fh:
+                while chunk := await asyncio.to_thread(fh.read, 262_144):
+                    yield chunk
+
+        try:
+            response = await self.acquire_client.put(
+                f"/execution/v1/sandbox/archive/{kind}", content=chunks()
+            )
+        except httpx.HTTPError as exc:
+            raise ExecutionClientError(f"{kind} archive import failed: {exc}") from exc
+        content = await response.aread()
+        self._workspace_rejection(response, content, f"{kind} archive import")
+        try:
+            return str(json.loads(content).get("path", ""))
+        except (ValueError, AttributeError) as exc:
+            raise ExecutionClientError("invalid archive import response") from exc
+
+    async def sandbox_health(self) -> dict[str, Any]:
+        response = await self.control_client.get("/execution/v1/health")
+        if response.status_code != 200:
+            raise ExecutionClientError("sandbox health failed", status_code=response.status_code)
+        return dict(response.json())
+
+    async def close_session(self) -> None:
+        """Ask the sandbox to run its stop path now (sessionless sandbox end)."""
+        response = await self.cleanup_client.post("/execution/v1/sandbox/close")
+        if response.status_code != 200:
+            raise ExecutionClientError(
+                f"sandbox close failed: {response.text[:200]}", status_code=response.status_code
+            )
 
     async def start_session(self, controller_id: str, invocation_id: str) -> None:
         """Run `hooks.sessionStart` once for a new session's live reservation."""

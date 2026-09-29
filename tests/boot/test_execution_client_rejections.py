@@ -71,7 +71,9 @@ async def test_handoff_rejection_keeps_the_controller(tmp_path: Path, status: in
 
 
 async def test_session_start_503_is_still_controller_fatal() -> None:
-    client = _client(lambda r: httpx.Response(503, json={"detail": "execution service is unhealthy"}))
+    client = _client(
+        lambda r: httpx.Response(503, json={"detail": "execution service is unhealthy"})
+    )
     await client.connect()
     try:
         with pytest.raises(ExecutionClientError) as info:

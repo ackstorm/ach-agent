@@ -117,6 +117,12 @@ async def test_home_and_hydration_import_only_before_configure(
         )
         path = Path(r.json()["path"])
         assert (path / "skills" / "x.md").read_bytes() == b"hi"
+        # the extracted batch must be acceptable to the real installer
+        from ach_agent.engine.context import delete_hydration_batch, install_hydration
+
+        install_hydration(path, tmp_path / "eh", tmp_path / "eh" / "skills")
+        assert (tmp_path / "eh" / "skills" / "x.md").read_bytes() == b"hi"
+        delete_hydration_batch(path)
         bad = await c.put(
             "/execution/v1/sandbox/archive/home", content=b"not a tar", headers=_auth()
         )

@@ -525,7 +525,7 @@ def _register_sandbox_routes(app: FastAPI, service: ExecutionService) -> None:
             await write_capped(request.stream(), archive, max_bytes=max_bytes)
             await asyncio.to_thread(extract, archive, dest, max_expanded_bytes=8 * max_bytes)
         except Exception as exc:
-            if dest.name.startswith("ach-sandbox-hydration-"):
+            if dest.name.startswith(".ach-harness-shared-files-"):
                 shutil.rmtree(dest, ignore_errors=True)
             return _error_response(exc)
         finally:
@@ -539,7 +539,8 @@ def _register_sandbox_routes(app: FastAPI, service: ExecutionService) -> None:
 
     @app.put("/execution/v1/sandbox/archive/hydration")
     async def archive_hydration(request: Request) -> JSONResponse:
-        dest = Path(f"/tmp/ach-sandbox-hydration-{uuid.uuid4().hex}")
+        # Must satisfy engine.context._safe_batch (prefix + transfer-root parent name).
+        dest = Path(f"/tmp/ach-agent-transfer/.ach-harness-shared-files-{uuid.uuid4().hex}")
         return await receive(request, dest) or JSONResponse({"path": str(dest)})
 
     @app.post("/execution/v1/sandbox/close")

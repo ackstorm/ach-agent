@@ -60,7 +60,8 @@ class FacadeGateway:
 
     async def start(self, host: str, port: int) -> int:
         self._session = aiohttp.ClientSession(timeout=_TIMEOUT)
-        app = web.Application(client_max_size=0)  # bodies are streamed; the archive handler caps its own
+        # bodies are streamed, never buffered; the archive handler caps its own
+        app = web.Application(client_max_size=0)
         app.router.add_put("/s/{token}/session/archive", self._archive)
         app.router.add_route("*", r"/t/{trace}/s/{token}/{port:\d+}/{tail:.*}", self._relay)
         app.router.add_route("*", r"/s/{token}/{port:\d+}/{tail:.*}", self._relay)

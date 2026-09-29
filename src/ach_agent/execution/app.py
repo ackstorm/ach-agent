@@ -519,7 +519,10 @@ def _register_sandbox_routes(app: FastAPI, service: ExecutionService) -> None:
     max_bytes = int(os.environ.get("ACH_SANDBOX_MAX_ARCHIVE_BYTES", str(2 * 1024**3)))
 
     async def receive(
-        request: Request, dest: Path, *, filter: Literal["data", "tar"] = "data"  # noqa: A002
+        request: Request,
+        dest: Path,
+        *,
+        filter: Literal["data", "tar"] = "data",  # noqa: A002
     ) -> JSONResponse | None:
         if service.configured:
             return JSONResponse({"detail": "sandbox already configured"}, status_code=409)

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+**Breaking:** the `distributed` placement is removed, together with `--role harness`,
+`--role channels`, `ACH_CHANNELS_HMAC_KEY`, `ACH_HARNESS_URL` and the split Dockerfile
+targets. Placements are `standalone` and `sandboxed`. `--role engine` remains.
+
+### Added
+- `sandboxed` placement: the mini-harness runs in a claimed agent-sandbox pod over TCP
+  (Ed25519 bearer derived from the per-agent key), the HOME archive is cached on the PVC and
+  stored in S3, and sandboxes reach the harness only through the facade gateway. New
+  `sandbox` config block. The egress proxy works inside sandboxes (listens on the pod
+  network, capability-gated; the CA private key stays in the harness).
+
+### Fixed
+- A rejected `sessionStart` or handoff import fails that invocation instead of restarting
+  the harness (F5).
+- A failed `sessionStart` is retried as a new session. A session is "new" until
+  `.ach-session-started` exists. **Upgrade note:** standalone workspaces created by v0.17.0
+  have no marker, so their next event runs `handoff` (scope `session`) and `sessionStart` once
+  more.
+- Health-probe httpx lines no longer flood the log below debug level (F1).
+
 ## [0.17.0] - 2026-09-28
 
 **Breaking:** `channels[].prepare`/`cleanup` are rejected at boot. Deploy only with ACH

@@ -816,7 +816,7 @@ It is one of the harness's **hosted** MCP servers (the other being the memory fa
 everything else is a proxied remote server. (Distinct from the inbound `a2a` **channel**,
 which receives calls — `channels/a2a.py`.)
 
-### 9.1 `channel.prepare` / `channel.cleanup` — session workspace hooks
+### 9.1 `channel.handoff` / `hooks` — session workspace hooks
 
 The way to give an agent a real repo. (It replaced `repoCheckout`, a harness-hosted
 `checkout_repo` MCP tool that read gitlab-mcp's archive resource and unpacked a tarball;

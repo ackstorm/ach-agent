@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## [0.18.0] - 2026-09-29
+
 **Breaking:** the `distributed` placement is removed, together with `--role harness`,
 `--role channels`, `ACH_CHANNELS_HMAC_KEY`, `ACH_HARNESS_URL` and the split Dockerfile
 targets. Placements are `standalone` and `sandboxed`. `--role engine` remains.
@@ -26,6 +28,8 @@ targets. Placements are `standalone` and `sandboxed`. `--role engine` remains.
   have no marker, so their next event runs `handoff` (scope `session`) and `sessionStart` once
   more.
 - Health-probe httpx lines no longer flood the log below debug level (F1).
+- Loopback proxies drop an inbound `Transfer-Encoding` before re-sending the buffered body.
+  Sandboxed model calls arrive chunked through the facade gateway and were rejected with 400.
 
 ## [0.17.0] - 2026-09-28
 

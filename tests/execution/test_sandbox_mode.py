@@ -228,3 +228,26 @@ async def test_run_engine_tcp_requires_verify_key(monkeypatch) -> None:
     monkeypatch.delenv("ACH_SANDBOX_VERIFY_KEY", raising=False)
     with pytest.raises(SystemExit, match="ACH_SANDBOX_VERIFY_KEY"):
         await run_engine()
+
+
+async def test_controller_stream_ends_when_service_starts_closing(fake_driver) -> None:
+    import asyncio
+
+    service = _service(fake_driver)
+    app = create_execution_app(service, verify_key=VK)
+    async with _running_server(app) as url, await _client(url) as c:
+        async with c.stream(
+            "POST",
+            "/execution/v1/controller",
+            json={"version": 1, "instance_id": service.instance_id, "controller_id": "h"},
+            headers=_auth(),
+        ) as r:
+            lines = r.aiter_lines()
+            await anext(lines)  # hello
+            service.closing = True
+            # The held stream must end by itself so the harness sees controller_lost.
+            async def drain() -> None:
+                async for _ in lines:
+                    pass
+
+            await asyncio.wait_for(drain(), timeout=5)

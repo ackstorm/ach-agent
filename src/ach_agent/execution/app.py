@@ -248,6 +248,7 @@ def create_execution_app(service: ExecutionService, *, verify_key: str | None = 
                 while (
                     service.controller_id == hello.controller_id
                     and not service.shutdown_requested
+                    and not service.closing
                     and not await request.is_disconnected()
                 ):
                     await asyncio.sleep(0.05)

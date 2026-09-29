@@ -109,3 +109,20 @@ def test_collect_secret_env_names_includes_egress_secrets() -> None:
     )
     names = collect_secret_env_names(cfg)
     assert "ACH_SECRET_EGRESS_0" in names
+
+
+def test_sandbox_key_name_is_stripped_from_forward_env() -> None:
+    from tests.config.test_handoff_hooks import _base
+
+    raw = _base()
+    raw["engine"] = {**raw["engine"], "forwardEnv": ["ACH_SANDBOX_KEY", "OK"]}
+    raw["persistence"] = {"enabled": True}
+    raw["sandbox"] = {
+        "enabled": True,
+        "warmPool": "wp",
+        "gatewayHost": "h",
+        "sessions": {"bucket": "b"},
+    }
+    cfg = AgentConfig.model_validate(raw)
+    assert "ACH_SANDBOX_KEY" in collect_secret_env_names(cfg)
+    assert strip_forwarded_secrets(cfg) == ["OK"]

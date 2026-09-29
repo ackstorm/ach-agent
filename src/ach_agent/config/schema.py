@@ -1109,6 +1109,40 @@ class CostBlock(BaseModel):
     )
 
 
+class SandboxSessionsBlock(BaseModel):
+    """Where bot-session HOME archives live."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    bucket: str = ""
+    # Object key = <prefix>/<digest>.tar.gz; empty → "<POD_NAMESPACE>/<agent.name>".
+    prefix: str = ""
+    cache_ttl_seconds: float = Field(default=86400, gt=0, alias="cacheTtlSeconds")
+    max_archive_bytes: int = Field(default=2 * 1024**3, gt=0, alias="maxArchiveBytes")
+
+
+class SandboxBlock(BaseModel):
+    """Run the engine in agent-sandbox pods. Off by default."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    enabled: bool = False
+    warm_pool: str = Field(default="", alias="warmPool")
+    # Address the sandbox uses to reach this harness (Service DNS): gateway AND egress host.
+    gateway_host: str = Field(default="", alias="gatewayHost")
+    gateway_port: int = Field(default=8095, alias="gatewayPort")
+    engine_port: int = Field(default=8082, alias="enginePort")
+    # Only used when `egress` is set.
+    egress_port: int = Field(default=8096, alias="egressPort")
+    # HOME inside the sandbox image; public.home is pinned to it.
+    home: str = "/home/agent"
+    idle_seconds: float = Field(default=900, ge=0, alias="idleSeconds")
+    ready_timeout_seconds: float = Field(default=120, gt=0, alias="readyTimeoutSeconds")
+    # NAME of the env var holding the per-agent key K (harness only). A name, never a value.
+    key_env: str = Field(default="ACH_SANDBOX_KEY", alias="keyEnv")
+    sessions: SandboxSessionsBlock = Field(default_factory=SandboxSessionsBlock)
+
+
 class AgentConfig(BaseModel):
     """Full operator contract §2 rendered runtime config (D-01: modeled in one pass).
 
@@ -1133,6 +1167,21 @@ class AgentConfig(BaseModel):
     channels: list[ChannelConfig] = Field(default_factory=list)
     hooks: HooksBlock = Field(default_factory=HooksBlock)
     egress: EgressBlock | None = None
+    sandbox: SandboxBlock = Field(default_factory=SandboxBlock)
+
+    @model_validator(mode="after")
+    def _sandbox_requirements(self) -> AgentConfig:
+        sb = self.sandbox
+        if not sb.enabled:
+            return self
+        if not self.persistence.enabled:
+            raise ValueError("sandbox.enabled requires persistence.enabled (session cache PVC)")
+        if not sb.sessions.bucket:
+            raise ValueError("sandbox.enabled requires sandbox.sessions.bucket")
+        for name, value in (("warmPool", sb.warm_pool), ("gatewayHost", sb.gateway_host)):
+            if not value:
+                raise ValueError(f"sandbox.enabled requires sandbox.{name}")
+        return self
 
     @model_validator(mode="after")
     def _hook_timeouts_fit_the_lane(self) -> AgentConfig:

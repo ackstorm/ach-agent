@@ -1035,3 +1035,34 @@ with proxy/trust names (`*_PROXY`, `SSL_CERT_*`) — rejected at load. E receive
 with a per-lifetime capability, `NO_PROXY` for loopback, and a CA bundle (public cert only).
 Rotation = restart. Spec: `docs/superpowers/specs/2026-09-28-authenticated-egress-proxy-design.md`.
 
+
+## `sandbox` — agent-sandbox placement (2026-09-29, v0.18.0)
+
+Rendered only for placement `sandboxed`; absent or `enabled: false` for `standalone`.
+
+```jsonc
+"sandbox": {
+  "enabled": true,
+  "warmPool": "<agent>-pool",          // SandboxWarmPool name (same namespace)
+  "gatewayHost": "<agent>.<ns>.svc",   // harness Service DNS: gateway AND egress host
+  "gatewayPort": 8095,                 // Service port -> harness container 8095
+  "enginePort": 8082,                  // sandbox container port of the execution API
+  "egressPort": 8096,                  // Service port -> harness 8096; only used when `egress` is set
+  "home": "/home/agent",               // HOME inside the sandbox image (writable, uid 10001)
+  "idleSeconds": 900,
+  "readyTimeoutSeconds": 120,
+  "keyEnv": "ACH_SANDBOX_KEY",         // NAME of the harness env var holding K
+  "sessions": {
+    "bucket": "<bucket>",              // required
+    "prefix": "",                      // "" -> "<POD_NAMESPACE>/<agent.name>"
+    "cacheTtlSeconds": 86400,
+    "maxArchiveBytes": 2147483648
+  }
+}
+```
+
+Validation: `sandbox.enabled` requires `persistence.enabled`, a non-empty `sessions.bucket`,
+`warmPool` and `gatewayHost`. K (`ACH_SANDBOX_KEY`) is 64 hex chars, harness only. The sandbox
+template carries only the public Ed25519 key `ACH_SANDBOX_VERIFY_KEY` derived from K
+(`ed25519.NewKeyFromSeed(HMAC-SHA256(K, "ach-sandbox-engine")).Public()`, base64url no pad; test
+vector K=`"0"×64` → `lZLI1hcEx9ydNM7EoaQ213ri9oNsmILvrFE6AB2YO94`).

@@ -44,6 +44,8 @@ def collect_secret_env_names(cfg: AgentConfig) -> list[str]:
             names.append(auth.env)
     if cfg.egress is not None:
         names.extend(s.auth.secret.env for s in cfg.egress.services)
+    if cfg.sandbox.enabled:
+        names.append(cfg.sandbox.key_env)
     return names
 
 

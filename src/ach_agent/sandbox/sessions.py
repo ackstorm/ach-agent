@@ -142,6 +142,9 @@ class SandboxSessions:
             "mcp_servers": {k: rewrite(v) for k, v in cfg.mcp_servers.items()},
             "home": self._sb.home,
             "work_dir": f"{self._sb.home}/workspace",
+            "persistence_enabled": True,
+            # inside HOME so the codemem DB travels in the archive
+            "codemem_db_path": f"{self._sb.home}/state/codemem.db" if cfg.codemem_db_path else "",
             "idle_seconds": self._sb.idle_seconds if box.persistent else 0,
             "session_archive_url": (
                 f"{self._public_base}/s/{box.facade_token}/session/archive"

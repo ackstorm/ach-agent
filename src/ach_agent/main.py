@@ -773,17 +773,6 @@ async def _run_harness(
             **egress_update,
         }
     )
-    if sandbox_mode:
-        home = cfg.sandbox.home
-        public_cfg = public_cfg.model_copy(
-            update={
-                "home": home,
-                "work_dir": f"{home}/workspace",
-                "persistence_enabled": True,
-                # inside HOME so the codemem DB travels in the archive
-                "codemem_db_path": f"{home}/state/codemem.db" if public_cfg.codemem_db_path else "",
-            }
-        )
     local_engine_env = {
         name: os.environ[name] for name in public_cfg.engine_env_names if name in os.environ
     }

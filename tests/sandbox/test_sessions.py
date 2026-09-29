@@ -420,3 +420,11 @@ async def test_boot_lists_claims_sweeps_and_close_leaves_sandboxes(tmp_path: Pat
     assert _store(s).swept == 1
     await s.close()
     assert _claims(s).deleted == []
+
+
+def test_engine_config_owns_sandbox_persistence_and_codemem_paths(tmp_path: Path) -> None:
+    s, box = make_sessions(tmp_path)
+    out = s.engine_config(box, PublicEngineConfig(codemem_db_path="/harness/codemem.db"))
+    assert out.persistence_enabled is True
+    assert out.codemem_db_path == "/home/agent/state/codemem.db"
+    assert s.engine_config(box, PublicEngineConfig()).codemem_db_path == ""

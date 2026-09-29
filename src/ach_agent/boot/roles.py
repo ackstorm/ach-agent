@@ -35,6 +35,7 @@ from ach_agent.config.schema import (
 from ach_agent.execution.app import create_execution_app, create_execution_health_app
 from ach_agent.execution.service import ExecutionService
 from ach_agent.execution.wire import PublicEngineConfig
+from ach_agent.security import preflight
 
 DEFAULT_ENGINE_HOST = "0.0.0.0"
 DEFAULT_ENGINE_PORT = 8081
@@ -248,10 +249,13 @@ async def run_engine(
     public_config: JsonValue | None = None, *, terminal_mode: bool = False
 ) -> None:
     """Start the engine HTTP role with no native process at endpoint boot."""
+    sandbox_tcp = os.environ.get("ACH_ENGINE_LISTEN") == "tcp"
+    if sandbox_tcp:
+        # The sandbox has no preflight of its own: block same-uid /proc/<pid>/mem reads.
+        preflight.harden_self()
     service = ExecutionService(None, None)
     if public_config is not None:
         await service.configure(PublicEngineConfig.model_validate(public_config))
-    sandbox_tcp = os.environ.get("ACH_ENGINE_LISTEN") == "tcp"
     verify_key = os.environ.get("ACH_SANDBOX_VERIFY_KEY", "")
     if sandbox_tcp and not verify_key:
         raise SystemExit("ACH_SANDBOX_VERIFY_KEY is required with ACH_ENGINE_LISTEN=tcp")

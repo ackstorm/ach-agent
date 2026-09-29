@@ -150,6 +150,11 @@ def test_sandbox_engine_config_carries_no_egress_secret(monkeypatch: Any, tmp_pa
     assert sent.egress_proxy_url == "http://bot.ach.svc:8096"
     body = claim_body("c", {}, "wp", dt.datetime.now(dt.UTC))
     assert _SECRET not in str(body) and "env" not in body["spec"]
+    # K itself (not just the egress secret) never reaches the sandbox or its claim.
+    from tests.sandbox.test_sessions import K
+
+    leaked = (sent.model_dump_json(), str(body))
+    assert not any(K.hex() in dump or K.decode() in dump for dump in leaked)
 
 
 def test_sandbox_key_and_egress_secrets_never_in_engine_env_names() -> None:

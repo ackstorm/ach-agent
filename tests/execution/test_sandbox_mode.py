@@ -251,3 +251,16 @@ async def test_controller_stream_ends_when_service_starts_closing(fake_driver) -
                     pass
 
             await asyncio.wait_for(drain(), timeout=5)
+
+
+async def test_run_engine_tcp_hardens_itself_first(monkeypatch) -> None:
+    from ach_agent.boot.roles import run_engine
+    from ach_agent.security import preflight
+
+    calls: list[str] = []
+    monkeypatch.setattr(preflight, "harden_self", lambda: calls.append("hardened"))
+    monkeypatch.setenv("ACH_ENGINE_LISTEN", "tcp")
+    monkeypatch.delenv("ACH_SANDBOX_VERIFY_KEY", raising=False)
+    with pytest.raises(SystemExit):
+        await run_engine()
+    assert calls == ["hardened"]

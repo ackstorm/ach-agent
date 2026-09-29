@@ -66,6 +66,9 @@ class ExecutionClientError(RuntimeError):
         self.status_code = status_code
 
 
+_WORKSPACE_REJECTIONS = frozenset({404, 409, 413, 422})
+
+
 class WorkspaceOperationFailed(ExecutionClientError):
     """A completed workspace operation failed without invalidating controller admission."""
 
@@ -784,23 +787,43 @@ class ExecutionClient:
         except httpx.HTTPError as exc:
             await self._fail_admission(exc)
             raise ExecutionClientError(f"handoff import failed: {exc}") from exc
-        if response.status_code < 200 or response.status_code >= 300:
-            error = ExecutionClientError(
-                f"handoff import failed: {response.text[:512]}", status_code=response.status_code
-            )
-            await self._fail_admission(error)
-            raise error
+        content = await response.aread()
+        try:
+            self._workspace_rejection(response, content, "handoff import")
+        except WorkspaceOperationFailed:
+            raise
+        except ExecutionClientError as exc:
+            await self._fail_admission(exc)
+            raise
 
     async def start_session(self, controller_id: str, invocation_id: str) -> None:
         """Run `hooks.sessionStart` once for a new session's live reservation."""
         self._assert_controller_live()
-        result = await self._json_request(
+        request = self.acquire_client.build_request(
             "POST",
             "/execution/v1/workspace/session-start",
-            WorkspaceSessionStartRequest(
+            json=WorkspaceSessionStartRequest(
                 controller_id=controller_id, invocation_id=invocation_id
             ).model_dump(mode="json"),
         )
+        try:
+            response, content = await self._owned_request(self.acquire_client, request)
+        except httpx.HTTPError as exc:
+            await self._fail_admission(exc)
+            raise ExecutionClientError(f"session-start failed: {exc}") from exc
+        try:
+            self._workspace_rejection(response, content, "session-start")
+        except WorkspaceOperationFailed:
+            raise
+        except ExecutionClientError as exc:
+            await self._fail_admission(exc)
+            raise
+        try:
+            result = json.loads(content) if content else None
+        except ValueError as exc:
+            error = ExecutionClientError("invalid session-start JSON response")
+            await self._fail_admission(error)
+            raise error from exc
         await self._require_ok(result, "session-start")
 
     async def _ack_session(self, request: TurnRequest, event: ExecutionEvent) -> None:
@@ -826,6 +849,26 @@ class ExecutionClient:
             client=self.priority_client,
         )
         await self._require_ok(result, "session-ready")
+
+    def _workspace_rejection(self, response: httpx.Response, content: bytes, operation: str) -> None:
+        """Raise a per-invocation failure for a typed 4xx; other non-2xx stay fatal (F5)."""
+        if 200 <= response.status_code < 300:
+            return
+        detail = content[:512].decode("utf-8", "replace")
+        try:
+            payload = json.loads(content)
+        except ValueError:
+            payload = None
+        if response.status_code in _WORKSPACE_REJECTIONS and isinstance(payload, dict):
+            message = payload.get("detail")
+            if isinstance(message, str):
+                raise WorkspaceOperationFailed(
+                    f"{operation} rejected: {message}",
+                    status_code=response.status_code,
+                    confirmed=True,
+                    rejection=True,
+                )
+        raise ExecutionClientError(f"{operation} failed: {detail}", status_code=response.status_code)
 
     async def _require_ok(self, result: Any, operation: str) -> None:
         if result != {"status": "ok"}:

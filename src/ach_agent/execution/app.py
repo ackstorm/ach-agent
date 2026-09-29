@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import tarfile
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
@@ -132,8 +133,10 @@ def _error_response(exc: Exception, *, workspace_confirmed: bool = True) -> JSON
         return JSONResponse({"type": "OutputLimitExceeded", "message": str(exc)}, status_code=507)
     if isinstance(exc, ArchiveTooLarge):
         return JSONResponse({"detail": str(exc)}, status_code=413)
-    if isinstance(exc, SessionHookFailed):
-        return JSONResponse({"detail": str(exc)}, status_code=500)
+    if isinstance(exc, (SessionHookFailed, tarfile.TarError)):
+        # Workspace rejections: the service answered and is healthy. A 4xx keeps the
+        # client from treating a bad hook or a bad handoff archive as controller loss (F5).
+        return JSONResponse({"detail": str(exc)}, status_code=422)
     if isinstance(exc, ValueError):
         status = 409 if ("controller" in str(exc) or "turn" in str(exc)) else 404
         return JSONResponse({"detail": str(exc)}, status_code=status)

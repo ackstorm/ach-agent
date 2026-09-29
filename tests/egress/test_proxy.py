@@ -114,3 +114,19 @@ async def test_harness_task_factory_restored_while_proxy_runs() -> None:
     finally:
         await proxy.stop()
     assert loop.get_task_factory() is before
+
+
+async def test_start_can_listen_on_all_interfaces_with_a_fixed_port() -> None:
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    proxy = EgressProxy([_service()])
+    try:
+        endpoint, _cap, _ca = await proxy.start(listen_host="0.0.0.0", listen_port=port)
+        assert endpoint == f"http://0.0.0.0:{port}"
+        _, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.close()
+    finally:
+        await proxy.stop()

@@ -18,6 +18,7 @@ from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import structlog
 
@@ -171,10 +172,18 @@ def _egress_env(public: Any) -> dict[str, str]:
     """
     if not public.egress_proxy_url:
         return {}
-    # egress_proxy_url is "http://127.0.0.1:<port>" (EgressProxy.start()) — insert the
-    # capability as HTTP proxy userinfo per proxyauth's expected form.
+    # egress_proxy_url is "http://127.0.0.1:<port>" standalone, or the harness Service
+    # "http://<gatewayHost>:<egressPort>" sandboxed — insert the capability as HTTP proxy
+    # userinfo per proxyauth's expected form.
     authority = public.egress_proxy_url.removeprefix("http://")
     proxy_url = f"http://{_EGRESS_CAPABILITY_USER}:{public.egress_proxy_capability}@{authority}"
+
+    host = urlsplit(public.egress_proxy_url).hostname or ""
+    no_proxy = _EGRESS_NO_PROXY
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        # sandboxed: the proxy host is the harness Service, which also fronts the facade
+        # gateway (model/MCP) — that traffic must bypass the proxy (P6).
+        no_proxy = f"{no_proxy},{host}"
 
     ca_path = str(_egress_ca_path(public))
     env = {
@@ -182,8 +191,8 @@ def _egress_env(public: Any) -> dict[str, str]:
         "HTTPS_PROXY": proxy_url,
         "http_proxy": proxy_url,
         "https_proxy": proxy_url,
-        "NO_PROXY": _EGRESS_NO_PROXY,
-        "no_proxy": _EGRESS_NO_PROXY,
+        "NO_PROXY": no_proxy,
+        "no_proxy": no_proxy,
         "SSL_CERT_FILE": ca_path,
         "NODE_EXTRA_CA_CERTS": ca_path,
     }
@@ -389,6 +398,9 @@ class ExecutionService:
                 if hydration and Path(hydration).exists():
                     configured_driver = self._configured_driver()
                     await self._initialize_native(public, configured_driver)
+                # P4: H may have restarted with a new mitm CA; never trust the bundle
+                # already in HOME (it may come from a restored archive).
+                _write_egress_ca_bundle(public)
                 self._public_config = public
                 return
             if public.engine_type == "pi":

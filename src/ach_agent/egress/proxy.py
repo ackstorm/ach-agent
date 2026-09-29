@@ -18,7 +18,8 @@ Findings encoded here (re-verify against the pinned version when bumping it):
      interception to declared origins only — every other host is passed through as an
      opaque tunnel, never decrypted, never touched by the addon (design §1 scope).
   5. confdir -> private 0700 tempdir: the CA private key must never sit in a HOME the
-     engine can read (standalone mode shares filesystem with E).
+     engine can read (standalone mode shares filesystem with E). Sandboxed mode keeps the
+     private key in H's confdir too; sandboxes only ever receive the public cert.
   6. proxyserver.servers entries expose listen_addrs as a tuple property, not a method
      (verified against 12.2.3 — not what the design doc's spike assumed).
 """
@@ -77,12 +78,18 @@ class EgressProxy:
                 log.error("egress: proxy task ended unexpectedly")
                 self._on_failure()
 
-    async def start(self) -> tuple[str, str, str]:
-        """Returns (loopback endpoint, proxy capability, public CA cert PEM)."""
+    async def start(
+        self, *, listen_host: str = "127.0.0.1", listen_port: int = 0
+    ) -> tuple[str, str, str]:
+        """Returns (listen endpoint, proxy capability, public CA cert PEM).
+
+        Standalone: loopback, ephemeral port. Sandboxed: 0.0.0.0 on a fixed port so the
+        harness Service can expose it to sandbox pods (P5); the capability still gates it.
+        """
         self.confdir = tempfile.mkdtemp(prefix="ach-egress-")  # mkdtemp is 0700
         opts = options.Options(
-            listen_host="127.0.0.1",
-            listen_port=0,
+            listen_host=listen_host,
+            listen_port=listen_port,
             confdir=self.confdir,
             allow_hosts=_allow_hosts_patterns(self._services),
         )
@@ -104,7 +111,7 @@ class EgressProxy:
         loop.set_task_factory(harness_task_factory)
         ca_pem = (Path(self.confdir) / "mitmproxy-ca-cert.pem").read_text()
         log.info("egress: proxy started", port=port, service_count=len(self._services))
-        return f"http://127.0.0.1:{port}", capability, ca_pem
+        return f"http://{listen_host}:{port}", capability, ca_pem
 
     async def _await_listener(self) -> int:
         assert self._task is not None

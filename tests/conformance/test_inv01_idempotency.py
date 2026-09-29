@@ -3,6 +3,7 @@
 Invariant: idempotency-key derivation is per-channel-type; unique-per-distinct-event;
 degrades to unique-per-arrival (never to a shared/empty key).
 """
+
 from __future__ import annotations
 
 import time
@@ -38,9 +39,7 @@ def test_inv01_idempotency_key_derivation() -> None:
 
     # Keys across distinct events must differ (uniqueness per distinct event).
     keys = [wh_key, a2a_key, cron_key]
-    assert len(set(keys)) == len(keys), (
-        "§6.1: distinct events must yield distinct idempotency keys"
-    )
+    assert len(set(keys)) == len(keys), "§6.1: distinct events must yield distinct idempotency keys"
 
     # Broad-key regression: two header-less webhooks must NOT produce the same key.
     # A shared fallback would cause the second event to be silently deduped against

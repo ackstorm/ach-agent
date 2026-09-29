@@ -2,6 +2,7 @@
 
 Invariant (SC#2 extra): ek_ and GITLAB_TOKEN values never appear in log output.
 """
+
 from __future__ import annotations
 
 from io import StringIO
@@ -26,8 +27,8 @@ def _configure_json_logging_with_redaction(stream: StringIO) -> None:
             structlog.contextvars.merge_contextvars,
             structlog.stdlib.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
-            redact_ek_processor,              # SEC-01: ek_ redaction
-            redact_gitlab_token_processor,    # SEC-03: GITLAB_TOKEN redaction
+            redact_ek_processor,  # SEC-01: ek_ redaction
+            redact_gitlab_token_processor,  # SEC-03: GITLAB_TOKEN redaction
             structlog.processors.JSONRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(0),

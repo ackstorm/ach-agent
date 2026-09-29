@@ -3,6 +3,7 @@
 Invariant: memory backend down → run without memory context, log it,
 never fail the invocation (read and write).
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
@@ -39,9 +40,7 @@ async def test_inv05_memory_fail_open() -> None:
                 f"got {type(exc).__name__}: {exc}"
             ) from exc
 
-    assert available is False, (
-        "§6.5: backend unreachable must return available=False (fail-open)"
-    )
+    assert available is False, "§6.5: backend unreachable must return available=False (fail-open)"
     assert isinstance(section, str) and section, (
         "§6.5: fail-open must return a non-empty section string (unavailable placeholder)"
     )

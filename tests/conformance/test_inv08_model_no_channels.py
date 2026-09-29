@@ -3,6 +3,7 @@
 Invariant: model never talks to channels — adapters execute only accepted,
 validated actions. The seam import boundary prevents engine ↔ channel coupling.
 """
+
 from __future__ import annotations
 
 import re

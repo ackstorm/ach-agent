@@ -3,6 +3,7 @@
 Invariant: expire exhaustion / full queue is never silent:
 503 sync / NACK-redelivery async-retriable / drop-log async-no-retry.
 """
+
 from __future__ import annotations
 
 import pytest

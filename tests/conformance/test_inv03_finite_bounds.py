@@ -3,6 +3,7 @@
 Invariant: maxConcurrentInvocations, maxInvocationSeconds (600), and
 maxQueuedTotal (100) are always enforced — never exceeded.
 """
+
 from __future__ import annotations
 
 import asyncio

@@ -3,6 +3,7 @@
 Invariant (SC#2 extra): at most one invocation per session key at a time;
 events for the same session key are processed in FIFO order.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -34,10 +35,7 @@ async def test_inv10_fifo_per_session(fake_engine: FakeEngine) -> None:
 
     session = "fifo-conformance-session"
     n = 5
-    events = [
-        make_event(idempotency_key=f"fifo-conf-{i}", session_key=session)
-        for i in range(n)
-    ]
+    events = [make_event(idempotency_key=f"fifo-conf-{i}", session_key=session) for i in range(n)]
 
     # Hold the engine so all events queue up in submit order.
     fake_engine.hold()

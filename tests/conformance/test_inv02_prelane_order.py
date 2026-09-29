@@ -3,6 +3,7 @@
 Invariant: dedup → backpressure (maxQueuedTotal) → lane. Duplicates are
 discarded before they consume a queue slot.
 """
+
 from __future__ import annotations
 
 import pytest

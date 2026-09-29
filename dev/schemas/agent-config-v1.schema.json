@@ -1055,6 +1055,99 @@
       "title": "RemoteMcpServer",
       "type": "object"
     },
+    "SandboxBlock": {
+      "additionalProperties": false,
+      "description": "Run the engine in agent-sandbox pods. Off by default.",
+      "properties": {
+        "egressPort": {
+          "default": 8096,
+          "title": "Egressport",
+          "type": "integer"
+        },
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "enginePort": {
+          "default": 8082,
+          "title": "Engineport",
+          "type": "integer"
+        },
+        "gatewayHost": {
+          "default": "",
+          "title": "Gatewayhost",
+          "type": "string"
+        },
+        "gatewayPort": {
+          "default": 8095,
+          "title": "Gatewayport",
+          "type": "integer"
+        },
+        "home": {
+          "default": "/home/agent",
+          "title": "Home",
+          "type": "string"
+        },
+        "idleSeconds": {
+          "default": 900,
+          "minimum": 0,
+          "title": "Idleseconds",
+          "type": "number"
+        },
+        "keyEnv": {
+          "default": "ACH_SANDBOX_KEY",
+          "title": "Keyenv",
+          "type": "string"
+        },
+        "readyTimeoutSeconds": {
+          "default": 120,
+          "exclusiveMinimum": 0,
+          "title": "Readytimeoutseconds",
+          "type": "number"
+        },
+        "sessions": {
+          "$ref": "#/$defs/SandboxSessionsBlock"
+        },
+        "warmPool": {
+          "default": "",
+          "title": "Warmpool",
+          "type": "string"
+        }
+      },
+      "title": "SandboxBlock",
+      "type": "object"
+    },
+    "SandboxSessionsBlock": {
+      "additionalProperties": false,
+      "description": "Where bot-session HOME archives live.",
+      "properties": {
+        "bucket": {
+          "default": "",
+          "title": "Bucket",
+          "type": "string"
+        },
+        "cacheTtlSeconds": {
+          "default": 86400,
+          "exclusiveMinimum": 0,
+          "title": "Cachettlseconds",
+          "type": "number"
+        },
+        "maxArchiveBytes": {
+          "default": 2147483648,
+          "exclusiveMinimum": 0,
+          "title": "Maxarchivebytes",
+          "type": "integer"
+        },
+        "prefix": {
+          "default": "",
+          "title": "Prefix",
+          "type": "string"
+        }
+      },
+      "title": "SandboxSessionsBlock",
+      "type": "object"
+    },
     "SecretSource": {
       "additionalProperties": false,
       "description": "Operator contract §2 secret source — env-only (no disk secrets).\n\nenv → the harness reads the value from os.environ[NAME] at use time (hardened default:\n      dumpable=0 hides it from the co-resident agent; the NAME must NOT be in\n      engine.forwardEnv — the harness strips it from the forwarded set + WARNs).",
@@ -1427,6 +1520,9 @@
         }
       ],
       "default": null
+    },
+    "sandbox": {
+      "$ref": "#/$defs/SandboxBlock"
     },
     "schemaVersion": {
       "const": "1",

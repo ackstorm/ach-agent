@@ -160,7 +160,7 @@ idle window expires:
    resources, HOME volume, `automountServiceAccountToken: false`, `networkPolicyManagement:
    Unmanaged`) and `SandboxWarmPool` (replicas).
 3. Render the sandbox NetworkPolicy (§6) and the harness egress rule to sandbox pods.
-4. Harness Deployment: Role/RoleBinding for `sandboxclaims` (create/get/list/watch/delete) in
+4. Harness Deployment: Role/RoleBinding for `sandboxclaims` (create/get/patch/delete) in
    its namespace only; RWO PVC for the tarball cache; session bucket/prefix/retention in
    `config.json`.
 5. Dependency: agent-sandbox CRDs + controller (+ extensions) installed in the cluster; the

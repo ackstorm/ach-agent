@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from pathlib import Path
@@ -40,13 +41,17 @@ async def test_miss_everywhere(tmp_path: Path) -> None:
     assert await _store(tmp_path, FakeS3()).fetch(D) is None
 
 
+async def _drain(store: SessionStore) -> None:
+    await asyncio.gather(*store._uploads)
+
+
 async def test_commit_then_fetch_from_cache(tmp_path: Path) -> None:
     s3 = FakeS3()
     store = _store(tmp_path, s3)
     src = tmp_path / "x.tar.gz"
     src.write_bytes(b"data")
     await store.commit(D, src)
-    await store.wait_uploads()
+    await _drain(store)
     assert store.object_key(D) == f"ns/bot/{D}.tar.gz"
     assert s3.objects[store.object_key(D)] == b"data"
     path = await store.fetch(D)
@@ -68,7 +73,7 @@ async def test_sweep_retries_pending_then_evicts(tmp_path: Path) -> None:
     src = tmp_path / "x.tar.gz"
     src.write_bytes(b"data")
     await store.commit(D, src)
-    await store.wait_uploads()
+    await _drain(store)
     old = time.time() - 2 * 86400
     os.utime(store.cache_path(D), (old, old))
     s3.fail_upload = False

@@ -73,13 +73,10 @@ class SandboxSessions:
         self._factory = client_factory
         self._live: set[str] = set()
         self._clients: dict[str, ExecutionClient] = {}
-        self._locks: dict[str, asyncio.Lock] = {}
         self._public_base = f"http://{sandbox.gateway_host}:{sandbox.gateway_port}"
 
     # ── registry ──────────────────────────────────────────────────────────────────────────
     async def boot(self) -> None:
-        for claim in await self._claims.list_agent(self._agent):
-            self._live.add(claim["metadata"]["name"])
         await self._store.sweep()
 
     async def is_live(self, claim: str) -> bool:
@@ -169,18 +166,17 @@ class SandboxSessions:
     async def lease(self, event: MessageEvent, *, persistent: bool) -> AsyncIterator[Sandbox]:
         session_digest = digest(event.session_key if persistent else uuid.uuid4().hex)
         name = claim_name(self._agent, session_digest)
-        async with self._locks.setdefault(name, asyncio.Lock()):
-            box = await self._open(name, session_digest, persistent)
-            try:
-                await self._claims.touch(
-                    name,
-                    shutdown_at=dt.datetime.now(dt.UTC)
-                    + dt.timedelta(seconds=self._sb.idle_seconds + self._max_invocation + 300),
-                )
-                yield box
-            finally:
-                if not persistent:
-                    await self._end_sessionless(box)
+        box = await self._open(name, session_digest, persistent)
+        try:
+            await self._claims.touch(
+                name,
+                shutdown_at=dt.datetime.now(dt.UTC)
+                + dt.timedelta(seconds=self._sb.idle_seconds + self._max_invocation + 300),
+            )
+            yield box
+        finally:
+            if not persistent:
+                await self._end_sessionless(box)
 
     async def _open(self, name: str, session_digest: str, persistent: bool) -> Sandbox:
         if persistent and await self._claims.get(name) is not None:

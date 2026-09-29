@@ -132,15 +132,6 @@ class ClaimClient:
         )
         resp.raise_for_status()
 
-    async def list_agent(self, agent_label: str) -> list[dict[str, Any]]:
-        resp = await self._http.get(
-            self._base,
-            params={"labelSelector": f"{AGENT_LABEL}={agent_label}"},
-            headers=self._headers(),
-        )
-        resp.raise_for_status()
-        return list(resp.json().get("items", []))
-
     async def delete(self, name: str) -> None:
         resp = await self._http.delete(f"{self._base}/{name}", headers=self._headers())
         if resp.status_code != 404:

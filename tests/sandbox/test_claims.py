@@ -62,7 +62,6 @@ async def test_create_get_touch_list_delete(tmp_path: Path) -> None:
     await client.create("c1", {AGENT_LABEL: "bot"}, NOW)
     assert await client.get("missing") is None
     await client.touch("c1", shutdown_at=NOW)
-    await client.list_agent("bot")
     await client.delete("c1")  # 404 is success
     await client.close()
     base = "/apis/extensions.agents.x-k8s.io/v1beta1/namespaces/ach/sandboxclaims"
@@ -71,7 +70,6 @@ async def test_create_get_touch_list_delete(tmp_path: Path) -> None:
     assert json.loads(seen[2].content) == {
         "spec": {"lifecycle": {"shutdownTime": "2026-09-29T12:00:00Z"}}
     }
-    assert seen[3].url.params["labelSelector"] == f"{AGENT_LABEL}=bot"
 
 
 async def test_wait_ready_and_wait_deleted_are_bounded(tmp_path: Path) -> None:

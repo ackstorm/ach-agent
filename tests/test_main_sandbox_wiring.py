@@ -71,12 +71,6 @@ async def test_start_and_stop_sandbox_order(
     state_dir = tmp_path / "state"
     state_dir.mkdir()
 
-    from ach_agent.sandbox import claims as claims_mod
-
-    async def no_claims(self: Any, agent: str) -> list[Any]:
-        return []
-
-    monkeypatch.setattr(claims_mod.ClaimClient, "list_agent", no_claims)
     events: list[str] = []
     sessions, gateway, sweep = await main_mod._start_sandbox(
         cfg,

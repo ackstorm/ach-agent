@@ -49,9 +49,6 @@ class FakeClaims:
     async def touch(self, name: str, *, shutdown_at: dt.datetime) -> None:
         self.touched.append(name)
 
-    async def list_agent(self, agent: str) -> list[dict[str, Any]]:
-        return list(self.items.values())
-
     async def delete(self, name: str) -> None:
         self.deleted.append(name)
         self.items.pop(name, None)
@@ -412,7 +409,7 @@ async def test_on_archive_for_sessionless_claim_is_409(tmp_path: Path) -> None:
     assert (await _put(s, name, b"x")).status == 409
 
 
-async def test_boot_lists_claims_sweeps_and_close_leaves_sandboxes(tmp_path: Path) -> None:
+async def test_boot_sweeps_and_close_leaves_sandboxes(tmp_path: Path) -> None:
     s, _ = make_sessions(tmp_path)
     _claims(s).items["ach-bot-live"] = {"metadata": {"name": "ach-bot-live"}}
     await s.boot()

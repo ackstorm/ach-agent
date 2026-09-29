@@ -97,9 +97,6 @@ class SessionStore:
             return
         Path(f"{path}{_PENDING}").unlink(missing_ok=True)
 
-    async def wait_uploads(self) -> None:
-        await asyncio.gather(*self._uploads, return_exceptions=True)
-
     async def sweep(self) -> None:
         """Retry pending uploads, then evict uploaded archives older than the TTL."""
         for marker in self._dir.glob(f"*.tar.gz{_PENDING}"):

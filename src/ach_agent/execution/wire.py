@@ -94,8 +94,9 @@ class PublicEngineConfig(_WireModel):
     idle_seconds: float = Field(default=0, alias="idleSeconds")
     # Authenticated egress proxy projection (design doc
     # 2026-09-28-authenticated-egress-proxy-design.md §6). Empty when egress is unset —
-    # the real secret never crosses this boundary; only the proxy endpoint (loopback standalone, harness Service sandboxed), the local
-    # access capability, the public CA cert, and the non-secret placeholder NAMES do.
+    # the real secret never crosses this boundary; only the proxy endpoint (loopback
+    # standalone, harness Service sandboxed), the local access capability, the public CA
+    # cert, and the non-secret placeholder NAMES do.
     egress_proxy_url: str = Field(default="", alias="egressProxyUrl")
     egress_proxy_capability: str = Field(default="", alias="egressProxyCapability")
     egress_ca_cert: str = Field(default="", alias="egressCaCert")

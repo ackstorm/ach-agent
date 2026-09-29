@@ -126,6 +126,10 @@ _SYSTEM_CA_BUNDLE_PATHS = ("/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.
 _EGRESS_CAPABILITY_USER = "ach-egress"
 _EGRESS_CA_BUNDLE_NAME = ".ach-egress-ca-bundle.pem"
 _DEFAULT_ENGINE_HOME = "/tmp/ach-home"
+# Written only after sessionStart succeeded (or ran with no hook). Its presence — not the
+# directory's — makes a session "existing": a failed start leaves the directory behind,
+# and a restored sandbox HOME carries the marker inside its archive.
+SESSION_STARTED_MARKER = ".ach-session-started"
 
 
 def _system_ca_bundle() -> str:
@@ -708,7 +712,7 @@ class ExecutionService:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + request.remaining_seconds
         workspace = workspace_dir(request.work_dir, request.session_key)
-        new_session = not workspace.exists()
+        new_session = not (workspace / SESSION_STARTED_MARKER).exists()
         reservation = _WorkspaceReservation(request, workspace, deadline, new_session=new_session)
         self._workspace_reservations[request.invocation_id] = reservation
         completed = False
@@ -814,7 +818,9 @@ class ExecutionService:
             raise ValueError("sessionStart already ran for this reservation")
         reservation.session_started = True
         hook = self._public_config.hook_session_start if self._public_config is not None else None
+        marker = reservation.workspace / SESSION_STARTED_MARKER
         if hook is None:
+            marker.touch()
             return
         from ach_agent.boot.prepare import (
             _execute_hook,
@@ -845,6 +851,7 @@ class ExecutionService:
             raise SessionHookFailed(
                 f"sessionStart failed: exited {returncode}: {_stderr_tail(stderr)}"
             )
+        marker.touch()
 
     async def _run_session_suspend(self, session_key: str) -> None:
         """Run `hooks.sessionSuspend` for `session_key`'s workspace; no-op without a hook.

@@ -55,17 +55,51 @@ def _tar_gz(files: dict[str, bytes]) -> bytes:
 # --------------------------------------------------------------------------- new_session
 
 
-async def test_new_session_true_then_false_for_the_same_key(fake_driver, tmp_path: Path) -> None:
+async def test_new_session_true_until_session_start_succeeds(fake_driver, tmp_path: Path) -> None:
     service = ExecutionService(fake_driver, {})
     await service.claim_controller("controller")
 
     first = await service.prepare_workspace(_prepare(tmp_path, invocation_id="inv-1"))
     assert first["new_session"] is True
+    await service.session_start(
+        WorkspaceSessionStartRequest(controller_id="controller", invocation_id="inv-1")
+    )
+    assert (Path(first["workspace"]) / ".ach-session-started").is_file()
 
     await service.release_controller("controller")
     await service.claim_controller("controller")
     second = await service.prepare_workspace(_prepare(tmp_path, invocation_id="inv-2"))
     assert second["new_session"] is False
+
+
+async def test_failed_session_start_leaves_the_session_new(fake_driver, tmp_path: Path) -> None:
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+    await service.configure(PublicEngineConfig(hook_session_start=HookSpec(script="exit 3")))
+
+    first = await service.prepare_workspace(_prepare(tmp_path, invocation_id="inv-1"))
+    assert first["new_session"] is True
+    with pytest.raises(SessionHookFailed):
+        await service.session_start(
+            WorkspaceSessionStartRequest(controller_id="controller", invocation_id="inv-1")
+        )
+    assert not (Path(first["workspace"]) / ".ach-session-started").exists()
+    await service.cancel("controller", "inv-1")
+
+    second = await service.prepare_workspace(_prepare(tmp_path, invocation_id="inv-2"))
+    assert second["new_session"] is True
+
+
+async def test_restored_workspace_with_marker_is_not_new(fake_driver, tmp_path: Path) -> None:
+    from ach_agent.engine.workspace import workspace_dir
+
+    workspace = workspace_dir(str(tmp_path / "work"), "group/project:1")
+    workspace.mkdir(parents=True)
+    (workspace / ".ach-session-started").touch()  # as restored from a HOME archive
+    service = ExecutionService(fake_driver, {})
+    await service.claim_controller("controller")
+    result = await service.prepare_workspace(_prepare(tmp_path))
+    assert result["new_session"] is False
 
 
 # --------------------------------------------------------------------------- handoff import

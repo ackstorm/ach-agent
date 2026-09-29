@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import asyncio
 import gzip
 from collections.abc import AsyncIterator
 
@@ -19,11 +20,16 @@ CLAIM = "ach-bot-" + "0" * 32
 class Upstream:
     def __init__(self) -> None:
         self.paths: list[str] = []
+        self.first_chunk = asyncio.Event()
         self.port = 0
         self._runner: web.AppRunner | None = None
 
     async def _handle(self, request: web.Request) -> web.StreamResponse:
         self.paths.append(request.path)
+        if request.path.endswith("/echo"):
+            await request.content.readany()
+            self.first_chunk.set()
+            return web.Response(text="got-first-chunk")
         if request.path.endswith("/gz"):
             return web.Response(body=gzip.compress(b"zipped"), headers={"Content-Encoding": "gzip"})
         resp = web.StreamResponse()
@@ -134,5 +140,23 @@ async def test_gzip_upstream_arrives_decoded(upstream: Upstream) -> None:
         status, body, headers = await _get(url)
         assert (status, body) == (200, b"zipped")
         assert "content-encoding" not in {k.lower() for k in headers}
+    finally:
+        await gw.stop()
+
+
+async def test_relay_streams_request_body_instead_of_buffering(upstream: Upstream) -> None:
+    gw, port, _ = await _gateway()
+    try:
+        gw.allow_port(upstream.port)
+        url = f"http://127.0.0.1:{port}/s/{facade_token(K, CLAIM)}/{upstream.port}/echo"
+
+        async def body() -> AsyncIterator[bytes]:
+            yield b"a" * 1024
+            # A buffering relay never forwards chunk one until this generator ends.
+            await asyncio.wait_for(upstream.first_chunk.wait(), timeout=5)
+            yield b"b" * 1024
+
+        async with aiohttp.ClientSession() as s, s.post(url, data=body()) as r:
+            assert (r.status, await r.text()) == (200, "got-first-chunk")
     finally:
         await gw.stop()

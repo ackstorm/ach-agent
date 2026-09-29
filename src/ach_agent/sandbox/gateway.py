@@ -27,7 +27,7 @@ from ach_agent.sandbox.tokens import verify_facade_token
 
 log = structlog.get_logger(__name__)
 
-_DROP_REQUEST = frozenset({"host", "content-length"})
+_DROP_REQUEST = frozenset({"host", "content-length", "transfer-encoding"})
 # aiohttp decompresses upstream bodies, so content-encoding must not be forwarded.
 _DROP_RESPONSE = frozenset({"content-length", "transfer-encoding", "content-encoding"})
 _TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=10)
@@ -60,7 +60,7 @@ class FacadeGateway:
 
     async def start(self, host: str, port: int) -> int:
         self._session = aiohttp.ClientSession(timeout=_TIMEOUT)
-        app = web.Application(client_max_size=0)  # archive size is capped by the handler
+        app = web.Application(client_max_size=0)  # bodies are streamed; the archive handler caps its own
         app.router.add_put("/s/{token}/session/archive", self._archive)
         app.router.add_route("*", r"/t/{trace}/s/{token}/{port:\d+}/{tail:.*}", self._relay)
         app.router.add_route("*", r"/s/{token}/{port:\d+}/{tail:.*}", self._relay)
@@ -98,9 +98,10 @@ class FacadeGateway:
         target = f"http://127.0.0.1:{port}{prefix}/{request.match_info['tail']}"
         headers = {k: v for k, v in request.headers.items() if k.lower() not in _DROP_REQUEST}
         assert self._session is not None
-        body = await request.read()
+        # Streamed, never buffered: the caller is an untrusted agent.
+        body = request.content if request.body_exists else None
         async with self._session.request(
-            request.method, target, headers=headers, params=request.query, data=body or None
+            request.method, target, headers=headers, params=request.query, data=body
         ) as upstream:
             resp = web.StreamResponse(status=upstream.status)
             for k, v in upstream.headers.items():

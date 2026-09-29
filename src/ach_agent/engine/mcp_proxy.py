@@ -49,6 +49,9 @@ _DROP_REQUEST_HEADERS = frozenset(
     {
         "host",
         "content-length",
+        # The body is re-sent buffered; a streamed inbound (the sandbox facade gateway)
+        # would otherwise go upstream chunked AND content-length, which envoy 400s.
+        "transfer-encoding",
         "authorization",
         "x-ach-key",
         "x-goog-api-key",

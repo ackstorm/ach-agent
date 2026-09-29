@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import anyio
+import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import ValidationError
@@ -48,6 +49,8 @@ from ach_agent.execution.wire import (
 )
 from ach_agent.sandbox.archive import ArchiveTooLarge, extract, write_capped
 from ach_agent.sandbox.tokens import verify_engine_bearer
+
+log = structlog.get_logger(__name__)
 
 EXECUTION_API_VERSION = 1
 MAX_REQUEST_BODY_BYTES = 1 * 1024 * 1024
@@ -234,6 +237,8 @@ def create_execution_app(service: ExecutionService, *, verify_key: str | None = 
         try:
             await service.claim_controller(hello.controller_id, config=hello.config)
         except Exception as exc:
+            # A failed configure marks the engine unhealthy and ends the role; say why.
+            log.warning("execution: controller claim failed", error=repr(exc))
             return service_error(exc)
 
         response_hello = ControllerHello(

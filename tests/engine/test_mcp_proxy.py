@@ -171,9 +171,7 @@ async def test_mcp_proxy_replaces_case_variant_client_identity() -> None:
         await upstream_runner.cleanup()
         identity.reset_for_testing()
 
-    assert seen_identity == [
-        [("x-ach-agent", "classifier"), ("x-ach-environment", "platform")]
-    ]
+    assert seen_identity == [[("x-ach-agent", "classifier"), ("x-ach-environment", "platform")]]
 
 
 async def _start_header_recording_upstream(
@@ -449,3 +447,48 @@ async def test_a_tool_call_carries_its_trace_in_the_message_too() -> None:
         "agent", "webhook", "delivery-1"
     )
     assert sent["params"]["arguments"] == {"q": "x"}, "the tool's own arguments must survive"
+
+
+async def test_a_chunked_request_is_forwarded_with_one_framing() -> None:
+    """The sandbox facade gateway streams bodies (chunked); the proxy re-sends them buffered.
+
+    Forwarding the inbound Transfer-Encoding beside aiohttp's Content-Length gives the
+    upstream both framings, which envoy rejects with 400.
+    """
+    seen: list[list[str]] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        framing = {"content-length", "transfer-encoding"}
+        seen.append(
+            sorted(
+                k.decode().lower() for k, _ in request.raw_headers if k.decode().lower() in framing
+            )
+        )
+        return web.json_response({"body": (await request.read()).decode()})
+
+    app = web.Application()
+    app.router.add_route("*", "/{tail:.*}", handler)
+    upstream_runner = web.AppRunner(app)
+    await upstream_runner.setup()
+    site = web.TCPSite(upstream_runner, host="127.0.0.1", port=0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+    proxy = McpProxy()
+
+    async def chunks():  # type: ignore[no-untyped-def]
+        yield b'{"hello":'
+        yield b'"world"}'
+
+    try:
+        urls = await proxy.start(
+            [McpServer(id="m1", endpoint=f"http://127.0.0.1:{port}")], ek="ek", exclude=set()
+        )
+        async with aiohttp.ClientSession() as session:
+            async with session.post(_routable(urls["m1"]), data=chunks()) as resp:
+                assert resp.status == 200
+                assert (await resp.json())["body"] == '{"hello":"world"}'
+    finally:
+        await proxy.stop()
+        await upstream_runner.cleanup()
+
+    assert seen == [["content-length"]]

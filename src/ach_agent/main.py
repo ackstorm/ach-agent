@@ -57,7 +57,6 @@ from ach_agent.config import load_config
 from ach_agent.config.schema import (
     AchMemoryMemory,
     AgentConfig,
-    ChannelSourceConfig,
     CodememMemory,
     LocalMcpServer,
     McpServerConfig,
@@ -500,10 +499,10 @@ async def _run_harness(
     role_paths = resolve_role_paths(cfg)
     engine_home = str(role_paths.engine_home)
     engine_work_dir = str(role_paths.work_dir)
-    from ach_agent.boot.roles import build_role_configs
+    from ach_agent.boot.roles import build_role_configs, channel_sources
     from ach_agent.execution.wire import PublicEngineConfig
 
-    channels_projection, public_projection = build_role_configs(cfg)
+    public_projection = build_role_configs(cfg)
     public_cfg = PublicEngineConfig.model_validate(public_projection).model_copy(
         update={"home": engine_home, "work_dir": engine_work_dir}
     )
@@ -1110,15 +1109,7 @@ async def _run_harness(
         completion_notifier=completion_registry.finish_event,
     )
     router_ref["router"] = router
-    projected_sources = channels_projection.get("channels", [])
-    if not isinstance(projected_sources, list):
-        raise ValueError("channels projection must contain a list of sources")
-    source_configs = {
-        source_config.name: source_config
-        for source_config in (
-            ChannelSourceConfig.model_validate(source) for source in projected_sources
-        )
-    }
+    source_configs = channel_sources(cfg)
 
     # --tui / --prompt launch modifiers: ignore the configured channels and drive the
     # engine directly. The engine + proxies + hydration are already wired above; the

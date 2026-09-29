@@ -73,8 +73,8 @@ def create_app(
     async def lifespan(app: FastAPI) -> Any:
         """FastAPI lifespan: optionally set ready after wiring, clear on teardown.
 
-        Split-role startup manages the flag from downstream readiness; direct app
-        users retain the historical lifespan-managed behavior by default.
+        Startup manages the flag from downstream readiness; direct app users
+        retain the historical lifespan-managed behavior by default.
         """
         # Wiring is complete — channels are registered and the route is active
         if lifespan_ready:
@@ -191,7 +191,7 @@ def create_app(
     async def readyz() -> JSONResponse:
         """Readiness probe — 200 only while startup and downstream readiness hold.
 
-        Split roles update the shared state after hydration and engine checks.
+        Startup updates the shared state after hydration and engine checks.
         """
         if not state.ready or state.draining:
             return JSONResponse({"status": "not_ready"}, status_code=503)

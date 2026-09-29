@@ -17,7 +17,7 @@ log = structlog.get_logger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class RolePaths:
-    """Role-owned filesystem roots for split boot and startup transfer."""
+    """Role-owned filesystem roots for the harness and the engine, and startup transfer."""
 
     harness_state: Path
     engine_home: Path
@@ -26,7 +26,7 @@ class RolePaths:
 
 
 def resolve_role_paths(cfg: AgentConfig) -> RolePaths:
-    """Resolve the three operator data roots used by the split roles."""
+    """Resolve the operator data roots used by the harness and engine roles."""
 
     def trusted(path: str | Path) -> Path:
         # These roots come from operator configuration and are captured before E

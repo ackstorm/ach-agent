@@ -138,7 +138,7 @@ EXPOSE 8080
 RUN useradd -u 10001 -m appuser \
  && mkdir -p /tmp/ach-home /tmp/ach-agent/state /tmp/ach-agent/home/workspace \
       /var/lib/ach-agent/state /var/lib/ach-agent/home/workspace \
-      /run/ach-agent/channels /run/ach-agent/engine /run/ach-agent/transfer \
+      /run/ach-agent/engine \
  && chown -R 10001 /tmp/ach-home /tmp/ach-agent /var/lib/ach-agent /run/ach-agent
 USER 10001
 

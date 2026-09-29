@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Split-role configuration and engine-role startup.
+"""Engine-role configuration and startup.
 
 The harness owns the full :class:`AgentConfig`.  This module is deliberately the
-small boundary used to derive the channels projection and the credential-free
-engine configuration.  It does not start inbound channels or the harness router;
-those orchestration paths remain in the local/deployment launcher.
+small boundary used to derive the credential-free engine configuration and start
+the engine HTTP role.  It does not start inbound channels or the harness router;
+those orchestration paths remain in the launcher.
 """
 
 from __future__ import annotations
@@ -40,22 +40,22 @@ DEFAULT_ENGINE_HOST = "0.0.0.0"
 DEFAULT_ENGINE_PORT = 8081
 
 
-class SplitRoleConfigError(ValueError):
-    """A full harness config cannot be safely projected to a split role."""
+class RoleConfigError(ValueError):
+    """The engine role was started without the configuration it requires."""
 
 
 async def _run_native_terminal(service: ExecutionService) -> None:
     """Run the inherited native terminal after controller-open configuration."""
     public = service.public_config
     if public is None or service.driver is None:
-        raise SplitRoleConfigError("native terminal requires controller configuration")
+        raise RoleConfigError("native terminal requires controller configuration")
     from ach_agent.channels.tui import _CONSOLE_SESSION_KEY
     from ach_agent.engine import trace
     from ach_agent.execution.service import _engine_config
 
     token = public.trace_token
     if not token or not public.trace_parent or not public.trace_session_id:
-        raise SplitRoleConfigError("trace fields are required for native terminal mode")
+        raise RoleConfigError("trace fields are required for native terminal mode")
     trace.adopt(token)
     trace.adopt_tui(token, traceparent=public.trace_parent, session_id=public.trace_session_id)
     native_cfg = _engine_config(public)
@@ -131,24 +131,23 @@ def _json_model(value: Any) -> dict[str, JsonValue]:
     )
 
 
-def _source_projection(cfg: AgentConfig) -> list[dict[str, JsonValue]]:
-    projected: list[dict[str, JsonValue]] = []
-    for channel in cfg.channels:
-        # Construct from an allowlist rather than dumping and excluding private fields;
-        # a newly added harness field must never silently cross the role boundary.
-        raw = {
-            "name": channel.name,
-            "type": channel.type,
-            "concurrency": channel.concurrency,
-            "source": channel.source,
-            "webhook": channel.webhook,
-            "cron": channel.cron,
-            "queue": channel.queue,
-            "a2a": channel.a2a,
-        }
-        source = ChannelSourceConfig.model_validate(raw)
-        projected.append(_json_model(source))
-    return projected
+def channel_sources(cfg: AgentConfig) -> dict[str, ChannelSourceConfig]:
+    """Per-channel source configs keyed by name, built from an allowlist of fields."""
+    return {
+        channel.name: ChannelSourceConfig.model_validate(
+            {
+                "name": channel.name,
+                "type": channel.type,
+                "concurrency": channel.concurrency,
+                "source": channel.source,
+                "webhook": channel.webhook,
+                "cron": channel.cron,
+                "queue": channel.queue,
+                "a2a": channel.a2a,
+            }
+        )
+        for channel in cfg.channels
+    }
 
 
 def _codemem_bootstrap(cfg: AgentConfig) -> tuple[str, str]:
@@ -190,21 +189,15 @@ def _engine_env_names(cfg: AgentConfig) -> list[str]:
     return list(dict.fromkeys(names))
 
 
-def build_role_configs(
-    cfg: AgentConfig,
-) -> tuple[dict[str, JsonValue], dict[str, JsonValue]]:
-    """Build the channels projection and public engine configuration.
+def build_role_configs(cfg: AgentConfig) -> dict[str, JsonValue]:
+    """Build the public engine configuration.
 
-    ``engine.forwardEnv`` selects names for the public engine configuration in both
-    local and split mode.  Their current values are copied into the typed config sent
+    ``engine.forwardEnv`` selects names for the public engine configuration in
+    every mode.  Their current values are copied into the typed config sent
     to the engine during controller-open.
     """
     engine_env_names = _engine_env_names(cfg)
     paths = resolve_role_paths(cfg)
-    channels: dict[str, JsonValue] = {
-        "schemaVersion": "1",
-        "channels": cast(JsonValue, _source_projection(cfg)),
-    }
     codemem_db_path, codemem_project = _codemem_bootstrap(cfg)
     templates = {
         name: spec
@@ -248,7 +241,7 @@ def build_role_configs(
         hook_session_start=_hook_spec(cfg.hooks.session_start),
         hook_session_suspend=_hook_spec(cfg.hooks.session_suspend),
     )
-    return channels, _json_model(public)
+    return _json_model(public)
 
 
 async def run_engine(
@@ -267,9 +260,9 @@ async def run_engine(
     try:
         health_port = int(os.environ.get("ACH_ENGINE_HEALTH_PORT", str(DEFAULT_ENGINE_PORT)))
     except ValueError as exc:
-        raise SplitRoleConfigError("ACH_ENGINE_HEALTH_PORT must be an integer") from exc
+        raise RoleConfigError("ACH_ENGINE_HEALTH_PORT must be an integer") from exc
     if not 0 <= health_port <= 65535:
-        raise SplitRoleConfigError("ACH_ENGINE_HEALTH_PORT must be between 0 and 65535")
+        raise RoleConfigError("ACH_ENGINE_HEALTH_PORT must be between 0 and 65535")
     listener = None if sandbox_tcp else bind_listener(engine_socket_path())
     server = uvicorn.Server(
         uvicorn.Config(

@@ -9,7 +9,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from ach_agent.config.schema import AgentConfig, ChannelSourceConfig
+from ach_agent.config.schema import AgentConfig
 from ach_agent.execution.wire import PublicEngineConfig
 
 
@@ -47,17 +47,14 @@ def _cfg(**updates: object) -> AgentConfig:
 def test_source_projection_drops_execution_fields_but_accepts_webhook_script() -> None:
     cfg = _cfg()
 
-    from ach_agent.boot.roles import build_role_configs
+    from ach_agent.boot.roles import build_role_configs, channel_sources
 
-    channels, public = build_role_configs(cfg)
-    assert set(channels) == {"schemaVersion", "channels"}
-    source = channels["channels"][0]
-    assert source["type"] == "webhook-script"
-    assert "script" not in source
-    assert "prompt" not in source
-    assert "handoff" not in source
-    assert "session" not in source
-    ChannelSourceConfig.model_validate(source)
+    public = build_role_configs(cfg)
+    sources = channel_sources(cfg)
+    assert "webhook-script" in {s.type for s in sources.values()}
+    assert not {"script", "prompt", "handoff", "session"} & set(
+        type(next(iter(sources.values()))).model_fields
+    )
     assert public["agentName"] == "agent-a"
 
 
@@ -69,7 +66,7 @@ def test_projection_carries_only_selected_values(monkeypatch: pytest.MonkeyPatch
 
     from ach_agent.boot.roles import build_role_configs
 
-    _channels, public = build_role_configs(cfg)
+    public = build_role_configs(cfg)
 
     assert public["engineEnvNames"] == ["DEBUG", "CUSTOM_TOOL_TOKEN"]
     assert "synthetic-managed" not in str(public)
@@ -80,7 +77,7 @@ def test_local_projection_keeps_only_sanitized_forward_env_names() -> None:
 
     from ach_agent.boot.roles import build_role_configs
 
-    _channels, public = build_role_configs(cfg)
+    public = build_role_configs(cfg)
     assert public["engineEnvNames"] == ["SAFE_NATIVE_VAR"]
 
 
@@ -95,7 +92,7 @@ def test_public_bootstrap_has_no_managed_credentials_or_full_config(
     from ach_agent.boot.roles import build_role_configs
 
     monkeypatch.setattr("shutil.which", lambda _name: (_ for _ in ()).throw(AssertionError()))
-    _channels, public = build_role_configs(cfg)
+    public = build_role_configs(cfg)
     assert "capability" not in public
     assert "channels" not in public
     assert "memory" not in public
@@ -107,14 +104,14 @@ def test_public_bootstrap_has_no_managed_credentials_or_full_config(
 def test_default_codemem_path_preserves_existing_layout() -> None:
     from ach_agent.boot.roles import build_role_configs
 
-    _channels, public = build_role_configs(_cfg(memory={"type": "codemem", "codemem": {}}))
+    public = build_role_configs(_cfg(memory={"type": "codemem", "codemem": {}}))
     assert public["codemem_db_path"] == "/tmp/ach-home/state/codemem.db"
 
 
 def test_default_codemem_path_stays_stable_with_custom_volatile_home(tmp_path: Path) -> None:
     from ach_agent.boot.roles import build_role_configs
 
-    _channels, public = build_role_configs(
+    public = build_role_configs(
         _cfg(
             memory={"type": "codemem", "codemem": {}},
             engine={"home": str(tmp_path / "custom-home")},

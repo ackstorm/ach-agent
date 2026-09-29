@@ -1,0 +1,825 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>2026 09 10 harness engine final spec - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#ach-channelsharnessengine-implementation-review-specification" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              2026 09 10 harness engine final spec
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-objective-and-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Objective and deployment
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Boundaries
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-session-and-execution-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Session and execution ownership
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-startup-and-hydration" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Startup and hydration
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-channels-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Channels API
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-mini-harness-execution-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Mini-harness execution API
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-failure-and-cleanup" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Failure and cleanup
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-credentials-proxies-and-security" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Credentials, proxies and security
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-private-preparation-and-script-only-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Private preparation and script-only work
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-phase-2-proxy-improvements-and-phase-3-deferred-ideas" class="md-nav__link">
+    <span class="md-ellipsis">
+      10. Phase 2 proxy improvements and phase 3 deferred ideas
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-acceptance" class="md-nav__link">
+    <span class="md-ellipsis">
+      11. Acceptance
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-implementation-order-and-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      12. Implementation order and review
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<blockquote>
+<p>Archived design history. Superseded by the <a href="../../../references/2026-09-14-three-role-split/">current split contract</a>. Do not use as implementation instructions.</p>
+</blockquote>
+<h1 id="ach-channelsharnessengine-implementation-review-specification">ACH Channels–Harness–Engine — Implementation Review Specification</h1>
+<p><strong>Revision:</strong> 8 · 2026-09-11
+<strong>Status:</strong> Architecture consolidated for implementation planning, incorporating the final review with the corrections below. This document does not authorize implementation or claim external sign-off.
+<strong>Audience:</strong> Reviewers without access to ACH code.
+<strong>Supersedes:</strong> Revisions 1–7 and the earlier HTML companion. Filename retained for existing links. Code baseline reviewed: v0.16.1 (<code>462912f</code>).</p>
+<h2 id="1-objective-and-deployment">1. Objective and deployment</h2>
+<p><strong>One pod, one replica, three ordinary containers from the first implementation: channels, harness and engine.</strong> No new inter-component broker, autoscaler, persistence system or application init container. Acceptance/results remain in memory; existing dedup persistence and source queue semantics remain as described below.</p>
+<p>Phase 1 separates components while preserving current behavior, including conversation continuity and workspace reuse. Phase 2 improves proxy policy and content protection. Phase 3 records deferred ideas for evaluation, not an obligation to build them. Existing managed proxy routing and credential separation are required in phase 1; new proxy features do not block the split.</p>
+<ul>
+<li><strong>Channels:</strong> source authentication, inbound adapters, event normalization and result delivery.</li>
+<li><strong>Harness:</strong> ACH hydration, logical sessions, admission/router, execution credentials, preparation and capability proxies.</li>
+<li><strong>Engine:</strong> our mini-harness supervising Pi/OpenCode, owning their native protocols and native session state.</li>
+</ul>
+<p>Local use keeps one launcher, which starts the mini-harness as a child process. All programmatic engine execution uses the same HTTP API as Kubernetes. Channels may use an in-process adapter over the same serializable envelopes. Native local mode provides no hostile-engine isolation guarantee. Native TUI attachment is an explicit terminal path: OpenCode attach uses its native server; Pi requires its native terminal attachment. Neither introduces a second programmatic driver path or a remote TUI guarantee.</p>
+<p>The roles can reuse image bases; separate env, mounts and entrypoints define the deployment. Per-engine images include the mini-harness at build time. Ubuntu Docker isolated mode shares the harness container's network namespace among all three roles; it does not use host networking. macOS native use remains available.</p>
+<h2 id="2-boundaries">2. Boundaries</h2>
+<pre><code>Channels container
+  source adapters / authentication / result delivery
+          │ internal HTTP: events and correlated results
+          ▼
+Harness container
+  hydrate / logical sessions / admission + router
+  credentials / capability proxies / private preparation
+          │ our HTTP execution API + streamed events
+          ▼
+Engine container
+  tini (PID 1) → our mini-harness (only direct child)
+    ├─ Pi integration       → native stdio → Pi
+    └─ OpenCode integration → native HTTP/SSE → OpenCode
+          │
+          └─ model / MCP / A2A calls → harness proxies
+</code></pre>
+<p>The central harness may know which engine configuration is selected, but does not parse Pi JSONL or OpenCode SSE, manage their native conversation IDs, or call their native APIs directly. The mini-harness reuses existing native integration where practical.</p>
+<p>HTTP carries our execution semantics. It is not a raw OpenCode byte tunnel. There is no custom Unix framing, HTTP multiplexing tunnel, proxy-socket bridge or IPC-volume layout in this revision.</p>
+<p>The two internal APIs have different contracts: channels submit events; the harness requests engine execution. Reusing HTTP does not merge their responsibilities.</p>
+<h2 id="3-session-and-execution-ownership">3. Session and execution ownership</h2>
+<ul>
+<li><strong>Lane key (<code>session_key</code>):</strong> harness-owned FIFO and execution-pool identity.</li>
+<li><strong>Conversation key:</strong> native-session reuse identity derived from <code>channel.session</code> (<code>none</code>, <code>auto</code>, <code>custom</code>); distinct from the lane key.</li>
+<li><strong>Native session ID/state:</strong> Pi/OpenCode-specific identity and files, managed by the mini-harness. Its conversation-key mapping lives under engine home. Native references may appear in diagnostic turn statistics; the harness does not use them to drive native APIs.</li>
+<li><strong>Execution ID:</strong> identifies an acquired native execution.</li>
+<li><strong>Invocation ID:</strong> identifies an admitted unit of work, containing one or more turns on its current native session. Main turn, step-budget wrap-up and terminal repair continue that session.</li>
+</ul>
+<p>IDs are correlation data, not credentials. The harness accepts results only for work it requested.</p>
+<p>The harness retains <strong>dedup → backpressure → lane</strong>, finite concurrency/time/queue bounds, per-session FIFO and retention decisions. Mini-harness launches, retains, stops and reaps requested engines and enforces process limits; it introduces no second work queue or scheduler.</p>
+<p>Terminal-contract validation and decisions to repair, compact, discard or forget a conversation mapping remain harness-side. The mini-harness performs the corresponding native operations. Token-overflow rotation and warm idle-TTL reuse retain their current meaning.</p>
+<p>Conversation mappings retain their existing engine-type/conversation-key scope; adding the lane key would change reuse semantics. Different lanes may therefore select the same conversation. The harness must serialize access to a reused conversation across those lanes, covering mapping resolution, all invocation turns, native session maintenance and confirmed cessation of invocation activity. Use mutual exclusion within the existing bounded execution path, not another scheduler or unbounded queue; waiting remains subject to cancellation and the invocation deadline. Unrelated conversations remain concurrent. <code>session: none</code> creates independent conversations. This is a targeted concurrency correction to verify during implementation, not a claim that current per-lane FIFO already provides it.</p>
+<p>Moving native adapters must not move credential resolution or upstream authorization. Mini-harness receives public proxy URLs, approved context, engine options and workspace paths, and generates native engine configuration without managed secrets.</p>
+<h2 id="4-startup-and-hydration">4. Startup and hydration</h2>
+<p>All three ordinary containers start independently:</p>
+<ol>
+<li>Channels starts its source adapters and connects/retries to the harness.</li>
+<li>Mini-harness exposes its execution API with zero Pi/OpenCode processes.</li>
+<li>Harness hydrates from ACH, resolves capabilities/context, starts model/MCP/A2A proxies and prepares public engine bootstrap data.</li>
+<li>Harness checks mini-harness API compatibility and establishes a controller lifetime. It sends no launch request before bootstrap is complete.</li>
+<li>After admitted work and preparation, harness requests execution; mini-harness opens the native session and checks native readiness.</li>
+</ol>
+<p><strong>Harness bootstrapped</strong>, <strong>mini-harness reachable</strong> and <strong>engine execution ready</strong> are different observations, not a separate multi-stage notification protocol. Port existence alone is not readiness. Startup retries have a bounded deadline; engine binaries need not exist in the harness image for hydration.</p>
+<p>Only approved engine-needed hydration outputs are shared. Harness private manifests/home/secrets remain private. Mini-harness manages native files in engine home/workspace.</p>
+<p>The current layout defaults to <code>&lt;mountPath&gt;/home</code> with persistence enabled, otherwise <code>/tmp/ach-home</code>; workDir defaults to <code>&lt;home&gt;/workspace</code>. Preparation creates a session-keyed workspace and links <code>.ach-state</code> to hydrated prompts/artifacts under home. Workspaces can survive successive events; they are not merely temporary hydration buffers. Preserve configured paths, retention and link resolution when rendering mounts. Containers share explicitly mounted volumes, not their whole root filesystems. Use ephemeral or persistent storage according to the existing configuration; do not force an emptyDir-only lifecycle or add a storage subsystem for the split.</p>
+<p>Per-event channel.prepare remains on the harness lane after admission, before invocation. It is neither hydration nor a channel-container startup operation.</p>
+<h2 id="5-channels-api">5. Channels API</h2>
+<p>Channels is physically separate in Kubernetes immediately. Local mode can use an in-process adapter with the same serializable envelopes.</p>
+<table>
+<thead>
+<tr>
+<th>Envelope</th>
+<th>Required semantics</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Event</td>
+<td>Stable event/idempotency ID, target agent, source channel, validated identity/context, existing session-routing inputs, payload, <code>free_form</code> and correlation</td>
+</tr>
+<tr>
+<td>Submission outcome</td>
+<td>Accepted/rejected/retryable with reason and event ID; invocation ID if assigned; current queued/running/completed state for an existing event</td>
+</tr>
+<tr>
+<td>Completion</td>
+<td>Event/invocation correlation, terminal status and serializable result/error</td>
+</tr>
+</tbody>
+</table>
+<p>No future, callback, live HTTP object or engine handle crosses this boundary. <code>reply_future</code> and <code>delivery_context.on_complete</code> / <code>on_fail</code> become an ID-keyed completion registry. Harness-internal <code>on_text</code> / <code>on_tool</code> sinks stay internal. Preserve existing session derivation, dedup identifiers and channel-specific acknowledgement/reply behavior. Removing callbacks does not remove <code>_event_value</code> scalar conversion or printable/repository-path validation.</p>
+<p>Use direct HTTP submission, with a correlated response/event stream when the source waits for completion. No durable result service or arbitrary source-provided callback URL is introduced.</p>
+<p>Harness authenticates channels-service requests and validates target scope. A platform-injected per-pod HMAC key exists only in channels/harness environments. Sign method, request target, body, timestamp and nonce with an unambiguous encoding; verify signatures, a short validity window and a bounded nonce cache. Retries use a fresh nonce with the same event ID. Use standard HMAC primitives and constant-time verification; no reusable bearer is sent.</p>
+<p>Channels must verify signatures on every response that changes source acknowledgement or delivery behavior: acceptance, rejection (including FULL_QUEUE), duplicate, outcome-unavailable and authoritative terminal outcomes. Bind the response status and body to the request nonce and event/invocation correlation. Missing or invalid authentication is a submission failure, never an instruction to acknowledge or discard work. An impostor must not be able to acknowledge or complete work merely by binding the harness port. Streaming progress is not an authoritative acceptance or terminal result. Exact signed-message encoding belongs to implementation planning.</p>
+<p>This authenticates messages, not the TCP peer, and does not encrypt content. An impostor can observe or relay a valid request before its nonce has been accepted; HMAC does not prevent that relay. The nonce cache rejects previously accepted requests within its lifetime, not across loss of in-memory state. Event deduplication still applies. No TLS or new certificate infrastructure is introduced.</p>
+<p>Unavailable harness means failure/retry according to the source contract, not an accepted message silently discarded. Ambiguous submissions retry with the same ID. Acceptance is not completion or durable storage: current in-memory failure limitations remain, with no exactly-once external-effects promise.</p>
+<p>Resubmitting an existing event returns its state and assigned invocation ID, plus its terminal result when retained. A synchronous waiter can reattach by event ID; channels disconnect only detaches that waiter and never cancels admitted work. Retain terminal outcomes for a configurable bounded window, with finite entry/byte limits; active entries are bounded by admission. Expiry or capacity eviction returns an explicit outcome-unavailable response. A retained dedup record without an outcome must not trigger re-execution or invent success. Harness restart can lose accepted work and results; this is not a durable result service.</p>
+<p>Future queue consumption must feed the existing router, not another scheduler.</p>
+<p><strong>Existing Redis queue adapter:</strong> the Redis Streams consumer, consumer-group pending-entry recovery and current acknowledgements move with channels. Preserve actual behavior: accepted/duplicate submissions are acknowledged at admission, not execution completion; authenticated FULL_QUEUE follows the existing acknowledge-and-drop path; submission exceptions or unauthenticated responses remain pending for recovery. The <code>ackMode: onComplete</code> label does not change that implementation behavior in this increment. Configuration documentation and release notes must state that admission ACK can lose work before completion and overload intentionally drops messages. Changing these source semantics is separate work, not an incidental change in the HTTP split.</p>
+<h2 id="6-mini-harness-execution-api">6. Mini-harness execution API</h2>
+<p>Our HTTP API expresses:</p>
+<ul>
+<li>Controller connection and fixed API-version compatibility.</li>
+<li>Open/acquire session with public bootstrap configuration and workspace.</li>
+<li>Begin invocation, then execute turns on its current session and stream required events/results.</li>
+<li>Cancel invocation; release/close session.</li>
+<li>Discard or compact the native session; forget a conversation-key mapping.</li>
+<li>Report native launch/readiness failure, process exit and cleanup outcome.</li>
+</ul>
+<p>Exact URI names and DTO spelling belong in implementation planning. Session/execution/invocation/controller correlation and the behavior below are required.</p>
+<p>Use HTTP operations and independent streamed responses/SSE for invocation output. Mini-harness translates native text, tool/lifecycle and usage events and reports turn completion. The harness validates the terminal contract. There is no engine question/approval return path in this increment: current question/permission/elicitation settings remain in force. Section 11 defines the concrete parity inventory.</p>
+<p>Buffers and response sizes are bounded per stream and in aggregate. Heavy output or a slow reader must not prevent cancellation or another session's progress. A stalled invocation stream fails that invocation rather than blocking the API or accumulating unlimited output.</p>
+<p>A dedicated long-lived HTTP connection defines the controlling harness lifetime; associated requests reference that controller, with one owner at a time. This is correlation within the agent-wide engine scope, not authentication against a compromised engine. Control descriptors must not leak into child processes.</p>
+<p>Controller loss closes launch admission and fails active invocations without replay. Mini-harness cleans every owned execution before another controller is accepted. Lost invocation streams fail their respective invocations; controller loss affects all owned executions. No transparent reconnect, replay history or native-session adoption across controller loss is implemented.</p>
+<p>Controller loss means transport closure, not a new heartbeat. The harness liveness probe must detect an unresponsive controller process and force its restart. Invocation admission carries the remaining <code>maxInvocationSeconds</code> budget; the mini-harness establishes a local hard deadline and enforces termination when it expires. Subsequent turns cannot reset or extend that invocation deadline. The harness also enforces its deadline; these are bounded execution timers, not ownership fencing.</p>
+<h2 id="7-failure-and-cleanup">7. Failure and cleanup</h2>
+<p>Native startup failure returns typed <strong>LaunchFailed</strong>. Mini-harness kills/reaps the failed process; central harness fails that invocation without exiting or restarting unrelated healthy sessions.</p>
+<p>Cancellation and cleanup use bounded deadlines. <code>tini</code> is PID 1 and reaps orphaned zombies; process-group signalling alone does not prove detached descendants stopped. Mini-harness must terminate owned live processes and establish cleanup before reuse. If that cannot be established, it refuses new work and exits. <code>tini</code> then exits, causing remaining processes in the container PID namespace to be killed; platform supervision handles replacement. <code>tini</code> is not a hydration init container and does not itself establish successful cleanup of live descendants before exit.</p>
+<table>
+<thead>
+<tr>
+<th>Transition</th>
+<th>Required ordering</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Successful final turn</td>
+<td>Harness validates the outcome; mini-harness confirms invocation activity has ceased; lane is released after required cleanup. A healthy idle native process may remain for warm reuse.</td>
+</tr>
+<tr>
+<td>Cancel or stalled execution stream</td>
+<td>Request cancellation, stop the affected execution and confirm no remaining invocation writers, then finish cleanup and release the lane. A failed stream alone is not stop confirmation.</td>
+</tr>
+<tr>
+<td>Cancel races completion</td>
+<td>First accepted terminal outcome wins; ignore the later outcome, but still establish quiescence/cleanup before lane release.</td>
+</tr>
+<tr>
+<td>Duplicate live execute or obsolete controller</td>
+<td>Reject by invocation/turn or controller identity; do not execute twice. A subsequent distinct turn is allowed only after the previous turn completes.</td>
+</tr>
+<tr>
+<td>Cleanup deadline expires</td>
+<td>Mini-harness closes admission and exits; controller loss fails all affected invocations. Rearm execution when a new mini-harness instance accepts the controller, not by reconnecting to the failed instance. No per-lane quarantine state is introduced.</td>
+</tr>
+<tr>
+<td>Controller disconnect</td>
+<td>Stop all owned executions, including warm ones, and reap before accepting another controller; otherwise exit.</td>
+</tr>
+</tbody>
+</table>
+<p>Terminal outcome, cessation of invocation writes and native process exit are distinct observations. Successful warm reuse need not kill a healthy idle process. Cleanup failure blocks engine admission as a whole until a new mini-harness instance accepts the controller. Its startup identity distinguishes it from the failed instance; this is supervised recovery under the single-pod model, not proof of termination on a lost node or cross-node fencing.</p>
+<p>This is supervised cleanup, not independent enforcement against a fully compromised mini-harness refusing to cooperate. Containment failure or endpoint unhealthiness can require platform replacement. Replacing shared execution explicitly fails all affected invocations.</p>
+<p>Ordinary containers have no guaranteed shutdown order. Stop admission, attempt graceful completion/cancellation, then rely on runtime/platform termination. Pod API deletion does not prove an unreachable node stopped execution. Completed external effects cannot be undone by disconnecting.</p>
+<p><strong>No new platform ownership lease is introduced.</strong> Existing governance/revocation remains, but automatic authorization shutdown during a platform partition is not promised. Revocation of one gateway key is not asserted to fence raw forge credentials or every MCP/A2A path. The earlier unresolved lease dependency is removed together with that guarantee.</p>
+<h2 id="8-credentials-proxies-and-security">8. Credentials, proxies and security</h2>
+<p>Managed credentials never enter the execution API, engine arguments, environment, generated config, workspace, responses or ordinary logs. Values legitimately required by the engine come from its own configured environment. The earlier snapshot rejection of <code>engine.forwardEnv</code> in split mode is superseded by the 2026-09-12 operator contract: it selects sanitized names for <code>engineEnvNames</code>, while the mini-harness resolves passthrough <code>${env:NAME}</code> values from the engine-container environment, never from the harness environment. Operators may deliberately expose credentials through that engine environment; record exposure without values. Local child launch likewise uses an explicit environment, without inheriting managed harness secrets. No new credential broker is designed here.</p>
+<p>Managed model/MCP/A2A integrations use harness loopback proxies. Content filtering may be disabled without disabling routing or authorization. Masking/restoration remains a gateway-side configuration decision, not a new harness subsystem.</p>
+<p>Engine processes share agent-wide ambient capability authority. Session directories/IDs are not hostile-session isolation; different agents keep separate private execution state.</p>
+<p>Render three ordinary containers with:</p>
+<ul>
+<li>Pod-wide service-account token automount disabled.</li>
+<li>Separate root/PID namespaces, no shared process namespace or host PID/network mode.</li>
+<li>Non-root users, restricted capabilities, no privilege escalation and appropriate seccomp.</li>
+<li>Shared engine workspace/context only where required; no engine access to harness scratch, secrets or runtime sockets.</li>
+<li>Channels limited to ingress/service credentials and adapter configuration; no engine home or preparation scratch.</li>
+</ul>
+<p>Harness dedup/logical state and preparation scratch have a private mount. Engine home, native files and conversation-key mapping have an engine-only mount. Only the workspace handoff target is shared writable; approved context may be mounted read-only into engine. Never mount a common parent exposing harness state to engine. Distinct volumes or correctly scoped subpath mounts may implement this: two new operator fields/PVCs are not required unless existing configuration cannot express it. Local native mode keeps separate subtrees without claiming same-UID isolation. Existing session mappings must migrate to engine storage during upgrade without silently discarding reuse.</p>
+<p>All three share pod networking. Internal APIs/proxies bind loopback; intentional external ingress/health/metrics listeners bind as required. Inventory routes and enforce authentication on channels submission and privileged harness actions. No loopback authentication is added to the mini-harness or capability proxies; no per-container network isolation is claimed. Upstream ACH authorization remains enforced; local proxy path tokens are not claimed as an authorization boundary.</p>
+<p>Shared/open egress remains: arbitrary curl/package traffic can bypass proxies. Managed routing is not universal interception or data-loss prevention.</p>
+<h2 id="9-private-preparation-and-script-only-work">9. Private preparation and script-only work</h2>
+<p>Private preparation is an independent security correction for the current deployment, scheduled before transport work. It is not deferred until the split.</p>
+<p>Credential-bearing steps use harness-private scratch, including cwd, HOME, tool configuration and Git checkout. No credential-bearing tool consumes agent-mutated configuration. Harness image retains Git and tools required by supported operator scripts.</p>
+<p>Hand approved files into execution without credentials, authorization headers, credential-bearing remote URLs or helper state. Preserve existing workspace/session reuse and the workspace root inode. This specification neither mandates whole-workspace replacement nor adds a configurable handoff target. The existing checkout convention is <code>$ACH_WORKSPACE/repo</code>. Implementation planning must define the private-checkout handoff against existing prepare/cleanup behavior and verify that it does not silently discard retained work. Credential-bearing Git must never fall back to the agent-mutated checkout to preserve compatibility.</p>
+<p>Handoff happens only after previous writers have stopped. Reject paths escaping the target, never follow source symlinks, and do not traverse engine-planted destination symlinks. Recreate harness-owned <code>.ach-state</code> links deliberately rather than copying them from input. Cleanup hooks also receive private HOME/cwd/config and never run credential-bearing tools in the engine workspace or its mutable parent.</p>
+<p>Reject declared configurations requesting the legacy shared credential-bearing cwd/HOME contract, and update shipped examples. Arbitrary shell cannot be proved safe by configuration validation: supported operator scripts must comply with the private-input contract. Trusted script provenance does not make its inputs trusted.</p>
+<p>In the current single-container, same-UID mode, a private directory is not an OS security boundary against a concurrently malicious engine. This correction removes the contaminated Git/configuration input path; it does not make live credentials or scratch inaccessible to that process. Separate PID/root namespaces and private mounts in split mode provide that boundary. Do not describe the independent patch as complete hostile-engine isolation.</p>
+<p>Publication uses credential-free artifacts and a clean private checkout; never execute imported content with publisher credentials.</p>
+<p><strong>webhook-script</strong> remains harness-side with fresh private per-run scratch, <strong>maxConcurrentScripts</strong>, no engine-concurrency slot and no mini-harness dependency. Results return through channel correlation. Script-only work proceeds when the native engine is unavailable but the mini-harness container is healthy. A broken engine container can make the pod unready and requires platform replacement; no ingress availability through that failure is promised.</p>
+<p>Git remote rewriting to a harness reverse proxy remains a bounded extension direction, not a prerequisite once private preparation exists. General gh/glab API interception, SSH/LFS support and transparent CLI brokering are outside this increment.</p>
+<h2 id="10-phase-2-proxy-improvements-and-phase-3-deferred-ideas">10. Phase 2 proxy improvements and phase 3 deferred ideas</h2>
+<p><strong>Phase 2 — proxy improvements:</strong> keep this as planned follow-on work, separate from the split's delivery gate. Build on harness-owned model/MCP/A2A routing to add explicit capability policy and gateway-side content filtering, including secret masking/restoration where supported and validated. Define which values are protected and test both leakage prevention on the managed route and functional correctness. No claim covers arbitrary direct egress. Phase 1 retains existing routing and upstream authorization; it does not introduce a new masking subsystem.</p>
+<p><strong>Phase 3 — evaluate when needed:</strong> credential-free Git/gh/glab integrations, broader traffic interception or Envoy, restricted egress, hardened runtimes, stronger session isolation, separate channels deployment with autoscaling, and S3 artifacts. These remain recorded ideas, not prerequisites or automatic implementation commitments. Rejected duplicate mechanisms (per-lane quarantine, general shell safety validation, custom transport framing) are not a future backlog by default.</p>
+<p><strong>Preparation configuration ownership — discussion recorded, not decided:</strong> consider agent-level preparation/cleanup defaults with channel-specific selection or overrides. Configuration placement is distinct from trusted execution placement: the harness coordinates preparation using normalized channel event variables, regardless of where a hook is declared. A GitLab review may prepare the repository identified by the event, while another channel registers a webhook without invoking an engine. Per-event workspace preparation must remain distinct from one-time hydration and native-engine startup, especially with warm session reuse. Phase 1 preserves current channel-specific hook configuration, selection, event variables and lifecycle; it adds no agent-level hook field or precedence rule. Any future change must define those semantics and preserve credential isolation.</p>
+<p><strong>Future execution queue and autoscaling:</strong> later move channels outside the execution pod and define durable dispatch to harness/engine. A platform-owned autoscaler, potentially KEDA, observes work and starts execution. No new broker/scaler/threshold is selected now. Today's single pod cannot keep channels alive while scaling that same pod to zero.</p>
+<p>Later work must define durable acceptance, delivery recovery, deduplication, ordering, result persistence and safe draining. Events arriving during shutdown must remain retained. Channels/harness still need no Kubernetes administration access.</p>
+<p><strong>S3 session artifacts:</strong> later recover session files, start a fresh native process and export consistent state on close. Mini-harness knows native state; harness owns logical session identity. This restores files, not process memory. Archiving all HOME is not assumed sufficient or safe.</p>
+<p>State selection, consistency, engine-version compatibility, concurrent publication and storage authorization need their own concrete design. No S3 client, catalog, snapshot API or storage credential is added now. Current session identity must simply not assume a permanent PID or permanently mounted disk.</p>
+<h2 id="11-acceptance">11. Acceptance</h2>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Required evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Deployment</td>
+<td>Three separate roles in one pod, intended env/mounts, no init/native-sidecar ordering</td>
+</tr>
+<tr>
+<td>Channels</td>
+<td>Serializable events/results, no futures/lambdas/handles; existing acknowledgement/reply behavior retained</td>
+</tr>
+<tr>
+<td>Submission failure</td>
+<td>Lost acknowledgement followed by same-ID retry returns existing state/result; waiter reattaches without executing again; disconnect does not cancel work; expired/evicted/lost outcome is explicitly unavailable</td>
+</tr>
+<tr>
+<td>Channels authentication</td>
+<td>Stop harness and bind its port from engine: no reusable secret is disclosed and forged acceptance/completion is rejected; retry to real harness with same event ID succeeds. Verify signature binding, replay-cache/window checks and bounded cache behavior without claiming relay prevention</td>
+</tr>
+<tr>
+<td>Central neutrality</td>
+<td>Our API is used centrally; native parsing/session management resides in mini-harness</td>
+</tr>
+<tr>
+<td>Startup</td>
+<td>Either execution container starts first; hydration precedes launch; zero-engine idle state works</td>
+</tr>
+<tr>
+<td>Compatibility</td>
+<td>Existing local Pi/OpenCode features and native TUI remain under one launcher</td>
+</tr>
+<tr>
+<td>Streaming</td>
+<td>Heavy output/slow consumer does not block cancel or another session; bounded memory</td>
+</tr>
+<tr>
+<td>Launch failure</td>
+<td>LaunchFailed cleans one process and fails its invocation without harness restart</td>
+</tr>
+<tr>
+<td>Controller loss</td>
+<td>All owned executions, including detached descendants, stopped before new controller; cleanup failure exits/replaces endpoint; no replay; hung controller is detected by liveness and invocation deadline still terminates execution</td>
+</tr>
+<tr>
+<td>Ordering</td>
+<td>Cancel/completion race has one terminal outcome; no lane reuse before quiescence/cleanup; duplicate turn rejected; warm idle reuse preserved; cleanup timeout fails all affected invocations and blocks engine admission until a new mini-harness instance accepts controller</td>
+</tr>
+<tr>
+<td>Credentials</td>
+<td>In split mode, synthetic managed credentials unreadable/unreturned to engine; forwardEnv selects sanitized engine names; passthrough refs resolve from engine env; local launch does not implicitly inherit harness secrets</td>
+</tr>
+<tr>
+<td>State isolation</td>
+<td>Engine cannot read/write harness dedup/state/scratch; native mapping survives intended engine-home reuse and existing mappings migrate; channels cannot read either private store</td>
+</tr>
+<tr>
+<td>Preparation: hostile inputs</td>
+<td>Seed prior workspace with .gitconfig, .git/config and hooks; credential-bearing preparation and cleanup do not execute any planted command</td>
+</tr>
+<tr>
+<td>Preparation: handoff</td>
+<td>Seed source/destination symlinks and escaping paths; no traversal or credential state reaches target; controlled .ach-state recreation succeeds</td>
+</tr>
+<tr>
+<td>Preparation: reuse</td>
+<td>Fresh private scratch on successive events; existing retained-work behavior and workspace root inode preserved; no handoff while previous execution writes; hydration links resolve across mounts</td>
+</tr>
+<tr>
+<td>Scripts</td>
+<td>webhook-script works with native engine unavailable and mini-harness healthy, respects maxConcurrentScripts and consumes no engine slot; broken engine container correctly makes deployment unhealthy</td>
+</tr>
+<tr>
+<td>Proxies</td>
+<td>Managed calls use proxies regardless of filtering setting; upstream ACH authorization remains enforced</td>
+</tr>
+<tr>
+<td>Existing Redis source</td>
+<td>Admission ACK, duplicate ACK, FULL_QUEUE drop/ACK and exception/pending recovery preserved across HTTP ambiguity</td>
+</tr>
+<tr>
+<td>Response authentication coverage</td>
+<td>Forged FULL_QUEUE, duplicate, rejection or outcome-unavailable never causes source ACK/drop; Redis message stays pending. Authenticated responses retain current source behavior</td>
+</tr>
+<tr>
+<td>Shared conversation concurrency</td>
+<td>Two different lanes selecting the same reused conversation cannot overlap its native turns or maintenance; continuity remains shared, cancellation/deadlines bound waiting, and unrelated conversations can progress</td>
+</tr>
+</tbody>
+</table>
+<p>The engine parity inventory below requires evidence through the shared programmatic API, with terminal attachment tested separately:</p>
+<table>
+<thead>
+<tr>
+<th>Existing behavior</th>
+<th>Required evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Text and tools</td>
+<td>Streaming text and existing OpenCodeToolUpdate lifecycle shape survive translation</td>
+</tr>
+<tr>
+<td>Usage and diagnostics</td>
+<td>Usage plus session_ref / oc_session_id turn statistics remain available where applicable</td>
+</tr>
+<tr>
+<td>Multi-turn invocation</td>
+<td>Main turn, step-budget abort/wrap-up and terminal repair continue the same native session; harness validates terminal contract; deadline never resets between turns</td>
+</tr>
+<tr>
+<td>Session lifecycle</td>
+<td>Discard, compact, token-overflow rotation/forget mapping and warm idle-TTL reuse retain behavior</td>
+</tr>
+<tr>
+<td>Routing versus conversation</td>
+<td>session: none / auto / custom works independently of lane FIFO/pool identity</td>
+</tr>
+<tr>
+<td>Engines and local use</td>
+<td>Pi and OpenCode launch/health, local single-launcher HTTP execution, and each engine's native TUI attachment work; no remote TUI promise</td>
+</tr>
+</tbody>
+</table>
+<p>Tests follow implemented scope. Broker, autoscaling and S3 validation belong to later work.</p>
+<h2 id="12-implementation-order-and-review">12. Implementation order and review</h2>
+<p>The following steps deliver <strong>phase 1: the split with functional parity</strong>. The preparation patch has an independent security gate; phase 2 proxy improvements and phase 3 ideas are described in Section 10 and do not block this delivery.</p>
+<ol>
+<li>Private credential-bearing preparation/cleanup and script-only scratch, with hostile-workspace acceptance evidence. Independent patch for the current release line, before transport work; its ship gate does not claim same-UID isolation.</li>
+<li>Serializable channel envelopes and bounded ID-keyed completion registry, including resubmission and waiter reattachment. Router untouched.</li>
+<li>Native integrations behind mini-harness HTTP API: multi-turn/session operations, engine-owned native mapping, bounded streaming, LaunchFailed, cleanup ordering and carried deadline. Local programmatic execution switches to this single path.</li>
+<li>Channels HTTP adapter with signed requests/acceptance/outcomes; three-container manifest, private state mounts, engine environment rules and local isolated configuration.</li>
+</ol>
+<p>Step 0 is independently releasable after its checks. Steps 1–3 ship together as the separation increment; its final deliverable includes physically separate channels. This order is implementation guidance, not authorization to release code.</p>
+<p>This revision replaces the Unix transport/lease proposal. AgentTrigger CRDs and Actions-as-OCI deployment are not requirements of this increment; this does not remove deployed resources or claim earlier broader proposals are implemented.</p>
+<p>The architecture is closed at this scope. Endpoint paths, signed-message encoding, DTO spelling, finite limit defaults, probe wiring and mount rendering belong to implementation planning and targeted verification. They must satisfy these contracts without adding a broker, heartbeat, ownership lease or speculative storage framework. No further full architecture review is required unless implementation reveals an incompatible constraint.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../../..", "features": [], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

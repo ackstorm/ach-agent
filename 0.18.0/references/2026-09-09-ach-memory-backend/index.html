@@ -1,0 +1,725 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>ach-memory as an ach-agent memory backend - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#ach-memory-as-an-ach-agent-memory-backend" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ach-memory as an ach-agent memory backend
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-goal" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Goal
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-why" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Why
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-what-ach-memory-gives-us" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. What ach-memory gives us
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-prior-art-to-reuse-not-reinvent" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Prior art to reuse, not reinvent
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Configuration
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Flow
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#boot" class="md-nav__link">
+    <span class="md-ellipsis">
+      Boot
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#per-event" class="md-nav__link">
+    <span class="md-ellipsis">
+      Per event
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#passing-the-project-to-the-facade" class="md-nav__link">
+    <span class="md-ellipsis">
+      Passing the project to the facade
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-the-agent-sees" class="md-nav__link">
+    <span class="md-ellipsis">
+      What the agent sees
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-prompt" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Prompt
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-deletions" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Deletions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-decided-how-the-harness-authenticates" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. DECIDED — how the harness authenticates
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-test-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      10. Test surface
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-gitlab-pryaml-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      11. gitlab-pr.yaml migration
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="ach-memory-as-an-ach-agent-memory-backend">ach-memory as an ach-agent memory backend</h1>
+<p><strong>Status:</strong> spec, settled. Auth decided 2026-09-09 (§9). Ready to become an implementation plan.
+<strong>Supersedes for new agents:</strong> <code>2026-07-05-hindsight-memory-facade.md</code> (the direct-Hindsight backend).
+<strong>Companion:</strong> <code>ach-memory/docs/plans/2026-09-09-builtin-only-standing-context.md</code> (Plan A). Independent — this work runs against ach-memory as it stands today and only <em>benefits</em> from Plan A's <code>load_context</code> scope filter.</p>
+<hr />
+<h2 id="1-goal">1. Goal</h2>
+<p>Replace the direct-Hindsight memory backend with ach-memory. The agent stops carrying a bank id, an admin secret, and a list of mental models; it gains per-project memory scoped by authorization rather than by a tag convention the prompt merely asks for.</p>
+<h2 id="2-why">2. Why</h2>
+<p>Measured on <code>gitlab-reviewer</code> (2026-09-08). <code>fetch_mental_model_summaries</code> calls Hindsight's <code>get_mental_model</code> once per configured model, per invocation, and injects the result into the system prompt. Hindsight defaults <code>detail="full"</code>, which returns the whole row — including <code>reflect_response.based_on</code>, the full text of every fact the synthesis cited, plus the refresh trace — pretty-printed with <code>json.dumps(indent=2)</code>. <code>maxTokens</code> bounds only the <code>content</code> field; the envelope around it is unbounded.</p>
+<p><code>hindsight.py:201</code> now passes <code>detail="content"</code>, which caps the immediate bleeding. The structural problems remain:</p>
+<ol>
+<li><strong>One bank for every repository.</strong> <code>bank: gitlab-ackstorm</code> is static and shared. <code>MentalModelSpec</code> has no <code>tags</code> field, so "Architecture Overview" synthesizes across every ACKstorm repo at once. The system prompt asks the model to tag memories <code>repo:&lt;project-path&gt;</code>; nothing enforces it and nothing reads it back.</li>
+<li><strong>No budget.</strong> Four models at 4096/2048/2048/2048 = 10 240 tokens of <em>content</em>, injected on every event including the Trivial tier the prompt's own decision table says should load nothing.</li>
+<li><strong>A bank-wide admin secret</strong> lives in the agent's environment.</li>
+</ol>
+<p>ach-memory answers the first two outright: <code>load_context</code> is deadline-bounded and token-budgeted and returns only <code>content</code>, and project scope is resolved server-side through authz. The third it narrows rather than removes — see §9.</p>
+<h2 id="3-what-ach-memory-gives-us">3. What ach-memory gives us</h2>
+<table>
+<thead>
+<tr>
+<th>Need</th>
+<th>Mechanism</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Bounded standing context</td>
+<td><code>load_context</code> — 2s deadline (<code>DEADLINE_SECONDS</code>), per-section <code>max_tokens</code>, a 5120-token global ceiling (<code>assemble_context</code>), <code>_model_text</code> takes only <code>content</code>, machine-readable <code>omissions</code>/<code>overages</code> for anything dropped or over budget</td>
+</tr>
+<tr>
+<td>Hard ceiling</td>
+<td><code>USER_ALWAYS_IN_CONTEXT_BUDGET</code> / <code>PROJECT_ALWAYS_IN_CONTEXT_BUDGET</code> = 2560 each, enforced at registration</td>
+</tr>
+<tr>
+<td>Per-repo isolation</td>
+<td>project scope; <code>project_slug</code> resolved through <code>projects.resolve</code> + authz</td>
+</tr>
+<tr>
+<td>Provisioning</td>
+<td><code>POST /v1/bootstrap {project_slug}</code> — idempotent; creates project, bank, the <code>project-context</code> built-in, and the exact-retain strategy</td>
+</tr>
+<tr>
+<td>Standing models</td>
+<td>built-ins <code>user-context</code> / <code>project-context</code> (2048 each). After Plan A, custom models can never be standing</td>
+</tr>
+<tr>
+<td>Response compaction</td>
+<td><code>mcp/compact.py</code> strips fields no caller of this surface can use</td>
+</tr>
+</tbody>
+</table>
+<p><strong>The four configured mental models go away entirely.</strong> <code>project-context</code>'s own source query already covers them: <em>"accepted decisions and useful rationale, constraints, conventions, non-obvious facts and history, and verified gotchas… distinguish rejected or superseded alternatives from active decisions."</em> That is <code>architecture</code> + <code>conventions</code> + <code>recurring-issues</code> in one, at 2048 tokens, on a delta refresh with a 300s floor. <code>team-reviewer</code> does not fit the remaining 512-token headroom and should not: reviewer/ownership context is a <code>recall</code> at review time, not standing context on every webhook.</p>
+<h2 id="4-prior-art-to-reuse-not-reinvent">4. Prior art to reuse, not reinvent</h2>
+<ul>
+<li><strong><code>ach-memory/src/memory/mcp/proxy.py</code></strong> — the client-side bridge. It already resolves a project (<code>MEMORY_PROJECT</code> env, else git origin), calls <code>POST /v1/bootstrap</code> once at startup, fills project-scoped arguments the model omitted, and forwards the rest unchanged. Its <code>bootstrap()</code> (<code>proxy.py:83</code>) is the exact call this harness needs, including its fail-open contract: <em>"a broken or slow service must cost this session its bootstrap, never its startup."</em> It is a <strong>stdio</strong> bridge started once, so it cannot serve a per-event project — but its behaviour is the reference.</li>
+<li><strong><code>RepoCheckoutFacade</code></strong> (<code>main.py:496-509</code>) — a second loopback facade in the same boot block, and the clearest example of the invariant this one must also hold: the agent never sees the credential or the real endpoint, only the loopback URL.</li>
+<li><strong><code>memory.codemem.project</code> templating</strong> (<code>engine_runner.py:174-186</code>) — the existing precedent for a per-event, <code>{{ }}</code>-templated memory project, rendered from the same <code>ctx</code> as <code>channel.prompt</code>.</li>
+<li><strong><code>MemoryFacade</code></strong> (<code>memory/facade.py</code>) — the loopback FastMCP shape, <code>LocalMcpHost</code>, and the fail-soft <code>_invoke</code>.</li>
+</ul>
+<h2 id="5-configuration">5. Configuration</h2>
+<div class="highlight"><pre><span></span><code><span class="nt">memory</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ach-memory</span>
+<span class="w">  </span><span class="nt">achMemory</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">endpoint</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://ach-memory.ach.svc:8000</span>
+<span class="w">    </span><span class="nt">auth</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">secretKeyRef</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ach-memory-key</span>
+<span class="w">        </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ACH_MEMORY_API_KEY</span>
+<span class="w">    </span><span class="nt">project</span><span class="p">:</span><span class="w"> </span><span class="s">"{{</span><span class="nv"> </span><span class="s">payload.project.path_with_namespace</span><span class="nv"> </span><span class="s">}}"</span>
+<span class="w">    </span><span class="nt">scope</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">project</span><span class="w">                       </span><span class="c1"># user | project | both (default both)</span>
+<span class="w">    </span><span class="nt">tools</span><span class="p">:</span><span class="w">                               </span><span class="c1"># optional; omitted → the default set below</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">recall</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">reflect</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">retain</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">get_mental_model</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">list_mental_models</span>
+</code></pre></div>
+<p>Gone from the CRD: <code>bank</code>, <code>mission</code>, <code>mentalModels</code>. <code>MentalModelSpec</code> is deleted outright. <code>auth</code> survives, but as a <em>user</em> key rather than a bank-wide admin secret (§9).</p>
+<p><strong><code>tools</code> — optional with a safe default.</strong> Omitted, the facade exposes exactly <code>recall</code>, <code>reflect</code>, <code>retain</code>, <code>get_mental_model</code>, <code>list_mental_models</code>. Everything else ach-memory advertises — <code>create/update/delete_mental_model</code>, <code>forget/correct/restore</code>, the document and operation tools, working state, <code>sync_retain</code> — must be named explicitly. Validate each entry against the server's advertised set at boot and refuse to start on an unknown name, the same discipline the JWT loader uses (<code>ErrEmptyKid</code>): a typo'd tool name that silently does nothing is worse than a failed start.</p>
+<p><strong><code>project</code> is templated, <code>scope</code> is not.</strong> <code>project</code> uses the same <code>{{ }}</code> engine and namespaces as <code>channel.prompt</code> — this is <code>memory.codemem.project</code>'s rule, not <code>memory.hindsight.bank</code>'s. The bank rule (<code>_bank_static</code>) existed because a templated <em>bank id</em> selects another tenant's memory directly. A project slug is different in kind: it never names a bank, it resolves through <code>projects.resolve</code> and <code>_authorize_resolution</code>, and it is exactly the value <code>_REPO_PATH</code> (<code>boot/prepare.py:71</code>) already validates as a trust boundary for the clone URL. Carry that validation over; do not invent a second one.</p>
+<h2 id="6-flow">6. Flow</h2>
+<h3 id="boot">Boot</h3>
+<ol>
+<li>Resolve the ach-memory endpoint (§9) and probe it. Unreachable → <code>MEMORY_DEGRADED</code>, no facade, run without memory. Fail-open, unchanged (D-02).</li>
+<li>Start the ach-memory facade on loopback with the resolved credential and the tool allowlist.</li>
+<li><strong>No mental-model provisioning.</strong> <code>provision_memory</code>'s model loop is deleted. Bootstrap moves to the per-event path because it needs the project.</li>
+</ol>
+<h3 id="per-event">Per event</h3>
+<p>Ordering already exists and is correct — <code>engine_runner</code> builds <code>ctx</code> from the channel event (<code>:123</code>) and only then calls <code>select_memory_wiring_async</code> (<code>:135</code>). Memory wiring is already downstream of the channel. Nothing to reorder.</p>
+<ol>
+<li>Render <code>achMemory.project</code> from <code>ctx</code>. Validate against <code>_REPO_PATH</code>. Empty or invalid → user scope only, log, continue.</li>
+<li><code>POST /v1/bootstrap {project_slug}</code> — <strong>once per project per process</strong>, cached in memory. Not once per event. Fail-open: log, drop to user scope, continue.</li>
+<li><code>load_context(project_slug, scope)</code> — one call, replacing N× <code>get_mental_model</code>.</li>
+<li>Take <code>ContextPayload.text</code> verbatim as the <code>## Memory</code> body. <strong>Do not re-render sections</strong> — <code>assemble_context</code> (<code>delivery.py:58</code>) has already ordered them, neutralised forged headings (<code>_inert</code>), applied every per-section budget and enforced the 5120-token global ceiling. The harness's whole job is <code>f"## Memory\n\n{payload['text']}"</code>. Log <code>omissions</code>, <code>overages</code> and <code>total_tokens</code>; put none of them in the prompt.</li>
+<li>Pass the facade URL for this event to opencode.</li>
+</ol>
+<h3 id="passing-the-project-to-the-facade">Passing the project to the facade</h3>
+<p>The facade is one long-lived loopback server shared across events; the tool call arrives from opencode on a different task than <code>engine_runner</code>, so a contextvar will not propagate. <code>engine_runner</code> already rebuilds <code>mcp_servers</code> per invocation (<code>:166</code>), so <strong>put the project in the facade URL path</strong> — <code>http://127.0.0.1:&lt;port&gt;/mcp/&lt;urlencoded project&gt;</code> — and have the facade read it per request. Stateless, per-event, no session map to leak or evict.</p>
+<p>The alternative — a <code>{session_key: project}</code> map registered before each invocation — needs the MCP call to carry the session key, which it does not. Note the constraint the codemem comment records (<code>:174-176</code>): the pool reuses one agent per <code>session_key</code>, so anything baked at agent-acquire time is pinned by the first event of the session. A URL read per request is not.</p>
+<h3 id="what-the-agent-sees">What the agent sees</h3>
+<p>Exactly as today: the agent never sees the credential, the endpoint, or the project. <code>retain</code>/<code>recall</code>/<code>reflect</code>/<code>get_mental_model</code> are exposed <strong>without</strong> <code>scope</code> and <code>project_slug</code> parameters; the facade fills both from the URL. This is the same contract as today's bank injection, and it is what makes §5's templating safe — the agent cannot choose, or be talked into choosing, another project.</p>
+<h2 id="7-prompt">7. Prompt</h2>
+<p><code>TOOLS_SPEC</code> is per-backend and harness-appended (operator contract §2, line 516: <em>"each <code>memory.type</code> owns its own <code>TOOLS_SPEC</code>"</em>), so the ach-memory backend ships its own and no skill is needed in the catalog.</p>
+<p>It must carry the typed-retain contract, because ach-memory rejects a retain that does not meet it: <code>memory_type</code>, <code>basis</code>, <code>trigger</code>, and 1–4 <code>evidence</code> excerpts are required, content is capped at 4 KiB, secrets are rejected, and content must be English regardless of conversation language. A retain missing any of these bounces on validation. This is boot-static harness text, not a hint the model can be argued out of.</p>
+<p>Also drop from <code>gitlab-pr.yaml</code>'s system prompt: the <code>tags: ["repo:&lt;project-path&gt;"]</code> instructions and the <code>memory_recall</code>/<code>memory_reflect</code>/<code>memory_retain</code> tag guidance in Phases 1, 3 and 5. Scope replaces tags, and the harness sets it.</p>
+<h2 id="8-deletions">8. Deletions</h2>
+<table>
+<thead>
+<tr>
+<th>Delete</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fetch_mental_model_summaries</code></td>
+<td><code>memory/hindsight.py:177</code> (and the <code>detail="content"</code> fix, which goes with it)</td>
+</tr>
+<tr>
+<td>Mental-model provisioning loop</td>
+<td><code>memory/hindsight.py:314-345</code></td>
+</tr>
+<tr>
+<td><code>MentalModelSpec</code></td>
+<td><code>config/schema.py:245</code>; <code>ach/api/ach/v1alpha1/achagent_types.go:75</code></td>
+</tr>
+<tr>
+<td><code>HINDSIGHT_GET_MENTAL_MODEL</code>, <code>_CREATE_</code>, <code>_REFRESH_</code></td>
+<td><code>memory/hindsight.py:36-39</code></td>
+</tr>
+<tr>
+<td><code>memory_get_mental_model</code> facade tool</td>
+<td><code>memory/facade.py</code></td>
+</tr>
+</tbody>
+</table>
+<p>Keep the Hindsight backend itself. <code>memory.type</code> is a discriminated union; ach-memory is a third arm beside <code>hindsight</code> and <code>codemem</code>, not a replacement of the union.</p>
+<h2 id="9-decided-how-the-harness-authenticates">9. DECIDED — how the harness authenticates</h2>
+<p><strong>Decision (2026-09-09): direct in-cluster URL with an ach-memory user key.</strong></p>
+<div class="highlight"><pre><span></span><code><span class="nt">achMemory</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">endpoint</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://ach-memory.ach.svc:8000</span>
+<span class="w">  </span><span class="nt">auth</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">secretKeyRef</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ach-memory-key</span>
+<span class="w">      </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ACH_MEMORY_API_KEY</span>
+</code></pre></div>
+<p>The harness reaches both surfaces at one origin: <code>POST /v1/bootstrap</code> for provisioning and <code>/mcp</code> for <code>load_context</code> and the facade's proxied tool calls. Auth is <code>Authorization: Bearer &lt;user key&gt;</code> on both — the same header <code>proxy.py:97</code> already uses. <code>auth</code> is a <code>SecretSource</code>, resolved at use time, never logged, never forwarded to opencode: the existing <code>resolve_memory_secret</code> gate applies unchanged, including its <code>(False, None)</code> misconfigured-degrade branch.</p>
+<p><strong>Why not the ek through the forwarder.</strong> It was the other candidate: <code>achMemory.mcpServerId</code> naming a hydrated <code>runtime.mcpServers[]</code> entry, ek as <code>x-ach-key</code>, the forwarder minting the EdDSA JWT that <code>jwt_provider.py</code> already verifies. Rejected because it needs <code>bootstrap</code> on the MCP surface, which <code>FORBIDDEN_TOOLS</code> deliberately keeps off it (<code>create_project</code> is barred there), and that widening is not worth buying with this migration.</p>
+<p><strong>Consequences to hold in mind:</strong></p>
+<ul>
+<li><strong>ach-memory requires no change for this work.</strong> Plan A and this plan are fully independent and can run in either order or at once.</li>
+<li><strong>The memory principal is the key's user, not the ACH identity.</strong> Every agent configured with the same key shares one user bank — so <code>user-context</code> is shared standing context across those agents. Give each agent its own ach-memory user key unless sharing is intended. With <code>scope: project</code> (§5) the user section is omitted anyway, which is the recommended setting for a bot.</li>
+<li><strong>A static shared secret stays in the agent's environment.</strong> It is narrower than today's Hindsight admin secret — a user key is scoped to one ach-memory user and its authorized projects, not to every bank on the service — but it is still a credential to rotate, and rotation is a pod restart.</li>
+</ul>
+<h2 id="10-test-surface">10. Test surface</h2>
+<p>Existing files to extend, following their conventions:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Covers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tests/config/test_memory_union.py</code></td>
+<td>the third union arm; <code>{type: ach-memory}</code> accepted, flat form rejected</td>
+</tr>
+<tr>
+<td><code>tests/config/test_ach_memory_schema.py</code> <em>(new)</em></td>
+<td><code>tools</code> default set, unknown-tool refusal, <code>project</code> templating allowed, <code>scope</code> enum</td>
+</tr>
+<tr>
+<td><code>tests/memory/test_ach_memory_adapter.py</code> <em>(new)</em></td>
+<td><code>load_context</code> → prompt section; bootstrap cached per project; every fail-open branch</td>
+</tr>
+<tr>
+<td><code>tests/memory/test_facade.py</code></td>
+<td>allowlist enforcement; <code>scope</code>/<code>project_slug</code> absent from every exposed signature</td>
+</tr>
+<tr>
+<td><code>tests/memory/test_wiring.py</code></td>
+<td>facade URL carries the rendered project; MCP server present/absent per probe branch</td>
+</tr>
+</tbody>
+</table>
+<p>Two behaviours worth a test of their own because they are the ones that will regress silently: <strong>the agent-facing tool signatures must not contain <code>project_slug</code> or <code>scope</code></strong>, and <strong>a project that fails <code>_REPO_PATH</code> must fall back to user scope rather than reaching <code>projects.resolve</code></strong>.</p>
+<h2 id="11-gitlab-pryaml-migration">11. gitlab-pr.yaml migration</h2>
+<p><code>aws-nglz-genai/gitops-genai-blueprint/workloads/agents/achagents/gitlab-pr.yaml</code>:</p>
+<ul>
+<li>replace the whole <code>memory:</code> block with §5's form</li>
+<li>delete the four <code>mentalModels</code> entries</li>
+<li>delete the <code>repo:&lt;project-path&gt;</code> tag instructions from Phases 1, 3 and 5 of the system prompt</li>
+<li>keep <code>GITLAB_TOKEN</code> and the prepare/cleanup scripts unchanged</li>
+</ul>
+<p>No migration of the <code>gitlab-ackstorm</code> bank — declined. Its memories carry no <code>schema:ach-retain-v1</code> tag, so <code>project-context</code> (which matches <code>tags_match: "all"</code> on those tags) would read nothing from it regardless. Fresh start.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

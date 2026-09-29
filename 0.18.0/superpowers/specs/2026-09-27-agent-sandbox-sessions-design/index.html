@@ -1,0 +1,863 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>Agent Sandbox Sessions — Design - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#agent-sandbox-sessions-design" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Agent Sandbox Sessions — Design
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Decisions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Architecture
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-flows" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Flows
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Flows">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-task-agent-sessionless" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.1 Task agent (sessionless)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-bot-agent-sessioned" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.2 Bot agent (sessioned)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-the-session-tarball" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. The session tarball
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-transport-and-trust-between-harness-and-sandbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Transport and trust between harness and sandbox
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-harness-changes-ach-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Harness changes (ach-agent)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-operator-changes-ach" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Operator changes (../ach)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-known-exception-mcpservers-passthrough" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Known exception: mcpServers passthrough
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-phase-2-not-implemented-now" class="md-nav__link">
+    <span class="md-ellipsis">
+      10. Phase 2 (not implemented now)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-infrastructure-terraform" class="md-nav__link">
+    <span class="md-ellipsis">
+      11. Infrastructure (Terraform)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-acceptance-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      12. Acceptance evidence
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#13-open-for-the-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      13. Open for the plan
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#amendments-2026-09-28" class="md-nav__link">
+    <span class="md-ellipsis">
+      Amendments 2026-09-28
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="agent-sandbox-sessions-design">Agent Sandbox Sessions — Design</h1>
+<p><strong>Status:</strong> Draft for review. Not an implementation plan.</p>
+<p><strong>Date:</strong> 2026-09-27</p>
+<p><strong>Builds on:</strong> <a href="2026-09-10-agent-execution-isolation-design.md">Portable Agent Execution and Isolation</a>
+(concept spec, vendor-neutral) and the
+<a href="../../../references/2026-09-14-three-role-split/">three-role split contract</a>. This document
+selects the sandbox vendor, fixes the session persistence model and splits the work across
+repositories. It does not rewrite either source document.</p>
+<p><strong>Repositories:</strong> <code>ach-agent</code> (this repo), <code>../ach</code> (operator), <code>../aws-nglz-genai/terraform-genai-blueprint-module</code> (infra).</p>
+<hr />
+<h2 id="1-goals">1. Goals</h2>
+<ol>
+<li><strong>Task agents</strong> (sessionless, non-interactive): each event runs in a fresh isolated
+   sandbox that is destroyed afterwards.</li>
+<li><strong>Bot agents</strong> (sessioned): one isolated sandbox per <code>session_key</code>. When the session goes
+   idle its state is stored; when an event for that session returns, the state is restored
+   and the conversation continues — including the next day.</li>
+<li><strong>No credential in the sandbox.</strong> The engine reaches models, ACH MCP servers, memory, a2a
+   and repo checkout only through harness facades. The sandbox's network is restricted to the
+   harness.</li>
+<li><strong>Reuse upstream</strong> rather than build: Kubernetes SIG projects where they fit.</li>
+</ol>
+<h2 id="2-decisions">2. Decisions</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Decision</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>D1</td>
+<td>Sandbox lifecycle uses <strong><code>kubernetes-sigs/agent-sandbox</code></strong> (v1.0.x, <code>agents.x-k8s.io/v1beta1</code> + <code>extensions.agents.x-k8s.io/v1beta1</code>): <code>SandboxTemplate</code>, <code>SandboxWarmPool</code>, <code>SandboxClaim</code></td>
+<td>SIG Apps project, stable API, one controller. Isolation itself is <code>runtimeClassName</code> (gVisor/Kata) in the template.</td>
+</tr>
+<tr>
+<td>D2</td>
+<td><strong>kagent</strong> (kagent.dev v1) and <strong>agent-substrate</strong> are references only; no code reused</td>
+<td>kagent v1 is alpha on a forked pre-1.0 Substrate, lacks our channels and LiteLLM governance. Substrate's value (RAM checkpoint, actor multiplexing) needs its own control plane + Postgres + privileged DaemonSet; our engines keep state on disk, so a disk snapshot suffices. The <em>idea</em> is borrowed: idle → snapshot to object storage → sandbox returns to pool.</td>
+</tr>
+<tr>
+<td>D3</td>
+<td>The <strong>harness</strong> creates and deletes <code>SandboxClaim</code>s, per event (task) or per session (bot)</td>
+<td>The harness owns lanes and session lifecycle.</td>
+</tr>
+<tr>
+<td>D4</td>
+<td>The in-sandbox process is the existing <strong>mini-harness</strong> (the three-role <code>engine</code> role, <code>ach_agent.execution</code>). <code>sandboxd</code> is not used</td>
+<td>sandboxd is a generic process/file daemon (exec + files, no auth, no agent semantics). The mini-harness already speaks acquire/turn/session-op/session-import/release/cancel, and hosts the engine drivers (opencode HTTP/SSE, pi JSONL stdio).</td>
+</tr>
+<tr>
+<td>D5</td>
+<td>Engine control moves from Unix socket to <strong>TCP</strong>; trust = <strong>NetworkPolicy + per-session token</strong></td>
+<td>mTLS not required yet.</td>
+</tr>
+<tr>
+<td>D6</td>
+<td>Bot session state = <strong>the whole per-session HOME</strong> as one tarball, repo clone included</td>
+<td>Engine-agnostic: opencode SQLite, pi storage, future engines. A resumed session finds the repo as it left it.</td>
+</tr>
+<tr>
+<td>D7</td>
+<td>Export <strong>on idle only</strong>; a sandbox crash loses state since the last export</td>
+<td>Accepted trade-off; no per-turn snapshots.</td>
+</tr>
+<tr>
+<td>D8</td>
+<td>Resume tiers: <strong>hot</strong> (sandbox kept) → <strong>PVC cache</strong> (1 day) → <strong>S3</strong> (60 days, bucket lifecycle)</td>
+<td>Fast common case, cheap long tail.</td>
+</tr>
+<tr>
+<td>D9</td>
+<td>Restore is <strong>not</strong> a new session: channel <code>prepare</code> does not run</td>
+<td>The workspace is already there.</td>
+</tr>
+<tr>
+<td>D10</td>
+<td>Harness-owned config files (<code>opencode.json</code>, pi config, …) are <strong>always rewritten</strong> by the harness, including after restore</td>
+<td>An agent cannot plant config for its next life.</td>
+</tr>
+<tr>
+<td>D11</td>
+<td><code>mcpServers</code> passthrough (<code>local</code>/<code>remote</code>) stays as-is: its credentials <strong>do</strong> reach the sandbox</td>
+<td>Documented exception (see §9). Only ACH harness surfaces are credential-free.</td>
+</tr>
+<tr>
+<td>D12</td>
+<td>No credential-injecting egress gateway</td>
+<td>Harness facades cover it.</td>
+</tr>
+<tr>
+<td>D13</td>
+<td>S3 access via <strong>EKS Pod Identity</strong> on the harness, provisioned in Terraform</td>
+<td>No static keys. The sandbox never holds S3 access.</td>
+</tr>
+<tr>
+<td>D14</td>
+<td>Phase 1 = <strong>one harness replica</strong>. Multi-replica + dedicated cache pod = phase 2</td>
+<td>See §10.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="3-architecture">3. Architecture</h2>
+<div class="highlight"><pre><span></span><code> harness pod (trusted, 1 replica in phase 1)                 Sandbox pod (untrusted, gVisor/Kata)
+ ┌────────────────────────────────────────────┐              ┌──────────────────────────────────┐
+ │ channels → router → lane(session_key)      │              │ mini-harness (execution role)    │
+ │ SandboxBackend: claim / push / pull / drop │── control ──▶│   └─ engine: opencode | pi       │
+ │ facades: model · McpProxy · memory · a2a · │   TCP+token  │ HOME=/home/agent (tar unit)      │
+ │          repo checkout  (hold every key)   │◀── /t/&lt;tok&gt;/ │ no secrets · no SA token         │
+ │ session store: PVC cache (RWO) ⇄ S3        │   facades    │ NetworkPolicy: egress → harness  │
+ └────────────────────────────────────────────┘              │   + DNS only; ingress ← harness  │
+         │ Pod Identity                                       └──────────────────────────────────┘
+         ▼
+   S3 bucket  &lt;ns&gt;/&lt;agent&gt;/&lt;hash(session_key)&gt;.tar.zst   (lifecycle: expire 60d)
+</code></pre></div>
+<p>The three-role split is kept: channels + harness stay in the trusted pod; the <code>engine</code> role
+becomes the sandbox. Placement <code>standalone</code>/<code>distributed</code> remain available; sandboxed execution
+is a new placement (§8).</p>
+<p><strong>Deviation from the isolation spec §5:</strong> that spec keeps the engine adapter on the trusted side
+and calls the receiver "transport only". Here the adapter (engine driver) runs inside the
+sandbox, as it already does in the <code>engine</code> role. This is acceptable because the adapter holds
+no secrets; the harness treats every event it returns as untrusted input (existing terminal
+validation stays harness-side).</p>
+<h2 id="4-flows">4. Flows</h2>
+<h3 id="41-task-agent-sessionless">4.1 Task agent (sessionless)</h3>
+<div class="highlight"><pre><span></span><code>event → lane → claim (warm) → wait Ready → hello + token + engine config
+      → workspace/prepare (channel prepare) → turn → deliver → delete claim
+</code></pre></div>
+<p>No restore, no export. <code>SandboxClaim.lifecycle.shutdownPolicy: Delete</code> with a
+<code>shutdownTime</code> as a backstop if the harness dies mid-run.</p>
+<h3 id="42-bot-agent-sessioned">4.2 Bot agent (sessioned)</h3>
+<div class="highlight"><pre><span></span><code>event(session_key) → lane
+  hot?   sandbox for session_key alive → turn                              (subsecond)
+  else   ┌ claim (warm) ─────────────┐   in parallel
+         └ fetch tarball: PVC → S3 ──┘
+         → hello + token → stream tarball into sandbox, extract into HOME
+         → rewrite harness-owned config (D10) → turn                       (seconds)
+         none found → new session: channel prepare → turn
+after turn: keep sandbox hot for idle window (release TTL)
+idle window expires:
+  stop engine → mini-harness streams tar.zst of HOME → harness writes PVC cache
+  → delete claim → upload to S3 in background
+</code></pre></div>
+<ul>
+<li><strong>Hot tier</strong> reuses the existing <code>pool.release(key, ttl_seconds)</code> idea, moved from "keep the
+  opencode process" to "keep the sandbox".</li>
+<li><strong>Claim ‖ fetch</strong> in parallel so their latencies overlap.</li>
+<li><strong>PVC before S3</strong>: sandbox deletion never waits on S3; a harness restart mid-upload finds the
+  file in the PVC and retries.</li>
+<li><strong>Tar only with the engine stopped</strong> — SQLite consistency.</li>
+</ul>
+<h2 id="5-the-session-tarball">5. The session tarball</h2>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Content</td>
+<td>Entire session HOME, including workspace/repo. Token and harness config are outside HOME or rewritten (D10).</td>
+</tr>
+<tr>
+<td>Format</td>
+<td><code>tar</code> + zstd, streamed end to end. Never fully buffered in memory.</td>
+</tr>
+<tr>
+<td>Trust</td>
+<td>Written by the agent → <strong>untrusted</strong>. The harness never extracts it; it only moves bytes between S3/PVC and the sandbox. Extraction happens in the sandbox, so a hostile archive can only damage its own sandbox.</td>
+</tr>
+<tr>
+<td>Size cap</td>
+<td>Configurable maximum; over the cap → export fails loud, session is lost (logged + metric).</td>
+</tr>
+<tr>
+<td>Key</td>
+<td><code>&lt;namespace&gt;/&lt;agent&gt;/&lt;hash(session_key)&gt;.tar.zst</code>. No raw payload-derived text in keys; tenants separated by prefix.</td>
+</tr>
+<tr>
+<td>Retention</td>
+<td>PVC: evict after 1 day (sweep on startup + periodic) plus a size cap. S3: bucket lifecycle expiry, 60 days default.</td>
+</tr>
+<tr>
+<td>Credentials in archive</td>
+<td>None from ACH surfaces. <strong>Exception:</strong> <code>mcpServers</code> passthrough credentials that land in engine config — mitigated because harness-owned config is rewritten on restore, but a copy may still sit in the archived HOME. See §9.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="6-transport-and-trust-between-harness-and-sandbox">6. Transport and trust between harness and sandbox</h2>
+<ul>
+<li><strong>Control:</strong> the existing <code>/execution/v1/*</code> API of the mini-harness, over TCP on the Sandbox
+  headless Service FQDN / pod IP. <code>boot/execution_client.py</code> already accepts a <code>base_url</code>.</li>
+<li><strong>Token on first contact:</strong> warm-pool pods are generic, so no per-session secret exists at
+  pod creation (claim <code>env</code> forces a cold start). The harness generates a per-session token and
+  pushes it in the first call; the mini-harness accepts exactly one <code>hello</code>, then requires the
+  token on every call. The window before <code>hello</code> is closed by NetworkPolicy (ingress from the
+  harness only).</li>
+<li><strong>Facades:</strong> served on the harness pod IP instead of <code>127.0.0.1</code>, still only under
+  <code>/t/&lt;token&gt;/…</code> (<code>engine/trace.py</code> <code>tokenize_url</code>). Tokens are per session and revoked on
+  claim deletion.</li>
+<li><strong>NetworkPolicy</strong> (<code>networkPolicyManagement: Unmanaged</code> on the template, ACH renders its own):
+  sandbox egress → harness facade port(s) + DNS only; ingress ← harness pods only.
+  <code>automountServiceAccountToken: false</code>.</li>
+<li><strong>New export route:</strong> <code>session-export</code> streams the HOME tarball out; <code>session-import</code> is
+  extended to accept a tarball stream. Exact wire shapes are left to the plan.</li>
+</ul>
+<h2 id="7-harness-changes-ach-agent">7. Harness changes (<code>ach-agent</code>)</h2>
+<ol>
+<li><strong>Sandbox backend module</strong> — one module owning: claim create/delete (deterministic name =
+   <code>hash(session_key)</code>), Ready wait (bounded, explicit failure), hello/token, tarball
+   push/pull. Kept in one place so a future backend swap or the phase-2 cache pod touches one
+   module. No speculative interface.</li>
+<li><strong>Session store</strong> — PVC cache read/write, S3 get/put (streamed), 1-day sweep. One module.</li>
+<li><strong>Pool</strong> — hot-tier idle TTL keeps the sandbox, and on expiry triggers export → PVC →
+   delete claim → background S3 upload.</li>
+<li><strong>Facades bind</strong> to the pod network with per-session token routing.</li>
+<li><strong>Mini-harness</strong>: TCP listener, token check after <code>hello</code>, <code>session-export</code>, tarball
+   <code>session-import</code>.</li>
+<li><strong>Config</strong>: sandbox mode enabled, idle window, tarball size cap, bucket/prefix, PVC path.
+   <code>make schema</code> after editing.</li>
+<li><strong>Docs</strong>: mark the <code>mcpServers</code> exception in CLAUDE.md invariant section as reaching the
+   sandbox; update <code>docs/references/README.md</code> with this doc when accepted.</li>
+</ol>
+<h2 id="8-operator-changes-ach">8. Operator changes (<code>../ach</code>)</h2>
+<ol>
+<li>New placement (e.g. <code>sandboxed</code>) on <code>AgentProfile.spec.achagent.placement</code>.</li>
+<li>Render from <code>AgentProfile</code>: <code>SandboxTemplate</code> (mini-harness image, <code>runtimeClassName</code>,
+   resources, HOME volume, <code>automountServiceAccountToken: false</code>, <code>networkPolicyManagement:
+   Unmanaged</code>) and <code>SandboxWarmPool</code> (replicas).</li>
+<li>Render the sandbox NetworkPolicy (§6) and the harness egress rule to sandbox pods.</li>
+<li>Harness Deployment: Role/RoleBinding for <code>sandboxclaims</code> (create/get/patch/delete) in
+   its namespace only; RWO PVC for the tarball cache; session bucket/prefix/retention in
+   <code>config.json</code>.</li>
+<li>Dependency: agent-sandbox CRDs + controller (+ extensions) installed in the cluster; the
+   chart documents the minimum version.</li>
+<li><code>docs/api-reference/</code> + <code>examples/</code> in the same commit (ach doc-hygiene rule).</li>
+</ol>
+<h2 id="9-known-exception-mcpservers-passthrough">9. Known exception: <code>mcpServers</code> passthrough</h2>
+<p><code>LocalMcpServer</code>/<code>RemoteMcpServer</code> (<code>engine/mcp_passthrough.py</code>) resolve <code>${env:NAME}</code> and
+write the result into engine config / child env. With sandboxes these credentials therefore
+reach the sandbox and may be captured in the archived HOME. <strong>Accepted for now (D11)</strong>, the
+operator opts in by naming the server. Future options, not scheduled: route <code>remote</code> servers
+through a harness facade (same <code>_forward</code> path as <code>McpProxy</code>); run credential-bearing <code>local</code>
+servers outside the sandbox.</p>
+<h2 id="10-phase-2-not-implemented-now">10. Phase 2 (not implemented now)</h2>
+<ul>
+<li>Multiple harness replicas: Redis/Valkey lock per <code>session_key</code> (lease + renew), dedup in
+  Redis (<code>SET NX</code> + TTL). The deterministic claim name from phase 1 lets any replica find a
+  hot sandbox.</li>
+<li><strong>Dedicated cache pod</strong> replacing the per-harness RWO PVC cache (small HTTP service with its
+  own PVC and auth).</li>
+</ul>
+<h2 id="11-infrastructure-terraform">11. Infrastructure (Terraform)</h2>
+<p>In <code>../aws-nglz-genai/terraform-genai-blueprint-module</code>:
+- S3 bucket for session tarballs, SSE, public access blocked, lifecycle expiry (60d default).
+- Pod Identity association: harness ServiceAccount → IAM role scoped to the bucket/prefix
+  (<code>GetObject</code>, <code>PutObject</code>, <code>DeleteObject</code>).
+- RuntimeClass for gVisor (or Kata) on a node group that supports it.
+- agent-sandbox controller installation (if not owned by the ach chart).</p>
+<h2 id="12-acceptance-evidence">12. Acceptance evidence</h2>
+<ol>
+<li>Task agent: event → sandbox from warm pool → result → claim gone.</li>
+<li>Bot agent: turn 1 → idle expiry → tarball in PVC and S3 → claim gone → turn 2 restores and
+   the engine remembers turn 1; the repo's uncommitted change is present.</li>
+<li>PVC miss (entry older than 1 day) restores from S3.</li>
+<li>From inside the sandbox: no ACH credential in env, files or <code>/proc</code>; egress to anything but
+   the harness facades and DNS fails; cloud metadata unreachable.</li>
+<li>A tampered <code>opencode.json</code> inside a restored HOME is overwritten before the turn.</li>
+<li>Calls to the mini-harness without the session token are rejected after <code>hello</code>.</li>
+<li>Resume latency measured per tier (hot / PVC / S3).</li>
+</ol>
+<h2 id="13-open-for-the-plan">13. Open for the plan</h2>
+<ul>
+<li>Default idle window and warm-pool size.</li>
+<li>Exact wire shapes for <code>hello</code>, <code>session-export</code>, tarball <code>session-import</code>.</li>
+<li>Where the agent-sandbox controller is installed (ach chart vs Terraform).</li>
+<li>Whether <code>standalone</code>/<code>distributed</code> placements remain long-term once sandboxed is proven.</li>
+</ul>
+<hr />
+<h2 id="amendments-2026-09-28">Amendments 2026-09-28</h2>
+<p>These supersede the body above where they differ. Implementation detail lives in
+<code>docs/superpowers/plans/2026-09-28-agent-sandbox-sessions.md</code>.</p>
+<ol>
+<li><strong>Archive format tar.gz</strong> (stdlib), not zstd. Key: <code>&lt;ns&gt;/&lt;agent&gt;/&lt;digest&gt;.tar.gz</code>,
+   <code>digest = sha256(session_key)[:32]</code>.</li>
+<li><strong>Session end is sandbox-initiated.</strong> The mini-harness owns the idle timer: no invocation for
+   <code>idleSeconds</code> → close admission → stop engine → pack HOME → <code>PUT</code> to the harness gateway
+   (<code>/s/&lt;facade-token&gt;/session/archive</code>). The harness writes PVC then S3 and deletes the claim.
+   Replaces §4.2's harness-driven export.</li>
+<li><strong>Kubernetes is the registry.</strong> No SQLite, no ACH Postgres (that would put DB credentials in
+   every agent namespace). Live sandboxes are the agent's labelled <code>SandboxClaim</code>s; claim name and
+   <code>ach.ackstorm.ai/session</code> label carry the digest; the harness→sandbox bearer and the
+   sandbox→harness facade token are <code>HMAC(K, purpose:claim)</code> with a per-agent Secret <code>K</code> held only
+   by the harness; <code>lifecycle.shutdownTime</code> (refreshed per lease) is the idle backstop. A restarted
+   harness lists claims, re-derives tokens, keeps serving facade calls and accepts archive pushes.
+   Multi-replica (phase 2) inherits this for free.</li>
+<li><strong>FacadeGateway</strong> (§6): facades stay on loopback; one pod-network port verifies the facade
+   token on every request and relays to registered facade ports only. Needed because <code>/t/&lt;token&gt;/</code>
+   is correlation (minted by the engine pool), not authentication.</li>
+<li><strong>Harness restart mid-turn:</strong> the in-flight turn fails; the session survives (the mini-harness
+   releases the lost controller, stops the engine, accepts the new harness).</li>
+<li><strong>D10 widened:</strong> every harness-owned agent config is rewritten — opencode.json and the system
+   prompt file, pi models/settings/mcp.json, hydrated skills/prompts/artifacts.</li>
+<li><strong><code>handoff</code> + in-sandbox session hooks</strong> (supersedes §3's harness-side prepare and D9).
+   <code>channel.prepare</code> → <code>channel.handoff</code>: credentialed harness script run only for a new session in
+   an empty staging dir; its output is shipped into the sandbox at <code>&lt;workDir&gt;/handoff</code>
+   (content-agnostic). <code>channel.cleanup</code> is removed. Agent-level <code>hooks.sessionStart</code> (once per
+   session, after the handoff, before the first turn, fail-closed) and <code>hooks.sessionSuspend</code>
+   (every sandbox stop, before the HOME archive, best-effort, may run many times) run inside the
+   sandbox with only <code>engine.forwardEnv</code>. The harness never extracts or runs scripts over an
+   agent-written archive. The job/steps workflow model is parked as a future idea.</li>
+<li><strong>Same options in every placement; <code>distributed</code> removed.</strong> Placements differ only in where
+   the engine runs: <code>standalone</code> (local child over a Unix socket; local testing and quick k8s
+   tests) and <code>sandboxed</code> (claimed sandbox over TCP). <code>handoff</code>, <code>hooks</code> and new-session detection
+   (the session workspace did not exist yet) behave identically in both. <code>distributed</code> is removed
+   (follow-up plan). No babysitting: without <code>cleanup</code>, workspace disk growth in <code>standalone</code> is the
+   operator's concern — no retention sweep.</li>
+<li><strong>Handoff cadence is configurable:</strong> <code>handoff.scope: event</code> (default, every invocation — today's
+   prepare cadence) or <code>session</code> (new sessions only). Every run starts from an empty staging dir
+   and replaces <code>&lt;workspace&gt;/handoff</code> wholesale; the agent should not keep edits inside it.</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../../..", "features": [], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

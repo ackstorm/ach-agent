@@ -1,0 +1,611 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ACH Agent — execution plane harness for the ACH ecosystem">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>2026 09 13 unix split simplification - ach-agent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#split-simplification-queues-unix-sockets-and-private-configuration" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="ach-agent" class="md-header__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ach-agent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              2026 09 13 unix split simplification
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="ach-agent" class="md-nav__button md-logo" aria-label="ach-agent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ach-agent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ackstorm/ach-agent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#intended-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      Intended system
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#queue-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Queue boundary
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#two-sockets" class="md-nav__link">
+    <span class="md-ellipsis">
+      Two sockets
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-over-the-existing-connection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration over the existing connection
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#existing-workspace-and-hooks-restore-do-not-redesign" class="md-nav__link">
+    <span class="md-ellipsis">
+      Existing workspace and hooks: restore, do not redesign
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#preserve-current-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      Preserve current behavior
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#removal-and-release-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      Removal and release gate
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<blockquote>
+<p>Archived design history. Superseded by the <a href="../../../references/2026-09-14-three-role-split/">current split contract</a>. Do not use as implementation instructions.</p>
+</blockquote>
+<h1 id="split-simplification-queues-unix-sockets-and-private-configuration">Split simplification: queues, Unix sockets and private configuration</h1>
+<p>Status: implemented on <code>feat/phase1-split</code>, verified locally on 2026-09-14.
+See the <a href="../../../reports/unix-split-validation/">validation report</a> for exact revisions,
+test results and the boundary between local evidence and an external rollout.
+Implementation starts from <code>d855fa5</code> on <code>feat/phase1-split</code>; <strong>functional behavior
+is defined by the original agent v0.16.1 (<code>462912f</code>), before the split</strong>.
+The split changes placement and transport, not the original agent's features or
+policies. Remove mechanisms introduced by our split that changed those behaviors.
+Use baseline characterization tests to settle details, not new design preferences.</p>
+<p>Execution plan: <a href="../../plans/2026-09-14-preserve-behavior-simplify-split/">preserve behavior and simplify the split</a>.</p>
+<h2 id="intended-system">Intended system</h2>
+<div class="highlight"><pre><span></span><code>channels -- channel.sock --&gt; admission / bounded RAM queues / consumers in harness
+                                                                  |
+                                                             agent.sock
+                                                                  |
+                                                           mini-harness
+                                                                  |
+                                                             Pi / OpenCode
+</code></pre></div>
+<p>One pod, three ordinary containers, one active replica. The full configuration
+is private to H. C and E receive only the inputs they need through their socket.
+Managed ACH credentials remain H-side. Deliberately selected engine environment
+values cross the execution socket. No new public CR fields.</p>
+<h2 id="queue-boundary">Queue boundary</h2>
+<p>The existing <code>Router</code> and <code>Lane</code> already implement bounded RAM queues and their
+consumers. Keep them as the queue implementation; do not insert another inbox,
+scheduler, queue-capacity setting, broker class hierarchy or worker pool.
+<code>ChannelsClient.handle/submit</code> sends an event; the existing completion registry
+and router admit it. Admission is not completion. Preserve dedup, backpressure,
+FIFO, separate script concurrency, result correlation and bounded retention.</p>
+<p>Future Redis may replace the handoff, but this increment promises no durable
+acceptance. Existing Redis <strong>source channels</strong> remain supported; they are not
+the future internal broker. Their existing ACK behavior is unchanged.</p>
+<h2 id="two-sockets">Two sockets</h2>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Socket owner</th>
+<th>Directory mounts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/run/ach-agent/channels/channel.sock</code></td>
+<td>H</td>
+<td>H writable, C read-only, absent E</td>
+</tr>
+<tr>
+<td><code>/run/ach-agent/engine/agent.sock</code></td>
+<td>E</td>
+<td>E writable, H read-only, absent C</td>
+</tr>
+</tbody>
+</table>
+<p>Use two distinct <code>emptyDir</code> volumes, outside workspace and engine home. Mount
+directories, not individual sockets. UID/GID/fsGroup 10001; sockets 0600.
+Mounted directory roots may be owned by root with fsGroup write access; do
+not require the non-root process to chmod/chown them. Locally created private
+runtime directories use 0700. A read-only directory mount permits connecting to a socket
+but prevents replacing its filesystem entry. Verify this in actual containers.
+Server restart may remove its own stale socket, never a live listener, regular
+file or symlink. No recursive cleanup of the mount or unrelated contents.</p>
+<p>HTTP with existing JSON/NDJSON runs over Unix sockets using the installed
+httpx/Uvicorn stack. A socket pathname is one endpoint, not a single connection:
+retain independent connections for streams and cancellation. No bespoke framing,
+HTTP/SSE tunnel, TCP fallback, TLS or internal HMAC. External webhook/A2A source
+authentication remains intact. Engine-container access to its own endpoint is
+accepted under the existing agent-wide trust scope.</p>
+<p>Only the control endpoints lose TCP. Channels ingress, model/MCP/A2A proxies
+and native OpenCode HTTP remain where required by their existing clients.
+Proxy URLs are supplied by H automatically; the operator does not configure
+internal control ports or protocol details.</p>
+<h2 id="configuration-over-the-existing-connection">Configuration over the existing connection</h2>
+<p>H alone reads <code>ACH_CONFIG_PATH</code>, hydrates and starts proxies. It constructs
+allowlisted public inputs; it never serializes the whole config and then tries
+to scrub it. No generated C/E bootstrap JSON files or bootstrap key remain.</p>
+<p>C obtains <code>{agentName, channels}</code> from <code>GET /internal/v1/config</code> on channel.sock
+before starting its source adapters. <code>channels</code> uses the existing
+<code>ChannelSourceConfig</code> projection; no prepare/cleanup scripts or secret values.
+C resolves source credentials from its own environment. H can expose this
+only after its source projection is available; C waits boundedly for H.</p>
+<p>E starts its socket without a config or native process. H supplies the existing
+<code>PublicEngineConfig</code> in its existing controller-open request. This selects the
+adapter, prepares E-owned paths and opens E's native session store; it does not
+launch Pi/OpenCode. The existing <code>AcquireRequest.config</code> supplies per-execution
+settings when work arrives. Keep this existing DTO rather than add a parallel
+start protocol. Do not echo config in the controller response.</p>
+<p>Controller initialization precedes existing session-map import and workspace
+reservation. E's instance identity exists before configuration. Reconnect after
+confirmed cleanup preserves native mapping behavior; immutable engine/layout
+changes require process/pod replacement, not hot reload. Fresh proxy URLs after
+H restart are valid per-execution inputs, not layout changes.</p>
+<p>The public configuration keeps <code>engine.forwardEnv</code> as the original name selector.
+H resolves eligible selected names and sends their <strong>values</strong>, in internal wire
+field <code>engineEnv: dict[str, str]</code>. E applies this explicit mapping to the native
+process, without requiring duplicate operator env routing to E and without
+mutating the mini-harness's global environment. Keep baseline sanitization and
+deliberate passthrough MCP behavior. A custom token explicitly forwarded is
+deliberate engine exposure; managed ACH/proxy/source/preparation-only credentials
+are not automatically forwarded. Never log or echo the environment mapping.</p>
+<p>Native config files are generated by E's existing adapters from these launch
+inputs. URLs/model/MCP settings are acquisition configuration, not repeated turn
+payloads. H builds prompts and interprets channel configuration; E receives no
+channel hook scripts or complete private config.</p>
+<h2 id="existing-workspace-and-hooks-restore-do-not-redesign">Existing workspace and hooks: restore, do not redesign</h2>
+<p>Keep the exact original <code>workspace_dir(work_dir, session_key)</code> formula and logical
+paths. A workspace belongs to the existing FIFO/session key, not a new invocation
+directory. Preserve the separate native-conversation key and original reuse rules.
+Do not rename directories, reset sessions or clear repositories on upgrade.</p>
+<p>H/E mount the same workspace volume at the same logical path. H executes <strong>all</strong>
+prepare and cleanup hooks as originally configured, with or without credentials.
+Prepare runs on the admitted lane before acquisition; <code>cwd</code> and hook <code>HOME</code> are
+the workspace. Cleanup runs best-effort at original teardown points, with cwd at
+the workspace parent and hook HOME still the workspace. Keep timeouts, shell/stdin
+handling, selected env, event-value validation, output limits and redaction.</p>
+<p>No automatic private clone, bundle export/import, repository reset, Git inspection
+or script policy enforcement is part of this split. The operator-script author
+owns safe handling of agent-modified repository configuration. This knowingly
+restores the original shared-checkout trust model; containers do not remove that
+property. Do not remove existing basic validation while removing the new machinery.</p>
+<p>The native engine home remains E-owned. Preserve the workspace's <code>.ach-state</code>
+view of hydrated public content using the narrow shared public-context mount;
+do not expose H state or require H to mount E's private home to run a hook.</p>
+<p>Preserve warm idle TTL, cleanup registration and original failure behavior. H must
+not run destructive cleanup before E confirms stop, and cleanup must not race a
+new event's prepare. Reuse the smallest existing reservation/stop-notification/
+acknowledgement mechanism needed to carry the original pool callback across IPC.
+Remove script execution and bundle transfer from E; do not create a new workspace
+manager or perform cleanup after every response merely to simplify transport.</p>
+<p><code>webhook-script</code> remains H-side, uses original temporary-workspace/payload semantics
+and its separate script concurrency pool; it never acquires an engine.</p>
+<h2 id="preserve-current-behavior">Preserve current behavior</h2>
+<p>No functional changes to original sessions, conversation keys, terminal repair,
+budgets, prompt composition, hook behavior, source results or proxy policy.
+Keep existing controller-loss cleanup and explicit stop confirmation. No new
+leases, heartbeats, generations, replay or quarantine machinery.</p>
+<p>Local RPC execution uses the same Unix endpoint in a private short temporary
+directory, with a parent-owned mini-harness child. Local native Pi/OpenCode TUI
+still inherits the real terminal. Its public launch configuration travels over
+the same controller socket, never stdin, and preserves its existing native-TUI
+exception to pooled execution. No remote terminal protocol is introduced.</p>
+<p>H/E probes execute HTTP over their Unix socket. E endpoint health/readiness
+must allow initial controller configuration without first launching a native
+engine; no startup cycle. C public probes and ingress remain unchanged.</p>
+<h2 id="removal-and-release-gate">Removal and release gate</h2>
+<p>Remove internal HMAC signing, nonce caches and key distribution; shared bootstrap
+files/readers/writers; ordinary internal TCP host/port/URL configuration; local
+role-artifact files; E-side channel hook execution and mandatory private Git/bundle
+handoff introduced by the split. Do not retain two production transports for the unpublished
+split. Update manifests, tests and the operator handoff together.</p>
+<p>Acceptance: baseline characterization parity; actual read-only socket mounts;
+C/E without full config; no managed secret leakage and only explicitly selected
+engine values on the execution wire; both native engines with session reuse and streaming, overlapping
+stream/cancel traffic, controller loss, H restart, script-only work, native TUI,
+ordinary Compose without internal env boilerplate, and the unchanged full gate.
+Image publication and external ACH rendering remain separately authorized work.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../../..", "features": [], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>

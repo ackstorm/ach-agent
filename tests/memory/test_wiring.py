@@ -62,7 +62,9 @@ async def test_ach_memory_wiring_empty_when_unavailable(monkeypatch):
 def test_ach_memory_auth_env_collected_for_forward_env_strip():
     """SECURITY: the ach-memory user key env NAME must be collected so it is stripped from
     engine.forwardEnv and redacted from logs — same path as the channel secrets."""
-    cfg = types.SimpleNamespace(channels=[], memory=_ach_cfg(), egress=None)
+    cfg = types.SimpleNamespace(
+        channels=[], memory=_ach_cfg(), egress=None, sandbox=types.SimpleNamespace(enabled=False)
+    )
     assert "AM_TOK" in collect_secret_env_names(cfg)
 
 
@@ -84,6 +86,7 @@ def test_ach_auth_arm_contributes_no_env_name():
             }
         ),
         egress=None,
+        sandbox=types.SimpleNamespace(enabled=False),
     )
     assert collect_secret_env_names(cfg) == []
 

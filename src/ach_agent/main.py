@@ -28,6 +28,7 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import structlog
 import uvicorn
@@ -303,6 +304,108 @@ def _engine_runtime_fields(cfg: Any) -> dict[str, Any]:
     }
 
 
+def _sandbox_key(cfg: AgentConfig) -> bytes:
+    """Per-agent key K for the sandboxed placement; fail closed when it is missing."""
+    key = os.environ.get(cfg.sandbox.key_env, "").encode()
+    if not key:
+        log.error("sandbox key missing", env=cfg.sandbox.key_env)
+        sys.exit(1)
+    return key
+
+
+def _egress_listen(cfg: AgentConfig, sandbox_mode: bool) -> tuple[dict[str, Any], str]:
+    """EgressProxy.start() kwargs and the URL sandboxes use to reach it (P5)."""
+    if not sandbox_mode:
+        return {}, ""
+    sb = cfg.sandbox
+    return (
+        {"listen_host": "0.0.0.0", "listen_port": sb.egress_port},
+        f"http://{sb.gateway_host}:{sb.egress_port}",
+    )
+
+
+def _facade_ports(*urls: str | None) -> set[int]:
+    """Loopback facade ports a sandbox may reach through the gateway."""
+    ports: set[int] = set()
+    for url in urls:
+        parts = urlsplit(url or "")
+        if parts.hostname == "127.0.0.1" and parts.port:
+            ports.add(parts.port)
+    return ports
+
+
+async def _start_sandbox(
+    cfg: AgentConfig,
+    *,
+    key: bytes,
+    public_cfg: Any,
+    hydration_batch: Path,
+    state_dir: Path,
+    facade_urls: list[str | None],
+    egress_url: str,
+) -> tuple[Any, Any, asyncio.Task[None]]:
+    """Build claims/store/gateway/sessions, start the gateway, return (sessions, gateway, sweep)."""
+    from ach_agent.sandbox import archive
+    from ach_agent.sandbox.claims import ClaimClient
+    from ach_agent.sandbox.gateway import FacadeGateway
+    from ach_agent.sandbox.sessions import SandboxSessions
+    from ach_agent.sandbox.store import SessionStore
+
+    sb = cfg.sandbox
+    namespace = os.environ["POD_NAMESPACE"]
+    store = SessionStore(
+        Path(cfg.persistence.mount_path) / "sessions",
+        bucket=sb.sessions.bucket,
+        prefix=sb.sessions.prefix or f"{namespace}/{cfg.agent.name}",
+        cache_ttl_seconds=sb.sessions.cache_ttl_seconds,
+    )
+    hydration = state_dir / "hydration.tar.gz"
+    await asyncio.to_thread(
+        archive.pack, hydration_batch, hydration, max_bytes=sb.sessions.max_archive_bytes
+    )
+    holder: dict[str, Any] = {}
+
+    async def is_live(claim: str) -> bool:
+        return bool(await holder["sessions"].is_live(claim))
+
+    async def on_archive(claim: str, request: Any) -> Any:
+        return await holder["sessions"].on_archive(claim, request)
+
+    gateway = FacadeGateway(key=key, is_live=is_live, on_archive=on_archive)
+    for port in _facade_ports(*facade_urls):
+        gateway.allow_port(port)
+    sessions = SandboxSessions(
+        key=key,
+        agent=cfg.agent.name,
+        claims=ClaimClient(namespace, sb.warm_pool),
+        store=store,
+        gateway=gateway,
+        sandbox=sb,
+        max_invocation_seconds=float(cfg.limits.max_invocation_seconds),
+        hydration_archive=hydration,
+        public_cfg=public_cfg,
+        egress_url=egress_url,
+    )
+    holder["sessions"] = sessions
+    await gateway.start("0.0.0.0", sb.gateway_port)
+    await sessions.boot()
+
+    async def sweep_hourly() -> None:
+        while True:
+            await asyncio.sleep(3600)
+            await store.sweep()
+
+    return sessions, gateway, asyncio.create_task(sweep_hourly())
+
+
+async def _stop_sandbox(sessions: Any, gateway: Any, sweep: asyncio.Task[None]) -> None:
+    """Sandboxes keep running (they push to whichever harness is up); only the links close."""
+    sweep.cancel()
+    await asyncio.gather(sweep, return_exceptions=True)
+    await sessions.close()
+    await gateway.stop()
+
+
 async def _refresh_engine_readiness(client: Any, state: HealthState) -> None:
     """Refresh H readiness from the claimed E instance and its ready endpoint."""
     if state.draining:
@@ -389,6 +492,9 @@ async def _run_harness(
     # catch arbitrary secret.env NAMES).
     strip_forwarded_secrets(cfg)
     add_secret_redaction(collect_secret_env_names(cfg))
+    # P11: console modes are local debugging tools and always run standalone.
+    sandbox_mode = cfg.sandbox.enabled and not console_mode
+    sandbox_key = _sandbox_key(cfg) if sandbox_mode else b""
     from ach_agent.boot.paths import resolve_role_paths
 
     role_paths = resolve_role_paths(cfg)
@@ -608,6 +714,7 @@ async def _run_harness(
     # EgressProxy._run() converts SystemExit inside the task itself (see egress/proxy.py).
     egress_proxy: Any = None
     egress_update: dict[str, object] = {}
+    sandbox_egress_url = ""
     if cfg.egress is not None:
         from ach_agent.egress.proxy import EgressProxy
         from ach_agent.egress.resolver import resolve_services
@@ -616,7 +723,8 @@ async def _run_harness(
         # design §8: proxy task dying later → agent unready. Drive the same graceful
         # drain path a lost execution controller already triggers.
         egress_proxy = EgressProxy(egress_resolved, on_failure=shutdown_event.set)
-        egress_url, egress_capability, egress_ca_pem = await egress_proxy.start()
+        egress_listen, sandbox_egress_url = _egress_listen(cfg, sandbox_mode)
+        egress_url, egress_capability, egress_ca_pem = await egress_proxy.start(**egress_listen)
         egress_update = {
             "egress_proxy_url": egress_url,
             "egress_proxy_capability": egress_capability,
@@ -665,6 +773,17 @@ async def _run_harness(
             **egress_update,
         }
     )
+    if sandbox_mode:
+        home = cfg.sandbox.home
+        public_cfg = public_cfg.model_copy(
+            update={
+                "home": home,
+                "work_dir": f"{home}/workspace",
+                "persistence_enabled": True,
+                # inside HOME so the codemem DB travels in the archive
+                "codemem_db_path": f"{home}/state/codemem.db" if public_cfg.codemem_db_path else "",
+            }
+        )
     local_engine_env = {
         name: os.environ[name] for name in public_cfg.engine_env_names if name in os.environ
     }
@@ -779,72 +898,129 @@ async def _run_harness(
     if hasattr(session_store, "close"):
         session_store.close()
 
-    engine_url = "http://ach-internal"
+    client: ExecutionClient | None = None
     local_engine: LocalEngineProcess | None = None
-    local_runtime_dir: Path | None = None
-    local_runtime_dir = Path(tempfile.mkdtemp(prefix="ach-runtime-", dir="/tmp"))
-    local_socket_env = {
-        **local_engine_env,
-        "ACH_RUNTIME_DIR": str(local_runtime_dir),
-    }
-    try:
-        local_engine = await LocalEngineProcess.start(env=local_socket_env)
-        await local_engine.wait_ready(
-            engine_url,
-            timeout=float(cfg.engine.startup_timeout_seconds),
-            socket_path=str(engine_socket_path(local_runtime_dir)),
-        )
-    except BaseException:
-        if local_engine is not None:
-            await local_engine.close()
-        else:
-            shutil.rmtree(local_runtime_dir, ignore_errors=True)
-        await stop_model_proxies()
-        if mcp_proxy is not None:
-            await mcp_proxy.stop()
-        if memory_facade is not None:
-            await memory_facade.stop()
-        if a2a_facade is not None:
-            await a2a_facade.stop()
-        if egress_proxy is not None:
-            await egress_proxy.stop()
-        raise
-    engine_socket = (
-        str(engine_socket_path(local_runtime_dir))
-        if local_runtime_dir
-        else str(engine_socket_path())
-    )
-    client = ExecutionClient(
-        engine_url,
-        controller_id=f"harness-{os.getpid()}-{id(cfg)}",
-        socket_path=engine_socket or None,
-    )
-    connect_deadline = asyncio.get_running_loop().time() + float(cfg.engine.startup_timeout_seconds)
-    while True:
+    sandbox_sessions: Any = None
+    sandbox_gateway: Any = None
+    sandbox_sweep: Any = None
+    if sandbox_mode:
         try:
-            await client.connect(public_cfg)
-            break
-        except Exception:
-            if client.controller_lost:
-                await client.close()
-                if not hydration_batch.exists():
-                    hydration_batch = new_hydration_batch(role_paths.transfer_root)
-                    if manifest is not None and ek:
-                        await fetch_context(
-                            manifest.context,
-                            ek,
-                            hydration_batch,
-                            hydration_batch / "skills",
+            sandbox_sessions, sandbox_gateway, sandbox_sweep = await _start_sandbox(
+                cfg,
+                key=sandbox_key,
+                public_cfg=public_cfg,
+                hydration_batch=hydration_batch,
+                state_dir=role_paths.harness_state,
+                facade_urls=[
+                    model_base_url,
+                    *mcp_local_urls.values(),
+                    memory_facade_url,
+                    a2a_facade_url,
+                ],
+                egress_url=sandbox_egress_url,
+            )
+        except BaseException:
+            await stop_model_proxies()
+            if mcp_proxy is not None:
+                await mcp_proxy.stop()
+            if memory_facade is not None:
+                await memory_facade.stop()
+            if a2a_facade is not None:
+                await a2a_facade.stop()
+            if egress_proxy is not None:
+                await egress_proxy.stop()
+            raise
+    else:
+        engine_url = "http://ach-internal"
+        local_runtime_dir: Path | None = None
+        local_runtime_dir = Path(tempfile.mkdtemp(prefix="ach-runtime-", dir="/tmp"))
+        local_socket_env = {
+            **local_engine_env,
+            "ACH_RUNTIME_DIR": str(local_runtime_dir),
+        }
+        try:
+            local_engine = await LocalEngineProcess.start(env=local_socket_env)
+            await local_engine.wait_ready(
+                engine_url,
+                timeout=float(cfg.engine.startup_timeout_seconds),
+                socket_path=str(engine_socket_path(local_runtime_dir)),
+            )
+        except BaseException:
+            if local_engine is not None:
+                await local_engine.close()
+            else:
+                shutil.rmtree(local_runtime_dir, ignore_errors=True)
+            await stop_model_proxies()
+            if mcp_proxy is not None:
+                await mcp_proxy.stop()
+            if memory_facade is not None:
+                await memory_facade.stop()
+            if a2a_facade is not None:
+                await a2a_facade.stop()
+            if egress_proxy is not None:
+                await egress_proxy.stop()
+            raise
+        engine_socket = (
+            str(engine_socket_path(local_runtime_dir))
+            if local_runtime_dir
+            else str(engine_socket_path())
+        )
+        client = ExecutionClient(
+            engine_url,
+            controller_id=f"harness-{os.getpid()}-{id(cfg)}",
+            socket_path=engine_socket or None,
+        )
+        connect_deadline = asyncio.get_running_loop().time() + float(
+            cfg.engine.startup_timeout_seconds
+        )
+        while True:
+            try:
+                await client.connect(public_cfg)
+                break
+            except Exception:
+                if client.controller_lost:
+                    await client.close()
+                    if not hydration_batch.exists():
+                        hydration_batch = new_hydration_batch(role_paths.transfer_root)
+                        if manifest is not None and ek:
+                            await fetch_context(
+                                manifest.context,
+                                ek,
+                                hydration_batch,
+                                hydration_batch / "skills",
+                            )
+                        public_cfg = public_cfg.model_copy(
+                            update={"hydration_dir": str(hydration_batch)}
                         )
-                    public_cfg = public_cfg.model_copy(
-                        update={"hydration_dir": str(hydration_batch)}
+                    client = ExecutionClient(
+                        engine_url,
+                        controller_id=f"harness-{os.getpid()}-{id(cfg)}",
+                        socket_path=engine_socket,
                     )
-                client = ExecutionClient(
-                    engine_url,
-                    controller_id=f"harness-{os.getpid()}-{id(cfg)}",
-                    socket_path=engine_socket,
-                )
-            if asyncio.get_running_loop().time() >= connect_deadline:
+                if asyncio.get_running_loop().time() >= connect_deadline:
+                    await client.close()
+                    if local_engine is not None:
+                        await local_engine.close()
+                    await stop_model_proxies()
+                    if mcp_proxy is not None:
+                        await mcp_proxy.stop()
+                    if memory_facade is not None:
+                        await memory_facade.stop()
+                    if a2a_facade is not None:
+                        await a2a_facade.stop()
+                    if egress_proxy is not None:
+                        await egress_proxy.stop()
+                    raise
+                await asyncio.sleep(0.25)
+        if cfg.persistence.enabled:
+            from ach_agent.execution.state import export_legacy_sessions
+
+            legacy_path = Path(cfg.persistence.mount_path) / "state" / "state.db"
+            try:
+                await client.import_legacy_sessions(export_legacy_sessions(legacy_path))
+            except BaseException:
+                with contextlib.suppress(Exception):
+                    await client.graceful_stop(timeout=_graceful_stop_timeout(cfg))
                 await client.close()
                 if local_engine is not None:
                     await local_engine.close()
@@ -858,29 +1034,6 @@ async def _run_harness(
                 if egress_proxy is not None:
                     await egress_proxy.stop()
                 raise
-            await asyncio.sleep(0.25)
-    if cfg.persistence.enabled:
-        from ach_agent.execution.state import export_legacy_sessions
-
-        legacy_path = Path(cfg.persistence.mount_path) / "state" / "state.db"
-        try:
-            await client.import_legacy_sessions(export_legacy_sessions(legacy_path))
-        except BaseException:
-            with contextlib.suppress(Exception):
-                await client.graceful_stop(timeout=_graceful_stop_timeout(cfg))
-            await client.close()
-            if local_engine is not None:
-                await local_engine.close()
-            await stop_model_proxies()
-            if mcp_proxy is not None:
-                await mcp_proxy.stop()
-            if memory_facade is not None:
-                await memory_facade.stop()
-            if a2a_facade is not None:
-                await a2a_facade.stop()
-            if egress_proxy is not None:
-                await egress_proxy.stop()
-            raise
 
     # Best-effort stats sink (harness-local, ACH_STATS_* — never part of operator contract).
     # Unset ACH_STATS_REDIS_URL → Prometheus-only, no queue/writer.
@@ -930,6 +1083,7 @@ async def _run_harness(
     channel_handler = CompletionHandler(completion_registry)
     engine_runner = make_engine_runner(
         client=client,
+        sandboxes=sandbox_sessions,
         engine_cfg=public_cfg,
         max_invocation_seconds=cfg.limits.max_invocation_seconds,
         terminal_output_retries=cfg.limits.terminal_output_retries,
@@ -996,6 +1150,7 @@ async def _run_harness(
                 # by the engine-role child in separated deployments.
                 await run_tui_console(channel_handler)
         finally:
+            assert client is not None  # console modes never run sandboxed (P11)
             with contextlib.suppress(Exception):
                 await client.graceful_stop(timeout=_graceful_stop_timeout(cfg))
             await client.close()
@@ -1069,16 +1224,20 @@ async def _run_harness(
     # process cannot safely replay or reclaim the controller; the supervisor must
     # restart H for a fresh hydration/claim cycle.
 
-    async def watch_engine_readiness() -> None:
+    async def watch_engine_readiness(engine: ExecutionClient) -> None:
         while True:
-            await _refresh_engine_readiness(client, state)
-            if _controller_loss_requires_shutdown(client, state):
+            await _refresh_engine_readiness(engine, state)
+            if _controller_loss_requires_shutdown(engine, state):
                 log.error("execution controller lost; restarting harness")
                 shutdown_event.set()
                 return
             await asyncio.sleep(0.5)
 
-    readiness_task = asyncio.create_task(watch_engine_readiness())
+    if client is not None:
+        readiness_task = asyncio.create_task(watch_engine_readiness(client))
+    else:
+        # Sandboxed: no single engine to watch; the gateway and claim registry are up.
+        state.ready = True
 
     # Step 7: wire channel adapters (D-08: one CronScheduler for ALL cron channels, SC#3)
     tasks: list[asyncio.Task[None]] = []
@@ -1177,12 +1336,16 @@ async def _run_harness(
         if readiness_task is not None:
             readiness_task.cancel()
             await asyncio.gather(readiness_task, return_exceptions=True)
-        with contextlib.suppress(Exception):
-            await client.graceful_stop(timeout=_graceful_stop_timeout(cfg))
-        await client.close()
+        if client is not None:
+            with contextlib.suppress(Exception):
+                await client.graceful_stop(timeout=_graceful_stop_timeout(cfg))
+            await client.close()
         close_runner = getattr(engine_runner, "close", None)
         if close_runner is not None:
             await close_runner()
+        if sandbox_sessions is not None:
+            # Sandboxes keep running and push to whichever harness is up (S7).
+            await _stop_sandbox(sandbox_sessions, sandbox_gateway, sandbox_sweep)
         if local_engine is not None:
             await local_engine.close()
         # Plan 2: tear down the localhost proxies (closes their aiohttp runners/sessions).
@@ -1218,12 +1381,16 @@ async def _run_harness(
         if readiness_task is not None:
             readiness_task.cancel()
             await asyncio.gather(readiness_task, return_exceptions=True)
-        with contextlib.suppress(Exception):
-            await client.graceful_stop(timeout=_graceful_stop_timeout(cfg))
-        await client.close()
+        if client is not None:
+            with contextlib.suppress(Exception):
+                await client.graceful_stop(timeout=_graceful_stop_timeout(cfg))
+            await client.close()
         close_runner = getattr(engine_runner, "close", None)
         if close_runner is not None:
             await close_runner()
+        if sandbox_sessions is not None:
+            # Sandboxes keep running and push to whichever harness is up (S7).
+            await _stop_sandbox(sandbox_sessions, sandbox_gateway, sandbox_sweep)
         if local_engine is not None:
             await local_engine.close()
         await stop_model_proxies()

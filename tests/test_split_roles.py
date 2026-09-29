@@ -72,7 +72,7 @@ def test_native_terminal_failure_propagates_after_server_cleanup(
         raise RuntimeError("native terminal failed")
 
     monkeypatch.setattr(roles, "ExecutionService", FakeService)
-    monkeypatch.setattr(roles, "create_execution_app", lambda _service: object())
+    monkeypatch.setattr(roles, "create_execution_app", lambda _service, **_kw: object())
     monkeypatch.setattr(roles, "bind_listener", lambda _path: FakeListener())
     monkeypatch.setattr(roles, "engine_socket_path", lambda: tmp_path / "agent.sock")
     monkeypatch.setattr(roles.uvicorn, "Server", FakeServer)

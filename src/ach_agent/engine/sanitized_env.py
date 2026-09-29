@@ -166,6 +166,19 @@ def redact_text(text: str) -> str:
     return text
 
 
+_PROBE_PATHS = ("/execution/v1/health", "/readyz", "/healthz")
+
+
+class _ProbeLogFilter(logging.Filter):
+    """F1: the 0.5 s H→E readiness probe floods the pod log at INFO; keep it for debug."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if _resolve_log_level() <= logging.DEBUG:
+            return True
+        message = record.getMessage()
+        return not any(path in message for path in _PROBE_PATHS)
+
+
 def configure_logging() -> None:
     """Configure structlog with the redact_ek_processor in the processor chain.
 
@@ -194,6 +207,7 @@ def configure_logging() -> None:
         # the stub demands full TextIO, hence the narrow ignore.
         logger_factory=structlog.PrintLoggerFactory(file=_StderrProxy()),  # type: ignore[arg-type]
     )
+    logging.getLogger("httpx").addFilter(_ProbeLogFilter())
 
 
 def add_secret_redaction(env_names: list[str]) -> None:

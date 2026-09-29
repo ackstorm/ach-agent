@@ -1027,6 +1027,31 @@ the base64 tarball, the TTL sweep and the prompt hint that advertised the tool.
 
 Implementation-level gates live in the implementation plans, not here.
 
+## `egress` — authenticated egress proxy (2026-09-28)
+
+Optional top-level block. Absent → no proxy, no CA, no engine env change. Present → H runs an
+embedded mitmproxy on loopback and replaces the credential on requests to each declared origin.
+**Credential substitution only:** undeclared hosts pass through untouched (not decrypted), there
+is no default deny and no method/path policy — the upstream token's own scope is the only limit.
+
+```yaml
+egress:
+  services:                          # non-empty
+    - name: github                   # unique, lowercase DNS label
+      origin: https://api.github.com:443   # exact https origin; no path/userinfo/wildcard/IP
+      auth:
+        header: Authorization        # not Host/Content-Length/Transfer-Encoding/Connection/Cookie/Proxy-Authorization
+        prefix: "Bearer "
+        secret: {env: ACH_SECRET_EGRESS_0}   # H-only env, resolved at boot, fail-closed
+        placeholderEnv: GH_TOKEN     # optional; E receives the literal "non-secret"
+```
+
+Operator renders `ACHAgent.spec.egress.services[].auth.secretKeyRef` into `secret.env` names
+bound only in H. `placeholderEnv` and `engine.forwardEnv` must not collide with each other or
+with proxy/trust names (`*_PROXY`, `SSL_CERT_*`) — rejected at load. E receives the proxy URL
+with a per-lifetime capability, `NO_PROXY` for loopback, and a CA bundle (public cert only).
+Rotation = restart. Spec: `docs/superpowers/specs/2026-09-28-authenticated-egress-proxy-design.md`.
+
 ## Phase 1 split role packaging
 
 The target uses three ordinary containers from the image targets `harness`, `channels`,

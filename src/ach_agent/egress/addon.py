@@ -35,7 +35,7 @@ class EgressAddon:
         try:
             self._handle(flow)
         except Exception:
-            log.error("egress: error in request handling — denying", exc_info=True)
+            log.error("egress: credential injection failed — aborting request", exc_info=True)
             flow.response = http.Response.make(502)
 
     def _handle(self, flow: http.HTTPFlow) -> None:
@@ -48,4 +48,4 @@ class EgressAddon:
         for name in self._strip:
             req.headers.pop(name, None)  # Headers is case-insensitive; pop drops all dupes
         req.headers[svc.header] = svc.prefix + svc.secret
-        log.info("egress: authorized", service=svc.name, method=req.method)
+        log.info("egress: credential injected", service=svc.name, method=req.method)

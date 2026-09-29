@@ -7,8 +7,9 @@ Findings encoded here (re-verify against the pinned version when bumping it):
      CPython 3.13: asyncio's Task.__step re-raises BaseExceptions straight out of the
      loop, killing asyncio.run(). The catch must be INSIDE the task's own coroutine
      (_run), wrapping master.run() — design §6 is wrong on this; this module corrects it.
-  2. Master.run() swaps the loop's exception handler for its whole lifetime. Task 8
-     verifies the router conformance suite still passes with the proxy running.
+  2. Master.run() swaps the loop's exception handler AND installs asyncio's eager task
+     factory for its whole lifetime — i.e. for every other harness task too. Nothing in
+     H may rely on its own exception handler or on lazy task scheduling while it runs.
   3. proxyauth (built-in) gates the local capability; set via options.update() after
      DumpMaster construction — the key doesn't exist before addon registration.
   4. allow_hosts (anchored "^host:port$" regex per declared service) scopes TLS

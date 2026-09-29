@@ -321,3 +321,20 @@ def test_completion_rejects_nonfinite_result() -> None:
             state="completed",
             result={"value": float("inf")},
         )
+
+
+@pytest.mark.asyncio
+async def test_submit_works_under_eager_task_factory() -> None:
+    # mitmproxy (egress proxy) sets eager_task_factory for its lifetime: create_task runs
+    # _admit synchronously, so the record must exist before the task is created.
+    async def handle(received: MessageEvent) -> RouterAdmitResult:
+        return RouterAdmitResult.ACCEPTED
+
+    loop = asyncio.get_running_loop()
+    previous = loop.get_task_factory()
+    loop.set_task_factory(asyncio.eager_task_factory)
+    try:
+        result = await CompletionRegistry(handle).submit(event())
+    finally:
+        loop.set_task_factory(previous)
+    assert result.admission is Admission.ACCEPTED

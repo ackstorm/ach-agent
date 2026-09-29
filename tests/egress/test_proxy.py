@@ -99,3 +99,18 @@ async def test_proxy_death_after_start_invokes_on_failure() -> None:
     proxy._master.shutdown()  # simulate unexpected exit: run() returns without stop()
     await asyncio.wait_for(failed.wait(), timeout=5)
     await proxy.stop()
+
+
+async def test_harness_task_factory_restored_while_proxy_runs() -> None:
+    """Master.run() installs asyncio.eager_task_factory for its lifetime; the harness
+    code isn't written for eager scheduling (CompletionRegistry.submit KeyError'd), so
+    start() puts the previous factory back once the listener is up."""
+    loop = asyncio.get_running_loop()
+    before = loop.get_task_factory()
+    proxy = EgressProxy([_service()])
+    try:
+        await proxy.start()
+        assert loop.get_task_factory() is before
+    finally:
+        await proxy.stop()
+    assert loop.get_task_factory() is before

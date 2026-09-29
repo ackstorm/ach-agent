@@ -25,8 +25,8 @@ class RegistryBusy(RuntimeError):
 @dataclass(slots=True)
 class _Record:
     completion: Completion
-    owner: asyncio.Task[Submission]
     changed: asyncio.Event
+    owner: asyncio.Task[Submission] | None = None
     retained_at: float | None = None
     retained_bytes: int = 0
 
@@ -110,6 +110,7 @@ class CompletionRegistry:
         existing = self._records.get(key) or self._completed.get(key)
         if existing is not None:
             if key in self._records:
+                assert existing.owner is not None  # set before submit() yields
                 outcome = await asyncio.shield(existing.owner)
                 if outcome.admission is Admission.ACCEPTED:
                     return Submission(
@@ -129,10 +130,13 @@ class CompletionRegistry:
             invocation_id=uuid.uuid4().hex,
             state="queued",
         )
-        changed = asyncio.Event()
+        # Record before create_task: under an eager task factory (the embedded egress
+        # proxy installs one) _admit runs synchronously and reads self._records[key].
+        record = _Record(completion=completion, changed=asyncio.Event())
+        self._records[key] = record
         owner = asyncio.create_task(self._admit(event, ref))
         owner.add_done_callback(self._retrieve_owner_exception)
-        self._records[key] = _Record(completion=completion, owner=owner, changed=changed)
+        record.owner = owner
         return await asyncio.shield(owner)
 
     async def _admit(self, event: MessageEvent, ref: EventRef) -> Submission:

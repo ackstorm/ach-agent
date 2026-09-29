@@ -8,8 +8,10 @@ Findings encoded here (re-verify against the pinned version when bumping it):
      loop, killing asyncio.run(). The catch must be INSIDE the task's own coroutine
      (_run), wrapping master.run() — design §6 is wrong on this; this module corrects it.
   2. Master.run() swaps the loop's exception handler AND installs asyncio's eager task
-     factory for its whole lifetime — i.e. for every other harness task too. Nothing in
-     H may rely on its own exception handler or on lazy task scheduling while it runs.
+     factory for its whole lifetime — i.e. for every other harness task too. Eager
+     scheduling broke CompletionRegistry.submit (KeyError), so start() restores H's task
+     factory once the listener is up. The exception handler swap stays: nothing in H may
+     rely on its own loop exception handler while the proxy runs.
   3. proxyauth (built-in) gates the local capability; set via options.update() after
      DumpMaster construction — the key doesn't exist before addon registration.
   4. allow_hosts (anchored "^host:port$" regex per declared service) scopes TLS
@@ -88,12 +90,18 @@ class EgressProxy:
         self._master.addons.add(EgressAddon(self._services))
         capability = secrets.token_urlsafe(32)
         self._master.options.update(proxyauth=f"{_CAPABILITY_USER}:{capability}")
+        loop = asyncio.get_running_loop()
+        harness_task_factory = loop.get_task_factory()
         self._task = asyncio.create_task(self._run())
         try:
             port = await self._await_listener()
         except EgressStartupError:
             await self.stop()
             raise
+        # Finding 2: undo run()'s eager task factory for the rest of H (mitmproxy's own
+        # finally restores this same value on shutdown). Its tasks run lazily too — the
+        # gh smoke test and tests/egress cover that.
+        loop.set_task_factory(harness_task_factory)
         ca_pem = (Path(self.confdir) / "mitmproxy-ca-cert.pem").read_text()
         log.info("egress: proxy started", port=port, service_count=len(self._services))
         return f"http://127.0.0.1:{port}", capability, ca_pem

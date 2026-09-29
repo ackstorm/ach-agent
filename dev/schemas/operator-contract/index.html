@@ -495,6 +495,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#egress-authenticated-egress-proxy-2026-09-28" class="md-nav__link">
+    <span class="md-ellipsis">
+      egress — authenticated egress proxy (2026-09-28)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#phase-1-split-role-packaging" class="md-nav__link">
     <span class="md-ellipsis">
       Phase 1 split role packaging
@@ -1522,6 +1531,26 @@ in <a href="../../configuration/"><code>docs/configuration.md</code></a> and
 with a real <code>.git</code> — at the engine's cwd before the first token. That removes the tool call,
 the base64 tarball, the TTL sweep and the prompt hint that advertised the tool.</p>
 <p>Implementation-level gates live in the implementation plans, not here.</p>
+<h2 id="egress-authenticated-egress-proxy-2026-09-28"><code>egress</code> — authenticated egress proxy (2026-09-28)</h2>
+<p>Optional top-level block. Absent → no proxy, no CA, no engine env change. Present → H runs an
+embedded mitmproxy on loopback and replaces the credential on requests to each declared origin.
+<strong>Credential substitution only:</strong> undeclared hosts pass through untouched (not decrypted), there
+is no default deny and no method/path policy — the upstream token's own scope is the only limit.</p>
+<div class="highlight"><pre><span></span><code><span class="nt">egress</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">services</span><span class="p">:</span><span class="w">                          </span><span class="c1"># non-empty</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">github</span><span class="w">                   </span><span class="c1"># unique, lowercase DNS label</span>
+<span class="w">      </span><span class="nt">origin</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.github.com:443</span><span class="w">   </span><span class="c1"># exact https origin; no path/userinfo/wildcard/IP</span>
+<span class="w">      </span><span class="nt">auth</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">header</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Authorization</span><span class="w">        </span><span class="c1"># not Host/Content-Length/Transfer-Encoding/Connection/Cookie/Proxy-Authorization</span>
+<span class="w">        </span><span class="nt">prefix</span><span class="p">:</span><span class="w"> </span><span class="s">"Bearer</span><span class="nv"> </span><span class="s">"</span>
+<span class="w">        </span><span class="nt">secret</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">env</span><span class="p">:</span><span class="w"> </span><span class="nv">ACH_SECRET_EGRESS_0</span><span class="p p-Indicator">}</span><span class="w">   </span><span class="c1"># H-only env, resolved at boot, fail-closed</span>
+<span class="w">        </span><span class="nt">placeholderEnv</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">GH_TOKEN</span><span class="w">     </span><span class="c1"># optional; E receives the literal "non-secret"</span>
+</code></pre></div>
+<p>Operator renders <code>ACHAgent.spec.egress.services[].auth.secretKeyRef</code> into <code>secret.env</code> names
+bound only in H. <code>placeholderEnv</code> and <code>engine.forwardEnv</code> must not collide with each other or
+with proxy/trust names (<code>*_PROXY</code>, <code>SSL_CERT_*</code>) — rejected at load. E receives the proxy URL
+with a per-lifetime capability, <code>NO_PROXY</code> for loopback, and a CA bundle (public cert only).
+Rotation = restart. Spec: <code>docs/superpowers/specs/2026-09-28-authenticated-egress-proxy-design.md</code>.</p>
 <h2 id="phase-1-split-role-packaging">Phase 1 split role packaging</h2>
 <p>The target uses three ordinary containers from the image targets <code>harness</code>, <code>channels</code>,
 and <code>engine-opencode</code> or <code>engine-pi</code>. Every role uses the image entrypoint

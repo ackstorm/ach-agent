@@ -513,74 +513,23 @@
       "title": "CronBlock",
       "type": "object"
     },
-    "EgressAccessRule": {
-      "additionalProperties": false,
-      "description": "design §4 access.allow[] entry — method + exactly one of pathExact/pathPrefix.",
-      "properties": {
-        "methods": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Methods",
-          "type": "array"
-        },
-        "pathExact": {
-          "default": "",
-          "title": "Pathexact",
-          "type": "string"
-        },
-        "pathPrefix": {
-          "default": "",
-          "title": "Pathprefix",
-          "type": "string"
-        }
-      },
-      "required": [
-        "methods"
-      ],
-      "title": "EgressAccessRule",
-      "type": "object"
-    },
     "EgressBlock": {
       "additionalProperties": false,
       "description": "design §4 top-level egress block. Absent on AgentConfig = feature disabled.",
       "properties": {
-        "defaultAction": {
-          "const": "deny",
-          "default": "deny",
-          "title": "Defaultaction",
-          "type": "string"
-        },
         "services": {
           "items": {
             "$ref": "#/$defs/EgressServiceBlock"
           },
+          "minItems": 1,
           "title": "Services",
           "type": "array"
         }
       },
+      "required": [
+        "services"
+      ],
       "title": "EgressBlock",
-      "type": "object"
-    },
-    "EgressServiceAccess": {
-      "additionalProperties": false,
-      "description": "design §4 access block — absent means unrestricted at the declared origin.",
-      "properties": {
-        "allow": {
-          "items": {
-            "$ref": "#/$defs/EgressAccessRule"
-          },
-          "title": "Allow",
-          "type": "array"
-        },
-        "defaultAction": {
-          "const": "deny",
-          "default": "deny",
-          "title": "Defaultaction",
-          "type": "string"
-        }
-      },
-      "title": "EgressServiceAccess",
       "type": "object"
     },
     "EgressServiceAuth": {
@@ -616,17 +565,6 @@
       "additionalProperties": false,
       "description": "design §4 services[] entry.",
       "properties": {
-        "access": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/EgressServiceAccess"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "auth": {
           "$ref": "#/$defs/EgressServiceAuth"
         },

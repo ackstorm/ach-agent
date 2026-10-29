@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.19.0] - 2026-10-29
+## [0.1.0] - 2026-10-29
 
 ach-agent is now one project: CRDs, operator and runtime in one repository, released together under one
 version. The runtime has its own history in `runtime/CHANGELOG.md`.

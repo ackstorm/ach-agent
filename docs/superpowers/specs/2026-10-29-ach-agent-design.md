@@ -20,9 +20,9 @@ gateway high availability; per-endpoint facade bypass.
 
 ## 2. Repository and artifacts
 
-- Public repo `github.com/ackstorm/ach-agent` (reused: its legacy runtime history is kept, the
-  last legacy release is `v0.18.0`), local path `../ach-agent`, MIT licence.
-- One repo, two languages, one version (starts at `0.19.0`), one chart:
+- New public repo `github.com/ackstorm/ach-agent` (the legacy repo of that name, its packages and
+  pages are deleted first; no legacy history is carried), local path `../ach-agent`, MIT licence.
+- One repo, two languages, one version (starts at `0.1.0`), one chart:
 
 ```
 ach-agent/

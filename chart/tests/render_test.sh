@@ -23,7 +23,7 @@ c = pod["spec"]["containers"][0]
 env = {e["name"]: e for e in c.get("env", [])}
 assert env["ACH_AGENT_OPENSHELL_GATEWAY"]["value"] == "http://openshell.openshell.svc.cluster.local:8080"
 assert env["ACH_AGENT_NAMESPACE"]["valueFrom"]["fieldRef"]["fieldPath"] == "metadata.namespace"
-assert c["image"].endswith(":0.19.0"), c["image"]
+assert c["image"].endswith(":0.1.0"), c["image"]
 sc = c["securityContext"]
 assert sc["readOnlyRootFilesystem"] and not sc["allowPrivilegeEscalation"] and sc["capabilities"]["drop"] == ["ALL"]
 role = one("Role")

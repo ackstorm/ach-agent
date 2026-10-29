@@ -22,7 +22,7 @@ CONTROL_IMAGE = "ach-runtime-control:0.1.0"
 EXECUTION_IMAGE = "ach-runtime-execution:0.1.0"
 BOOT_FIXTURE = ROOT / "tests/config/fixtures/bootstrap.json"
 PUBLIC_FIXTURE = ROOT / "tests/config/fixtures/pr-review-runtime.json"
-FACADE_FIXTURE = ROOT / "spikes/opencode-v2/fake-facades.mjs"
+FACADE_FIXTURE = ROOT / "tests/fixtures/fake-facades.mjs"
 IMAGE_MEMORY = "512m"
 
 

@@ -84,7 +84,7 @@ e2e:
 	timeout 300s docker run --rm --pull=never --cpus=1 --memory=1g --memory-swap=1g --pids-limit=256 --network="$(E2E_NETWORK)" \
 		--tmpfs /tmp:rw,nosuid,nodev,size=512m \
 		-v "$(CURDIR)/src:/work/src:ro" -v "$(CURDIR)/tests:/work/tests:ro" \
-		-v "$(CURDIR)/plugins:/work/plugins:ro" -v "$(CURDIR)/spikes/opencode-v2:/work/spikes/opencode-v2:ro" \
+		-v "$(CURDIR)/plugins:/work/plugins:ro" \
 		-e PYTHONPATH=/work/src:/work/tests/storage:/work/tests/engine:/work/tests/facades:/work/tests/harness \
 		-e PYTHONDONTWRITEBYTECODE=1 -e OPENCODE_BIN=/work/node_modules/.bin/opencode2 \
 		-e ACH_STORAGE_TEST_S3_ENDPOINT="$(E2E_S3_ENDPOINT)" -e ACH_STORAGE_TEST_S3_BUCKET=ach-storage-test \

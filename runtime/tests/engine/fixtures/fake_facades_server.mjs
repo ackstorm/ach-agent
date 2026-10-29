@@ -1,5 +1,5 @@
 // Thin control wrapper around the Task 1 spike's proven fake model+MCP fixture
-// (spikes/opencode-v2/fake-facades.mjs) — reused as-is, not reimplemented. Spawned as a
+// (tests/fixtures/fake-facades.mjs) — reused as-is, not reimplemented. Spawned as a
 // short-lived process by Python tests so the REAL opencode2 binary can point at a
 // scripted, loopback model/MCP backend instead of an unreachable HTTPS facade.
 //
@@ -7,7 +7,7 @@
 // both fakes are listening, then stays alive (reading stdin) until killed.
 import { createServer } from "node:http"
 import { Readable } from "node:stream"
-import { startFakeFacades, textChunks } from "../../../spikes/opencode-v2/fake-facades.mjs"
+import { startFakeFacades, textChunks } from "../../fixtures/fake-facades.mjs"
 
 const scenario = process.argv[2] ?? "text"
 const fixture = await startFakeFacades()

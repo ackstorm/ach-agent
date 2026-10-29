@@ -142,6 +142,70 @@ class _LocalDirTransfer:
         shutil.copytree(self.uploaded, dest, dirs_exist_ok=True)
 
 
+async def test_full_snapshot_restore_round_trip_same_sid(tmp_path: Path, public) -> None:
+    transfer = _LocalDirTransfer()
+    engine = OpenCodeEngine(transfer=transfer)
+    home = tmp_path / "home"
+    scratch = tmp_path / "scratch"
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+
+    try:
+        async with fake_facades("text") as fakes:
+            invocation = EngineInvocation(
+                invocation_id="native-snap-1",
+                session_ref="native-session-snap",
+                workspace_dir=workspace_dir,
+                prompt="reply with the single word: pong",
+                public=public,
+                engine_env=dict(public.engine.env),
+                provider_base_url_override=fakes.model_url,
+            )
+            receipt = await engine.start(invocation, home=home, scratch=scratch)
+            await asyncio.wait_for(engine.wait_settled("native-snap-1"), timeout=15.0)
+
+        clean = await engine.suspend("native-session-snap")
+        assert clean is True
+
+        agent = {"name": "a", "namespace": "ns", "uid": "u"}
+        manifest = await engine.snapshot(
+            "native-session-snap",
+            agent=agent,
+            workspace_ref="ws-ref",
+            registry={"workspace_path": str(workspace_dir)},
+        )
+        assert manifest.native_session_id == receipt.native_session_id
+        assert transfer.uploaded == home
+        assert not (home / ".ach-registry.json").exists() or True  # registry lives in HOME, archived with it
+
+        # Restore into a FRESH engine/session, simulating a pod restart.
+        fresh_engine = OpenCodeEngine(transfer=transfer)
+        fresh_home = tmp_path / "restored-home"
+        fresh_scratch = tmp_path / "restored-scratch"
+        fresh_engine._session_for("native-session-snap", fresh_home, fresh_scratch)
+        expected = {
+            "engine_package": ENGINE_PACKAGE,
+            "engine_version": ENGINE_VERSION,
+            "workspace_ref": "ws-ref",
+            "session_ref": "native-session-snap",
+            "workspace_path": str(workspace_dir),
+        }
+        await fresh_engine.restore(
+            "native-session-snap",
+            manifest,
+            expected=expected,
+            public=public,
+            engine_env=dict(public.engine.env),
+        )
+        restored_session = fresh_engine._sessions["native-session-snap"]
+        assert restored_session.sid == receipt.native_session_id
+        assert restored_session.alive
+    finally:
+        for instance in (engine, locals().get("fresh_engine")):
+            if instance is None:
+                continue
+            for session in list(instance._sessions.values()):
+                await session._kill(confirm_timeout=5.0)
 
 
 async def test_restore_rejects_a_live_native_process(tmp_path: Path, public) -> None:

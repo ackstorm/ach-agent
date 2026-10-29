@@ -110,3 +110,31 @@ async def test_memory_auth_header_wins_over_the_servers_header_case_insensitivel
         assert control._memory_headers == {"x-api-key": "memory-token-value-1"}
     finally:
         await control.close()
+
+
+async def test_literal_header_is_sent_but_never_redacted():
+    from ach_runtime.observability.runs import redact
+
+    wire = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    wire["workspace"]["persistence"]["enabled"] = False
+    wire["workspace"]["session"]["persistence"]["enabled"] = False
+    wire["artifacts"]["enabled"] = False
+    wire["capability"]["standalone"]["model"]["headers"]["Accept-Language"] = {"value": "en-literal-value"}
+    wire["configVersion"] = compute_config_version(wire)
+    control = await assemble(parse_config(wire), environ=ENV)
+    try:
+        assert control._model_headers["Accept-Language"] == "en-literal-value"
+        assert "en-literal-value" not in control.upstream_secrets
+        assert redact("accept en-literal-value") == "accept en-literal-value"
+        assert redact("key model-secret-1") == "key [redacted]"
+    finally:
+        await control.close()
+
+
+@pytest.mark.parametrize("header", [{"env": "ACH_AGENT_MODEL_H0", "value": "x"}, {}, {"value": 1}])
+def test_header_is_exactly_an_env_alias_or_a_literal(header):
+    wire = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    wire["capability"]["standalone"]["model"]["headers"]["Accept-Language"] = header
+    wire["configVersion"] = compute_config_version(wire)
+    with pytest.raises(ValueError):
+        parse_config(wire)

@@ -148,7 +148,19 @@ _RESERVED_HEADER_NAMES = frozenset({
 _RESERVED_HEADER_PREFIXES = ("x-ach-", "langfuse_")
 
 
-def _check_headers(headers: dict[str, SecretAlias], where: str) -> None:
+class HeaderLiteral(BaseModel):
+    """A literal upstream header value. Not a secret: it is never registered for redaction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: str
+
+
+# `{"env": NAME}` (secret, resolved from the control pod's env) or `{"value": "..."}` (literal).
+HeaderValue = SecretAlias | HeaderLiteral
+
+
+def _check_headers(headers: dict[str, HeaderValue], where: str) -> None:
     seen: set[str] = set()
     for name in headers:
         lowered = name.lower()
@@ -174,7 +186,7 @@ class StandaloneModel(BaseModel):
     name: str
     type: Literal["openai", "gemini", "anthropic"]
     base_url: str = Field(alias="baseUrl", pattern=_ENDPOINT_PATTERN)
-    headers: dict[str, SecretAlias] = Field(default_factory=dict)
+    headers: dict[str, HeaderValue] = Field(default_factory=dict)
     params: dict[str, Any] = Field(default_factory=dict)
     thinking: ThinkingBlock = Field(default_factory=ThinkingBlock)
     limits: ModelLimits | None = None
@@ -190,7 +202,7 @@ class StandaloneMcpServer(BaseModel):
 
     name: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,62}$")
     url: str = Field(pattern=_ENDPOINT_PATTERN)
-    headers: dict[str, SecretAlias] = Field(default_factory=dict)
+    headers: dict[str, HeaderValue] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _headers_are_valid(self) -> StandaloneMcpServer:

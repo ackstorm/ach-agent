@@ -62,15 +62,21 @@ func TestRender_StandaloneProducesV3CapabilityAndEnvBindings(t *testing.T) {
 	}
 }
 
-func TestRender_StandaloneLiteralHeaderBecomesPlainEnvBinding(t *testing.T) {
+func TestRender_StandaloneLiteralHeaderIsOnTheWireWithoutAnEnvBinding(t *testing.T) {
 	p, a := standaloneFixture()
 	a.Spec.Standalone.Model.Headers = map[string]v1.HeaderValue{"Accept-Language": {Value: ptr("en")}}
-	_, env, err := Render(p, a)
+	cfg, env, err := Render(p, a)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(env) < 1 || env[0].Name != "ACH_AGENT_MODEL_H0" || env[0].Value == nil || *env[0].Value != "en" || env[0].SecretKeyRef != nil {
-		t.Fatalf("env = %#v", env)
+	raw, _ := json.Marshal(cfg)
+	if !strings.Contains(string(raw), `"Accept-Language":{"value":"en"}`) {
+		t.Errorf("config lacks the literal header: %s", raw)
+	}
+	for _, b := range env {
+		if strings.HasPrefix(b.Name, "ACH_AGENT_MODEL_H") {
+			t.Errorf("literal header got an env binding: %#v", b)
+		}
 	}
 }
 

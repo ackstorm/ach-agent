@@ -180,15 +180,22 @@ type WSStandalone struct {
 	McpServers []WSMcpServer     `json:"mcpServers"`
 }
 
+// WSHeader is one upstream header of the standalone model or an MCP server: exactly one of
+// an env alias (a secret) or a literal value.
+type WSHeader struct {
+	Env   string  `json:"env,omitempty"`
+	Value *string `json:"value,omitempty"`
+}
+
 // WSStandaloneModel is capability.standalone.model (schema StandaloneModel).
 type WSStandaloneModel struct {
-	Name     string                   `json:"name"`
-	Type     string                   `json:"type"`
-	BaseURL  string                   `json:"baseUrl"`
-	Headers  map[string]WSSecretAlias `json:"headers"`
-	Params   map[string]any           `json:"params"`
-	Thinking *ThinkingBlock           `json:"thinking,omitempty"`
-	Limits   *WSModelLimits           `json:"limits,omitempty"`
+	Name     string              `json:"name"`
+	Type     string              `json:"type"`
+	BaseURL  string              `json:"baseUrl"`
+	Headers  map[string]WSHeader `json:"headers"`
+	Params   map[string]any      `json:"params"`
+	Thinking *ThinkingBlock      `json:"thinking,omitempty"`
+	Limits   *WSModelLimits      `json:"limits,omitempty"`
 }
 
 // WSModelLimits is capability.standalone.model.limits (schema ModelLimits).
@@ -199,9 +206,9 @@ type WSModelLimits struct {
 
 // WSMcpServer is one capability.standalone.mcpServers entry (schema StandaloneMcpServer).
 type WSMcpServer struct {
-	Name    string                   `json:"name"`
-	URL     string                   `json:"url"`
-	Headers map[string]WSSecretAlias `json:"headers"`
+	Name    string              `json:"name"`
+	URL     string              `json:"url"`
+	Headers map[string]WSHeader `json:"headers"`
 }
 
 // WSAchServer is capability.ach (schema AchServer).

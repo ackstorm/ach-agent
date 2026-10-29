@@ -328,8 +328,9 @@ The engine never sees the real `baseUrl` or any header value.
 
 - `ach`: missing env or unreachable ACH -> `HydrationError`, fail closed (as today).
 - `standalone`: no startup round-trip; the first upstream failure is the run's error.
-- Run-record redaction covers every configured header value (read from env at startup), not
-  only the `ek_` / `sk-` patterns.
+- Run-record redaction covers every env-derived header value (read from env at startup), not
+  only the `ek_` / `sk-` patterns. A literal header (`value`) is not a secret: it renders on the
+  wire as `{"value": ...}`, gets no env binding and is never redacted.
 
 ## 6. OpenShell integration
 

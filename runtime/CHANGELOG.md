@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - License changed from Apache-2.0 to MIT.
+- Upstream header entries in the workspace config are `{"env": NAME}` (secret) or `{"value": "..."}` (literal). Only env-derived values are redacted from logs.
 
 ### Fixed
 

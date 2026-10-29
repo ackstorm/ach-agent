@@ -24,7 +24,7 @@ from starlette.routing import Mount
 from ach_runtime import __version__
 from ach_runtime.channels.event import Event, RoutedEvent
 from ach_runtime.config.public import ExecutionBootstrap, PublicConfig, public_config
-from ach_runtime.config.schema import RuntimeConfig, SecretAlias
+from ach_runtime.config.schema import HeaderLiteral, HeaderValue, RuntimeConfig
 from ach_runtime.execution.wire import CancelRequest, RunStatus, StartRequest
 from ach_runtime.facades._memory_client import (
     TOOLS_SPEC,
@@ -840,15 +840,23 @@ def create_facade_app(control: Control) -> FastAPI:
     return app
 
 
-def resolve_headers(headers: Mapping[str, SecretAlias], env: Mapping[str, str]) -> dict[str, str]:
-    """Resolve configured upstream headers from env; a missing value fails assembly."""
+def resolve_headers(
+    headers: Mapping[str, HeaderValue], env: Mapping[str, str]
+) -> tuple[dict[str, str], list[str]]:
+    """Resolve configured upstream headers: (all headers, the env-derived secret values).
+    An env alias that is unset fails assembly; a literal is not a secret."""
     resolved: dict[str, str] = {}
-    for name, alias in headers.items():
-        value = env.get(alias.env, "")
+    secrets: list[str] = []
+    for name, header in headers.items():
+        if isinstance(header, HeaderLiteral):
+            resolved[name] = header.value
+            continue
+        value = env.get(header.env, "")
         if not value:
-            raise WorkspaceAssemblyUnavailable(f"upstream header {name} needs env {alias.env}, which is unset")
+            raise WorkspaceAssemblyUnavailable(f"upstream header {name} needs env {header.env}, which is unset")
         resolved[name] = value
-    return resolved
+        secrets.append(value)
+    return resolved, secrets
 
 
 def merge_headers(base: Mapping[str, str], over: Mapping[str, str]) -> dict[str, str]:
@@ -896,11 +904,10 @@ async def assemble(
         ek = ""
         catalog = standalone_catalog(config)
         model_endpoint = server.model.base_url
-        model_headers = resolve_headers(server.model.headers, env)
-        mcp_headers = {item.name: resolve_headers(item.headers, env) for item in server.mcp_servers}
-        upstream_secrets = tuple(model_headers.values()) + tuple(
-            value for headers in mcp_headers.values() for value in headers.values()
-        )
+        model_headers, model_secrets = resolve_headers(server.model.headers, env)
+        resolved_mcp = {item.name: resolve_headers(item.headers, env) for item in server.mcp_servers}
+        mcp_headers = {name: headers for name, (headers, _) in resolved_mcp.items()}
+        upstream_secrets = (*model_secrets, *(value for _, secrets in resolved_mcp.values() for value in secrets))
     identity = ProcessIdentity(agent=config.agent.name, environment=config.identity_environment)
     public = public_config(config, config.engine.env)
     storage = storage_from_env(config, env)
@@ -912,6 +919,7 @@ async def assemble(
     memory_endpoint = ""
     memory_project = ""
     memory_headers: dict[str, str] = {}
+    memory_auth_secrets: tuple[str, ...] = ()
     if config.memory is not None:
         params = config.memory.ach_memory
         memory_endpoint = resolve_endpoint(endpoint=params.endpoint, mcp_server_id=params.mcp_server_id,
@@ -921,6 +929,7 @@ async def assemble(
                                               resolve_secret=lambda alias: env.get(alias))
         if ok:
             memory_headers = headers
+            memory_auth_secrets = tuple(headers.values())
             if config.capability.standalone is not None and params.mcp_server_id in mcp_headers:
                 memory_headers = merge_headers(mcp_headers[params.mcp_server_id], headers)
         memory_excluded = excluded_mcp_server_ids(
@@ -1024,7 +1033,7 @@ async def assemble(
         )
     metadata = catalog.model.metadata
     control._priced = metadata is not None and metadata.input_cost_per_token is not None
-    register_secrets((*upstream_secrets, *memory_headers.values()))
+    register_secrets((*upstream_secrets, *memory_auth_secrets))
     lifecycle = Lifecycle(control)
     control.lifecycle = lifecycle
     return control

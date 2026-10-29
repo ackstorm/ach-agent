@@ -870,6 +870,21 @@
       "title": "HandoffBlock",
       "type": "object"
     },
+    "HeaderLiteral": {
+      "additionalProperties": false,
+      "description": "A literal upstream header value. Not a secret: it is never registered for redaction.",
+      "properties": {
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "HeaderLiteral",
+      "type": "object"
+    },
     "HookBlock": {
       "additionalProperties": false,
       "properties": {
@@ -1282,7 +1297,14 @@
         },
         "headers": {
           "additionalProperties": {
-            "$ref": "#/$defs/SecretAlias"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SecretAlias"
+              },
+              {
+                "$ref": "#/$defs/HeaderLiteral"
+              }
+            ]
           },
           "title": "Headers",
           "type": "object"
@@ -1318,7 +1340,14 @@
         },
         "headers": {
           "additionalProperties": {
-            "$ref": "#/$defs/SecretAlias"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SecretAlias"
+              },
+              {
+                "$ref": "#/$defs/HeaderLiteral"
+              }
+            ]
           },
           "title": "Headers",
           "type": "object"

@@ -18,21 +18,27 @@ type EnvBinding struct {
 	Value        *string
 }
 
-// HeaderEnv names one env var per header (<prefix>_H<i>, i in case-insensitive name order)
-// and returns the config aliases plus the pod bindings.
-func HeaderEnv(prefix string, headers map[string]v1.HeaderValue) (map[string]WSSecretAlias, []EnvBinding) {
+// HeaderEnv renders every header for the wire: a Secret key becomes the alias
+// {"env": <prefix>_H<i>} (i in case-insensitive name order, over all headers) with a pod
+// binding; a literal becomes {"value": ...} and gets no binding, so the runtime never treats
+// it as a secret.
+func HeaderEnv(prefix string, headers map[string]v1.HeaderValue) (map[string]WSHeader, []EnvBinding) {
 	names := make([]string, 0, len(headers))
 	for name := range headers {
 		names = append(names, name)
 	}
 	sort.Slice(names, func(i, j int) bool { return strings.ToLower(names[i]) < strings.ToLower(names[j]) })
-	aliases := make(map[string]WSSecretAlias, len(names))
+	aliases := make(map[string]WSHeader, len(names))
 	bindings := make([]EnvBinding, 0, len(names))
 	for i, name := range names {
-		env := fmt.Sprintf("%s_H%d", prefix, i)
-		aliases[name] = WSSecretAlias{Env: env}
 		h := headers[name]
-		bindings = append(bindings, EnvBinding{Name: env, SecretKeyRef: h.SecretKeyRef, Value: h.Value})
+		if h.SecretKeyRef == nil {
+			aliases[name] = WSHeader{Value: h.Value}
+			continue
+		}
+		env := fmt.Sprintf("%s_H%d", prefix, i)
+		aliases[name] = WSHeader{Env: env}
+		bindings = append(bindings, EnvBinding{Name: env, SecretKeyRef: h.SecretKeyRef})
 	}
 	return aliases, bindings
 }

@@ -392,7 +392,7 @@ The `capability` block replaces the `ach` block and the root `model`:
 - `server` is `standalone` or `ach`. The chosen server's block is required and the other is forbidden.
 - `capability.ach` holds `baseUrl`, `environment`, `key` (an env name) and `model` (the former root `model`).
 - `capability.standalone.model.type` is the wire format: `openai`, `anthropic` or `gemini`.
-- Header values are env names (`{"env": NAME}`), resolved only by the control role. A missing value fails assembly.
+- A header value is `{"env": NAME}` (a secret, resolved only by the control role; a missing value fails assembly) or `{"value": "..."}` (a literal, not a secret). Only env-derived values are redacted from logs and run records.
 - Header names are unique case-insensitively per endpoint. Reserved names are rejected: `host`, `content-length`, `transfer-encoding`, `connection`, `traceparent`, `tracestate`, `x-litellm-session-id`, `x-litellm-trace-id`, `x-ach-*` and `langfuse_*`.
 - `filter.exclude.skills` requires `server` `ach`.
 - With `server` `standalone`, `memory.achMemory.auth.type` cannot be `ach`, and `memory.achMemory.mcpServerId` must name a `capability.standalone.mcpServers` entry.

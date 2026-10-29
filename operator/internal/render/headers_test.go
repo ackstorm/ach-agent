@@ -9,23 +9,20 @@ import (
 	v1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
 )
 
-func TestHeaderEnv_SortsCaseInsensitivelyAndBindsSecretsAndLiterals(t *testing.T) {
+func TestHeaderEnv_SortsCaseInsensitivelyBindsSecretsAndKeepsLiteralsOnTheWire(t *testing.T) {
 	aliases, bindings := HeaderEnv("ACH_AGENT_MODEL", map[string]v1.HeaderValue{
 		"x-litellm-api-key": {SecretKeyRef: &v1.SecretKeyRef{Name: "litellm", Key: "apiKey"}},
 		"Accept-Language":   {Value: ptr("en")},
 	})
-	wantAliases := map[string]WSSecretAlias{
-		"Accept-Language":   {Env: "ACH_AGENT_MODEL_H0"},
+	wantAliases := map[string]WSHeader{
+		"Accept-Language":   {Value: ptr("en")},
 		"x-litellm-api-key": {Env: "ACH_AGENT_MODEL_H1"},
 	}
 	if !reflect.DeepEqual(aliases, wantAliases) {
 		t.Fatalf("aliases = %#v", aliases)
 	}
-	if bindings[0].Name != "ACH_AGENT_MODEL_H0" || *bindings[0].Value != "en" {
-		t.Fatalf("binding 0 = %#v", bindings[0])
-	}
-	if bindings[1].Name != "ACH_AGENT_MODEL_H1" || bindings[1].SecretKeyRef.Name != "litellm" {
-		t.Fatalf("binding 1 = %#v", bindings[1])
+	if len(bindings) != 1 || bindings[0].Name != "ACH_AGENT_MODEL_H1" || bindings[0].SecretKeyRef.Name != "litellm" || bindings[0].Value != nil {
+		t.Fatalf("bindings = %#v, want only the secret header's", bindings)
 	}
 }
 

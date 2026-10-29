@@ -42,7 +42,7 @@ _BODY_MODEL_PATHS = {
 }
 # Top-level body fields an LLM gateway such as LiteLLM routes or authenticates on.
 _ROUTING_FIELDS = frozenset({"fallbacks", "user_config", "api_base", "base_url", "api_key"})
-_GEMINI_PATH = re.compile(r"models/([^/:]+):(generateContent|streamGenerateContent|countTokens)")
+_GEMINI_PATH = re.compile(r"models/([^:]+):(generateContent|streamGenerateContent|countTokens)")
 _INTERNAL_CLIENT_TIMEOUT = httpx.Timeout(None, connect=30.0)
 
 OwnedWorkspace = Callable[[str], Awaitable[bool]]
@@ -82,22 +82,24 @@ def check_model_request(
         match = _GEMINI_PATH.fullmatch(tail)
         if match is None:
             return 404, "path not allowed"
-        if match.group(1) != model:
+        if match.group(1) != model or {"", ".", ".."} & set(match.group(1).split("/")):
             return 400, "model not allowed"
         if set(query) - {"alt"} or query.get("alt", "sse") != "sse":
             return 400, "query not allowed"
-        return None
-    if tail not in _BODY_MODEL_PATHS[api]:
-        return 404, "path not allowed"
-    if query:
-        return 400, "query not allowed"
+    else:
+        if tail not in _BODY_MODEL_PATHS[api]:
+            return 404, "path not allowed"
+        if query:
+            return 400, "query not allowed"
     try:
         document = json.loads(body, object_pairs_hook=_no_duplicate_keys)
     except _DuplicateKey:
         return 400, "duplicate key"
     except ValueError:
         return 400, "body is not JSON"
-    if not isinstance(document, dict) or document.get("model") != model:
+    if not isinstance(document, dict):
+        return 400, "body is not an object"
+    if api != "gemini" and document.get("model") != model:
         return 400, "model not allowed"
     if _ROUTING_FIELDS & document.keys():
         return 400, "routing field not allowed"

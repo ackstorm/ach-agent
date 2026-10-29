@@ -74,7 +74,26 @@ async def test_allowed_gemini_paths_reach_upstream(action):
     ("gemini", "POST", "models/other:generateContent", {"json": {}}, 400),
     ("gemini", "POST", f"models/{GEMINI}:generateContent?key=x", {"json": {}}, 400),
     ("gemini", "POST", f"models/{GEMINI}:embedContent", {"json": {}}, 404),
+    ("gemini", "POST", f"models/{GEMINI}:generateContent", {"content": b"not json"}, 400),
+    ("gemini", "POST", f"models/{GEMINI}:generateContent", {"content": b'{"a": 1, "a": 2}'}, 400),
+    ("gemini", "POST", f"models/{GEMINI}:generateContent", {"content": b"[]"}, 400),
+    *[("gemini", "POST", f"models/{GEMINI}:generateContent", {"json": {field: "x"}}, 400)
+      for field in ("fallbacks", "user_config", "api_base", "base_url", "api_key")],
+    ("gemini", "POST", "models/pub/other:generateContent", {"json": {}}, 400),
 ])
 async def test_rejections_never_reach_upstream(api, method, path, kwargs, status):
     model = GEMINI if api == "gemini" else MODEL
     assert await _send(api, model, method, path, **kwargs) == (status, 0)
+
+
+@pytest.mark.parametrize("model", ["publishers/google/models/gemini-x", "tunedModels/my-model"])
+async def test_gemini_model_ids_with_slashes_match_exactly(model):
+    assert await _send("gemini", model, "POST", f"models/{model}:generateContent", json={}) == (200, 1)
+
+
+@pytest.mark.parametrize("path", ["models/a//b:generateContent", "models/a/./b:generateContent",
+                                  "models/a/../b:generateContent", "models//a:generateContent"])
+async def test_gemini_model_ids_reject_empty_and_dot_segments(path):
+    model = path.removeprefix("models/").removesuffix(":generateContent")
+    status, hits = await _send("gemini", model, "POST", path, json={})
+    assert hits == 0 and status in (400, 404)

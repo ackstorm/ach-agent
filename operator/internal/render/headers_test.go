@@ -43,12 +43,21 @@ func TestCheckHeaderNames_RejectsCaseVariants(t *testing.T) {
 }
 
 func TestCheckHeaderNames_RejectsReservedNames(t *testing.T) {
-	for _, name := range []string{"Host", "content-length", "Transfer-Encoding", "CONNECTION", "X-Ach-Key", "x-ach-anything"} {
+	for _, name := range []string{"Host", "content-length", "Transfer-Encoding", "CONNECTION", "X-Ach-Key", "x-ach-anything",
+		"traceparent", "TraceState", "x-litellm-session-id", "X-LiteLLM-Trace-Id", "langfuse_user_id", "Langfuse_Tag"} {
 		if err := checkHeaderNames("x", map[string]v1.HeaderValue{name: {Value: ptr("a")}}); err == nil {
 			t.Errorf("header %q must be rejected", name)
 		}
 	}
 	if err := checkHeaderNames("x", map[string]v1.HeaderValue{"x-litellm-api-key": {Value: ptr("a")}, "Authorization": {Value: ptr("b")}}); err != nil {
 		t.Errorf("ordinary headers rejected: %v", err)
+	}
+}
+
+func TestCheckHeaderNames_RejectsInvalidTokens(t *testing.T) {
+	for _, name := range []string{"bad name", "bad:name", "bad/name", "näme", "a,b"} {
+		if err := checkHeaderNames("x", map[string]v1.HeaderValue{name: {Value: ptr("a")}}); err == nil {
+			t.Errorf("header %q must be rejected", name)
+		}
 	}
 }

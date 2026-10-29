@@ -4,6 +4,7 @@ package render
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -41,8 +42,16 @@ func McpEnvPrefix(server string) string {
 	return "ACH_AGENT_MCP_" + strings.ToUpper(strings.ReplaceAll(server, "-", "_"))
 }
 
-// reservedHeaders are never configurable: the proxy and the HTTP framing own them.
-var reservedHeaders = map[string]struct{}{"host": {}, "content-length": {}, "transfer-encoding": {}, "connection": {}}
+// The header rules mirror the runtime's config validation (ach_runtime/config/schema.py): the
+// proxy, the HTTP framing and the tracing layer own the reserved names and prefixes.
+var (
+	reservedHeaders = map[string]struct{}{
+		"host": {}, "content-length": {}, "transfer-encoding": {}, "connection": {},
+		"traceparent": {}, "tracestate": {}, "x-litellm-session-id": {}, "x-litellm-trace-id": {},
+	}
+	reservedHeaderPrefixes = []string{"x-ach-", "langfuse_"}
+	headerNameRE           = regexp.MustCompile("^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
+)
 
 // checkHeaderNames rejects reserved names and two names that differ only by case: header
 // names are case-insensitive and unique per endpoint.
@@ -50,7 +59,10 @@ func checkHeaderNames(where string, headers map[string]v1.HeaderValue) error {
 	seen := make(map[string]string, len(headers))
 	for name := range headers {
 		lower := strings.ToLower(name)
-		if _, ok := reservedHeaders[lower]; ok || strings.HasPrefix(lower, "x-ach-") {
+		if !headerNameRE.MatchString(name) {
+			return fmt.Errorf("%s: invalid header name %q", where, name)
+		}
+		if _, ok := reservedHeaders[lower]; ok || hasAnyPrefix(lower, reservedHeaderPrefixes) {
 			return fmt.Errorf("%s: header %q is reserved", where, name)
 		}
 		if prev, ok := seen[lower]; ok {
@@ -59,4 +71,13 @@ func checkHeaderNames(where string, headers map[string]v1.HeaderValue) error {
 		seen[lower] = name
 	}
 	return nil
+}
+
+func hasAnyPrefix(s string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
 }

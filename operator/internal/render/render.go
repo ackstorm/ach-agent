@@ -266,11 +266,6 @@ func renderMemory(m *v1.MemorySpec) *MemoryBlock {
 			}
 			out.AchMemory = ab
 		}
-	case "codemem":
-		// codemem block is optional per schema; {"type":"codemem"} is valid.
-		if m.Codemem != nil && (m.Codemem.DBPath != "" || m.Codemem.Project != "") {
-			out.Codemem = &CodememBlock{DBPath: m.Codemem.DBPath, Project: m.Codemem.Project}
-		}
 	}
 	return out
 }

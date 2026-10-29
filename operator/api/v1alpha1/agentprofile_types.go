@@ -267,9 +267,14 @@ type ControlSpec struct {
 // SandboxResources maps onto the OpenShell sandbox template resources.
 type SandboxResources struct {
 	// +optional
+	// +kubebuilder:validation:Pattern=`^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$`
 	CPU string `json:"cpu,omitempty"`
 	// +optional
+	// +kubebuilder:validation:Pattern=`^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$`
 	Memory string `json:"memory,omitempty"`
+	// +optional
+	// +kubebuilder:validation:Pattern=`^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$`
+	EphemeralStorage string `json:"ephemeralStorage,omitempty"`
 }
 
 // OpenShellSpec is the OpenShell sandbox every Workspace of the profile's Agents runs in.

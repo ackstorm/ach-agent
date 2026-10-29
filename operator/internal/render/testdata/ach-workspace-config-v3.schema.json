@@ -1276,6 +1276,7 @@
           "type": "string"
         },
         "url": {
+          "pattern": "^https?://[^/\\s]+",
           "title": "Url",
           "type": "string"
         },
@@ -1311,6 +1312,7 @@
           "type": "string"
         },
         "baseUrl": {
+          "pattern": "^https?://[^/\\s]+",
           "title": "Baseurl",
           "type": "string"
         },

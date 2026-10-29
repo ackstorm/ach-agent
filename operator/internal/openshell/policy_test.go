@@ -24,13 +24,13 @@ func TestBuildPolicy_ReservedFacadeRuleAndDefaults(t *testing.T) {
 	if !ok || rule.Endpoints[0].Host != "agent-r.ns.svc.cluster.local" || rule.Endpoints[0].Port != 8081 {
 		t.Fatalf("facade rule = %#v", p.NetworkPolicies)
 	}
-	if len(rule.Binaries) != 3 {
+	if len(rule.Binaries) != 2 {
 		t.Fatalf("binaries = %#v", rule.Binaries)
 	}
 	if p.Landlock.Compatibility != "hard_requirement" {
 		t.Fatalf("landlock = %#v", p.Landlock)
 	}
-	if !p.Filesystem.IncludeWorkdir || p.Version != 1 {
+	if p.Filesystem.IncludeWorkdir || p.Version != 1 {
 		t.Fatalf("policy = %#v", p)
 	}
 }
@@ -97,6 +97,22 @@ func TestBuildPolicy_Rejections(t *testing.T) {
 		"writable parent":       {`{"filesystem":{"read_write":["/opt"]}}`, "writable"},
 		"writable root":         {`{"filesystem":{"read_write":["/"]}}`, "writable"},
 		"writable via dotdot":   {`{"filesystem":{"read_write":["/tmp/../usr/local/bin"]}}`, "writable"},
+		"writable runtime code": {`{"filesystem":{"read_write":["/work/src"]}}`, "writable"},
+		"writable work":         {`{"filesystem":{"read_write":["/work"]}}`, "writable"},
+		"writable stdlib":       {`{"filesystem":{"read_write":["/usr/local/lib/python3.13"]}}`, "writable"},
+		"relative read_write":   {`{"filesystem":{"read_write":["usr/local/bin"]}}`, "absolute"},
+		"dotdot read_write":     {`{"filesystem":{"read_write":["../usr/local/bin"]}}`, "absolute"},
+		"relative read_only":    {`{"filesystem":{"read_only":["data"]}}`, "absolute"},
+		"reserved name field":   {`{"network_policies":{"x":{"name":"ach-agent-facades"}}}`, "reserved prefix"},
+		"reserved name mixed":   {`{"network_policies":{"x":{"name":"ACH-Agent-facades"}}}`, "reserved prefix"},
+		"name differs from key": {`{"network_policies":{"x":{"name":"y"}}}`, "differs from its key"},
+		"facade exact host":     {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"F.","port":8081}]}}}`, "facade"},
+		"facade host glob":      {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"f*","port":8081}]}}}`, "facade"},
+		"facade wildcard host":  {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"**","port":8081}]}}}`, "facade"},
+		"facade ports list":     {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"f","ports":[443,8081]}]}}}`, "facade"},
+		"facade allowed_ips":    {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"example.com","port":8081,"allowed_ips":["10.0.0.0/8"]}]}}}`, "facade"},
+		"reserved middleware":   {`{"network_middlewares":{"ach-agent-m":{"name":"m","middleware":"x"}}}`, "reserved prefix"},
+		"middleware on facade":  {`{"network_middlewares":{"m":{"name":"m","middleware":"x","endpoints":{"include":["f"]}}}}`, "facade"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			for who, args := range map[string][2]*apiextensionsv1.JSON{"agent": {nil, raw(tc.doc)}, "profile": {raw(tc.doc), nil}} {
@@ -109,9 +125,33 @@ func TestBuildPolicy_Rejections(t *testing.T) {
 	}
 }
 
+func TestBuildPolicy_UnrelatedEgressIsKept(t *testing.T) {
+	doc := raw(`{"network_policies":{"a":{"name":"a","endpoints":[{"host":"pypi.org","port":443},{"host":"*.example.com","port":8081},{"host":"example.com","port":8081,"allowed_ips":["10.0.0.0/8"]}]}}}`)
+	if _, err := BuildPolicy(nil, doc, "f.ns.svc", 8081); err == nil {
+		t.Fatal("allowed_ips on the facade port must be rejected")
+	}
+	doc = raw(`{"network_policies":{"a":{"name":"a","endpoints":[{"host":"pypi.org","port":443},{"host":"*.example.com","port":8081},{"host":"f.other.svc","port":8081}]}}}`)
+	if _, err := BuildPolicy(nil, doc, "f.ns.svc", 8081); err != nil {
+		t.Fatalf("unrelated egress rejected: %v", err)
+	}
+}
+
+func TestBuildPolicy_RuntimeCodeIsReadOnly(t *testing.T) {
+	p, err := BuildPolicy(nil, nil, "f", 8081)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(p.Filesystem.ReadOnly, "/work") || slices.Contains(p.Filesystem.ReadWrite, "/work") {
+		t.Fatalf("filesystem = %#v", p.Filesystem)
+	}
+	if !slices.Contains(p.Filesystem.ReadWrite, "/workspace") {
+		t.Fatalf("/workspace must be listed explicitly: %#v", p.Filesystem)
+	}
+}
+
 func TestResources_MapsCpuMemory(t *testing.T) {
-	m, err := Resources(&v1.SandboxResources{CPU: "2", Memory: "4Gi"})
-	if err != nil || m["cpu"] != "2" || m["memory"] != "4Gi" || len(m) != 2 {
+	m, err := Resources(&v1.SandboxResources{CPU: "2", Memory: "4Gi", EphemeralStorage: "10Gi"})
+	if err != nil || m["cpu"] != "2" || m["memory"] != "4Gi" || m["ephemeral-storage"] != "10Gi" || len(m) != 3 {
 		t.Fatalf("m=%v err=%v", m, err)
 	}
 	if m, err := Resources(nil); m != nil || err != nil {

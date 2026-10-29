@@ -38,7 +38,6 @@ type PromptSystemBlock struct {
 type MemoryBlock struct {
 	Type      string          `json:"type"`
 	AchMemory *AchMemoryBlock `json:"achMemory,omitempty"`
-	Codemem   *CodememBlock   `json:"codemem,omitempty"`
 }
 
 // AchMemoryBlock renders memory.achMemory. Endpoint and McpServerID are the two
@@ -59,11 +58,6 @@ type AchMemoryAuthBlock struct {
 	Type   string `json:"type"`
 	Env    string `json:"env,omitempty"`
 	Header string `json:"header,omitempty"`
-}
-
-type CodememBlock struct {
-	DBPath  string `json:"dbPath,omitempty"`
-	Project string `json:"project,omitempty"`
 }
 
 // PrepareBlock is the rendered per-invocation workspace hook (channels[].handoff,

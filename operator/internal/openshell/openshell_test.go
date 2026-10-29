@@ -219,7 +219,7 @@ func TestOpenShell_CreateMapsLaunchExactly(t *testing.T) {
 	if len(rule.Binaries) != len(runtimeBinaries) {
 		t.Errorf("binaries = %+v, want %v (finding 10)", rule.Binaries, runtimeBinaries)
 	}
-	if fs := s.Spec.Policy.Filesystem; fs == nil || !fs.IncludeWorkdir || !slices.Equal(fs.ReadOnly, runtimeReadOnly) || !slices.Equal(fs.ReadWrite, runtimeReadWrite) {
+	if fs := s.Spec.Policy.Filesystem; fs == nil || fs.IncludeWorkdir || !slices.Equal(fs.ReadOnly, runtimeReadOnly) || !slices.Equal(fs.ReadWrite, runtimeReadWrite) {
 		t.Errorf("filesystem policy = %+v (finding 10)", fs)
 	}
 	if l := s.Spec.Policy.Landlock; l == nil || l.Compatibility != "hard_requirement" {

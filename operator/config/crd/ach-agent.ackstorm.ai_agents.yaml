@@ -55,6 +55,7 @@ spec:
                 properties:
                   baseUrl:
                     minLength: 1
+                    pattern: ^https?://[^/\s]+
                     type: string
                   environment:
                     description: |-
@@ -834,10 +835,8 @@ spec:
                 type: object
               memory:
                 description: |-
-                  MemorySpec is a discriminated memory backend (config: memory). Omit for no memory (fail-open).
-                  Asymmetry is intentional and mirrors the schema: AchMemoryMemory REQUIRES the achMemory block
-                  (endpoint has no default); CodememMemory requires only `type` — {"type":"codemem"} is valid
-                  (dbPath/project are derived/defaulted by the harness).
+                  MemorySpec is the memory backend (config: memory). Omit for no memory (fail-open). The
+                  achMemory block is required (its endpoint has no default).
                 properties:
                   achMemory:
                     description: 'AchMemorySpec is the ach-memory memory backend (config:
@@ -958,18 +957,8 @@ spec:
                     x-kubernetes-validations:
                     - message: 'memory.achMemory: set exactly one of endpoint or mcpServerId'
                       rule: has(self.endpoint) != has(self.mcpServerId)
-                  codemem:
-                    description: 'CodememSpec is the codemem memory backend (config:
-                      memory.codemem). All fields optional.'
-                    properties:
-                      dbPath:
-                        type: string
-                      project:
-                        type: string
-                    type: object
                   type:
                     enum:
-                    - codemem
                     - ach-memory
                     type: string
                 required:
@@ -977,7 +966,7 @@ spec:
                 type: object
                 x-kubernetes-validations:
                 - message: memory.achMemory is required when type=ach-memory
-                  rule: (self.type=='ach-memory' && has(self.achMemory)) || (self.type=='codemem')
+                  rule: self.type=='ach-memory' && has(self.achMemory)
               profileRef:
                 description: LocalObjectRef references a resource by name in the CR's
                   namespace.
@@ -1090,6 +1079,7 @@ spec:
                           type: string
                         url:
                           minLength: 1
+                          pattern: ^https?://[^/\s]+
                           type: string
                       required:
                       - name
@@ -1114,6 +1104,7 @@ spec:
                         type: string
                       baseUrl:
                         minLength: 1
+                        pattern: ^https?://[^/\s]+
                         type: string
                       headers:
                         additionalProperties:
@@ -1146,7 +1137,8 @@ spec:
                         description: |-
                           Headers are sent to the endpoint by the control pod; the sandbox never sees them. Header
                           names are case-insensitive and unique; host, content-length, transfer-encoding,
-                          connection and x-ach-* are reserved (rejected when the Agent is rendered).
+                          connection, traceparent, tracestate, x-litellm-session-id, x-litellm-trace-id,
+                          x-ach-* and langfuse_* are reserved (rejected when the Agent is rendered).
                         maxProperties: 64
                         type: object
                       limits:

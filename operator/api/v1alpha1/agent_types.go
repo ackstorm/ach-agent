@@ -141,27 +141,15 @@ type AchMemorySpec struct {
 	Project string `json:"project,omitempty"`
 }
 
-// CodememSpec is the codemem memory backend (config: memory.codemem). All fields optional.
-type CodememSpec struct {
-	// +optional
-	DBPath string `json:"dbPath,omitempty"`
-	// +optional
-	Project string `json:"project,omitempty"`
-}
-
-// MemorySpec is a discriminated memory backend (config: memory). Omit for no memory (fail-open).
-// Asymmetry is intentional and mirrors the schema: AchMemoryMemory REQUIRES the achMemory block
-// (endpoint has no default); CodememMemory requires only `type` — {"type":"codemem"} is valid
-// (dbPath/project are derived/defaulted by the harness).
-// +kubebuilder:validation:XValidation:rule="(self.type=='ach-memory' && has(self.achMemory)) || (self.type=='codemem')",message="memory.achMemory is required when type=ach-memory"
+// MemorySpec is the memory backend (config: memory). Omit for no memory (fail-open). The
+// achMemory block is required (its endpoint has no default).
+// +kubebuilder:validation:XValidation:rule="self.type=='ach-memory' && has(self.achMemory)",message="memory.achMemory is required when type=ach-memory"
 type MemorySpec struct {
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=codemem;ach-memory
+	// +kubebuilder:validation:Enum=ach-memory
 	Type string `json:"type"`
 	// +optional
 	AchMemory *AchMemorySpec `json:"achMemory,omitempty"`
-	// +optional
-	Codemem *CodememSpec `json:"codemem,omitempty"`
 }
 
 // WebhookAuthSpec configures webhook auth (config: channels[].webhook.auth; secretRef → secretPath).
@@ -411,10 +399,12 @@ type StandaloneModelSpec struct {
 	API string `json:"api"`
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^https?://[^/\s]+`
 	BaseURL string `json:"baseUrl"`
 	// Headers are sent to the endpoint by the control pod; the sandbox never sees them. Header
 	// names are case-insensitive and unique; host, content-length, transfer-encoding,
-	// connection and x-ach-* are reserved (rejected when the Agent is rendered).
+	// connection, traceparent, tracestate, x-litellm-session-id, x-litellm-trace-id,
+	// x-ach-* and langfuse_* are reserved (rejected when the Agent is rendered).
 	// +optional
 	// +kubebuilder:validation:MaxProperties=64
 	Headers map[string]HeaderValue `json:"headers,omitempty"`
@@ -435,6 +425,7 @@ type StandaloneMcpServerSpec struct {
 	Name string `json:"name"`
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^https?://[^/\s]+`
 	URL string `json:"url"`
 	// +optional
 	// +kubebuilder:validation:MaxProperties=64
@@ -473,6 +464,7 @@ type AchModelSpec struct {
 type AchServerSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^https?://[^/\s]+`
 	BaseURL string `json:"baseUrl"`
 	// Environment is the ACH Hub Environment name. The key already scopes the environment
 	// server-side.

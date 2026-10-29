@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 
 from ach_runtime.harness.workspaces import Placement, WorkspaceRef
@@ -28,7 +29,9 @@ class FakeSource:
         self.adopt_gate: asyncio.Event | None = None
         self.lost: Callable[[str, str | None], Awaitable[None]] | None = None
         self._registration = 0
-        self.gateway = True
+        self._gateway = True
+        self._gateway_back = asyncio.Event()
+        self._gateway_back.set()
 
     def placement(self, name: str) -> Placement:
         self._registration += 1
@@ -66,8 +69,27 @@ class FakeSource:
         self.events.append("serving")
         return self.serving_ok
 
+    @property
+    def gateway(self) -> bool:
+        return self._gateway
+
+    @gateway.setter
+    def gateway(self, available: bool) -> None:
+        self._gateway = available
+        if available:
+            self._gateway_back.set()
+        else:
+            self._gateway_back.clear()
+
     def gateway_available(self) -> bool:
-        return self.gateway
+        return self._gateway
+
+    async def wait_gateway(self, deadline: float) -> bool:
+        try:
+            await asyncio.wait_for(self._gateway_back.wait(), max(0.0, deadline - time.monotonic()))
+        except TimeoutError:
+            pass
+        return self._gateway
 
     def on_lost(self, callback: Callable[[str, str | None], Awaitable[None]]) -> None:
         self.lost = callback

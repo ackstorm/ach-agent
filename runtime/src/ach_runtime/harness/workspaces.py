@@ -203,6 +203,7 @@ class WorkspaceManager:
         self._errors: dict[str, BaseException] = {}
         self._adoption: asyncio.Task[None] | None = None
         self._loss_tasks: set[asyncio.Task[Any]] = set()
+        self._deferred_adoptions: set[asyncio.Task[Any]] = set()
         # ponytail: never pruned; one id per lost instance.
         self._lost_instances: set[str] = set()
         source.on_lost(self._source_lost)
@@ -331,7 +332,7 @@ class WorkspaceManager:
                 lifecycle = next(
                     (
                         task
-                        for lifecycle_kind in ("close", "recover", "retire")
+                        for lifecycle_kind in ("close", "recover", "retire", "adopt")
                         if (task := owner.tasks.get(lifecycle_kind)) is not None and not task.done()
                     ),
                     None,
@@ -567,6 +568,8 @@ class WorkspaceManager:
         """Shutdown: an adoption still waiting for the host's inventory is cancelled."""
         if self._adoption is not None and not self._adoption.done():
             self._adoption.cancel()
+        for task in list(self._deferred_adoptions):
+            task.cancel()
 
     async def _run_adoption(self) -> None:
         units = await self._source.adopt()
@@ -592,12 +595,36 @@ class WorkspaceManager:
         return await wait(deadline)
 
     async def _adopt_when_gateway_returns(self, ref: WorkspaceRef, placement: Placement) -> None:
-        wait = getattr(self._source, "wait_gateway", None)
         while not self._source.gateway_available():
-            if wait is None:
-                return
-            await wait(time.monotonic() + 30)
+            await self.wait_gateway(time.monotonic() + 30)
+            if not self._source.gateway_available() and getattr(self._source, "wait_gateway", None) is None:
+                await asyncio.sleep(1)
         await self._adopt_one(ref, placement)
+
+    def _defer_adoption(self, ref: WorkspaceRef, placement: Placement) -> None:
+        """Re-run the adoption once the gateway is back, as the ref's own "adopt" task:
+        `ensure()` waits for it (no `place()` against a unit that is still hosted), it runs
+        under the ref's lock after the current attempt returns, and `cancel_adoption()`
+        cancels it. The task replaces the finishing attempt in `owner.tasks`."""
+        key = ref.workspace_ref
+        owner = self._owners.setdefault(key, _RefOwner())
+
+        async def runner() -> None:
+            async with owner.lock:
+                await self._adopt_when_gateway_returns(ref, placement)
+
+        task = asyncio.ensure_future(runner())
+        owner.tasks["adopt"] = task
+        self._deferred_adoptions.add(task)
+
+        def _cleanup(done: asyncio.Task[Any]) -> None:
+            self._deferred_adoptions.discard(done)
+            if owner.tasks.get("adopt") is done:
+                del owner.tasks["adopt"]
+            if not done.cancelled():
+                done.exception()
+
+        task.add_done_callback(_cleanup)
 
     async def _adopt_one(self, ref: WorkspaceRef, placement: Placement) -> None:
         key = ref.workspace_ref
@@ -613,9 +640,7 @@ class WorkspaceManager:
                 raise
             if not self._source.gateway_available():
                 _LOG.warning("Workspace adoption deferred: gateway unavailable: workspace_ref=%s", key)
-                task = asyncio.ensure_future(self._adopt_when_gateway_returns(ref, placement))
-                self._loss_tasks.add(task)
-                task.add_done_callback(self._loss_tasks.discard)
+                self._defer_adoption(ref, placement)
                 return
             _LOG.error("Workspace adoption failed: workspace_ref=%s error=%s", key, type(exc).__name__)
             # Readiness does not wait for the host's DELETE, but `ensure()` must not place

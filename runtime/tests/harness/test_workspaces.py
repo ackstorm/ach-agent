@@ -409,23 +409,55 @@ async def test_failed_adoption_keeps_the_slot_until_the_host_confirms() -> None:
     assert h.source.retire_calls == [bad_name]
 
 
+async def _deferred_unit(h: "_Harness", name: str):
+    ref = _ref(h.config, name)
+    h.adopt_unit(ref)
+    unit_name = _name(h.config, ref)
+    h.probe_fail.add(unit_name)
+    h.source.gateway = False
+    await h.manager.adopt()
+    return ref, unit_name
+
+
 async def test_failed_adoption_is_deferred_while_gateway_unavailable() -> None:
     h = _Harness(_config(capacity=2))
-    bad = _ref(h.config, "fa-gw")
-    h.adopt_unit(bad)
-    bad_name = _name(h.config, bad)
-    h.probe_fail.add(bad_name)
-    h.source.gateway = False
-
-    await h.manager.adopt()
+    bad, bad_name = await _deferred_unit(h, "fa-gw")
     assert bad_name not in h.source.released
     assert bad.workspace_ref not in h.manager.active_endpoints()
 
     h.probe_fail.clear()
-    h.source.gateway = True
-    await h.manager._adopt_when_gateway_returns(bad, h.source.adopted[0][1])
+    h.source.gateway = True  # the scheduled task wakes by itself: no manual call
+    for _ in range(100):
+        if bad.workspace_ref in h.manager.active_endpoints():
+            break
+        await asyncio.sleep(0.01)
     assert bad.workspace_ref in h.manager.active_endpoints()
     assert bad_name not in h.source.released
+
+
+async def test_ensure_waits_for_a_deferred_adoption_instead_of_placing() -> None:
+    h = _Harness(_config(capacity=2))
+    bad, _ = await _deferred_unit(h, "fa-ensure")
+
+    waiting = asyncio.ensure_future(h.manager.ensure(bad))
+    await _settle()
+    assert not waiting.done() and h.source.place_calls == []
+
+    h.probe_fail.clear()
+    h.source.gateway = True
+    endpoint = await asyncio.wait_for(waiting, 5)
+    assert endpoint.ref == bad
+    assert h.source.place_calls == []
+
+
+async def test_close_cancels_a_deferred_adoption() -> None:
+    h = _Harness(_config(capacity=2))
+    await _deferred_unit(h, "fa-cancel")
+    tasks = list(h.manager._deferred_adoptions)
+    assert tasks
+    h.manager.cancel_adoption()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    assert all(task.cancelled() for task in tasks)
 
 
 async def test_failed_adoption_with_retire_timeout_never_places() -> None:

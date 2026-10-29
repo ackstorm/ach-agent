@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from copy import copy
-from typing import Any
+from typing import Any, get_args
 
-from prometheus_client import REGISTRY, Counter, Histogram
+from prometheus_client import REGISTRY, Counter, Gauge, Histogram
 from prometheus_client.registry import Collector
 
 from ach_runtime.facades._proxy import ProcessIdentity
@@ -40,6 +41,30 @@ ANOMALIES_TOTAL = Counter(
 RUNS_TOTAL = Counter(
     "ach_agent_runs_total", "Recorded invocations by channel and outcome", ["channel", "outcome"]
 )
+AGENT_INFO = Gauge(
+    "ach_agent_info", "Always 1; the scrape identity adds the agent and environment labels"
+)
+
+_COST_UNPRICED_REASONS = ("usage_missing",)
+
+
+def initialise(channels: Iterable[str]) -> None:
+    """Export the identity series and every child whose labels are known at startup, at 0.
+
+    A labelled metric has no sample until its first child exists, so without this a fresh
+    agent exports no ach_agent_* series until its first event. Model-labelled metrics stay
+    lazy: the model is only known at the first turn.
+    """
+    from ach_runtime.observability.runs import AnomalyKind, RunOutcome
+
+    AGENT_INFO.set(1)
+    for kind in get_args(AnomalyKind):
+        ANOMALIES_TOTAL.labels(kind=kind)
+    for channel in channels:
+        for outcome in get_args(RunOutcome):
+            RUNS_TOTAL.labels(channel=channel, outcome=outcome)
+    for reason in _COST_UNPRICED_REASONS:
+        COST_UNPRICED.labels(reason=reason)
 
 
 def observe(record: Any) -> None:
@@ -115,7 +140,7 @@ class IdentityRegistry:
             yield metric
 
 __all__ = [
-    "ANOMALIES_TOTAL", "COST_UNPRICED", "IdentityRegistry", "SESSIONS_TOTAL",
+    "AGENT_INFO", "ANOMALIES_TOTAL", "COST_UNPRICED", "IdentityRegistry", "SESSIONS_TOTAL",
     "TURN_COST_USD_TOTAL", "TURN_DURATION_SECONDS", "TURN_TOKENS_TOTAL", "TURNS_TOTAL",
-    "_TURN_BUCKETS", "observe",
+    "_TURN_BUCKETS", "initialise", "observe",
 ]

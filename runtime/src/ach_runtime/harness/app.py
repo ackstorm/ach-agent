@@ -22,6 +22,7 @@ from ach_runtime.harness.admission import AdmissionClosedError, AdmissionQueueFu
 from ach_runtime.harness.control import Control, create_facade_app
 from ach_runtime.facades._proxy import ProcessIdentity
 from ach_runtime.observability import IdentityRegistry
+from ach_runtime.observability.metrics import initialise as initialise_metrics
 
 MAX_BODY = 1024 * 1024
 
@@ -118,6 +119,7 @@ def create_app(control: Control) -> FastAPI:
             headers={"X-ACH-Task-Id": task_id},
         )
 
+    initialise_metrics(channel.name for channel in control.config.channels)
     app.mount(
         "/metrics",
         make_asgi_app(registry=IdentityRegistry(identity=ProcessIdentity(

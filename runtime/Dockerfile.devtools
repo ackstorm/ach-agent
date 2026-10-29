@@ -40,33 +40,5 @@ RUN pip install --no-cache-dir --break-system-packages -e ".[dev]"
 
 COPY plugins/ ./plugins/
 COPY tests/ ./tests/
-# Read-only reuse of Task 1's proven fake model+MCP fixture (spikes/opencode-v2/
-# fake-facades.mjs) for tests/engine/fake_facades.py — never edited here.
-COPY spikes/opencode-v2/fake-facades.mjs ./spikes/opencode-v2/fake-facades.mjs
 
 CMD ["pytest", "tests/execution", "tests/engine", "-q"]
-
-# Devtools image for the Task 1 OpenCode v2 compatibility spike.
-# Pins the real "OpenCode v2" release (npm @opencode/cli, latest 2.0.20 as of
-# 2026-09-30; GitHub tag v2.0.20 @ 84c9be93a56304a108f1a22df0c5d62c26d5b6ca).
-# See spikes/opencode-v2/README.md "npm scope confusion" for why this is NOT
-# the similarly-named `opencode-ai` package (an unrelated v1 line).
-FROM node:22-alpine
-
-WORKDIR /work
-
-# git: required for the R4 snapshot-effect probe (task-1-controls-contrast.md
-# -- Snapshot.capture needs a real Git Workspace to produce a step snapshot).
-RUN apk add --no-cache git
-
-# --no-save: this is a throwaway spike image, not a project dependency.
-# Installed before COPY so editing spike test code doesn't invalidate this
-# (network-dependent) layer on every iteration.
-RUN npm install --no-save @opencode/cli@2.0.20 \
-    && ./node_modules/.bin/opencode2 --version
-
-COPY spikes/opencode-v2/ ./spikes/opencode-v2/
-
-ENV OPENCODE_BIN=/work/node_modules/.bin/opencode2
-
-CMD ["node", "spikes/opencode-v2/probe.mjs"]

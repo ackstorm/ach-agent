@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "ach-runtime"
-version = "0.2.2"
-description = "ach-runtime: Channels + Harness operator config/schema (workspace-v1)"
+name = "ach-agent-runtime"
+version = "0.18.0"
+description = "ach-agent runtime: control and execution roles (workspace-v3)"
 requires-python = ">=3.13"
 license = { text = "MIT" }
 dependencies = [

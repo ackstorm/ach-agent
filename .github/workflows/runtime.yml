@@ -1,0 +1,166 @@
+name: runtime
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ["runtime/**", ".github/workflows/runtime.yml"]
+  push:
+    branches: [main]
+    paths: ["runtime/**", ".github/workflows/runtime.yml"]
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: runtime
+
+jobs:
+  runtime-checks:
+    name: Retained runtime checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare devtools build context
+        run: |
+          set -euo pipefail
+          context="$RUNNER_TEMP/ach-runtime-devtools-context"
+          mkdir -p "$context/docs"
+          cp Dockerfile.devtools pyproject.toml "$context/"
+          cp -a src plugins scripts tests examples "$context/"
+          cp -a docs/schemas "$context/docs/schemas"
+
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+
+      - name: Bound BuildKit resources
+        run: |
+          set -euo pipefail
+          builder_id="$(docker ps --filter name=buildx_buildkit --format '{{.ID}}' | head -n1)"
+          test -n "$builder_id"
+          docker update --cpus 1 --memory 1g --memory-swap 1g "$builder_id"
+
+      - name: Build retained execution devtools once
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ runner.temp }}/ach-runtime-devtools-context
+          file: ${{ runner.temp }}/ach-runtime-devtools-context/Dockerfile.devtools
+          target: python-execution
+          load: true
+          push: false
+          tags: ach-runtime-python-execution:ci
+          cache-from: type=gha,scope=runtime-devtools
+          cache-to: type=gha,mode=max,scope=runtime-devtools
+
+      - name: Create isolated SeaweedFS fixture network
+        run: docker network create ach-runtime-seaweed-e2e_test
+
+      - name: Start S3 fixture
+        run: docker compose --profile fixture up -d --wait --wait-timeout 120 s3
+
+      - name: Run S3 integration first
+        env:
+          ACH_STORAGE_TEST_S3_ENDPOINT: http://127.0.0.1:19000
+          ACH_STORAGE_TEST_S3_BUCKET: ach-storage-test
+          ACH_STORAGE_TEST_S3_ACCESS_KEY: ach-storage-test
+          ACH_STORAGE_TEST_S3_SECRET_KEY: ach-storage-test-secret
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ach-runtime-results"
+          docker run --rm --cpus 1 --memory 512m --network host \
+            -e PYTHONDONTWRITEBYTECODE=1 \
+            -e PYTHONPATH=/work/src:/work/tests/storage:/work/tests/engine:/work/tests/facades:/work/tests/harness \
+            -e ACH_STORAGE_TEST_S3_ENDPOINT \
+            -e ACH_STORAGE_TEST_S3_BUCKET \
+            -e ACH_STORAGE_TEST_S3_ACCESS_KEY \
+            -e ACH_STORAGE_TEST_S3_SECRET_KEY \
+            -v "$GITHUB_WORKSPACE/runtime/src:/work/src:ro" \
+            -v "$GITHUB_WORKSPACE/runtime/tests:/work/tests:ro" \
+            -v "$GITHUB_WORKSPACE/runtime/plugins:/work/plugins:ro" \
+            -v "$GITHUB_WORKSPACE/runtime/docs:/work/docs:ro" \
+            -v "$GITHUB_WORKSPACE/runtime/examples:/work/examples:ro" \
+            -v "$GITHUB_WORKSPACE/runtime/scripts:/work/scripts:ro" \
+            -v "$RUNNER_TEMP/ach-runtime-results:/results" \
+            ach-runtime-python-execution:ci \
+            pytest --import-mode=importlib \
+              tests/storage/test_s3_integration.py \
+              tests/storage/test_artifacts_s3_integration.py \
+              -q -p no:cacheprovider --junitxml=/results/s3.xml
+
+      - name: Run complete retained pytest suite
+        env:
+          ACH_STORAGE_TEST_S3_ENDPOINT: http://127.0.0.1:19000
+          ACH_STORAGE_TEST_S3_BUCKET: ach-storage-test
+          ACH_STORAGE_TEST_S3_ACCESS_KEY: ach-storage-test
+          ACH_STORAGE_TEST_S3_SECRET_KEY: ach-storage-test-secret
+        run: |
+          set -euo pipefail
+          docker run --rm --cpus 1 --memory 1g --network host \
+            -e PYTHONDONTWRITEBYTECODE=1 \
+            -e PYTHONPATH=/work/src:/work/tests/storage:/work/tests/engine:/work/tests/facades:/work/tests/harness \
+            -e ACH_STORAGE_TEST_S3_ENDPOINT \
+            -e ACH_STORAGE_TEST_S3_BUCKET \
+            -e ACH_STORAGE_TEST_S3_ACCESS_KEY \
+            -e ACH_STORAGE_TEST_S3_SECRET_KEY \
+            -v "$GITHUB_WORKSPACE/runtime/src:/work/src:ro" \
+            -v "$GITHUB_WORKSPACE/runtime/tests:/work/tests:ro" \
+            -v "$GITHUB_WORKSPACE/runtime/plugins:/work/plugins:ro" \
+            -v "$GITHUB_WORKSPACE/runtime/docs:/work/docs:ro" \
+            -v "$GITHUB_WORKSPACE/runtime/examples:/work/examples:ro" \
+            -v "$GITHUB_WORKSPACE/runtime/scripts:/work/scripts:ro" \
+            -v "$GITHUB_WORKSPACE/runtime/Dockerfile:/work/Dockerfile:ro" \
+            -v "$RUNNER_TEMP/ach-runtime-results:/results" \
+            ach-runtime-python-execution:ci \
+            pytest --import-mode=importlib tests -q -p no:cacheprovider \
+              --junitxml=/results/runtime.xml
+
+      - name: Run retained Node and schema checks
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint sh --workdir /work --network none \
+            --cpus 1 --memory 512m \
+            -e PYTHONDONTWRITEBYTECODE=1 \
+            -e PYTHONPATH=/work/src \
+            -v "$GITHUB_WORKSPACE/runtime/src:/work/src:ro" \
+            -v "$GITHUB_WORKSPACE/runtime/tests:/work/tests:ro" \
+            -v "$GITHUB_WORKSPACE/runtime/plugins:/work/plugins:ro" \
+            -v "$GITHUB_WORKSPACE/runtime/docs:/work/docs:ro" \
+            -v "$GITHUB_WORKSPACE/runtime/scripts:/work/scripts:ro" \
+            ach-runtime-python-execution:ci \
+            -ec 'node --test tests/engine/test_managed_prompt.mjs && python scripts/gen_schema.py --check'
+
+      - name: Require nonempty, skip-free JUnit results and summarize revision
+        run: |
+          set -euo pipefail
+          python -c 'import sys, xml.etree.ElementTree as ET; p=sys.argv[1]; root=ET.parse(p).getroot(); suites=[root] if root.tag == "testsuite" else list(root.iter("testsuite")); tests=sum(int(s.get("tests", 0)) for s in suites); skipped=sum(int(s.get("skipped", 0)) for s in suites); failures=sum(int(s.get("failures", 0)) for s in suites); errors=sum(int(s.get("errors", 0)) for s in suites); assert tests > 0, f"{p}: no tests collected"; assert skipped == failures == errors == 0, f"{p}: skipped={skipped} failures={failures} errors={errors}"; print(f"{p}: tests={tests} skipped={skipped} failures={failures} errors={errors}")' "$RUNNER_TEMP/ach-runtime-results/s3.xml"
+          python -c 'import sys, xml.etree.ElementTree as ET; p=sys.argv[1]; root=ET.parse(p).getroot(); suites=[root] if root.tag == "testsuite" else list(root.iter("testsuite")); tests=sum(int(s.get("tests", 0)) for s in suites); skipped=sum(int(s.get("skipped", 0)) for s in suites); failures=sum(int(s.get("failures", 0)) for s in suites); errors=sum(int(s.get("errors", 0)) for s in suites); cases=list(root.iter("testcase")); assert tests > 0, f"{p}: no tests collected"; assert skipped == failures == errors == 0, f"{p}: skipped={skipped} failures={failures} errors={errors}"; assert any("test_opencode_adapter" in c.get("classname", "") for c in cases), "native OpenCode adapter tests did not run"; print(f"{p}: tests={tests} skipped={skipped} failures={failures} errors={errors}; native OpenCode adapter tests present")' "$RUNNER_TEMP/ach-runtime-results/runtime.xml"
+          {
+            echo "Revision: $GITHUB_SHA"
+            echo "S3 JUnit: $(python -c 'import xml.etree.ElementTree as E,sys; r=E.parse(sys.argv[1]).getroot(); s=[r] if r.tag=="testsuite" else list(r.iter("testsuite")); print(sum(int(x.get("tests",0)) for x in s))' "$RUNNER_TEMP/ach-runtime-results/s3.xml") tests, zero skipped/failures/errors"
+            echo "Runtime JUnit: $(python -c 'import xml.etree.ElementTree as E,sys; r=E.parse(sys.argv[1]).getroot(); s=[r] if r.tag=="testsuite" else list(r.iter("testsuite")); print(sum(int(x.get("tests",0)) for x in s))' "$RUNNER_TEMP/ach-runtime-results/runtime.xml") tests, zero skipped/failures/errors"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Tear down this run's S3 fixture and network
+        if: always()
+        run: |
+          docker compose --profile fixture down --remove-orphans || true
+          if docker network inspect ach-runtime-seaweed-e2e_test >/dev/null 2>&1; then
+            docker network rm ach-runtime-seaweed-e2e_test
+          fi
+
+  compose-e2e:
+    name: Single-unit compose acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the compose example end to end
+        run: make compose-e2e

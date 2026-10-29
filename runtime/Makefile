@@ -66,7 +66,7 @@ test-execution:
 	docker run --rm ach-runtime-execution-devtools
 
 # --- Task 6A: storage/ durable CAS core (container, no host venv) ---
-.PHONY: test-storage
+.PHONY: test-storage test-unit
 
 test-storage:
 	docker build --target python-config -f Dockerfile.devtools -t ach-runtime-config-devtools .
@@ -103,3 +103,16 @@ e2e:
 # Separate from `e2e`, which has a hard 300 s cap.
 compose-e2e:
 	timeout 1500 bash examples/hosts/compose/ci/run.sh
+
+test-unit: ## Full unit suite in the devtools execution image, as CI runs it
+	docker build --target python-execution -f Dockerfile.devtools -t ach-agent-runtime-execution-devtools .
+	docker run --rm --network host -e PYTHONDONTWRITEBYTECODE=1 \
+	  -e PYTHONPATH=/work/src:/work/tests/storage:/work/tests/engine:/work/tests/facades:/work/tests/harness \
+	  -e ACH_STORAGE_TEST_S3_ENDPOINT -e ACH_STORAGE_TEST_S3_BUCKET \
+	  -e ACH_STORAGE_TEST_S3_ACCESS_KEY -e ACH_STORAGE_TEST_S3_SECRET_KEY \
+	  -v "$(CURDIR)/src:/work/src:ro" -v "$(CURDIR)/tests:/work/tests:ro" \
+	  -v "$(CURDIR)/plugins:/work/plugins:ro" -v "$(CURDIR)/docs:/work/docs:ro" \
+	  -v "$(CURDIR)/examples:/work/examples:ro" -v "$(CURDIR)/scripts:/work/scripts:ro" \
+	  -v "$(CURDIR)/Dockerfile:/work/Dockerfile:ro" -w /work \
+	  ach-agent-runtime-execution-devtools \
+	  pytest --import-mode=importlib tests -q -p no:cacheprovider

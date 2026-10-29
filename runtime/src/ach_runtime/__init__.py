@@ -3,4 +3,4 @@
 
 from importlib.metadata import version
 
-__version__ = version("ach-runtime")
+__version__ = version("ach-agent-runtime")

@@ -278,7 +278,7 @@ class Control:
     def _catalog_for(self, endpoint: WorkspaceEndpoint) -> dict[str, Any]:
         facade = self.public.infrastructure.facade_endpoint.rstrip("/")
         token = facade_token(self.key, endpoint.name)
-        excluded = set(self.config.ach.capability.filter.exclude.mcp_servers)
+        excluded = set(self.config.capability.filter.exclude.mcp_servers)
         if self.config.memory is not None:
             params = self.config.memory.ach_memory
             servers = {item.id: item.endpoint for item in self.catalog.mcp_servers}
@@ -512,7 +512,7 @@ class Control:
         return request
 
     async def _transfer_context(self, ticket: AdmissionTicket, endpoint: WorkspaceEndpoint) -> None:
-        ek = os.environ.get(self.config.ach.identity.env, "")
+        ek = os.environ.get(self.config.capability.ach.key.env, "")
         # assemble() resolves credentials from its private environment. Resolve the
         # configured variable there, never put it in the archive or request body.
         ek = getattr(self, "_ek", ek)
@@ -737,7 +737,7 @@ class Control:
                 usage = None
         record_run(RunRecord(
             agent=self.config.agent.name,
-            environment=self.config.ach.environment,
+            environment=self.config.identity_environment,
             invocation_id=expected.invocation_id,
             run_id=(status.run_id if status is not None else started_run_id or getattr(expected, "run_id", None)),
             actor=event.actor if event is not None else None,
@@ -836,11 +836,11 @@ async def assemble(
         raise RuntimeError("ACH_SANDBOX_KEY is required and must not be empty")
     key = raw_key.encode("utf-8")
     verify_key = engine_verify_key(key)
-    ek = env.get(config.ach.identity.env, "")
+    ek = env.get(config.capability.ach.key.env, "")
     if not ek:
         raise WorkspaceAssemblyUnavailable("ACH identity credential is not configured")
     ach_client = httpx.AsyncClient(transport=ach_transport, timeout=30)
-    identity = ProcessIdentity(agent=config.agent.name, environment=config.ach.environment)
+    identity = ProcessIdentity(agent=config.agent.name, environment=config.identity_environment)
     hydrator = Hydrator(resolve_ek=lambda name: env.get(name, ""), client=ach_client)
     try:
         catalog = await hydrator.load(config)
@@ -849,7 +849,7 @@ async def assemble(
     public = public_config(config, config.engine.env)
     storage = storage_from_env(config, env)
     mcp_servers = {item.id: item.endpoint for item in catalog.mcp_servers}
-    excluded = frozenset(config.ach.capability.filter.exclude.mcp_servers)
+    excluded = frozenset(config.capability.filter.exclude.mcp_servers)
     memory: AchMemoryFacade | None = None
     memory_excluded: set[str] = set()
     memory_configured = config.memory is not None
@@ -871,11 +871,11 @@ async def assemble(
             memory = AchMemoryFacade(
                 endpoint=memory_endpoint, headers=headers, project=memory_project,
                 key=key, owned_workspace=lambda claim: control._owned_live(claim), identity=identity,
-                exclude_tools=frozenset(config.ach.capability.filter.exclude.tools),
+                exclude_tools=frozenset(config.capability.filter.exclude.tools),
             )
     # Facades close over Control for the owned-live check, so construct the bundle first.
     mini_client = httpx.AsyncClient(transport=mini_transport, timeout=10)
-    bootstrap = ExecutionBootstrap(bootstrapVersion="workspace-v2", agent=config.agent, facadeEndpoint=facade_endpoint)
+    bootstrap = ExecutionBootstrap(bootstrapVersion="workspace-v3", agent=config.agent, facadeEndpoint=facade_endpoint)
     source = source_factory(bootstrap, verify_key) if source_factory else HostedSource(bootstrap, verify_key=verify_key)
     manager = WorkspaceManager(
         config, source,
@@ -935,11 +935,11 @@ async def assemble(
     mcp = McpFacade(
         servers=mcp_servers, ek=ek, key=key, owned_workspace=control._owned_live,
         exclude=excluded | frozenset(memory_excluded),
-        exclude_tools=frozenset(config.ach.capability.filter.exclude.tools), identity=identity,
+        exclude_tools=frozenset(config.capability.filter.exclude.tools), identity=identity,
         client=mcp_client,
     )
     model = ModelFacade(
-        endpoint=f"{config.ach.base_url.rstrip('/')}/{model_endpoint_prefix}", ek=ek, key=key,
+        endpoint=f"{config.capability.ach.base_url.rstrip('/')}/{model_endpoint_prefix}", ek=ek, key=key,
         owned_workspace=control._owned_live, identity=identity,
         client=model_client,
     )
@@ -957,14 +957,14 @@ async def assemble(
             identity=identity,
             key=key,
             owned_workspace=control._owned_live,
-            exclude_tools=frozenset(config.ach.capability.filter.exclude.tools),
+            exclude_tools=frozenset(config.capability.filter.exclude.tools),
         )
     if config.artifacts.enabled:
         control.artifact_facade = ArtifactFacade(
             key=key,
             owned_workspace=control._owned_live,
             operations=control.artifact_operations,
-            exclude_tools=frozenset(config.ach.capability.filter.exclude.tools),
+            exclude_tools=frozenset(config.capability.filter.exclude.tools),
         )
     lifecycle = Lifecycle(control)
     control.lifecycle = lifecycle

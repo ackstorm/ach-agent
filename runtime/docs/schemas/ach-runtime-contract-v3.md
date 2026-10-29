@@ -1,4 +1,4 @@
-# ach-runtime host contract v2 (draft)
+# ach-runtime host contract v3
 
 Status: **draft proposal, revision 5, 2026-10-27 (external review rounds 1–4 applied). Not implemented.** Decisions are listed in section 9. There is no backward compatibility with v1: runtime and host are upgraded together.
 
@@ -63,7 +63,7 @@ A host picks one topology:
 
 ### 3.1 Configuration document
 
-- The host renders and delivers one JSON configuration document per agent. The format is section 7: the v1 `workspace-v1` schema minus its infrastructure fields.
+- The host renders and delivers one JSON configuration document per agent. The format is section 7: the `workspace-v3` schema, with a `capability` block that selects the standalone or the ACH server.
 - The runtime reads it from the path given by `--config` at start. It does not watch the file.
 - A configuration change takes effect when the host restarts the unit. The host decides when; v1 §5 explains what an in-flight restart loses.
 - The host computes `configVersion` exactly as v1 §5 defines.
@@ -79,7 +79,7 @@ The host sets these environment variables. Values are single-line strings.
 | Variable | Roles | Required | Meaning |
 |---|---|---|---|
 | `ACH_SANDBOX_KEY` | `agent`, `control` | yes | Runtime master key. 32 random bytes, hex. The host generates it once per agent, keeps it stable and never gives it to execution units. Everything the runtime signs or verifies derives from it, including the host API credential (5.2). |
-| The variable named by `ach.identity.env` | `agent`, `control` | yes | The agent's ACH `ek_` credential. |
+| The variable named by `capability.ach.key.env` | `agent`, `control` | when `capability.server` is `ach` | The agent's ACH `ek_` credential. |
 | Variables named by config aliases | `agent`, `control` | when configured | Channel auth (`channels[].auth.env`, A2A `auth.env`), handoff and script `secretEnv.*.env`, memory `auth.env`. Each name the config references must exist. |
 | Literal `engine.env` values | — | — | These are in the configuration document, not in the environment (v1 §5). |
 | `ACH_STORAGE_S3_BUCKET`, `ACH_STORAGE_S3_REGION`, `ACH_STORAGE_S3_ENDPOINT_URL`, `ACH_STORAGE_S3_PREFIX` | `agent`, `control` | bucket required when Workspace persistence, session persistence or artifacts is enabled | S3-compatible storage. Credentials come from the standard AWS SDK chain (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`, or ambient). A missing bucket when storage is required is a configuration error; there is no volatile fallback. |
@@ -95,7 +95,8 @@ Rules:
 
 | Service | Needed by | When |
 |---|---|---|
-| An ACH-compatible platform API at `ach.baseUrl` (3.3.1) | `agent`, `control` | always |
+| An ACH-compatible platform API at `capability.ach.baseUrl` (3.3.1) | `agent`, `control` | `capability.server` is `ach` |
+| The model endpoint and MCP servers in `capability.standalone` | `agent`, `control` | `capability.server` is `standalone` |
 | S3-compatible storage | `agent`, `control` | persistence or artifacts enabled |
 | Redis | `agent`, `control` | queue channels |
 | MCP servers listed in the hydrated catalog | `agent`, `control` | when the catalog lists any |
@@ -123,7 +124,7 @@ The runtime calls only these endpoints. Every call carries the agent credential 
 
 Rules:
 
-- `ach.identity` still names an environment variable, but its value is opaque to the runtime. A stand-in may accept any value.
+- `capability.ach.key` names an environment variable, but its value is opaque to the runtime. A stand-in may accept any value.
 - Memory (`memory.*`) and A2A egress are optional features that need their own endpoints when configured.
 - Anything the stand-in does not provide must be absent from the catalog and the configuration; it must not fail at call time.
 
@@ -222,7 +223,7 @@ All routes are on `control` `8081`, under `/host/v1`, and are served from proces
           "ACH_SANDBOX_VERIFY_KEY": "…",
           "ACH_WORKSPACE_NAME": "…",
           "ACH_WORKSPACE_REF": "…",
-          "ACH_BOOTSTRAP_JSON": "{\"bootstrapVersion\":\"workspace-v2\",\"agent\":{…},\"facadeEndpoint\":\"…\"}"
+          "ACH_BOOTSTRAP_JSON": "{\"bootstrapVersion\":\"workspace-v3\",\"agent\":{…},\"facadeEndpoint\":\"…\"}"
         }
       },
       "instance": {"instanceId": "…", "baseUrl": "http://…:8080", "state": "serving"}
@@ -354,10 +355,36 @@ The schema is the v1 `workspace-v1` schema, with these changes:
 | `infrastructure.execution.controlEndpoint` | Removed: unused by the runtime. |
 | `infrastructure.execution.facadeEndpoint` | Moves to `infrastructure.facadeEndpoint`. Required for `control`; optional for `agent`, where it defaults to loopback. |
 | `agent.namespace`, `agent.uid` | Same shape, host-neutral meaning (3.1). The rule that the execution service account equals `ach-execution-<uid>` is dropped. |
-| Bootstrap document | Becomes `bootstrapVersion: "workspace-v2"`, and `controlEndpoint` is removed. The runtime produces it inside `launch.env` as `ACH_BOOTSTRAP_JSON` (5.5); the host no longer renders it. |
+| Bootstrap document | Becomes `bootstrapVersion: "workspace-v3"`, and `controlEndpoint` is removed. The runtime produces it inside `launch.env` as `ACH_BOOTSTRAP_JSON` (5.5); the host no longer renders it. |
 | `workspace.readyTimeoutSeconds` | New, optional, default 30. How long a new execution unit has to become ready (placement, health probe) before activation fails; also bounds adoption and recovery starts. Hosts with slow starts (sandboxes that pull images) raise it. |
 
-These changes ship as `schemaVersion: "workspace-v2"` (D1).
+These changes ship as `schemaVersion: "workspace-v3"`.
+
+The `capability` block replaces the `ach` block and the root `model`:
+
+```json
+"capability": {
+  "server": "standalone",
+  "standalone": {
+    "model": {"name": "anthropic/claude-sonnet-5.5", "type": "openai",
+              "baseUrl": "https://litellm.example.com/v1",
+              "headers": {"x-litellm-api-key": {"env": "ACH_AGENT_MODEL_H0"}},
+              "params": {}, "thinking": {"enabled": false},
+              "limits": {"context": 200000, "output": 32000}},
+    "mcpServers": [{"name": "serper", "url": "https://mcp.serper.dev/mcp",
+                    "headers": {"X-API-KEY": {"env": "ACH_AGENT_MCP_SERPER_H0"}}}]
+  },
+  "filter": {"exclude": {"tools": [], "mcpServers": [], "skills": []}}
+}
+```
+
+- `server` is `standalone` or `ach`. The chosen server's block is required and the other is forbidden.
+- `capability.ach` holds `baseUrl`, `environment`, `key` (an env name) and `model` (the former root `model`).
+- `capability.standalone.model.type` is the wire format: `openai`, `anthropic` or `gemini`.
+- Header values are env names (`{"env": NAME}`), resolved only by the control role. A missing value fails assembly.
+- Header names are unique case-insensitively per endpoint. Reserved names are rejected: `host`, `content-length`, `transfer-encoding`, `connection`, `traceparent`, `tracestate`, `x-litellm-session-id`, `x-litellm-trace-id`, `x-ach-*` and `langfuse_*`.
+- `filter.exclude.skills` requires `server` `ach`.
+- With `server` `standalone`, `memory.achMemory.auth.type` cannot be `ach`, and `memory.achMemory.mcpServerId` must name a `capability.standalone.mcpServers` entry.
 
 ## 8. Amendments to v1
 

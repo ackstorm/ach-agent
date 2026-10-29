@@ -1,5 +1,5 @@
 {
-  "bootstrapVersion": "workspace-v2",
+  "bootstrapVersion": "workspace-v3",
   "agent": {
     "name": "gitlab-reviewer",
     "namespace": "ach",

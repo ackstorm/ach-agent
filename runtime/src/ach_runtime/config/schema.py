@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MIT
-"""workspace-v2 RuntimeConfig — the resolved wire contract (docs/schemas/ach-runtime-contract-v2.md).
+"""workspace-v3 RuntimeConfig — the resolved wire contract (docs/schemas/ach-runtime-contract-v3.md).
 
 Models the complete resolved camelCase wire object the operator emits at
-`/etc/ach-runtime/config.json` (contract §5/§11): `agent`, `configVersion`, `ach`, `model`,
+`/etc/ach-runtime/config.json` (contract §5/§11): `agent`, `configVersion`, `capability`,
 `engine`, `limits`, `workspace`, `artifacts`, `channels`, `prompt`, `hooks`, `memory`,
 `infrastructure`. Every block carries `ConfigDict(extra="forbid")` — unknown keys hard-fail.
 
-This is workspace-v2, independent of the old runtime's `schemaVersion: "1"` contract
+This is workspace-v3, independent of the old runtime's `schemaVersion: "1"` contract
 (old-ach-agent/src/ach_agent/config/schema.py) — reused here only where the contract marks a
 surface compatible (model/thinking/prompt/ach-memory/cron/queue/a2a shapes). Routing, Pi,
 placement, session none/auto/custom and the old infra knobs are NOT ported: see contract §10.
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import uuid as _uuid
+from functools import cached_property
 from pathlib import PurePosixPath
 from typing import Annotated, Any, Literal
 
@@ -42,7 +43,7 @@ class ConfigError(ValueError):
 class SecretAlias(BaseModel):
     """A private environment-variable NAME the Harness/control pod resolves — never a value.
 
-    Wire shape for `ach.identity`, `handoff.secretEnv.<name>`: `{"env": "ACH_SECRET_..."}`.
+    Wire shape for `capability.ach.key`, `handoff.secretEnv.<name>`: `{"env": "ACH_SECRET_..."}`.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -86,7 +87,7 @@ class AgentIdentity(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# ach block (contract §5: baseUrl, environment, identity, capability.filter.exclude)
+# capability filter (contract §5: capability.filter.exclude)
 # ---------------------------------------------------------------------------
 
 
@@ -108,15 +109,6 @@ class AchCapabilityBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     filter: AchCapabilityFilter = Field(default_factory=AchCapabilityFilter)
-
-
-class AchBlock(BaseModel):
-    model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
-
-    base_url: str = Field(alias="baseUrl")
-    environment: str
-    identity: SecretAlias
-    capability: AchCapabilityBlock = Field(default_factory=AchCapabilityBlock)
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +136,110 @@ class ModelBlock(BaseModel):
     type: Literal["openai", "gemini", "anthropic"]
     params: dict[str, Any] = Field(default_factory=dict)
     thinking: ThinkingBlock = Field(default_factory=ThinkingBlock)
+
+
+_HEADER_NAME_RE = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
+_RESERVED_HEADER_NAMES = frozenset({
+    "host", "content-length", "transfer-encoding", "connection",
+    "traceparent", "tracestate", "x-litellm-session-id", "x-litellm-trace-id",
+})
+_RESERVED_HEADER_PREFIXES = ("x-ach-", "langfuse_")
+
+
+def _check_headers(headers: dict[str, SecretAlias], where: str) -> None:
+    seen: set[str] = set()
+    for name in headers:
+        lowered = name.lower()
+        if not _HEADER_NAME_RE.fullmatch(name):
+            raise ValueError(f"{where}: invalid header name {name!r}")
+        if lowered in _RESERVED_HEADER_NAMES or lowered.startswith(_RESERVED_HEADER_PREFIXES):
+            raise ValueError(f"{where}: header {name!r} is reserved")
+        if lowered in seen:
+            raise ValueError(f"{where}: duplicate header {name!r}")
+        seen.add(lowered)
+
+
+class ModelLimits(BaseModel):
+    model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
+
+    context: int = Field(gt=0)
+    output: int = Field(gt=0)
+
+
+class StandaloneModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
+
+    name: str
+    type: Literal["openai", "gemini", "anthropic"]
+    base_url: str = Field(alias="baseUrl")
+    headers: dict[str, SecretAlias] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
+    thinking: ThinkingBlock = Field(default_factory=ThinkingBlock)
+    limits: ModelLimits | None = None
+
+    @model_validator(mode="after")
+    def _headers_are_valid(self) -> StandaloneModel:
+        _check_headers(self.headers, "capability.standalone.model.headers")
+        return self
+
+
+class StandaloneMcpServer(BaseModel):
+    model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
+
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,62}$")
+    url: str
+    headers: dict[str, SecretAlias] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _headers_are_valid(self) -> StandaloneMcpServer:
+        _check_headers(self.headers, f"capability.standalone.mcpServers[{self.name}].headers")
+        return self
+
+
+class StandaloneServer(BaseModel):
+    model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
+
+    model: StandaloneModel
+    mcp_servers: list[StandaloneMcpServer] = Field(default_factory=list, alias="mcpServers")
+
+    @model_validator(mode="after")
+    def _names_are_unique(self) -> StandaloneServer:
+        names = [server.name for server in self.mcp_servers]
+        if len(names) != len(set(names)):
+            raise ValueError("capability.standalone.mcpServers: duplicate name")
+        return self
+
+
+class AchServer(BaseModel):
+    model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
+
+    base_url: str = Field(alias="baseUrl")
+    environment: str
+    key: SecretAlias
+    model: ModelBlock
+
+
+class CapabilityBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
+
+    server: Literal["standalone", "ach"]
+    standalone: StandaloneServer | None = None
+    ach: AchServer | None = None
+    filter: AchCapabilityFilter = Field(default_factory=AchCapabilityFilter)
+
+    @model_validator(mode="after")
+    def _server_selects_its_block(self) -> CapabilityBlock:
+        chosen, other = (
+            (self.standalone, self.ach) if self.server == "standalone" else (self.ach, self.standalone)
+        )
+        if chosen is None or other is not None:
+            raise ValueError(
+                f"capability: server {self.server!r} requires capability.{self.server} "
+                "and no other server block"
+            )
+        if self.server == "standalone" and self.filter.exclude.skills:
+            raise ValueError("capability.filter.exclude.skills requires server 'ach'")
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +299,7 @@ class EngineBlock(BaseModel):
     startup_timeout_seconds: int = Field(default=30, gt=0, alias="startupTimeoutSeconds")
     compaction: CompactionBlock
     # Native OpenCode tools hidden from the model: each name becomes a permission deny rule
-    # on the managed agent. MCP tools are governed by `ach.capability.filter.exclude.tools`.
+    # on the managed agent. MCP tools are governed by `capability.filter.exclude.tools`.
     deny_tools: list[str] = Field(default_factory=list, alias="denyTools")
 
     @field_validator("deny_tools")
@@ -213,7 +309,7 @@ class EngineBlock(BaseModel):
             if not name or "." in name:
                 raise ValueError(
                     f"engine.denyTools entry {name!r} must be a native OpenCode tool name; "
-                    "MCP tools go in ach.capability.filter.exclude.tools"
+                    "MCP tools go in capability.filter.exclude.tools"
                 )
         if len(set(v)) != len(v):
             raise ValueError("engine.denyTools has duplicate names")
@@ -768,11 +864,10 @@ class RuntimeConfig(BaseModel):
         extra="forbid", strict=True, validate_by_alias=True, validate_by_name=False
     )
 
-    schema_version: Literal["workspace-v2"] = Field(alias="schemaVersion")
+    schema_version: Literal["workspace-v3"] = Field(alias="schemaVersion")
     agent: AgentIdentity
     config_version: str = Field(alias="configVersion", pattern=r"^[0-9a-f]{64}$")
-    ach: AchBlock
-    model: ModelBlock
+    capability: CapabilityBlock
     engine: EngineBlock
     limits: LimitsBlock
     workspace: WorkspaceBlock
@@ -782,6 +877,38 @@ class RuntimeConfig(BaseModel):
     hooks: HooksBlock = Field(default_factory=HooksBlock)
     memory: AchMemoryMemory | None = None
     infrastructure: InfrastructureBlock = Field(default_factory=InfrastructureBlock)
+
+    @cached_property
+    def model(self) -> ModelBlock:
+        """The selected server's model as the runtime's provider-neutral block."""
+        if self.capability.ach is not None:
+            return self.capability.ach.model
+        m = self.capability.standalone.model
+        return ModelBlock.model_validate(
+            {"name": m.name, "type": m.type, "params": m.params, "thinking": m.thinking.model_dump()}
+        )
+
+    @cached_property
+    def identity_environment(self) -> str:
+        """Metrics/run-record environment label: the ACH environment, else the namespace."""
+        if self.capability.ach is not None:
+            return self.capability.ach.environment
+        return self.agent.namespace
+
+    @model_validator(mode="after")
+    def _memory_fits_the_capability_server(self) -> RuntimeConfig:
+        if self.memory is None or self.capability.standalone is None:
+            return self
+        params = self.memory.ach_memory
+        if params.auth is not None and params.auth.type == "ach":
+            raise ValueError("memory.achMemory.auth.type 'ach' requires capability.server 'ach'")
+        names = {server.name for server in self.capability.standalone.mcp_servers}
+        if params.mcp_server_id and params.mcp_server_id not in names:
+            raise ValueError(
+                f"memory.achMemory.mcpServerId {params.mcp_server_id!r} "
+                "is not a capability.standalone.mcpServers name"
+            )
+        return self
 
     @model_validator(mode="after")
     def _shared_handoff_requires_single_session(self) -> RuntimeConfig:
@@ -828,9 +955,9 @@ def parse_config(raw: dict[str, Any]) -> RuntimeConfig:
     """
     if not isinstance(raw, dict):
         raise ConfigError("config root must be an object")
-    if raw.get("schemaVersion") == "workspace-v1":
+    if raw.get("schemaVersion") in ("workspace-v1", "workspace-v2"):
         raise ConfigError(
-            "workspace-v1 is no longer supported; see docs/schemas/ach-runtime-contract-v2.md"
+            f"{raw['schemaVersion']} is not supported; see docs/schemas/ach-runtime-contract-v3.md"
         )
     try:
         validate_json_value(raw)

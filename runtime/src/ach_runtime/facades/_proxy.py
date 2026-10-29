@@ -11,7 +11,7 @@ than adapting it.
 
 `ProcessIdentity`/`with_identity_headers` are copied from old-ach-agent `identity.py`
 WITHOUT its module-level `_current`/`configure()` global: the caller already knows its
-own identity (`config.agent.name`/`config.ach.environment`) and passes it explicitly, so
+own identity (`config.agent.name`/`config.identity_environment`) and passes it explicitly, so
 there is nothing to commit process-wide. `is_correlation_header`/`inject_meta` are copied
 from old-ach-agent `engine/trace.py`; the per-token correlation REGISTRY that function used
 to read is replaced by an explicit `correlation: Mapping[str,str] | None` snapshot the

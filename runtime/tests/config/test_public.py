@@ -107,7 +107,7 @@ def test_public_config_facade_endpoint_requires_a_host(
 ) -> None:
     """review I5: validated as PublicConfig's own leaf, not merely assumed safe because
     public_config() happens to copy it from an already-checked RuntimeConfig."""
-    from ach_runtime.config.public import PublicConfig, PublicEngineBlock, PublicInfrastructureBlock
+    from ach_runtime.config.public import AchCapabilityBlock, PublicConfig, PublicEngineBlock, PublicInfrastructureBlock
     from pydantic import ValidationError
 
     cfg = parse_config(pr_review_wire)
@@ -117,7 +117,7 @@ def test_public_config_facade_endpoint_requires_a_host(
             agent=cfg.agent,
             configVersion=cfg.config_version,
             model=cfg.model,
-            capability=cfg.ach.capability,
+            capability=AchCapabilityBlock(filter=cfg.capability.filter),
             prompt=cfg.prompt,
             limits=cfg.limits,
             engine=PublicEngineBlock(env={}, startupTimeoutSeconds=1, compaction=cfg.engine.compaction),
@@ -167,7 +167,7 @@ def bootstrap_wire() -> dict[str, Any]:
 
 def test_bootstrap_fixture_is_accepted(bootstrap_wire: dict[str, Any]) -> None:
     bootstrap = ExecutionBootstrap.model_validate(bootstrap_wire)
-    assert bootstrap.bootstrap_version == "workspace-v2"
+    assert bootstrap.bootstrap_version == "workspace-v3"
 
 
 def test_bootstrap_rejects_unknown_field(bootstrap_wire: dict[str, Any]) -> None:
@@ -200,7 +200,7 @@ def test_bootstrap_without_projected_token_metadata(bootstrap_wire: dict[str, An
     rejects a private `ach` block."""
     assert set(bootstrap_wire) == {"bootstrapVersion", "agent", "facadeEndpoint"}
     bootstrap = ExecutionBootstrap.model_validate(bootstrap_wire)
-    assert bootstrap.bootstrap_version == "workspace-v2"
+    assert bootstrap.bootstrap_version == "workspace-v3"
 
     private = dict(bootstrap_wire)
     private["ach"] = {"baseUrl": "https://ach.ackstorm.ai", "environment": "engineering-prod"}

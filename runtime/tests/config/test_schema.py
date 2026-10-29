@@ -35,7 +35,7 @@ def _resign(wire: dict[str, Any]) -> dict[str, Any]:
 
 def test_pr_review_fixture_is_accepted(pr_review_wire: dict[str, Any]) -> None:
     cfg = parse_config(pr_review_wire)
-    assert cfg.schema_version == "workspace-v2"
+    assert cfg.schema_version == "workspace-v3"
     assert cfg.agent.name == "gitlab-reviewer"
     assert cfg.limits.max_steps == 30
     assert cfg.channels[0].handoff is not None
@@ -69,14 +69,14 @@ def test_parse_roundtrip_preserves_canonical_bytes(pr_review_wire: dict[str, Any
 
 
 def test_explicit_false_empty_maps_survive_roundtrip(pr_review_wire: dict[str, Any]) -> None:
-    pr_review_wire["model"]["thinking"]["enabled"] = False
-    pr_review_wire["ach"]["capability"]["filter"]["exclude"]["tools"] = []
+    pr_review_wire["capability"]["ach"]["model"]["thinking"]["enabled"] = False
+    pr_review_wire["capability"]["filter"]["exclude"]["tools"] = []
     pr_review_wire["engine"]["env"] = {}
     _resign(pr_review_wire)
     cfg = parse_config(pr_review_wire)
     dumped = cfg.model_dump(mode="json", by_alias=True, exclude_unset=True)
-    assert dumped["model"]["thinking"]["enabled"] is False
-    assert dumped["ach"]["capability"]["filter"]["exclude"]["tools"] == []
+    assert dumped["capability"]["ach"]["model"]["thinking"]["enabled"] is False
+    assert dumped["capability"]["filter"]["exclude"]["tools"] == []
     assert dumped["engine"]["env"] == {}
 
 
@@ -424,13 +424,13 @@ def test_queue_block_accepts_minimal_shape() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_workspace_v1_is_rejected_naming_contract_v2(pr_review_wire: dict[str, Any]) -> None:
+def test_workspace_v1_is_rejected_naming_contract_v3(pr_review_wire: dict[str, Any]) -> None:
     pr_review_wire["schemaVersion"] = "workspace-v1"
     _resign(pr_review_wire)
     with pytest.raises(ConfigError) as exc:
         parse_config(pr_review_wire)
     assert "workspace-v1" in str(exc.value)
-    assert "ach-runtime-contract-v2" in str(exc.value)
+    assert "ach-runtime-contract-v3" in str(exc.value)
 
 
 @pytest.mark.parametrize("key", ["control", "execution"])
@@ -488,7 +488,7 @@ def test_ingress_unicode_failure_raises_configerror_not_canonicalizationerror(
 ) -> None:
     # Ingress validation runs before the configVersion check, so an unrecomputed (now stale)
     # hash does not mask this — the lone surrogate must fail first either way.
-    pr_review_wire["model"]["params"]["bad"] = "\ud800"  # lone surrogate
+    pr_review_wire["capability"]["ach"]["model"]["params"]["bad"] = "\ud800"  # lone surrogate
     with pytest.raises(ConfigError):
         parse_config(pr_review_wire)
 
@@ -496,7 +496,7 @@ def test_ingress_unicode_failure_raises_configerror_not_canonicalizationerror(
 def test_ingress_numeric_failure_raises_configerror_not_canonicalizationerror(
     pr_review_wire: dict[str, Any],
 ) -> None:
-    pr_review_wire["model"]["params"]["bad"] = float("nan")
+    pr_review_wire["capability"]["ach"]["model"]["params"]["bad"] = float("nan")
     with pytest.raises(ConfigError):
         parse_config(pr_review_wire)
 
@@ -506,7 +506,7 @@ def test_surrogate_object_key_raises_configerror_not_unicodeencodeerror(
 ) -> None:
     # validate_json_value only checks keys are str, so a lone surrogate key reaches the
     # canonicalization dumps boundary (I2), not the earlier ingress check (I1's sibling).
-    pr_review_wire["model"]["params"]["\ud800"] = 1
+    pr_review_wire["capability"]["ach"]["model"]["params"]["\ud800"] = 1
     with pytest.raises(ConfigError):
         parse_config(pr_review_wire)
 

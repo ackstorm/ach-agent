@@ -27,8 +27,8 @@ async def _response_body() -> AsyncIterator[bytes]:
 
 def _config(model_type: str):
     wire = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    wire["ach"]["baseUrl"] = ACH_BASE
-    wire["model"]["type"] = model_type
+    wire["capability"]["ach"]["baseUrl"] = ACH_BASE
+    wire["capability"]["ach"]["model"]["type"] = model_type
     wire["workspace"]["persistence"]["enabled"] = False
     wire["workspace"]["session"]["persistence"]["enabled"] = False
     wire["artifacts"]["enabled"] = False

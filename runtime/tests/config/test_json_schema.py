@@ -2,7 +2,7 @@
 """Draft 2020-12 JSON Schema parity for the artifact ACH vendors (review I2).
 
 `parse_config`/Pydantic rejecting a bad wire is not evidence that the EXPORTED
-`docs/schemas/ach-workspace-config-v2.schema.json` rejects the same wire — the two are
+`docs/schemas/ach-workspace-config-v3.schema.json` rejects the same wire — the two are
 produced by different code paths (Pydantic's Python validators vs. `gen_schema.py`'s JSON
 Schema export). This module runs the real `jsonschema.Draft202012Validator` against both the
 shared fixture (must pass) and the review's own six repro cases (each must fail), so semantic
@@ -29,7 +29,7 @@ from jsonschema import Draft202012Validator
 from ach_runtime.config.canonical import compute_config_version
 from ach_runtime.config.public import ExecutionBootstrap, PublicConfig
 
-SCHEMA_PATH = Path(__file__).parent.parent.parent / "docs" / "schemas" / "ach-workspace-config-v2.schema.json"
+SCHEMA_PATH = Path(__file__).parent.parent.parent / "docs" / "schemas" / "ach-workspace-config-v3.schema.json"
 
 
 @pytest.fixture(scope="module")
@@ -298,7 +298,7 @@ def test_webhook_script_with_source_gitlab_accepted_by_schema(
 
 # ---------------------------------------------------------------------------
 # ExecutionBootstrap — generated on the fly, not a second committed artifact (only
-# ach-workspace-config-v2.schema.json is the file ACH vendors).
+# ach-workspace-config-v3.schema.json is the file ACH vendors).
 # ---------------------------------------------------------------------------
 
 

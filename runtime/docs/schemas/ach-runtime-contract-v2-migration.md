@@ -1,6 +1,6 @@
 # Contract v2 migration note (draft)
 
-Status: draft, 2026-10-26, a companion to [ach-runtime-contract-v2.md](ach-runtime-contract-v2.md). Nothing here is implemented.
+Status: draft, 2026-10-26, a companion to [ach-runtime-contract-v3.md](ach-runtime-contract-v2.md). Nothing here is implemented.
 
 This note maps every infrastructure responsibility that contract v1 gives the runtime onto its owner under v2. Unlike the contract, it names the current host (the ACH operator on Kubernetes), because that is where the work moves.
 

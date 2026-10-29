@@ -1,40 +1,106 @@
 {
-  "schemaVersion": "workspace-v2",
-  "agent": {"name": "compose-example", "namespace": "local", "uid": "6b0c1c3e-5d1e-4f7a-9a52-2f0f7d3b8c11"},
-  "configVersion": "17e5cbe9502a54d097aed8347cf5f184cc936d13a4b16ace7f1424bc80ae92cb",
-  "ach": {
-    "baseUrl": "http://ach-stub:9000",
-    "environment": "local",
-    "identity": {"env": "ACH_SECRET_IDENTITY"},
-    "capability": {"filter": {"exclude": {"tools": [], "mcpServers": [], "skills": []}}}
+  "schemaVersion": "workspace-v3",
+  "agent": {
+    "name": "compose-example",
+    "namespace": "local",
+    "uid": "6b0c1c3e-5d1e-4f7a-9a52-2f0f7d3b8c11"
   },
-  "model": {"name": "local-model", "type": "openai", "params": {}, "thinking": {"enabled": false, "effort": null}},
+  "configVersion": "922fc1e7da4a60f5821785cef896120f5279727545659bc764ad06d10e081d13",
   "engine": {
     "env": {},
     "startupTimeoutSeconds": 60,
-    "compaction": {"auto": true, "keep": {"tokens": 8000}, "buffer": 20000}
+    "compaction": {
+      "auto": true,
+      "keep": {
+        "tokens": 8000
+      },
+      "buffer": 20000
+    }
   },
   "limits": {
-    "maxActiveWorkspaces": 2, "maxConcurrentInvocations": 2, "maxConcurrentScripts": 1,
-    "maxInvocationSeconds": 600, "maxQueuedTotal": 20, "idempotencyWindowSeconds": 3600, "maxSteps": 30
+    "maxActiveWorkspaces": 2,
+    "maxConcurrentInvocations": 2,
+    "maxConcurrentScripts": 1,
+    "maxInvocationSeconds": 600,
+    "maxQueuedTotal": 20,
+    "idempotencyWindowSeconds": 3600,
+    "maxSteps": 30
   },
   "workspace": {
-    "idleTimeoutSeconds": 6, "shutdownTimeoutSeconds": 60, "maxConcurrentSessions": 1,
-    "persistence": {"enabled": true, "retentionDays": 7},
-    "session": {"idleTimeoutSeconds": 3, "persistence": {"enabled": true, "retentionDays": 7}}
+    "idleTimeoutSeconds": 6,
+    "shutdownTimeoutSeconds": 60,
+    "maxConcurrentSessions": 1,
+    "persistence": {
+      "enabled": true,
+      "retentionDays": 7
+    },
+    "session": {
+      "idleTimeoutSeconds": 3,
+      "persistence": {
+        "enabled": true,
+        "retentionDays": 7
+      }
+    }
   },
-  "artifacts": {"enabled": false, "maxArtifactBytes": 104857600, "retentionDays": 7},
+  "artifacts": {
+    "enabled": false,
+    "maxArtifactBytes": 104857600,
+    "retentionDays": 7
+  },
   "channels": [
     {
       "name": "tasks",
       "type": "webhook",
       "concurrency": 1,
       "source": "generic",
-      "routing": {"sessionKey": "{{ payload.session }}"},
+      "routing": {
+        "sessionKey": "{{ payload.session }}"
+      },
       "prompt": "{{ payload.task }}",
-      "webhook": {"auth": {"type": "header_token", "env": "ACH_SECRET_WEBHOOK", "header": "x-webhook-token"}}
+      "webhook": {
+        "auth": {
+          "type": "header_token",
+          "env": "ACH_SECRET_WEBHOOK",
+          "header": "x-webhook-token"
+        }
+      }
     }
   ],
-  "prompt": {"system": {"type": "text", "text": "You are a helpful assistant running in a local test setup. Answer briefly."}},
-  "hooks": {"sessionStart": null, "sessionRestore": null, "sessionSuspend": null}
+  "prompt": {
+    "system": {
+      "type": "text",
+      "text": "You are a helpful assistant running in a local test setup. Answer briefly."
+    }
+  },
+  "hooks": {
+    "sessionStart": null,
+    "sessionRestore": null,
+    "sessionSuspend": null
+  },
+  "capability": {
+    "server": "ach",
+    "ach": {
+      "baseUrl": "http://ach-stub:9000",
+      "environment": "local",
+      "key": {
+        "env": "ACH_SECRET_IDENTITY"
+      },
+      "model": {
+        "name": "local-model",
+        "type": "openai",
+        "params": {},
+        "thinking": {
+          "enabled": false,
+          "effort": null
+        }
+      }
+    },
+    "filter": {
+      "exclude": {
+        "tools": [],
+        "mcpServers": [],
+        "skills": []
+      }
+    }
+  }
 }

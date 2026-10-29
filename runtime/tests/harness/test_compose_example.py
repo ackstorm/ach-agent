@@ -33,7 +33,7 @@ def test_config_parses_and_its_version_is_current() -> None:
     assert wire["configVersion"] == expected, f"stamp configVersion with {expected}"
     config = parse_config(wire)
     assert config.infrastructure.facade_endpoint is None  # the agent role defaults it
-    assert config.ach.base_url == "http://ach-stub:9000"
+    assert config.capability.ach.base_url == "http://ach-stub:9000"
     channel = config.channels[0]
     assert channel.type == "webhook" and channel.routing is not None and channel.routing.session_key
     assert config.workspace.persistence.enabled and config.workspace.session.persistence.enabled
@@ -42,8 +42,8 @@ def test_config_parses_and_its_version_is_current() -> None:
 def test_catalog_grants_the_configured_model_with_an_endpoint() -> None:
     wire = json.loads((EXAMPLE / "config.json").read_text())
     manifest = HydrationManifest.model_validate(json.loads((EXAMPLE / "stub" / "catalog.json").read_text()))
-    assert resolve_model(manifest, wire["model"]["name"]).endpoint
-    assert manifest.environment == wire["ach"]["environment"]
+    assert resolve_model(manifest, wire["capability"]["ach"]["model"]["name"]).endpoint
+    assert manifest.environment == wire["capability"]["ach"]["environment"]
 
 
 @pytest.mark.asyncio

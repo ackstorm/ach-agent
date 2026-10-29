@@ -191,7 +191,7 @@ def test_load_bootstrap_from_env() -> None:
 
     inline = BOOTSTRAP_FIXTURE.read_text(encoding="utf-8")
     bootstrap = load_bootstrap(None, {"ACH_BOOTSTRAP_JSON": inline})
-    assert bootstrap.bootstrap_version == "workspace-v2"
+    assert bootstrap.bootstrap_version == "workspace-v3"
     assert bootstrap == load_bootstrap(BOOTSTRAP_FIXTURE, {})
 
 

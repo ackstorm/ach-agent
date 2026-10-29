@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""workspace-v2 RuntimeConfig/PublicConfig/ExecutionBootstrap schema and canonicalization."""
+"""workspace-v3 RuntimeConfig/PublicConfig/ExecutionBootstrap schema and canonicalization."""
 
 from ach_runtime.config.canonical import (
     CanonicalizationError,

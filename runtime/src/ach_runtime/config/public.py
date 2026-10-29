@@ -70,7 +70,7 @@ class PublicInfrastructureBlock(BaseModel):
 class PublicConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
 
-    schema_version: Literal["workspace-v2"] = Field(alias="schemaVersion")
+    schema_version: Literal["workspace-v3"] = Field(alias="schemaVersion")
     agent: AgentIdentity
     config_version: str = Field(alias="configVersion", pattern=r"^[0-9a-f]{64}$")
     model: ModelBlock
@@ -108,7 +108,7 @@ def public_config(config: RuntimeConfig, engine_env: dict[str, str]) -> PublicCo
         agent=config.agent,
         configVersion=config.config_version,
         model=config.model,
-        capability=config.ach.capability,
+        capability=AchCapabilityBlock(filter=config.capability.filter),
         prompt=config.prompt,
         limits=config.limits,
         engine=PublicEngineBlock(
@@ -134,7 +134,7 @@ class ExecutionBootstrap(BaseModel):
 
     model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
 
-    bootstrap_version: Literal["workspace-v2"] = Field(alias="bootstrapVersion")
+    bootstrap_version: Literal["workspace-v3"] = Field(alias="bootstrapVersion")
     agent: AgentIdentity
     facade_endpoint: str = Field(
         alias="facadeEndpoint", json_schema_extra={"pattern": ENDPOINT_PATTERN}

@@ -133,7 +133,7 @@ async def test_both_role_boots_emit_safe_info_and_anomaly_stream(
         from ach_runtime.execution.boot import run_execution
 
         bootstrap = {
-            "bootstrapVersion": "workspace-v2",
+            "bootstrapVersion": "workspace-v3",
             "agent": {"name": config.agent.name, "namespace": config.agent.namespace,
                       "uid": config.agent.uid},
             "facadeEndpoint": "http://ach-control.ach.svc:8081/facades",

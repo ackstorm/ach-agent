@@ -429,9 +429,9 @@ async def e2e_stack_factory(tmp_path: Path, s3_client, monkeypatch) -> AsyncIter
             wire["limits"]["maxQueuedTotal"] = max_queued_total
             wire["channels"][0]["handoff"]["scope"] = handoff_scope
             wire["channels"][0]["handoff"]["env"]["GITLAB_REPO_BASEURL"] = f"file://{tmp_path / 'git'}"
-            wire["ach"]["baseUrl"] = upstream.model_url.rsplit("/v1", 1)[0]
-            wire["ach"]["capability"]["filter"]["exclude"]["mcpServers"] = [
-                item for item in wire["ach"]["capability"]["filter"]["exclude"]["mcpServers"]
+            wire["capability"]["ach"]["baseUrl"] = upstream.model_url.rsplit("/v1", 1)[0]
+            wire["capability"]["filter"]["exclude"]["mcpServers"] = [
+                item for item in wire["capability"]["filter"]["exclude"]["mcpServers"]
                 if item != "mcp-gitlab-ro"
             ]
             listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

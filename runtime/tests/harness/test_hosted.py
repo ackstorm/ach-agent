@@ -37,7 +37,7 @@ AUTH = {"authorization": f"Bearer {TOKEN}"}
 
 def _bootstrap() -> ExecutionBootstrap:
     return ExecutionBootstrap.model_validate({
-        "bootstrapVersion": "workspace-v2",
+        "bootstrapVersion": "workspace-v3",
         "agent": {"name": "gitlab-reviewer", "namespace": "ach", "uid": UID},
         "facadeEndpoint": "http://control.ach.svc:8081/facades",
     })

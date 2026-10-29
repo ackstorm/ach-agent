@@ -33,7 +33,7 @@ def _config(*, peers: bool = True, excluded: list[str] | None = None):
     wire["workspace"]["persistence"]["enabled"] = False
     wire["workspace"]["session"]["persistence"]["enabled"] = False
     wire["artifacts"]["enabled"] = False
-    wire["ach"]["capability"]["filter"]["exclude"]["tools"] = excluded or []
+    wire["capability"]["filter"]["exclude"]["tools"] = excluded or []
     wire["configVersion"] = compute_config_version(wire)
     config = parse_config(wire)
     return config

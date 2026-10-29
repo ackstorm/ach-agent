@@ -345,14 +345,14 @@ class Hydrator:
         self._client = client
 
     async def load(self, config: RuntimeConfig) -> HydratedCatalog:
-        identity = ProcessIdentity(agent=config.agent.name, environment=config.ach.environment)
-        ek = self._resolve_ek(config.ach.identity.env)
+        identity = ProcessIdentity(agent=config.agent.name, environment=config.identity_environment)
+        ek = self._resolve_ek(config.capability.ach.key.env)
         manifest = await fetch_hydration_manifest(
-            config.ach.base_url, ek, config.ach.environment, identity=identity, client=self._client
+            config.capability.ach.base_url, ek, config.identity_environment, identity=identity, client=self._client
         )
         entry = resolve_model(manifest, config.model.name)
         metadata = await fetch_model_metadata(
-            config.ach.base_url, ek, config.model.name, client=self._client
+            config.capability.ach.base_url, ek, config.model.name, client=self._client
         )
         return HydratedCatalog(
             environment=manifest.environment,
@@ -380,7 +380,7 @@ async def stage_context(
     from ach_runtime.storage.archive import extract
 
     root.mkdir(parents=True, exist_ok=True)
-    excluded = set(config.ach.capability.filter.exclude.skills)
+    excluded = set(config.capability.filter.exclude.skills)
     headers = {"x-ach-key": ek}
     for kind in ("skills", "prompts", "artifacts"):
         items = getattr(catalog, kind)

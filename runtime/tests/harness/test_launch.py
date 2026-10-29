@@ -8,7 +8,7 @@ from ach_runtime.harness.workspaces import WorkspaceAssemblyUnavailable, Workspa
 UID = "3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77"
 REF = WorkspaceRef("ach", UID, "a" * 64)
 BOOT = ExecutionBootstrap.model_validate_json(
-    '{"bootstrapVersion":"workspace-v2","agent":{"name":"a","namespace":"ach","uid":"%s"},'
+    '{"bootstrapVersion":"workspace-v3","agent":{"name":"a","namespace":"ach","uid":"%s"},'
     '"facadeEndpoint":"http://127.0.0.1:8081/facades"}' % UID
 )
 

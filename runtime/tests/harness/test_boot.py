@@ -64,7 +64,7 @@ class _Mountable:
 def _source(config) -> HostedSource:
     return HostedSource(
         ExecutionBootstrap(
-            bootstrapVersion="workspace-v2", agent=config.agent, facadeEndpoint=config.infrastructure.facade_endpoint
+            bootstrapVersion="workspace-v3", agent=config.agent, facadeEndpoint=config.infrastructure.facade_endpoint
         ),
         verify_key="verify-key",
     )

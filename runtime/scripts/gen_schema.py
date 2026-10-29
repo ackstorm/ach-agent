@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Regenerate docs/schemas/ach-workspace-config-v2.schema.json from RuntimeConfig.
+"""Regenerate docs/schemas/ach-workspace-config-v3.schema.json from RuntimeConfig.
 
 ACH vendors this file with a drift gate (internal/agentrender/schema_test.go, Task 2B) — this
 script is the single source of truth, never hand-edited. `--check` fails (exit 1) instead of
 writing when the committed file is stale.
 
-    python scripts/gen_schema.py          # regenerate docs/schemas/ach-workspace-config-v2.schema.json
+    python scripts/gen_schema.py          # regenerate docs/schemas/ach-workspace-config-v3.schema.json
     python scripts/gen_schema.py --check  # fail if the committed file is stale (CI / make schema-check)
 """
 
@@ -26,7 +26,7 @@ from ach_runtime.config.schema import (  # noqa: E402
 )
 
 SCHEMA_PATH = (
-    Path(__file__).resolve().parent.parent / "docs" / "schemas" / "ach-workspace-config-v2.schema.json"
+    Path(__file__).resolve().parent.parent / "docs" / "schemas" / "ach-workspace-config-v3.schema.json"
 )
 
 # review I2 (round 1) + two pre-commit correctness re-checks: constraints Pydantic's own
@@ -233,8 +233,8 @@ def generate() -> str:
     _patch_shared_handoff_requires_single_session(schema)
     schema = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://ach-runtime.ackstorm.ai/schemas/ach-workspace-config-v2.schema.json",
-        "title": "ach-runtime workspace-v2 RuntimeConfig",
+        "$id": "https://ach-runtime.ackstorm.ai/schemas/ach-workspace-config-v3.schema.json",
+        "title": "ach-runtime workspace-v3 RuntimeConfig",
         **schema,
     }
     return json.dumps(schema, indent=2, sort_keys=False) + "\n"

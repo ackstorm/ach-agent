@@ -61,7 +61,7 @@ func main() {
 	var leaderElect bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "address the metrics endpoint binds to")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "address the probe endpoint binds to")
-	flag.BoolVar(&leaderElect, "leader-elect", false, "enable leader election")
+	flag.BoolVar(&leaderElect, "leader-elect", true, "enable leader election (needs a namespaced Role on coordination.k8s.io leases)")
 	zapOpts := zap.Options{Development: true}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()

@@ -5,6 +5,7 @@ package controller
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"testing"
 
@@ -128,6 +129,9 @@ func TestEnsureWorkspaceKey_RejectsUnownedForeignAndEmptySecrets(t *testing.T) {
 			if err == nil {
 				t.Fatal("ensureWorkspaceKey succeeded; want validation error")
 			}
+			if !errors.Is(err, errKeySecretConflict) {
+				t.Fatalf("err = %v, want errKeySecretConflict", err)
+			}
 			if strings.Contains(err.Error(), "private-value") {
 				t.Fatalf("error exposed Secret data: %v", err)
 			}
@@ -236,4 +240,50 @@ func workspaceKeyTestScheme(t *testing.T) *runtime.Scheme {
 		t.Fatalf("add ACH scheme: %v", err)
 	}
 	return s
+}
+
+type failingGetReader struct{ client.Reader }
+
+func (failingGetReader) Get(context.Context, client.ObjectKey, client.Object, ...client.GetOption) error {
+	return errors.New("apiserver timeout")
+}
+
+func TestEnsureWorkspaceKey_TransientErrorIsNotAConflict(t *testing.T) {
+	a := workspaceKeyTestAgent("ns", "agent", "11111111-2222-4333-8444-555555555555")
+	scheme := workspaceKeyTestScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	r := &AgentReconciler{Client: c, APIReader: failingGetReader{c}, Scheme: scheme}
+	err := r.ensureWorkspaceKey(context.Background(), a)
+	if err == nil || errors.Is(err, errKeySecretConflict) {
+		t.Fatalf("err = %v, want a non-conflict error", err)
+	}
+}
+
+func TestPruneAndApply_LeaveObjectsTheAgentDoesNotControl(t *testing.T) {
+	ctx := context.Background()
+	a := workspaceKeyTestAgent("ns", "agent", "11111111-2222-4333-8444-555555555555")
+	scheme := workspaceKeyTestScheme(t)
+	mine := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "agent-http", Namespace: "ns"}}
+	if err := controllerutil.SetControllerReference(a, mine, scheme); err != nil {
+		t.Fatal(err)
+	}
+	theirs := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "theirs", Namespace: "ns"}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mine, theirs).Build()
+	r := &AgentReconciler{Client: c, APIReader: c, Scheme: scheme}
+
+	if err := r.prune(ctx, a, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "theirs", Namespace: "ns"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, client.ObjectKey{Namespace: "ns", Name: "theirs"}, &corev1.Service{}); err != nil {
+		t.Fatalf("a Service the Agent does not control was deleted: %v", err)
+	}
+	if err := r.prune(ctx, a, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "agent-http", Namespace: "ns"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, client.ObjectKey{Namespace: "ns", Name: "agent-http"}, &corev1.Service{}); err == nil {
+		t.Fatal("the controlled Service was not pruned")
+	}
+	if err := r.apply(ctx, a, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "theirs", Namespace: "ns"}}); err == nil {
+		t.Fatal("apply adopted an unowned Service")
+	}
 }

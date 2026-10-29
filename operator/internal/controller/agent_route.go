@@ -65,7 +65,7 @@ func (r *AgentReconciler) reconcileRoute(ctx context.Context, a *achv1alpha1.Age
 		if !r.HTTPRouteAvailable {
 			return nil, nil
 		}
-		return nil, r.prune(ctx, &gatewayv1.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: render.ControlName(a.Name), Namespace: a.Namespace}})
+		return nil, r.prune(ctx, a, &gatewayv1.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: render.ControlName(a.Name), Namespace: a.Namespace}})
 	}
 	if !r.HTTPRouteAvailable {
 		setCond(&conds, condWorkloadApplied, metav1.ConditionFalse, "RouteUnsupported",

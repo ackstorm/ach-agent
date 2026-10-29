@@ -13,6 +13,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -300,6 +301,9 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// The private key Secret is created only after render and the authored Secret checks pass.
 	// Errors are deliberately sanitized so the key can never appear in status or logs.
 	if err := r.ensureWorkspaceKey(ctx, &agent); err != nil {
+		if !errors.Is(err, errKeySecretConflict) {
+			return ctrl.Result{}, fmt.Errorf("ensure workspace key: %w", err)
+		}
 		setCond(&conds, condSecretsResolved, metav1.ConditionFalse, "SecretConflict", "key Secret is not controlled by this Agent or is empty", agent.Generation)
 		return r.finish(ctx, &agent, conds)
 	}
@@ -354,7 +358,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		if err := r.apply(ctx, &agent, buildService(&agent, &profile)); err != nil {
 			return r.applyFail(ctx, &agent, conds, "Service", err)
 		}
-	} else if err := r.prune(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: httpServiceName(agent.Name), Namespace: agent.Namespace}}); err != nil {
+	} else if err := r.prune(ctx, &agent, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: httpServiceName(agent.Name), Namespace: agent.Namespace}}); err != nil {
 		// Converge expose.service true→false: owner-ref GC only fires on Agent delete, not
 		// when the owner stops desiring the child.
 		return r.applyFail(ctx, &agent, conds, "Service", err)
@@ -427,6 +431,9 @@ func (r *AgentReconciler) checkSecrets(ctx context.Context, ns string, refSecret
 func (r *AgentReconciler) apply(ctx context.Context, owner *achv1alpha1.Agent, desired client.Object) error {
 	obj := desired.DeepCopyObject().(client.Object)
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, obj, func() error {
+		if obj.GetResourceVersion() != "" && !metav1.IsControlledBy(obj, owner) {
+			return fmt.Errorf("%T %s exists and is not controlled by Agent %s", obj, obj.GetName(), owner.Name)
+		}
 		copySpec(obj, desired)
 		return controllerutil.SetControllerReference(owner, obj, r.Scheme)
 	})
@@ -434,12 +441,16 @@ func (r *AgentReconciler) apply(ctx context.Context, owner *achv1alpha1.Agent, d
 }
 
 // prune deletes a child the agent no longer desires (expose.service false). Owner-ref GC only fires on Agent delete,
-// so convergence needs an explicit delete. Idempotent — NotFound is a no-op.
-func (r *AgentReconciler) prune(ctx context.Context, obj client.Object) error {
-	if err := r.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
-		return err
+// so convergence needs an explicit delete. Idempotent — NotFound is a no-op. An object the
+// Agent does not control (a user's own, same name) is left alone.
+func (r *AgentReconciler) prune(ctx context.Context, owner *achv1alpha1.Agent, obj client.Object) error {
+	if err := r.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
+		return client.IgnoreNotFound(err)
 	}
-	return nil
+	if !metav1.IsControlledBy(obj, owner) {
+		return nil
+	}
+	return client.IgnoreNotFound(r.Delete(ctx, obj))
 }
 
 // applyPVC creates the PVC once. When retainPolicy=Retain the PVC gets NO owner-ref, so it

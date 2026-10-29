@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -23,6 +24,10 @@ func workspaceKeySecretName(uid string) string { return "ach-agent-key-" + uid }
 
 // ensureWorkspaceKey ensures the legacy Harness key exists without ever returning
 // or replacing its secret value. K is the UTF-8 encoding of the stored hex string.
+// errKeySecretConflict marks a key Secret the Agent cannot use: foreign or empty. Other errors
+// (apiserver trouble) are transient and requeue.
+var errKeySecretConflict = errors.New("workspace key Secret conflict")
+
 func (r *AgentReconciler) ensureWorkspaceKey(ctx context.Context, a *achv1alpha1.Agent) error {
 	key := types.NamespacedName{Namespace: a.Namespace, Name: workspaceKeySecretName(string(a.UID))}
 	readAndValidate := func() error {
@@ -31,10 +36,10 @@ func (r *AgentReconciler) ensureWorkspaceKey(ctx context.Context, a *achv1alpha1
 			return err
 		}
 		if !workspaceKeyOwnedBy(&existing, a) {
-			return fmt.Errorf("workspace key Secret is not controlled by this Agent")
+			return fmt.Errorf("%w: not controlled by this Agent", errKeySecretConflict)
 		}
 		if len(existing.Data[workspaceKeyDataKey]) == 0 {
-			return fmt.Errorf("workspace key Secret has no nonempty key")
+			return fmt.Errorf("%w: no nonempty key", errKeySecretConflict)
 		}
 		return nil
 	}

@@ -1,0 +1,203 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  parse-release:
+    if: "${{ startsWith(github.event.head_commit.message, 'chore(release): v') }}"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract the version and verify every version field
+        id: version
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+          first_line="${MSG%%$'\n'*}"
+          version="$(printf '%s' "$first_line" | sed -nE 's/^chore\(release\): v([0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?).*$/\1/p')"
+          test -n "$version" || { echo "release version could not be parsed" >&2; exit 1; }
+          make release-check VERSION="$version"
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "Verified release version: v$version"
+
+  runtime-ci:
+    needs: parse-release
+    permissions:
+      contents: read
+    uses: ./.github/workflows/runtime.yml
+
+  operator-ci:
+    needs: parse-release
+    permissions:
+      contents: read
+    uses: ./.github/workflows/operator.yml
+
+  publish-images:
+    needs: [parse-release, runtime-ci, operator-ci]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish operator image
+        id: operator
+        uses: docker/build-push-action@v7
+        with:
+          context: operator
+          platforms: linux/amd64,linux/arm64
+          push: true
+          # latest only for a non-prerelease; an empty line is dropped from the list.
+          tags: |
+            ghcr.io/ackstorm/ach-agent-operator:${{ needs.parse-release.outputs.version }}
+            ${{ !contains(needs.parse-release.outputs.version, '-') && 'ghcr.io/ackstorm/ach-agent-operator:latest' || '' }}
+          cache-from: type=gha,scope=operator-release
+          cache-to: type=gha,mode=max,scope=operator-release
+
+      - name: Publish control image
+        id: control
+        uses: docker/build-push-action@v7
+        with:
+          context: runtime
+          target: control
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/ackstorm/ach-agent-control:${{ needs.parse-release.outputs.version }}
+            ${{ !contains(needs.parse-release.outputs.version, '-') && 'ghcr.io/ackstorm/ach-agent-control:latest' || '' }}
+          cache-from: type=gha,scope=control-release
+          cache-to: type=gha,mode=max,scope=control-release
+
+      - name: Publish execution image
+        id: execution
+        uses: docker/build-push-action@v7
+        with:
+          context: runtime
+          target: execution
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/ackstorm/ach-agent-execution:${{ needs.parse-release.outputs.version }}
+            ${{ !contains(needs.parse-release.outputs.version, '-') && 'ghcr.io/ackstorm/ach-agent-execution:latest' || '' }}
+          cache-from: type=gha,scope=execution-release
+          cache-to: type=gha,mode=max,scope=execution-release
+
+      - name: Require both published platform manifests
+        env:
+          VERSION: ${{ needs.parse-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          for image in \
+            "ghcr.io/ackstorm/ach-agent-operator:$VERSION" \
+            "ghcr.io/ackstorm/ach-agent-control:$VERSION" \
+            "ghcr.io/ackstorm/ach-agent-execution:$VERSION"; do
+            manifest="$(docker buildx imagetools inspect "$image")"
+            printf '%s\n' "$manifest" | grep -Fq 'linux/amd64'
+            printf '%s\n' "$manifest" | grep -Fq 'linux/arm64'
+            echo "$image has linux/amd64 and linux/arm64 manifests"
+          done
+
+      - name: Record possible partial registry publication
+        if: always()
+        env:
+          OPERATOR_OUTCOME: ${{ steps.operator.outcome }}
+          CONTROL_OUTCOME: ${{ steps.control.outcome }}
+          EXECUTION_OUTCOME: ${{ steps.execution.outcome }}
+        run: |
+          {
+            echo "Operator image build/push step: $OPERATOR_OUTCOME"
+            echo "Control image build/push step: $CONTROL_OUTCOME"
+            echo "Execution image build/push step: $EXECUTION_OUTCOME"
+            echo "A failed or cancelled publication can leave a partial registry state; inspect Actions logs and the exact versioned tags before retrying. No tag or GitHub release is created unless manifest checks pass."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-chart:
+    needs: [parse-release, runtime-ci, operator-ci]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: Package and push the chart
+        env:
+          VERSION: ${{ needs.parse-release.outputs.version }}
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REGISTRY_TOKEN" | helm registry login ghcr.io --username "$REGISTRY_USER" --password-stdin
+          helm package chart --version "$VERSION" --app-version "$VERSION"
+          helm push "ach-agent-$VERSION.tgz" oci://ghcr.io/ackstorm/charts
+
+  create-release:
+    needs: [parse-release, runtime-ci, operator-ci, publish-images, publish-chart]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create or verify annotated release tag
+        env:
+          VERSION: ${{ needs.parse-release.outputs.version }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --tags origin
+          tag="v$VERSION"
+          if git show-ref --verify --quiet "refs/tags/$tag"; then
+            tag_sha="$(git rev-parse "refs/tags/$tag^{commit}")"
+            test "$tag_sha" = "$RELEASE_SHA" || {
+              echo "existing $tag points at $tag_sha, expected $RELEASE_SHA" >&2
+              exit 1
+            }
+          else
+            git tag -a "$tag" -m "$tag" "$RELEASE_SHA"
+            git push origin "refs/tags/$tag"
+          fi
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.parse-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/release-notes.md"
+          awk -v version="$VERSION" '
+            $0 ~ "^## \\[" version "\\]" { found=1; next }
+            /^## \[/ { if (found) exit }
+            found { print }
+          ' CHANGELOG.md > "$notes"
+          if [ -s "$notes" ]; then
+            gh release create "v$VERSION" --title "v$VERSION" --notes-file "$notes"
+          else
+            gh release create "v$VERSION" --title "v$VERSION" --generate-notes
+          fi

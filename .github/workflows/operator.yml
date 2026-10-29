@@ -7,9 +7,10 @@ on:
   push:
     branches: [main]
     paths: ["operator/**", "runtime/docs/schemas/**", ".github/workflows/operator.yml"]
+  workflow_call:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-operator-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

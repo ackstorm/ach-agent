@@ -1,0 +1,1576 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ach-runtime.ackstorm.ai/schemas/ach-workspace-config-v2.schema.json",
+  "title": "RuntimeConfig",
+  "$defs": {
+    "A2AAuthBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "header": {
+          "default": "x-a2a-custom-api-key",
+          "title": "Header",
+          "type": "string"
+        },
+        "env": {
+          "title": "Env",
+          "type": "string"
+        }
+      },
+      "required": [
+        "env"
+      ],
+      "title": "A2AAuthBlock",
+      "type": "object"
+    },
+    "A2ABlock": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "const": "async",
+          "default": "async",
+          "title": "Mode",
+          "type": "string"
+        },
+        "auth": {
+          "$ref": "#/$defs/A2AAuthBlock"
+        }
+      },
+      "required": [
+        "auth"
+      ],
+      "title": "A2ABlock",
+      "type": "object"
+    },
+    "AchBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "baseUrl": {
+          "title": "Baseurl",
+          "type": "string"
+        },
+        "environment": {
+          "title": "Environment",
+          "type": "string"
+        },
+        "identity": {
+          "$ref": "#/$defs/SecretAlias"
+        },
+        "capability": {
+          "$ref": "#/$defs/AchCapabilityBlock"
+        }
+      },
+      "required": [
+        "baseUrl",
+        "environment",
+        "identity"
+      ],
+      "title": "AchBlock",
+      "type": "object"
+    },
+    "AchCapabilityBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "filter": {
+          "$ref": "#/$defs/AchCapabilityFilter"
+        }
+      },
+      "title": "AchCapabilityBlock",
+      "type": "object"
+    },
+    "AchCapabilityFilter": {
+      "additionalProperties": false,
+      "properties": {
+        "exclude": {
+          "$ref": "#/$defs/AchCapabilityFilterExclude"
+        }
+      },
+      "title": "AchCapabilityFilter",
+      "type": "object"
+    },
+    "AchCapabilityFilterExclude": {
+      "additionalProperties": false,
+      "properties": {
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tools",
+          "type": "array"
+        },
+        "mcpServers": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Mcpservers",
+          "type": "array"
+        },
+        "skills": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Skills",
+          "type": "array"
+        }
+      },
+      "title": "AchCapabilityFilterExclude",
+      "type": "object"
+    },
+    "AchMemoryAuthAch": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "ach",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "AchMemoryAuthAch",
+      "type": "object"
+    },
+    "AchMemoryAuthBearer": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "bearer",
+          "title": "Type",
+          "type": "string"
+        },
+        "env": {
+          "default": "",
+          "title": "Env",
+          "type": "string"
+        },
+        "header": {
+          "default": "Authorization",
+          "pattern": "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$",
+          "title": "Header",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "AchMemoryAuthBearer",
+      "type": "object"
+    },
+    "AchMemoryMemory": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "ach-memory",
+          "title": "Type",
+          "type": "string"
+        },
+        "achMemory": {
+          "$ref": "#/$defs/AchMemoryParams"
+        }
+      },
+      "required": [
+        "type",
+        "achMemory"
+      ],
+      "title": "AchMemoryMemory",
+      "type": "object"
+    },
+    "AchMemoryParams": {
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": {
+          "default": "",
+          "title": "Endpoint",
+          "type": "string"
+        },
+        "mcpServerId": {
+          "default": "",
+          "title": "Mcpserverid",
+          "type": "string"
+        },
+        "auth": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "ach": "#/$defs/AchMemoryAuthAch",
+                  "bearer": "#/$defs/AchMemoryAuthBearer"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/AchMemoryAuthAch"
+                },
+                {
+                  "$ref": "#/$defs/AchMemoryAuthBearer"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Auth"
+        },
+        "project": {
+          "default": "",
+          "title": "Project",
+          "type": "string"
+        }
+      },
+      "title": "AchMemoryParams",
+      "type": "object"
+    },
+    "AgentIdentity": {
+      "additionalProperties": false,
+      "description": "`agent.{name,namespace,uid}` \u2014 namespace is an opaque, stable, host-assigned scope;\nuid is the canonical lowercase UUID.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "namespace": {
+          "title": "Namespace",
+          "type": "string"
+        },
+        "uid": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Uid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "namespace",
+        "uid"
+      ],
+      "title": "AgentIdentity",
+      "type": "object"
+    },
+    "ArtifactsBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "maxArtifactBytes": {
+          "exclusiveMinimum": 0,
+          "title": "Maxartifactbytes",
+          "type": "integer"
+        },
+        "retentionDays": {
+          "minimum": 0,
+          "title": "Retentiondays",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "enabled",
+        "maxArtifactBytes",
+        "retentionDays"
+      ],
+      "title": "ArtifactsBlock",
+      "type": "object"
+    },
+    "ChannelConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "webhook",
+            "webhook-script",
+            "cron",
+            "queue",
+            "a2a"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "concurrency": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "title": "Concurrency",
+          "type": "integer"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "enum": [
+                "gitlab",
+                "github",
+                "generic"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "routing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RoutingBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "prompt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt"
+        },
+        "webhook": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebhookBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "handoff": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HandoffBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "script": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScriptBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cron": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CronBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "queue": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QueueBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "a2a": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/A2ABlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "title": "ChannelConfig",
+      "type": "object",
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "webhook"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "source",
+              "webhook"
+            ],
+            "properties": {
+              "source": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "webhook": {
+                "allOf": [
+                  {
+                    "not": {
+                      "type": "null"
+                    }
+                  },
+                  {
+                    "properties": {
+                      "gitlabEvents": {
+                        "items": {
+                          "enum": [
+                            "issue",
+                            "merge_request",
+                            "note"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "cron": {
+                "type": "null"
+              },
+              "queue": {
+                "type": "null"
+              },
+              "a2a": {
+                "type": "null"
+              },
+              "script": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "webhook-script"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "source",
+              "webhook",
+              "script"
+            ],
+            "properties": {
+              "source": {
+                "const": "gitlab"
+              },
+              "webhook": {
+                "allOf": [
+                  {
+                    "not": {
+                      "type": "null"
+                    }
+                  },
+                  {
+                    "required": [
+                      "gitlabEvents"
+                    ],
+                    "properties": {
+                      "gitlabEvents": {
+                        "not": {
+                          "type": "null"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "script": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "cron": {
+                "type": "null"
+              },
+              "queue": {
+                "type": "null"
+              },
+              "a2a": {
+                "type": "null"
+              },
+              "prompt": {
+                "type": "null"
+              },
+              "handoff": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "cron"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "cron"
+            ],
+            "properties": {
+              "cron": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "webhook": {
+                "type": "null"
+              },
+              "queue": {
+                "type": "null"
+              },
+              "a2a": {
+                "type": "null"
+              },
+              "script": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "queue"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "queue"
+            ],
+            "properties": {
+              "queue": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "webhook": {
+                "type": "null"
+              },
+              "cron": {
+                "type": "null"
+              },
+              "a2a": {
+                "type": "null"
+              },
+              "script": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "a2a"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "a2a"
+            ],
+            "properties": {
+              "a2a": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "webhook": {
+                "type": "null"
+              },
+              "cron": {
+                "type": "null"
+              },
+              "queue": {
+                "type": "null"
+              },
+              "script": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "CompactionBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "auto": {
+          "title": "Auto",
+          "type": "boolean"
+        },
+        "keep": {
+          "$ref": "#/$defs/CompactionKeepBlock"
+        },
+        "buffer": {
+          "minimum": 0,
+          "title": "Buffer",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "auto",
+        "keep",
+        "buffer"
+      ],
+      "title": "CompactionBlock",
+      "type": "object"
+    },
+    "CompactionKeepBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "tokens": {
+          "exclusiveMinimum": 0,
+          "title": "Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "tokens"
+      ],
+      "title": "CompactionKeepBlock",
+      "type": "object"
+    },
+    "CronBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "schedule": {
+          "title": "Schedule",
+          "type": "string"
+        },
+        "timezone": {
+          "default": "UTC",
+          "title": "Timezone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schedule"
+      ],
+      "title": "CronBlock",
+      "type": "object"
+    },
+    "EngineBlock": {
+      "additionalProperties": false,
+      "description": "Resolved `engine` \u2014 CR `forwardEnv` names have already become literal values.\n\n`env` carries only approved literal (non-secret) values selected by the operator from\n`spec.env`; SecretRefs never reach this map (contract \u00a75: \"en v1 solo valores literales\npueden llegar por engine.forwardEnv\").",
+      "properties": {
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Env",
+          "type": "object",
+          "propertyNames": {
+            "allOf": [
+              {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+              },
+              {
+                "not": {
+                  "enum": [
+                    "HOME",
+                    "OPENCODE_BIN",
+                    "OPENCODE_DISABLE_MODELS_FETCH",
+                    "OPENCODE_DISABLE_PROJECT_CONFIG",
+                    "OPENCODE_MODELS_URL",
+                    "OPENCODE_SERVER_PASSWORD"
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "pattern": "^(?:ACH_|XDG_|OPENCODE_CONFIG)"
+                }
+              }
+            ]
+          }
+        },
+        "startupTimeoutSeconds": {
+          "default": 30,
+          "exclusiveMinimum": 0,
+          "title": "Startuptimeoutseconds",
+          "type": "integer"
+        },
+        "compaction": {
+          "$ref": "#/$defs/CompactionBlock"
+        },
+        "denyTools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Denytools",
+          "type": "array"
+        }
+      },
+      "required": [
+        "compaction"
+      ],
+      "title": "EngineBlock",
+      "type": "object"
+    },
+    "HandoffBlock": {
+      "additionalProperties": false,
+      "description": "`channels[].handoff` \u2014 replaces the shared Workspace directory at `destination`.\n\nV1 requires `workspace.maxConcurrentSessions == 1` whenever any channel carries a handoff\n(contract \u00a76) \u2014 the Workspace, not a per-session HOME, is always the destination. It runs\nfor every event; the directory is shared by every session in the workspace, so per-session\nfiles need `routing.workspaceKey: session`. `scope` stays only because ACH renders it.",
+      "properties": {
+        "script": {
+          "title": "Script",
+          "type": "string"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Env",
+          "type": "object"
+        },
+        "secretEnv": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SecretAlias"
+          },
+          "title": "Secretenv",
+          "type": "object"
+        },
+        "timeoutSeconds": {
+          "default": 120,
+          "exclusiveMinimum": 0,
+          "maximum": 3600,
+          "title": "Timeoutseconds",
+          "type": "integer"
+        },
+        "scope": {
+          "const": "event",
+          "default": "event",
+          "title": "Scope",
+          "type": "string"
+        },
+        "destination": {
+          "type": "string",
+          "minLength": 1,
+          "allOf": [
+            {
+              "not": {
+                "pattern": "^/"
+              }
+            },
+            {
+              "not": {
+                "pattern": "\\x00"
+              }
+            },
+            {
+              "not": {
+                "pattern": "(?:^|/)\\.\\.(?:/|$)"
+              }
+            },
+            {
+              "not": {
+                "pattern": "^(?:\\.?/)*\\.?$"
+              }
+            },
+            {
+              "pattern": "\\S"
+            }
+          ],
+          "title": "Destination"
+        }
+      },
+      "required": [
+        "script",
+        "destination"
+      ],
+      "title": "HandoffBlock",
+      "type": "object"
+    },
+    "HookBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "script": {
+          "title": "Script",
+          "type": "string"
+        },
+        "timeoutSeconds": {
+          "default": 120,
+          "exclusiveMinimum": 0,
+          "maximum": 3600,
+          "title": "Timeoutseconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "script"
+      ],
+      "title": "HookBlock",
+      "type": "object"
+    },
+    "HooksBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "workspaceStart": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HookBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sessionStart": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HookBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sessionRestore": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HookBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sessionSuspend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HookBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "workspaceStop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HookBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "HooksBlock",
+      "type": "object"
+    },
+    "InfrastructureBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "facadeEndpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "pattern": "^https?://[^/\\s]+",
+          "title": "Facadeendpoint"
+        }
+      },
+      "title": "InfrastructureBlock",
+      "type": "object"
+    },
+    "LimitsBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "maxActiveWorkspaces": {
+          "exclusiveMinimum": 0,
+          "title": "Maxactiveworkspaces",
+          "type": "integer"
+        },
+        "maxConcurrentInvocations": {
+          "exclusiveMinimum": 0,
+          "title": "Maxconcurrentinvocations",
+          "type": "integer"
+        },
+        "maxConcurrentScripts": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Maxconcurrentscripts"
+        },
+        "maxInvocationSeconds": {
+          "exclusiveMinimum": 0,
+          "title": "Maxinvocationseconds",
+          "type": "integer"
+        },
+        "maxQueuedTotal": {
+          "exclusiveMinimum": 0,
+          "title": "Maxqueuedtotal",
+          "type": "integer"
+        },
+        "idempotencyWindowSeconds": {
+          "minimum": 0,
+          "title": "Idempotencywindowseconds",
+          "type": "integer"
+        },
+        "maxSteps": {
+          "exclusiveMinimum": 0,
+          "title": "Maxsteps",
+          "type": "integer"
+        },
+        "maxStallSeconds": {
+          "default": 300,
+          "exclusiveMinimum": 0,
+          "title": "Maxstallseconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maxActiveWorkspaces",
+        "maxConcurrentInvocations",
+        "maxInvocationSeconds",
+        "maxQueuedTotal",
+        "idempotencyWindowSeconds",
+        "maxSteps"
+      ],
+      "title": "LimitsBlock",
+      "type": "object"
+    },
+    "ModelBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "openai",
+            "gemini",
+            "anthropic"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "title": "Params",
+          "type": "object"
+        },
+        "thinking": {
+          "$ref": "#/$defs/ThinkingBlock"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "title": "ModelBlock",
+      "type": "object"
+    },
+    "PersistenceBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "retentionDays": {
+          "minimum": 0,
+          "title": "Retentiondays",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "enabled",
+        "retentionDays"
+      ],
+      "title": "PersistenceBlock",
+      "type": "object"
+    },
+    "PromptBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "system": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "ach": "#/$defs/SystemAch",
+                  "file": "#/$defs/SystemFile",
+                  "text": "#/$defs/SystemText"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/SystemText"
+                },
+                {
+                  "$ref": "#/$defs/SystemFile"
+                },
+                {
+                  "$ref": "#/$defs/SystemAch"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "System"
+        },
+        "compose": {
+          "default": "append",
+          "enum": [
+            "append",
+            "replace"
+          ],
+          "title": "Compose",
+          "type": "string"
+        }
+      },
+      "title": "PromptBlock",
+      "type": "object"
+    },
+    "QueueBlock": {
+      "additionalProperties": false,
+      "description": "Contract \u00a73: the adapter confirms delivery on `Started`, never on completion.\n\n`ackMode` was a legacy `onComplete` selector (old-ach-agent) with no equivalent here \u2014\nthere is exactly one ACK semantic contract-wide, so it is not a configurable field.",
+      "properties": {
+        "type": {
+          "const": "redis",
+          "default": "redis",
+          "title": "Type",
+          "type": "string"
+        },
+        "key": {
+          "title": "Key",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "title": "QueueBlock",
+      "type": "object"
+    },
+    "RoutingBlock": {
+      "additionalProperties": false,
+      "description": "`channels[].routing` (contract \u00a72) \u2014 both overrides optional and independent.\n\nAn omitted override keeps the adapter default (generic webhook and queue have no default\nsession and require `sessionKey`); a present one must be a non-empty template string.\n`workspaceKey: session` is a reserved keyword: one workspace per session.\nTemplate syntax/rendering is an adapter concern (Task 3), not validated here.",
+      "properties": {
+        "workspaceKey": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Workspacekey"
+        },
+        "sessionKey": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Sessionkey"
+        }
+      },
+      "title": "RoutingBlock",
+      "type": "object"
+    },
+    "ScriptBlock": {
+      "additionalProperties": false,
+      "description": "Base shape for `channels[].script` (webhook-script handler) and `handoff` (below).\n\n`env` carries literal selected values; `secretEnv` carries private alias NAMES only\n(contract \u00a711: \"Handoff/script env contiene literales seleccionados\" /\n\"secretEnv.<nombre>: {env: ...} contienen solo aliases privados\").",
+      "properties": {
+        "script": {
+          "title": "Script",
+          "type": "string"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Env",
+          "type": "object"
+        },
+        "secretEnv": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SecretAlias"
+          },
+          "title": "Secretenv",
+          "type": "object"
+        },
+        "timeoutSeconds": {
+          "default": 120,
+          "exclusiveMinimum": 0,
+          "maximum": 3600,
+          "title": "Timeoutseconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "script"
+      ],
+      "title": "ScriptBlock",
+      "type": "object"
+    },
+    "SecretAlias": {
+      "additionalProperties": false,
+      "description": "A private environment-variable NAME the Harness/control pod resolves \u2014 never a value.\n\nWire shape for `ach.identity`, `handoff.secretEnv.<name>`: `{\"env\": \"ACH_SECRET_...\"}`.",
+      "properties": {
+        "env": {
+          "title": "Env",
+          "type": "string"
+        }
+      },
+      "required": [
+        "env"
+      ],
+      "title": "SecretAlias",
+      "type": "object"
+    },
+    "SessionPolicyBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "idleTimeoutSeconds": {
+          "exclusiveMinimum": 0,
+          "title": "Idletimeoutseconds",
+          "type": "integer"
+        },
+        "persistence": {
+          "$ref": "#/$defs/PersistenceBlock"
+        }
+      },
+      "required": [
+        "idleTimeoutSeconds",
+        "persistence"
+      ],
+      "title": "SessionPolicyBlock",
+      "type": "object"
+    },
+    "SystemAch": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "ach",
+          "title": "Type",
+          "type": "string"
+        },
+        "ach": {
+          "title": "Ach",
+          "type": "string"
+        },
+        "file": {
+          "default": "",
+          "title": "File",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "ach"
+      ],
+      "title": "SystemAch",
+      "type": "object"
+    },
+    "SystemFile": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "file",
+          "title": "Type",
+          "type": "string"
+        },
+        "file": {
+          "title": "File",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "file"
+      ],
+      "title": "SystemFile",
+      "type": "object"
+    },
+    "SystemText": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "text",
+          "title": "Type",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "title": "SystemText",
+      "type": "object"
+    },
+    "ThinkingBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "effort": {
+          "anyOf": [
+            {
+              "enum": [
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Effort"
+        }
+      },
+      "title": "ThinkingBlock",
+      "type": "object"
+    },
+    "WebhookAuthBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "default": "hmac",
+          "enum": [
+            "gitlab_token",
+            "hmac",
+            "header_token",
+            "none"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "env": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Env"
+        },
+        "header": {
+          "default": "",
+          "title": "Header",
+          "type": "string"
+        }
+      },
+      "title": "WebhookAuthBlock",
+      "type": "object"
+    },
+    "WebhookBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "auth": {
+          "$ref": "#/$defs/WebhookAuthBlock"
+        },
+        "gitlabEvents": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "merge_request",
+                  "issue",
+                  "note",
+                  "push",
+                  "project_create",
+                  "project_rename",
+                  "project_transfer",
+                  "project_update",
+                  "repository_update"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gitlabevents"
+        },
+        "botUsername": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Botusername"
+        },
+        "triggerUsers": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Triggerusers"
+        },
+        "mergeRequestsOnly": {
+          "default": false,
+          "title": "Mergerequestsonly",
+          "type": "boolean"
+        }
+      },
+      "title": "WebhookBlock",
+      "type": "object"
+    },
+    "WorkspaceBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "idleTimeoutSeconds": {
+          "exclusiveMinimum": 0,
+          "title": "Idletimeoutseconds",
+          "type": "integer"
+        },
+        "shutdownTimeoutSeconds": {
+          "exclusiveMinimum": 0,
+          "title": "Shutdowntimeoutseconds",
+          "type": "integer"
+        },
+        "readyTimeoutSeconds": {
+          "default": 30,
+          "exclusiveMinimum": 0,
+          "title": "Readytimeoutseconds",
+          "type": "integer"
+        },
+        "maxConcurrentSessions": {
+          "exclusiveMinimum": 0,
+          "title": "Maxconcurrentsessions",
+          "type": "integer"
+        },
+        "persistence": {
+          "$ref": "#/$defs/PersistenceBlock"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionPolicyBlock"
+        }
+      },
+      "required": [
+        "idleTimeoutSeconds",
+        "shutdownTimeoutSeconds",
+        "maxConcurrentSessions",
+        "persistence",
+        "session"
+      ],
+      "title": "WorkspaceBlock",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The complete resolved wire object `W` (contract \u00a75/\u00a711) minus no field at all.\n\n`configVersion` IS a member of this model (and of W) \u2014 compute_config_version() only\nexcludes it from the bytes being hashed, it is not absent from the schema.",
+  "properties": {
+    "schemaVersion": {
+      "const": "workspace-v2",
+      "title": "Schemaversion",
+      "type": "string"
+    },
+    "agent": {
+      "$ref": "#/$defs/AgentIdentity"
+    },
+    "configVersion": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Configversion",
+      "type": "string"
+    },
+    "ach": {
+      "$ref": "#/$defs/AchBlock"
+    },
+    "model": {
+      "$ref": "#/$defs/ModelBlock"
+    },
+    "engine": {
+      "$ref": "#/$defs/EngineBlock"
+    },
+    "limits": {
+      "$ref": "#/$defs/LimitsBlock"
+    },
+    "workspace": {
+      "$ref": "#/$defs/WorkspaceBlock"
+    },
+    "artifacts": {
+      "$ref": "#/$defs/ArtifactsBlock"
+    },
+    "channels": {
+      "items": {
+        "$ref": "#/$defs/ChannelConfig"
+      },
+      "title": "Channels",
+      "type": "array"
+    },
+    "prompt": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PromptBlock"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "hooks": {
+      "$ref": "#/$defs/HooksBlock"
+    },
+    "memory": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AchMemoryMemory"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "infrastructure": {
+      "$ref": "#/$defs/InfrastructureBlock"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "agent",
+    "configVersion",
+    "ach",
+    "model",
+    "engine",
+    "limits",
+    "workspace",
+    "artifacts"
+  ],
+  "type": "object",
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "channels"
+        ],
+        "properties": {
+          "channels": {
+            "contains": {
+              "type": "object",
+              "required": [
+                "handoff"
+              ],
+              "properties": {
+                "handoff": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "workspace": {
+            "type": "object",
+            "properties": {
+              "maxConcurrentSessions": {
+                "const": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -120,9 +120,11 @@ func newFakeUnits() *fakeUnits {
 	return &fakeUnits{state: map[string]UnitState{}, sticky: map[string]bool{}}
 }
 
-func (f *fakeUnits) State(_ context.Context, name string) (UnitState, error) { return f.state[name], nil }
+func (f *fakeUnits) State(_ context.Context, name string) (UnitState, error) {
+	return f.state[name], nil
+}
 
-func (f *fakeUnits) Create(_ context.Context, _ *achv1alpha1.ACHAgent, _ *achv1alpha1.AgentProfile, w Workspace) error {
+func (f *fakeUnits) Create(_ context.Context, _ *achv1alpha1.Agent, _ *achv1alpha1.AgentProfile, w Workspace) error {
 	if f.createErr != nil {
 		return f.createErr
 	}
@@ -168,8 +170,8 @@ func (f *fakeUnits) Live(ctx context.Context) ([]InventoryUnit, error) {
 
 func newHost(t *testing.T, rt *fakeRuntime, units *fakeUnits) *Host {
 	t.Helper()
-	a := &achv1alpha1.ACHAgent{ObjectMeta: metav1.ObjectMeta{Name: "gitlab-reviewer", Namespace: "ach", UID: types.UID(testUID)},
-		Spec: achv1alpha1.ACHAgentSpec{ProfileRef: achv1alpha1.LocalObjectRef{Name: "prof"}}}
+	a := &achv1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "gitlab-reviewer", Namespace: "ach", UID: types.UID(testUID)},
+		Spec: achv1alpha1.AgentSpec{ProfileRef: achv1alpha1.LocalObjectRef{Name: "prof"}}}
 	p := &achv1alpha1.AgentProfile{ObjectMeta: metav1.ObjectMeta{Name: "prof", Namespace: "ach"}}
 	scheme := testScheme(t)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(a, p).Build()

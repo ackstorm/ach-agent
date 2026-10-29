@@ -24,7 +24,7 @@ const (
 
 type Backend interface {
 	State(ctx context.Context, name string) (UnitState, error)
-	Create(ctx context.Context, a *achv1alpha1.ACHAgent, p *achv1alpha1.AgentProfile, w Workspace) error
+	Create(ctx context.Context, a *achv1alpha1.Agent, p *achv1alpha1.AgentProfile, w Workspace) error
 	BaseURL(w Workspace) string
 	// Remove requests deletion of the unit and reports whether anything of it remains, i.e.
 	// whether its process may still run. Never waits, never forces.

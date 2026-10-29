@@ -19,17 +19,17 @@ import (
 
 var (
 	errNotDesired    = errors.New("registration refused: the Workspace is no longer desired (stale listing), relisting")
-	errAgentGone     = errors.New("ACHAgent is gone or being deleted")
+	errAgentGone     = errors.New("Agent is gone or being deleted")
 	errStillAdopting = errors.New("control unit still adopting after the inventory was accepted")
 )
 
-// Host reconciles ONE ACHAgent's execution units against its control unit's /host/v1.
+// Host reconciles ONE Agent's execution units against its control unit's /host/v1.
 // It is a single sequential loop: no other goroutine sends host API mutations for the agent.
 type Host struct {
 	Agent types.NamespacedName
-	UID   types.UID // an ACHAgent recreated under the same name is a different Host
+	UID   types.UID // an Agent recreated under the same name is a different Host
 	API   *Client
-	// Client writes, and reads ACHAgent/AgentProfile from the informer cache.
+	// Client writes, and reads Agent/AgentProfile from the informer cache.
 	Client client.Client
 	// Reader is uncached. It decides whether to create a unit, whether a unit is really gone
 	// before a DELETE confirms it, and what the inventory reports: a stale cache must never
@@ -41,8 +41,8 @@ type Host struct {
 	Log     logr.Logger
 }
 
-func (h *Host) load(ctx context.Context) (*achv1alpha1.ACHAgent, *achv1alpha1.AgentProfile, error) {
-	var a achv1alpha1.ACHAgent
+func (h *Host) load(ctx context.Context) (*achv1alpha1.Agent, *achv1alpha1.AgentProfile, error) {
+	var a achv1alpha1.Agent
 	if err := h.Client.Get(ctx, h.Agent, &a); err != nil {
 		return nil, nil, err
 	}

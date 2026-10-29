@@ -28,13 +28,10 @@ func testScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-func unitFixture() (*achv1alpha1.ACHAgent, *achv1alpha1.AgentProfile, host.Workspace) {
-	a := &achv1alpha1.ACHAgent{ObjectMeta: metav1.ObjectMeta{Name: "gitlab-reviewer", Namespace: "ach", UID: testUID}}
+func unitFixture() (*achv1alpha1.Agent, *achv1alpha1.AgentProfile, host.Workspace) {
+	a := &achv1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "gitlab-reviewer", Namespace: "ach", UID: testUID}}
 	p := &achv1alpha1.AgentProfile{}
-	p.Spec.Execution = achv1alpha1.ExecutionInfraSpec{
-		Image:            "ghcr.io/ackstorm/ach-runtime-execution:dev",
-		EphemeralStorage: "1Gi",
-	}
+	p.Spec.Sandbox.OpenShell = achv1alpha1.OpenShellSpec{Image: "ghcr.io/ackstorm/ach-runtime-execution:dev"}
 	w := host.Workspace{
 		Name: "agent-gitlab-reviewer-1a2b3c4d5e6f7a8b9c0d", WorkspaceRef: strings.Repeat("ab", 32), Desired: "running",
 		Launch: host.Launch{

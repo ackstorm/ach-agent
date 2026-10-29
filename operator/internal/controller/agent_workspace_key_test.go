@@ -25,7 +25,7 @@ func TestEnsureWorkspaceKey_CreateOnce(t *testing.T) {
 	a := workspaceKeyTestAgent("ns", "agent", "11111111-2222-4333-8444-555555555555")
 	scheme := workspaceKeyTestScheme(t)
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
-	r := &ACHAgentReconciler{Client: c, APIReader: c, Scheme: scheme}
+	r := &AgentReconciler{Client: c, APIReader: c, Scheme: scheme}
 
 	if err := r.ensureWorkspaceKey(ctx, a); err != nil {
 		t.Fatalf("first ensureWorkspaceKey: %v", err)
@@ -46,7 +46,7 @@ func TestEnsureWorkspaceKey_CreateOnce(t *testing.T) {
 		t.Errorf("Secret type = %q, want Opaque", got.Type)
 	}
 	if !metav1.IsControlledBy(&got, a) || len(got.OwnerReferences) != 1 {
-		t.Errorf("Secret owner references = %+v, want the ACHAgent controller owner", got.OwnerReferences)
+		t.Errorf("Secret owner references = %+v, want the Agent controller owner", got.OwnerReferences)
 	}
 	if got.Labels[agentLabelKey] != a.Name {
 		t.Errorf("Secret labels = %v, want agent label %q", got.Labels, a.Name)
@@ -75,7 +75,7 @@ func TestEnsureWorkspaceKey_AcceptsExistingOwnedNonemptyLiteral(t *testing.T) {
 	s := workspaceKeyTestSecret(t, a, supplied)
 	scheme := workspaceKeyTestScheme(t)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(s).Build()
-	r := &ACHAgentReconciler{Client: c, APIReader: c, Scheme: scheme}
+	r := &AgentReconciler{Client: c, APIReader: c, Scheme: scheme}
 
 	if err := r.ensureWorkspaceKey(ctx, a); err != nil {
 		t.Fatalf("ensureWorkspaceKey: %v", err)
@@ -123,7 +123,7 @@ func TestEnsureWorkspaceKey_RejectsUnownedForeignAndEmptySecrets(t *testing.T) {
 			s := tc.make()
 			scheme := workspaceKeyTestScheme(t)
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(s).Build()
-			r := &ACHAgentReconciler{Client: c, APIReader: c, Scheme: scheme}
+			r := &AgentReconciler{Client: c, APIReader: c, Scheme: scheme}
 			err := r.ensureWorkspaceKey(ctx, a)
 			if err == nil {
 				t.Fatal("ensureWorkspaceKey succeeded; want validation error")
@@ -145,13 +145,12 @@ func TestEnsureWorkspaceKey_RejectsUnownedForeignAndEmptySecrets(t *testing.T) {
 func TestWorkspaceKeySecretChangeRollsPrivateHash(t *testing.T) {
 	ctx := context.Background()
 	a := workspaceKeyTestAgent("ns", "agent", "11111111-2222-4333-8444-555555555555")
-	a.Spec.Ach = achIdentity("identity", "prod")
 	keyName := workspaceKeySecretName(string(a.UID))
 	identity := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "identity", Namespace: a.Namespace}, Data: map[string][]byte{"ek": []byte("ek_test")}}
 	key := workspaceKeyTestSecret(t, a, "first-key")
 	scheme := workspaceKeyTestScheme(t)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(identity, key).Build()
-	r := &ACHAgentReconciler{Client: c, APIReader: c, Scheme: scheme}
+	r := &AgentReconciler{Client: c, APIReader: c, Scheme: scheme}
 	secrets := map[string][]string{keyName: {workspaceKeyDataKey}}
 	first, err := r.hashSecrets(ctx, a, secrets)
 	if err != nil {
@@ -176,7 +175,7 @@ func TestAgentsForWorkspaceKeySecretEnqueuesOnlyMatchingNamespaceAndUID(t *testi
 	otherNamespace := workspaceKeyTestAgent("ns-two", "same-uid", string(target.UID))
 	scheme := workspaceKeyTestScheme(t)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(target, otherUID, otherNamespace).Build()
-	r := &ACHAgentReconciler{Client: c, APIReader: c, Scheme: scheme}
+	r := &AgentReconciler{Client: c, APIReader: c, Scheme: scheme}
 	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: target.Namespace, Name: workspaceKeySecretName(string(target.UID))}}
 	got := r.agentsForSecret(context.Background(), secret)
 	want := types.NamespacedName{Namespace: target.Namespace, Name: target.Name}
@@ -187,11 +186,10 @@ func TestAgentsForWorkspaceKeySecretEnqueuesOnlyMatchingNamespaceAndUID(t *testi
 
 func TestWorkspaceKeyPrivateControlEnvAndConfigMapBoundary(t *testing.T) {
 	a := workspaceKeyTestAgent("ns", "agent", "11111111-2222-4333-8444-555555555555")
-	a.Spec.Ach = achIdentity("identity", "prod")
 	p := &achv1alpha1.AgentProfile{}
-	p.Spec.Achagent.Image = "agent:test"
+	p.Spec.Control.Image = "agent:test"
 	keyName := workspaceKeySecretName(string(a.UID))
-	env := buildAgentEnv(a, p, "")
+	env := buildAgentEnv(a, p, nil)
 	env = overrideEnv(env, []corev1.EnvVar{{Name: "ACH_SANDBOX_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: keyName}, Key: workspaceKeyDataKey}}}})
 	sts := buildStatefulSet(a, p, "hash", env)
 	var found int
@@ -213,13 +211,13 @@ func TestWorkspaceKeyPrivateControlEnvAndConfigMapBoundary(t *testing.T) {
 	}
 }
 
-func workspaceKeyTestAgent(namespace, name, uid string) *achv1alpha1.ACHAgent {
-	a := &achv1alpha1.ACHAgent{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name, UID: types.UID(uid)}}
-	a.APIVersion, a.Kind = achv1alpha1.GroupVersion.String(), "ACHAgent"
+func workspaceKeyTestAgent(namespace, name, uid string) *achv1alpha1.Agent {
+	a := &achv1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name, UID: types.UID(uid)}}
+	a.APIVersion, a.Kind = achv1alpha1.GroupVersion.String(), "Agent"
 	return a
 }
 
-func workspaceKeyTestSecret(t *testing.T, owner *achv1alpha1.ACHAgent, value string) *corev1.Secret {
+func workspaceKeyTestSecret(t *testing.T, owner *achv1alpha1.Agent, value string) *corev1.Secret {
 	t.Helper()
 	s := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: workspaceKeySecretName(string(owner.UID)), Namespace: owner.Namespace, Labels: agentLabels(owner)}, Type: corev1.SecretTypeOpaque, Data: map[string][]byte{workspaceKeyDataKey: []byte(value)}}
 	if err := controllerutil.SetControllerReference(owner, s, workspaceKeyTestScheme(t)); err != nil {

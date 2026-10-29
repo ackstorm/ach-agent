@@ -4,16 +4,14 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.0
-  name: achagents.ach.ackstorm.ai
+  name: agents.ach-agent.ackstorm.ai
 spec:
-  group: ach.ackstorm.ai
+  group: ach-agent.ackstorm.ai
   names:
-    kind: ACHAgent
-    listKind: ACHAgentList
-    plural: achagents
-    shortNames:
-    - agent
-    singular: achagent
+    kind: Agent
+    listKind: AgentList
+    plural: agents
+    singular: agent
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
@@ -29,7 +27,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: ACHAgent is a running agent instance.
+        description: Agent is a running agent instance.
         properties:
           apiVersion:
             description: |-
@@ -49,89 +47,68 @@ spec:
           metadata:
             type: object
           spec:
-            description: ACHAgentSpec defines the desired state of an agent instance.
+            description: AgentSpec defines the desired state of an Agent.
             properties:
               ach:
-                description: |-
-                  AchSpec is the ACH platform block (config: ach{baseUrl,environment,identity,capability},
-                  contract §5). It is the SAME type used by both AgentProfile.spec.achagent.ach (shared
-                  defaults: baseUrl/environment/capability) and ACHAgent's inline AgentDefaults override
-                  (adds the required identity credential) — per-field deep merge via ResolveAch, exactly
-                  like model/engine/limits. identity is never a shared profile default: AgentProfile forbids
-                  setting it (object-level CEL on AgentProfileSpec); ACHAgentSpec requires it.
-
-                  BaseURL resolves as ACHAgent.spec.ach.baseUrl ?? AgentProfile.spec.achagent.ach.baseUrl ??
-                  operator ACH_BASE_URL env (agentrender.ResolveAchBaseURL). An empty result blocks the agent.
+                description: AchServerSpec is the capability source of an Agent hydrated
+                  from ACH.
                 properties:
                   baseUrl:
+                    minLength: 1
                     type: string
-                  capability:
-                    description: 'CapabilitySpec is the per-agent capability block
-                      (config: capability{type:ach,ach.environment,filter}).'
-                    properties:
-                      environment:
-                        description: |-
-                          Environment is the ACH Hub Environment name, for documentation/intent only.
-                          The ek already scopes the environment server-side, and the harness reads the
-                          hydrated environment (manifest.environment) — NOT this field. Optional: omit
-                          to let the ek decide; when set it is rendered but never authoritative.
-                        type: string
-                      filter:
-                        description: FilterSpec wraps the exclude gate.
-                        properties:
-                          exclude:
-                            description: 'ExcludeSpec is the governance gate ABOVE
-                              the model (config: capability.filter.exclude).'
-                            properties:
-                              mcpServers:
-                                items:
-                                  type: string
-                                type: array
-                              skills:
-                                items:
-                                  type: string
-                                type: array
-                              tools:
-                                items:
-                                  type: string
-                                type: array
-                            type: object
-                        type: object
-                    type: object
                   environment:
                     description: |-
-                      Environment is the ACH Hub Environment name, for documentation/intent only — see
-                      CapabilitySpec.Environment's original doc: the ek already scopes the environment
-                      server-side and the harness reads the hydrated environment, never this field. A
-                      POINTER (unlike most other optional strings here): AgentProfile.spec.achagent.ach may
-                      set a shared default (ResolveAch), and an agent needs to be able to override it with an
-                      explicit empty string — indistinguishable from "unset" on a plain omitempty string.
+                      Environment is the ACH Hub Environment name. The key already scopes the environment
+                      server-side.
                     type: string
-                  identity:
-                    description: |-
-                      Identity carries the ACH ek_ (injected as ACH_TOKEN env via secretKeyRef). Required
-                      on the agent (ACHAgentSpec object-level CEL); forbidden on the profile (AgentProfileSpec
-                      object-level CEL) — a credential is never an implicit shared profile default.
+                  keySecretRef:
+                    description: KeySecretRef points at a Secret holding the ACH key.
                     properties:
-                      secretRef:
-                        description: SecretRef points at a Secret holding the ek_
-                          (create it yourself, e.g. `ach-cli keys create`).
+                      key:
+                        description: Key is the data key inside the Secret.
+                        minLength: 1
+                        type: string
+                      name:
+                        description: Name is the Kubernetes Secret name.
+                        minLength: 1
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                  model:
+                    description: AchModelSpec selects the ACH-served model.
+                    properties:
+                      api:
+                        default: openai
+                        description: API is the wire format of the ACH model route.
+                        enum:
+                        - openai
+                        - anthropic
+                        - gemini
+                        type: string
+                      name:
+                        minLength: 1
+                        type: string
+                      params:
+                        x-kubernetes-preserve-unknown-fields: true
+                      thinking:
+                        description: |-
+                          ThinkingSpec is the normalized reasoning intent each engine translates for itself
+                          (pi: models.json reasoning + --thinking; opencode: per-call providerOptions).
                         properties:
-                          key:
-                            description: Key is the data key inside the Secret.
-                            minLength: 1
+                          effort:
                             type: string
-                          name:
-                            description: Name is the Kubernetes Secret name.
-                            minLength: 1
-                            type: string
-                        required:
-                        - key
-                        - name
+                          enabled:
+                            type: boolean
                         type: object
                     required:
-                    - secretRef
+                    - name
                     type: object
+                required:
+                - baseUrl
+                - keySecretRef
+                - model
                 type: object
               artifacts:
                 description: Artifacts is the Harness Artifacts policy (contract §8).
@@ -147,6 +124,14 @@ spec:
                     minimum: 1
                     type: integer
                 type: object
+              capabilityServer:
+                default: standalone
+                description: CapabilityServer selects where the model and tools come
+                  from.
+                enum:
+                - standalone
+                - ach
+                type: string
               channels:
                 items:
                   description: 'ChannelSpec is one inbound channel (config: channels[]).'
@@ -217,7 +202,7 @@ spec:
                           type: string
                         forwardEnv:
                           description: |-
-                            ForwardEnv selects names from the merged AgentProfile.spec.env + ACHAgent.spec.env.
+                            ForwardEnv selects names from the merged AgentProfile.spec.control.env + Agent.spec.env.
                             Literal values become the hook's env; secretKeyRef values become its secretEnv via
                             generated Pod aliases. Unknown names are ignored and remain unset.
                           items:
@@ -282,7 +267,7 @@ spec:
                       properties:
                         forwardEnv:
                           description: |-
-                            ForwardEnv selects names from the merged AgentProfile.spec.env + ACHAgent.spec.env.
+                            ForwardEnv selects names from the merged AgentProfile.spec.control.env + Agent.spec.env.
                             Literal values become the hook's env; secretKeyRef values become its secretEnv via
                             generated Pod aliases. Unknown names are ignored and remain unset.
                           items:
@@ -481,8 +466,8 @@ spec:
                 type: object
               env:
                 description: |-
-                  Env are pod-level environment variables merged over AgentProfile.spec.env by name.
-                  An agent entry replaces the complete inherited EnvVar. Reserved ACH_* names are
+                  Env are pod-level environment variables merged over AgentProfile.spec.control.env by
+                  name. An agent entry replaces the complete inherited EnvVar. Reserved ACH_* names are
                   forbidden; only literal values and secretKeyRef sources are supported.
                 items:
                   description: EnvVar represents an environment variable present in
@@ -653,37 +638,71 @@ spec:
                   rule: self.all(e, !has(e.valueFrom) || !has(e.value) || e.value
                     == '')
               expose:
-                description: |-
-                  Expose controls reachability (Service + gateway route). Omit for a fully
-                  private agent (no Service, no public URL).
+                description: Expose controls reachability. Omit for a fully private
+                  agent.
                 properties:
+                  route:
+                    description: RouteSpec publishes the Agent through a Gateway API
+                      HTTPRoute.
+                    properties:
+                      hostname:
+                        minLength: 1
+                        type: string
+                      parentRef:
+                        description: ParentRef defaults to the operator's configured
+                          Gateway.
+                        properties:
+                          name:
+                            minLength: 1
+                            type: string
+                          namespace:
+                            type: string
+                          sectionName:
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      path:
+                        default: /
+                        type: string
+                    required:
+                    - hostname
+                    type: object
                   service:
                     description: |-
-                      Service creates the ClusterIP Service (achagent-<name>) so in-cluster
-                      peers (a2a) or your own ingress can reach the harness. Required for any
-                      inbound HTTP channel (webhook/a2a) to be reachable at all.
+                      Service creates the ClusterIP Service so in-cluster peers (a2a) or an ingress can reach
+                      the control pod. Required for any inbound HTTP channel to be reachable at all.
                     type: boolean
                 type: object
-              health:
-                description: |-
-                  HealthSpec is the harness HTTP surface (config: health{host,port}). In standalone
-                  placement it drives the Service targetPort and the container probes. In distributed
-                  placement it is NOT used by the operator: the Service targets channels on 8080 and every
-                  role is probed over HTTP on a fixed port (channels 8080, harness 8090, engine 8081)
-                  bound by ach-agent. Harness default port is 8080.
+                x-kubernetes-validations:
+                - message: expose.route requires expose.service
+                  rule: '!has(self.route) || self.service'
+              filter:
+                description: Filter is the governance gate above the model, in both
+                  modes.
                 properties:
-                  host:
-                    type: string
-                  port:
-                    format: int32
-                    maximum: 65535
-                    minimum: 1
-                    type: integer
+                  exclude:
+                    description: 'ExcludeSpec is the governance gate ABOVE the model
+                      (config: capability.filter.exclude).'
+                    properties:
+                      mcpServers:
+                        items:
+                          type: string
+                        type: array
+                      skills:
+                        items:
+                          type: string
+                        type: array
+                      tools:
+                        items:
+                          type: string
+                        type: array
+                    type: object
                 type: object
               hooks:
                 description: |-
-                  Hooks are agent-level workspace and session lifecycle hooks, run
-                  inside the mini-harness with only engine.forwardEnv variables.
+                  Hooks are agent-level workspace and session lifecycle hooks, run inside the sandbox
+                  with only engine.forwardEnv variables.
                 properties:
                   sessionRestore:
                     description: |-
@@ -769,8 +788,6 @@ spec:
                     - script
                     type: object
                 type: object
-              image:
-                type: string
               limits:
                 description: |-
                   LimitsSpec bounds invocations (config: limits.*, contract §3). Fields stay POINTERS
@@ -815,77 +832,6 @@ spec:
                     minimum: 1
                     type: integer
                 type: object
-              mcpServers:
-                description: |-
-                  MCPServers are harness-managed MCP servers (local / remote) rendered into the
-                  config's mcpServers map. Presence = enabled; omit for none.
-                items:
-                  description: |-
-                    McpServerSpec is one harness-managed MCP server (rendered into config
-                    mcpServers[<name>]). Both variants are PASSTHROUGH (opencode launches a stdio
-                    subprocess / connects to a remote endpoint directly, NOT via the ACH proxy). The
-                    operator renders the list into the config's mcpServers map keyed by name. Distinct
-                    from the Environment's ACH-fronted MCP set (hydrated as runtime.mcpServers) —
-                    different namespace, no collision.
-                  properties:
-                    local:
-                      description: |-
-                        LocalMcpSpec is a passthrough stdio MCP server opencode launches as a subprocess.
-                        env lists extra var NAMES to forward to the subprocess (ACH_*/ek_ are stripped
-                        defensively); wire their values into the pod via profile/agent spec.env.
-                      properties:
-                        args:
-                          items:
-                            type: string
-                          type: array
-                        command:
-                          minLength: 1
-                          type: string
-                        env:
-                          items:
-                            type: string
-                          type: array
-                      required:
-                      - command
-                      type: object
-                    name:
-                      minLength: 1
-                      type: string
-                    remote:
-                      description: |-
-                        RemoteMcpSpec is a passthrough remote MCP endpoint opencode connects to directly.
-                        headers values are ${env:NAME} refs (NAMES, never secret values); wire the env into
-                        the pod via profile/agent spec.env. SECURITY: opencode receives the
-                        resolved header, so a co-resident same-uid agent CAN read it — front the server via
-                        ACH hydrate instead if that is unacceptable.
-                      properties:
-                        headers:
-                          additionalProperties:
-                            type: string
-                          type: object
-                        url:
-                          minLength: 1
-                          type: string
-                      required:
-                      - url
-                      type: object
-                    type:
-                      enum:
-                      - local
-                      - remote
-                      type: string
-                  required:
-                  - name
-                  - type
-                  type: object
-                  x-kubernetes-validations:
-                  - message: 'mcpServers: the block matching type is required'
-                    rule: (self.type=='local' && has(self.local)) || (self.type=='remote'
-                      && has(self.remote))
-                type: array
-                x-kubernetes-list-map-keys:
-                - name
-                x-kubernetes-list-type: map
               memory:
                 description: |-
                   MemorySpec is a discriminated memory backend (config: memory). Omit for no memory (fail-open).
@@ -1032,40 +978,6 @@ spec:
                 x-kubernetes-validations:
                 - message: memory.achMemory is required when type=ach-memory
                   rule: (self.type=='ach-memory' && has(self.achMemory)) || (self.type=='codemem')
-              model:
-                description: |-
-                  ModelSpec selects the ACH-served model (config: model{name,type,params,thinking}).
-                  Name/Type are optional authoring fields (a profile or an agent may supply either
-                  alone via per-field merge, ResolveModel) — Render2 requires the EFFECTIVE
-                  (post-merge) name to be nonempty and defaults an unset effective type to openai
-                  (ACH model aliases resolve on LiteLLM's /v1); neither is a CRD-level requirement,
-                  since either field may legitimately come from the sibling.
-                properties:
-                  name:
-                    minLength: 1
-                    type: string
-                  params:
-                    description: Params is an open, unvalidated dict splatted to the
-                      model client.
-                    x-kubernetes-preserve-unknown-fields: true
-                  thinking:
-                    description: |-
-                      Thinking is the normalized model-level reasoning intent (config: model.thinking).
-                      Free-form (no Enum) — ach-agent's Pydantic ThinkingBlock is the single enforcer
-                      (D-2 precedent): effort one of minimal|low|medium|high|xhigh, requires enabled=true.
-                    properties:
-                      effort:
-                        type: string
-                      enabled:
-                        type: boolean
-                    type: object
-                  type:
-                    enum:
-                    - openai
-                    - gemini
-                    - anthropic
-                    type: string
-                type: object
               profileRef:
                 description: LocalObjectRef references a resource by name in the CR's
                   namespace.
@@ -1117,6 +1029,167 @@ spec:
                         && has(self.file)) || (self.type=='ach' && has(self.ach))
                 required:
                 - system
+                type: object
+              sandbox:
+                description: AgentSandboxSpec holds the per-Agent sandbox overrides.
+                properties:
+                  openshell:
+                    description: AgentOpenShellSpec is the Agent's own sandbox policy.
+                    properties:
+                      policy:
+                        description: |-
+                          Policy is merged over the profile's policy: network rules by name, filesystem lists
+                          concatenated, scalars agent over profile. Rule names starting with ach-agent- are
+                          reserved.
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                    type: object
+                type: object
+              standalone:
+                description: |-
+                  StandaloneSpec is the capability source of an Agent that talks to its own model and MCP
+                  servers.
+                properties:
+                  mcpServers:
+                    items:
+                      description: StandaloneMcpServerSpec is one remote MCP server
+                        of a standalone Agent.
+                      properties:
+                        headers:
+                          additionalProperties:
+                            description: 'HeaderValue is one HTTP header value: a
+                              Secret key or a literal.'
+                            properties:
+                              secretKeyRef:
+                                description: SecretKeyRef identifies a key in a same-namespace
+                                  Secret.
+                                properties:
+                                  key:
+                                    description: Key is the data key inside the Secret.
+                                    minLength: 1
+                                    type: string
+                                  name:
+                                    description: Name is the Kubernetes Secret name.
+                                    minLength: 1
+                                    type: string
+                                required:
+                                - key
+                                - name
+                                type: object
+                              value:
+                                type: string
+                            type: object
+                            x-kubernetes-validations:
+                            - message: exactly one of secretKeyRef or value must be
+                                set
+                              rule: has(self.secretKeyRef) != has(self.value)
+                          maxProperties: 64
+                          type: object
+                        name:
+                          pattern: ^[a-z0-9][a-z0-9_-]{0,62}$
+                          type: string
+                        url:
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      - url
+                      type: object
+                    maxItems: 64
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  model:
+                    description: |-
+                      StandaloneModelSpec is the model endpoint of a standalone Agent. Every header is stated by
+                      the user; there are no defaults per api.
+                    properties:
+                      api:
+                        description: API is the wire format of the endpoint.
+                        enum:
+                        - openai
+                        - anthropic
+                        - gemini
+                        type: string
+                      baseUrl:
+                        minLength: 1
+                        type: string
+                      headers:
+                        additionalProperties:
+                          description: 'HeaderValue is one HTTP header value: a Secret
+                            key or a literal.'
+                          properties:
+                            secretKeyRef:
+                              description: SecretKeyRef identifies a key in a same-namespace
+                                Secret.
+                              properties:
+                                key:
+                                  description: Key is the data key inside the Secret.
+                                  minLength: 1
+                                  type: string
+                                name:
+                                  description: Name is the Kubernetes Secret name.
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - key
+                              - name
+                              type: object
+                            value:
+                              type: string
+                          type: object
+                          x-kubernetes-validations:
+                          - message: exactly one of secretKeyRef or value must be
+                              set
+                            rule: has(self.secretKeyRef) != has(self.value)
+                        description: |-
+                          Headers are sent to the endpoint by the control pod; the sandbox never sees them. Header
+                          names are case-insensitive and unique; host, content-length, transfer-encoding,
+                          connection and x-ach-* are reserved (rejected when the Agent is rendered).
+                        maxProperties: 64
+                        type: object
+                      limits:
+                        description: |-
+                          ModelLimitsSpec states the model's context and output windows when the endpoint does not
+                          advertise them.
+                        properties:
+                          context:
+                            format: int64
+                            minimum: 1
+                            type: integer
+                          output:
+                            format: int64
+                            minimum: 1
+                            type: integer
+                        required:
+                        - context
+                        - output
+                        type: object
+                      name:
+                        minLength: 1
+                        type: string
+                      params:
+                        description: Params is an open, unvalidated dict splatted
+                          to the model client.
+                        x-kubernetes-preserve-unknown-fields: true
+                      thinking:
+                        description: |-
+                          ThinkingSpec is the normalized reasoning intent each engine translates for itself
+                          (pi: models.json reasoning + --thinking; opencode: per-call providerOptions).
+                        properties:
+                          effort:
+                            type: string
+                          enabled:
+                            type: boolean
+                        type: object
+                    required:
+                    - api
+                    - baseUrl
+                    - name
+                    type: object
+                required:
+                - model
                 type: object
               workspace:
                 description: Workspace is the Harness Workspace/session lifecycle
@@ -1189,10 +1262,15 @@ spec:
             - profileRef
             type: object
             x-kubernetes-validations:
-            - message: spec.ach.identity is required
-              rule: has(self.ach) && has(self.ach.identity)
+            - message: capabilityServer selects exactly one of standalone/ach
+              rule: 'self.capabilityServer == ''standalone'' ? (has(self.standalone)
+                && !has(self.ach)) : (has(self.ach) && !has(self.standalone))'
+            - message: filter.exclude.skills requires capabilityServer ach
+              rule: '!has(self.filter) || !has(self.filter.exclude) || !has(self.filter.exclude.skills)
+                || size(self.filter.exclude.skills) == 0 || self.capabilityServer
+                == ''ach'''
           status:
-            description: ACHAgentStatus is the observed state.
+            description: AgentStatus is the observed state.
             properties:
               conditions:
                 items:
@@ -1256,10 +1334,10 @@ spec:
             type: object
         type: object
         x-kubernetes-validations:
-        - message: ACHAgent name must be <= 50 chars (operator derives <=63-char child
+        - message: Agent name must be <= 50 chars (operator derives <=63-char child
             names)
           rule: size(self.metadata.name) <= 50
-        - message: ACHAgent name must not end in -<20 hex> (reserved for the runtime's
+        - message: Agent name must not end in -<20 hex> (reserved for the runtime's
             agent-<name>-<20 hex> workspace names)
           rule: '!self.metadata.name.matches(''-[0-9a-f]{20}$'')'
     served: true

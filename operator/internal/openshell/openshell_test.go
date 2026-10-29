@@ -123,7 +123,7 @@ const bootstrapWithFacade = `{"bootstrapVersion":"workspace-v3","facadeEndpoint"
 type osFixture struct {
 	gw    *fakeGateway
 	b     host.Backend
-	a     *achv1alpha1.ACHAgent
+	a     *achv1alpha1.Agent
 	p     *achv1alpha1.AgentProfile
 	w     host.Workspace
 	c     client.Client
@@ -134,7 +134,7 @@ func newOSFixture(t *testing.T, pods ...client.Object) *osFixture {
 	t.Helper()
 	a, p, w := unitFixture()
 	a.Finalizers = []string{SandboxFinalizer} // the controller adds it before any sandbox may exist
-		w.Launch.Env["ACH_BOOTSTRAP_JSON"] = bootstrapWithFacade
+	w.Launch.Env["ACH_BOOTSTRAP_JSON"] = bootstrapWithFacade
 	gw := newFakeGateway()
 	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(pods...).Build()
 	o := &OpenShell{Sandboxes: gw, Config: OpenShellConfig{
@@ -181,7 +181,7 @@ func TestOpenShell_CreateMapsLaunchExactly(t *testing.T) {
 	if strings.Join(s.Spec.Command, " ") != strings.Join(f.w.Launch.Command, " ") {
 		t.Errorf("command = %v, want %v", s.Spec.Command, f.w.Launch.Command)
 	}
-	if s.Spec.Template == nil || s.Spec.Template.Image != f.p.Spec.Execution.Image {
+	if s.Spec.Template == nil || s.Spec.Template.Image != f.p.Spec.Sandbox.OpenShell.Image {
 		t.Errorf("template = %+v, want the profile image (finding 9)", s.Spec.Template)
 	}
 	if s.Spec.RestartPolicy != ostypes.SandboxRestartNever {
@@ -210,7 +210,7 @@ func TestOpenShell_CreateMapsLaunchExactly(t *testing.T) {
 
 	// a repeated pass is a no-op on AlreadyExists is the gateway's job; a wrong release is refused here
 	g := newOSFixture(t)
-	g.p.Spec.Execution.Image = "ghcr.io/ackstorm/ach-runtime-execution:0.1.21"
+	g.p.Spec.Sandbox.OpenShell.Image = "ghcr.io/ackstorm/ach-runtime-execution:0.1.21"
 	if err := g.b.Create(context.Background(), g.a, g.p, g.w); err == nil || len(g.gw.created) != 0 {
 		t.Errorf("err = %v created = %v, want a refusal without Create (finding 9)", err, g.gw.created)
 	}

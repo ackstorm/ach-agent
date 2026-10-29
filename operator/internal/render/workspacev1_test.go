@@ -10,7 +10,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	achv1alpha1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
+	v1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
 )
 
 // fixtureSubtree loads testdata/pr-review-runtime.json and returns one top-level key,
@@ -66,47 +66,43 @@ func assertJSONEqual(t *testing.T, got any, wantKey string) {
 // pr-review-runtime.json (contract's own binding example, examples/gitlab-pr.yaml in
 // ach-agent) — every field the wire schema requires is set, so these tests prove the
 // MAPPING is correct, independent of the (separately blocked) default-resolution gap.
-func gitlabPRReviewerAgent() (ach *achv1alpha1.AchSpec, engine *achv1alpha1.EngineSpec, limits *achv1alpha1.LimitsSpec, workspace *achv1alpha1.WorkspaceSpec, artifacts *achv1alpha1.ArtifactsSpec, env []corev1.EnvVar, channel achv1alpha1.ChannelSpec) {
-	ach = &achv1alpha1.AchSpec{
-		BaseURL: "https://ach.ackstorm.ai", Environment: ptr("engineering-prod"),
-		Identity: &achv1alpha1.IdentitySpec{SecretRef: achv1alpha1.SecretKeyRef{Name: "test", Key: "ek"}},
-		Capability: &achv1alpha1.CapabilitySpec{Filter: &achv1alpha1.FilterSpec{Exclude: &achv1alpha1.ExcludeSpec{
-			Tools:      []string{},
-			McpServers: []string{"mcp-gitlab-ro", "mcp-google-calendar-ro", "mcp-slack", "mcp-zoho-desk-ro"},
-			Skills:     []string{"frontend-design@anthropics-skills"},
-		}}},
-	}
+func gitlabPRReviewerAgent() (filter *v1.FilterSpec, engine *v1.EngineSpec, limits *v1.LimitsSpec, workspace *v1.WorkspaceSpec, artifacts *v1.ArtifactsSpec, env []corev1.EnvVar, channel v1.ChannelSpec) {
+	filter = &v1.FilterSpec{Exclude: &v1.ExcludeSpec{
+		Tools:      []string{},
+		McpServers: []string{"mcp-gitlab-ro", "mcp-google-calendar-ro", "mcp-slack", "mcp-zoho-desk-ro"},
+		Skills:     []string{"frontend-design@anthropics-skills"},
+	}}
 	env = []corev1.EnvVar{{Name: "OPENCODE_ENABLE_EXA", Value: "true"}}
-	engine = &achv1alpha1.EngineSpec{
+	engine = &v1.EngineSpec{
 		ForwardEnv: []string{"OPENCODE_ENABLE_EXA"}, StartupTimeoutSeconds: ptr(int64(60)),
-		Compaction: &achv1alpha1.CompactionSpec{Auto: ptr(true), Keep: &achv1alpha1.CompactionKeepSpec{Tokens: ptr(int64(8000))}, Buffer: ptr(int64(20000))},
+		Compaction: &v1.CompactionSpec{Auto: ptr(true), Keep: &v1.CompactionKeepSpec{Tokens: ptr(int64(8000))}, Buffer: ptr(int64(20000))},
 	}
-	limits = &achv1alpha1.LimitsSpec{
+	limits = &v1.LimitsSpec{
 		MaxActiveWorkspaces: ptr(int64(4)), MaxConcurrentInvocations: ptr(int64(4)), MaxConcurrentScripts: ptr(int64(2)),
 		MaxInvocationSeconds: ptr(int64(900)), MaxQueuedTotal: ptr(int64(100)), IdempotencyWindowSeconds: ptr(int64(3600)), MaxSteps: ptr(int64(30)),
 	}
-	workspace = &achv1alpha1.WorkspaceSpec{
+	workspace = &v1.WorkspaceSpec{
 		IdleTimeoutSeconds: ptr(int64(600)), ShutdownTimeoutSeconds: ptr(int64(300)), MaxConcurrentSessions: ptr(int64(1)),
-		Persistence: &achv1alpha1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))},
-		Session: &achv1alpha1.WorkspaceSessionSpec{
+		Persistence: &v1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))},
+		Session: &v1.WorkspaceSessionSpec{
 			IdleTimeoutSeconds: ptr(int64(300)),
-			Persistence:        &achv1alpha1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))},
+			Persistence:        &v1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))},
 		},
 	}
-	artifacts = &achv1alpha1.ArtifactsSpec{Enabled: ptr(true), MaxArtifactBytes: ptr(int64(104857600)), RetentionDays: ptr(int64(90))}
+	artifacts = &v1.ArtifactsSpec{Enabled: ptr(true), MaxArtifactBytes: ptr(int64(104857600)), RetentionDays: ptr(int64(90))}
 	bot := "ai.run"
-	channel = achv1alpha1.ChannelSpec{
+	channel = v1.ChannelSpec{
 		Name: "gitlab-mr-review", Type: "webhook", Source: "gitlab", Concurrency: ptr(int64(4)),
 		Prompt: "Review the current state of this merge request.\nProject: {{ event.gitlab.projectPath }}\nMR: {{ event.gitlab.mergeRequestIid }}\nTrigger: {{ event.type }}\nPayload: {{ payload | json }}\nRepository: ./handoff/repo\n",
-		Webhook: &achv1alpha1.WebhookSpec{
-			Auth:              achv1alpha1.WebhookAuthSpec{Type: "gitlab_token", SecretRef: &achv1alpha1.SecretKeyRef{Name: "gitlab-reviewer-webhook", Key: "secret"}},
+		Webhook: &v1.WebhookSpec{
+			Auth:              v1.WebhookAuthSpec{Type: "gitlab_token", SecretRef: &v1.SecretKeyRef{Name: "gitlab-reviewer-webhook", Key: "secret"}},
 			GitlabEvents:      []string{"merge_request", "note"},
 			BotUsername:       &bot,
 			TriggerUsers:      []string{"juancarlos.moreno", "ivan.hernanz"},
 			MergeRequestsOnly: ptr(true),
 		},
-		Handoff: &achv1alpha1.HandoffSpec{
-			PrepareSpec: achv1alpha1.PrepareSpec{
+		Handoff: &v1.HandoffSpec{
+			PrepareSpec: v1.PrepareSpec{
 				ForwardEnv:     []string{"GITLAB_TOKEN", "GITLAB_REPO_BASEURL"},
 				TimeoutSeconds: ptr(int64(300)),
 				Script:         "set -eu\ncase \"$ACH_EVENT_PROJECT_PATH\" in\n  \"\"|*[!a-zA-Z0-9_./-]*) exit 1 ;;\nesac\ncase \"/$ACH_EVENT_PROJECT_PATH/\" in\n  *\"/../\"*|*\"/./\"*|*\"//\"*) exit 1 ;;\nesac\ncase \"$ACH_EVENT_MR_IID\" in\n  \"\"|*[!0-9]*) exit 1 ;;\nesac\nAUTH=$(printf 'oauth2:%s' \"$GITLAB_TOKEN\" | base64 -w0)\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=http.extraHeader\nexport GIT_CONFIG_VALUE_0=\"Authorization: Basic $AUTH\"\nexport GIT_TERMINAL_PROMPT=0\nexport GIT_LFS_SKIP_SMUDGE=1\ngit clone --no-checkout --no-recurse-submodules \\\n  \"$GITLAB_REPO_BASEURL/$ACH_EVENT_PROJECT_PATH.git\" \\\n  \"$ACH_HANDOFF_DIR/repo\"\ngit -C \"$ACH_HANDOFF_DIR/repo\" fetch origin \\\n  \"refs/merge-requests/$ACH_EVENT_MR_IID/head\"\ngit -C \"$ACH_HANDOFF_DIR/repo\" checkout --detach FETCH_HEAD\n",
@@ -114,16 +110,7 @@ func gitlabPRReviewerAgent() (ach *achv1alpha1.AchSpec, engine *achv1alpha1.Engi
 			Destination: "handoff",
 		},
 	}
-	return ach, engine, limits, workspace, artifacts, env, channel
-}
-
-func TestWorkspaceV1_AchBlockMatchesFixture(t *testing.T) {
-	ach, _, _, _, _, _, _ := gitlabPRReviewerAgent()
-	got, err := RenderAchV1(ach, ach.BaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertJSONEqual(t, got, "ach")
+	return filter, engine, limits, workspace, artifacts, env, channel
 }
 
 func TestWorkspaceV1_EngineBlockMatchesFixture(t *testing.T) {
@@ -252,6 +239,9 @@ func TestWorkspaceV1_ChannelMatchesFixture(t *testing.T) {
 	wantMap := wantV.(map[string]any)
 	wantMap["webhook"].(map[string]any)["auth"].(map[string]any)["env"] = channelSecretEnvName(&channel)
 	wantMap["handoff"].(map[string]any)["secretEnv"].(map[string]any)["GITLAB_TOKEN"].(map[string]any)["env"] = hookSecretEnvName(&channel, "HANDOFF", "GITLAB_TOKEN")
+	// handoff.scope is const "event" with a default of "event": the runtime fills it in, so the
+	// renderer leaves it out.
+	delete(wantMap["handoff"].(map[string]any), "scope")
 	wantCanon, _ := json.Marshal(wantMap)
 
 	if string(gotCanon) != string(wantCanon) {
@@ -263,11 +253,8 @@ func TestWorkspaceV1_ChannelMatchesFixture(t *testing.T) {
 // regression: a filter excluding only skills must render tools/mcpServers as [] (the schema
 // type), never JSON null (a nil Go slice's default marshal).
 func TestRenderFilterV1_PartialFilterEmitsEmptyArraysNotNull(t *testing.T) {
-	f := &achv1alpha1.FilterSpec{Exclude: &achv1alpha1.ExcludeSpec{Skills: []string{"send-email"}}}
+	f := &v1.FilterSpec{Exclude: &v1.ExcludeSpec{Skills: []string{"send-email"}}}
 	got := renderFilterV1(f)
-	if got == nil || got.Exclude == nil {
-		t.Fatal("expected a non-nil filter block")
-	}
 	b, err := json.Marshal(got.Exclude)
 	if err != nil {
 		t.Fatal(err)
@@ -287,8 +274,8 @@ func TestRenderFilterV1_PartialFilterEmitsEmptyArraysNotNull(t *testing.T) {
 // regression: a forwardEnv name absent from the merged environment must fail closed, not
 // silently vanish from the rendered handoff block.
 func TestRenderHandoffV1_MissingForwardEnvNameErrors(t *testing.T) {
-	ch := &achv1alpha1.ChannelSpec{Name: "c", Handoff: &achv1alpha1.HandoffSpec{
-		PrepareSpec: achv1alpha1.PrepareSpec{Script: "true", ForwardEnv: []string{"MISSING"}}, Destination: "handoff",
+	ch := &v1.ChannelSpec{Name: "c", Handoff: &v1.HandoffSpec{
+		PrepareSpec: v1.PrepareSpec{Script: "true", ForwardEnv: []string{"MISSING"}}, Destination: "handoff",
 	}}
 	if _, err := RenderHandoffV1(ch, nil); err == nil {
 		t.Fatal("expected rejection of a forwardEnv name absent from the merged environment")
@@ -297,7 +284,7 @@ func TestRenderHandoffV1_MissingForwardEnvNameErrors(t *testing.T) {
 
 // TestRenderScriptV1_MissingForwardEnvNameErrors is the script-channel counterpart.
 func TestRenderScriptV1_MissingForwardEnvNameErrors(t *testing.T) {
-	ch := &achv1alpha1.ChannelSpec{Name: "c", Script: &achv1alpha1.PrepareSpec{Script: "true", ForwardEnv: []string{"MISSING"}}}
+	ch := &v1.ChannelSpec{Name: "c", Script: &v1.PrepareSpec{Script: "true", ForwardEnv: []string{"MISSING"}}}
 	if _, err := RenderScriptV1(ch, nil); err == nil {
 		t.Fatal("expected rejection of a forwardEnv name absent from the merged environment")
 	}
@@ -330,34 +317,21 @@ func TestWorkspaceV1_HooksBlock_AllThreeKeysAlwaysPresent(t *testing.T) {
 // disturbing its own siblings. Each subtest exercises a different Resolve*/Render*V1 pair
 // pinned by Task 3's brief (step 1).
 func TestWorkspaceV1_PartialOverrides(t *testing.T) {
-	t.Run("explicit empty Environment clears inherited intent", testPartialEnvironment)
 	t.Run("maxSteps override inherits the other finite limits", testPartialLimits)
 	t.Run("enabled false inherits retentionDays (workspace persistence)", testPartialPersistence)
 	t.Run("enabled false inherits retentionDays (artifacts)", testPartialArtifacts)
 	t.Run("empty forwardEnv selection clears inherited exposure", testPartialForwardEnv)
 	t.Run("session override preserves workspace and session siblings", testPartialSession)
-	t.Run("per-name whole-EnvVar replacement and agent-only identity", testPartialEnvIdentity)
-}
-
-func testPartialEnvironment(t *testing.T) {
-	profile := &achv1alpha1.AchSpec{Environment: ptr("prod")}
-	agent := &achv1alpha1.AchSpec{
-		Identity:    &achv1alpha1.IdentitySpec{SecretRef: achv1alpha1.SecretKeyRef{Name: "ek", Key: "ek"}},
-		Environment: ptr(""),
-	}
-	got := ResolveAch(agent, profile)
-	if got.Environment == nil || *got.Environment != "" {
-		t.Fatalf("Environment = %v, want explicit empty string (not inherited \"prod\")", got.Environment)
-	}
+	t.Run("per-name whole-EnvVar replacement", testPartialEnvIdentity)
 }
 
 func testPartialLimits(t *testing.T) {
-	profile := &achv1alpha1.LimitsSpec{
+	profile := &v1.LimitsSpec{
 		MaxActiveWorkspaces: ptr(int64(4)), MaxConcurrentInvocations: ptr(int64(4)),
 		MaxInvocationSeconds: ptr(int64(900)), MaxQueuedTotal: ptr(int64(100)),
 		IdempotencyWindowSeconds: ptr(int64(3600)), MaxSteps: ptr(int64(30)),
 	}
-	agent := &achv1alpha1.LimitsSpec{MaxSteps: ptr(int64(12))}
+	agent := &v1.LimitsSpec{MaxSteps: ptr(int64(12))}
 	got := ResolveLimits(agent, profile)
 	if *got.MaxSteps != 12 {
 		t.Fatalf("MaxSteps = %d, want 12", *got.MaxSteps)
@@ -369,8 +343,8 @@ func testPartialLimits(t *testing.T) {
 }
 
 func testPartialPersistence(t *testing.T) {
-	profile := &achv1alpha1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))}
-	agent := &achv1alpha1.WorkspacePersistenceSpec{Enabled: ptr(false)}
+	profile := &v1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))}
+	agent := &v1.WorkspacePersistenceSpec{Enabled: ptr(false)}
 	got := ResolvePersistence(agent, profile)
 	if got.Enabled == nil || *got.Enabled {
 		t.Fatalf("Enabled = %v, want false", got.Enabled)
@@ -381,8 +355,8 @@ func testPartialPersistence(t *testing.T) {
 }
 
 func testPartialArtifacts(t *testing.T) {
-	profile := &achv1alpha1.ArtifactsSpec{Enabled: ptr(true), MaxArtifactBytes: ptr(int64(104857600)), RetentionDays: ptr(int64(90))}
-	agent := &achv1alpha1.ArtifactsSpec{Enabled: ptr(false)}
+	profile := &v1.ArtifactsSpec{Enabled: ptr(true), MaxArtifactBytes: ptr(int64(104857600)), RetentionDays: ptr(int64(90))}
+	agent := &v1.ArtifactsSpec{Enabled: ptr(false)}
 	got := ResolveArtifacts(agent, profile)
 	if got.Enabled == nil || *got.Enabled {
 		t.Fatalf("Enabled = %v, want false", got.Enabled)
@@ -393,11 +367,11 @@ func testPartialArtifacts(t *testing.T) {
 }
 
 func testPartialForwardEnv(t *testing.T) {
-	profile := &achv1alpha1.EngineSpec{
+	profile := &v1.EngineSpec{
 		ForwardEnv: []string{"HTTPS_PROXY"},
-		Compaction: &achv1alpha1.CompactionSpec{Auto: ptr(true), Keep: &achv1alpha1.CompactionKeepSpec{Tokens: ptr(int64(8000))}, Buffer: ptr(int64(20000))},
+		Compaction: &v1.CompactionSpec{Auto: ptr(true), Keep: &v1.CompactionKeepSpec{Tokens: ptr(int64(8000))}, Buffer: ptr(int64(20000))},
 	}
-	agent := &achv1alpha1.EngineSpec{ForwardEnv: []string{}}
+	agent := &v1.EngineSpec{ForwardEnv: []string{}}
 	resolved := ResolveEngine(agent, profile)
 	if len(resolved.ForwardEnv) != 0 {
 		t.Fatalf("ForwardEnv = %v, want explicit empty override to clear the inherited HTTPS_PROXY selection", resolved.ForwardEnv)
@@ -412,8 +386,8 @@ func testPartialForwardEnv(t *testing.T) {
 }
 
 func TestWorkspaceV1_EngineBlock_DenyTools(t *testing.T) {
-	engine := &achv1alpha1.EngineSpec{
-		Compaction: &achv1alpha1.CompactionSpec{Auto: ptr(true), Keep: &achv1alpha1.CompactionKeepSpec{Tokens: ptr(int64(8000))}, Buffer: ptr(int64(20000))},
+	engine := &v1.EngineSpec{
+		Compaction: &v1.CompactionSpec{Auto: ptr(true), Keep: &v1.CompactionKeepSpec{Tokens: ptr(int64(8000))}, Buffer: ptr(int64(20000))},
 	}
 	render := func() string {
 		b, err := RenderEngineV1(engine, nil)
@@ -436,15 +410,15 @@ func TestWorkspaceV1_EngineBlock_DenyTools(t *testing.T) {
 }
 
 func testPartialSession(t *testing.T) {
-	profile := &achv1alpha1.WorkspaceSpec{
+	profile := &v1.WorkspaceSpec{
 		IdleTimeoutSeconds: ptr(int64(600)), ShutdownTimeoutSeconds: ptr(int64(300)), MaxConcurrentSessions: ptr(int64(1)),
-		Persistence: &achv1alpha1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))},
-		Session: &achv1alpha1.WorkspaceSessionSpec{
+		Persistence: &v1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))},
+		Session: &v1.WorkspaceSessionSpec{
 			IdleTimeoutSeconds: ptr(int64(300)),
-			Persistence:        &achv1alpha1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))},
+			Persistence:        &v1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))},
 		},
 	}
-	agent := &achv1alpha1.WorkspaceSpec{Session: &achv1alpha1.WorkspaceSessionSpec{IdleTimeoutSeconds: ptr(int64(120))}}
+	agent := &v1.WorkspaceSpec{Session: &v1.WorkspaceSessionSpec{IdleTimeoutSeconds: ptr(int64(120))}}
 	got := ResolveWorkspace(agent, profile)
 	if *got.Session.IdleTimeoutSeconds != 120 {
 		t.Fatalf("session.idleTimeoutSeconds = %d, want 120", *got.Session.IdleTimeoutSeconds)
@@ -473,17 +447,14 @@ func testPartialEnvIdentity(t *testing.T) {
 			t.Errorf("env %s = %q, want %q", e.Name, e.Value, want[e.Name])
 		}
 	}
+}
 
-	// Identity is agent-only: ResolveAch never backfills it from the profile (the
-	// profile is forbidden from setting one by object-level CEL), and merging other
-	// profile fields alongside it must not disturb the agent's own identity.
-	achProfile := &achv1alpha1.AchSpec{Environment: ptr("prod")}
-	achAgent := &achv1alpha1.AchSpec{Identity: &achv1alpha1.IdentitySpec{SecretRef: achv1alpha1.SecretKeyRef{Name: "ek", Key: "ek"}}}
-	achGot := ResolveAch(achAgent, achProfile)
-	if achGot.Identity == nil || achGot.Identity.SecretRef.Name != "ek" {
-		t.Fatalf("Identity = %v, want the agent's own identity preserved", achGot.Identity)
+func TestRenderFilterV1_AbsentFilterStillEmitsEmptyExclude(t *testing.T) {
+	b, err := json.Marshal(renderFilterV1(nil))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if achGot.Environment == nil || *achGot.Environment != "prod" {
-		t.Fatalf("Environment = %v, want inherited \"prod\"", achGot.Environment)
+	if want := `{"exclude":{"tools":[],"mcpServers":[],"skills":[]}}`; string(b) != want {
+		t.Fatalf("filter = %s, want %s", b, want)
 	}
 }

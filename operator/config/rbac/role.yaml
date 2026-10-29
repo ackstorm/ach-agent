@@ -22,6 +22,13 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
   - pods
   verbs:
   - delete
@@ -38,31 +45,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - ach.ackstorm.ai
-  resources:
-  - achagents
-  verbs:
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ach.ackstorm.ai
-  resources:
-  - achagents/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - ach.ackstorm.ai
-  resources:
-  - achagents/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - ach.ackstorm.ai
+  - ach-agent.ackstorm.ai
   resources:
   - agentprofiles
   verbs:
@@ -70,9 +53,45 @@ rules:
   - list
   - watch
 - apiGroups:
+  - ach-agent.ackstorm.ai
+  resources:
+  - agents
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ach-agent.ackstorm.ai
+  resources:
+  - agents/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - ach-agent.ackstorm.ai
+  resources:
+  - agents/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
   - apps
   resources:
   - statefulsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - httproutes
   verbs:
   - create
   - delete

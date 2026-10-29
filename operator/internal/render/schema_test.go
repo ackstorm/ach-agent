@@ -34,52 +34,47 @@ func compileSchema(t *testing.T, path string) *jsonschema.Schema {
 }
 
 const (
-	vendoredWorkspaceV2Schema      = "testdata/ach-workspace-config-v2.schema.json"
+	vendoredWorkspaceSchema        = "testdata/ach-workspace-config-v3.schema.json"
 	vendoredPRReviewRuntime        = "testdata/pr-review-runtime.json"
+	vendoredStandaloneRuntime      = "testdata/standalone-runtime.json"
 	vendoredConfigCanonicalization = "testdata/config-canonicalization.json"
 )
 
-// TestWorkspaceV2Schema_NoDrift fails if the vendored workspace-v2 schema differs from the
-// coordinating runtime-schema-v1 worker's generated copy. Unlike the retired
-// TestSchema_NoDrift (the agent-config-v1 contract, which tolerated a missing/pre-addendum
-// upstream), this is the live contract; it skips only when no sibling ach-runtime checkout exists (CI). The runtime
-// worker's report/commit confirming final GREEN was still pending at vendor time (see
-// task-2-ach-report.md); if the upstream file moves, re-vendor and record the new hash there.
-func TestWorkspaceV2Schema_NoDrift(t *testing.T) {
-	upstream := "../../../ach-runtime/docs/schemas/ach-workspace-config-v2.schema.json"
+// TestWorkspaceSchema_NoDrift fails if the vendored workspace-v3 schema differs from the
+// runtime package's generated copy in this repository.
+func TestWorkspaceSchema_NoDrift(t *testing.T) {
+	upstream := "../../../runtime/docs/schemas/ach-workspace-config-v3.schema.json"
 	up, err := os.ReadFile(upstream)
-	if os.IsNotExist(err) {
-		// CI has no sibling ach-runtime checkout; scripts/dev.sh mounts it locally.
-		t.Skipf("sibling ach-runtime checkout not present (%v)", err)
-	}
 	if err != nil {
-		t.Fatalf("read upstream workspace-v2 schema: %v", err)
+		t.Fatalf("read runtime schema %s: %v", upstream, err)
 	}
-	vend, err := os.ReadFile(vendoredWorkspaceV2Schema)
+	vend, err := os.ReadFile(vendoredWorkspaceSchema)
 	if err != nil {
 		t.Fatalf("read vendored schema: %v", err)
 	}
 	if sha256.Sum256(up) != sha256.Sum256(vend) {
-		t.Fatalf("vendored workspace-v2 schema drifted from %s — re-copy it", upstream)
+		t.Fatalf("vendored workspace-v3 schema drifted from %s — re-copy it", upstream)
 	}
 }
 
-// TestWorkspaceV1Fixture_ConformsToSchema validates the coordinating runtime-schema-v1
+// TestWorkspaceFixtures_ConformToSchema validates the coordinating runtime-schema-v1
 // worker's own pr-review-runtime.json sample against the vendored schema — a consistency
 // check on the coordination artifacts themselves, independent of this repo's renderer
 // (which does not yet produce this wire shape; see task-2-ach-report.md).
-func TestWorkspaceV1Fixture_ConformsToSchema(t *testing.T) {
-	schema := compileSchema(t, vendoredWorkspaceV2Schema)
-	f, err := os.ReadFile(vendoredPRReviewRuntime)
-	if err != nil {
-		t.Fatalf("read fixture: %v", err)
-	}
-	var v any
-	if err := json.Unmarshal(f, &v); err != nil {
-		t.Fatalf("unmarshal fixture: %v", err)
-	}
-	if err := schema.Validate(v); err != nil {
-		t.Fatalf("pr-review-runtime.json violates ach-workspace-config-v2:\n%v", err)
+func TestWorkspaceFixtures_ConformToSchema(t *testing.T) {
+	schema := compileSchema(t, vendoredWorkspaceSchema)
+	for _, name := range []string{vendoredPRReviewRuntime, vendoredStandaloneRuntime} {
+		f, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read fixture: %v", err)
+		}
+		var v any
+		if err := json.Unmarshal(f, &v); err != nil {
+			t.Fatalf("unmarshal fixture: %v", err)
+		}
+		if err := schema.Validate(v); err != nil {
+			t.Errorf("%s violates ach-workspace-config-v3:\n%v", name, err)
+		}
 	}
 }
 

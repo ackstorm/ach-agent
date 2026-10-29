@@ -32,7 +32,7 @@ func (f *fakeRemover) RemoveAgentSandboxes(_ context.Context, uid string) (bool,
 
 const finalizerTestUID = "11111111-2222-4333-8444-555555555555"
 
-// deletingAgent builds a fake client holding an ACHAgent that carries the finalizer and is being
+// deletingAgent builds a fake client holding an Agent that carries the finalizer and is being
 // deleted (the fake client sets deletionTimestamp on Delete when finalizers exist).
 func deletingAgent(t *testing.T, objs ...client.Object) (client.Client, types.NamespacedName) {
 	t.Helper()
@@ -47,13 +47,13 @@ func deletingAgent(t *testing.T, objs ...client.Object) (client.Client, types.Na
 
 func finalizerReconcile(t *testing.T, c client.Client, key types.NamespacedName, s sandboxRemover) (ctrl.Result, error) {
 	t.Helper()
-	r := &ACHAgentReconciler{Client: c, APIReader: c, Scheme: c.Scheme(), Sandboxes: s}
+	r := &AgentReconciler{Client: c, APIReader: c, Scheme: c.Scheme(), Sandboxes: s}
 	return r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key})
 }
 
 func hasFinalizer(t *testing.T, c client.Client, key types.NamespacedName) bool {
 	t.Helper()
-	var got achv1alpha1.ACHAgent
+	var got achv1alpha1.Agent
 	if err := c.Get(context.Background(), key, &got); err != nil {
 		if apierrors.IsNotFound(err) {
 			return false
@@ -64,7 +64,7 @@ func hasFinalizer(t *testing.T, c client.Client, key types.NamespacedName) bool 
 }
 
 func TestFinalizer_AddedOnceForEveryAgent(t *testing.T) {
-	a := &achv1alpha1.ACHAgent{}
+	a := &achv1alpha1.Agent{}
 	if !ensureExecutionFinalizer(a) || !controllerutil.ContainsFinalizer(a, executionFinalizer) {
 		t.Fatalf("finalizer not added: %v", a.Finalizers)
 	}

@@ -25,15 +25,13 @@ import (
 // entry already present at those exact names, unrelated entries survive untouched, and
 // building without the override (the all-disabled path) appends nothing.
 func TestRuntimeStorageControlEnv(t *testing.T) {
-	a := &achv1alpha1.ACHAgent{}
+	a := &achv1alpha1.Agent{}
 	a.Name, a.Namespace = "demo", "ns"
-	a.Spec.Ach = achIdentity("", "prod")
 	a.Spec.Env = []corev1.EnvVar{{Name: "MY_CUSTOM_VAR", Value: "keep-me"}}
 	p := &achv1alpha1.AgentProfile{}
-	p.Spec.Achagent.Image = "img"
-	p.Spec.Achagent.Ach = &achv1alpha1.AchSpec{BaseURL: "https://ach"}
+	p.Spec.Control.Image = "img"
 
-	base := buildAgentEnv(a, p, "")
+	base := buildAgentEnv(a, p, nil)
 	// Simulate a stale/conflicting entry already at a storage env name (the reconciler
 	// overrides at these exact names, regardless of how they got there).
 	base = append(base, corev1.EnvVar{Name: "ACH_STORAGE_S3_BUCKET", Value: "stale-should-be-overridden"})
@@ -74,14 +72,14 @@ func TestRuntimeStorageControlEnv(t *testing.T) {
 
 	// All-disabled: the reconciler never calls overrideEnv at all, so buildAgentEnv's own
 	// output alone must carry none of the four names.
-	for _, e := range buildAgentEnv(a, p, "") {
+	for _, e := range buildAgentEnv(a, p, nil) {
 		if strings.HasPrefix(e.Name, "ACH_STORAGE_S3_") {
 			t.Errorf("buildAgentEnv alone (all-disabled path) must carry no ACH_STORAGE_S3_* names, got %q", e.Name)
 		}
 	}
 }
 
-// minimalProfileSpec builds a complete AgentProfileSpec (every Render2-required block
+// minimalProfileSpec builds a complete AgentProfileSpec (every Render-required block
 // resolved, reusing the package's existing envtest fixtures) with workspace persistence set
 // by persist — the single dimension TestRuntimeStorageSecretHashAndEnqueue/agentsForSecret
 // coverage below needs to flip RuntimeRequiresStorage.
@@ -89,16 +87,15 @@ func minimalProfileSpec(persist bool) achv1alpha1.AgentProfileSpec {
 	ws := testWorkspaceSpec()
 	ws.Persistence.Enabled = boolPtr(persist)
 	return achv1alpha1.AgentProfileSpec{
-		Achagent: achv1alpha1.AgentDefaults{
-			Image: "img:test", Ach: &achv1alpha1.AchSpec{BaseURL: "https://ach"},
-			Model:  &achv1alpha1.ModelSpec{Name: "m", Type: "openai"},
+		Control: achv1alpha1.ControlSpec{Image: "img:test", TerminationGracePeriodSeconds: ptrInt64(330)},
+		Defaults: achv1alpha1.AgentDefaults{
 			Limits: testLimitsSpec(10), Workspace: ws, Artifacts: testArtifactsSpec(), Engine: testEngineSpec(),
 		},
-		Execution: testExecutionSpec(),
+		Sandbox: testSandboxSpec(),
 	}
 }
 
-func newFakeStorageReconciler(t *testing.T, options render.RuntimeStorageOptions, objs ...client.Object) *ACHAgentReconciler {
+func newFakeStorageReconciler(t *testing.T, options render.RuntimeStorageOptions, objs ...client.Object) *AgentReconciler {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := achv1alpha1.AddToScheme(scheme); err != nil {
@@ -108,7 +105,7 @@ func newFakeStorageReconciler(t *testing.T, options render.RuntimeStorageOptions
 		t.Fatal(err)
 	}
 	c := clientfake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
-	return &ACHAgentReconciler{Client: c, APIReader: c, Scheme: scheme, RuntimeStorageOptions: options}
+	return &AgentReconciler{Client: c, APIReader: c, Scheme: scheme, Storage: options}
 }
 
 // TestRuntimeStorageSecretHashAndEnqueue exercises the actual hashSecrets method (never a
@@ -117,8 +114,7 @@ func newFakeStorageReconciler(t *testing.T, options render.RuntimeStorageOptions
 // salted rollout hash — no token is ever required for hashSecrets to succeed.
 func TestRuntimeStorageSecretHashAndEnqueue(t *testing.T) {
 	const ns = "ns"
-	a := achv1alpha1.ACHAgent{ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: ns}}
-	a.Spec.Ach = achIdentity("ek", "prod")
+	a := achv1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: ns}}
 	a.Spec.ProfileRef = achv1alpha1.LocalObjectRef{Name: "p"}
 	a.UID = "3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77"
 
@@ -164,13 +160,13 @@ func TestAgentsForSecret_GlobalStorageCredential(t *testing.T) {
 	const ns = "ns"
 	volatileProfile := &achv1alpha1.AgentProfile{ObjectMeta: metav1.ObjectMeta{Name: "p-volatile", Namespace: ns}, Spec: minimalProfileSpec(false)}
 	persistentProfile := &achv1alpha1.AgentProfile{ObjectMeta: metav1.ObjectMeta{Name: "p-persist", Namespace: ns}, Spec: minimalProfileSpec(true)}
-	volatileAgent := &achv1alpha1.ACHAgent{
+	volatileAgent := &achv1alpha1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: "a-volatile", Namespace: ns, UID: "11111111-1111-4111-8111-111111111111"},
-		Spec:       achv1alpha1.ACHAgentSpec{ProfileRef: achv1alpha1.LocalObjectRef{Name: "p-volatile"}, AgentDefaults: achv1alpha1.AgentDefaults{Ach: achIdentity("ek", "prod")}},
+		Spec:       achv1alpha1.AgentSpec{ProfileRef: achv1alpha1.LocalObjectRef{Name: "p-volatile"}, CapabilityServer: "standalone", Standalone: testStandalone()},
 	}
-	persistentAgent := &achv1alpha1.ACHAgent{
+	persistentAgent := &achv1alpha1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: "a-persist", Namespace: ns, UID: "22222222-2222-4222-8222-222222222222"},
-		Spec:       achv1alpha1.ACHAgentSpec{ProfileRef: achv1alpha1.LocalObjectRef{Name: "p-persist"}, AgentDefaults: achv1alpha1.AgentDefaults{Ach: achIdentity("ek", "prod")}},
+		Spec:       achv1alpha1.AgentSpec{ProfileRef: achv1alpha1.LocalObjectRef{Name: "p-persist"}, CapabilityServer: "standalone", Standalone: testStandalone()},
 	}
 
 	options := render.RuntimeStorageOptions{Bucket: "runtime-bucket", CredentialsSecretName: "runtime-s3"}
@@ -178,15 +174,15 @@ func TestAgentsForSecret_GlobalStorageCredential(t *testing.T) {
 
 	for _, tc := range []struct {
 		profile *achv1alpha1.AgentProfile
-		agent   *achv1alpha1.ACHAgent
+		agent   *achv1alpha1.Agent
 		want    bool
 	}{
 		{volatileProfile, volatileAgent, false},
 		{persistentProfile, persistentAgent, true},
 	} {
-		cfg, err := render.Render2(*tc.profile, *tc.agent, "")
+		cfg, _, err := render.Render(*tc.profile, *tc.agent)
 		if err != nil {
-			t.Fatalf("Render2(%s): %v", tc.agent.Name, err)
+			t.Fatalf("Render(%s): %v", tc.agent.Name, err)
 		}
 		if got := render.RuntimeRequiresStorage(cfg); got != tc.want {
 			t.Errorf("RuntimeRequiresStorage(%s) = %v, want %v", tc.agent.Name, got, tc.want)

@@ -3,6 +3,7 @@
 package controller
 
 import (
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -15,24 +16,16 @@ import (
 
 func mkEnv(name, val string) []corev1.EnvVar { return []corev1.EnvVar{{Name: name, Value: val}} }
 
-// achIdentity is the test-fixture ach block: required identity, optional baseUrl/environment.
-func achIdentity(baseURL, environment string) *achv1alpha1.AchSpec {
-	return &achv1alpha1.AchSpec{
-		BaseURL: baseURL, Environment: &environment,
-		Identity: &achv1alpha1.IdentitySpec{SecretRef: achv1alpha1.SecretKeyRef{Name: "ek", Key: "ek"}},
-	}
-}
-
 func TestComputeConfigHash_ChangesWithInputs(t *testing.T) {
 	base := computeConfigHash([]byte(`{"a":1}`), []byte(`[]`), "img:1", "sec1")
 	if len(base) != 16 {
 		t.Fatalf("hash len = %d", len(base))
 	}
 	for name, h := range map[string]string{
-		"config":      computeConfigHash([]byte(`{"a":2}`), []byte(`[]`), "img:1", "sec1"),
-		"env":         computeConfigHash([]byte(`{"a":1}`), []byte(`[{}]`), "img:1", "sec1"),
-		"image":       computeConfigHash([]byte(`{"a":1}`), []byte(`[]`), "img:2", "sec1"),
-		"secret":      computeConfigHash([]byte(`{"a":1}`), []byte(`[]`), "img:1", "sec2"),
+		"config": computeConfigHash([]byte(`{"a":2}`), []byte(`[]`), "img:1", "sec1"),
+		"env":    computeConfigHash([]byte(`{"a":1}`), []byte(`[{}]`), "img:1", "sec1"),
+		"image":  computeConfigHash([]byte(`{"a":1}`), []byte(`[]`), "img:2", "sec1"),
+		"secret": computeConfigHash([]byte(`{"a":1}`), []byte(`[]`), "img:1", "sec2"),
 	} {
 		if h == base {
 			t.Errorf("%s change did not alter hash", name)
@@ -40,119 +33,12 @@ func TestComputeConfigHash_ChangesWithInputs(t *testing.T) {
 	}
 }
 
-func TestBuildAgentEnv_EkSecretRefAndReservedFilter(t *testing.T) {
-	a := &achv1alpha1.ACHAgent{}
-	a.Name, a.Namespace = "demo", "ns"
-	a.Spec.Ach = achIdentity("", "prod")
-	a.Spec.Ach.Identity.SecretRef = achv1alpha1.SecretKeyRef{Name: "demo-ek", Key: "ek"}
-	p := &achv1alpha1.AgentProfile{}
-	p.Spec.Achagent.Image = "img"
-	p.Spec.Achagent.Ach = &achv1alpha1.AchSpec{BaseURL: "https://ach"}
-	p.Spec.Env = mkEnv("CUSTOM_VAR", "http://p")
-
-	env := buildAgentEnv(a, p, "")
-
-	var token, base, extra, reserved bool
-	for _, e := range env {
-		switch e.Name {
-		case render.AchIdentityAliasEnv:
-			token = e.Value == "" && e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil && e.ValueFrom.SecretKeyRef.Name == "demo-ek"
-		case "ACH_BASE_URL":
-			base = e.Value == "https://ach"
-		case "CUSTOM_VAR":
-			extra = true
-		}
-		if e.Name == "ACH_BASE_URL" && e.Value != "https://ach" {
-			reserved = true
-		}
-	}
-	if !token {
-		t.Errorf("%s must be a secretKeyRef to demo-ek", render.AchIdentityAliasEnv)
-	}
-	if !base || !extra || reserved {
-		t.Errorf("env assembly wrong: base=%v extra=%v reservedHijack=%v", base, extra, reserved)
-	}
-}
-
-// TestBuildAgentEnv_BaseURLResolution proves ACH_BASE_URL follows the same
-// agent ?? profile ?? operator-default chain as the rendered config.
-func TestBuildAgentEnv_BaseURLResolution(t *testing.T) {
-	a := &achv1alpha1.ACHAgent{}
-	a.Name = "d"
-	a.Spec.Ach = achIdentity("", "")
-	p := &achv1alpha1.AgentProfile{} // no profile baseUrl
-
-	get := func(env []corev1.EnvVar) string {
-		for _, e := range env {
-			if e.Name == "ACH_BASE_URL" {
-				return e.Value
-			}
-		}
-		return ""
-	}
-	if v := get(buildAgentEnv(a, p, "https://env")); v != "https://env" {
-		t.Errorf("ACH_BASE_URL = %q, want operator default", v)
-	}
-	p.Spec.Achagent.Ach = &achv1alpha1.AchSpec{BaseURL: "https://profile"}
-	if v := get(buildAgentEnv(a, p, "https://env")); v != "https://profile" {
-		t.Errorf("ACH_BASE_URL = %q, want profile over default", v)
-	}
-	a.Spec.Ach.BaseURL = "https://agent"
-	if v := get(buildAgentEnv(a, p, "https://env")); v != "https://agent" {
-		t.Errorf("ACH_BASE_URL = %q, want agent override", v)
-	}
-}
-
-// TestControlPort_FixedRegardlessOfLegacyHealthOverride is the Important review finding 7
-// regression: workspace-v1 fixes control HTTP at 8080 (Render2 has no health block at all);
-// the legacy agent-config-v1 health.host/port CRD knob is compatibility-only now and must be
-// completely ignored by the real k8s objects this controller builds — the probe port, the
-// Service targetPort, and the containerPort must all stay 8080 even when an agent/profile
-// sets a health override.
-func TestControlPort_FixedRegardlessOfLegacyHealthOverride(t *testing.T) {
-	a := &achv1alpha1.ACHAgent{}
-	a.Name, a.Namespace = "demo", "ns"
-	a.Spec.Ach = achIdentity("", "e")
-	a.Spec.Model = &achv1alpha1.ModelSpec{Name: "m", Type: "openai"}
-	a.Spec.Channels = []achv1alpha1.ChannelSpec{{Name: "c", Type: "cron", Cron: &achv1alpha1.CronSpec{Schedule: "* * * * *"}}}
-	a.Spec.Health = &achv1alpha1.HealthSpec{Port: 9137} // legacy override — must be ignored
-	p := &achv1alpha1.AgentProfile{}
-	p.Spec.Achagent.Image = "img"
-	p.Spec.Achagent.Ach = &achv1alpha1.AchSpec{BaseURL: "https://ach"}
-	p.Spec.Achagent.Health = &achv1alpha1.HealthSpec{Port: 8000} // legacy override — must be ignored
-
-	const want = int32(8080)
-	if tp := buildService(a, p).Spec.Ports[0].TargetPort.IntVal; tp != want {
-		t.Errorf("service targetPort = %d, want fixed %d", tp, want)
-	}
-	dep := buildStatefulSet(a, p, "h", buildAgentEnv(a, p, ""))
-	c := dep.Spec.Template.Spec.Containers[0]
-	if cp := c.Ports[0].ContainerPort; cp != want {
-		t.Errorf("containerPort = %d, want fixed %d", cp, want)
-	}
-	if c.StartupProbe.HTTPGet.Port.IntVal != want || c.ReadinessProbe.HTTPGet.Port.IntVal != want || c.LivenessProbe.HTTPGet.Port.IntVal != want {
-		t.Errorf("probes must all target the fixed port %d", want)
-	}
-	// Important review finding 7: an explicit control launch command, not an unverified
-	// arbitrary image entrypoint.
-	wantCmd := []string{"python", "-m", "ach_runtime", "control", "--config", "/etc/ach-runtime/config.json"}
-	if len(c.Command) != len(wantCmd) {
-		t.Fatalf("command = %v, want %v", c.Command, wantCmd)
-	}
-	for i := range wantCmd {
-		if c.Command[i] != wantCmd[i] {
-			t.Fatalf("command = %v, want %v", c.Command, wantCmd)
-		}
-	}
-}
-
 func TestBuildAgentEnv_RejectsReservedEnv(t *testing.T) {
-	a := &achv1alpha1.ACHAgent{}
+	a := &achv1alpha1.Agent{}
 	a.Name = "d"
-	a.Spec.Ach = achIdentity("u", "")
 	p := &achv1alpha1.AgentProfile{}
-	p.Spec.Env = mkEnv("ACH_TOKEN", "ek_LEAK") // reserved — must be dropped
-	for _, e := range buildAgentEnv(a, p, "") {
+	p.Spec.Control.Env = mkEnv("ACH_TOKEN", "ek_LEAK") // reserved — must be dropped
+	for _, e := range buildAgentEnv(a, p, nil) {
 		if e.Name == "ACH_TOKEN" && e.Value == "ek_LEAK" {
 			t.Fatal("reserved ACH_* env leaked into the pod spec")
 		}
@@ -160,14 +46,13 @@ func TestBuildAgentEnv_RejectsReservedEnv(t *testing.T) {
 }
 
 func TestBuildAgentEnv_AgentOverridesProfileEnv(t *testing.T) {
-	a := &achv1alpha1.ACHAgent{}
-	a.Spec.Ach = achIdentity("", "")
+	a := &achv1alpha1.Agent{}
 	a.Spec.Env = mkEnv("SHARED", "agent")
 	p := &achv1alpha1.AgentProfile{}
-	p.Spec.Env = append(mkEnv("PROFILE", "p"), mkEnv("SHARED", "profile")...)
+	p.Spec.Control.Env = append(mkEnv("PROFILE", "p"), mkEnv("SHARED", "profile")...)
 
 	values := map[string]string{}
-	for _, e := range buildAgentEnv(a, p, "") {
+	for _, e := range buildAgentEnv(a, p, nil) {
 		values[e.Name] = e.Value
 	}
 	if values["PROFILE"] != "p" || values["SHARED"] != "agent" {
@@ -176,22 +61,19 @@ func TestBuildAgentEnv_AgentOverridesProfileEnv(t *testing.T) {
 }
 
 func TestBuildDeployment_MountsConfigProbesAndHash(t *testing.T) {
-	a := &achv1alpha1.ACHAgent{}
+	a := &achv1alpha1.Agent{}
 	a.Name, a.Namespace = "demo", "ns"
-	a.Spec.Ach = achIdentity("", "")
-	a.Spec.Ach.Identity.SecretRef = achv1alpha1.SecretKeyRef{Name: "demo-ek", Key: "ek"}
 	p := &achv1alpha1.AgentProfile{}
-	p.Spec.Achagent.Image = "ghcr.io/ackstorm/ach-agent:latest"
-	p.Spec.Achagent.Ach = &achv1alpha1.AchSpec{BaseURL: "https://ach"}
+	p.Spec.Control.Image = "ghcr.io/ackstorm/ach-agent:latest"
 
-	env := buildAgentEnv(a, p, "")
+	env := buildAgentEnv(a, p, nil)
 	dep := buildStatefulSet(a, p, "cfghash", env)
 
 	if *dep.Spec.Replicas != 1 {
 		t.Errorf("replicas = %d", *dep.Spec.Replicas)
 	}
 	c := dep.Spec.Template.Spec.Containers[0]
-	if c.Image != p.Spec.Achagent.Image {
+	if c.Image != p.Spec.Control.Image {
 		t.Errorf("image = %q", c.Image)
 	}
 	if c.ReadinessProbe == nil || c.ReadinessProbe.HTTPGet == nil || c.ReadinessProbe.HTTPGet.Path != "/readyz" {
@@ -207,12 +89,12 @@ func TestBuildDeployment_MountsConfigProbesAndHash(t *testing.T) {
 	// /metrics on it BY NAME, so a rename here silently breaks agent metrics collection.
 	var hp *corev1.ContainerPort
 	for i := range c.Ports {
-		if c.Ports[i].Name == "health" {
+		if c.Ports[i].Name == "http" {
 			hp = &c.Ports[i]
 		}
 	}
 	if hp == nil || hp.ContainerPort != 8080 {
-		t.Errorf("container must declare named control port 8080, got %+v", c.Ports)
+		t.Errorf("container must declare named http port 8080, got %+v", c.Ports)
 	}
 	// config.json is served by the directory mount at /etc/ach-runtime (alongside ca.crt),
 	// not a SubPath file mount (Important review finding 9: "implement the specified
@@ -226,27 +108,24 @@ func TestBuildDeployment_MountsConfigProbesAndHash(t *testing.T) {
 	if !found {
 		t.Error("config.json subPath mount missing")
 	}
-	if dep.Spec.Template.Annotations["ach.ackstorm.ai/config-hash"] != "cfghash" {
+	if dep.Spec.Template.Annotations["ach-agent.ackstorm.ai/config-hash"] != "cfghash" {
 		t.Error("config-hash annotation missing")
 	}
 }
 
 func TestBuildAgentEnv_ChannelSecretInjectedAsEnv(t *testing.T) {
-	a := &achv1alpha1.ACHAgent{}
+	a := &achv1alpha1.Agent{}
 	a.Name, a.Namespace = "demo", "ns"
-	a.Spec.Ach = achIdentity("", "")
-	a.Spec.Ach.Identity.SecretRef = achv1alpha1.SecretKeyRef{Name: "demo-ek", Key: "ek"}
 	a.Spec.Channels = []achv1alpha1.ChannelSpec{{
 		Name: "gitlab-mr-review", Type: "webhook",
 		Webhook: &achv1alpha1.WebhookSpec{Auth: achv1alpha1.WebhookAuthSpec{Type: "gitlab_token", SecretRef: &achv1alpha1.SecretKeyRef{Name: "gl-hook", Key: "secret"}}},
 	}}
 	p := &achv1alpha1.AgentProfile{}
-	p.Spec.Achagent.Image = "img"
-	p.Spec.Achagent.Ach = &achv1alpha1.AchSpec{BaseURL: "https://ach"}
+	p.Spec.Control.Image = "img"
 
 	// Auth secret must be a secretKeyRef env var, never an inline value.
 	var found bool
-	for _, e := range buildAgentEnv(a, p, "") {
+	for _, e := range buildAgentEnv(a, p, nil) {
 		if e.Name != "ACH_SECRET_GITLAB_MR_REVIEW_WEBHOOK" {
 			continue
 		}
@@ -261,7 +140,7 @@ func TestBuildAgentEnv_ChannelSecretInjectedAsEnv(t *testing.T) {
 	}
 
 	// And it must NOT be mounted as a file (fsGroup exists for the PVC, not for secrets).
-	dep := buildStatefulSet(a, p, "h", buildAgentEnv(a, p, ""))
+	dep := buildStatefulSet(a, p, "h", buildAgentEnv(a, p, nil))
 	for _, v := range dep.Spec.Template.Spec.Volumes {
 		if v.Secret != nil {
 			t.Errorf("secret volume present; auth secrets are env-injected now: %+v", v)
@@ -270,9 +149,7 @@ func TestBuildAgentEnv_ChannelSecretInjectedAsEnv(t *testing.T) {
 }
 
 func TestBuildAgentEnv_HandoffSecretGetsGeneratedAlias(t *testing.T) {
-	a := &achv1alpha1.ACHAgent{}
-	a.Spec.Ach = achIdentity("", "")
-	a.Spec.Ach.Identity.SecretRef = achv1alpha1.SecretKeyRef{Name: "demo-ek", Key: "ek"}
+	a := &achv1alpha1.Agent{}
 	a.Spec.Env = []corev1.EnvVar{{Name: "GITLAB_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
 		LocalObjectReference: corev1.LocalObjectReference{Name: "gl-clone"}, Key: "token",
 	}}}}
@@ -283,7 +160,7 @@ func TestBuildAgentEnv_HandoffSecretGetsGeneratedAlias(t *testing.T) {
 	p := &achv1alpha1.AgentProfile{}
 
 	var original, handoffAlias *corev1.EnvVar
-	env := buildAgentEnv(a, p, "")
+	env := buildAgentEnv(a, p, nil)
 	for i := range env {
 		e := &env[i]
 		switch e.Name {
@@ -304,14 +181,12 @@ func TestBuildAgentEnv_HandoffSecretGetsGeneratedAlias(t *testing.T) {
 // Without it the harness degrades to the bare agent name — same bank, different
 // key, no error anywhere — so assert the downward-API ref explicitly.
 func TestBuildAgentEnv_PodNamespaceFromDownwardAPI(t *testing.T) {
-	a := &achv1alpha1.ACHAgent{}
+	a := &achv1alpha1.Agent{}
 	a.Name, a.Namespace = "demo", "ns"
-	a.Spec.Ach = achIdentity("", "")
-	a.Spec.Ach.Identity.SecretRef = achv1alpha1.SecretKeyRef{Name: "demo-ek", Key: "ek"}
 	p := &achv1alpha1.AgentProfile{}
-	p.Spec.Achagent.Image = "img"
+	p.Spec.Control.Image = "img"
 
-	for _, e := range buildAgentEnv(a, p, "") {
+	for _, e := range buildAgentEnv(a, p, nil) {
 		if e.Name != "POD_NAMESPACE" {
 			continue
 		}
@@ -325,21 +200,18 @@ func TestBuildAgentEnv_PodNamespaceFromDownwardAPI(t *testing.T) {
 }
 
 func TestBuildAgentEnv_MemoryAuthInjectedAsEnv(t *testing.T) {
-	a := &achv1alpha1.ACHAgent{}
+	a := &achv1alpha1.Agent{}
 	a.Name, a.Namespace = "demo", "ns"
-	a.Spec.Ach = achIdentity("", "")
-	a.Spec.Ach.Identity.SecretRef = achv1alpha1.SecretKeyRef{Name: "demo-ek", Key: "ek"}
 	a.Spec.Channels = []achv1alpha1.ChannelSpec{{Name: "c", Type: "cron", Cron: &achv1alpha1.CronSpec{Schedule: "* * * * *"}}}
 	a.Spec.Memory = &achv1alpha1.MemorySpec{Type: "ach-memory", AchMemory: &achv1alpha1.AchMemorySpec{
 		Endpoint: "http://ach-memory.ach.svc:8000/mcp/", Auth: &achv1alpha1.AchMemoryAuthSpec{Type: "bearer", SecretRef: &achv1alpha1.SecretKeyRef{Name: "hs-admin", Key: "token"}},
 	}}
 	p := &achv1alpha1.AgentProfile{}
-	p.Spec.Achagent.Image = "img"
-	p.Spec.Achagent.Ach = &achv1alpha1.AchSpec{BaseURL: "https://ach"}
+	p.Spec.Control.Image = "img"
 
 	// The ach-memory user key rides in env (secretKeyRef), never inline, never a file.
 	var found bool
-	for _, e := range buildAgentEnv(a, p, "") {
+	for _, e := range buildAgentEnv(a, p, nil) {
 		if e.Name != "ACH_SECRET_MEMORY_AUTH" {
 			continue
 		}
@@ -355,59 +227,21 @@ func TestBuildAgentEnv_MemoryAuthInjectedAsEnv(t *testing.T) {
 
 	// No auth → no such env var.
 	a.Spec.Memory.AchMemory.Auth = nil
-	for _, e := range buildAgentEnv(a, p, "") {
+	for _, e := range buildAgentEnv(a, p, nil) {
 		if e.Name == "ACH_SECRET_MEMORY_AUTH" {
 			t.Errorf("no-auth ach-memory must not inject ACH_SECRET_MEMORY_AUTH")
 		}
 	}
 }
 
-// TestBuildDeployment_AgentImageAndEngineOverride: profile engine forwardEnv; agent
-// startupTimeoutSeconds + image override. The container image must be the agent's,
-// the startup budget must come from the RESOLVED engine, and the rendered engine
-// must inherit the profile's forwardEnv (per-field deep merge).
-func TestBuildDeployment_AgentImageAndEngineOverride(t *testing.T) {
-	st := int64(600)
-	a := &achv1alpha1.ACHAgent{}
-	a.Name, a.Namespace = "demo", "ns"
-	a.Spec.Ach = achIdentity("", "e")
-	a.Spec.Channels = []achv1alpha1.ChannelSpec{{Name: "c", Type: "cron", Cron: &achv1alpha1.CronSpec{Schedule: "* * * * *"}}}
-	a.Spec.AgentDefaults.Image = "img:agent"
-	a.Spec.AgentDefaults.Engine = &achv1alpha1.EngineSpec{StartupTimeoutSeconds: ptrInt64(45)}
-	a.Spec.Env = []corev1.EnvVar{{Name: "OPENCODE_ENABLE_EXA", Value: "true"}}
-	p := &achv1alpha1.AgentProfile{}
-	p.Spec.Achagent = achv1alpha1.AgentDefaults{
-		Image:  "img:profile",
-		Ach:    &achv1alpha1.AchSpec{BaseURL: "https://ach"},
-		Model:  &achv1alpha1.ModelSpec{Name: "m", Type: "openai"},
-		Engine: &achv1alpha1.EngineSpec{ForwardEnv: []string{"OPENCODE_ENABLE_EXA"}, StartupTimeoutSeconds: &st},
-	}
-
-	dep := buildStatefulSet(a, p, "h", buildAgentEnv(a, p, ""))
-	c := dep.Spec.Template.Spec.Containers[0]
-	if c.Image != "img:agent" {
-		t.Errorf("container image = %q, want agent override img:agent", c.Image)
-	}
-	if got := c.StartupProbe.FailureThreshold; got != int32(45/5)+1 {
-		t.Errorf("startup FailureThreshold = %d, want %d (from resolved engine startupTimeoutSeconds)", got, int32(45/5)+1)
-	}
-
-	eng := render.ResolveEngine(a.Spec.Engine, p.Spec.Achagent.Engine)
-	if eng == nil || len(eng.ForwardEnv) != 1 || eng.ForwardEnv[0] != "OPENCODE_ENABLE_EXA" {
-		t.Errorf("resolved engine forwardEnv = %+v, want inherited [OPENCODE_ENABLE_EXA]", eng)
-	}
-}
-
 func TestBuildDeployment_Shape(t *testing.T) {
-	a := &achv1alpha1.ACHAgent{}
+	a := &achv1alpha1.Agent{}
 	a.Name, a.Namespace = "demo", "ns"
-	a.Spec.Ach = achIdentity("", "prod")
 	p := &achv1alpha1.AgentProfile{}
-	p.Spec.Achagent.Image = "ghcr.io/ackstorm/ach-agent:role"
-	p.Spec.Achagent.Ach = &achv1alpha1.AchSpec{BaseURL: "https://ach"}
-	p.Spec.Persistence = &achv1alpha1.PersistenceSpec{Enabled: true, Size: "1Gi", MountPath: "/var/lib/ach-agent"}
+	p.Spec.Control.Image = "ghcr.io/ackstorm/ach-agent:role"
+	p.Spec.Control.Persistence = &achv1alpha1.PersistenceSpec{Enabled: true, Size: "1Gi", MountPath: "/var/lib/ach-agent"}
 
-	dep := buildStatefulSet(a, p, "h", buildAgentEnv(a, p, ""))
+	dep := buildStatefulSet(a, p, "h", buildAgentEnv(a, p, nil))
 	ps := dep.Spec.Template.Spec
 	if len(ps.Containers) != 1 || ps.Containers[0].Name != agentContainerName || ps.Containers[0].Args != nil {
 		t.Fatalf("must render the single %q container with no args: %+v", agentContainerName, ps.Containers)
@@ -440,22 +274,21 @@ func ptrInt64(v int64) *int64 { return &v }
 
 // buildTestControlSTS is the shared fixture for the control-pod naming/volume regression
 // tests below — split out of one over-complex test into several focused ones.
-func buildTestControlSTS(t *testing.T) (*appsv1.StatefulSet, *achv1alpha1.ACHAgent) {
+func buildTestControlSTS(t *testing.T) (*appsv1.StatefulSet, *achv1alpha1.Agent) {
 	t.Helper()
-	a := &achv1alpha1.ACHAgent{}
+	a := &achv1alpha1.Agent{}
 	a.Name, a.Namespace = "demo", "ns"
 	a.UID = "3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77"
-	a.Spec.Ach = achIdentity("", "")
 	p := &achv1alpha1.AgentProfile{}
-	p.Spec.Achagent.Image = "img"
+	p.Spec.Control.Image = "img"
 
-	sts := buildStatefulSet(a, p, "h", buildAgentEnv(a, p, ""))
+	sts := buildStatefulSet(a, p, "h", buildAgentEnv(a, p, nil))
 	return sts, a
 }
 
 // TestBuildStatefulSet_ControlNaming is the contract §11 regression guard found by root's
 // review of f66d476: the control StatefulSet's own metadata.name must be agent-<agent name>
-// (matching ServiceName, not the legacy achagent-<name> scheme other children keep).
+// (matching ServiceName).
 func TestBuildStatefulSet_ControlNaming(t *testing.T) {
 	sts, a := buildTestControlSTS(t)
 	wantName := "agent-" + a.Name
@@ -497,13 +330,12 @@ func TestBuildStatefulSet_ControlPodHardening(t *testing.T) {
 // path is an emptyDir at /tmp, and TMPDIR points at it explicitly — even over a profile env
 // that tries to move it (ach-runtime: exactly one writable path, children inherit TMPDIR).
 func TestBuildStatefulSet_WritableTmp(t *testing.T) {
-	a := &achv1alpha1.ACHAgent{}
+	a := &achv1alpha1.Agent{}
 	a.Name, a.Namespace = "demo", "ns"
-	a.Spec.Ach = achIdentity("", "")
 	p := &achv1alpha1.AgentProfile{}
-	p.Spec.Achagent.Image = "img"
-	p.Spec.Env = mkEnv("TMPDIR", "/var/tmp")
-	sts := buildStatefulSet(a, p, "h", buildAgentEnv(a, p, ""))
+	p.Spec.Control.Image = "img"
+	p.Spec.Control.Env = mkEnv("TMPDIR", "/var/tmp")
+	sts := buildStatefulSet(a, p, "h", buildAgentEnv(a, p, nil))
 	ps := sts.Spec.Template.Spec
 	var vol *corev1.Volume
 	for i := range ps.Volumes {
@@ -553,13 +385,13 @@ func TestBuildStatefulSet_ConfigMount(t *testing.T) {
 }
 
 // TestControlSelectors_IgnoreWorkspacePods: the runtime labels workspace pods
-// ach.ackstorm.ai/agent=<name> too, so every operator selector aimed at the control pod
+// ach-agent.ackstorm.ai/agent=<name> too, so every operator selector aimed at the control pod
 // (StatefulSet, control + expose Services) must also require the control
 // component label — a workspace pod must never become a control endpoint.
 func TestControlSelectors_IgnoreWorkspacePods(t *testing.T) {
 	sts, a := buildTestControlSTS(t)
 	p := &achv1alpha1.AgentProfile{}
-	workspacePod := labels.Set{agentLabelKey: a.Name, "runtime.ach.ackstorm.ai/agent-uid": string(a.UID), "runtime.ach.ackstorm.ai/workspace-name": "ach-ws-demo-0123456789abcdef0123"}
+	workspacePod := labels.Set{agentLabelKey: a.Name, "runtime.ach-agent.ackstorm.ai/agent-uid": string(a.UID), "runtime.ach-agent.ackstorm.ai/workspace-name": "ach-ws-demo-0123456789abcdef0123"}
 	controlPod := labels.Set(sts.Spec.Template.Labels)
 	selectors := map[string]map[string]string{
 		"StatefulSet":     sts.Spec.Selector.MatchLabels,
@@ -596,7 +428,7 @@ func TestBuildStatefulSet_ControlHasNoTokenAndProbesHealthzFirst(t *testing.T) {
 }
 
 func TestBuildControlService_PublishesNotReadyAddressesButEventServiceStaysGated(t *testing.T) {
-	a := &achv1alpha1.ACHAgent{}
+	a := &achv1alpha1.Agent{}
 	a.Name, a.Namespace = "demo", "ns"
 	if !buildControlService(a).Spec.PublishNotReadyAddresses {
 		t.Error("8081 control Service must publish not-ready addresses: the host API and the inventory that readiness waits for go through it")
@@ -607,7 +439,7 @@ func TestBuildControlService_PublishesNotReadyAddressesButEventServiceStaysGated
 }
 
 func TestBuildControlServiceAccount_NoTokenAutomount(t *testing.T) {
-	a := &achv1alpha1.ACHAgent{}
+	a := &achv1alpha1.Agent{}
 	a.Name, a.Namespace = "demo", "ns"
 	a.UID = "3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77"
 	if sa := buildControlServiceAccount(a); sa.AutomountServiceAccountToken == nil || *sa.AutomountServiceAccountToken {
@@ -616,12 +448,110 @@ func TestBuildControlServiceAccount_NoTokenAutomount(t *testing.T) {
 }
 
 func TestCopySpec_ServiceUpdatesPublishNotReadyAddresses(t *testing.T) {
-	a := &achv1alpha1.ACHAgent{}
+	a := &achv1alpha1.Agent{}
 	a.Name, a.Namespace = "demo", "ns"
 	existing := buildControlService(a)
 	existing.Spec.PublishNotReadyAddresses = false // a Service created by an older operator
 	copySpec(existing, buildControlService(a))
 	if !existing.Spec.PublishNotReadyAddresses {
 		t.Error("an existing control Service must converge to publishNotReadyAddresses=true")
+	}
+}
+
+func TestBuildStatefulSet_AmbientLabelPortsAndHeaderEnv(t *testing.T) {
+	a := &achv1alpha1.Agent{}
+	a.Name, a.Namespace = "demo", "ns"
+	p := &achv1alpha1.AgentProfile{}
+	p.Spec.Control.Image = "img"
+	bindings := []render.EnvBinding{{Name: "ACH_AGENT_MODEL_H0", SecretKeyRef: &achv1alpha1.SecretKeyRef{Name: "litellm", Key: "apiKey"}}}
+	sts := buildStatefulSet(a, p, "h", buildAgentEnv(a, p, bindings))
+
+	if got := sts.Spec.Template.Labels["istio.io/dataplane-mode"]; got != "ambient" {
+		t.Fatalf("labels = %v, want istio.io/dataplane-mode=ambient", sts.Spec.Template.Labels)
+	}
+	c := sts.Spec.Template.Spec.Containers[0]
+	ports := map[int32]bool{}
+	for _, p := range c.Ports {
+		ports[p.ContainerPort] = true
+	}
+	if !ports[8080] || !ports[8081] || len(ports) != 2 {
+		t.Fatalf("ports = %v, want exactly 8080 and 8081", c.Ports)
+	}
+	var found bool
+	for _, e := range c.Env {
+		if e.Name == "ACH_AGENT_MODEL_H0" {
+			found = e.ValueFrom != nil && e.ValueFrom.SecretKeyRef.Name == "litellm" && e.ValueFrom.SecretKeyRef.Key == "apiKey"
+		}
+	}
+	if !found {
+		t.Fatalf("ACH_AGENT_MODEL_H0 not wired from Secret litellm/apiKey: %v", c.Env)
+	}
+	if sts.Spec.Template.Spec.AutomountServiceAccountToken == nil || *sts.Spec.Template.Spec.AutomountServiceAccountToken {
+		t.Fatal("token automount must be off")
+	}
+}
+
+func TestBuildAgentEnv_LiteralHeaderBecomesPlainEnv(t *testing.T) {
+	a, p := &achv1alpha1.Agent{}, &achv1alpha1.AgentProfile{}
+	v := "en"
+	env := buildAgentEnv(a, p, []render.EnvBinding{{Name: "ACH_AGENT_MODEL_H0", Value: &v}})
+	for _, e := range env {
+		if e.Name == "ACH_AGENT_MODEL_H0" {
+			if e.Value != "en" || e.ValueFrom != nil {
+				t.Fatalf("literal header env = %+v, want plain value", e)
+			}
+			return
+		}
+	}
+	t.Fatal("ACH_AGENT_MODEL_H0 missing")
+}
+
+func TestBuildAgentEnv_AchKeyComesFromTheBinding(t *testing.T) {
+	a, p := &achv1alpha1.Agent{}, &achv1alpha1.AgentProfile{}
+	env := buildAgentEnv(a, p, []render.EnvBinding{{Name: render.AchKeyEnv, SecretKeyRef: &achv1alpha1.SecretKeyRef{Name: "ek", Key: "token"}}})
+	var n int
+	for _, e := range env {
+		if e.Name == render.AchKeyEnv {
+			n++
+			if e.ValueFrom == nil || e.ValueFrom.SecretKeyRef.Name != "ek" || e.ValueFrom.SecretKeyRef.Key != "token" {
+				t.Fatalf("%s = %+v", render.AchKeyEnv, e)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%s appears %d times, want 1", render.AchKeyEnv, n)
+	}
+}
+
+func TestChildNamesDeriveFromControlName(t *testing.T) {
+	for _, name := range []string{"researcher", "team.reviewer"} {
+		base := render.ControlName(name)
+		if configMapName(name) != base+"-config" || pvcName(name) != base+"-state" || httpServiceName(name) != base+"-http" {
+			t.Errorf("child names for %q = %s %s %s", name, configMapName(name), pvcName(name), httpServiceName(name))
+		}
+	}
+}
+
+func TestGraceBelowDrainPlus15IsRejected(t *testing.T) {
+	a := &achv1alpha1.Agent{}
+	p := &achv1alpha1.AgentProfile{}
+	p.Spec.Control.TerminationGracePeriodSeconds = ptrInt64(30)
+	a.Spec.Workspace = &achv1alpha1.WorkspaceSpec{ShutdownTimeoutSeconds: ptrInt64(20)}
+	if err := checkGracePeriod(p, a); err == nil || !strings.Contains(err.Error(), "35") {
+		t.Fatalf("err = %v, want a rejection naming the minimum 35", err)
+	}
+	p.Spec.Control.TerminationGracePeriodSeconds = ptrInt64(35)
+	if err := checkGracePeriod(p, a); err != nil {
+		t.Fatalf("grace == drain + 15 must pass: %v", err)
+	}
+	// The profile default workspace applies when the agent sets none.
+	a.Spec.Workspace = nil
+	p.Spec.Defaults.Workspace = &achv1alpha1.WorkspaceSpec{ShutdownTimeoutSeconds: ptrInt64(300)}
+	if err := checkGracePeriod(p, a); err == nil {
+		t.Fatal("a 35s grace must be rejected against the profile's 300s drain")
+	}
+	p.Spec.Control.TerminationGracePeriodSeconds = nil // default 120
+	if err := checkGracePeriod(p, a); err == nil {
+		t.Fatal("the 120s default grace must be rejected against a 300s drain")
 	}
 }

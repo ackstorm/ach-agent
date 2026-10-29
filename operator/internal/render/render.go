@@ -12,7 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
-	achv1alpha1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
+	v1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
 )
 
 // Inbound channel types that carry an auth secret.
@@ -46,14 +46,14 @@ const memoryAuthSecretEnvName = "ACH_SECRET_MEMORY_AUTH" // #nosec G101 -- env v
 // agent can't read the harness env); it just has to be a valid C identifier,
 // unique (channel name is unique via listMapKey), and never collide with the
 // reserved ACH_* vars (the ACH_SECRET_ prefix guarantees that).
-func channelSecretEnvName(ch *achv1alpha1.ChannelSpec) string {
+func channelSecretEnvName(ch *v1.ChannelSpec) string {
 	return "ACH_SECRET_" + sanitizeEnvSegment(ch.Name) + "_" + sanitizeEnvSegment(ch.Type)
 }
 
 // hookSecretEnvName is the deterministic env var name carrying one rendered
 // channel hook secretEnv entry. varName already passed the shell-env-name CRD
 // pattern, so preserve its case: `token` and `TOKEN` are distinct variables.
-func hookSecretEnvName(ch *achv1alpha1.ChannelSpec, phase, varName string) string {
+func hookSecretEnvName(ch *v1.ChannelSpec, phase, varName string) string {
 	return "ACH_SECRET_" + sanitizeEnvSegment(ch.Name) + "_" + phase + "_" + varName
 }
 
@@ -78,9 +78,9 @@ type ChannelSecretEnvRef struct {
 
 // ChannelSecretEnv returns generated aliases for channel auth and hook secrets.
 // The operator wires each via secretKeyRef; rendered config references only EnvName.
-func ChannelSecretEnv(p achv1alpha1.AgentProfile, a achv1alpha1.ACHAgent) []ChannelSecretEnvRef {
+func ChannelSecretEnv(p v1.AgentProfile, a v1.Agent) []ChannelSecretEnvRef {
 	var out []ChannelSecretEnvRef
-	env := indexEnv(ResolveEnv(a.Spec.Env, p.Spec.Env))
+	env := indexEnv(ResolveEnv(a.Spec.Env, p.Spec.Control.Env))
 	for i := range a.Spec.Channels {
 		ch := &a.Spec.Channels[i]
 		switch ch.Type {
@@ -97,7 +97,7 @@ func ChannelSecretEnv(p achv1alpha1.AgentProfile, a achv1alpha1.ACHAgent) []Chan
 		// strip an independently engine-forwarded original name.
 		type namedHook struct {
 			phase string
-			spec  *achv1alpha1.PrepareSpec
+			spec  *v1.PrepareSpec
 		}
 		hooks := []namedHook{{phase: "SCRIPT", spec: ch.Script}}
 		if ch.Handoff != nil {
@@ -151,7 +151,7 @@ func indexEnv(env []corev1.EnvVar) map[string]corev1.EnvVar {
 // Bearer arm ONLY: the ach arm authenticates with the harness's own ek_, so there is no
 // second secret to inject.
 // or nil when the agent has no memory auth. Same wiring as channel secrets (env, not file).
-func MemorySecretEnv(a achv1alpha1.ACHAgent) *ChannelSecretEnvRef {
+func MemorySecretEnv(a v1.Agent) *ChannelSecretEnvRef {
 	m := a.Spec.Memory
 	if m == nil || m.Type != memoryTypeAchMemory || m.AchMemory == nil ||
 		m.AchMemory.Auth == nil || m.AchMemory.Auth.Type != memoryAuthTypeBearer || m.AchMemory.Auth.SecretRef == nil {
@@ -174,34 +174,6 @@ func decodeParams(raw *apiextensionsv1.JSON) (map[string]any, error) {
 		return nil, fmt.Errorf("model.params: %w", err)
 	}
 	return m, nil
-}
-
-// ResolveAch deep-merges the agent's Ach block over the profile's shared ach defaults
-// (AgentProfileSpec.Achagent.Ach: "shared defaults: baseUrl/environment/capability" per
-// AgentDefaults' doc comment). Identity is NEVER taken from the profile — object-level CEL
-// on AgentProfileSpec already forbids a profile from setting it, and this merge preserves
-// that: the result always carries the AGENT's own Identity (nil when the agent itself has
-// none, never backfilled from profile). BaseURL is resolved separately by
-// ResolveAchBaseURL (which also consults the operator default) and is not part of this
-// merge. Environment/Capability merge per field: the agent's value wins when explicitly
-// set (Environment is a *string so an explicit empty string can clear an inherited
-// non-empty value — distinct from "the agent didn't touch this field"), else the result
-// inherits the profile's.
-func ResolveAch(agent, profile *achv1alpha1.AchSpec) *achv1alpha1.AchSpec {
-	if agent == nil {
-		return profile
-	}
-	if profile == nil {
-		return agent
-	}
-	out := *agent
-	if agent.Environment == nil {
-		out.Environment = profile.Environment
-	}
-	if agent.Capability == nil {
-		out.Capability = profile.Capability
-	}
-	return &out
 }
 
 // reservedForwardEnvNames/reservedForwardEnvPrefixes mirror, name-for-name, the final
@@ -229,7 +201,7 @@ var reservedForwardEnvPrefixes = []string{"ACH_", "XDG_", "OPENCODE_CONFIG"}
 // values already present in the merged env — never a secretKeyRef source, never a reserved
 // name/prefix, never a name absent from the merge. A violation is a configuration error, not
 // a silent drop.
-func validateEngineForwardEnv(e *achv1alpha1.EngineSpec, resolvedEnv []corev1.EnvVar) error {
+func validateEngineForwardEnv(e *v1.EngineSpec, resolvedEnv []corev1.EnvVar) error {
 	if e == nil || len(e.ForwardEnv) == 0 {
 		return nil
 	}
@@ -254,7 +226,7 @@ func validateEngineForwardEnv(e *achv1alpha1.EngineSpec, resolvedEnv []corev1.En
 	return nil
 }
 
-func renderPrompt(p *achv1alpha1.AgentPromptSpec) *PromptBlock {
+func renderPrompt(p *v1.AgentPromptSpec) *PromptBlock {
 	if p == nil {
 		return nil
 	}
@@ -271,7 +243,7 @@ func renderPrompt(p *achv1alpha1.AgentPromptSpec) *PromptBlock {
 	return &PromptBlock{System: sys, Compose: p.Compose}
 }
 
-func renderMemory(m *achv1alpha1.MemorySpec) *MemoryBlock {
+func renderMemory(m *v1.MemorySpec) *MemoryBlock {
 	if m == nil {
 		return nil
 	}
@@ -303,48 +275,11 @@ func renderMemory(m *achv1alpha1.MemorySpec) *MemoryBlock {
 	return out
 }
 
-// ResolveImage is the per-agent image resolution: agent wins when set, else the
-// profile's spec.achagent.image. Empty result blocks the agent (Render2 errors).
-func ResolveImage(agent, profile string) string {
-	if agent != "" {
-		return agent
-	}
-	return profile
-}
-
-// ResolveModel deep-merges the agent model over the profile model per field.
-// Params and Thinking are atomic: present on the agent → replace as a whole;
-// omitted → inherit the profile's (deliberate: an agent that changes name/type
-// but omits params inherits profile params). Result may alias profile memory —
-// read-only.
-func ResolveModel(agent, profile *achv1alpha1.ModelSpec) *achv1alpha1.ModelSpec {
-	if agent == nil {
-		return profile
-	}
-	if profile == nil {
-		return agent
-	}
-	out := *profile
-	if agent.Name != "" {
-		out.Name = agent.Name
-	}
-	if agent.Type != "" {
-		out.Type = agent.Type
-	}
-	if agent.Params != nil {
-		out.Params = agent.Params
-	}
-	if agent.Thinking != nil {
-		out.Thinking = agent.Thinking
-	}
-	return &out
-}
-
 // ResolveEngine deep-merges the agent engine over the profile engine per field. ForwardEnv
 // is atomic (replace as a whole when present on the agent); Compaction merges per-field via
 // ResolveCompaction, so an agent can flip e.g. just compaction.buffer. Result may alias
 // profile memory — read-only.
-func ResolveEngine(agent, profile *achv1alpha1.EngineSpec) *achv1alpha1.EngineSpec {
+func ResolveEngine(agent, profile *v1.EngineSpec) *v1.EngineSpec {
 	if agent == nil {
 		return profile
 	}
@@ -367,7 +302,7 @@ func ResolveEngine(agent, profile *achv1alpha1.EngineSpec) *achv1alpha1.EngineSp
 
 // ResolveCompaction deep-merges per field; Keep is one atomic sub-block (its only field,
 // tokens, has no independent meaning to override alone).
-func ResolveCompaction(agent, profile *achv1alpha1.CompactionSpec) *achv1alpha1.CompactionSpec {
+func ResolveCompaction(agent, profile *v1.CompactionSpec) *v1.CompactionSpec {
 	if agent == nil {
 		return profile
 	}
@@ -394,7 +329,7 @@ func ResolveCompaction(agent, profile *achv1alpha1.CompactionSpec) *achv1alpha1.
 // always carries a positive maxSteps — a zero on the agent side means "the agent's Limits
 // literal didn't set it", not an explicit override. Result may alias profile memory —
 // read-only.
-func ResolveLimits(agent, profile *achv1alpha1.LimitsSpec) *achv1alpha1.LimitsSpec {
+func ResolveLimits(agent, profile *v1.LimitsSpec) *v1.LimitsSpec {
 	if agent == nil {
 		return profile
 	}
@@ -430,7 +365,7 @@ func ResolveLimits(agent, profile *achv1alpha1.LimitsSpec) *achv1alpha1.LimitsSp
 // the profile's RetentionDays (and vice versa) — the wholesale sub-block swap this replaces
 // was exactly the Important review finding ("workspace.persistence: {enabled: false} loses
 // inherited retentionDays").
-func ResolvePersistence(agent, profile *achv1alpha1.WorkspacePersistenceSpec) *achv1alpha1.WorkspacePersistenceSpec {
+func ResolvePersistence(agent, profile *v1.WorkspacePersistenceSpec) *v1.WorkspacePersistenceSpec {
 	if agent == nil {
 		return profile
 	}
@@ -450,7 +385,7 @@ func ResolvePersistence(agent, profile *achv1alpha1.WorkspacePersistenceSpec) *a
 // ResolveSession deep-merges workspace.session per field; Persistence resolves recursively
 // via ResolvePersistence (same rationale: `session: {idleTimeoutSeconds: 0}` must not lose
 // the profile's session.persistence).
-func ResolveSession(agent, profile *achv1alpha1.WorkspaceSessionSpec) *achv1alpha1.WorkspaceSessionSpec {
+func ResolveSession(agent, profile *v1.WorkspaceSessionSpec) *v1.WorkspaceSessionSpec {
 	if agent == nil {
 		return profile
 	}
@@ -468,7 +403,7 @@ func ResolveSession(agent, profile *achv1alpha1.WorkspaceSessionSpec) *achv1alph
 // ResolveWorkspace deep-merges per field, including the nested Persistence/Session
 // sub-blocks (ResolvePersistence/ResolveSession) — NOT a wholesale sub-block swap, so a
 // partial agent override of one leaf field inherits every sibling field from the profile.
-func ResolveWorkspace(agent, profile *achv1alpha1.WorkspaceSpec) *achv1alpha1.WorkspaceSpec {
+func ResolveWorkspace(agent, profile *v1.WorkspaceSpec) *v1.WorkspaceSpec {
 	if agent == nil {
 		return profile
 	}
@@ -492,7 +427,7 @@ func ResolveWorkspace(agent, profile *achv1alpha1.WorkspaceSpec) *achv1alpha1.Wo
 
 // ResolveArtifacts deep-merges per field, Enabled included (now a pointer): an agent
 // overriding just MaxArtifactBytes/RetentionDays must not lose the profile's Enabled.
-func ResolveArtifacts(agent, profile *achv1alpha1.ArtifactsSpec) *achv1alpha1.ArtifactsSpec {
+func ResolveArtifacts(agent, profile *v1.ArtifactsSpec) *v1.ArtifactsSpec {
 	if agent == nil {
 		return profile
 	}
@@ -512,23 +447,10 @@ func ResolveArtifacts(agent, profile *achv1alpha1.ArtifactsSpec) *achv1alpha1.Ar
 	return &out
 }
 
-// ResolveAchBaseURL is the SINGLE ACH base-URL resolution: ACHAgent.spec.ach.baseUrl ??
-// AgentProfile.spec.achagent.ach.baseUrl ?? operator default (ACH_BASE_URL). Empty
-// result => the agent has no ACH to hydrate against and Render2 blocks it. Used
-// for both the config capability.ach.baseUrl and the container ACH_BASE_URL env.
-func ResolveAchBaseURL(agentAch, profileAch *achv1alpha1.AchSpec, envDefault string) string {
-	if agentAch != nil && agentAch.BaseURL != "" {
-		return agentAch.BaseURL
-	}
-	if profileAch != nil && profileAch.BaseURL != "" {
-		return profileAch.BaseURL
-	}
-	return envDefault
-}
-
-// ReferencedSecrets returns env/channel-secret NAME → sorted KEYS for key checks,
-// salted content hashing, and Secret watches. The ek identity Secret is handled separately.
-func ReferencedSecrets(p achv1alpha1.AgentProfile, a achv1alpha1.ACHAgent) map[string][]string {
+// ReferencedSecrets returns Secret NAME → sorted KEYS for key checks, salted content hashing
+// and Secret watches: env secretKeyRefs, channel and memory auth, model and MCP header
+// Secrets, and the ACH key.
+func ReferencedSecrets(p v1.AgentProfile, a v1.Agent) map[string][]string {
 	set := map[string]map[string]struct{}{}
 	add := func(name, key string) {
 		if set[name] == nil {
@@ -536,7 +458,7 @@ func ReferencedSecrets(p achv1alpha1.AgentProfile, a achv1alpha1.ACHAgent) map[s
 		}
 		set[name][key] = struct{}{}
 	}
-	for _, e := range ResolveEnv(a.Spec.Env, p.Spec.Env) {
+	for _, e := range ResolveEnv(a.Spec.Env, p.Spec.Control.Env) {
 		if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {
 			add(e.ValueFrom.SecretKeyRef.Name, e.ValueFrom.SecretKeyRef.Key)
 		}
@@ -556,6 +478,23 @@ func ReferencedSecrets(p achv1alpha1.AgentProfile, a achv1alpha1.ACHAgent) map[s
 	}
 	if ref := MemorySecretEnv(a); ref != nil {
 		add(ref.SecretName, ref.Key)
+	}
+	if st := a.Spec.Standalone; st != nil {
+		for _, h := range st.Model.Headers {
+			if h.SecretKeyRef != nil {
+				add(h.SecretKeyRef.Name, h.SecretKeyRef.Key)
+			}
+		}
+		for _, srv := range st.McpServers {
+			for _, h := range srv.Headers {
+				if h.SecretKeyRef != nil {
+					add(h.SecretKeyRef.Name, h.SecretKeyRef.Key)
+				}
+			}
+		}
+	}
+	if ach := a.Spec.Ach; ach != nil {
+		add(ach.KeySecretRef.Name, ach.KeySecretRef.Key)
 	}
 	out := make(map[string][]string, len(set))
 	for name, keys := range set {

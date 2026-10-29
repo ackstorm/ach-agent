@@ -4,16 +4,9 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
-
-// IdentitySpec carries the ACH ek_ (config: injected as ACH_SECRET_IDENTITY env via
-// secretKeyRef — the alias name ach.identity.env names in the rendered config).
-type IdentitySpec struct {
-	// SecretRef points at a Secret holding the ek_ (create it yourself, e.g. `ach-cli keys create`).
-	// +kubebuilder:validation:Required
-	SecretRef SecretKeyRef `json:"secretRef"`
-}
 
 // ExcludeSpec is the governance gate ABOVE the model (config: capability.filter.exclude).
 type ExcludeSpec struct {
@@ -29,18 +22,6 @@ type ExcludeSpec struct {
 type FilterSpec struct {
 	// +optional
 	Exclude *ExcludeSpec `json:"exclude,omitempty"`
-}
-
-// CapabilitySpec is the per-agent capability block (config: capability{type:ach,ach.environment,filter}).
-type CapabilitySpec struct {
-	// Environment is the ACH Hub Environment name, for documentation/intent only.
-	// The ek already scopes the environment server-side, and the harness reads the
-	// hydrated environment (manifest.environment) — NOT this field. Optional: omit
-	// to let the ek decide; when set it is rendered but never authoritative.
-	// +optional
-	Environment string `json:"environment,omitempty"`
-	// +optional
-	Filter *FilterSpec `json:"filter,omitempty"`
 }
 
 // PromptSystemSpec is a discriminated persona source (config: prompt.system).
@@ -281,7 +262,7 @@ type PrepareSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Script string `json:"script"`
-	// ForwardEnv selects names from the merged AgentProfile.spec.env + ACHAgent.spec.env.
+	// ForwardEnv selects names from the merged AgentProfile.spec.control.env + Agent.spec.env.
 	// Literal values become the hook's env; secretKeyRef values become its secretEnv via
 	// generated Pod aliases. Unknown names are ignored and remain unset.
 	// +optional
@@ -357,62 +338,6 @@ type ChannelSpec struct {
 	Script *PrepareSpec `json:"script,omitempty"`
 }
 
-// ExposeSpec controls how an agent is reachable. An agent is fully private
-// (control Pod only, no Service) unless it explicitly opts in.
-type ExposeSpec struct {
-	// Service creates the ClusterIP Service (achagent-<name>) so in-cluster
-	// peers (a2a) or your own ingress can reach the harness. Required for any
-	// inbound HTTP channel (webhook/a2a) to be reachable at all.
-	// +optional
-	Service bool `json:"service,omitempty"`
-}
-
-// McpServerSpec is one harness-managed MCP server (rendered into config
-// mcpServers[<name>]). Both variants are PASSTHROUGH (opencode launches a stdio
-// subprocess / connects to a remote endpoint directly, NOT via the ACH proxy). The
-// operator renders the list into the config's mcpServers map keyed by name. Distinct
-// from the Environment's ACH-fronted MCP set (hydrated as runtime.mcpServers) —
-// different namespace, no collision.
-// +kubebuilder:validation:XValidation:rule="(self.type=='local' && has(self.local)) || (self.type=='remote' && has(self.remote))",message="mcpServers: the block matching type is required"
-type McpServerSpec struct {
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	Name string `json:"name"`
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=local;remote
-	Type string `json:"type"`
-	// +optional
-	Local *LocalMcpSpec `json:"local,omitempty"`
-	// +optional
-	Remote *RemoteMcpSpec `json:"remote,omitempty"`
-}
-
-// LocalMcpSpec is a passthrough stdio MCP server opencode launches as a subprocess.
-// env lists extra var NAMES to forward to the subprocess (ACH_*/ek_ are stripped
-// defensively); wire their values into the pod via profile/agent spec.env.
-type LocalMcpSpec struct {
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	Command string `json:"command"`
-	// +optional
-	Args []string `json:"args,omitempty"`
-	// +optional
-	Env []string `json:"env,omitempty"`
-}
-
-// RemoteMcpSpec is a passthrough remote MCP endpoint opencode connects to directly.
-// headers values are ${env:NAME} refs (NAMES, never secret values); wire the env into
-// the pod via profile/agent spec.env. SECURITY: opencode receives the
-// resolved header, so a co-resident same-uid agent CAN read it — front the server via
-// ACH hydrate instead if that is unacceptable.
-type RemoteMcpSpec struct {
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	URL string `json:"url"`
-	// +optional
-	Headers map[string]string `json:"headers,omitempty"`
-}
-
 // HookSpec is a script run inside the agent's execution environment (the mini-harness),
 // with only engine.forwardEnv variables. It carries no forwardEnv of its own: a hook never
 // gets channel credentials.
@@ -454,19 +379,186 @@ type HooksSpec struct {
 	SessionSuspend *HookSpec `json:"sessionSuspend,omitempty"`
 }
 
-// ACHAgentSpec defines the desired state of an agent instance.
-// +kubebuilder:validation:XValidation:rule="has(self.ach) && has(self.ach.identity)",message="spec.ach.identity is required"
-type ACHAgentSpec struct {
+// HeaderValue is one HTTP header value: a Secret key or a literal.
+// +kubebuilder:validation:XValidation:rule="has(self.secretKeyRef) != has(self.value)",message="exactly one of secretKeyRef or value must be set"
+type HeaderValue struct {
+	// +optional
+	SecretKeyRef *SecretKeyRef `json:"secretKeyRef,omitempty"`
+	// +optional
+	Value *string `json:"value,omitempty"`
+}
+
+// ModelLimitsSpec states the model's context and output windows when the endpoint does not
+// advertise them.
+type ModelLimitsSpec struct {
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Minimum=1
+	Context int64 `json:"context"`
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Minimum=1
+	Output int64 `json:"output"`
+}
+
+// StandaloneModelSpec is the model endpoint of a standalone Agent. Every header is stated by
+// the user; there are no defaults per api.
+type StandaloneModelSpec struct {
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// API is the wire format of the endpoint.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=openai;anthropic;gemini
+	API string `json:"api"`
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	BaseURL string `json:"baseUrl"`
+	// Headers are sent to the endpoint by the control pod; the sandbox never sees them. Header
+	// names are case-insensitive and unique; host, content-length, transfer-encoding,
+	// connection and x-ach-* are reserved (rejected when the Agent is rendered).
+	// +optional
+	// +kubebuilder:validation:MaxProperties=64
+	Headers map[string]HeaderValue `json:"headers,omitempty"`
+	// Params is an open, unvalidated dict splatted to the model client.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Params *apiextensionsv1.JSON `json:"params,omitempty"`
+	// +optional
+	Thinking *ThinkingSpec `json:"thinking,omitempty"`
+	// +optional
+	Limits *ModelLimitsSpec `json:"limits,omitempty"`
+}
+
+// StandaloneMcpServerSpec is one remote MCP server of a standalone Agent.
+type StandaloneMcpServerSpec struct {
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9_-]{0,62}$`
+	Name string `json:"name"`
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	URL string `json:"url"`
+	// +optional
+	// +kubebuilder:validation:MaxProperties=64
+	Headers map[string]HeaderValue `json:"headers,omitempty"`
+}
+
+// StandaloneSpec is the capability source of an Agent that talks to its own model and MCP
+// servers.
+type StandaloneSpec struct {
+	// +kubebuilder:validation:Required
+	Model StandaloneModelSpec `json:"model"`
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=64
+	McpServers []StandaloneMcpServerSpec `json:"mcpServers,omitempty"`
+}
+
+// AchModelSpec selects the ACH-served model.
+type AchModelSpec struct {
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// API is the wire format of the ACH model route.
+	// +kubebuilder:default=openai
+	// +kubebuilder:validation:Enum=openai;anthropic;gemini
+	API string `json:"api,omitempty"`
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Params *apiextensionsv1.JSON `json:"params,omitempty"`
+	// +optional
+	Thinking *ThinkingSpec `json:"thinking,omitempty"`
+}
+
+// AchServerSpec is the capability source of an Agent hydrated from ACH.
+type AchServerSpec struct {
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	BaseURL string `json:"baseUrl"`
+	// Environment is the ACH Hub Environment name. The key already scopes the environment
+	// server-side.
+	// +optional
+	Environment string `json:"environment,omitempty"`
+	// KeySecretRef points at a Secret holding the ACH key.
+	// +kubebuilder:validation:Required
+	KeySecretRef SecretKeyRef `json:"keySecretRef"`
+	// +kubebuilder:validation:Required
+	Model AchModelSpec `json:"model"`
+}
+
+// AgentOpenShellSpec is the Agent's own sandbox policy.
+type AgentOpenShellSpec struct {
+	// Policy is merged over the profile's policy: network rules by name, filesystem lists
+	// concatenated, scalars agent over profile. Rule names starting with ach-agent- are
+	// reserved.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Type=object
+	Policy *apiextensionsv1.JSON `json:"policy,omitempty"`
+}
+
+// AgentSandboxSpec holds the per-Agent sandbox overrides.
+type AgentSandboxSpec struct {
+	// +optional
+	OpenShell *AgentOpenShellSpec `json:"openshell,omitempty"`
+}
+
+// ParentRef is the Gateway an HTTPRoute attaches to.
+type ParentRef struct {
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+	// +optional
+	SectionName string `json:"sectionName,omitempty"`
+}
+
+// RouteSpec publishes the Agent through a Gateway API HTTPRoute.
+type RouteSpec struct {
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Hostname string `json:"hostname"`
+	// +kubebuilder:default="/"
+	// +optional
+	Path string `json:"path,omitempty"`
+	// ParentRef defaults to the operator's configured Gateway.
+	// +optional
+	ParentRef *ParentRef `json:"parentRef,omitempty"`
+}
+
+// ExposeSpec controls how an Agent is reachable. An Agent is fully private (control Pod
+// only, no Service) unless it opts in.
+// +kubebuilder:validation:XValidation:rule="!has(self.route) || self.service",message="expose.route requires expose.service"
+type ExposeSpec struct {
+	// Service creates the ClusterIP Service so in-cluster peers (a2a) or an ingress can reach
+	// the control pod. Required for any inbound HTTP channel to be reachable at all.
+	// +optional
+	Service bool `json:"service,omitempty"`
+	// +optional
+	Route *RouteSpec `json:"route,omitempty"`
+}
+
+// AgentSpec defines the desired state of an Agent.
+// +kubebuilder:validation:XValidation:rule="self.capabilityServer == 'standalone' ? (has(self.standalone) && !has(self.ach)) : (has(self.ach) && !has(self.standalone))",message="capabilityServer selects exactly one of standalone/ach"
+// +kubebuilder:validation:XValidation:rule="!has(self.filter) || !has(self.filter.exclude) || !has(self.filter.exclude.skills) || size(self.filter.exclude.skills) == 0 || self.capabilityServer == 'ach'",message="filter.exclude.skills requires capabilityServer ach"
+type AgentSpec struct {
 	// +kubebuilder:validation:Required
 	ProfileRef LocalObjectRef `json:"profileRef"`
-	// AgentDefaults are the inline per-agent overrides of the profile's
-	// spec.achagent defaults (image/ach/model/engine/limits/health). Per-field
-	// deep merge: a set field here wins, an omitted one inherits the profile's.
-	// ach.identity is required here (object-level CEL): the credential is the
-	// agent's own, never an implicit shared profile default (contract §5).
+	// CapabilityServer selects where the model and tools come from.
+	// +kubebuilder:default=standalone
+	// +kubebuilder:validation:Enum=standalone;ach
+	CapabilityServer string `json:"capabilityServer,omitempty"`
+	// +optional
+	Standalone *StandaloneSpec `json:"standalone,omitempty"`
+	// +optional
+	Ach *AchServerSpec `json:"ach,omitempty"`
+	// Filter is the governance gate above the model, in both modes.
+	// +optional
+	Filter *FilterSpec `json:"filter,omitempty"`
+	// AgentDefaults are the inline per-agent overrides of the profile's spec.defaults.
+	// Per-field deep merge: a set field here wins, an omitted one inherits the profile's.
 	AgentDefaults `json:",inline"`
-	// Env are pod-level environment variables merged over AgentProfile.spec.env by name.
-	// An agent entry replaces the complete inherited EnvVar. Reserved ACH_* names are
+	// Env are pod-level environment variables merged over AgentProfile.spec.control.env by
+	// name. An agent entry replaces the complete inherited EnvVar. Reserved ACH_* names are
 	// forbidden; only literal values and secretKeyRef sources are supported.
 	// +optional
 	// +listType=map
@@ -479,29 +571,24 @@ type ACHAgentSpec struct {
 	Prompt *AgentPromptSpec `json:"prompt,omitempty"`
 	// +optional
 	Memory *MemorySpec `json:"memory,omitempty"`
-	// Hooks are agent-level workspace and session lifecycle hooks, run
-	// inside the mini-harness with only engine.forwardEnv variables.
+	// Hooks are agent-level workspace and session lifecycle hooks, run inside the sandbox
+	// with only engine.forwardEnv variables.
 	// +optional
 	Hooks *HooksSpec `json:"hooks,omitempty"`
-	// Expose controls reachability (Service + gateway route). Omit for a fully
-	// private agent (no Service, no public URL).
-	// +optional
-	Expose *ExposeSpec `json:"expose,omitempty"`
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1
 	// +listType=map
 	// +listMapKey=name
 	Channels []ChannelSpec `json:"channels"`
-	// MCPServers are harness-managed MCP servers (local / remote) rendered into the
-	// config's mcpServers map. Presence = enabled; omit for none.
 	// +optional
-	// +listType=map
-	// +listMapKey=name
-	MCPServers []McpServerSpec `json:"mcpServers,omitempty"`
+	Sandbox *AgentSandboxSpec `json:"sandbox,omitempty"`
+	// Expose controls reachability. Omit for a fully private agent.
+	// +optional
+	Expose *ExposeSpec `json:"expose,omitempty"`
 }
 
-// ACHAgentStatus is the observed state.
-type ACHAgentStatus struct {
+// AgentStatus is the observed state.
+type AgentStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 	// +optional
@@ -512,31 +599,31 @@ type ACHAgentStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced,shortName=agent
+// +kubebuilder:resource:scope=Namespaced
 // +kubebuilder:printcolumn:name="Profile",type=string,JSONPath=".spec.profileRef.name"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=".status.conditions[?(@.type=='Ready')].status"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
-// +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 50",message="ACHAgent name must be <= 50 chars (operator derives <=63-char child names)"
-// +kubebuilder:validation:XValidation:rule="!self.metadata.name.matches('-[0-9a-f]{20}$')",message="ACHAgent name must not end in -<20 hex> (reserved for the runtime's agent-<name>-<20 hex> workspace names)"
+// +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 50",message="Agent name must be <= 50 chars (operator derives <=63-char child names)"
+// +kubebuilder:validation:XValidation:rule="!self.metadata.name.matches('-[0-9a-f]{20}$')",message="Agent name must not end in -<20 hex> (reserved for the runtime's agent-<name>-<20 hex> workspace names)"
 
-// ACHAgent is a running agent instance.
-type ACHAgent struct {
+// Agent is a running agent instance.
+type Agent struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ACHAgentSpec   `json:"spec,omitempty"`
-	Status ACHAgentStatus `json:"status,omitempty"`
+	Spec   AgentSpec   `json:"spec,omitempty"`
+	Status AgentStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// ACHAgentList contains a list of ACHAgent.
-type ACHAgentList struct {
+// AgentList contains a list of Agent.
+type AgentList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []ACHAgent `json:"items"`
+	Items           []Agent `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&ACHAgent{}, &ACHAgentList{})
+	SchemeBuilder.Register(&Agent{}, &AgentList{})
 }

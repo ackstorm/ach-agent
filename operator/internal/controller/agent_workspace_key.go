@@ -23,7 +23,7 @@ func workspaceKeySecretName(uid string) string { return "ach-agent-key-" + uid }
 
 // ensureWorkspaceKey ensures the legacy Harness key exists without ever returning
 // or replacing its secret value. K is the UTF-8 encoding of the stored hex string.
-func (r *ACHAgentReconciler) ensureWorkspaceKey(ctx context.Context, a *achv1alpha1.ACHAgent) error {
+func (r *AgentReconciler) ensureWorkspaceKey(ctx context.Context, a *achv1alpha1.Agent) error {
 	key := types.NamespacedName{Namespace: a.Namespace, Name: workspaceKeySecretName(string(a.UID))}
 	readAndValidate := func() error {
 		var existing corev1.Secret
@@ -31,7 +31,7 @@ func (r *ACHAgentReconciler) ensureWorkspaceKey(ctx context.Context, a *achv1alp
 			return err
 		}
 		if !workspaceKeyOwnedBy(&existing, a) {
-			return fmt.Errorf("workspace key Secret is not controlled by this ACHAgent")
+			return fmt.Errorf("workspace key Secret is not controlled by this Agent")
 		}
 		if len(existing.Data[workspaceKeyDataKey]) == 0 {
 			return fmt.Errorf("workspace key Secret has no nonempty key")
@@ -70,7 +70,7 @@ func (r *ACHAgentReconciler) ensureWorkspaceKey(ctx context.Context, a *achv1alp
 	return nil
 }
 
-func workspaceKeyOwnedBy(secret *corev1.Secret, a *achv1alpha1.ACHAgent) bool {
+func workspaceKeyOwnedBy(secret *corev1.Secret, a *achv1alpha1.Agent) bool {
 	for _, ref := range secret.OwnerReferences {
 		if ref.Controller != nil && *ref.Controller && ref.UID == a.UID && ref.Name == a.Name && ref.Kind == achAgentOwnerKind && ref.APIVersion == achv1alpha1.GroupVersion.String() {
 			return true

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ach-runtime.ackstorm.ai/schemas/ach-workspace-config-v2.schema.json",
+  "$id": "https://ach-runtime.ackstorm.ai/schemas/ach-workspace-config-v3.schema.json",
   "title": "RuntimeConfig",
   "$defs": {
     "A2AAuthBlock": {
@@ -39,42 +39,6 @@
         "auth"
       ],
       "title": "A2ABlock",
-      "type": "object"
-    },
-    "AchBlock": {
-      "additionalProperties": false,
-      "properties": {
-        "baseUrl": {
-          "title": "Baseurl",
-          "type": "string"
-        },
-        "environment": {
-          "title": "Environment",
-          "type": "string"
-        },
-        "identity": {
-          "$ref": "#/$defs/SecretAlias"
-        },
-        "capability": {
-          "$ref": "#/$defs/AchCapabilityBlock"
-        }
-      },
-      "required": [
-        "baseUrl",
-        "environment",
-        "identity"
-      ],
-      "title": "AchBlock",
-      "type": "object"
-    },
-    "AchCapabilityBlock": {
-      "additionalProperties": false,
-      "properties": {
-        "filter": {
-          "$ref": "#/$defs/AchCapabilityFilter"
-        }
-      },
-      "title": "AchCapabilityBlock",
       "type": "object"
     },
     "AchCapabilityFilter": {
@@ -223,6 +187,33 @@
       "title": "AchMemoryParams",
       "type": "object"
     },
+    "AchServer": {
+      "additionalProperties": false,
+      "properties": {
+        "baseUrl": {
+          "title": "Baseurl",
+          "type": "string"
+        },
+        "environment": {
+          "title": "Environment",
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/$defs/SecretAlias"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelBlock"
+        }
+      },
+      "required": [
+        "baseUrl",
+        "environment",
+        "key",
+        "model"
+      ],
+      "title": "AchServer",
+      "type": "object"
+    },
     "AgentIdentity": {
       "additionalProperties": false,
       "description": "`agent.{name,namespace,uid}` \u2014 namespace is an opaque, stable, host-assigned scope;\nuid is the canonical lowercase UUID.",
@@ -273,6 +264,49 @@
         "retentionDays"
       ],
       "title": "ArtifactsBlock",
+      "type": "object"
+    },
+    "CapabilityBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "server": {
+          "enum": [
+            "standalone",
+            "ach"
+          ],
+          "title": "Server",
+          "type": "string"
+        },
+        "standalone": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StandaloneServer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ach": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AchServer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "filter": {
+          "$ref": "#/$defs/AchCapabilityFilter"
+        }
+      },
+      "required": [
+        "server"
+      ],
+      "title": "CapabilityBlock",
       "type": "object"
     },
     "ChannelConfig": {
@@ -1035,6 +1069,27 @@
       "title": "ModelBlock",
       "type": "object"
     },
+    "ModelLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "context": {
+          "exclusiveMinimum": 0,
+          "title": "Context",
+          "type": "integer"
+        },
+        "output": {
+          "exclusiveMinimum": 0,
+          "title": "Output",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "context",
+        "output"
+      ],
+      "title": "ModelLimits",
+      "type": "object"
+    },
     "PersistenceBlock": {
       "additionalProperties": false,
       "properties": {
@@ -1180,7 +1235,7 @@
     },
     "SecretAlias": {
       "additionalProperties": false,
-      "description": "A private environment-variable NAME the Harness/control pod resolves \u2014 never a value.\n\nWire shape for `ach.identity`, `handoff.secretEnv.<name>`: `{\"env\": \"ACH_SECRET_...\"}`.",
+      "description": "A private environment-variable NAME the Harness/control pod resolves \u2014 never a value.\n\nWire shape for `capability.ach.key`, `handoff.secretEnv.<name>`: `{\"env\": \"ACH_SECRET_...\"}`.",
       "properties": {
         "env": {
           "title": "Env",
@@ -1210,6 +1265,108 @@
         "persistence"
       ],
       "title": "SessionPolicyBlock",
+      "type": "object"
+    },
+    "StandaloneMcpServer": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        },
+        "headers": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SecretAlias"
+          },
+          "title": "Headers",
+          "type": "object"
+        }
+      },
+      "required": [
+        "name",
+        "url"
+      ],
+      "title": "StandaloneMcpServer",
+      "type": "object"
+    },
+    "StandaloneModel": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "openai",
+            "gemini",
+            "anthropic"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "baseUrl": {
+          "title": "Baseurl",
+          "type": "string"
+        },
+        "headers": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SecretAlias"
+          },
+          "title": "Headers",
+          "type": "object"
+        },
+        "params": {
+          "additionalProperties": true,
+          "title": "Params",
+          "type": "object"
+        },
+        "thinking": {
+          "$ref": "#/$defs/ThinkingBlock"
+        },
+        "limits": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelLimits"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "baseUrl"
+      ],
+      "title": "StandaloneModel",
+      "type": "object"
+    },
+    "StandaloneServer": {
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "$ref": "#/$defs/StandaloneModel"
+        },
+        "mcpServers": {
+          "items": {
+            "$ref": "#/$defs/StandaloneMcpServer"
+          },
+          "title": "Mcpservers",
+          "type": "array"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "title": "StandaloneServer",
       "type": "object"
     },
     "SystemAch": {
@@ -1457,7 +1614,7 @@
   "description": "The complete resolved wire object `W` (contract \u00a75/\u00a711) minus no field at all.\n\n`configVersion` IS a member of this model (and of W) \u2014 compute_config_version() only\nexcludes it from the bytes being hashed, it is not absent from the schema.",
   "properties": {
     "schemaVersion": {
-      "const": "workspace-v2",
+      "const": "workspace-v3",
       "title": "Schemaversion",
       "type": "string"
     },
@@ -1469,11 +1626,8 @@
       "title": "Configversion",
       "type": "string"
     },
-    "ach": {
-      "$ref": "#/$defs/AchBlock"
-    },
-    "model": {
-      "$ref": "#/$defs/ModelBlock"
+    "capability": {
+      "$ref": "#/$defs/CapabilityBlock"
     },
     "engine": {
       "$ref": "#/$defs/EngineBlock"
@@ -1527,8 +1681,7 @@
     "schemaVersion",
     "agent",
     "configVersion",
-    "ach",
-    "model",
+    "capability",
     "engine",
     "limits",
     "workspace",

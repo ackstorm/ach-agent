@@ -7,12 +7,17 @@ import (
 	"flag"
 	"os"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	achv1alpha1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
 	"github.com/ackstorm/ach-agent/operator/internal/controller"
@@ -30,6 +35,27 @@ func envOr(key, def string) string {
 	return def
 }
 
+// httpRouteServed reports whether the cluster serves gateway.networking.k8s.io/v1 httproutes.
+func httpRouteServed(cfg *rest.Config) (bool, error) {
+	dc, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return false, err
+	}
+	list, err := dc.ServerResourcesForGroupVersion(gatewayv1.GroupVersion.String())
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, r := range list.APIResources {
+		if r.Name == "httproutes" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func main() {
 	var metricsAddr, probeAddr string
 	var leaderElect bool
@@ -43,7 +69,7 @@ func main() {
 	setupLog := ctrl.Log.WithName("setup")
 
 	scheme := runtime.NewScheme()
-	for _, add := range []func(*runtime.Scheme) error{clientgoscheme.AddToScheme, achv1alpha1.AddToScheme} {
+	for _, add := range []func(*runtime.Scheme) error{clientgoscheme.AddToScheme, achv1alpha1.AddToScheme, gatewayv1.Install} {
 		if err := add(scheme); err != nil {
 			setupLog.Error(err, "register scheme")
 			os.Exit(1)
@@ -76,10 +102,21 @@ func main() {
 		Prefix:                envOr("ACH_AGENT_STORAGE_S3_PREFIX", "ach"),
 		CredentialsSecretName: os.Getenv("ACH_AGENT_STORAGE_S3_CREDENTIALS_SECRET"),
 	}
-	if err := (&controller.ACHAgentReconciler{
+	routeAvailable, err := httpRouteServed(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "discover Gateway API")
+		os.Exit(1)
+	}
+	if err := (&controller.AgentReconciler{
 		Client: mgr.GetClient(), APIReader: mgr.GetAPIReader(), Scheme: mgr.GetScheme(),
-		RuntimeStorageOptions: storage,
-		Sandboxes:             sandboxes,
+		Storage:   storage,
+		Sandboxes: sandboxes,
+		RouteParent: achv1alpha1.ParentRef{
+			Name:        os.Getenv("ACH_AGENT_ROUTE_PARENT_NAME"),
+			Namespace:   os.Getenv("ACH_AGENT_ROUTE_PARENT_NAMESPACE"),
+			SectionName: os.Getenv("ACH_AGENT_ROUTE_PARENT_SECTION"),
+		},
+		HTTPRouteAvailable: routeAvailable,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "register Agent controller")
 		os.Exit(1)

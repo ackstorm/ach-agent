@@ -15,79 +15,16 @@ type LocalObjectRef struct {
 	Name string `json:"name"`
 }
 
-// AchSpec is the ACH platform block (config: ach{baseUrl,environment,identity,capability},
-// contract §5). It is the SAME type used by both AgentProfile.spec.achagent.ach (shared
-// defaults: baseUrl/environment/capability) and ACHAgent's inline AgentDefaults override
-// (adds the required identity credential) — per-field deep merge via ResolveAch, exactly
-// like model/engine/limits. identity is never a shared profile default: AgentProfile forbids
-// setting it (object-level CEL on AgentProfileSpec); ACHAgentSpec requires it.
-//
-// BaseURL resolves as ACHAgent.spec.ach.baseUrl ?? AgentProfile.spec.achagent.ach.baseUrl ??
-// operator ACH_BASE_URL env (agentrender.ResolveAchBaseURL). An empty result blocks the agent.
-type AchSpec struct {
-	// +optional
-	BaseURL string `json:"baseUrl,omitempty"`
-	// Environment is the ACH Hub Environment name, for documentation/intent only — see
-	// CapabilitySpec.Environment's original doc: the ek already scopes the environment
-	// server-side and the harness reads the hydrated environment, never this field. A
-	// POINTER (unlike most other optional strings here): AgentProfile.spec.achagent.ach may
-	// set a shared default (ResolveAch), and an agent needs to be able to override it with an
-	// explicit empty string — indistinguishable from "unset" on a plain omitempty string.
-	// +optional
-	Environment *string `json:"environment,omitempty"`
-	// Identity carries the ACH ek_ (injected as ACH_TOKEN env via secretKeyRef). Required
-	// on the agent (ACHAgentSpec object-level CEL); forbidden on the profile (AgentProfileSpec
-	// object-level CEL) — a credential is never an implicit shared profile default.
-	// +optional
-	Identity *IdentitySpec `json:"identity,omitempty"`
-	// +optional
-	Capability *CapabilitySpec `json:"capability,omitempty"`
-}
-
-// ModelSpec selects the ACH-served model (config: model{name,type,params,thinking}).
-// Name/Type are optional authoring fields (a profile or an agent may supply either
-// alone via per-field merge, ResolveModel) — Render2 requires the EFFECTIVE
-// (post-merge) name to be nonempty and defaults an unset effective type to openai
-// (ACH model aliases resolve on LiteLLM's /v1); neither is a CRD-level requirement,
-// since either field may legitimately come from the sibling.
-type ModelSpec struct {
-	// +optional
-	// +kubebuilder:validation:MinLength=1
-	Name string `json:"name,omitempty"`
-	// +optional
-	// +kubebuilder:validation:Enum=openai;gemini;anthropic
-	Type string `json:"type,omitempty"`
-	// Params is an open, unvalidated dict splatted to the model client.
-	// +optional
-	// +kubebuilder:pruning:PreserveUnknownFields
-	Params *apiextensionsv1.JSON `json:"params,omitempty"`
-	// Thinking is the normalized model-level reasoning intent (config: model.thinking).
-	// Free-form (no Enum) — ach-agent's Pydantic ThinkingBlock is the single enforcer
-	// (D-2 precedent): effort one of minimal|low|medium|high|xhigh, requires enabled=true.
-	// +optional
-	Thinking *ThinkingSpec `json:"thinking,omitempty"`
-}
-
 // AgentDefaults is the shared set of profile defaults that an agent may override.
-// AgentProfile.spec.achagent names these defaults, and ACHAgentSpec embeds this
-// type inline. Resolution is a per-field deep merge: a field set on the agent
-// wins, while an omitted field inherits from the profile. Slices, maps, and
-// nested blocks such as engine.pi and cost are atomic and are not recursively merged.
-// The resolvers are the source of truth for this behavior. Image is required on
-// the profile, but optional on the agent and inherited when omitted.
+// AgentProfile.spec.defaults names these defaults, and AgentSpec embeds this type inline.
+// Resolution is a per-field deep merge: a field set on the agent wins, while an omitted
+// field inherits from the profile. Slices, maps, and nested blocks are atomic and are not
+// recursively merged. The resolvers are the source of truth for this behavior.
 type AgentDefaults struct {
-	// +optional
-	Image string `json:"image,omitempty"`
-	// +optional
-	Ach *AchSpec `json:"ach,omitempty"`
-	// +optional
-	Model *ModelSpec `json:"model,omitempty"`
 	// +optional
 	Engine *EngineSpec `json:"engine,omitempty"`
 	// +optional
 	Limits *LimitsSpec `json:"limits,omitempty"`
-	// +optional
-	Health *HealthSpec `json:"health,omitempty"`
 	// Workspace is the Harness Workspace/session lifecycle policy (contract §3/§7).
 	// +optional
 	Workspace *WorkspaceSpec `json:"workspace,omitempty"`
@@ -194,20 +131,6 @@ type LimitsSpec struct {
 	MaxSteps *int64 `json:"maxSteps,omitempty"`
 }
 
-// HealthSpec is the harness HTTP surface (config: health{host,port}). In standalone
-// placement it drives the Service targetPort and the container probes. In distributed
-// placement it is NOT used by the operator: the Service targets channels on 8080 and every
-// role is probed over HTTP on a fixed port (channels 8080, harness 8090, engine 8081)
-// bound by ach-agent. Harness default port is 8080.
-type HealthSpec struct {
-	// +optional
-	Host string `json:"host,omitempty"`
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	Port int32 `json:"port,omitempty"`
-}
-
 // WorkspacePersistenceSpec is a Workspace or session durability switch (contract §7:
 // workspace.persistence, workspace.session.persistence). This is the Harness/Storage logical
 // policy — distinct from AgentProfileSpec.Persistence, which is the operator's ephemeral
@@ -293,38 +216,35 @@ type PersistenceSpec struct {
 	// +optional
 	// +kubebuilder:default="/var/lib/ach-agent"
 	MountPath string `json:"mountPath,omitempty"`
-	// RetainPolicy controls PVC lifecycle on ACHAgent deletion. Retain → the PVC is created
+	// RetainPolicy controls PVC lifecycle on Agent deletion. Retain → the PVC is created
 	// WITHOUT a controller owner-ref, so it survives agent deletion (operator-managed cleanup).
 	// +optional
 	// +kubebuilder:validation:Enum=Retain;Delete
 	RetainPolicy *string `json:"retainPolicy,omitempty"`
 }
 
-// AgentProfileSpec is the reusable infra + defaults half. Agent-scoped defaults
-// (image/ach/model/engine/limits/health/workspace/artifacts) live under the named achagent
-// block and deep-merge with an ACHAgent's inline AgentDefaults (agent field wins);
-// everything else here is profile-only infrastructure an agent cannot override.
-// +kubebuilder:validation:XValidation:rule="!has(self.achagent.ach) || !has(self.achagent.ach.identity)",message="spec.achagent.ach.identity is forbidden on a profile — a credential is never a shared implicit default (contract §5)"
-type AgentProfileSpec struct {
-	// Achagent holds the agent-overridable defaults. image is required here
-	// (object-level CEL); the other fields are optional defaults.
+// ControlSpec is the infrastructure of the control pod every Agent using the profile runs.
+type ControlSpec struct {
+	// Image is the control image (runtime role control).
 	// +kubebuilder:validation:Required
-	Achagent AgentDefaults `json:"achagent"`
-	// +optional
-	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
-	// ControlServiceAccountName, when set, is an existing ServiceAccount that the control
-	// (Harness) pods of every ACHAgent using this profile run as, instead of the per-agent
-	// ach-harness-<uid>. The operator does not create, own or delete it: it must already
-	// exist in the agent's namespace (e.g. one bound to a cloud identity such as EKS Pod
-	// Identity, which has no wildcards). Each agent still gets its own Role/RoleBinding,
-	// bound to this ServiceAccount. Empty keeps the per-agent ach-harness-<uid>.
+	// +kubebuilder:validation:MinLength=1
+	Image string `json:"image"`
+	// ServiceAccountName, when set, is an existing ServiceAccount the control pods run as,
+	// instead of the per-Agent ach-agent-control-<uid>. The operator does not create, own or
+	// delete it: it must already exist in the Agent's namespace.
 	// +optional
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
-	ControlServiceAccountName string `json:"controlServiceAccountName,omitempty"`
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
-	// Env are pod-level environment variables inherited by ACHAgents using this profile.
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+	// +optional
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+	// Env are pod-level environment variables inherited by Agents using this profile.
 	// Reserved ACH_* names are forbidden because the operator owns that namespace. Only
 	// literal values and secretKeyRef sources are supported.
 	// +optional
@@ -334,57 +254,63 @@ type AgentProfileSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self.all(e, !has(e.valueFrom) || (has(e.valueFrom.secretKeyRef) && !has(e.valueFrom.configMapKeyRef) && !has(e.valueFrom.fieldRef) && !has(e.valueFrom.resourceFieldRef) && !has(e.valueFrom.fileKeyRef)))",message="env valueFrom supports only secretKeyRef"
 	// +kubebuilder:validation:XValidation:rule="self.all(e, !has(e.valueFrom) || !has(e.value) || e.value == '')",message="env value and valueFrom are mutually exclusive"
 	Env []corev1.EnvVar `json:"env,omitempty"`
-	// +optional
-	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
-	// +optional
-	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
-	// +optional
-	Persistence *PersistenceSpec `json:"persistence,omitempty"`
+	// TerminationGracePeriodSeconds must be at least workspace.shutdownTimeoutSeconds + 15
+	// (the runtime drain plus margin); the operator reports InvalidGracePeriod otherwise.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty"`
-	// Execution is the contract §11 execution-role infrastructure (the mini-harness pod
-	// Harness creates per Workspace): image, resources, ephemeral storage and scheduling for
-	// THAT role, distinct from achagent.image/spec.resources above, which remain the
-	// CONTROL pod's (Channels+Harness) settings. Root ruling 2026-10-01: a profile-only
-	// section, not a new CR/WorkspaceProfile kind.
-	// +kubebuilder:validation:Required
-	Execution ExecutionInfraSpec `json:"execution"`
+	// Persistence is the control unit's PVC.
+	// +optional
+	Persistence *PersistenceSpec `json:"persistence,omitempty"`
 }
 
-// ExecutionInfraSpec is AgentProfileSpec.Execution (config: infrastructure.execution,
-// contract §11). image and ephemeralStorage are required — no operator-wide default
-// (root ruling: explicit required effective policy, not a guessed renderer default).
-type ExecutionInfraSpec struct {
+// SandboxResources maps onto the OpenShell sandbox template resources.
+type SandboxResources struct {
+	// +optional
+	CPU string `json:"cpu,omitempty"`
+	// +optional
+	Memory string `json:"memory,omitempty"`
+}
+
+// OpenShellSpec is the OpenShell sandbox every Workspace of the profile's Agents runs in.
+type OpenShellSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
 	// +optional
-	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
-	// EphemeralStorage is a Kubernetes resource.Quantity string (e.g. "2Gi") for the
-	// execution pod's ephemeral-storage resource request/limit.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	EphemeralStorage string `json:"ephemeralStorage"`
-	// +optional
-	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
-	// +optional
-	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
-	// +optional
-	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
-	// +optional
-	// +kubebuilder:validation:Minimum=0
-	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty"`
-	// ReadyTimeoutSeconds is how long a new execution unit has to become ready, rendered
-	// verbatim as the control config's workspace.readyTimeoutSeconds. Omitted: the runtime
-	// default (30). Raise it for backends that start slowly (OpenShell: 20-30 s). Needs an
-	// ach-runtime release that knows the field.
+	Resources *SandboxResources `json:"resources,omitempty"`
+	// ReadyTimeoutSeconds is how long a new sandbox has to become ready, rendered as the
+	// control config's workspace.readyTimeoutSeconds. Omitted: the runtime default.
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	ReadyTimeoutSeconds *int64 `json:"readyTimeoutSeconds,omitempty"`
+	// Policy is the OpenShell sandbox policy (snake_case proto JSON), merged under the
+	// Agent's own policy. Rule names starting with ach-agent- are reserved.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Type=object
+	Policy *apiextensionsv1.JSON `json:"policy,omitempty"`
 }
 
-// AgentProfileStatus is minimal — profiles are read by ACHAgent; they have no side effects.
+// ProfileSandboxSpec selects the sandbox. OpenShell is the only one; another sandbox later
+// becomes a sibling block.
+type ProfileSandboxSpec struct {
+	// +kubebuilder:validation:Required
+	OpenShell OpenShellSpec `json:"openshell"`
+}
+
+// AgentProfileSpec is the reusable infrastructure + defaults half. Agent-scoped defaults live
+// under defaults and deep-merge with an Agent's inline overrides (agent field wins).
+type AgentProfileSpec struct {
+	// +kubebuilder:validation:Required
+	Control ControlSpec `json:"control"`
+	// +kubebuilder:validation:Required
+	Sandbox ProfileSandboxSpec `json:"sandbox"`
+	// +kubebuilder:validation:Required
+	Defaults AgentDefaults `json:"defaults"`
+}
+
+// AgentProfileStatus is minimal: profiles are read by Agent and have no side effects.
 type AgentProfileStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -392,19 +318,17 @@ type AgentProfileStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced,shortName=aprofile
-// +kubebuilder:printcolumn:name="Image",type=string,JSONPath=".spec.achagent.image"
+// +kubebuilder:resource:scope=Namespaced
+// +kubebuilder:printcolumn:name="Image",type=string,JSONPath=".spec.control.image"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 50",message="AgentProfile name must be <= 50 chars (operator derives <=63-char child names)"
-// +kubebuilder:validation:XValidation:rule="has(self.spec.achagent) && has(self.spec.achagent.image) && size(self.spec.achagent.image) > 0",message="spec.achagent.image is required (nonempty)"
-// +kubebuilder:validation:XValidation:rule="has(self.spec.achagent) && has(self.spec.achagent.limits)",message="spec.achagent.limits is required — it is the only place a profile is guaranteed to set limits.maxSteps, which contract §3 requires on every agent (positive, never unlimited)"
-// +kubebuilder:validation:XValidation:rule="has(self.spec.achagent) && has(self.spec.achagent.engine) && has(self.spec.achagent.engine.compaction)",message="spec.achagent.engine.compaction is required — the wire schema requires it unconditionally and no harness default is published"
-// +kubebuilder:validation:XValidation:rule="has(self.spec.achagent) && has(self.spec.achagent.workspace)",message="spec.achagent.workspace is required — the wire schema requires every workspace.* field unconditionally"
-// +kubebuilder:validation:XValidation:rule="has(self.spec.achagent) && has(self.spec.achagent.artifacts)",message="spec.achagent.artifacts is required — the wire schema requires every artifacts.* field unconditionally"
-// +kubebuilder:validation:XValidation:rule="has(self.spec.execution) && has(self.spec.execution.image) && size(self.spec.execution.image) > 0",message="spec.execution.image is required (nonempty)"
-// +kubebuilder:validation:XValidation:rule="has(self.spec.execution) && has(self.spec.execution.ephemeralStorage) && size(self.spec.execution.ephemeralStorage) > 0",message="spec.execution.ephemeralStorage is required (nonempty)"
+// +kubebuilder:validation:XValidation:rule="has(self.spec.sandbox) && has(self.spec.sandbox.openshell) && has(self.spec.sandbox.openshell.image) && size(self.spec.sandbox.openshell.image) > 0",message="spec.sandbox.openshell.image is required (nonempty)"
+// +kubebuilder:validation:XValidation:rule="has(self.spec.defaults) && has(self.spec.defaults.limits)",message="spec.defaults.limits is required — it is the only place a profile is guaranteed to set limits.maxSteps, which the runtime requires on every agent (positive, never unlimited)"
+// +kubebuilder:validation:XValidation:rule="has(self.spec.defaults) && has(self.spec.defaults.engine) && has(self.spec.defaults.engine.compaction)",message="spec.defaults.engine.compaction is required — the wire schema requires it unconditionally and no harness default is published"
+// +kubebuilder:validation:XValidation:rule="has(self.spec.defaults) && has(self.spec.defaults.workspace)",message="spec.defaults.workspace is required — the wire schema requires every workspace.* field unconditionally"
+// +kubebuilder:validation:XValidation:rule="has(self.spec.defaults) && has(self.spec.defaults.artifacts)",message="spec.defaults.artifacts is required — the wire schema requires every artifacts.* field unconditionally"
 
-// AgentProfile is the reusable infra + defaults for a class of agents.
+// AgentProfile is the reusable infrastructure and defaults for a class of Agents.
 type AgentProfile struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

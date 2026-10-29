@@ -13,7 +13,7 @@ const defaultRuntimeStoragePrefix = "ach"
 
 // RuntimeStorageOptions is the operator/chart-level global Storage backend configuration
 // (root D1 decision): bucket/region/endpoint/prefix plus an optional namespace-local
-// credentials Secret name. NEVER per-ACHAgent, NEVER per-AgentProfile — sourced from
+// credentials Secret name. NEVER per-Agent, NEVER per-AgentProfile — sourced from
 // operator env/Helm (cmd/ach/cmd/operator.go), the same pattern as DefaultAchBaseURL.
 type RuntimeStorageOptions struct {
 	Bucket                string

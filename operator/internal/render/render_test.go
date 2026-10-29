@@ -13,56 +13,31 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
-	achv1alpha1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
+	v1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
 )
 
 func ptr[T any](v T) *T                      { return &v }
 func rawJSON(s string) *apiextensionsv1.JSON { return &apiextensionsv1.JSON{Raw: []byte(s)} }
 
-func TestResolveAchBaseURL_Precedence(t *testing.T) {
-	agent := &achv1alpha1.AchSpec{BaseURL: "https://agent"}
-	profile := &achv1alpha1.AchSpec{BaseURL: "https://profile"}
-	cases := []struct {
-		name    string
-		agent   *achv1alpha1.AchSpec
-		profile *achv1alpha1.AchSpec
-		def     string
-		want    string
-	}{
-		{"agent wins", agent, profile, "https://env", "https://agent"},
-		{"profile when no agent block", nil, profile, "https://env", "https://profile"},
-		{"profile when agent block empty", &achv1alpha1.AchSpec{}, profile, "https://env", "https://profile"},
-		{"env default when both empty", nil, nil, "https://env", "https://env"},
-		{"empty when all empty", nil, nil, "", ""},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := ResolveAchBaseURL(c.agent, c.profile, c.def); got != c.want {
-				t.Errorf("ResolveAchBaseURL = %q, want %q", got, c.want)
-			}
-		})
-	}
-}
-
 func TestReferencedSecrets_NameToKeys(t *testing.T) {
-	a := achv1alpha1.ACHAgent{Spec: achv1alpha1.ACHAgentSpec{Channels: []achv1alpha1.ChannelSpec{
-		{Name: "w1", Type: "webhook", Webhook: &achv1alpha1.WebhookSpec{Auth: achv1alpha1.WebhookAuthSpec{Type: "hmac", SecretRef: &achv1alpha1.SecretKeyRef{Name: "s1", Key: "kb"}}}},
-		{Name: "w2", Type: "webhook", Webhook: &achv1alpha1.WebhookSpec{Auth: achv1alpha1.WebhookAuthSpec{Type: "hmac", SecretRef: &achv1alpha1.SecretKeyRef{Name: "s1", Key: "ka"}}}},
-		{Name: "cr", Type: "cron", Cron: &achv1alpha1.CronSpec{Schedule: "* * * * *"}},
+	a := v1.Agent{Spec: v1.AgentSpec{Channels: []v1.ChannelSpec{
+		{Name: "w1", Type: "webhook", Webhook: &v1.WebhookSpec{Auth: v1.WebhookAuthSpec{Type: "hmac", SecretRef: &v1.SecretKeyRef{Name: "s1", Key: "kb"}}}},
+		{Name: "w2", Type: "webhook", Webhook: &v1.WebhookSpec{Auth: v1.WebhookAuthSpec{Type: "hmac", SecretRef: &v1.SecretKeyRef{Name: "s1", Key: "ka"}}}},
+		{Name: "cr", Type: "cron", Cron: &v1.CronSpec{Schedule: "* * * * *"}},
 	}}}
-	got := ReferencedSecrets(achv1alpha1.AgentProfile{}, a)
+	got := ReferencedSecrets(v1.AgentProfile{}, a)
 	if len(got) != 1 || len(got["s1"]) != 2 || got["s1"][0] != "ka" || got["s1"][1] != "kb" {
 		t.Errorf("ReferencedSecrets = %v, want {s1:[ka kb]}", got)
 	}
 }
 
 func TestChannelSecretEnv_NamesAndRefs(t *testing.T) {
-	a := achv1alpha1.ACHAgent{Spec: achv1alpha1.ACHAgentSpec{Channels: []achv1alpha1.ChannelSpec{
-		{Name: "gitlab-mr-review", Type: "webhook", Webhook: &achv1alpha1.WebhookSpec{Auth: achv1alpha1.WebhookAuthSpec{Type: "gitlab_token", SecretRef: &achv1alpha1.SecretKeyRef{Name: "gl", Key: "secret"}}}},
-		{Name: "peer-intake", Type: "a2a", A2A: &achv1alpha1.A2ASpec{Auth: achv1alpha1.A2AAuthSpec{SecretRef: achv1alpha1.SecretKeyRef{Name: "peer", Key: "apikey"}}}},
-		{Name: "daily", Type: "cron", Cron: &achv1alpha1.CronSpec{Schedule: "* * * * *"}}, // no secret
+	a := v1.Agent{Spec: v1.AgentSpec{Channels: []v1.ChannelSpec{
+		{Name: "gitlab-mr-review", Type: "webhook", Webhook: &v1.WebhookSpec{Auth: v1.WebhookAuthSpec{Type: "gitlab_token", SecretRef: &v1.SecretKeyRef{Name: "gl", Key: "secret"}}}},
+		{Name: "peer-intake", Type: "a2a", A2A: &v1.A2ASpec{Auth: v1.A2AAuthSpec{SecretRef: v1.SecretKeyRef{Name: "peer", Key: "apikey"}}}},
+		{Name: "daily", Type: "cron", Cron: &v1.CronSpec{Schedule: "* * * * *"}}, // no secret
 	}}}
-	got := ChannelSecretEnv(achv1alpha1.AgentProfile{}, a)
+	got := ChannelSecretEnv(v1.AgentProfile{}, a)
 	if len(got) != 2 {
 		t.Fatalf("ChannelSecretEnv len = %d, want 2", len(got))
 	}
@@ -75,43 +50,43 @@ func TestChannelSecretEnv_NamesAndRefs(t *testing.T) {
 }
 
 func TestMemorySecretEnv_AchMemoryAuth(t *testing.T) {
-	withAuth := achv1alpha1.ACHAgent{Spec: achv1alpha1.ACHAgentSpec{Memory: &achv1alpha1.MemorySpec{
-		Type: "ach-memory", AchMemory: &achv1alpha1.AchMemorySpec{Endpoint: "http://m/mcp/", Auth: &achv1alpha1.AchMemoryAuthSpec{Type: memoryAuthTypeBearer, SecretRef: &achv1alpha1.SecretKeyRef{Name: "am", Key: "token"}}},
+	withAuth := v1.Agent{Spec: v1.AgentSpec{Memory: &v1.MemorySpec{
+		Type: "ach-memory", AchMemory: &v1.AchMemorySpec{Endpoint: "http://m/mcp/", Auth: &v1.AchMemoryAuthSpec{Type: memoryAuthTypeBearer, SecretRef: &v1.SecretKeyRef{Name: "am", Key: "token"}}},
 	}}}
 	ref := MemorySecretEnv(withAuth)
 	if ref == nil || ref.EnvName != "ACH_SECRET_MEMORY_AUTH" || ref.SecretName != "am" || ref.Key != "token" {
 		t.Errorf("MemorySecretEnv = %+v, want ACH_SECRET_MEMORY_AUTH → am/token", ref)
 	}
 	// It must join ReferencedSecrets so the reconciler key-check + hash + watch cover it.
-	if keys := ReferencedSecrets(achv1alpha1.AgentProfile{}, withAuth)["am"]; len(keys) != 1 || keys[0] != "token" {
-		t.Errorf("ReferencedSecrets missing memory secret: %v", ReferencedSecrets(achv1alpha1.AgentProfile{}, withAuth))
+	if keys := ReferencedSecrets(v1.AgentProfile{}, withAuth)["am"]; len(keys) != 1 || keys[0] != "token" {
+		t.Errorf("ReferencedSecrets missing memory secret: %v", ReferencedSecrets(v1.AgentProfile{}, withAuth))
 	}
 	// No auth → no ref (internal/no-auth ach-memory URL).
-	noAuth := achv1alpha1.ACHAgent{Spec: achv1alpha1.ACHAgentSpec{Memory: &achv1alpha1.MemorySpec{
-		Type: "ach-memory", AchMemory: &achv1alpha1.AchMemorySpec{Endpoint: "http://m/mcp/"},
+	noAuth := v1.Agent{Spec: v1.AgentSpec{Memory: &v1.MemorySpec{
+		Type: "ach-memory", AchMemory: &v1.AchMemorySpec{Endpoint: "http://m/mcp/"},
 	}}}
 	if ref := MemorySecretEnv(noAuth); ref != nil {
 		t.Errorf("MemorySecretEnv(no auth) = %+v, want nil", ref)
 	}
 	// ach arm → no ref: the harness sends its own ek_, there is no second secret.
-	achArm := achv1alpha1.ACHAgent{Spec: achv1alpha1.ACHAgentSpec{Memory: &achv1alpha1.MemorySpec{
-		Type: "ach-memory", AchMemory: &achv1alpha1.AchMemorySpec{
-			Endpoint: "https://api.ackstorm.ai/mcp/ach-memory", Auth: &achv1alpha1.AchMemoryAuthSpec{Type: memoryAuthTypeAch},
+	achArm := v1.Agent{Spec: v1.AgentSpec{Memory: &v1.MemorySpec{
+		Type: "ach-memory", AchMemory: &v1.AchMemorySpec{
+			Endpoint: "https://api.ackstorm.ai/mcp/ach-memory", Auth: &v1.AchMemoryAuthSpec{Type: memoryAuthTypeAch},
 		},
 	}}}
 	if ref := MemorySecretEnv(achArm); ref != nil {
 		t.Errorf("MemorySecretEnv(ach arm) = %+v, want nil", ref)
 	}
 	// Non-ach-memory memory → no ref.
-	if ref := MemorySecretEnv(achv1alpha1.ACHAgent{Spec: achv1alpha1.ACHAgentSpec{Memory: &achv1alpha1.MemorySpec{Type: "codemem"}}}); ref != nil {
+	if ref := MemorySecretEnv(v1.Agent{Spec: v1.AgentSpec{Memory: &v1.MemorySpec{Type: "codemem"}}}); ref != nil {
 		t.Errorf("MemorySecretEnv(codemem) = %+v, want nil", ref)
 	}
 }
 
 func TestRenderMemory_AchMemoryBlock(t *testing.T) {
-	out := renderMemory(&achv1alpha1.MemorySpec{Type: "ach-memory", AchMemory: &achv1alpha1.AchMemorySpec{
+	out := renderMemory(&v1.MemorySpec{Type: "ach-memory", AchMemory: &v1.AchMemorySpec{
 		Endpoint: "http://m/mcp/", Project: "team-reviewer",
-		Auth: &achv1alpha1.AchMemoryAuthSpec{Type: memoryAuthTypeBearer, Header: "x-litellm-api-key", SecretRef: &achv1alpha1.SecretKeyRef{Name: "am", Key: "token"}},
+		Auth: &v1.AchMemoryAuthSpec{Type: memoryAuthTypeBearer, Header: "x-litellm-api-key", SecretRef: &v1.SecretKeyRef{Name: "am", Key: "token"}},
 	}})
 	b, err := json.Marshal(out)
 	if err != nil {
@@ -134,8 +109,8 @@ func TestRenderMemory_AchMemoryBlock(t *testing.T) {
 	}
 	// project omitted when unset — the harness derives {POD_NAMESPACE}-{agent.name}.
 	// ach arm renders {type: ach} with NO env — there is no second credential.
-	achArm := renderMemory(&achv1alpha1.MemorySpec{Type: "ach-memory", AchMemory: &achv1alpha1.AchMemorySpec{
-		Endpoint: "https://api.ackstorm.ai/mcp/ach-memory", Auth: &achv1alpha1.AchMemoryAuthSpec{Type: memoryAuthTypeAch},
+	achArm := renderMemory(&v1.MemorySpec{Type: "ach-memory", AchMemory: &v1.AchMemorySpec{
+		Endpoint: "https://api.ackstorm.ai/mcp/ach-memory", Auth: &v1.AchMemoryAuthSpec{Type: memoryAuthTypeAch},
 	}})
 	ab, _ := json.Marshal(achArm)
 	var aM map[string]any
@@ -153,9 +128,9 @@ func TestRenderMemory_AchMemoryBlock(t *testing.T) {
 
 	// bearer with header unset omits it, so the harness applies its own
 	// "Authorization" default rather than ACH restating a value it does not own.
-	bareBearer := renderMemory(&achv1alpha1.MemorySpec{Type: "ach-memory", AchMemory: &achv1alpha1.AchMemorySpec{
+	bareBearer := renderMemory(&v1.MemorySpec{Type: "ach-memory", AchMemory: &v1.AchMemorySpec{
 		Endpoint: "http://m/mcp/",
-		Auth:     &achv1alpha1.AchMemoryAuthSpec{Type: memoryAuthTypeBearer, SecretRef: &achv1alpha1.SecretKeyRef{Name: "am", Key: "token"}},
+		Auth:     &v1.AchMemoryAuthSpec{Type: memoryAuthTypeBearer, SecretRef: &v1.SecretKeyRef{Name: "am", Key: "token"}},
 	}})
 	bb, _ := json.Marshal(bareBearer)
 	var bm map[string]any
@@ -168,9 +143,9 @@ func TestRenderMemory_AchMemoryBlock(t *testing.T) {
 	// mcpServerId is the OTHER arm of the where-is-ach-memory choice: it renders
 	// instead of endpoint, and its presence is what tells the harness to drop that
 	// server from the MCP proxy so the facade is the only path to the bank.
-	byID := renderMemory(&achv1alpha1.MemorySpec{Type: "ach-memory", AchMemory: &achv1alpha1.AchMemorySpec{
+	byID := renderMemory(&v1.MemorySpec{Type: "ach-memory", AchMemory: &v1.AchMemorySpec{
 		McpServerID: "ach-memory",
-		Auth:        &achv1alpha1.AchMemoryAuthSpec{Type: memoryAuthTypeAch},
+		Auth:        &v1.AchMemoryAuthSpec{Type: memoryAuthTypeAch},
 	}})
 	ib, _ := json.Marshal(byID)
 	var im map[string]any
@@ -183,7 +158,7 @@ func TestRenderMemory_AchMemoryBlock(t *testing.T) {
 		t.Errorf("mcpServerId arm must not render endpoint: %s", ib)
 	}
 
-	noAuth := renderMemory(&achv1alpha1.MemorySpec{Type: "ach-memory", AchMemory: &achv1alpha1.AchMemorySpec{Endpoint: "http://m/mcp/"}})
+	noAuth := renderMemory(&v1.MemorySpec{Type: "ach-memory", AchMemory: &v1.AchMemorySpec{Endpoint: "http://m/mcp/"}})
 	nb, _ := json.Marshal(noAuth)
 	var nm map[string]any
 	_ = json.Unmarshal(nb, &nm)
@@ -238,7 +213,7 @@ func TestValidateEngineForwardEnv(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := validateEngineForwardEnv(&achv1alpha1.EngineSpec{ForwardEnv: c.forward}, env)
+			err := validateEngineForwardEnv(&v1.EngineSpec{ForwardEnv: c.forward}, env)
 			if c.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -252,41 +227,29 @@ func TestValidateEngineForwardEnv(t *testing.T) {
 	}
 }
 
-func TestResolveImage(t *testing.T) {
-	if got := ResolveImage("", "img:profile"); got != "img:profile" {
-		t.Errorf("empty agent image must inherit profile, got %q", got)
-	}
-	if got := ResolveImage("img:agent", "img:profile"); got != "img:agent" {
-		t.Errorf("agent image must win, got %q", got)
-	}
-	if got := ResolveImage("", ""); got != "" {
-		t.Errorf("both empty must resolve empty, got %q", got)
-	}
-}
-
 func TestResolveEngine(t *testing.T) {
-	profile := &achv1alpha1.EngineSpec{ForwardEnv: []string{"HTTPS_PROXY"}, StartupTimeoutSeconds: ptr(int64(600))}
+	profile := &v1.EngineSpec{ForwardEnv: []string{"HTTPS_PROXY"}, StartupTimeoutSeconds: ptr(int64(600))}
 	t.Run("nil agent inherits profile", func(t *testing.T) {
 		if got := ResolveEngine(nil, profile); got != profile {
 			t.Errorf("ResolveEngine(nil, p) = %+v, want profile", got)
 		}
 	})
 	t.Run("nil profile returns agent", func(t *testing.T) {
-		agent := &achv1alpha1.EngineSpec{StartupTimeoutSeconds: ptr(int64(10))}
+		agent := &v1.EngineSpec{StartupTimeoutSeconds: ptr(int64(10))}
 		if got := ResolveEngine(agent, nil); got != agent {
 			t.Errorf("ResolveEngine(a, nil) = %+v, want agent", got)
 		}
 	})
 	t.Run("agent denyTools replaces profile denyTools as a whole", func(t *testing.T) {
-		p := &achv1alpha1.EngineSpec{DenyTools: []string{"question"}}
-		a := &achv1alpha1.EngineSpec{DenyTools: []string{"webfetch"}}
+		p := &v1.EngineSpec{DenyTools: []string{"question"}}
+		a := &v1.EngineSpec{DenyTools: []string{"webfetch"}}
 		if got := ResolveEngine(a, p); !reflect.DeepEqual(got.DenyTools, []string{"webfetch"}) {
 			t.Errorf("DenyTools = %v, want [webfetch]", got.DenyTools)
 		}
 	})
 	t.Run("agent without denyTools inherits profile denyTools", func(t *testing.T) {
-		p := &achv1alpha1.EngineSpec{DenyTools: []string{"question"}}
-		if got := ResolveEngine(&achv1alpha1.EngineSpec{}, p); !reflect.DeepEqual(got.DenyTools, []string{"question"}) {
+		p := &v1.EngineSpec{DenyTools: []string{"question"}}
+		if got := ResolveEngine(&v1.EngineSpec{}, p); !reflect.DeepEqual(got.DenyTools, []string{"question"}) {
 			t.Errorf("DenyTools = %v, want profile's", got.DenyTools)
 		}
 	})
@@ -296,7 +259,7 @@ func TestResolveEngine(t *testing.T) {
 		}
 	})
 	t.Run("agent startupTimeoutSeconds wins, forwardEnv inherits", func(t *testing.T) {
-		agent := &achv1alpha1.EngineSpec{StartupTimeoutSeconds: ptr(int64(10))}
+		agent := &v1.EngineSpec{StartupTimeoutSeconds: ptr(int64(10))}
 		got := ResolveEngine(agent, profile)
 		if got.StartupTimeoutSeconds == nil || *got.StartupTimeoutSeconds != 10 {
 			t.Errorf("agent startupTimeoutSeconds must win: %+v", got)
@@ -306,14 +269,14 @@ func TestResolveEngine(t *testing.T) {
 		}
 	})
 	t.Run("agent forwardEnv replaces atomically", func(t *testing.T) {
-		agent := &achv1alpha1.EngineSpec{ForwardEnv: []string{"NO_PROXY"}}
+		agent := &v1.EngineSpec{ForwardEnv: []string{"NO_PROXY"}}
 		got := ResolveEngine(agent, profile)
 		if len(got.ForwardEnv) != 1 || got.ForwardEnv[0] != "NO_PROXY" {
 			t.Errorf("forwardEnv must replace as a whole: %v", got.ForwardEnv)
 		}
 	})
 	t.Run("agent compaction replaces atomically", func(t *testing.T) {
-		agent := &achv1alpha1.EngineSpec{Compaction: &achv1alpha1.CompactionSpec{Auto: ptr(true)}}
+		agent := &v1.EngineSpec{Compaction: &v1.CompactionSpec{Auto: ptr(true)}}
 		got := ResolveEngine(agent, profile)
 		if got.Compaction == nil || got.Compaction.Auto == nil || !*got.Compaction.Auto {
 			t.Errorf("agent compaction must win: %+v", got.Compaction)
@@ -326,8 +289,8 @@ func TestResolveEngine(t *testing.T) {
 // merge, not an atomic whole-block replace. maxSteps is a pointer like every other field
 // here (no longer the non-pointer exception), so it merges the same way.
 func TestResolveLimits_FieldMerge(t *testing.T) {
-	profile := &achv1alpha1.LimitsSpec{MaxConcurrentInvocations: ptr(int64(8)), MaxSteps: ptr(int64(50))}
-	agent := &achv1alpha1.LimitsSpec{MaxConcurrentScripts: ptr(int64(2))}
+	profile := &v1.LimitsSpec{MaxConcurrentInvocations: ptr(int64(8)), MaxSteps: ptr(int64(50))}
+	agent := &v1.LimitsSpec{MaxConcurrentScripts: ptr(int64(2))}
 	got := ResolveLimits(agent, profile)
 	if got.MaxConcurrentScripts == nil || *got.MaxConcurrentScripts != 2 {
 		t.Errorf("agent field must win: %+v", got)
@@ -338,7 +301,7 @@ func TestResolveLimits_FieldMerge(t *testing.T) {
 	if got.MaxSteps == nil || *got.MaxSteps != 50 {
 		t.Errorf("unset agent maxSteps must inherit profile: %+v", got)
 	}
-	agentOverridesSteps := &achv1alpha1.LimitsSpec{MaxSteps: ptr(int64(10))}
+	agentOverridesSteps := &v1.LimitsSpec{MaxSteps: ptr(int64(10))}
 	if got := ResolveLimits(agentOverridesSteps, profile); got.MaxSteps == nil || *got.MaxSteps != 10 {
 		t.Errorf("agent maxSteps must win when set: %+v", got)
 	}
@@ -347,43 +310,6 @@ func TestResolveLimits_FieldMerge(t *testing.T) {
 	}
 	if got := ResolveLimits(agent, nil); got != agent {
 		t.Errorf("nil profile must return agent")
-	}
-}
-
-func TestResolveModel_InheritsParams(t *testing.T) {
-	profile := &achv1alpha1.ModelSpec{
-		Name: "openai.gpt-5", Type: "openai",
-		Params:   rawJSON(`{"temperature":1}`),
-		Thinking: &achv1alpha1.ThinkingSpec{Enabled: true, Effort: "high"},
-	}
-	agent := &achv1alpha1.ModelSpec{Name: "gemini.pro", Type: "gemini"}
-	got := ResolveModel(agent, profile)
-	if got.Name != "gemini.pro" || got.Type != "gemini" {
-		t.Errorf("agent name/type must win: %+v", got)
-	}
-	if got.Params == nil || string(got.Params.Raw) != `{"temperature":1}` {
-		t.Errorf("omitted agent params must inherit profile params: %+v", got.Params)
-	}
-	if got.Thinking == nil || got.Thinking.Effort != "high" {
-		t.Errorf("omitted agent thinking must inherit profile thinking: %+v", got.Thinking)
-	}
-	// Atomic replacement when the agent DOES set params.
-	agent2 := &achv1alpha1.ModelSpec{Name: "m", Type: "openai", Params: rawJSON(`{"top_p":0.5}`)}
-	if got := ResolveModel(agent2, profile); string(got.Params.Raw) != `{"top_p":0.5}` {
-		t.Errorf("agent params must replace as a whole: %s", got.Params.Raw)
-	}
-}
-
-// TestResolveModel_PartialNameOrTypeOverride: ModelSpec.Name/Type are optional authoring
-// fields (Task 3 step 3) — an agent setting only ONE of the two must inherit the other from
-// the profile, same per-field merge convention as every other Resolve* function.
-func TestResolveModel_PartialNameOrTypeOverride(t *testing.T) {
-	profile := &achv1alpha1.ModelSpec{Name: "m", Type: "openai"}
-	if got := ResolveModel(&achv1alpha1.ModelSpec{Type: "anthropic"}, profile); got.Name != "m" || got.Type != "anthropic" {
-		t.Errorf("type-only override: got %+v, want name inherited (\"m\"), type overridden (\"anthropic\")", got)
-	}
-	if got := ResolveModel(&achv1alpha1.ModelSpec{Name: "other"}, profile); got.Name != "other" || got.Type != "openai" {
-		t.Errorf("name-only override: got %+v, want name overridden (\"other\"), type inherited (\"openai\")", got)
 	}
 }
 
@@ -397,55 +323,55 @@ func TestResolveEnv_AgentWinsByName(t *testing.T) {
 	}
 }
 
-// TestRender2_RejectsCollidingChannelSecretAliases migrates the legacy
+// TestRender_RejectsCollidingChannelSecretAliases migrates the legacy
 // TestRender_RejectsCollidingChannelSecretAliases off the retired Render() root: two
-// channel hooks whose generated aliases collide must fail Render2 closed, without leaking
+// channel hooks whose generated aliases collide must fail Render closed, without leaking
 // the underlying secret data into the error.
-func TestRender2_RejectsCollidingChannelSecretAliases(t *testing.T) {
+func TestRender_RejectsCollidingChannelSecretAliases(t *testing.T) {
 	secret := func(name, secretName, key string) corev1.EnvVar {
 		return corev1.EnvVar{Name: name, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
 			LocalObjectReference: corev1.LocalObjectReference{Name: secretName}, Key: key,
 		}}}
 	}
-	profile, agent := minimalRender2Fixture()
-	profile.Spec.Env = []corev1.EnvVar{
+	profile, agent := minimalFixture()
+	profile.Spec.Control.Env = []corev1.EnvVar{
 		secret("TOKEN_SCRIPT_X", "handoff-credential", "handoff-key"),
 		secret("X", "script-credential", "script-key"),
 	}
-	agent.Spec.Channels = []achv1alpha1.ChannelSpec{
+	agent.Spec.Channels = []v1.ChannelSpec{
 		{
-			Name: "c", Type: "cron", Cron: &achv1alpha1.CronSpec{Schedule: "* * * * *"},
-			Handoff: &achv1alpha1.HandoffSpec{PrepareSpec: achv1alpha1.PrepareSpec{Script: "true", ForwardEnv: []string{"TOKEN_SCRIPT_X"}}, Destination: "handoff"},
+			Name: "c", Type: "cron", Cron: &v1.CronSpec{Schedule: "* * * * *"},
+			Handoff: &v1.HandoffSpec{PrepareSpec: v1.PrepareSpec{Script: "true", ForwardEnv: []string{"TOKEN_SCRIPT_X"}}, Destination: "handoff"},
 		},
 		{
-			Name: "c-handoff-token", Type: "webhook-script", Webhook: &achv1alpha1.WebhookSpec{Auth: achv1alpha1.WebhookAuthSpec{Type: "hmac"}},
-			Script: &achv1alpha1.PrepareSpec{Script: "true", ForwardEnv: []string{"X"}},
+			Name: "c-handoff-token", Type: "webhook-script", Webhook: &v1.WebhookSpec{Auth: v1.WebhookAuthSpec{Type: "hmac"}},
+			Script: &v1.PrepareSpec{Script: "true", ForwardEnv: []string{"X"}},
 		},
 	}
 
-	_, err := Render2(profile, agent, "")
+	_, _, err := Render(profile, agent)
 	if err == nil || !strings.Contains(err.Error(), "duplicate generated channel secret env alias") {
-		t.Fatalf("Render2 error = %v", err)
+		t.Fatalf("Render error = %v", err)
 	}
 	for _, secretData := range []string{"handoff-credential", "handoff-key", "script-credential", "script-key"} {
 		if strings.Contains(err.Error(), secretData) {
-			t.Fatalf("Render2 error leaked secret reference data: %v", err)
+			t.Fatalf("Render error leaked secret reference data: %v", err)
 		}
 	}
 }
 
-// TestRender2_SecretRefNeverLeaks migrates the legacy TestRender_FullGolden secret-leak
+// TestRender_SecretRefNeverLeaks migrates the legacy TestRender_FullGolden secret-leak
 // assertions off Render()/AgentConfig: a webhook's secretRef must never reach the rendered
 // WSConfig, and the wire shape must carry only the operator-generated env alias.
-func TestRender2_SecretRefNeverLeaks(t *testing.T) {
-	profile, agent := minimalRender2Fixture()
-	agent.Spec.Channels = []achv1alpha1.ChannelSpec{{
+func TestRender_SecretRefNeverLeaks(t *testing.T) {
+	profile, agent := minimalFixture()
+	agent.Spec.Channels = []v1.ChannelSpec{{
 		Name: "gitlab-mr-review", Type: "webhook", Source: "gitlab",
-		Webhook: &achv1alpha1.WebhookSpec{Auth: achv1alpha1.WebhookAuthSpec{Type: "gitlab_token", SecretRef: &achv1alpha1.SecretKeyRef{Name: "gitlab-webhook", Key: "secret"}}},
+		Webhook: &v1.WebhookSpec{Auth: v1.WebhookAuthSpec{Type: "gitlab_token", SecretRef: &v1.SecretKeyRef{Name: "gitlab-webhook", Key: "secret"}}},
 	}}
-	cfg, err := Render2(profile, agent, "")
+	cfg, _, err := Render(profile, agent)
 	if err != nil {
-		t.Fatalf("Render2: %v", err)
+		t.Fatalf("Render: %v", err)
 	}
 	raw, err := json.Marshal(cfg)
 	if err != nil {
@@ -459,19 +385,19 @@ func TestRender2_SecretRefNeverLeaks(t *testing.T) {
 	}
 }
 
-// TestRender2_MemoryAchMemoryAuthRendered closes a coverage gap no existing Render2/
+// TestRender_MemoryAchMemoryAuthRendered closes a coverage gap no existing Render/
 // workspace-v1 test filled: memory.achMemory bearer auth wired end to end through the real
-// Render2 entrypoint (TestRenderMemory_AchMemoryBlock below only unit-tests the shared
+// Render entrypoint (TestRenderMemory_AchMemoryBlock below only unit-tests the shared
 // renderMemory helper directly).
-func TestRender2_MemoryAchMemoryAuthRendered(t *testing.T) {
-	profile, agent := minimalRender2Fixture()
-	agent.Spec.Memory = &achv1alpha1.MemorySpec{Type: "ach-memory", AchMemory: &achv1alpha1.AchMemorySpec{
+func TestRender_MemoryAchMemoryAuthRendered(t *testing.T) {
+	profile, agent := minimalFixture()
+	agent.Spec.Memory = &v1.MemorySpec{Type: "ach-memory", AchMemory: &v1.AchMemorySpec{
 		Endpoint: "http://m/mcp/", Project: "team-reviewer",
-		Auth: &achv1alpha1.AchMemoryAuthSpec{Type: memoryAuthTypeBearer, Header: "x-litellm-api-key", SecretRef: &achv1alpha1.SecretKeyRef{Name: "am", Key: "token"}},
+		Auth: &v1.AchMemoryAuthSpec{Type: memoryAuthTypeBearer, Header: "x-litellm-api-key", SecretRef: &v1.SecretKeyRef{Name: "am", Key: "token"}},
 	}}
-	cfg, err := Render2(profile, agent, "")
+	cfg, _, err := Render(profile, agent)
 	if err != nil {
-		t.Fatalf("Render2: %v", err)
+		t.Fatalf("Render: %v", err)
 	}
 	if cfg.Memory == nil || cfg.Memory.AchMemory == nil || cfg.Memory.AchMemory.Auth == nil {
 		t.Fatalf("Memory = %+v, want a rendered ach-memory block", cfg.Memory)
@@ -485,125 +411,46 @@ func TestRender2_MemoryAchMemoryAuthRendered(t *testing.T) {
 	}
 }
 
-// TestRender2_RequiresImage/BaseURL/Identity port the legacy required-field error checks
-// (TestRender_NoImage_Errors, TestRender_BaseURLResolutionAndBlock, TestRender_NoIdentity_Errors)
-// onto Render2, alongside the existing TestRender2_RequiresEffectiveModelName/Type.
-func TestRender2_RequiresImage(t *testing.T) {
-	profile, agent := minimalRender2Fixture()
-	profile.Spec.Achagent.Image = ""
-	if _, err := Render2(profile, agent, ""); err == nil || !strings.Contains(err.Error(), "no image") {
-		t.Fatalf("err = %v, want containing %q", err, "no image")
-	}
-}
-
-func TestRender2_RequiresBaseURL(t *testing.T) {
-	profile, agent := minimalRender2Fixture()
-	profile.Spec.Achagent.Ach.BaseURL = ""
-	if _, err := Render2(profile, agent, ""); err == nil || !strings.Contains(err.Error(), "no ACH base URL") {
-		t.Fatalf("err = %v, want containing %q", err, "no ACH base URL")
-	}
-}
-
-func TestRender2_RequiresIdentity(t *testing.T) {
-	profile, agent := minimalRender2Fixture()
-	agent.Spec.Ach.Identity = nil
-	if _, err := Render2(profile, agent, ""); err == nil || !strings.Contains(err.Error(), "identity") {
-		t.Fatalf("err = %v, want containing %q", err, "identity")
-	}
-}
-
-// TestRender2_ModelThinkingRendered/Absent and TestRender2_PromptRendered port the legacy
-// TestRenderModelThinking(Absent)/the TestRender_FullGolden prompt assertion onto Render2 —
-// neither model.thinking nor prompt was exercised by any existing Render2/workspace-v1 test.
-func TestRender2_ModelThinkingRendered(t *testing.T) {
-	profile, agent := minimalRender2Fixture()
-	profile.Spec.Achagent.Model.Thinking = &achv1alpha1.ThinkingSpec{Enabled: true, Effort: "high"}
-	cfg, err := Render2(profile, agent, "")
+func TestRender_PromptRendered(t *testing.T) {
+	profile, agent := minimalFixture()
+	agent.Spec.Prompt = &v1.AgentPromptSpec{System: v1.PromptSystemSpec{Type: "text", Text: "You are a reviewer."}, Compose: "append"}
+	cfg, _, err := Render(profile, agent)
 	if err != nil {
-		t.Fatalf("Render2: %v", err)
-	}
-	if cfg.Model.Thinking == nil || !cfg.Model.Thinking.Enabled || cfg.Model.Thinking.Effort != "high" {
-		t.Fatalf("Model.Thinking = %+v, want enabled=true effort=high", cfg.Model.Thinking)
-	}
-}
-
-func TestRender2_ModelThinkingAbsent(t *testing.T) {
-	profile, agent := minimalRender2Fixture()
-	cfg, err := Render2(profile, agent, "")
-	if err != nil {
-		t.Fatalf("Render2: %v", err)
-	}
-	if cfg.Model.Thinking != nil {
-		t.Fatalf("Model.Thinking = %+v, want nil (omitted from JSON)", cfg.Model.Thinking)
-	}
-}
-
-func TestRender2_PromptRendered(t *testing.T) {
-	profile, agent := minimalRender2Fixture()
-	agent.Spec.Prompt = &achv1alpha1.AgentPromptSpec{System: achv1alpha1.PromptSystemSpec{Type: "text", Text: "You are a reviewer."}, Compose: "append"}
-	cfg, err := Render2(profile, agent, "")
-	if err != nil {
-		t.Fatalf("Render2: %v", err)
+		t.Fatalf("Render: %v", err)
 	}
 	if cfg.Prompt == nil || cfg.Prompt.System.Type != "text" || cfg.Prompt.System.Text != "You are a reviewer." || cfg.Prompt.Compose != "append" {
 		t.Fatalf("Prompt = %+v, want rendered text prompt", cfg.Prompt)
 	}
 }
 
-// TestRender2_AgentOverridesModelAndEngine restores task-5-review.md Important #1: the live
-// Render2 orchestrator — not just the pure ResolveModel/ResolveEngine helpers in isolation —
-// must apply an agent's model override and merge a partial agent engine override with the
-// inherited profile forwardEnv/literal env value.
-func TestRender2_AgentOverridesModelAndEngine(t *testing.T) {
-	profile, agent := minimalRender2Fixture()
-	profile.Spec.Achagent.Engine.ForwardEnv = []string{"OPENCODE_ENABLE_EXA"}
-	profile.Spec.Env = []corev1.EnvVar{{Name: "OPENCODE_ENABLE_EXA", Value: "1"}}
-	agent.Spec.Model = &achv1alpha1.ModelSpec{Name: "gemini-flash", Type: "gemini"}
-	agent.Spec.Engine = &achv1alpha1.EngineSpec{StartupTimeoutSeconds: ptr(int64(90))}
-
-	cfg, err := Render2(profile, agent, "")
-	if err != nil {
-		t.Fatalf("Render2: %v", err)
-	}
-	if cfg.Model.Name != "gemini-flash" || cfg.Model.Type != "gemini" {
-		t.Errorf("Model = %+v, want agent override {gemini-flash, gemini}", cfg.Model)
-	}
-	if cfg.Engine.StartupTimeoutSeconds == nil || *cfg.Engine.StartupTimeoutSeconds != 90 {
-		t.Errorf("Engine.StartupTimeoutSeconds = %v, want agent's 90", cfg.Engine.StartupTimeoutSeconds)
-	}
-	if cfg.Engine.Env["OPENCODE_ENABLE_EXA"] != "1" {
-		t.Errorf("Engine.Env = %v, want inherited profile forwardEnv literal OPENCODE_ENABLE_EXA=1", cfg.Engine.Env)
-	}
-}
-
-// TestRender2_PromptVariants restores task-5-review.md Important #2: prompt.system's file
+// TestRender_PromptVariants restores task-5-review.md Important #2: prompt.system's file
 // and ach branches (including the ach arm's optional AchFile subpath) are still live
-// renderPrompt/Render2 code paths that lost their schema coverage with renderMatrix's
-// removal; this exercises both through the real Render2 entrypoint.
-func TestRender2_PromptVariants(t *testing.T) {
+// renderPrompt/Render code paths that lost their schema coverage with renderMatrix's
+// removal; this exercises both through the real Render entrypoint.
+func TestRender_PromptVariants(t *testing.T) {
 	cases := []struct {
 		name   string
-		prompt achv1alpha1.AgentPromptSpec
+		prompt v1.AgentPromptSpec
 		want   PromptSystemBlock
 	}{
 		{
 			name:   "file",
-			prompt: achv1alpha1.AgentPromptSpec{System: achv1alpha1.PromptSystemSpec{Type: "file", File: "prompts/x/y.md"}, Compose: "replace"},
+			prompt: v1.AgentPromptSpec{System: v1.PromptSystemSpec{Type: "file", File: "prompts/x/y.md"}, Compose: "replace"},
 			want:   PromptSystemBlock{Type: "file", File: "prompts/x/y.md"},
 		},
 		{
 			name:   "ach",
-			prompt: achv1alpha1.AgentPromptSpec{System: achv1alpha1.PromptSystemSpec{Type: "ach", Ach: "persona", AchFile: "main.md"}, Compose: "append"},
+			prompt: v1.AgentPromptSpec{System: v1.PromptSystemSpec{Type: "ach", Ach: "persona", AchFile: "main.md"}, Compose: "append"},
 			want:   PromptSystemBlock{Type: "ach", Ach: "persona", File: "main.md"},
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			profile, agent := minimalRender2Fixture()
+			profile, agent := minimalFixture()
 			agent.Spec.Prompt = &c.prompt
-			cfg, err := Render2(profile, agent, "")
+			cfg, _, err := Render(profile, agent)
 			if err != nil {
-				t.Fatalf("Render2: %v", err)
+				t.Fatalf("Render: %v", err)
 			}
 			if cfg.Prompt == nil || cfg.Prompt.System != c.want {
 				t.Fatalf("Prompt.System = %+v, want %+v", cfg.Prompt, c.want)
@@ -615,32 +462,32 @@ func TestRender2_PromptVariants(t *testing.T) {
 	}
 }
 
-// TestRender2_WebhookScriptAuthScriptAndForwardEnv restores task-5-review.md Important #3:
+// TestRender_WebhookScriptAuthScriptAndForwardEnv restores task-5-review.md Important #3:
 // the deleted TestWebhookScript_RendersAuthScriptAndForwardEnv's successful-case assertions
 // (webhook auth alias, rendered script literal/secret env, generated secret alias count),
-// adapted from Render()/AgentConfig onto Render2/minimalRender2Fixture. Unlike the retired
+// adapted from Render()/AgentConfig onto Render/minimalFixture. Unlike the retired
 // fixture, forwardEnv only selects names actually present in the merged env — the old
 // "MISSING" name that silently vanished from the rendered script is deliberately not
 // reproduced here; TestRenderScriptV1_MissingForwardEnvNameErrors (workspacev1_test.go)
 // already covers that rejection path.
-func TestRender2_WebhookScriptAuthScriptAndForwardEnv(t *testing.T) {
-	profile, agent := minimalRender2Fixture()
-	profile.Spec.Env = []corev1.EnvVar{{Name: "GITLAB_BASE_URL", Value: "https://git.example.com"}}
+func TestRender_WebhookScriptAuthScriptAndForwardEnv(t *testing.T) {
+	profile, agent := minimalFixture()
+	profile.Spec.Control.Env = []corev1.EnvVar{{Name: "GITLAB_BASE_URL", Value: "https://git.example.com"}}
 	agent.Spec.Env = []corev1.EnvVar{{Name: "GITLAB_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
 		LocalObjectReference: corev1.LocalObjectReference{Name: "gitlab-api"}, Key: "token",
 	}}}}
-	agent.Spec.Channels = []achv1alpha1.ChannelSpec{{
+	agent.Spec.Channels = []v1.ChannelSpec{{
 		Name: "gitlab-register", Type: "webhook-script", Source: "gitlab",
-		Webhook: &achv1alpha1.WebhookSpec{
-			Auth:         achv1alpha1.WebhookAuthSpec{Type: "gitlab_token", SecretRef: &achv1alpha1.SecretKeyRef{Name: "system-hook", Key: "secret"}},
+		Webhook: &v1.WebhookSpec{
+			Auth:         v1.WebhookAuthSpec{Type: "gitlab_token", SecretRef: &v1.SecretKeyRef{Name: "system-hook", Key: "secret"}},
 			GitlabEvents: []string{"project_create", "push", "merge_request"},
 		},
-		Script: &achv1alpha1.PrepareSpec{Script: "payload=$(cat)", ForwardEnv: []string{"GITLAB_BASE_URL", "GITLAB_TOKEN"}},
+		Script: &v1.PrepareSpec{Script: "payload=$(cat)", ForwardEnv: []string{"GITLAB_BASE_URL", "GITLAB_TOKEN"}},
 	}}
 
-	cfg, err := Render2(profile, agent, "")
+	cfg, _, err := Render(profile, agent)
 	if err != nil {
-		t.Fatalf("Render2: %v", err)
+		t.Fatalf("Render: %v", err)
 	}
 	if len(cfg.Channels) != 1 {
 		t.Fatalf("channels = %+v, want exactly 1", cfg.Channels)
@@ -665,10 +512,10 @@ func TestHandoff_SecretAliasesDoNotCollapseEnvNameCase(t *testing.T) {
 	secret := func(name, secret string) corev1.EnvVar {
 		return corev1.EnvVar{Name: name, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: secret}, Key: "key"}}}
 	}
-	p := achv1alpha1.AgentProfile{Spec: achv1alpha1.AgentProfileSpec{Env: []corev1.EnvVar{secret("token", "lower"), secret("TOKEN", "upper")}}}
-	a := achv1alpha1.ACHAgent{Spec: achv1alpha1.ACHAgentSpec{Channels: []achv1alpha1.ChannelSpec{{
-		Name: "c", Type: "cron", Cron: &achv1alpha1.CronSpec{Schedule: "* * * * *"},
-		Handoff: &achv1alpha1.HandoffSpec{PrepareSpec: achv1alpha1.PrepareSpec{Script: "true", ForwardEnv: []string{"token", "TOKEN"}}, Destination: "handoff"},
+	p := v1.AgentProfile{Spec: v1.AgentProfileSpec{Control: v1.ControlSpec{Env: []corev1.EnvVar{secret("token", "lower"), secret("TOKEN", "upper")}}}}
+	a := v1.Agent{Spec: v1.AgentSpec{Channels: []v1.ChannelSpec{{
+		Name: "c", Type: "cron", Cron: &v1.CronSpec{Schedule: "* * * * *"},
+		Handoff: &v1.HandoffSpec{PrepareSpec: v1.PrepareSpec{Script: "true", ForwardEnv: []string{"token", "TOKEN"}}, Destination: "handoff"},
 	}}}}
 	refs := ChannelSecretEnv(p, a)
 	if len(refs) != 2 || refs[0].EnvName == refs[1].EnvName {
@@ -676,69 +523,12 @@ func TestHandoff_SecretAliasesDoNotCollapseEnvNameCase(t *testing.T) {
 	}
 }
 
-// TestResolveAch_FieldMerge is the Important review finding 2 regression: profile
-// ach.environment/capability defaults must apply when the agent omits them, and an explicit
-// empty-string agent override must be able to CLEAR an inherited non-empty environment.
-// Identity must never be backfilled from the profile.
-func TestResolveAch_FieldMerge(t *testing.T) {
-	ident := &achv1alpha1.IdentitySpec{SecretRef: achv1alpha1.SecretKeyRef{Name: "ek", Key: "ek"}}
-	profileCap := &achv1alpha1.CapabilitySpec{Filter: &achv1alpha1.FilterSpec{Exclude: &achv1alpha1.ExcludeSpec{Skills: []string{"send-email"}}}}
-	profile := &achv1alpha1.AchSpec{Environment: ptr("prod"), Capability: profileCap}
-
-	t.Run("agent omits environment/capability: inherits profile", func(t *testing.T) {
-		agent := &achv1alpha1.AchSpec{Identity: ident}
-		got := ResolveAch(agent, profile)
-		if got.Identity != ident {
-			t.Fatal("identity must stay the agent's own")
-		}
-		if got.Environment == nil || *got.Environment != "prod" {
-			t.Errorf("environment = %v, want inherited \"prod\"", got.Environment)
-		}
-		if got.Capability != profileCap {
-			t.Errorf("capability must be inherited from profile when agent omits it")
-		}
-	})
-
-	t.Run("agent sets explicit empty environment: clears inherited value", func(t *testing.T) {
-		agent := &achv1alpha1.AchSpec{Identity: ident, Environment: ptr("")}
-		got := ResolveAch(agent, profile)
-		if got.Environment == nil || *got.Environment != "" {
-			t.Errorf("environment = %v, want explicit empty string to win over inherited \"prod\"", got.Environment)
-		}
-	})
-
-	t.Run("agent sets its own capability: wins over profile", func(t *testing.T) {
-		agentCap := &achv1alpha1.CapabilitySpec{}
-		agent := &achv1alpha1.AchSpec{Identity: ident, Capability: agentCap}
-		if got := ResolveAch(agent, profile); got.Capability != agentCap {
-			t.Error("agent capability must win over profile's")
-		}
-	})
-
-	t.Run("nil profile: agent as-is", func(t *testing.T) {
-		agent := &achv1alpha1.AchSpec{Identity: ident}
-		if got := ResolveAch(agent, nil); got != agent {
-			t.Error("nil profile must return agent unchanged")
-		}
-	})
-
-	t.Run("nil agent: profile as-is (identity stays nil, never backfilled)", func(t *testing.T) {
-		got := ResolveAch(nil, profile)
-		if got != profile {
-			t.Error("nil agent must return profile unchanged")
-		}
-		if got.Identity != nil {
-			t.Error("profile must never carry an identity")
-		}
-	})
-}
-
 // TestResolvePersistence_PreservesInheritedFieldOnPartialOverride is the Important review
 // finding 3 regression: `workspace.persistence: {enabled: false}` on the agent must not lose
 // the profile's retentionDays (the wholesale sub-block swap this replaces did exactly that).
 func TestResolvePersistence_PreservesInheritedFieldOnPartialOverride(t *testing.T) {
-	profile := &achv1alpha1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))}
-	agent := &achv1alpha1.WorkspacePersistenceSpec{Enabled: ptr(false)}
+	profile := &v1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))}
+	agent := &v1.WorkspacePersistenceSpec{Enabled: ptr(false)}
 	got := ResolvePersistence(agent, profile)
 	if got.Enabled == nil || *got.Enabled != false {
 		t.Errorf("enabled = %v, want agent's false", got.Enabled)
@@ -752,15 +542,15 @@ func TestResolvePersistence_PreservesInheritedFieldOnPartialOverride(t *testing.
 // level deeper: `workspace.session: {idleTimeoutSeconds: 0}` must not lose
 // session.persistence (previously an atomic sub-block swap at the WorkspaceSpec level).
 func TestResolveWorkspace_SessionPartialOverridePreservesPersistence(t *testing.T) {
-	profile := &achv1alpha1.WorkspaceSpec{
+	profile := &v1.WorkspaceSpec{
 		IdleTimeoutSeconds: ptr(int64(600)), ShutdownTimeoutSeconds: ptr(int64(300)), MaxConcurrentSessions: ptr(int64(1)),
-		Persistence: &achv1alpha1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))},
-		Session: &achv1alpha1.WorkspaceSessionSpec{
+		Persistence: &v1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))},
+		Session: &v1.WorkspaceSessionSpec{
 			IdleTimeoutSeconds: ptr(int64(300)),
-			Persistence:        &achv1alpha1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))},
+			Persistence:        &v1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))},
 		},
 	}
-	agent := &achv1alpha1.WorkspaceSpec{Session: &achv1alpha1.WorkspaceSessionSpec{IdleTimeoutSeconds: ptr(int64(0))}}
+	agent := &v1.WorkspaceSpec{Session: &v1.WorkspaceSessionSpec{IdleTimeoutSeconds: ptr(int64(0))}}
 	got := ResolveWorkspace(agent, profile)
 	if got.Session.IdleTimeoutSeconds == nil || *got.Session.IdleTimeoutSeconds != 0 {
 		t.Errorf("session.idleTimeoutSeconds = %v, want agent's explicit 0", got.Session.IdleTimeoutSeconds)
@@ -776,8 +566,8 @@ func TestResolveWorkspace_SessionPartialOverridePreservesPersistence(t *testing.
 // TestResolveArtifacts_PreservesEnabledOnPartialOverride mirrors the persistence case for
 // artifacts: an agent overriding only maxArtifactBytes must not lose the profile's enabled.
 func TestResolveArtifacts_PreservesEnabledOnPartialOverride(t *testing.T) {
-	profile := &achv1alpha1.ArtifactsSpec{Enabled: ptr(true), MaxArtifactBytes: ptr(int64(1000)), RetentionDays: ptr(int64(90))}
-	agent := &achv1alpha1.ArtifactsSpec{MaxArtifactBytes: ptr(int64(2000))}
+	profile := &v1.ArtifactsSpec{Enabled: ptr(true), MaxArtifactBytes: ptr(int64(1000)), RetentionDays: ptr(int64(90))}
+	agent := &v1.ArtifactsSpec{MaxArtifactBytes: ptr(int64(2000))}
 	got := ResolveArtifacts(agent, profile)
 	if got.Enabled == nil || !*got.Enabled {
 		t.Errorf("enabled = %v, want inherited true", got.Enabled)
@@ -812,7 +602,7 @@ func TestDecodeParams_OrdinaryJSONDecoding(t *testing.T) {
 // propertyNames constraint (testdata/ach-workspace-config-v2.schema.json, ach-agent commits
 // 3da2c6e/ceee54d), so the two cannot silently drift apart.
 func TestReservedForwardEnvDenylist_MatchesVendoredSchema(t *testing.T) {
-	raw, err := os.ReadFile(vendoredWorkspaceV2Schema)
+	raw, err := os.ReadFile(vendoredWorkspaceSchema)
 	if err != nil {
 		t.Fatalf("read vendored schema: %v", err)
 	}

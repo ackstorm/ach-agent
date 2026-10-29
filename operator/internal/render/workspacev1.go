@@ -7,7 +7,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	achv1alpha1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
+	v1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
 )
 
 // This file implements the workspace-v1 wire mapping that render2.go's Render2 orchestrates
@@ -40,26 +40,9 @@ type WSSecretAlias struct {
 	Env string `json:"env"`
 }
 
-// AchIdentityAliasEnv is the fixed env var name for ach.identity (contract §11 example:
-// ACH_SECRET_IDENTITY), distinct from the per-channel generated aliases. Exported: the
-// controller's buildAgentEnv (internal/controller/ach/achagent_workload.go) injects the
-// identity Secret under THIS exact name — a second, independent literal there would drift
-// silently from what the rendered config promises at ach.identity.env.
-const AchIdentityAliasEnv = "ACH_SECRET_IDENTITY"
-
-// WSAchBlock is ach{baseUrl,environment,identity,capability} (schema AchBlock — baseUrl,
-// environment and identity are all required; capability is optional).
-type WSAchBlock struct {
-	BaseURL     string          `json:"baseUrl"`
-	Environment string          `json:"environment"`
-	Identity    WSSecretAlias   `json:"identity"`
-	Capability  *FilterCapBlock `json:"capability,omitempty"`
-}
-
-// FilterCapBlock is ach.capability{filter} (schema AchCapabilityBlock).
-type FilterCapBlock struct {
-	Filter *WSFilterBlock `json:"filter,omitempty"`
-}
+// AchKeyEnv is the fixed env var name for capability.ach.key, distinct from the per-channel
+// generated aliases.
+const AchKeyEnv = "ACH_SECRET_IDENTITY"
 
 // WSFilterBlock/WSExcludeBlock mirror FilterBlock/ExcludeBlock but WITHOUT omitempty on
 // the three list fields: the fixture always emits tools/mcpServers/skills explicitly
@@ -67,7 +50,7 @@ type FilterCapBlock struct {
 // defaults. Neither is schema-required (AchCapabilityFilterExclude has no required list),
 // so this is a byte-parity choice, not a contract requirement.
 type WSFilterBlock struct {
-	Exclude *WSExcludeBlock `json:"exclude,omitempty"`
+	Exclude WSExcludeBlock `json:"exclude"`
 }
 
 type WSExcludeBlock struct {
@@ -88,36 +71,13 @@ func emptyIfNil(s []string) []string {
 	return s
 }
 
-func renderFilterV1(f *achv1alpha1.FilterSpec) *WSFilterBlock {
-	if f == nil || f.Exclude == nil {
-		return nil
+// renderFilterV1 always renders the exclude gate with non-null arrays.
+func renderFilterV1(f *v1.FilterSpec) WSFilterBlock {
+	var e v1.ExcludeSpec
+	if f != nil && f.Exclude != nil {
+		e = *f.Exclude
 	}
-	e := f.Exclude
-	if len(e.Tools) == 0 && len(e.McpServers) == 0 && len(e.Skills) == 0 {
-		return nil
-	}
-	return &WSFilterBlock{Exclude: &WSExcludeBlock{Tools: emptyIfNil(e.Tools), McpServers: emptyIfNil(e.McpServers), Skills: emptyIfNil(e.Skills)}}
-}
-
-// RenderAchV1 maps the already profile-merged Ach block (ResolveAch) to the wire ach block.
-// baseURL is the caller's already-resolved value (ResolveAchBaseURL); identity always comes
-// from ach (ResolveAch never backfills it from a profile — a profile is forbidden from
-// setting one).
-func RenderAchV1(ach *achv1alpha1.AchSpec, baseURL string) (WSAchBlock, error) {
-	if ach == nil || ach.Identity == nil {
-		return WSAchBlock{}, fmt.Errorf("ach.identity is required")
-	}
-	env := ""
-	if ach.Environment != nil {
-		env = *ach.Environment
-	}
-	b := WSAchBlock{BaseURL: baseURL, Environment: env, Identity: WSSecretAlias{Env: AchIdentityAliasEnv}}
-	if ach.Capability != nil {
-		if f := renderFilterV1(ach.Capability.Filter); f != nil {
-			b.Capability = &FilterCapBlock{Filter: f}
-		}
-	}
-	return b, nil
+	return WSFilterBlock{Exclude: WSExcludeBlock{Tools: emptyIfNil(e.Tools), McpServers: emptyIfNil(e.McpServers), Skills: emptyIfNil(e.Skills)}}
 }
 
 // WSCompactionKeepBlock is engine.compaction.keep (schema CompactionKeepBlock — tokens
@@ -148,7 +108,7 @@ type WSEngineBlock struct {
 // {nombre: valorLiteral}" — a NAME LIST becomes a NAME->VALUE MAP, every value a literal
 // already validated by validateEngineForwardEnv (never a secretKeyRef, never reserved,
 // never absent from the merged env).
-func RenderEngineV1(e *achv1alpha1.EngineSpec, resolvedEnv []corev1.EnvVar) (WSEngineBlock, error) {
+func RenderEngineV1(e *v1.EngineSpec, resolvedEnv []corev1.EnvVar) (WSEngineBlock, error) {
 	if e == nil {
 		return WSEngineBlock{}, fmt.Errorf("engine is required (workspace-v1: compaction has no default)")
 	}
@@ -189,7 +149,7 @@ type WSLimitsBlock struct {
 // maxConcurrentScripts is required on the wire, but the CRD keeps them as pointers (an
 // agent may override one limit without restating the rest — ResolveLimits per-field
 // merge), so completeness is checked HERE, on the resolved result, by exact field name.
-func RenderLimitsV1(l *achv1alpha1.LimitsSpec) (WSLimitsBlock, error) {
+func RenderLimitsV1(l *v1.LimitsSpec) (WSLimitsBlock, error) {
 	if l == nil {
 		return WSLimitsBlock{}, fmt.Errorf("limits is required")
 	}
@@ -236,7 +196,7 @@ type WSWorkspaceBlock struct {
 	Session                WSSessionPolicyBlock `json:"session"`
 }
 
-func renderPersistenceV1(p *achv1alpha1.WorkspacePersistenceSpec, field string) (WSPersistenceBlock, error) {
+func renderPersistenceV1(p *v1.WorkspacePersistenceSpec, field string) (WSPersistenceBlock, error) {
 	if p == nil || p.Enabled == nil {
 		return WSPersistenceBlock{}, fmt.Errorf("%s.enabled is required on the resolved wire value", field)
 	}
@@ -249,7 +209,7 @@ func renderPersistenceV1(p *achv1alpha1.WorkspacePersistenceSpec, field string) 
 // RenderWorkspaceV1 maps the resolved WorkspaceSpec to the wire workspace block. The CRD
 // keeps every field a pointer (per-field merge via ResolveWorkspace), so completeness of
 // the wire-required fields is checked HERE, on the resolved result, by exact field name.
-func RenderWorkspaceV1(w *achv1alpha1.WorkspaceSpec) (WSWorkspaceBlock, error) {
+func RenderWorkspaceV1(w *v1.WorkspaceSpec) (WSWorkspaceBlock, error) {
 	if w == nil {
 		return WSWorkspaceBlock{}, fmt.Errorf("workspace is required")
 	}
@@ -284,7 +244,7 @@ type WSArtifactsBlock struct {
 // RenderArtifactsV1 maps the resolved ArtifactsSpec to the wire artifacts block. The CRD
 // keeps maxArtifactBytes/retentionDays as pointers (per-field merge via ResolveArtifacts),
 // so completeness is checked here, on the resolved result.
-func RenderArtifactsV1(a *achv1alpha1.ArtifactsSpec) (WSArtifactsBlock, error) {
+func RenderArtifactsV1(a *v1.ArtifactsSpec) (WSArtifactsBlock, error) {
 	if a == nil || a.Enabled == nil || a.MaxArtifactBytes == nil || a.RetentionDays == nil {
 		return WSArtifactsBlock{}, fmt.Errorf("artifacts.{enabled,maxArtifactBytes,retentionDays} are required on the resolved wire value")
 	}
@@ -301,7 +261,7 @@ type WSRoutingBlock struct {
 
 // RenderRoutingV1 maps RoutingSpec verbatim — no interpolation (contract §2: the operator
 // never renders {{ }} templates, the Harness does).
-func RenderRoutingV1(r *achv1alpha1.RoutingSpec) *WSRoutingBlock {
+func RenderRoutingV1(r *v1.RoutingSpec) *WSRoutingBlock {
 	if r == nil {
 		return nil
 	}
@@ -322,7 +282,7 @@ type WSHandoffBlock struct {
 // environment is a configuration error (contract §11: check missing names before producing
 // JSON), never a silent drop. (Not named renderHookV1: that name already denotes the
 // unrelated hooks.sessionStart/.../sessionSuspend mapper.)
-func renderPrepareV1(ch *achv1alpha1.ChannelSpec, hook *achv1alpha1.PrepareSpec, resolvedEnv []corev1.EnvVar, phase string) (*PrepareBlock, error) {
+func renderPrepareV1(ch *v1.ChannelSpec, hook *v1.PrepareSpec, resolvedEnv []corev1.EnvVar, phase string) (*PrepareBlock, error) {
 	if hook == nil {
 		return nil, nil
 	}
@@ -350,7 +310,7 @@ func renderPrepareV1(ch *achv1alpha1.ChannelSpec, hook *achv1alpha1.PrepareSpec,
 
 // RenderHandoffV1 reuses the strict env-forwarding resolution (renderHookV1) and adds the
 // now-required destination.
-func RenderHandoffV1(ch *achv1alpha1.ChannelSpec, resolvedEnv []corev1.EnvVar) (*WSHandoffBlock, error) {
+func RenderHandoffV1(ch *v1.ChannelSpec, resolvedEnv []corev1.EnvVar) (*WSHandoffBlock, error) {
 	if ch.Handoff == nil {
 		return nil, nil
 	}
@@ -394,7 +354,7 @@ type WSWebhookBlock struct {
 
 // RenderWebhookV1 maps WebhookSpec to the wire shape. ch is used only to derive the
 // generated channelSecretEnvName alias (same deterministic name as the legacy renderer).
-func RenderWebhookV1(ch *achv1alpha1.ChannelSpec) *WSWebhookBlock {
+func RenderWebhookV1(ch *v1.ChannelSpec) *WSWebhookBlock {
 	if ch.Webhook == nil {
 		return nil
 	}
@@ -431,7 +391,7 @@ type WSHooksBlock struct {
 	SessionSuspend *WSHookBlock `json:"sessionSuspend"`
 }
 
-func renderHookV1(h *achv1alpha1.HookSpec) *WSHookBlock {
+func renderHookV1(h *v1.HookSpec) *WSHookBlock {
 	if h == nil {
 		return nil
 	}
@@ -439,7 +399,7 @@ func renderHookV1(h *achv1alpha1.HookSpec) *WSHookBlock {
 }
 
 // RenderHooksV1 maps HooksSpec verbatim.
-func RenderHooksV1(h *achv1alpha1.HooksSpec) WSHooksBlock {
+func RenderHooksV1(h *v1.HooksSpec) WSHooksBlock {
 	if h == nil {
 		return WSHooksBlock{}
 	}

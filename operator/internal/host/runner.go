@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	// PauseAnnotation set to "true" on an ACHAgent stops its host loop: no unit is created,
+	// PauseAnnotation set to "true" on an Agent stops its host loop: no unit is created,
 	// registered or removed until the annotation is removed. Units already running keep
 	// running. It exists so the kind gate can observe a control unit waiting for its
 	// inventory (T04), and for debugging.
@@ -33,9 +33,9 @@ const (
 
 func KeySecretName(agentUID string) string { return "ach-agent-key-" + agentUID }
 
-// Runner starts one Host per ACHAgent whose control pod is Running and stops it when the
+// Runner starts one Host per Agent whose control pod is Running and stops it when the
 // agent is deleted, paused, or its control pod is not Running. It deliberately does NOT wait
-// for the ACHAgent to be Ready: Ready follows the control pod's readiness, which waits for
+// for the Agent to be Ready: Ready follows the control pod's readiness, which waits for
 // the inventory this runner sends.
 type Runner struct {
 	Client    client.Client // informer-backed
@@ -47,7 +47,7 @@ type Runner struct {
 	// NewBackend builds the unit backend of one agent.
 	NewBackend func(agent types.NamespacedName, uid types.UID, reader client.Reader, writer client.Client) Backend
 
-	run func(ctx context.Context, a *achv1alpha1.ACHAgent) // test seam, default runAgent
+	run func(ctx context.Context, a *achv1alpha1.Agent) // test seam, default runAgent
 }
 
 // NeedLeaderElection: exactly one operator may send host mutations for an agent.
@@ -76,7 +76,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	}
 }
 
-func (r *Runner) controlRunning(ctx context.Context, a *achv1alpha1.ACHAgent) bool {
+func (r *Runner) controlRunning(ctx context.Context, a *achv1alpha1.Agent) bool {
 	var p corev1.Pod
 	name := render.ControlName(a.Name) + "-0"
 	err := r.Client.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: name}, &p)
@@ -90,12 +90,12 @@ func (r *Runner) sync(ctx context.Context, loops map[types.UID]context.CancelFun
 	if r.Namespace != "" {
 		opts = append(opts, client.InNamespace(r.Namespace))
 	}
-	var agents achv1alpha1.ACHAgentList
+	var agents achv1alpha1.AgentList
 	if err := r.Client.List(ctx, &agents, opts...); err != nil {
-		r.Log.Error(err, "list ACHAgents")
+		r.Log.Error(err, "list Agents")
 		return
 	}
-	want := make(map[types.UID]*achv1alpha1.ACHAgent, len(agents.Items))
+	want := make(map[types.UID]*achv1alpha1.Agent, len(agents.Items))
 	for i := range agents.Items {
 		a := &agents.Items[i]
 		if a.DeletionTimestamp.IsZero() && a.Annotations[PauseAnnotation] != "true" && r.controlRunning(ctx, a) {
@@ -115,14 +115,14 @@ func (r *Runner) sync(ctx context.Context, loops map[types.UID]context.CancelFun
 		loopCtx, cancel := context.WithCancel(ctx)
 		loops[uid] = cancel
 		wg.Add(1)
-		go func(a *achv1alpha1.ACHAgent) {
+		go func(a *achv1alpha1.Agent) {
 			defer wg.Done()
 			r.run(loopCtx, a)
 		}(a.DeepCopy())
 	}
 }
 
-func (r *Runner) key(ctx context.Context, a *achv1alpha1.ACHAgent) ([]byte, error) {
+func (r *Runner) key(ctx context.Context, a *achv1alpha1.Agent) ([]byte, error) {
 	var s corev1.Secret
 	if err := r.Reader.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: KeySecretName(string(a.UID))}, &s); err != nil {
 		return nil, err
@@ -135,7 +135,7 @@ func (r *Runner) key(ctx context.Context, a *achv1alpha1.ACHAgent) ([]byte, erro
 
 // runAgent runs one agent's Host until ctx ends. A rejected token or an unreadable key is
 // retried with backoff after re-reading the Secret. Neither the key nor the token is logged.
-func (r *Runner) runAgent(ctx context.Context, a *achv1alpha1.ACHAgent) {
+func (r *Runner) runAgent(ctx context.Context, a *achv1alpha1.Agent) {
 	log := r.Log.WithValues("agent", client.ObjectKeyFromObject(a).String())
 	for failures := 1; ctx.Err() == nil; failures++ {
 		key, err := r.key(ctx, a)

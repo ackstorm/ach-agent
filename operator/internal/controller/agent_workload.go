@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	achv1alpha1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
 	"github.com/ackstorm/ach-agent/operator/internal/render"
@@ -30,21 +31,22 @@ const (
 	// read-only root filesystem (ach-runtime: TMPDIR only; handoff/script children inherit it).
 	tmpVolumeName        = "ach-tmp"
 	tmpMountDir          = "/tmp"
-	configHashAnnotation = "ach.ackstorm.ai/config-hash"
-	agentLabelKey        = "ach.ackstorm.ai/agent"
-	componentLabelKey    = "ach.ackstorm.ai/component"
+	configHashAnnotation = "ach-agent.ackstorm.ai/config-hash"
+	agentLabelKey        = "ach-agent.ackstorm.ai/agent"
+	componentLabelKey    = "ach-agent.ackstorm.ai/component"
 	componentControl     = "control"
 	defaultGraceSeconds  = int64(120)
 	agentUID             = int64(10001)
 	controlServicePort   = 8081
 
-	// controlProbePort is the fixed workspace-v1 control HTTP port (contract §11) the
-	// container's health server binds, the probes target, and buildService's targetPort
-	// uses. Render2 has no health block (the legacy agent-config-v1 health.host/port CRD
-	// knob is compatibility-only now, read by nothing that builds real k8s objects) — a
-	// fixed port here can never drift from what the rendered config's infrastructure.control
-	// block and the control pod actually listen on.
+	// controlProbePort is the fixed control HTTP port: the container's health and event
+	// server binds it, the probes and the -http Service target it. controlServicePort carries
+	// the host API and the facades.
 	controlProbePort = int32(8080)
+
+	// ambientLabel puts the control pod in the Istio ambient mesh: the sandbox facade calls
+	// and the operator's host API calls rely on mesh identity.
+	ambientLabel = "istio.io/dataplane-mode"
 )
 
 // controlCommand is the fixed workspace-v1 control launch command (contract §11): the
@@ -52,13 +54,9 @@ const (
 // legacy distributed-placement "--role" args convention.
 var controlCommand = []string{"python", "-m", "ach_runtime", "control", "--config", configFilePath}
 
-// Contract §11 names live in agentrender (HarnessName, ExecutionServiceAccountName,
-// ControlName): RenderInfrastructureV1 embeds them in the rendered wire config, so the k8s
-// objects built here MUST use the same functions or the config lies about the topology.
-
-// effectiveControlServiceAccountName is what the control pod runs as: the profile's stable
-// controlServiceAccountName when set, else render.HarnessName(uid).
-func effectiveControlServiceAccountName(a *achv1alpha1.ACHAgent, p *achv1alpha1.AgentProfile) string {
+// effectiveControlServiceAccountName is what the control pod runs as: the profile's
+// control.serviceAccountName when set, else ach-agent-control-<uid>.
+func effectiveControlServiceAccountName(a *achv1alpha1.Agent, p *achv1alpha1.AgentProfile) string {
 	return render.ControlServiceAccountName(string(a.UID), p)
 }
 
@@ -69,26 +67,22 @@ var (
 	defaultMemoryLimit   = resource.MustParse("1Gi")
 )
 
-func agentResourceName(agentName string) string { return "achagent-" + agentName }
+// Child names derive from render.ControlName, which is bounded and DNS-safe.
+func configMapName(agentName string) string   { return render.ControlName(agentName) + "-config" }
+func pvcName(agentName string) string         { return render.ControlName(agentName) + "-state" }
+func httpServiceName(agentName string) string { return render.ControlName(agentName) + "-http" }
 
-func derefEnv(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
-
-func agentLabels(a *achv1alpha1.ACHAgent) map[string]string {
+func agentLabels(a *achv1alpha1.Agent) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/name":       "ach-agent",
-		"app.kubernetes.io/managed-by": "ach-operator",
+		"app.kubernetes.io/managed-by": "ach-agent-operator",
 		agentLabelKey:                  a.Name,
 	}
 }
 
 // agentSelectorLabels selects the agent's CONTROL pod. The component label is required:
-// the runtime also labels workspace pods ach.ackstorm.ai/agent=<name>, and they must never
-// back the control/expose Services 
+// the runtime also labels workspace pods ach-agent.ackstorm.ai/agent=<name>, and they must never
+// back the control/expose Services
 func agentSelectorLabels(agentName string) map[string]string {
 	return map[string]string{agentLabelKey: agentName, componentLabelKey: componentControl}
 }
@@ -126,22 +120,34 @@ func overrideEnv(base, overrides []corev1.EnvVar) []corev1.EnvVar {
 	return out
 }
 
-func buildAgentEnv(a *achv1alpha1.ACHAgent, p *achv1alpha1.AgentProfile, defaultBaseURL string) []corev1.EnvVar {
-	resolvedAch := render.ResolveAch(a.Spec.Ach, p.Spec.Achagent.Ach)
+// envFromBinding maps a render.EnvBinding onto a pod env var.
+func envFromBinding(b render.EnvBinding) corev1.EnvVar {
+	if b.SecretKeyRef != nil {
+		return corev1.EnvVar{Name: b.Name, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: b.SecretKeyRef.Name},
+			Key:                  b.SecretKeyRef.Key,
+		}}}
+	}
+	e := corev1.EnvVar{Name: b.Name}
+	if b.Value != nil {
+		e.Value = *b.Value
+	}
+	return e
+}
+
+func buildAgentEnv(a *achv1alpha1.Agent, p *achv1alpha1.AgentProfile, bindings []render.EnvBinding) []corev1.EnvVar {
 	env := []corev1.EnvVar{
-		{Name: "ACH_BASE_URL", Value: render.ResolveAchBaseURL(a.Spec.Ach, p.Spec.Achagent.Ach, defaultBaseURL)},
-		{Name: "ACH_ENVIRONMENT", Value: derefEnv(resolvedAch.Environment)},
 		{Name: "ACH_CONFIG_PATH", Value: configFilePath},
 		// POD_NAMESPACE feeds the ach-memory project slug ({POD_NAMESPACE}-{agent.name}).
 		// Without it the harness silently degrades to the bare agent name — the same bank
 		// under a different key, with no error anywhere.
 		{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"}}},
-		{Name: render.AchIdentityAliasEnv, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
-			LocalObjectReference: corev1.LocalObjectReference{Name: a.Spec.Ach.Identity.SecretRef.Name},
-			Key:                  a.Spec.Ach.Identity.SecretRef.Key,
-		}}},
 	}
-	for _, e := range render.ResolveEnv(a.Spec.Env, p.Spec.Env) {
+	// Model, MCP and ACH key aliases the rendered config names.
+	for _, b := range bindings {
+		env = append(env, envFromBinding(b))
+	}
+	for _, e := range render.ResolveEnv(a.Spec.Env, p.Spec.Control.Env) {
 		if strings.HasPrefix(e.Name, "ACH_") {
 			continue // reserved — defense-in-depth behind the CEL marker
 		}
@@ -171,31 +177,29 @@ func buildAgentEnv(a *achv1alpha1.ACHAgent, p *achv1alpha1.AgentProfile, default
 
 // buildConfigMap carries config.json only (contract §11 scope reset — no broker/TLS
 // material rides alongside it any more).
-func buildConfigMap(a *achv1alpha1.ACHAgent, configJSON []byte) *corev1.ConfigMap {
+func buildConfigMap(a *achv1alpha1.Agent, configJSON []byte) *corev1.ConfigMap {
 	return &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: agentResourceName(a.Name), Namespace: a.Namespace, Labels: agentLabels(a)},
+		ObjectMeta: metav1.ObjectMeta{Name: configMapName(a.Name), Namespace: a.Namespace, Labels: agentLabels(a)},
 		Data:       map[string]string{configFileName: string(configJSON)},
 	}
 }
 
-// buildControlServiceAccount is the control (harness) pod's identity, named per contract
-// §11 (ach-harness-<uid>). It has no Kubernetes access (no token, no Role): the operator
-// owns execution units. Not applied when the profile sets
-// controlServiceAccountName (that SA is external; ach-harness-<uid> SAs orphaned by a
-// profile switch are not deleted by the operator).
-func buildControlServiceAccount(a *achv1alpha1.ACHAgent) *corev1.ServiceAccount {
+// buildControlServiceAccount is the control pod's identity (ach-agent-control-<uid>). It has
+// no Kubernetes access (no token, no Role): the operator owns the sandboxes. Not applied when
+// the profile sets control.serviceAccountName (that SA is external).
+func buildControlServiceAccount(a *achv1alpha1.Agent) *corev1.ServiceAccount {
 	falseVal := false
 	return &corev1.ServiceAccount{
-		ObjectMeta:                   metav1.ObjectMeta{Name: render.HarnessName(string(a.UID)), Namespace: a.Namespace, Labels: agentLabels(a)},
+		ObjectMeta:                   metav1.ObjectMeta{Name: render.ControlServiceAccountName(string(a.UID), &achv1alpha1.AgentProfile{}), Namespace: a.Namespace, Labels: agentLabels(a)},
 		AutomountServiceAccountToken: &falseVal,
 	}
 }
 
-// buildControlService is the control pod's headless governing Service (contract §11:
-// agent-<agent name>, port 8081) — infrastructure.facadeEndpoint is built from this exact
-// DNS name by RenderInfrastructureV2. ClusterIP: None since the
-// control StatefulSet has a single replica and callers address the Service name directly.
-func buildControlService(a *achv1alpha1.ACHAgent) *corev1.Service {
+// buildControlService is the control pod's headless governing Service (agent-<agent name>,
+// port 8081) — infrastructure.facadeEndpoint is built from this exact DNS name by
+// RenderInfrastructureV2. ClusterIP: None since the control StatefulSet has a single replica
+// and callers address the Service name directly.
+func buildControlService(a *achv1alpha1.Agent) *corev1.Service {
 	name := render.ControlName(a.Name)
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: a.Namespace, Labels: agentLabels(a)},
@@ -211,17 +215,17 @@ func buildControlService(a *achv1alpha1.ACHAgent) *corev1.Service {
 	}
 }
 
-func buildPVC(a *achv1alpha1.ACHAgent, p *achv1alpha1.AgentProfile) (*corev1.PersistentVolumeClaim, error) {
-	qty, err := resource.ParseQuantity(p.Spec.Persistence.Size)
+func buildPVC(a *achv1alpha1.Agent, p *achv1alpha1.AgentProfile) (*corev1.PersistentVolumeClaim, error) {
+	qty, err := resource.ParseQuantity(p.Spec.Control.Persistence.Size)
 	if err != nil {
 		return nil, err
 	}
 	var scName *string
-	if p.Spec.Persistence.StorageClassName != "" {
-		scName = &p.Spec.Persistence.StorageClassName
+	if p.Spec.Control.Persistence.StorageClassName != "" {
+		scName = &p.Spec.Control.Persistence.StorageClassName
 	}
 	return &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: agentResourceName(a.Name), Namespace: a.Namespace, Labels: agentLabels(a)},
+		ObjectMeta: metav1.ObjectMeta{Name: pvcName(a.Name), Namespace: a.Namespace, Labels: agentLabels(a)},
 		Spec: corev1.PersistentVolumeClaimSpec{
 			AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 			Resources:        corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: qty}},
@@ -230,12 +234,10 @@ func buildPVC(a *achv1alpha1.ACHAgent, p *achv1alpha1.AgentProfile) (*corev1.Per
 	}, nil
 }
 
-// buildService fronts the pod on the fixed workspace-v1 control port 8080 (contract §11;
-// unlike the retired agent-config-v1 health.port knob, p/a are now unused for port
-// resolution — kept as parameters for call-site symmetry with the other builders).
-func buildService(a *achv1alpha1.ACHAgent, _ *achv1alpha1.AgentProfile) *corev1.Service {
+// buildService fronts the pod on the fixed control port 8080.
+func buildService(a *achv1alpha1.Agent, _ *achv1alpha1.AgentProfile) *corev1.Service {
 	return &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{Name: agentResourceName(a.Name), Namespace: a.Namespace, Labels: agentLabels(a)},
+		ObjectMeta: metav1.ObjectMeta{Name: httpServiceName(a.Name), Namespace: a.Namespace, Labels: agentLabels(a)},
 		Spec: corev1.ServiceSpec{
 			Type:     corev1.ServiceTypeClusterIP,
 			Selector: agentSelectorLabels(a.Name),
@@ -248,7 +250,7 @@ func buildService(a *achv1alpha1.ACHAgent, _ *achv1alpha1.AgentProfile) *corev1.
 // Now an explicit opt-in (expose.service) rather than inferred from channel
 // type: an inbound HTTP channel is only reachable when the author asks for a
 // Service. Fully private by default.
-func needsService(a *achv1alpha1.ACHAgent) bool {
+func needsService(a *achv1alpha1.Agent) bool {
 	return a.Spec.Expose != nil && a.Spec.Expose.Service
 }
 
@@ -262,29 +264,29 @@ func needsService(a *achv1alpha1.ACHAgent) bool {
 // has no Kubernetes access.
 // ServiceName is the control pod's own headless Service (buildControlService) — required by
 // StatefulSet and also the exact DNS name RenderInfrastructureV2 embeds in facadeEndpoint.
-func buildStatefulSet(a *achv1alpha1.ACHAgent, p *achv1alpha1.AgentProfile, configHash string, env []corev1.EnvVar) *appsv1.StatefulSet {
+func buildStatefulSet(a *achv1alpha1.Agent, p *achv1alpha1.AgentProfile, configHash string, env []corev1.EnvVar) *appsv1.StatefulSet {
 	one := int32(1)
 	falseVal, trueVal := false, true
 
 	volumes := buildReservedInfraVolumes(a)
 	mounts := buildReservedInfraMounts()
 
-	if p.Spec.Persistence != nil && p.Spec.Persistence.Enabled {
-		volumes = append(volumes, corev1.Volume{Name: pvcVolumeName, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: agentResourceName(a.Name)}}})
-		mounts = append(mounts, corev1.VolumeMount{Name: pvcVolumeName, MountPath: p.Spec.Persistence.MountPath})
+	if p.Spec.Control.Persistence != nil && p.Spec.Control.Persistence.Enabled {
+		volumes = append(volumes, corev1.Volume{Name: pvcVolumeName, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName(a.Name)}}})
+		mounts = append(mounts, corev1.VolumeMount{Name: pvcVolumeName, MountPath: p.Spec.Control.Persistence.MountPath})
 	}
 
 	grace := defaultGraceSeconds
-	if p.Spec.TerminationGracePeriodSeconds != nil {
-		grace = *p.Spec.TerminationGracePeriodSeconds
+	if p.Spec.Control.TerminationGracePeriodSeconds != nil {
+		grace = *p.Spec.Control.TerminationGracePeriodSeconds
 	}
 
 	resources := corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{corev1.ResourceCPU: defaultCPURequest.DeepCopy(), corev1.ResourceMemory: defaultMemoryRequest.DeepCopy()},
 		Limits:   corev1.ResourceList{corev1.ResourceCPU: defaultCPULimit.DeepCopy(), corev1.ResourceMemory: defaultMemoryLimit.DeepCopy()},
 	}
-	if p.Spec.Resources != nil {
-		resources = *p.Spec.Resources.DeepCopy()
+	if p.Spec.Control.Resources != nil {
+		resources = *p.Spec.Control.Resources.DeepCopy()
 	}
 
 	probe := func(path string) corev1.ProbeHandler {
@@ -293,12 +295,13 @@ func buildStatefulSet(a *achv1alpha1.ACHAgent, p *achv1alpha1.AgentProfile, conf
 	// startupProbe budget tracks engine.startupTimeoutSeconds; liveness only arms after startup
 	// succeeds, so a long hydration is not killed.
 	startupFail := int32(30) // 30 * 5s = 150s
-	if eng := render.ResolveEngine(a.Spec.Engine, p.Spec.Achagent.Engine); eng != nil && eng.StartupTimeoutSeconds != nil && *eng.StartupTimeoutSeconds > 0 {
+	if eng := render.ResolveEngine(a.Spec.Engine, p.Spec.Defaults.Engine); eng != nil && eng.StartupTimeoutSeconds != nil && *eng.StartupTimeoutSeconds > 0 {
 		startupFail = int32(*eng.StartupTimeoutSeconds/5) + 1
 	}
 
 	podLabels := agentLabels(a)
 	maps.Copy(podLabels, agentSelectorLabels(a.Name))
+	podLabels[ambientLabel] = "ambient"
 
 	// Pin uid/gid/fsGroup 10001: the image runs as that uid and a fresh cloud PVC (EBS,
 	// root-owned 0755) is unwritable without fsGroup — found by ach-agent on a persistent
@@ -311,12 +314,15 @@ func buildStatefulSet(a *achv1alpha1.ACHAgent, p *achv1alpha1.AgentProfile, conf
 	}
 	containers := []corev1.Container{{
 		Name:    agentContainerName,
-		Image:   render.ResolveImage(a.Spec.Image, p.Spec.Achagent.Image),
+		Image:   p.Spec.Control.Image,
 		Command: controlCommand,
 		// The health port doubles as the harness /metrics port (same server as
 		// /healthz + /readyz). Declared named so the PodMonitor
 		// (monitoring.coreos.com/v1) can reference it by name for scraping.
-		Ports:          []corev1.ContainerPort{{Name: "health", ContainerPort: controlProbePort, Protocol: corev1.ProtocolTCP}},
+		Ports: []corev1.ContainerPort{
+			{Name: "http", ContainerPort: controlProbePort, Protocol: corev1.ProtocolTCP},
+			{Name: "control", ContainerPort: controlServicePort, Protocol: corev1.ProtocolTCP},
+		},
 		Env:            env,
 		VolumeMounts:   mounts,
 		Resources:      resources,
@@ -332,7 +338,7 @@ func buildStatefulSet(a *achv1alpha1.ACHAgent, p *achv1alpha1.AgentProfile, conf
 
 	sts := &appsv1.StatefulSet{
 		// Name is the contract §11 control name (agent-<agent name>, render.ControlName), matching ServiceName
-		// below verbatim — not the legacy achagent-<name> scheme other children still use.
+		// below verbatim.
 		ObjectMeta: metav1.ObjectMeta{Name: render.ControlName(a.Name), Namespace: a.Namespace, Labels: agentLabels(a)},
 		Spec: appsv1.StatefulSetSpec{
 			Replicas:    &one,
@@ -350,9 +356,9 @@ func buildStatefulSet(a *achv1alpha1.ACHAgent, p *achv1alpha1.AgentProfile, conf
 					// and nothing else in the namespace belongs in its environment.
 					EnableServiceLinks:            &falseVal,
 					TerminationGracePeriodSeconds: &grace,
-					ImagePullSecrets:              p.Spec.ImagePullSecrets,
-					NodeSelector:                  p.Spec.NodeSelector,
-					Tolerations:                   p.Spec.Tolerations,
+					ImagePullSecrets:              p.Spec.Control.ImagePullSecrets,
+					NodeSelector:                  p.Spec.Control.NodeSelector,
+					Tolerations:                   p.Spec.Control.Tolerations,
 					SecurityContext:               podSC,
 					Volumes:                       volumes,
 					Containers:                    containers,
@@ -367,11 +373,11 @@ func buildStatefulSet(a *achv1alpha1.ACHAgent, p *achv1alpha1.AgentProfile, conf
 // buildReservedInfraVolumes/buildReservedInfraMounts are the single source of truth for the
 // fixed config plumbing (contract §11 scope reset — broker-token/leaf-TLS plumbing is gone,
 // not deferred) — so there is exactly one place that knows their shape.
-func buildReservedInfraVolumes(a *achv1alpha1.ACHAgent) []corev1.Volume {
+func buildReservedInfraVolumes(a *achv1alpha1.Agent) []corev1.Volume {
 	return []corev1.Volume{
 		{
 			Name:         configVolumeName,
-			VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: agentResourceName(a.Name)}}},
+			VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: configMapName(a.Name)}}},
 		},
 		{Name: tmpVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	}
@@ -406,6 +412,9 @@ func copySpec(existing, desired client.Object) {
 		e.Spec.ServiceName = d.Spec.ServiceName // immutable post-create; same value every pass, harmless to resend
 		e.Spec.Replicas = d.Spec.Replicas
 		e.Spec.Template = d.Spec.Template
+	case *gatewayv1.HTTPRoute:
+		d := desired.(*gatewayv1.HTTPRoute)
+		e.Labels, e.Spec = d.Labels, d.Spec
 	case *corev1.Service:
 		d := desired.(*corev1.Service)
 		e.Labels = d.Labels

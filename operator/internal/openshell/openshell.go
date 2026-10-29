@@ -4,10 +4,10 @@ package openshell
 
 import (
 	"context"
-	"errors"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net/url"
@@ -151,7 +151,7 @@ func (o *OpenShell) url(namespace, sandbox string, port int32) string {
 // routes that Host because *.<ns>.svc.cluster.local is one of its server_sans.
 func (o *OpenShell) serviceName(sandbox string) string { return o.Config.Workspace + "--" + sandbox }
 
-func (b *openShellUnits) ensureService(ctx context.Context, a *achv1alpha1.ACHAgent, sandbox string) error {
+func (b *openShellUnits) ensureService(ctx context.Context, a *achv1alpha1.Agent, sandbox string) error {
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: b.serviceName(sandbox), Namespace: a.Namespace,
 			Labels: map[string]string{AgentUIDLabel: string(a.UID)}},
@@ -216,12 +216,12 @@ func (o *OpenShell) workloadPod(ctx context.Context, reader client.Reader, sandb
 	return &pod, err
 }
 
-func (b *openShellUnits) Create(ctx context.Context, a *achv1alpha1.ACHAgent, p *achv1alpha1.AgentProfile, w host.Workspace) error {
+func (b *openShellUnits) Create(ctx context.Context, a *achv1alpha1.Agent, p *achv1alpha1.AgentProfile, w host.Workspace) error {
 	// Sandboxes have no owner reference: without the finalizer an agent deleted now would orphan them.
 	if !controllerutil.ContainsFinalizer(a, SandboxFinalizer) {
 		return fmt.Errorf("Agent %s has no sandbox finalizer yet; retrying", client.ObjectKeyFromObject(a))
 	}
-	image := p.Spec.Execution.Image
+	image := p.Spec.Sandbox.OpenShell.Image
 	if rel, want := imageRelease(image), strings.TrimPrefix(w.Launch.RuntimeRelease, "v"); rel != "" && want != "" && rel != want {
 		return fmt.Errorf("execution image %q is release %s but the runtime requires %s (launch.runtimeRelease)", image, rel, want)
 	}

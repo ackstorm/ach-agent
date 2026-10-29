@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package agentrender collapses an AgentProfile + ACHAgent into the workspace-v1 WSConfig
+// Package agentrender collapses an AgentProfile + Agent into the workspace-v1 WSConfig
 // (render2.go's Render2) the ach-agent harness self-boots from. Pure: no API calls, no side
 // effects. This file holds the Block types Render2/workspace-v1 share with each other —
 // output JSON tags MUST match the vendored

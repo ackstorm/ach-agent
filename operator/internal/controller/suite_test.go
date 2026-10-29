@@ -22,6 +22,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -93,8 +94,11 @@ func setupAndRun(m *testing.M) int {
 		return 1
 	}
 
+	// The shared manager watches WatchNamespace only: tests in other namespaces drive their own
+	// reconciler through Reconcile() without racing it.
 	mgr, err := manager.New(cfg, manager.Options{
 		Scheme:                 scheme,
+		Cache:                  cache.Options{DefaultNamespaces: map[string]cache.Config{WatchNamespace: {}}},
 		HealthProbeBindAddress: "0",
 		LeaderElection:         false,
 		Metrics:                metricsserver.Options{BindAddress: "0"},
@@ -103,13 +107,13 @@ func setupAndRun(m *testing.M) int {
 		fmt.Fprintf(os.Stderr, "manager.New: %v\n", err)
 		return 1
 	}
-	if err := (&ACHAgentReconciler{
-		Client:                mgr.GetClient(),
-		APIReader:             mgr.GetAPIReader(),
-		Scheme:                mgr.GetScheme(),
-		RuntimeStorageOptions: testRuntimeStorageOptions(),
+	if err := (&AgentReconciler{
+		Client:    mgr.GetClient(),
+		APIReader: mgr.GetAPIReader(),
+		Scheme:    mgr.GetScheme(),
+		Storage:   testRuntimeStorageOptions(),
 	}).SetupWithManager(mgr); err != nil {
-		fmt.Fprintf(os.Stderr, "SetupWithManager(ACHAgent): %v\n", err)
+		fmt.Fprintf(os.Stderr, "SetupWithManager(Agent): %v\n", err)
 		return 1
 	}
 

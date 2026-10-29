@@ -1,0 +1,17 @@
+# OpenShell gateway values. The gateway is plaintext and unauthenticated: it is safe only behind
+# the Istio ambient policy in docs/mesh/openshell-mesh.yaml.
+server:
+  # TLS is terminated by the mesh (STRICT mTLS).
+  disableTls: true
+  auth:
+    # Authorization is the mesh AuthorizationPolicy: only the operator and Agent namespaces reach it.
+    allowUnauthenticatedUsers: true
+  # The execution image runs as 10001; OpenShell needs the agent and sandbox to share one UID.
+  sandboxUid: "10001"
+  sandboxGid: "10001"
+  telemetryEnabled: false
+pkiInitJob:
+  # Sandbox URLs are <ws>--<sb>.<agent ns>.svc.cluster.local (operator ExternalName Services);
+  # a wildcard SAN makes the gateway route that domain (also with disableTls). One entry per
+  # Agent namespace.
+  serverDnsNames: ["*.ach-agent-e2e.svc.cluster.local"]

@@ -1,0 +1,35 @@
+{{- if .Values.admissionPolicy.enabled }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "ach-agent.fullname" . }}-secrets
+  labels:
+    {{- include "ach-agent.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["secrets"]
+  matchConditions:
+    - name: operator-only
+      expression: >-
+        request.userInfo.username == "system:serviceaccount:{{ .Release.Namespace }}:{{ include "ach-agent.serviceAccountName" . }}"
+  validations:
+    - expression: >-
+        object.metadata.name.startsWith("ach-agent-key-") &&
+        (!has(object.type) || object.type == "Opaque")
+      message: "the ach-agent operator may only create or update Opaque Secrets named ach-agent-key-*"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "ach-agent.fullname" . }}-secrets
+  labels:
+    {{- include "ach-agent.labels" . | nindent 4 }}
+spec:
+  policyName: {{ include "ach-agent.fullname" . }}-secrets
+  validationActions: [Deny]
+{{- end }}

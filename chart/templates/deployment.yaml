@@ -1,0 +1,94 @@
+{{- include "ach-agent.validate" . -}}
+{{- $s3 := .Values.runtime.storage.s3 -}}
+{{- $parent := .Values.route.parent -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ach-agent.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ach-agent.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.operator.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ach-agent.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ach-agent.selectorLabels" . | nindent 8 }}
+        {{- with .Values.operator.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        istio.io/dataplane-mode: ambient
+    spec:
+      serviceAccountName: {{ include "ach-agent.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.operator.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: operator
+          image: "{{ .Values.image.operator }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --leader-elect={{ .Values.operator.leaderElect }}
+            - --metrics-bind-address=:8080
+            - --health-probe-bind-address=:8081
+          env:
+            - name: ACH_AGENT_OPENSHELL_GATEWAY
+              value: {{ .Values.openshell.gateway | quote }}
+            - name: ACH_AGENT_OPENSHELL_WORKSPACE
+              value: {{ .Values.openshell.workspace | quote }}
+            - name: ACH_AGENT_OPENSHELL_POD_NAMESPACE
+              value: {{ .Values.openshell.podNamespace | quote }}
+            {{- with .Values.openshell.serviceURL }}
+            - name: ACH_AGENT_OPENSHELL_SERVICE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            - name: ACH_AGENT_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: ACH_AGENT_STORAGE_S3_BUCKET
+              value: {{ $s3.bucket | quote }}
+            - name: ACH_AGENT_STORAGE_S3_REGION
+              value: {{ $s3.region | quote }}
+            - name: ACH_AGENT_STORAGE_S3_ENDPOINT_URL
+              value: {{ $s3.endpointUrl | quote }}
+            - name: ACH_AGENT_STORAGE_S3_PREFIX
+              value: {{ $s3.prefix | quote }}
+            - name: ACH_AGENT_STORAGE_S3_CREDENTIALS_SECRET
+              value: {{ $s3.credentialsSecret | quote }}
+            - name: ACH_AGENT_ROUTE_PARENT_NAME
+              value: {{ $parent.name | quote }}
+            - name: ACH_AGENT_ROUTE_PARENT_NAMESPACE
+              value: {{ $parent.namespace | quote }}
+            - name: ACH_AGENT_ROUTE_PARENT_SECTION
+              value: {{ $parent.sectionName | quote }}
+          ports:
+            - {name: metrics, containerPort: 8080}
+            - {name: health, containerPort: 8081}
+          livenessProbe:
+            httpGet: {path: /healthz, port: health}
+          readinessProbe:
+            httpGet: {path: /readyz, port: health}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.operator.resources | nindent 12 }}

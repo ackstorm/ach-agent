@@ -1,0 +1,8 @@
+ach-agent operator installed in namespace {{ .Release.Namespace }}.
+
+It reaches the OpenShell gateway at {{ .Values.openshell.gateway }}. The gateway is plaintext and
+unauthenticated: it must sit behind an Istio ambient mesh policy that admits only the
+{{ .Release.Namespace }}/{{ include "ach-agent.serviceAccountName" . }} ServiceAccount and the Agent
+namespaces (see docs/mesh/openshell-mesh.yaml).
+
+Create AgentProfile and Agent resources in an Agent namespace labelled istio.io/dataplane-mode=ambient.

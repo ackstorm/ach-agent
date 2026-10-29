@@ -1,0 +1,35 @@
+image:
+  operator: ghcr.io/ackstorm/ach-agent-operator
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+openshell:
+  # Required: the OpenShell gateway URL, e.g. http://openshell.openshell.svc.cluster.local:8080
+  gateway: ""
+  # Required value: the gateway is plaintext and unauthenticated, protected only by the mesh.
+  mesh: istio-ambient
+  workspace: default
+  podNamespace: openshell
+  # Empty: the operator default.
+  serviceURL: ""
+
+runtime:
+  storage:
+    s3: {bucket: "", region: "", endpointUrl: "", prefix: ach, credentialsSecret: ""}
+
+route:
+  parent: {name: "", namespace: "", sectionName: ""}
+
+operator:
+  replicas: 1
+  leaderElect: true
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+
+admissionPolicy:
+  enabled: true

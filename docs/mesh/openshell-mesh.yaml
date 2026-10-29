@@ -1,0 +1,58 @@
+# Istio ambient mTLS around the OpenShell gateway. Apply after the OpenShell chart, replacing
+# <AGENT_NAMESPACE> with the namespace that holds the Agents (one source entry per Agent namespace).
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: default, namespace: openshell}
+spec:
+  mtls: {mode: STRICT}
+---
+# Gateway: gRPC and the sandbox service path share port 8080 (L4 cannot split them). The operator
+# is admitted by its ServiceAccount; control pods use per-Agent ServiceAccounts, so they are
+# admitted by namespace.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: openshell-gateway, namespace: openshell}
+spec:
+  selector:
+    matchLabels: {app.kubernetes.io/name: openshell, app.kubernetes.io/instance: openshell}
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/ach-agent-system/sa/ach-agent-operator
+              - cluster.local/ns/openshell/sa/openshell-sandbox
+        - source:
+            namespaces: [<AGENT_NAMESPACE>]
+      to:
+        - operation: {ports: ["8080"]}
+---
+# Every workload in the namespace (sandboxes included) accepts the gateway and the sandbox
+# ServiceAccount: the supervisor pod (os-supervisor-*, created by the gateway's driver) runs as
+# openshell-sandbox, like the workload pods, and reaches the workload's boundary port 5500 over
+# HBONE. Trade-off: sandbox-to-sandbox is therefore allowed at L4; OpenShell's in-sandbox egress
+# policy lets the agent reach only the facade endpoints.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: from-gateway, namespace: openshell}
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/openshell/sa/openshell
+              - cluster.local/ns/openshell/sa/openshell-sandbox
+---
+# Ambient HBONE: mesh traffic reaches a pod on TCP 15008, which the chart's and the driver's
+# NetworkPolicies (additive) do not allow. Access control stays mTLS + the policies above.
+# Keep this as soon as the cluster enforces NetworkPolicy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-hbone, namespace: openshell}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - {protocol: TCP, port: 15008}

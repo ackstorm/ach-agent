@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "image": {
+      "type": "object",
+      "properties": {
+        "operator": {"type": "string"},
+        "tag": {"type": "string"},
+        "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
+      }
+    },
+    "imagePullSecrets": {"type": "array"},
+    "openshell": {
+      "type": "object",
+      "properties": {
+        "gateway": {"type": "string"},
+        "mesh": {"type": "string", "enum": ["istio-ambient"]},
+        "workspace": {"type": "string"},
+        "podNamespace": {"type": "string"},
+        "serviceURL": {"type": "string"}
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "storage": {
+          "type": "object",
+          "properties": {
+            "s3": {
+              "type": "object",
+              "properties": {
+                "bucket": {"type": "string"},
+                "region": {"type": "string"},
+                "endpointUrl": {"type": "string"},
+                "prefix": {"type": "string"},
+                "credentialsSecret": {"type": "string"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "route": {
+      "type": "object",
+      "properties": {
+        "parent": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string"},
+            "namespace": {"type": "string"},
+            "sectionName": {"type": "string"}
+          }
+        }
+      }
+    },
+    "operator": {
+      "type": "object",
+      "properties": {
+        "replicas": {"type": "integer", "minimum": 0},
+        "leaderElect": {"type": "boolean"},
+        "resources": {"type": "object"},
+        "podLabels": {"type": "object"},
+        "nodeSelector": {"type": "object"},
+        "tolerations": {"type": "array"}
+      }
+    },
+    "admissionPolicy": {
+      "type": "object",
+      "properties": {"enabled": {"type": "boolean"}}
+    }
+  }
+}

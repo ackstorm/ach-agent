@@ -1,0 +1,80 @@
+{
+  "cases": [
+    {
+      "name": "case1_top_level_configVersion_excluded",
+      "input": { "z": 2, "configVersion": "ignored", "a": 1 },
+      "canonicalHex": "7b2261223a312c227a223a327d",
+      "sha256Hex": "99168216144c7fed5d4c54916cf98d9c66096280c04a499822a99b6658bd177a"
+    },
+    {
+      "name": "case2_html_unicode_key_order",
+      "input": {
+        "\ue000": 2,
+        "\ud83d\ude00": 1,
+        "\u20ac": 0,
+        "a": "<>&\u00e9\u2028\u2029"
+      },
+      "canonicalHex": "7b2261223a223c3e26c3a9e280a8e280a9222c22e282ac223a302c22f09f9880223a312c22ee8080223a327d",
+      "sha256Hex": "0f14d40b66c3ab57cc31cb9e2c4b7df69119259fac517958f573469cb4f479f5"
+    },
+    {
+      "name": "case3_numeric_forms",
+      "input": { "n": [-0.0, 1.0, 1e-6, 1e-7, 2e-3, 9007199254740991] },
+      "canonicalHex": "7b226e223a5b302c312c302e3030303030312c31652d372c302e3030322c393030373139393235343734303939315d7d",
+      "sha256Hex": "5eb7cb7a9fe991d0bb629ee9368ad8b4a019d35f395ff124c1129f4c22811096"
+    },
+    {
+      "name": "case4_nested_configVersion_retained",
+      "input": { "model": { "params": { "configVersion": "nested", "nil": null } } },
+      "canonicalHex": "7b226d6f64656c223a7b22706172616d73223a7b22636f6e66696756657273696f6e223a226e6573746564222c226e696c223a6e756c6c7d7d7d",
+      "sha256Hex": "60322b06700406094999f3c6d6ea78f351687d9f57c997b2b08fc42571092b0b"
+    },
+    {
+      "name": "case5_false_null_empty_survive",
+      "input": { "a": [], "b": false, "n": null, "o": {} },
+      "canonicalHex": "7b2261223a5b5d2c2262223a66616c73652c226e223a6e756c6c2c226f223a7b7d7d",
+      "sha256Hex": "0d2add17196ef3eb0e6e9c20e5c6e7ee25f344a7f9ee297a0154def8c2c692fa"
+    },
+    {
+      "name": "case6_empty_root",
+      "input": {},
+      "canonicalHex": "7b7d",
+      "sha256Hex": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "name": "error_nan",
+      "rawJson": "{\"a\":NaN}",
+      "error": true
+    },
+    {
+      "name": "error_infinity",
+      "rawJson": "{\"a\":Infinity}",
+      "error": true
+    },
+    {
+      "name": "error_negative_infinity",
+      "rawJson": "{\"a\":-Infinity}",
+      "error": true
+    },
+    {
+      "name": "error_out_of_range_int",
+      "rawJson": "{\"a\":9007199254740992}",
+      "error": true
+    },
+    {
+      "name": "error_out_of_range_float_exponent",
+      "rawJson": "{\"a\":1e400}",
+      "error": true
+    },
+    {
+      "name": "error_rounds_above_bound",
+      "rawJson": "{\"a\":9007199254740991.5}",
+      "error": true
+    },
+    {
+      "name": "error_trailing_data",
+      "rawJson": "{\"a\":1} garbage",
+      "error": true
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+# Reference single-unit host for ach-runtime (spec 12). NOT FOR PRODUCTION (contract v2 D5):
+# agent tools share the agent process's credentials. One agent, on one machine.
+name: ach-compose-example
+
+x-runtime: &runtime
+  build:
+    context: ../../..
+    dockerfile: Dockerfile
+    target: agent
+  image: ach-runtime-agent:compose
+
+services:
+  s3:
+    image: chrislusf/seaweedfs:4.48
+    entrypoint: ["weed"]
+    command:
+      - mini
+      - -dir=/data
+      - -ip=127.0.0.1
+      - -ip.bind=0.0.0.0
+      - -master.telemetry=false
+      - -master.volumeSizeLimitMB=32
+      - -volume.max=2
+      - -admin.ui=false
+      - -webdav=false
+      - -s3.port.iceberg=0
+      - -s3.port.lance=0
+      - -s3.readerCacheSizeMB=16
+    environment:
+      AWS_ACCESS_KEY_ID: ach-test-key            # test value, not a secret
+      AWS_SECRET_ACCESS_KEY: ach-test-secret     # test value, not a secret
+    volumes:
+      - s3-data:/data                            # named volume: state survives `down` (no -v)
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+
+  s3-init:
+    <<: *runtime
+    entrypoint: ["python", "-c"]
+    command:
+      - |
+        import boto3
+        s3 = boto3.client("s3", endpoint_url="http://s3:8333", region_name="us-east-1",
+                          aws_access_key_id="ach-test-key", aws_secret_access_key="ach-test-secret")
+        try:
+            s3.create_bucket(Bucket="ach")
+        except s3.exceptions.BucketAlreadyOwnedByYou:
+            pass
+    depends_on:
+      s3: {condition: service_healthy}
+    restart: "no"
+
+  ach-stub:
+    <<: *runtime
+    entrypoint: ["python", "/stub/ach_stub.py"]
+    command: []
+    environment:
+      MODEL_UPSTREAM_URL: ${MODEL_UPSTREAM_URL:-}   # e.g. http://host.docker.internal:11434
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+    volumes:
+      - ./stub:/stub:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:9000/healthz')"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  agent:
+    <<: *runtime
+    environment:
+      ACH_SANDBOX_KEY: compose-example-test-key-not-a-secret   # fixed test value
+      ACH_SECRET_IDENTITY: local-dummy
+      ACH_SECRET_WEBHOOK: ${WEBHOOK_TOKEN:-dev-webhook-token}
+      ACH_STORAGE_S3_BUCKET: ach
+      ACH_STORAGE_S3_ENDPOINT_URL: http://s3:8333
+      ACH_STORAGE_S3_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: ach-test-key
+      AWS_SECRET_ACCESS_KEY: ach-test-secret
+    volumes:
+      - ./config.json:/etc/ach-runtime/config.json:ro
+    ports:
+      - "127.0.0.1:${AGENT_PORT:-8080}:8080"
+    depends_on:
+      s3-init: {condition: service_completed_successfully}
+      ach-stub: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8080/readyz')"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+    stop_grace_period: 90s
+
+volumes:
+  s3-data:

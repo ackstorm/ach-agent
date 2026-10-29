@@ -1,0 +1,17 @@
+# gitleaks configuration for ach-runtime: default ruleset plus deliberate test fixtures.
+title = "gitleaks config"
+
+[extend]
+useDefault = true
+
+# Deliberate fake keys/tokens in test fixtures (never real secrets).
+[[rules]]
+id = "generic-api-key"
+[[rules.allowlists]]
+paths = ['''^tests/''']
+
+# The compose example's documented local default webhook token (never a real secret).
+[[rules]]
+id = "curl-auth-header"
+[[rules.allowlists]]
+regexes = ['''^dev-webhook-token$''']

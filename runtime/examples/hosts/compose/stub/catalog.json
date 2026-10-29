@@ -1,0 +1,9 @@
+{
+  "environment": "local",
+  "runtime": {
+    "models": [{"id": "local-model", "endpoint": "http://ach-stub:9000/v1"}],
+    "mcpServers": [],
+    "a2aAgents": []
+  },
+  "context": {"skills": [], "prompts": [], "artifacts": []}
+}

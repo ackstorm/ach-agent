@@ -1,0 +1,16 @@
+services:
+  echo:
+    image: ach-runtime-agent:compose
+    entrypoint: ["python", "/ci/echo_model.py"]
+    volumes:
+      - ./ci/echo_model.py:/ci/echo_model.py:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:9100/healthz')"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  ach-stub:
+    environment:
+      MODEL_UPSTREAM_URL: http://echo:9100
+    depends_on:
+      echo: {condition: service_healthy}

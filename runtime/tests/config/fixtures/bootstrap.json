@@ -1,0 +1,9 @@
+{
+  "bootstrapVersion": "workspace-v2",
+  "agent": {
+    "name": "gitlab-reviewer",
+    "namespace": "ach",
+    "uid": "3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77"
+  },
+  "facadeEndpoint": "http://ach-control-3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77.ach.svc:8081/facades"
+}

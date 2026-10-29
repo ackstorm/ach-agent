@@ -1,0 +1,48 @@
+name: ach-runtime-seaweed-e2e
+
+services:
+  s3:
+    profiles: [fixture]
+    image: chrislusf/seaweedfs:4.48
+    entrypoint: ["weed"]
+    command:
+      - mini
+      - -dir=/data
+      - -ip=127.0.0.1
+      - -ip.bind=0.0.0.0
+      - -master.telemetry=false
+      - -master.volumeSizeLimitMB=32
+      - -volume.max=2
+      - -admin.ui=false
+      - -webdav=false
+      - -s3.port.iceberg=0
+      - -s3.port.lance=0
+      - -s3.readerCacheSizeMB=16
+    environment:
+      AWS_ACCESS_KEY_ID: ach-storage-test
+      AWS_SECRET_ACCESS_KEY: ach-storage-test-secret
+      S3_BUCKET: ach-storage-test
+      GOMAXPROCS: "1"
+    ports: ["127.0.0.1:19000:8333"]
+    # The port opens before the S3 gateway serves requests; `up --wait` blocks on this.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+    cpus: 0.5
+    mem_limit: 256m
+    memswap_limit: 256m
+    pids_limit: 128
+    read_only: true
+    tmpfs:
+      - /data:mode=0700,size=134217728
+      - /tmp:mode=0700,size=16777216
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [test]
+
+networks:
+  test:
+    name: ach-runtime-seaweed-e2e_test
+    external: true

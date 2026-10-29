@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths: ["operator/**", "runtime/docs/schemas/**", ".github/workflows/operator.yml"]
   workflow_call:
+  workflow_dispatch:
 
 concurrency:
   group: ci-operator-${{ github.workflow }}-${{ github.ref }}

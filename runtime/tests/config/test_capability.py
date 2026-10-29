@@ -92,3 +92,15 @@ def test_public_projection_never_carries_upstreams_or_headers():
     assert "mcp.serper.dev" not in dumped
     assert "ACH_AGENT_" not in dumped
     assert "baseUrl" not in dumped
+
+
+@pytest.mark.parametrize("bad", ["litellm", "ftp://litellm.example.com", "https://", ""])
+def test_standalone_endpoints_must_be_http_urls_with_a_host(bad):
+    model = _wire("standalone-runtime.json")
+    model["capability"]["standalone"]["model"]["baseUrl"] = bad
+    with pytest.raises(ConfigError, match="baseUrl"):
+        _parse(model)
+    server = _wire("standalone-runtime.json")
+    server["capability"]["standalone"]["mcpServers"][0]["url"] = bad
+    with pytest.raises(ConfigError, match="url"):
+        _parse(server)

@@ -159,3 +159,28 @@ func TestList_EmptyEpochOrCursorFailsClosed(t *testing.T) {
 		t.Fatal("a listing without runtimeEpoch and cursor must be an error, not an empty desired state")
 	}
 }
+
+func TestClient_GatewayPutsAvailability(t *testing.T) {
+	for _, available := range []bool{false, true} {
+		c, rec := serve(t, http.StatusNoContent, "")
+		if err := c.Gateway(context.Background(), available); err != nil {
+			t.Fatal(err)
+		}
+		var body map[string]any
+		_ = json.Unmarshal([]byte(rec.body), &body)
+		if rec.method != http.MethodPut || rec.path != "/host/v1/gateway" || body["available"] != available || rec.auth != "Bearer tok" {
+			t.Fatalf("request = %+v body = %v, want PUT /host/v1/gateway available=%v", rec, body, available)
+		}
+	}
+}
+
+func TestClient_GatewayRejections(t *testing.T) {
+	c, _ := serve(t, http.StatusUnprocessableEntity, `{"error":"bad body"}`)
+	if err := c.Gateway(context.Background(), true); err == nil || errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("422 err = %v, want a plain failure", err)
+	}
+	c, _ = serve(t, http.StatusUnauthorized, "")
+	if err := c.Gateway(context.Background(), true); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("401 err = %v, want ErrUnauthorized", err)
+	}
+}

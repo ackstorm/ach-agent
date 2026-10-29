@@ -107,6 +107,11 @@ func main() {
 		setupLog.Error(err, "discover Gateway API")
 		os.Exit(1)
 	}
+	runner := &host.Runner{
+		Client: mgr.GetClient(), Reader: mgr.GetAPIReader(), Scheme: mgr.GetScheme(),
+		Log:        ctrl.Log.WithName("sandbox-host"),
+		NewBackend: sandboxes.ForAgent,
+	}
 	if err := (&controller.AgentReconciler{
 		Client: mgr.GetClient(), APIReader: mgr.GetAPIReader(), Scheme: mgr.GetScheme(),
 		Storage:   storage,
@@ -117,15 +122,12 @@ func main() {
 			SectionName: os.Getenv("ACH_AGENT_ROUTE_PARENT_SECTION"),
 		},
 		HTTPRouteAvailable: routeAvailable,
+		Host:               runner,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "register Agent controller")
 		os.Exit(1)
 	}
-	if err := mgr.Add(&host.Runner{
-		Client: mgr.GetClient(), Reader: mgr.GetAPIReader(), Scheme: mgr.GetScheme(),
-		Log:        ctrl.Log.WithName("sandbox-host"),
-		NewBackend: sandboxes.ForAgent,
-	}); err != nil {
+	if err := mgr.Add(runner); err != nil {
 		setupLog.Error(err, "register host runner")
 		os.Exit(1)
 	}

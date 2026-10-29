@@ -5,7 +5,9 @@ package openshell
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
+	"net"
 	"slices"
 	"strings"
 	"sync"
@@ -19,7 +21,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	osv1 "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1"
 	ostypes "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	achv1alpha1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
 	"github.com/ackstorm/ach-agent/operator/internal/host"
@@ -36,9 +41,13 @@ type fakeGateway struct {
 	exposures []ostypes.ServiceExposure
 	hang      bool // Get, ListAll and Create wait for ctx, like a frozen gateway
 	createErr error
+	err       error // returned by every call, like an unreachable gateway
 }
 
 func (f *fakeGateway) block(ctx context.Context) error {
+	if f.err != nil {
+		return f.err
+	}
 	if !f.hang {
 		return nil
 	}
@@ -106,6 +115,9 @@ func (f *fakeGateway) ListAll(ctx context.Context, _ string, opts ...ostypes.Lis
 }
 
 func (f *fakeGateway) Delete(ctx context.Context, _ string, name string, _ ...ostypes.DeleteOptions) (*ostypes.DeletionResult, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	f.mu.Lock()
 	delete(f.byName, name) // the record goes at once (finding 7)
 	f.deleted = append(f.deleted, name)
@@ -598,5 +610,174 @@ func TestOpenShell_CreateMapsGatewayInvalidArgument(t *testing.T) {
 				t.Fatalf("err = %v, want %v / %s carrying the gateway message", err, tc.want, tc.reason)
 			}
 		})
+	}
+}
+
+var downErr = status.Error(codes.Unavailable, "connection reset by peer")
+
+func TestIsUnavailable(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"grpc unavailable":      {downErr, true},
+		"grpc deadline":         {status.Error(codes.DeadlineExceeded, "slow"), true},
+		"sdk unavailable":       {&ostypes.StatusError{Code: ostypes.ErrorUnavailable, Message: "down"}, true},
+		"sdk deadline":          {&ostypes.StatusError{Code: ostypes.ErrorDeadlineExceeded, Message: "slow"}, true},
+		"call deadline":         {context.DeadlineExceeded, true},
+		"transport":             {&net.OpError{Op: "dial", Err: errors.New("refused")}, true},
+		"wrapped":               {fmt.Errorf("get: %w", downErr), true},
+		"already marked":        {host.ErrGatewayUnavailable, true},
+		"not found":             {&ostypes.StatusError{Code: ostypes.ErrorNotFound, Message: "no"}, false},
+		"invalid argument":      {&ostypes.StatusError{Code: ostypes.ErrorInvalidArgument, Message: "no"}, false},
+		"cancelled by the host": {context.Canceled, false},
+		"nil":                   {nil, false},
+	} {
+		if got := IsUnavailable(tc.err); got != tc.want {
+			t.Errorf("%s: IsUnavailable = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+func TestOpenShell_BackendMarksAnUnavailableGatewayForTheHost(t *testing.T) {
+	ctx := context.Background()
+	f := newOSFixture(t)
+	f.gw.err = downErr
+	if _, err := f.b.State(ctx, f.w.Name); !errors.Is(err, host.ErrGatewayUnavailable) {
+		t.Errorf("State err = %v", err)
+	}
+	if _, err := f.b.Owned(ctx); !errors.Is(err, host.ErrGatewayUnavailable) {
+		t.Errorf("Owned err = %v", err)
+	}
+	if _, err := f.b.Live(ctx); !errors.Is(err, host.ErrGatewayUnavailable) {
+		t.Errorf("Live err = %v", err)
+	}
+	if remaining, err := f.b.Remove(ctx, f.w.Name); !errors.Is(err, host.ErrGatewayUnavailable) || remaining {
+		t.Errorf("Remove = (%v, %v)", remaining, err)
+	}
+	if err := f.b.Create(ctx, f.a, f.p, f.w); !errors.Is(err, host.ErrGatewayUnavailable) {
+		t.Errorf("Create err = %v", err)
+	}
+	// A refused spec is not an outage.
+	f.gw.err = nil
+	f.gw.createErr = &ostypes.StatusError{Code: ostypes.ErrorInvalidArgument, Message: "bad policy"}
+	if err := f.b.Create(ctx, f.a, f.p, f.w); errors.Is(err, host.ErrGatewayUnavailable) {
+		t.Errorf("an InvalidArgument is not an outage: %v", err)
+	}
+}
+
+func TestOpenShell_CreateDoesNotStartASandboxForACancelledLoop(t *testing.T) {
+	f := newOSFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := f.b.Create(ctx, f.a, f.p, f.w); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if len(f.gw.created) != 0 {
+		t.Fatalf("created = %v after the loop was cancelled", f.gw.created)
+	}
+}
+
+func TestRebuilding_RecreatesClientAfterUnavailable(t *testing.T) {
+	builds := 0
+	r := NewRebuilding(func() (sandboxes, error) {
+		builds++
+		if builds == 1 {
+			return &fakeGateway{err: downErr}, nil
+		}
+		return newFakeGateway(), nil
+	}, 0)
+	if _, err := r.Get(context.Background(), "default", "x"); !IsUnavailable(err) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := r.ListAll(context.Background(), "default"); err != nil {
+		t.Fatalf("after rebuild: %v", err)
+	}
+	if builds != 2 {
+		t.Fatalf("builds = %d, want 2", builds)
+	}
+}
+
+type closableGateway struct {
+	*fakeGateway
+	closed *int
+}
+
+func (c closableGateway) Close() error { *c.closed++; return nil }
+
+func TestRebuilding_ClosesTheOldClientAndThrottlesRebuilds(t *testing.T) {
+	builds, closed := 0, 0
+	r := NewRebuilding(func() (sandboxes, error) {
+		builds++
+		return closableGateway{&fakeGateway{err: downErr}, &closed}, nil
+	}, time.Hour)
+	for range 5 {
+		_, _ = r.Get(context.Background(), "default", "x")
+	}
+	if builds != 1 || closed != 0 {
+		t.Fatalf("builds = %d closed = %d: a client built within the throttle must be kept", builds, closed)
+	}
+
+	builds, closed = 0, 0
+	r = NewRebuilding(func() (sandboxes, error) {
+		builds++
+		return closableGateway{&fakeGateway{err: downErr}, &closed}, nil
+	}, 0)
+	for range 3 {
+		_, _ = r.Get(context.Background(), "default", "x")
+	}
+	if builds != 3 || closed != 3 {
+		t.Fatalf("builds = %d closed = %d, want 3 builds and every failed client closed", builds, closed)
+	}
+}
+
+func TestRebuilding_KeepsTheClientOnOrdinaryErrors(t *testing.T) {
+	builds := 0
+	r := NewRebuilding(func() (sandboxes, error) {
+		builds++
+		return newFakeGateway(), nil
+	}, 0)
+	for range 3 {
+		if _, err := r.Get(context.Background(), "default", "missing"); !osv1.IsNotFound(err) {
+			t.Fatalf("err = %v", err)
+		}
+	}
+	if builds != 1 {
+		t.Fatalf("builds = %d: a NotFound must not rebuild the client", builds)
+	}
+}
+
+func TestRebuilding_ASlowDeleteDoesNotRebuild(t *testing.T) {
+	builds := 0
+	gw := newFakeGateway()
+	gw.slowDel = true
+	r := NewRebuilding(func() (sandboxes, error) {
+		builds++
+		return gw, nil
+	}, 0)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := r.Delete(ctx, "default", "x"); err == nil {
+		t.Fatal("expected the delete to time out")
+	}
+	if builds != 1 {
+		t.Fatalf("builds = %d: a delete that outlived its own deadline is not an outage", builds)
+	}
+}
+
+func TestRebuilding_FactoryErrorIsReturnedAndRetried(t *testing.T) {
+	builds := 0
+	r := NewRebuilding(func() (sandboxes, error) {
+		builds++
+		if builds == 1 {
+			return nil, errors.New("cannot dial")
+		}
+		return newFakeGateway(), nil
+	}, 0)
+	if _, err := r.ListAll(context.Background(), "default"); err == nil {
+		t.Fatal("factory error swallowed")
+	}
+	if _, err := r.ListAll(context.Background(), "default"); err != nil {
+		t.Fatalf("second call: %v", err)
 	}
 }

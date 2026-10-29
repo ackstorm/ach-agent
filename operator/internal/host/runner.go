@@ -48,6 +48,34 @@ type Runner struct {
 	NewBackend func(agent types.NamespacedName, uid types.UID, reader client.Reader, writer client.Client) Backend
 
 	run func(ctx context.Context, a *achv1alpha1.Agent) // test seam, default runAgent
+
+	mu      sync.Mutex
+	running map[types.UID]*loop
+}
+
+// loop is one agent's running host loop, for Stop.
+type loop struct {
+	cancel context.CancelFunc
+	done   chan struct{} // closed when the loop goroutine has returned
+}
+
+// Stop cancels the host loop of the Agent with this UID and waits until it has returned, so
+// no pass (and no sandbox create in flight) outlives the call. A UID without a loop is not an
+// error. ctx bounds the wait.
+func (r *Runner) Stop(ctx context.Context, uid types.UID) error {
+	r.mu.Lock()
+	l := r.running[uid]
+	r.mu.Unlock()
+	if l == nil {
+		return nil
+	}
+	l.cancel()
+	select {
+	case <-l.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // NeedLeaderElection: exactly one operator may send host mutations for an agent.
@@ -114,9 +142,24 @@ func (r *Runner) sync(ctx context.Context, loops map[types.UID]context.CancelFun
 		}
 		loopCtx, cancel := context.WithCancel(ctx)
 		loops[uid] = cancel
+		l := &loop{cancel: cancel, done: make(chan struct{})}
+		r.mu.Lock()
+		if r.running == nil {
+			r.running = map[types.UID]*loop{}
+		}
+		r.running[uid] = l
+		r.mu.Unlock()
 		wg.Add(1)
 		go func(a *achv1alpha1.Agent) {
 			defer wg.Done()
+			defer func() {
+				r.mu.Lock()
+				if r.running[a.UID] == l {
+					delete(r.running, a.UID)
+				}
+				r.mu.Unlock()
+				close(l.done)
+			}()
 			r.run(loopCtx, a)
 		}(a.DeepCopy())
 	}

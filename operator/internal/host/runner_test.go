@@ -4,6 +4,7 @@ package host
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -100,4 +101,74 @@ func TestRunner_KeyReadsTheAgentSecret(t *testing.T) {
 	if _, err := r.key(context.Background(), other); err == nil {
 		t.Error("a missing key Secret must be an error")
 	}
+}
+
+func TestRunner_StopCancelsTheLoopAndWaitsForIt(t *testing.T) {
+	const ns = "ach"
+	a := &achv1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "x", Namespace: ns, UID: "uid-x"}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: render.ControlName("x") + "-0", Namespace: ns}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(a, pod).Build()
+
+	started, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	r := &Runner{Client: c, Reader: c, Namespace: ns, Log: logr.Discard()}
+	r.run = func(ctx context.Context, _ *achv1alpha1.Agent) {
+		close(started)
+		<-ctx.Done()
+		<-release // an in-flight create that is still returning
+		close(finished)
+	}
+	loops := map[types.UID]context.CancelFunc{}
+	var wg sync.WaitGroup
+	r.sync(context.Background(), loops, &wg)
+	<-started
+
+	stopped := make(chan error, 1)
+	go func() { stopped <- r.Stop(context.Background(), "uid-x") }()
+	select {
+	case err := <-stopped:
+		t.Fatalf("Stop returned (%v) before the loop returned", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop did not return after the loop did")
+	}
+	select {
+	case <-finished:
+	default:
+		t.Fatal("Stop returned before the loop finished")
+	}
+	wg.Wait()
+	if err := r.Stop(context.Background(), "uid-x"); err != nil {
+		t.Fatalf("stopping a gone loop: %v", err)
+	}
+}
+
+func TestRunner_StopHonoursItsContext(t *testing.T) {
+	const ns = "ach"
+	a := &achv1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "x", Namespace: ns, UID: "uid-x"}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: render.ControlName("x") + "-0", Namespace: ns}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(a, pod).Build()
+	started, release := make(chan struct{}), make(chan struct{})
+	r := &Runner{Client: c, Reader: c, Namespace: ns, Log: logr.Discard()}
+	r.run = func(ctx context.Context, _ *achv1alpha1.Agent) {
+		close(started)
+		<-release
+	}
+	loops := map[types.UID]context.CancelFunc{}
+	var wg sync.WaitGroup
+	r.sync(context.Background(), loops, &wg)
+	<-started
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := r.Stop(ctx, "uid-x"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Stop = %v, want the context's deadline", err)
+	}
+	close(release)
+	wg.Wait()
 }

@@ -18,6 +18,11 @@ import (
 	achv1alpha1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
 )
 
+// ErrGatewayUnavailable marks a backend error caused by an unreachable sandbox gateway. While
+// it lasts the host never removes a unit and never confirms a stop or reports a unit lost:
+// "cannot see" is not "gone".
+var ErrGatewayUnavailable = errors.New("sandbox gateway unavailable")
+
 var (
 	errNotDesired    = errors.New("registration refused: the Workspace is no longer desired (stale listing), relisting")
 	errAgentGone     = errors.New("Agent is gone or being deleted")
@@ -44,6 +49,9 @@ type Host struct {
 	Log    logr.Logger
 
 	createFailure string // reason of the Ready=False this loop last wrote for a refused create
+
+	gatewayDown     bool  // the last backend call saw the gateway unavailable
+	gatewayReported *bool // the availability the control unit was last told, nil: never told
 }
 
 func (h *Host) load(ctx context.Context) (*achv1alpha1.Agent, *achv1alpha1.AgentProfile, error) {
@@ -154,14 +162,57 @@ func (h *Host) retire(ctx context.Context, w Workspace) (pending bool, err error
 	return false, h.API.Delete(ctx, w.Name, id)
 }
 
+// GatewayDown reports whether the last backend call found the gateway unavailable.
+func (h *Host) GatewayDown() bool { return h.gatewayDown }
+
+// noteGateway records the outcome of the backend calls of one step and, on a transition,
+// tells the Agent's status; syncGateway tells the control unit.
+func (h *Host) noteGateway(ctx context.Context, err error) {
+	down := errors.Is(err, ErrGatewayUnavailable)
+	if down == h.gatewayDown {
+		return
+	}
+	h.gatewayDown = down
+	if h.Status == nil {
+		return
+	}
+	cond := metav1.Condition{Type: "GatewayAvailable", Status: metav1.ConditionTrue, Reason: "GatewayAvailable"}
+	if down {
+		cond = metav1.Condition{Type: "GatewayAvailable", Status: metav1.ConditionFalse, Reason: "GatewayUnavailable", Message: err.Error()}
+	}
+	if serr := h.Status.SetCondition(ctx, h.Agent, cond); serr != nil {
+		h.Log.Error(serr, "report the gateway on the Agent")
+	}
+}
+
+// syncGateway tells the control unit about a change of the gateway's availability. A failed
+// call is retried by the next pass: gatewayReported only moves on success.
+func (h *Host) syncGateway(ctx context.Context) {
+	if h.gatewayReported != nil && *h.gatewayReported == !h.gatewayDown {
+		return
+	}
+	available := !h.gatewayDown
+	if err := h.API.Gateway(ctx, available); err != nil {
+		h.Log.Error(err, "report the gateway to the control unit", "available", available)
+		return
+	}
+	h.gatewayReported = &available
+}
+
 // Pass reconciles one complete listing (adopting == false). It never waits on Kubernetes: a
 // terminating pod only makes `pending` true, and the pass moves on to the next Workspace.
-// One failing Workspace does not stop the others; the errors are joined.
+// One failing Workspace does not stop the others; the errors are joined. The first backend
+// call that finds the gateway unavailable ends the pass: nothing is removed or confirmed
+// while the gateway cannot be seen.
 func (h *Host) Pass(ctx context.Context, l *Listing) (pending bool, err error) {
 	if _, _, err := h.load(ctx); err != nil {
 		return false, err
 	}
 	var errs []error
+	defer func() {
+		h.noteGateway(ctx, errors.Join(errs...))
+		h.syncGateway(ctx)
+	}()
 	listed := make(map[string]struct{}, len(l.Workspaces))
 	for _, w := range l.Workspaces {
 		listed[w.Name] = struct{}{}
@@ -175,6 +226,9 @@ func (h *Host) Pass(ctx context.Context, l *Listing) (pending bool, err error) {
 		}
 		if e != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", w.Name, e))
+			if errors.Is(e, ErrGatewayUnavailable) {
+				return true, errors.Join(errs...)
+			}
 			continue
 		}
 		pending = pending || p
@@ -182,7 +236,8 @@ func (h *Host) Pass(ctx context.Context, l *Listing) (pending bool, err error) {
 	// The list is complete: a Workspace that is not listed must have no unit.
 	owned, e := h.Backend.Owned(ctx)
 	if e != nil {
-		return pending, errors.Join(append(errs, e)...)
+		errs = append(errs, e)
+		return pending, errors.Join(errs...)
 	}
 	for _, name := range owned {
 		if _, ok := listed[name]; ok {
@@ -191,6 +246,9 @@ func (h *Host) Pass(ctx context.Context, l *Listing) (pending bool, err error) {
 		remaining, e := h.Backend.Remove(ctx, name)
 		if e != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", name, e))
+			if errors.Is(e, ErrGatewayUnavailable) {
+				return true, errors.Join(errs...)
+			}
 			continue
 		}
 		pending = pending || remaining
@@ -230,7 +288,9 @@ func (h *Host) Sync(ctx context.Context, s *State) error {
 	}
 	if l.RuntimeEpoch != s.Epoch && l.Adopting {
 		units, err := h.Inventory(ctx)
+		h.noteGateway(ctx, err)
 		if err != nil {
+			h.syncGateway(ctx) // best effort: the inventory itself cannot be sent
 			return err
 		}
 		if err := h.API.Inventory(ctx, l.RuntimeEpoch, units); err != nil {
@@ -241,6 +301,9 @@ func (h *Host) Sync(ctx context.Context, s *State) error {
 			return err
 		}
 		s.Epoch, s.Cursor = l.RuntimeEpoch, ""
+		// A new inventory starts a new epoch on the control unit: tell it the gateway's state.
+		h.gatewayReported = nil
+		h.syncGateway(ctx)
 		return nil
 	}
 	if l.Adopting { // while adopting: create, delete and PUT nothing

@@ -229,3 +229,22 @@ func (c *Client) Inventory(ctx context.Context, epoch string, units []InventoryU
 	}
 	return statusErr(resp, "inventory")
 }
+
+// Gateway reports whether the sandbox gateway is reachable. The control unit holds new
+// starts and keeps its registered units while it is not.
+func (c *Client) Gateway(ctx context.Context, available bool) error {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	body, _ := json.Marshal(struct {
+		Available bool `json:"available"`
+	}{available})
+	resp, err := c.do(ctx, http.MethodPut, "/gateway", body)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		return statusErr(resp, "gateway")
+	}
+	return nil
+}

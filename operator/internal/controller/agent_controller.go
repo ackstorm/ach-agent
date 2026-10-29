@@ -35,6 +35,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	achv1alpha1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
+	"github.com/ackstorm/ach-agent/operator/internal/host"
 	"github.com/ackstorm/ach-agent/operator/internal/openshell"
 	"github.com/ackstorm/ach-agent/operator/internal/render"
 )
@@ -92,9 +93,13 @@ type AgentReconciler struct {
 	// HTTPRoute. An Agent that asks for a route without it gets WorkloadApplied=False.
 	HTTPRouteAvailable bool
 
-	// Sandboxes deletes an agent's OpenShell sandboxes on finalization. Nil when the
-	// operator has no gateway configured.
+	// Sandboxes deletes an agent's OpenShell sandboxes on finalization. Nil keeps every
+	// finalizer: a missing gateway is never "no sandboxes".
 	Sandboxes sandboxRemover
+
+	// Host stops an Agent's host loop before its sandboxes are removed. Nil skips the stop
+	// (envtest runs no host loop).
+	Host hostStopper
 }
 
 const executionFinalizer = openshell.SandboxFinalizer
@@ -110,27 +115,72 @@ func ensureExecutionFinalizer(a *achv1alpha1.Agent) bool {
 	return controllerutil.AddFinalizer(a, executionFinalizer)
 }
 
-// finalizeExecutionUnits deletes the agent's OpenShell sandboxes (they cannot carry an owner
-// reference) and then lets the deletion proceed. Selection is by agent UID, so a newer
-// Agent with the same name is never touched. Gateway errors requeue with backoff.
+// hostStopper stops an Agent's host loop and waits until it has returned (host.Runner).
+type hostStopper interface {
+	Stop(ctx context.Context, uid types.UID) error
+}
+
+const (
+	stopTimeout       = 30 * time.Second
+	finalizeRetryWait = 15 * time.Second
+	finalizeCheckWait = 5 * time.Second
+)
+
+// finalizeExecutionUnits removes the Agent's sandboxes, which cannot carry an owner reference,
+// and then lets the deletion proceed. The order is fixed: the host loop stops first (so no
+// create races the inventory), then the gateway inventory by agent UID is emptied, then the
+// per-sandbox Services go. The finalizer is removed only once an inventory shows no sandbox
+// and no Service left; an unreachable gateway keeps it. Selection is by agent UID, so a newer
+// Agent with the same name is never touched.
 func (r *AgentReconciler) finalizeExecutionUnits(ctx context.Context, a *achv1alpha1.Agent) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(a, executionFinalizer) {
 		return ctrl.Result{}, nil
 	}
-	if r.Sandboxes == nil {
-		// No event recorder on this reconciler: the warning is logged.
-		log.FromContext(ctx).Info("Warning: OpenShellUnavailable: no OpenShell gateway configured; removing the sandbox finalizer", "achagent", client.ObjectKeyFromObject(a))
-	} else {
-		remaining, err := r.Sandboxes.RemoveAgentSandboxes(ctx, string(a.UID))
+	logger := log.FromContext(ctx).WithValues("agent", client.ObjectKeyFromObject(a))
+	if r.Host != nil {
+		stopCtx, cancel := context.WithTimeout(ctx, stopTimeout)
+		err := r.Host.Stop(stopCtx, a.UID)
+		cancel()
 		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("delete OpenShell sandboxes of %s: %w", a.Name, err)
+			logger.Info("host loop did not stop yet", "error", err.Error())
+			return ctrl.Result{RequeueAfter: finalizeCheckWait}, nil
 		}
-		if remaining {
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+	if r.Sandboxes == nil {
+		// Cannot happen in production (start fails without a gateway); never assume "gone".
+		logger.Info("no OpenShell gateway configured; keeping the sandbox finalizer")
+		return ctrl.Result{RequeueAfter: finalizeRetryWait}, nil
+	}
+	remaining, err := r.Sandboxes.RemoveAgentSandboxes(ctx, string(a.UID))
+	if err != nil {
+		logger.Info("sandbox inventory failed; keeping the sandbox finalizer", "error", err.Error())
+		r.setGatewayCondition(ctx, a, metav1.Condition{
+			Type: condGatewayAvailable, Status: metav1.ConditionFalse, Reason: "GatewayUnavailable",
+			Message: fmt.Sprintf("cannot remove the sandboxes of %s: %v", a.Name, err), ObservedGeneration: a.Generation,
+		})
+		return ctrl.Result{RequeueAfter: finalizeRetryWait}, nil
+	}
+	var svcs corev1.ServiceList
+	if err := r.List(ctx, &svcs, client.InNamespace(a.Namespace), client.MatchingLabels{openshell.AgentUIDLabel: string(a.UID)}); err != nil {
+		return ctrl.Result{}, fmt.Errorf("list per-sandbox Services of %s: %w", a.Name, err)
+	}
+	for i := range svcs.Items {
+		if err := r.Delete(ctx, &svcs.Items[i]); client.IgnoreNotFound(err) != nil {
+			return ctrl.Result{}, fmt.Errorf("delete per-sandbox Service %s: %w", svcs.Items[i].Name, err)
 		}
+	}
+	if remaining || len(svcs.Items) > 0 {
+		return ctrl.Result{RequeueAfter: finalizeCheckWait}, nil
 	}
 	controllerutil.RemoveFinalizer(a, executionFinalizer)
 	return ctrl.Result{}, r.Update(ctx, a)
+}
+
+func (r *AgentReconciler) setGatewayCondition(ctx context.Context, a *achv1alpha1.Agent, c metav1.Condition) {
+	w := &host.AgentStatusWriter{Client: r.Client, Reader: r.APIReader}
+	if err := w.SetCondition(ctx, client.ObjectKeyFromObject(a), c); err != nil {
+		log.FromContext(ctx).Error(err, "report the gateway on the Agent")
+	}
 }
 
 // graceMarginSeconds is added to the runtime drain to get the minimum grace period.

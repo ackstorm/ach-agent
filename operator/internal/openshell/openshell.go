@@ -71,6 +71,10 @@ type OpenShell struct {
 	Config    OpenShellConfig
 }
 
+// gw is the gateway as the backend sees it: an unavailable gateway is marked as such so the
+// host never mistakes "cannot see" for "gone".
+func (o *OpenShell) gw() sandboxes { return markUnavailable{o.Sandboxes} }
+
 // gatewayHost is the host of the gateway address: "http(s)://host:port", or "host:port" (TLS, no scheme).
 func gatewayHost(addr string) (string, error) {
 	u, err := url.Parse(addr)
@@ -102,11 +106,17 @@ func OpenShellFromEnv() (*OpenShell, error) {
 	if err != nil {
 		return nil, err
 	}
-	c, err := osv1.NewClient(osv1.Config{Address: addr})
-	if err != nil {
-		return nil, fmt.Errorf("OpenShell gateway %s: %w", addr, err)
+	factory := func() (sandboxes, error) {
+		c, err := osv1.NewClient(osv1.Config{Address: addr})
+		if err != nil {
+			return nil, fmt.Errorf("OpenShell gateway %s: %w", addr, err)
+		}
+		return clientBox{SandboxInterface: c.Sandboxes(), client: c}, nil
 	}
-	return &OpenShell{Sandboxes: c.Sandboxes(), Config: OpenShellConfig{
+	if _, err := factory(); err != nil { // fail the start on an address the SDK refuses
+		return nil, err
+	}
+	return &OpenShell{Sandboxes: NewRebuilding(factory, rebuildEvery), Config: OpenShellConfig{
 		Workspace:    envOr("ACH_AGENT_OPENSHELL_WORKSPACE", "default"),
 		ServiceURL:   envOr("ACH_AGENT_OPENSHELL_SERVICE_URL", "http://{workspace}--{sandbox}.{namespace}.svc.cluster.local:8080"),
 		PodNamespace: envOr("ACH_AGENT_OPENSHELL_POD_NAMESPACE", "openshell"),
@@ -166,7 +176,7 @@ func (b *openShellUnits) BaseURL(w host.Workspace) string {
 func (b *openShellUnits) State(ctx context.Context, name string) (host.UnitState, error) {
 	sandbox := SandboxName(string(b.uid), name)
 	cctx, cancel := call(ctx)
-	s, err := b.Sandboxes.Get(cctx, b.Config.Workspace, sandbox)
+	s, err := b.gw().Get(cctx, b.Config.Workspace, sandbox)
 	cancel()
 	switch {
 	case osv1.IsNotFound(err):
@@ -258,6 +268,11 @@ func (b *openShellUnits) Create(ctx context.Context, a *achv1alpha1.Agent, p *ac
 		RestartPolicy: ostypes.SandboxRestartNever,
 		Policy:        policy,
 	}
+	// A host loop that was stopped (Agent deleted) must not start a sandbox the finalizer
+	// would then have to find.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// A unit is never registered without its Service.
 	sandbox := SandboxName(string(b.uid), w.Name)
 	if err := b.ensureService(ctx, a, sandbox); err != nil {
@@ -266,7 +281,7 @@ func (b *openShellUnits) Create(ctx context.Context, a *achv1alpha1.Agent, p *ac
 	// launch.port is not in launch.env: the gateway record keeps it for the inventory.
 	cctx, cancel := call(ctx)
 	defer cancel()
-	_, err = b.Sandboxes.Create(cctx, b.Config.Workspace, sandbox, spec,
+	_, err = b.gw().Create(cctx, b.Config.Workspace, sandbox, spec,
 		ostypes.WithLabels(map[string]string{AgentUIDLabel: string(b.uid), NameLabel: w.Name, portLabel: strconv.Itoa(int(w.Launch.Port))}),
 		ostypes.WithServiceExposures(ostypes.ServiceExposure{
 			TargetPort: uint32(w.Launch.Port), AuthorizationMode: ostypes.ServiceAuthorizationModeBearerPassthrough,
@@ -311,13 +326,13 @@ func (b *openShellUnits) Remove(ctx context.Context, name string) (bool, error) 
 
 func (o *OpenShell) removeSandbox(ctx context.Context, reader client.Reader, sandbox string) (bool, error) {
 	cctx, cancel := call(ctx)
-	s, err := o.Sandboxes.Get(cctx, o.Config.Workspace, sandbox)
+	s, err := o.gw().Get(cctx, o.Config.Workspace, sandbox)
 	cancel()
 	switch {
 	case err == nil:
 		if s.Status.Phase != ostypes.SandboxDeleting {
 			dctx, cancel := context.WithTimeout(ctx, deleteDeadline)
-			_, err := o.Sandboxes.Delete(dctx, o.Config.Workspace, sandbox)
+			_, err := o.gw().Delete(dctx, o.Config.Workspace, sandbox)
 			cancel()
 			if err != nil && !osv1.IsDeadlineExceeded(err) && !osv1.IsNotFound(err) {
 				return false, err
@@ -337,7 +352,7 @@ func (o *OpenShell) removeSandbox(ctx context.Context, reader client.Reader, san
 func (o *OpenShell) forUID(ctx context.Context, uid string) ([]*ostypes.Sandbox, error) {
 	ctx, cancel := call(ctx)
 	defer cancel()
-	return o.Sandboxes.ListAll(ctx, o.Config.Workspace, ostypes.ListOptions{LabelSelector: AgentUIDLabel + "=" + uid})
+	return o.gw().ListAll(ctx, o.Config.Workspace, ostypes.ListOptions{LabelSelector: AgentUIDLabel + "=" + uid})
 }
 
 func (b *openShellUnits) Owned(ctx context.Context) ([]string, error) {

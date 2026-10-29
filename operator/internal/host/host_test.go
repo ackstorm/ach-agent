@@ -36,6 +36,22 @@ type fakeRuntime struct {
 	putBody            string
 	inventoryStatus    int
 	inventoryUnitNames []string
+	gateways           []bool // bodies of PUT /gateway, in order
+}
+
+func (f *fakeRuntime) lastGateway() (available, ok bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.gateways) == 0 {
+		return false, false
+	}
+	return f.gateways[len(f.gateways)-1], true
+}
+
+func (f *fakeRuntime) gatewayCalls() []bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]bool(nil), f.gateways...)
 }
 
 func (f *fakeRuntime) record(format string, args ...any) {
@@ -91,6 +107,16 @@ func (f *fakeRuntime) handler() http.Handler {
 		}
 		w.WriteHeader(status)
 	})
+	mux.HandleFunc("PUT /host/v1/gateway", func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			Available bool `json:"available"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		f.mu.Lock()
+		f.gateways = append(f.gateways, b.Available)
+		f.mu.Unlock()
+		w.WriteHeader(204)
+	})
 	return mux
 }
 
@@ -114,6 +140,7 @@ type fakeUnits struct {
 	created   []string
 	removed   []string
 	createErr error
+	err       error // returned by every call but Create and BaseURL, like an unreachable gateway
 }
 
 func newFakeUnits() *fakeUnits {
@@ -136,6 +163,9 @@ func (f *fakeUnits) Create(_ context.Context, _ *achv1alpha1.Agent, _ *achv1alph
 func (f *fakeUnits) BaseURL(w Workspace) string { return "http://" + w.Name + ".units" }
 
 func (f *fakeUnits) Remove(_ context.Context, name string) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
 	f.removed = append(f.removed, name)
 	if _, ok := f.state[name]; !ok {
 		return false, nil
@@ -149,6 +179,9 @@ func (f *fakeUnits) Remove(_ context.Context, name string) (bool, error) {
 }
 
 func (f *fakeUnits) Owned(context.Context) ([]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	names := make([]string, 0, len(f.state))
 	for n := range f.state {
 		names = append(names, n)
@@ -158,6 +191,9 @@ func (f *fakeUnits) Owned(context.Context) ([]string, error) {
 }
 
 func (f *fakeUnits) Live(ctx context.Context) ([]InventoryUnit, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	units := []InventoryUnit{}
 	names, _ := f.Owned(ctx)
 	for _, n := range names {
@@ -408,6 +444,10 @@ func TestSync_NewEpochAlreadyAdoptedNeedsNoInventory(t *testing.T) {
 func TestSync_PendingShortensTheLongPoll(t *testing.T) {
 	var waits []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		waits = append(waits, r.URL.Query().Get("waitSeconds"))
 		_, _ = w.Write([]byte(`{"cursor":"e.1","runtimeEpoch":"e","adopting":false,"workspaces":[]}`))
 	}))
@@ -562,5 +602,115 @@ func TestPass_RefusedCreateIsReportedOnTheAgentAndClearedOnSuccess(t *testing.T)
 	_, _ = h2.Pass(context.Background(), l)
 	if len(st2.conds) != 0 {
 		t.Fatalf("conditions = %+v, want none", st2.conds)
+	}
+}
+
+var errDown = fmt.Errorf("%w: connection refused", ErrGatewayUnavailable)
+
+func TestPass_GatewayDownReportsUnavailableAndNeverConfirmsAStopOrRemovesAUnit(t *testing.T) {
+	rt, u := &fakeRuntime{}, newFakeUnits()
+	u.state["w1"], u.state["lost"], u.state["unlisted"] = UnitStarted, UnitLost, UnitStarted
+	h := newHost(t, rt, u)
+	st := &fakeStatus{}
+	h.Status = st
+	id := "inst-1"
+	l := listing(
+		ws("w1", "released", &Instance{InstanceID: &id, BaseURL: "x", State: "serving"}),
+		ws("lost", "running", &Instance{InstanceID: &id, BaseURL: "http://lost.units", State: "serving"}),
+	)
+	u.err = errDown
+	pending, err := h.Pass(context.Background(), l)
+	if !errors.Is(err, ErrGatewayUnavailable) || !pending {
+		t.Fatalf("Pass = (%v, %v), want pending with the outage", pending, err)
+	}
+	if got := rt.Calls(); len(got) != 0 {
+		t.Fatalf("calls = %v: a stop was confirmed or a unit reported lost while the gateway was unavailable", got)
+	}
+	if len(u.removed) != 0 || len(u.created) != 0 {
+		t.Fatalf("removed = %v created = %v, want nothing touched", u.removed, u.created)
+	}
+	if got := rt.gatewayCalls(); len(got) != 1 || got[0] {
+		t.Fatalf("gateway reports = %v, want exactly one available=false", got)
+	}
+	if !h.GatewayDown() {
+		t.Fatal("host does not track the outage")
+	}
+	if len(st.conds) != 1 || st.conds[0].Type != "GatewayAvailable" || st.conds[0].Status != metav1.ConditionFalse || st.conds[0].Reason != "GatewayUnavailable" {
+		t.Fatalf("conditions = %+v", st.conds)
+	}
+	// Still down: nothing new is reported.
+	_, _ = h.Pass(context.Background(), l)
+	if got := rt.gatewayCalls(); len(got) != 1 || len(st.conds) != 1 {
+		t.Fatalf("outage re-reported: gateway = %v conditions = %+v", got, st.conds)
+	}
+}
+
+func TestPass_GatewayBackReportsAvailableOnce(t *testing.T) {
+	rt, u := &fakeRuntime{}, newFakeUnits()
+	h := newHost(t, rt, u)
+	st := &fakeStatus{}
+	h.Status = st
+	l := listing()
+	u.err = errDown
+	_, _ = h.Pass(context.Background(), l)
+	u.err = nil
+	for range 3 {
+		if _, err := h.Pass(context.Background(), l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := rt.gatewayCalls(); len(got) != 2 || got[0] || !got[1] {
+		t.Fatalf("gateway reports = %v, want [false true]", got)
+	}
+	if h.GatewayDown() {
+		t.Fatal("host still believes the gateway is down")
+	}
+	if len(st.conds) != 2 || st.conds[1].Type != "GatewayAvailable" || st.conds[1].Status != metav1.ConditionTrue {
+		t.Fatalf("conditions = %+v, want False then True", st.conds)
+	}
+}
+
+func TestPass_ARejectedGatewayReportIsRetriedNextPass(t *testing.T) {
+	rt, u := &fakeRuntime{}, newFakeUnits()
+	h := newHost(t, rt, u)
+	h.API = &Client{BaseURL: "http://127.0.0.1:1/host/v1", Token: "t"} // control unit unreachable
+	u.err = errDown
+	_, _ = h.Pass(context.Background(), listing())
+	if h.gatewayReported != nil {
+		t.Fatal("an unreported outage was recorded as reported")
+	}
+}
+
+func TestSync_ReportsGatewayAfterInventory(t *testing.T) {
+	rt, u := &fakeRuntime{listing: Listing{Cursor: "e1.1", RuntimeEpoch: "e1", Adopting: true}}, newFakeUnits()
+	u.state["alive"] = UnitStarted
+	h := newHost(t, rt, u)
+	if err := h.Sync(context.Background(), &State{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := rt.Calls(); len(got) != 1 || got[0] != "INVENTORY e1 [alive]" {
+		t.Fatalf("calls = %v", got)
+	}
+	if got := rt.gatewayCalls(); len(got) != 1 || !got[0] {
+		t.Fatalf("gateway reports = %v, want one available=true after the inventory", got)
+	}
+}
+
+func TestSync_InventoryWithTheGatewayDownIsNotSentAndTheOutageIsReported(t *testing.T) {
+	rt, u := &fakeRuntime{listing: Listing{Cursor: "e1.1", RuntimeEpoch: "e1", Adopting: true}}, newFakeUnits()
+	u.err = errDown
+	h := newHost(t, rt, u)
+	s := &State{}
+	if err := h.Sync(context.Background(), s); !errors.Is(err, ErrGatewayUnavailable) {
+		t.Fatalf("Sync = %v, want the outage", err)
+	}
+	if got := rt.Calls(); len(got) != 0 {
+		t.Fatalf("calls = %v: an inventory built without the gateway would claim there are no units", got)
+	}
+	if s.Epoch != "" {
+		t.Fatalf("epoch = %q recorded for an inventory that was never sent", s.Epoch)
+	}
+	if got := rt.gatewayCalls(); len(got) != 1 || got[0] {
+		t.Fatalf("gateway reports = %v, want available=false", got)
 	}
 }

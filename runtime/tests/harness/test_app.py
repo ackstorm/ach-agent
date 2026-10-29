@@ -284,3 +284,22 @@ async def test_webhook_script_post_spawn_nonzero_exit_keeps_http_202(tmp_path: P
         await ticket.completed
     assert ticket.started.done() and ticket.started.exception() is None
     await admission.close()
+
+
+
+async def test_create_app_initialises_metrics_for_configured_channels(monkeypatch) -> None:
+    from ach_runtime.harness import app as app_module
+
+    seen: list[list[str]] = []
+    monkeypatch.setattr(app_module, "initialise_metrics", lambda channels: seen.append(list(channels)))
+    control = SimpleNamespace(
+        config=SimpleNamespace(
+            channels=[SimpleNamespace(name="presence-ch", type="webhook")],
+            agent=SimpleNamespace(name="presence-agent"),
+            identity_environment="presence-env",
+        ),
+        admission=SimpleNamespace(),
+        _stopping=False,
+    )
+    create_app(control)
+    assert seen == [["presence-ch"]]

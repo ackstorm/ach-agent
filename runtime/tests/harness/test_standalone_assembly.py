@@ -63,3 +63,20 @@ async def test_standalone_run_cost_is_unpriced_without_catalog_cost():
         assert control._priced is False
     finally:
         await control.close()
+
+
+async def test_memory_bearer_secret_is_registered_for_redaction():
+    from ach_runtime.observability.runs import redact
+
+    wire = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    wire["workspace"]["persistence"]["enabled"] = False
+    wire["workspace"]["session"]["persistence"]["enabled"] = False
+    wire["artifacts"]["enabled"] = False
+    wire["memory"] = {"type": "ach-memory", "achMemory": {
+        "mcpServerId": "serper", "auth": {"type": "bearer", "env": "ACH_MEM_TOKEN"}}}
+    wire["configVersion"] = compute_config_version(wire)
+    control = await assemble(parse_config(wire), environ={**ENV, "ACH_MEM_TOKEN": "memory-token-value-1"})
+    try:
+        assert redact("log memory-token-value-1 line") == "log [redacted] line"
+    finally:
+        await control.close()

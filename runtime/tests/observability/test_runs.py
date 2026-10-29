@@ -69,6 +69,13 @@ def test_registered_upstream_secrets_are_redacted(caplog) -> None:
     assert "serper-secret-123456" not in caplog.text
 
 
+def test_the_token_after_an_auth_scheme_is_redacted_on_its_own(caplog) -> None:
+    from ach_runtime.observability.runs import redact, register_secrets
+
+    register_secrets(["Bearer scheme-token-9876543"])
+    assert redact("leaked scheme-token-9876543 here") == "leaked [redacted] here"
+
+
 def _catalog_handler(request: httpx.Request) -> httpx.Response:
     if request.url.path == "/platform/hydrate":
         return httpx.Response(200, json={

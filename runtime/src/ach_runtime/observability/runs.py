@@ -25,7 +25,13 @@ def register_secrets(values: Iterable[str]) -> None:
     """Add process secrets (resolved upstream headers) to log redaction. Values shorter
     than 8 characters are ignored: replacing them would corrupt ordinary text."""
     global _registered
-    merged = set(_registered) | {value for value in values if len(value) >= _MIN_REGISTERED_SECRET}
+    parts: set[str] = set()
+    for value in values:
+        parts.add(value)
+        # `Bearer <token>` style values: the token alone can reach a log without its scheme.
+        if " " in value.strip():
+            parts.add(value.strip().split(" ", 1)[1].strip())
+    merged = set(_registered) | {value for value in parts if len(value) >= _MIN_REGISTERED_SECRET}
     _registered = tuple(sorted(merged, key=len, reverse=True))
 
 

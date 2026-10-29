@@ -1016,7 +1016,7 @@ async def assemble(
         )
     metadata = catalog.model.metadata
     control._priced = metadata is not None and metadata.input_cost_per_token is not None
-    register_secrets(upstream_secrets)
+    register_secrets((*upstream_secrets, *memory_headers.values()))
     lifecycle = Lifecycle(control)
     control.lifecycle = lifecycle
     return control

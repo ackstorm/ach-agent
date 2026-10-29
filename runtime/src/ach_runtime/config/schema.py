@@ -138,6 +138,8 @@ class ModelBlock(BaseModel):
     thinking: ThinkingBlock = Field(default_factory=ThinkingBlock)
 
 
+# Same shape as ENDPOINT_PATTERN (defined with the infrastructure block, further down).
+_ENDPOINT_PATTERN = r"^https?://[^/\s]+"
 _HEADER_NAME_RE = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
 _RESERVED_HEADER_NAMES = frozenset({
     "host", "content-length", "transfer-encoding", "connection",
@@ -171,7 +173,7 @@ class StandaloneModel(BaseModel):
 
     name: str
     type: Literal["openai", "gemini", "anthropic"]
-    base_url: str = Field(alias="baseUrl")
+    base_url: str = Field(alias="baseUrl", pattern=_ENDPOINT_PATTERN)
     headers: dict[str, SecretAlias] = Field(default_factory=dict)
     params: dict[str, Any] = Field(default_factory=dict)
     thinking: ThinkingBlock = Field(default_factory=ThinkingBlock)
@@ -187,7 +189,7 @@ class StandaloneMcpServer(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
 
     name: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,62}$")
-    url: str
+    url: str = Field(pattern=_ENDPOINT_PATTERN)
     headers: dict[str, SecretAlias] = Field(default_factory=dict)
 
     @model_validator(mode="after")

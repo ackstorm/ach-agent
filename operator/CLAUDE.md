@@ -32,8 +32,9 @@ port of the ach `v0.14.2` agent operator (read it with `git -C <ach> archive v0.
   or missing gateway keeps it.
 - While the gateway is unavailable the host never removes a unit, confirms a stop or reports a
   unit lost; it reports `PUT /gateway available=false` and the `GatewayAvailable` condition.
-- Sandbox policy rule names starting `ach-agent-` are reserved; the runtime binaries and their
-  directories are never writable. The policy document uses the proto field names
+- Sandbox policy rule and middleware names starting `ach-agent-` are reserved; no other rule may
+  match the facade endpoint; the runtime binaries and code (`/usr/local/bin`, `/usr/local/lib`,
+  `/opt/opencode`, `/work`) are never writable. The policy document uses the proto field names
   (`network_policies`, `filesystem`, `landlock`).
 - Header env names: `ACH_AGENT_MODEL_H<i>`, `ACH_AGENT_MCP_<NAME>_H<i>` (index in the
   case-insensitive sorted header names); the ACH key is `ACH_SECRET_IDENTITY`.

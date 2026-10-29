@@ -1,0 +1,49 @@
+name: operator
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ["operator/**", "runtime/docs/schemas/**", ".github/workflows/operator.yml"]
+  push:
+    branches: [main]
+    paths: ["operator/**", "runtime/docs/schemas/**", ".github/workflows/operator.yml"]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Operator tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: operator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: operator/go.mod
+          cache-dependency-path: operator/go.sum
+      - name: Generated files, vet and unit tests
+        run: make verify
+      - name: Controller envtest
+        run: make test-envtest
+
+  image:
+    name: Operator image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v7
+        with:
+          context: operator
+          push: false
+          cache-from: type=gha,scope=operator
+          cache-to: type=gha,scope=operator,mode=max

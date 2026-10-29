@@ -1,0 +1,3 @@
+Copied from github.com/NVIDIA/OpenShell/sdk/go v0.0.0-20261020123705-bdb956f2cd65,
+openshell/v1/internal/converter (Apache-2.0): policy.go, network_policy.go, copy.go, time.go. Unmodified except the package name.
+Replace with the SDK's exported converter when one exists.

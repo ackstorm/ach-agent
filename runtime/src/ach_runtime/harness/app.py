@@ -118,15 +118,11 @@ def create_app(control: Control) -> FastAPI:
             headers={"X-ACH-Task-Id": task_id},
         )
 
-    agent = getattr(control.config, "agent", None)
-    ach = getattr(control.config, "ach", None)
-    if agent is not None and ach is not None:
-        app.mount(
-            "/metrics",
-            make_asgi_app(registry=IdentityRegistry(
-                identity=ProcessIdentity(agent=agent.name, environment=ach.environment)
-            )),
-        )
+    app.mount(
+        "/metrics",
+        make_asgi_app(registry=IdentityRegistry(identity=ProcessIdentity(
+            agent=control.config.agent.name, environment=control.config.identity_environment))),
+    )
 
     return app
 

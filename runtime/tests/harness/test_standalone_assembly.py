@@ -54,3 +54,12 @@ async def test_standalone_assembly_fails_closed_on_missing_header_env():
     env = {k: v for k, v in ENV.items() if k != "ACH_AGENT_MCP_SERPER_H0"}
     with pytest.raises(WorkspaceAssemblyUnavailable, match="ACH_AGENT_MCP_SERPER_H0"):
         await assemble(_config(), environ=env)
+
+
+async def test_standalone_run_cost_is_unpriced_without_catalog_cost():
+    control = await assemble(_config(), environ=ENV)
+    try:
+        assert control.catalog.model.metadata.input_cost_per_token is None
+        assert control._priced is False
+    finally:
+        await control.close()

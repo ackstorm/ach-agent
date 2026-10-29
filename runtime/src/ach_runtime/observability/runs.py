@@ -8,6 +8,7 @@ import logging
 import math
 import re
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -16,9 +17,25 @@ from ach_runtime.execution.wire import JsonValue
 _SECRET = re.compile(r"(ek[-_][A-Za-z0-9_\-]+|sk-[A-Za-z0-9_\-]+)")
 
 
+_registered: tuple[str, ...] = ()
+_MIN_REGISTERED_SECRET = 8
+
+
+def register_secrets(values: Iterable[str]) -> None:
+    """Add process secrets (resolved upstream headers) to log redaction. Values shorter
+    than 8 characters are ignored: replacing them would corrupt ordinary text."""
+    global _registered
+    merged = set(_registered) | {value for value in values if len(value) >= _MIN_REGISTERED_SECRET}
+    _registered = tuple(sorted(merged, key=len, reverse=True))
+
+
 def redact(text: str) -> str:
-    """Scrub legacy ACH bearer and provider tokens without truncating the value."""
-    return _SECRET.sub("[redacted]", text)
+    """Scrub legacy ACH bearer and provider tokens, plus registered process secrets,
+    without truncating the value."""
+    text = _SECRET.sub("[redacted]", text)
+    for value in _registered:
+        text = text.replace(value, "[redacted]")
+    return text
 
 
 # Explicit allowlist of record_run/alarm's own fields (policy gap): the formatter below

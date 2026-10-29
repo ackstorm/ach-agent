@@ -25,7 +25,7 @@ def invalid_event_app():
         ),
     )
     config = SimpleNamespace(channels=[channel], agent=SimpleNamespace(name="test-agent"),
-                             ach=SimpleNamespace(environment="test-env"))
+                             identity_environment="test-env")
     admission = Admission(
         namespace="ns", agent_uid="3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77",
         max_concurrent_invocations=1, max_queued_total=4, idempotency_window_seconds=1,
@@ -69,7 +69,7 @@ async def test_metrics_is_mounted_with_static_process_identity() -> None:
         config=SimpleNamespace(
             channels=[],
             agent=SimpleNamespace(name="metrics-agent"),
-            ach=SimpleNamespace(environment="metrics-env"),
+            identity_environment="metrics-env",
         ),
         admission=SimpleNamespace(),
         _stopping=False,
@@ -83,6 +83,21 @@ async def test_metrics_is_mounted_with_static_process_identity() -> None:
             'environment="metrics-env",model="metrics-model"} 1.0') in response.text
     assert 'agent="metrics-agent"' in response.text
     assert 'environment="metrics-env"' in response.text
+
+
+async def test_metrics_is_mounted_without_an_ach_block() -> None:
+    control = SimpleNamespace(
+        config=SimpleNamespace(
+            channels=[], agent=SimpleNamespace(name="metrics-agent"), identity_environment="team-ns"
+        ),
+        admission=SimpleNamespace(),
+        _stopping=False,
+    )
+    transport = httpx.ASGITransport(app=create_app(control))
+    async with httpx.AsyncClient(transport=transport, base_url="http://control") as client:
+        response = await client.get("/metrics/")
+    assert response.status_code == 200
+    assert 'environment="team-ns"' in response.text
 
 
 @pytest.mark.parametrize("payload", [
@@ -120,7 +135,7 @@ def _script_app(script: str, *, output: Path, auth: str = "none", bot: str | Non
     })
     control = Control.__new__(Control)
     control.config = SimpleNamespace(channels=[channel], agent=SimpleNamespace(name="test-agent"),
-                                     ach=SimpleNamespace(environment="test-env"))
+                                     identity_environment="test-env")
     control._private_env = {"PATH": "/bin:/usr/bin"}
     control._stopping = False
     control.admission = Admission(

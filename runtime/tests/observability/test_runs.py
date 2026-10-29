@@ -56,6 +56,19 @@ def test_completion_log_redacts_legacy_bearer_and_provider_tokens(caplog) -> Non
     assert "sk-provider-secret" not in caplog.text
 
 
+def test_registered_upstream_secrets_are_redacted(caplog) -> None:
+    from ach_runtime.observability.runs import register_secrets
+
+    register_secrets(["serper-secret-123456"])
+    record = RunRecord(
+        "agent", "dev", "inv", "run", "actor serper-secret-123456", None,
+        "webhook", "ws", "sess", "version", "model", 1.0, "completed", None,
+    )
+    with caplog.at_level(logging.INFO):
+        record_run(record)
+    assert "serper-secret-123456" not in caplog.text
+
+
 def _catalog_handler(request: httpx.Request) -> httpx.Response:
     if request.url.path == "/platform/hydrate":
         return httpx.Response(200, json={

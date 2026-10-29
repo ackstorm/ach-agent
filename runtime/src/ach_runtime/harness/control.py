@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 import re
 from contextlib import AsyncExitStack
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -48,6 +48,7 @@ from ach_runtime.harness.admission import (
     WorkspaceOwnerLost,
 )
 from ach_runtime.harness.delivery import Delivery, StartOutcomeUnknown
+from ach_runtime.observability.runs import register_secrets
 from ach_runtime.harness.hydrate import (
     HydratedCatalog,
     HydrationInput,
@@ -215,6 +216,8 @@ class Control:
     _ek: str = field(default="", repr=False)
     # Resolved upstream header values (log redaction) and per-upstream headers for the facades.
     upstream_secrets: tuple[str, ...] = field(default=(), repr=False)
+    # False when the catalog carries no per-token cost: run cost is then reported unpriced.
+    _priced: bool = True
     _model_headers: dict[str, str] = field(default_factory=dict, repr=False)
     _mcp_headers: dict[str, dict[str, str]] = field(default_factory=dict, repr=False)
     # I7: resolved memory endpoint/project/private headers/identity, populated by assemble
@@ -747,6 +750,8 @@ class Control:
                 )
             except (TypeError, ValueError):
                 usage = None
+        if usage is not None and not getattr(self, "_priced", True):
+            usage = replace(usage, cost_usd=None)
         record_run(RunRecord(
             agent=self.config.agent.name,
             environment=self.config.identity_environment,
@@ -1004,6 +1009,9 @@ async def assemble(
             operations=control.artifact_operations,
             exclude_tools=frozenset(config.capability.filter.exclude.tools),
         )
+    metadata = catalog.model.metadata
+    control._priced = metadata is not None and metadata.input_cost_per_token is not None
+    register_secrets(upstream_secrets)
     lifecycle = Lifecycle(control)
     control.lifecycle = lifecycle
     return control

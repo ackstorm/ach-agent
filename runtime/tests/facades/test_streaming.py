@@ -51,6 +51,14 @@ def _scope(*, token: str, method: str = "POST") -> dict[str, Any]:
     }
 
 
+MODEL_BODY = b'{"model": "test-model"}'
+
+
+def _body_for(scope: Any) -> bytes:
+    """The model facade needs a JSON body naming its model; the MCP facade forwards anything."""
+    return MODEL_BODY if scope is _scope else b""
+
+
 def _request_receive(body: bytes = b"") -> tuple[Receive, "asyncio.Queue[Message]"]:
     queue: asyncio.Queue[Message] = asyncio.Queue()
     queue.put_nowait({"type": "http.request", "body": body, "more_body": False})
@@ -114,9 +122,10 @@ class _RawChunkedUpstream:
             try:
                 # Detect the client (our forward()) closing its end — proof that
                 # `upstream.aclose()` ran, not just that the test stopped reading.
-                data = await reader.read(1)
-                if data == b"":
-                    self.connection_closed.set()
+                # A forwarded request body may precede the close: read until EOF.
+                while await reader.read(1024):
+                    pass
+                self.connection_closed.set()
             except (ConnectionResetError, BrokenPipeError):
                 self.connection_closed.set()
 
@@ -148,6 +157,8 @@ def _facade(upstream_port: int, *, client: httpx.AsyncClient | None = None) -> M
     return ModelFacade(
         endpoint=f"http://127.0.0.1:{upstream_port}/v1",
         headers={"x-ach-key": "ek-xyz"},
+        api="openai",
+        model="test-model",
         key=KEY,
         owned_workspace=_owned,
         identity=IDENTITY,
@@ -197,7 +208,7 @@ async def test_first_asgi_body_arrives_before_the_gated_second_chunk_is_released
     facade = _facade(upstream.port)
     token = facade_token(KEY, "owned-ws")
 
-    request_receive, _ = _request_receive()
+    request_receive, _ = _request_receive(MODEL_BODY)
     response = await facade._handle(Request(_scope(token=token), request_receive))
     assert isinstance(response, StreamingResponse)
 
@@ -255,7 +266,7 @@ async def test_disconnect_closes_tracked_upstream_and_owned_task_completes_withi
     facade = _facade(upstream.port, client=no_pool_client)
     token = facade_token(KEY, "owned-ws")
 
-    request_receive, _ = _request_receive()
+    request_receive, _ = _request_receive(MODEL_BODY)
     response = await facade._handle(Request(_scope(token=token), request_receive))
     assert isinstance(response, StreamingResponse)
 
@@ -304,7 +315,7 @@ async def test_preheader_disconnect_closes_upstream_within_two_seconds(make_faca
     no_pool_client = httpx.AsyncClient(limits=httpx.Limits(max_keepalive_connections=0))
     facade, scope = make_facade(upstream.port, client=no_pool_client)
     token = facade_token(KEY, "owned-ws")
-    request_receive, queue = _request_receive()
+    request_receive, queue = _request_receive(_body_for(scope))
 
     handle_task = asyncio.create_task(facade._handle(Request(scope(token=token), request_receive)))
     try:
@@ -337,7 +348,7 @@ async def test_preheader_caller_cancellation_closes_upstream(make_facade: Any) -
     no_pool_client = httpx.AsyncClient(limits=httpx.Limits(max_keepalive_connections=0))
     facade, scope = make_facade(upstream.port, client=no_pool_client)
     token = facade_token(KEY, "owned-ws")
-    request_receive, _ = _request_receive()
+    request_receive, _ = _request_receive(_body_for(scope))
 
     handle_task = asyncio.create_task(facade._handle(Request(scope(token=token), request_receive)))
     try:
@@ -438,7 +449,8 @@ async def test_mcp_facade_also_exposes_aclose_for_its_internally_owned_client() 
 
 def test_model_facade_internal_client_has_no_read_timeout_and_thirty_second_connect_bound() -> None:
     facade = ModelFacade(
-        endpoint="https://ach.example.com/v1", headers={"x-ach-key": "ek-xyz"}, key=KEY, owned_workspace=_owned, identity=IDENTITY
+        endpoint="https://ach.example.com/v1", headers={"x-ach-key": "ek-xyz"}, api="openai", model="test-model",
+        key=KEY, owned_workspace=_owned, identity=IDENTITY
     )
     timeout = facade._client.timeout
     assert timeout.read is None
@@ -450,6 +462,8 @@ def test_model_facade_injected_client_timeout_is_preserved() -> None:
     facade = ModelFacade(
         endpoint="https://ach.example.com/v1",
         headers={"x-ach-key": "ek-xyz"},
+        api="openai",
+        model="test-model",
         key=KEY,
         owned_workspace=_owned,
         identity=IDENTITY,
@@ -532,7 +546,7 @@ async def test_response_start_failure_closes_upstream_before_body_iteration(make
     facade, scope = make_facade(upstream.port, client=injected)
     try:
         token = facade_token(KEY, "owned-ws")
-        request_receive, _ = _request_receive()
+        request_receive, _ = _request_receive(_body_for(scope))
         response = await facade._handle(Request(scope(token=token), request_receive))
         assert isinstance(response, StreamingResponse)
         assert len(facade._responses) == 1
@@ -581,7 +595,7 @@ async def test_aclose_attempts_every_response_close_and_propagates_a_real_failur
     try:
         token = facade_token(KEY, "owned-ws")
         for _ in range(2):
-            request_receive, _ = _request_receive()
+            request_receive, _ = _request_receive(_body_for(scope))
             response = await facade._handle(Request(scope(token=token), request_receive))
             assert isinstance(response, StreamingResponse)
         assert len(facade._responses) == 2
@@ -612,7 +626,7 @@ async def test_aclose_preserves_injected_client_even_when_a_response_close_fails
     facade, scope = make_facade(upstream.port, client=injected)
     try:
         token = facade_token(KEY, "owned-ws")
-        request_receive, _ = _request_receive()
+        request_receive, _ = _request_receive(_body_for(scope))
         response = await facade._handle(Request(scope(token=token), request_receive))
         assert isinstance(response, StreamingResponse)
         tracked = next(iter(facade._responses))
@@ -644,7 +658,7 @@ async def test_aclose_closes_a_response_whose_streaming_body_never_started(make_
     try:
         facade, scope = make_facade(upstream.port)
         token = facade_token(KEY, "owned-ws")
-        request_receive, _ = _request_receive()
+        request_receive, _ = _request_receive(_body_for(scope))
         response = await facade._handle(Request(scope(token=token), request_receive))
         assert isinstance(response, StreamingResponse)
         assert len(facade._responses) == 1
@@ -666,7 +680,7 @@ async def test_app_lifespan_shutdown_closes_owned_client_and_outstanding_respons
     try:
         facade, scope = make_facade(upstream.port)
         token = facade_token(KEY, "owned-ws")
-        request_receive, _ = _request_receive()
+        request_receive, _ = _request_receive(_body_for(scope))
         response = await facade._handle(Request(scope(token=token), request_receive))
         assert isinstance(response, StreamingResponse)
         tracked = next(iter(facade._responses))
@@ -703,7 +717,7 @@ async def test_app_lifespan_shutdown_closes_outstanding_responses_but_not_inject
         injected = httpx.AsyncClient()
         facade, scope = make_facade(upstream.port, client=injected)
         token = facade_token(KEY, "owned-ws")
-        request_receive, _ = _request_receive()
+        request_receive, _ = _request_receive(_body_for(scope))
         response = await facade._handle(Request(scope(token=token), request_receive))
         assert isinstance(response, StreamingResponse)
         tracked = next(iter(facade._responses))
@@ -739,7 +753,7 @@ async def test_explicit_task_cancellation_closes_tracked_response_within_two_sec
     facade = _facade(upstream.port, client=no_pool_client)
     token = facade_token(KEY, "owned-ws")
 
-    request_receive, _ = _request_receive()
+    request_receive, _ = _request_receive(MODEL_BODY)
     response = await facade._handle(Request(_scope(token=token), request_receive))
     assert isinstance(response, StreamingResponse)
 

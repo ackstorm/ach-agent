@@ -75,6 +75,9 @@ async def _call(app: Any, method: str, path: str, **kwargs: Any) -> httpx.Respon
         return await client.request(method, path, **kwargs)
 
 
+MODEL = "test-model"
+
+
 # --- ModelFacade ----------------------------------------------------------------
 
 
@@ -83,6 +86,8 @@ def _model_facade(*, handler: Any, owned_workspace: Any = None, correlation_head
     return ModelFacade(
         endpoint="https://ach.example.com/v1",
         headers={"x-ach-key": "ek-xyz"},
+        api="openai",
+        model=MODEL,
         key=KEY,
         owned_workspace=owned_workspace or _owned_once(),
         identity=IDENTITY,
@@ -101,7 +106,7 @@ async def test_model_facade_drops_inbound_x_api_key_when_no_header_is_configured
     facade = _model_facade(handler=handler)
     token = facade_token(KEY, "owned-ws")
     resp = await _call(
-        facade.app(), "POST", f"/t/{token}/chat/completions", json={}, headers={"x-api-key": "local-proxy"}
+        facade.app(), "POST", f"/t/{token}/chat/completions", json={"model": MODEL}, headers={"x-api-key": "local-proxy"}
     )
     assert resp.status_code == 200
     assert "x-api-key" not in seen["headers"]
@@ -121,7 +126,7 @@ async def test_model_facade_injects_ek_and_identity_strips_inbound_auth_and_impe
         facade.app(),
         "POST",
         f"/t/{token}/chat/completions",
-        json={"hello": "world"},
+        json={"model": MODEL, "hello": "world"},
         headers={
             "Authorization": "Bearer dummy-client-token",
             "x-ach-key": "client-supplied-fake",
@@ -150,7 +155,7 @@ async def test_model_facade_denies_malformed_token_with_zero_upstream_egress() -
         return httpx.Response(200, json={"ok": True})
 
     facade = _model_facade(handler=handler)
-    resp = await _call(facade.app(), "POST", "/t/no-dot-here/chat/completions", json={})
+    resp = await _call(facade.app(), "POST", "/t/no-dot-here/chat/completions", json={"model": MODEL})
 
     assert resp.status_code == 403
     assert called is False
@@ -166,7 +171,7 @@ async def test_model_facade_denies_wrong_key_token_with_zero_upstream_egress() -
 
     facade = _model_facade(handler=handler)
     wrong_key_token = facade_token(b"a-different-key", "owned-ws")
-    resp = await _call(facade.app(), "POST", f"/t/{wrong_key_token}/chat/completions", json={})
+    resp = await _call(facade.app(), "POST", f"/t/{wrong_key_token}/chat/completions", json={"model": MODEL})
 
     assert resp.status_code == 403
     assert called is False
@@ -183,7 +188,7 @@ async def test_model_facade_denies_non_owned_claim_with_zero_upstream_egress() -
     owned = _owned_once("owned-ws")
     facade = _model_facade(handler=handler, owned_workspace=owned)
     token = facade_token(KEY, "someone-elses-ws")
-    resp = await _call(facade.app(), "POST", f"/t/{token}/chat/completions", json={})
+    resp = await _call(facade.app(), "POST", f"/t/{token}/chat/completions", json={"model": MODEL})
 
     assert resp.status_code == 403
     assert called is False
@@ -199,7 +204,7 @@ async def test_model_facade_untokenized_route_is_404() -> None:
         return httpx.Response(200, json={"ok": True})
 
     facade = _model_facade(handler=handler)
-    resp = await _call(facade.app(), "POST", "/chat/completions", json={})
+    resp = await _call(facade.app(), "POST", "/chat/completions", json={"model": MODEL})
 
     assert resp.status_code == 404
     assert called is False
@@ -218,11 +223,11 @@ async def test_model_facade_a_valid_hmac_becomes_non_owned_between_two_calls() -
     facade = _model_facade(handler=handler, owned_workspace=owned)
     token = facade_token(KEY, "owned-ws")
 
-    first = await _call(facade.app(), "POST", f"/t/{token}/chat/completions", json={})
+    first = await _call(facade.app(), "POST", f"/t/{token}/chat/completions", json={"model": MODEL})
     assert first.status_code == 200
     assert called_count == 1
 
-    second = await _call(facade.app(), "POST", f"/t/{token}/chat/completions", json={})
+    second = await _call(facade.app(), "POST", f"/t/{token}/chat/completions", json={"model": MODEL})
     assert second.status_code == 403
     assert called_count == 1, "second call must reach zero additional upstream egress"
     assert owned.state["count"] == 2
@@ -238,7 +243,7 @@ async def test_model_facade_streams_response_body() -> None:
 
     facade = _model_facade(handler=handler)
     token = facade_token(KEY, "owned-ws")
-    resp = await _call(facade.app(), "POST", f"/t/{token}/responses", json={"stream": True})
+    resp = await _call(facade.app(), "POST", f"/t/{token}/responses", json={"model": MODEL, "stream": True})
 
     assert resp.status_code == 200
     assert resp.content == b"data: one\n\ndata: two\n\n"
@@ -257,7 +262,7 @@ async def test_model_facade_strips_caller_correlation_when_no_trusted_carrier() 
         facade.app(),
         "POST",
         f"/t/{token}/chat/completions",
-        json={},
+        json={"model": MODEL},
         headers={
             "Traceparent": "00-" + "f" * 32 + "-" + "f" * 16 + "-01",
             "Tracestate": "vendor=forged",
@@ -290,7 +295,7 @@ async def test_model_facade_trusted_correlation_carrier_overwrites_case_variant(
         facade.app(),
         "POST",
         f"/t/{token}/chat/completions",
-        json={},
+        json={"model": MODEL},
         headers={
             "TraceParent": "00-" + "f" * 32 + "-" + "f" * 16 + "-01",
             "X-Litellm-Trace-Id": "forged-litellm-trace",
@@ -320,7 +325,7 @@ async def test_model_facade_mixed_case_identity_and_auth_headers_survive_a_naive
         facade.app(),
         "POST",
         f"/t/{token}/chat/completions",
-        json={},
+        json={"model": MODEL},
         headers={
             "AUTHORIZATION": "Bearer dummy",
             "X-ACH-KEY": "fake",
@@ -356,14 +361,14 @@ async def test_model_facade_a_chunked_inbound_body_is_forwarded_with_one_framing
     token = facade_token(KEY, "owned-ws")
 
     async def chunks() -> AsyncIterator[bytes]:
-        yield b'{"hello":'
-        yield b'"world"}'
+        yield b'{"model":"test-model",'
+        yield b'"hello":"world"}'
 
     resp = await _call(facade.app(), "POST", f"/t/{token}/chat/completions", content=chunks())
 
     assert resp.status_code == 200
     assert seen["framing"] == ["content-length"]
-    assert seen["body"] == b'{"hello":"world"}'
+    assert seen["body"] == b'{"model":"test-model","hello":"world"}'
 
 
 # --- McpFacade --------------------------------------------------------------------
@@ -901,7 +906,7 @@ async def test_model_facade_decodes_a_gzip_reply_it_strips_content_encoding_from
 
     facade = _model_facade(handler=handler)
     token = facade_token(KEY, "owned-ws")
-    resp = await _call(facade.app(), "POST", f"/t/{token}/chat/completions")
+    resp = await _call(facade.app(), "POST", f"/t/{token}/chat/completions", json={"model": MODEL})
 
     assert "content-encoding" not in resp.headers
     assert resp.json() == {"ok": True}
@@ -982,6 +987,7 @@ async def test_facade_does_not_forward_the_client_accept_encoding() -> None:
 
     facade = _model_facade(handler=handler)
     token = facade_token(KEY, "owned-ws")
-    await _call(facade.app(), "POST", f"/t/{token}/chat/completions", headers={"accept-encoding": "x-unsupported"})
+    await _call(facade.app(), "POST", f"/t/{token}/chat/completions", json={"model": MODEL},
+                headers={"accept-encoding": "x-unsupported"})
 
     assert "x-unsupported" not in seen["accept-encoding"]

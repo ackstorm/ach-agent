@@ -976,7 +976,8 @@ async def assemble(
         client=mcp_client,
     )
     model = ModelFacade(
-        endpoint=model_endpoint, headers=model_headers, key=key,
+        endpoint=model_endpoint, headers=model_headers, api=config.model.type, model=config.model.name,
+        key=key,
         owned_workspace=control._owned_live, identity=identity,
         client=model_client,
     )

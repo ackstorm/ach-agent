@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
 
@@ -33,10 +35,54 @@ from ach_runtime.harness.hydrate import HydratedCatalog, ModelMetadata
 from ach_runtime.harness.tokens import WorkspaceAuthenticationFailed, authenticate_facade
 
 _METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
+_BODY_MODEL_PATHS = {
+    "openai": frozenset({"chat/completions", "responses"}),
+    "anthropic": frozenset({"messages", "messages/count_tokens"}),
+}
+_GEMINI_PATH = re.compile(r"models/([^/:]+):(generateContent|streamGenerateContent|countTokens)")
 _INTERNAL_CLIENT_TIMEOUT = httpx.Timeout(None, connect=30.0)
 
 OwnedWorkspace = Callable[[str], Awaitable[bool]]
 CorrelationHeaders = Callable[[], Mapping[str, str]] | None
+
+
+def check_model_request(
+    api: str,
+    model: str,
+    method: str,
+    tail: str,
+    raw_path: bytes,
+    query: Mapping[str, str],
+    headers: Mapping[str, str],
+    body: bytes,
+) -> tuple[int, str] | None:
+    """(status, reason) when the request must not leave the facade; None when it may."""
+    if method != "POST":
+        return 405, "method not allowed"
+    if b"%" in raw_path:
+        return 400, "encoded path not allowed"
+    if headers.get("content-encoding", "identity").lower() != "identity":
+        return 400, "encoded body not allowed"
+    if api == "gemini":
+        match = _GEMINI_PATH.fullmatch(tail)
+        if match is None:
+            return 404, "path not allowed"
+        if match.group(1) != model:
+            return 400, "model not allowed"
+        if set(query) - {"alt"} or query.get("alt", "sse") != "sse":
+            return 400, "query not allowed"
+        return None
+    if tail not in _BODY_MODEL_PATHS[api]:
+        return 404, "path not allowed"
+    if query:
+        return 400, "query not allowed"
+    try:
+        document = json.loads(body)
+    except ValueError:
+        return 400, "body is not JSON"
+    if not isinstance(document, dict) or document.get("model") != model:
+        return 400, "model not allowed"
+    return None
 
 
 class ModelFacade:
@@ -48,6 +94,8 @@ class ModelFacade:
         *,
         endpoint: str,
         headers: Mapping[str, str],
+        api: str,
+        model: str,
         key: bytes,
         owned_workspace: OwnedWorkspace,
         identity: ProcessIdentity,
@@ -67,7 +115,17 @@ class ModelFacade:
             except WorkspaceAuthenticationFailed:
                 return JSONResponse({"detail": "forbidden"}, status_code=403)
 
-            target = join_tail(target_base, request.path_params.get("tail", ""))
+            tail = request.path_params.get("tail", "")
+            body = await request.body()
+            rejected = check_model_request(
+                api, model, request.method, tail, request.scope.get("raw_path", b""),
+                request.query_params, request.headers, body,
+            )
+            if rejected is not None:
+                status, reason = rejected
+                return JSONResponse({"detail": reason}, status_code=status)
+
+            target = join_tail(target_base, tail)
             if target is None:
                 return JSONResponse({"detail": "path escapes the model endpoint"}, status_code=400)
             correlation = correlation_headers() if correlation_headers is not None else None
@@ -78,6 +136,7 @@ class ModelFacade:
                 upstream_headers,
                 identity=identity,
                 correlation=correlation,
+                body=body,
                 _responses=self._responses,
             )
 

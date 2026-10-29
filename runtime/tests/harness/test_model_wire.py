@@ -86,7 +86,7 @@ async def test_model_facade_uses_configured_native_ach_endpoint(model_type, path
         model_urls = [provider["baseURL"] for provider in execution_catalog["providers"].values()]
         assert model_urls == [f"{control.public.infrastructure.facade_endpoint.rstrip('/')}/model/t/{token}"]
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://control") as client:
-            response = await client.post(f"/t/{token}{path}", json={"probe": True})
+            response = await client.post(f"/t/{token}{path}", json={"model": MODEL_ID, "probe": True})
         assert response.status_code == 200
         assert len(upstream) == 1
         assert upstream[0][0] == ACH_BASE.rstrip("/") + prefix + path

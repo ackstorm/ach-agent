@@ -226,6 +226,8 @@ async def test_public_catalog_call_emits_no_credential_or_raw_backend_sentinel_i
     facade = ModelFacade(
         endpoint="https://ach.example.com/v1",
         headers={"x-ach-key": "ek-super-secret-sentinel"},
+        api="openai",
+        model="m",
         key=b"fixture-key",
         owned_workspace=_owned,
         identity=ProcessIdentity(agent="classifier", environment="platform"),
@@ -236,7 +238,7 @@ async def test_public_catalog_call_emits_no_credential_or_raw_backend_sentinel_i
         transport = httpx.ASGITransport(app=facade.app())
         with caplog.at_level("DEBUG"):
             async with httpx.AsyncClient(transport=transport, base_url="http://facade") as client:
-                resp = await client.post(f"/t/{token}/chat/completions", json={})
+                resp = await client.post(f"/t/{token}/chat/completions", json={"model": "m"})
 
             catalog = _catalog(metadata=FULL_METADATA)
             public_catalog(

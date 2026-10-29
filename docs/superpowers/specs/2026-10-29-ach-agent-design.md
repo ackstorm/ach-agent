@@ -347,8 +347,11 @@ admitting only the ach-agent operator and control ServiceAccounts. The same mesh
 
 1. Start from the profile's `sandbox.openshell.policy`.
 2. Merge the Agent's: `network_policies` by name (Agent wins), `filesystem_policy` lists
-   concatenated, scalars (e.g. `landlock`) Agent over profile. Extra egress and Landlock
-   settings are the Agent author's choice (see "Trust boundary").
+   concatenated, scalars (e.g. `landlock`) Agent over profile. Extra egress is external
+   only: an endpoint with a dotless host, a host ending `.svc`, `.svc.cluster.local` or
+   `.cluster.local`, or an IP host or `allowed_ips` range overlapping loopback, link-local,
+   RFC1918, CGNAT, ULA or IPv6 link-local is rejected (`SandboxPolicyRejected`), so no alias of
+   a facade passes. Landlock settings are the Agent author's choice (see "Trust boundary").
 3. Apply the reserved `ach-agent-*` rules last; they cannot be overridden:
    - egress to the facades, bound to the runtime binaries;
    - the runtime binaries and their directories read-only: an Agent `filesystem_policy`

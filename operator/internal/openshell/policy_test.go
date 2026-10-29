@@ -90,29 +90,40 @@ func TestBuildPolicy_FilesystemListsConcatenate(t *testing.T) {
 
 func TestBuildPolicy_Rejections(t *testing.T) {
 	for name, tc := range map[string]struct{ doc, why string }{
-		"unknown field":         {`{"network_policy":{}}`, "unknown field"},
-		"reserved rule name":    {`{"network_policies":{"ach-agent-x":{"name":"ach-agent-x"}}}`, "reserved prefix"},
-		"writable runtime bin":  {`{"filesystem":{"read_write":["/usr/local/bin"]}}`, "writable"},
-		"writable opencode dir": {`{"filesystem":{"read_write":["/opt/opencode/node_modules"]}}`, "writable"},
-		"writable parent":       {`{"filesystem":{"read_write":["/opt"]}}`, "writable"},
-		"writable root":         {`{"filesystem":{"read_write":["/"]}}`, "writable"},
-		"writable via dotdot":   {`{"filesystem":{"read_write":["/tmp/../usr/local/bin"]}}`, "writable"},
-		"writable runtime code": {`{"filesystem":{"read_write":["/work/src"]}}`, "writable"},
-		"writable work":         {`{"filesystem":{"read_write":["/work"]}}`, "writable"},
-		"writable stdlib":       {`{"filesystem":{"read_write":["/usr/local/lib/python3.13"]}}`, "writable"},
-		"relative read_write":   {`{"filesystem":{"read_write":["usr/local/bin"]}}`, "absolute"},
-		"dotdot read_write":     {`{"filesystem":{"read_write":["../usr/local/bin"]}}`, "absolute"},
-		"relative read_only":    {`{"filesystem":{"read_only":["data"]}}`, "absolute"},
-		"reserved name field":   {`{"network_policies":{"x":{"name":"ach-agent-facades"}}}`, "reserved prefix"},
-		"reserved name mixed":   {`{"network_policies":{"x":{"name":"ACH-Agent-facades"}}}`, "reserved prefix"},
-		"name differs from key": {`{"network_policies":{"x":{"name":"y"}}}`, "differs from its key"},
-		"facade exact host":     {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"F.","port":8081}]}}}`, "facade"},
-		"facade host glob":      {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"f*","port":8081}]}}}`, "facade"},
-		"facade wildcard host":  {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"**","port":8081}]}}}`, "facade"},
-		"facade ports list":     {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"f","ports":[443,8081]}]}}}`, "facade"},
-		"facade allowed_ips":    {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"example.com","port":8081,"allowed_ips":["10.0.0.0/8"]}]}}}`, "facade"},
-		"reserved middleware":   {`{"network_middlewares":{"ach-agent-m":{"name":"m","middleware":"x"}}}`, "reserved prefix"},
-		"middleware on facade":  {`{"network_middlewares":{"m":{"name":"m","middleware":"x","endpoints":{"include":["f"]}}}}`, "facade"},
+		"unknown field":          {`{"network_policy":{}}`, "unknown field"},
+		"reserved rule name":     {`{"network_policies":{"ach-agent-x":{"name":"ach-agent-x"}}}`, "reserved prefix"},
+		"writable runtime bin":   {`{"filesystem":{"read_write":["/usr/local/bin"]}}`, "writable"},
+		"writable opencode dir":  {`{"filesystem":{"read_write":["/opt/opencode/node_modules"]}}`, "writable"},
+		"writable parent":        {`{"filesystem":{"read_write":["/opt"]}}`, "writable"},
+		"writable root":          {`{"filesystem":{"read_write":["/"]}}`, "writable"},
+		"writable via dotdot":    {`{"filesystem":{"read_write":["/tmp/../usr/local/bin"]}}`, "writable"},
+		"writable runtime code":  {`{"filesystem":{"read_write":["/work/src"]}}`, "writable"},
+		"writable work":          {`{"filesystem":{"read_write":["/work"]}}`, "writable"},
+		"writable stdlib":        {`{"filesystem":{"read_write":["/usr/local/lib/python3.13"]}}`, "writable"},
+		"relative read_write":    {`{"filesystem":{"read_write":["usr/local/bin"]}}`, "absolute"},
+		"dotdot read_write":      {`{"filesystem":{"read_write":["../usr/local/bin"]}}`, "absolute"},
+		"relative read_only":     {`{"filesystem":{"read_only":["data"]}}`, "absolute"},
+		"reserved name field":    {`{"network_policies":{"x":{"name":"ach-agent-facades"}}}`, "reserved prefix"},
+		"reserved name mixed":    {`{"network_policies":{"x":{"name":"ACH-Agent-facades"}}}`, "reserved prefix"},
+		"name differs from key":  {`{"network_policies":{"x":{"name":"y"}}}`, "differs from its key"},
+		"facade exact host":      {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"F.","port":8081}]}}}`, "facade"},
+		"facade host glob":       {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"f*","port":8081}]}}}`, "facade"},
+		"facade wildcard host":   {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"**","port":8081}]}}}`, "facade"},
+		"facade ports list":      {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"f","ports":[443,8081]}]}}}`, "facade"},
+		"facade allowed_ips":     {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"example.com","port":8081,"allowed_ips":["10.0.0.0/8"]}]}}}`, "facade"},
+		"reserved middleware":    {`{"network_middlewares":{"ach-agent-m":{"name":"m","middleware":"x"}}}`, "reserved prefix"},
+		"middleware on facade":   {`{"network_middlewares":{"m":{"name":"m","middleware":"x","endpoints":{"include":["f"]}}}}`, "facade"},
+		"internal pod dns":       {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"agent-foo-0.agent-foo.ns.svc.cluster.local","port":443}]}}}`, "cluster-internal"},
+		"internal svc":           {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"agent-foo.ns.svc.","port":443}]}}}`, "cluster-internal"},
+		"internal cluster.local": {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"A.Cluster.Local","port":443}]}}}`, "cluster-internal"},
+		"internal short name":    {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"agent-foo","port":443}]}}}`, "cluster-internal"},
+		"internal ip host":       {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"10.1.2.3","port":443}]}}}`, "cluster-internal"},
+		"cgnat ip host":          {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"100.64.1.1","port":443}]}}}`, "cluster-internal"},
+		"loopback v6":            {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"::1","port":443}]}}}`, "cluster-internal"},
+		"ula v6":                 {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"fd00::1","port":443}]}}}`, "cluster-internal"},
+		"link-local allowed_ips": {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"example.com","port":443,"allowed_ips":["169.254.169.254/32"]}]}}}`, "cluster-internal"},
+		"rfc1918 allowed_ips":    {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"example.com","port":443,"allowed_ips":["192.168.0.0/16"]}]}}}`, "cluster-internal"},
+		"v6 link-local allowed":  {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"example.com","port":443,"allowed_ips":["fe80::/10"]}]}}}`, "cluster-internal"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			for who, args := range map[string][2]*apiextensionsv1.JSON{"agent": {nil, raw(tc.doc)}, "profile": {raw(tc.doc), nil}} {
@@ -130,9 +141,13 @@ func TestBuildPolicy_UnrelatedEgressIsKept(t *testing.T) {
 	if _, err := BuildPolicy(nil, doc, "f.ns.svc", 8081); err == nil {
 		t.Fatal("allowed_ips on the facade port must be rejected")
 	}
-	doc = raw(`{"network_policies":{"a":{"name":"a","endpoints":[{"host":"pypi.org","port":443},{"host":"*.example.com","port":8081},{"host":"f.other.svc","port":8081}]}}}`)
+	doc = raw(`{"network_policies":{"a":{"name":"a","endpoints":[{"host":"pypi.org","port":443},{"host":"*.example.com","port":8081},{"host":"f.other.example","port":8081}]}}}`)
 	if _, err := BuildPolicy(nil, doc, "f.ns.svc", 8081); err != nil {
 		t.Fatalf("unrelated egress rejected: %v", err)
+	}
+	doc = raw(`{"network_policies":{"a":{"name":"a","endpoints":[{"host":"203.0.113.9","port":443,"allowed_ips":["203.0.113.0/24","2001:db8::/32"]},{"host":"api.example.com","port":443}]}}}`)
+	if _, err := BuildPolicy(nil, doc, "f.ns.svc", 8081); err != nil {
+		t.Fatalf("external egress rejected: %v", err)
 	}
 }
 

@@ -5,6 +5,7 @@ package openshell
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"path"
 	"strings"
 
@@ -99,6 +100,9 @@ func BuildPolicy(profile, agent *apiextensionsv1.JSON, facadeHost string, facade
 			if reachesFacade(ep, facadeHost, facadePort) {
 				return nil, fmt.Errorf("%w: rule %q could match the facade endpoint %s:%d", ErrPolicyRejected, name, facadeHost, facadePort)
 			}
+			if why := internalEndpoint(ep); why != "" {
+				return nil, fmt.Errorf("%w: rule %q endpoint %q is cluster-internal (%s); extra egress is external only", ErrPolicyRejected, name, ep.Host, why)
+			}
 		}
 	}
 	if merged.Filesystem == nil {
@@ -192,6 +196,61 @@ func reachesFacade(ep ostypes.PolicyNetworkEndpoint, facadeHost string, facadePo
 		portMatch = portMatch || p == 0 || p == facadePort
 	}
 	return portMatch && (hostMatches(ep.Host, facadeHost) || len(ep.AllowedIPs) > 0)
+}
+
+var internalPrefixes = func() []netip.Prefix {
+	var out []netip.Prefix
+	for _, c := range []string{"127.0.0.0/8", "169.254.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+		"100.64.0.0/10", "0.0.0.0/8", "::1/128", "::/128", "fc00::/7", "fe80::/10"} {
+		out = append(out, netip.MustParsePrefix(c))
+	}
+	return out
+}()
+
+// internalEndpoint returns why an endpoint targets the cluster or a private network, or "".
+// Extra egress is external only, so no alias of a facade (pod DNS, service DNS, short names, IPs)
+// can be allowed. A host glob is judged by its text; an allowed_ips range is rejected when it
+// overlaps any internal range.
+func internalEndpoint(ep ostypes.PolicyNetworkEndpoint) string {
+	host := strings.TrimSuffix(strings.ToLower(ep.Host), ".")
+	if a, err := netip.ParseAddr(host); err == nil {
+		if overlapsInternal(netip.PrefixFrom(a.Unmap(), a.Unmap().BitLen())) {
+			return "private or loopback IP"
+		}
+	} else {
+		switch {
+		case !strings.Contains(host, "."):
+			return "host has no dot"
+		case strings.HasSuffix(host, ".svc"), strings.HasSuffix(host, ".cluster.local"):
+			return "cluster DNS name"
+		}
+	}
+	for _, ip := range ep.AllowedIPs {
+		p, err := netip.ParsePrefix(ip)
+		if err != nil {
+			a, aerr := netip.ParseAddr(ip)
+			if aerr != nil {
+				return "allowed_ips " + ip + " is unparsable"
+			}
+			p = netip.PrefixFrom(a, a.BitLen())
+		}
+		if overlapsInternal(p) {
+			return "allowed_ips " + ip + " overlaps a private or loopback range"
+		}
+	}
+	return ""
+}
+
+func overlapsInternal(p netip.Prefix) bool {
+	if p.Addr().Is4In6() {
+		p = netip.PrefixFrom(p.Addr().Unmap(), max(p.Bits()-96, 0))
+	}
+	for _, in := range internalPrefixes {
+		if in.Overlaps(p) {
+			return true
+		}
+	}
+	return false
 }
 
 // checkWritable rejects a read-write path equal to, inside or above a protected directory:

@@ -33,7 +33,9 @@ port of the ach `v0.14.2` agent operator (read it with `git -C <ach> archive v0.
 - While the gateway is unavailable the host never removes a unit, confirms a stop or reports a
   unit lost; it reports `PUT /gateway available=false` and the `GatewayAvailable` condition.
 - Sandbox policy rule and middleware names starting `ach-agent-` are reserved; no other rule may
-  match the facade endpoint; the runtime binaries and code (`/usr/local/bin`, `/usr/local/lib`,
+  match the facade endpoint; extra egress is external only (a non-reserved endpoint with a dotless host,
+  a `.svc`/`.cluster.local` host, or a loopback/link-local/private/CGNAT/ULA IP or `allowed_ips` range
+  is rejected); the runtime binaries and code (`/usr/local/bin`, `/usr/local/lib`,
   `/opt/opencode`, `/work`) are never writable. The policy document uses the proto field names
   (`network_policies`, `filesystem`, `landlock`).
 - Header env names: `ACH_AGENT_MODEL_H<i>`, `ACH_AGENT_MCP_<NAME>_H<i>` (index in the

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Hydration + model-metadata facade input (contract §5; Task 7).
 
-`Hydrator.load(config) -> HydratedCatalog` combines the two authorized ACH surfaces:
+`Hydrator.load(source) -> HydratedCatalog` combines the two authorized ACH surfaces:
 POST `/platform/hydrate` (granted model/MCP/A2A ids+endpoints, hydrated context) and GET
 `/v2/model/info?model=<granted id>` (context/output limits, modalities, cost; not returned
 by hydrate itself — task-7-model-metadata-ruling-evidence.md).
@@ -10,7 +10,7 @@ Reused from `old-ach-agent/src/ach_agent/engine/{hydrate,cost}.py`
 (`task-7-reuse-handoff.md`): the typed `{id,endpoint}` manifest objects, the POST/GET
 request shape and the price-entry match (`model_name` then `litellm_params.model`).
 Deliberately NOT reused: `hydrate()`'s unconditional process-identity commit (this runtime
-has no such global — the caller already knows its own `ach.environment`) and
+has no such global — the caller already knows its own `capability.ach.environment`) and
 `resolve_model()`'s empty-catalog local-development fallback / `sys.exit` — both become an
 explicit `HydrationError` here (fail closed, never pretend an empty-catalog dev mode).
 
@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import math
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from pathlib import Path
@@ -319,6 +319,47 @@ class HydratedCatalog:
     a2a_agents: tuple[A2AAgentEntry, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class HydrationInput:
+    """What the ACH Hydrator needs, independent of the config document's layout."""
+
+    agent: str
+    base_url: str
+    environment: str
+    key_env: str
+    model: str
+
+    @classmethod
+    def from_config(cls, config: RuntimeConfig) -> HydrationInput:
+        ach = config.capability.ach
+        if ach is None:
+            raise HydrationError("capability.server is not 'ach'")
+        return cls(
+            agent=config.agent.name,
+            base_url=ach.base_url,
+            environment=ach.environment,
+            key_env=ach.key.env,
+            model=ach.model.name,
+        )
+
+
+def standalone_catalog(config: RuntimeConfig) -> HydratedCatalog:
+    """Catalog for capability.server 'standalone': the configured model and MCP servers only."""
+    server = config.capability.standalone
+    limits = server.model.limits
+    metadata = (
+        None if limits is None else ModelMetadata(context_limit=limits.context, output_limit=limits.output)
+    )
+    return HydratedCatalog(
+        environment=config.identity_environment,
+        model=HydratedModel(id=server.model.name, endpoint=server.model.base_url, metadata=metadata),
+        mcp_servers=tuple(McpServerEntry(id=item.name, endpoint=item.url) for item in server.mcp_servers),
+        skills=(),
+        prompts=(),
+        artifacts=(),
+    )
+
+
 EkResolver = Callable[[str], str]
 
 
@@ -327,7 +368,7 @@ def _default_ek_resolver(env_name: str) -> str:
     private control-pod env vars) — the real ek_ never leaves this process."""
     value = os.environ.get(env_name)
     if not value:
-        raise HydrationError(f"ach.identity env {env_name!r} is unset")
+        raise HydrationError(f"capability.ach.key env {env_name!r} is unset")
     return value
 
 
@@ -344,16 +385,14 @@ class Hydrator:
         self._resolve_ek = resolve_ek
         self._client = client
 
-    async def load(self, config: RuntimeConfig) -> HydratedCatalog:
-        identity = ProcessIdentity(agent=config.agent.name, environment=config.identity_environment)
-        ek = self._resolve_ek(config.capability.ach.key.env)
+    async def load(self, source: HydrationInput) -> HydratedCatalog:
+        identity = ProcessIdentity(agent=source.agent, environment=source.environment)
+        ek = self._resolve_ek(source.key_env)
         manifest = await fetch_hydration_manifest(
-            config.capability.ach.base_url, ek, config.identity_environment, identity=identity, client=self._client
+            source.base_url, ek, source.environment, identity=identity, client=self._client
         )
-        entry = resolve_model(manifest, config.model.name)
-        metadata = await fetch_model_metadata(
-            config.capability.ach.base_url, ek, config.model.name, client=self._client
-        )
+        entry = resolve_model(manifest, source.model)
+        metadata = await fetch_model_metadata(source.base_url, ek, source.model, client=self._client)
         return HydratedCatalog(
             environment=manifest.environment,
             model=HydratedModel(id=entry.id, endpoint=entry.endpoint, metadata=metadata),
@@ -367,9 +406,9 @@ class Hydrator:
 
 async def stage_context(
     catalog: HydratedCatalog,
-    config: RuntimeConfig,
     root: "Path",
     *,
+    excluded_skills: Iterable[str],
     client: httpx.AsyncClient,
     ek: str,
 ) -> None:
@@ -380,7 +419,7 @@ async def stage_context(
     from ach_runtime.storage.archive import extract
 
     root.mkdir(parents=True, exist_ok=True)
-    excluded = set(config.capability.filter.exclude.skills)
+    excluded = set(excluded_skills)
     headers = {"x-ach-key": ek}
     for kind in ("skills", "prompts", "artifacts"):
         items = getattr(catalog, kind)

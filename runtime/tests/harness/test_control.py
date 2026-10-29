@@ -1969,7 +1969,7 @@ async def test_harness_hydrates_prompt_tar_before_real_mini_engine_start(monkeyp
 async def test_context_files_before_started(monkeypatch) -> None:
     from ach_runtime.harness.hydrate import ContextItem
     seen: list[str] = []
-    async def stage(catalog, config, root, *, client, ek):
+    async def stage(catalog, root, *, excluded_skills, client, ek):
         (root / "skills").mkdir(parents=True)
         (root / "skills" / "demo").write_text("skill")
     monkeypatch.setattr("ach_runtime.harness.control.stage_context", stage)

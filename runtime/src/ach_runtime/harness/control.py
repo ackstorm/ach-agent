@@ -14,7 +14,7 @@ import re
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import httpx
@@ -24,7 +24,7 @@ from starlette.routing import Mount
 from ach_runtime import __version__
 from ach_runtime.channels.event import Event, RoutedEvent
 from ach_runtime.config.public import ExecutionBootstrap, PublicConfig, public_config
-from ach_runtime.config.schema import RuntimeConfig
+from ach_runtime.config.schema import RuntimeConfig, SecretAlias
 from ach_runtime.execution.wire import CancelRequest, RunStatus, StartRequest
 from ach_runtime.facades._memory_client import (
     TOOLS_SPEC,
@@ -48,7 +48,13 @@ from ach_runtime.harness.admission import (
     WorkspaceOwnerLost,
 )
 from ach_runtime.harness.delivery import Delivery, StartOutcomeUnknown
-from ach_runtime.harness.hydrate import HydratedCatalog, Hydrator, stage_context
+from ach_runtime.harness.hydrate import (
+    HydratedCatalog,
+    HydrationInput,
+    Hydrator,
+    stage_context,
+    standalone_catalog,
+)
 from ach_runtime.harness.hosted import HostedSource
 from ach_runtime.harness.lifecycle import Lifecycle
 from ach_runtime.harness.handoff import run_handoff
@@ -207,6 +213,10 @@ class Control:
     lifecycle: Lifecycle | None = None
     _private_env: dict[str, str] = field(default_factory=dict, repr=False)
     _ek: str = field(default="", repr=False)
+    # Resolved upstream header values (log redaction) and per-upstream headers for the facades.
+    upstream_secrets: tuple[str, ...] = field(default=(), repr=False)
+    _model_headers: dict[str, str] = field(default_factory=dict, repr=False)
+    _mcp_headers: dict[str, dict[str, str]] = field(default_factory=dict, repr=False)
     # I7: resolved memory endpoint/project/private headers/identity, populated by assemble
     # only -- never PublicConfig/StartRequest/catalog. `_memory_configured` distinguishes
     # "no memory block at all" (skip prepare entirely) from "configured but unresolved"
@@ -512,15 +522,17 @@ class Control:
         return request
 
     async def _transfer_context(self, ticket: AdmissionTicket, endpoint: WorkspaceEndpoint) -> None:
-        ek = os.environ.get(self.config.capability.ach.key.env, "")
-        # assemble() resolves credentials from its private environment. Resolve the
-        # configured variable there, never put it in the archive or request body.
-        ek = getattr(self, "_ek", ek)
+        # assemble() resolves credentials from its private environment; never put the
+        # value in the archive or request body.
+        ek = getattr(self, "_ek", "")
         with tempfile.TemporaryDirectory(prefix="ach-context-") as temporary:
             root = Path(temporary) / "context"
             root.mkdir()
             async with httpx.AsyncClient(timeout=30) as client:
-                await stage_context(self.catalog, self.config, root, client=client, ek=ek)
+                await stage_context(
+                    self.catalog, root, excluded_skills=self.config.capability.filter.exclude.skills,
+                    client=client, ek=ek,
+                )
             archive = Path(temporary) / "context.tar.gz"
             _, cancelled, error = await _run_owned(pack, root, archive, max_bytes=512 * 1024**2)
             if cancelled:
@@ -818,6 +830,17 @@ def create_facade_app(control: Control) -> FastAPI:
     return app
 
 
+def resolve_headers(headers: Mapping[str, SecretAlias], env: Mapping[str, str]) -> dict[str, str]:
+    """Resolve configured upstream headers from env; a missing value fails assembly."""
+    resolved: dict[str, str] = {}
+    for name, alias in headers.items():
+        value = env.get(alias.env, "")
+        if not value:
+            raise WorkspaceAssemblyUnavailable(f"upstream header {name} needs env {alias.env}, which is unset")
+        resolved[name] = value
+    return resolved
+
+
 async def assemble(
     config: RuntimeConfig,
     *,
@@ -836,16 +859,33 @@ async def assemble(
         raise RuntimeError("ACH_SANDBOX_KEY is required and must not be empty")
     key = raw_key.encode("utf-8")
     verify_key = engine_verify_key(key)
-    ek = env.get(config.capability.ach.key.env, "")
-    if not ek:
-        raise WorkspaceAssemblyUnavailable("ACH identity credential is not configured")
-    ach_client = httpx.AsyncClient(transport=ach_transport, timeout=30)
+    if config.capability.ach is not None:
+        ach = config.capability.ach
+        ek = env.get(ach.key.env, "")
+        if not ek:
+            raise WorkspaceAssemblyUnavailable("ACH identity credential is not configured")
+        ach_client = httpx.AsyncClient(transport=ach_transport, timeout=30)
+        hydrator = Hydrator(resolve_ek=lambda name: env.get(name, ""), client=ach_client)
+        try:
+            catalog = await hydrator.load(HydrationInput.from_config(config))
+        finally:
+            await ach_client.aclose()
+        prefix = {"openai": "v1", "gemini": "gemini/v1beta", "anthropic": "anthropic"}[config.model.type]
+        model_endpoint = f"{ach.base_url.rstrip('/')}/{prefix}"
+        model_headers = {"x-ach-key": ek}
+        mcp_headers = {item.id: {"x-ach-key": ek} for item in catalog.mcp_servers}
+        upstream_secrets = (ek,)
+    else:
+        server = config.capability.standalone
+        ek = ""
+        catalog = standalone_catalog(config)
+        model_endpoint = server.model.base_url
+        model_headers = resolve_headers(server.model.headers, env)
+        mcp_headers = {item.name: resolve_headers(item.headers, env) for item in server.mcp_servers}
+        upstream_secrets = tuple(model_headers.values()) + tuple(
+            value for headers in mcp_headers.values() for value in headers.values()
+        )
     identity = ProcessIdentity(agent=config.agent.name, environment=config.identity_environment)
-    hydrator = Hydrator(resolve_ek=lambda name: env.get(name, ""), client=ach_client)
-    try:
-        catalog = await hydrator.load(config)
-    finally:
-        await ach_client.aclose()
     public = public_config(config, config.engine.env)
     storage = storage_from_env(config, env)
     mcp_servers = {item.id: item.endpoint for item in catalog.mcp_servers}
@@ -898,6 +938,8 @@ async def assemble(
     control.catalog, control.public, control.storage = catalog, public, storage
     control._private_env = dict(env)
     control._ek = ek
+    control.upstream_secrets = upstream_secrets
+    control._model_headers, control._mcp_headers = model_headers, mcp_headers
     control.source, control.manager, control.delivery = source, manager, None
     control.admission, control.model_facade, control.mcp_facade = None, None, None
     control.memory_facade, control.mini_client = memory, mini_client
@@ -927,11 +969,6 @@ async def assemble(
     mcp_client = httpx.AsyncClient(transport=facade_transport, timeout=facade_timeout)
     model_client = httpx.AsyncClient(transport=facade_transport, timeout=facade_timeout)
     control.facade_clients.extend((mcp_client, model_client))
-    model_endpoint_prefix = {
-        "openai": "v1",
-        "gemini": "gemini/v1beta",
-        "anthropic": "anthropic",
-    }[config.model.type]
     mcp = McpFacade(
         servers=mcp_servers, ek=ek, key=key, owned_workspace=control._owned_live,
         exclude=excluded | frozenset(memory_excluded),
@@ -939,7 +976,7 @@ async def assemble(
         client=mcp_client,
     )
     model = ModelFacade(
-        endpoint=f"{config.capability.ach.base_url.rstrip('/')}/{model_endpoint_prefix}", ek=ek, key=key,
+        endpoint=model_endpoint, ek=ek, key=key,
         owned_workspace=control._owned_live, identity=identity,
         client=model_client,
     )

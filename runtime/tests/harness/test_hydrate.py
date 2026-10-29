@@ -9,6 +9,7 @@ task-7-model-metadata-ruling-evidence.md's unresolved live-metadata-availability
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 import httpx
@@ -16,6 +17,7 @@ import pytest
 
 from ach_runtime.facades._proxy import ProcessIdentity
 from ach_runtime.harness.hydrate import (
+    HydrationInput,
     Hydrator,
     HydrationError,
     fetch_hydration_manifest,
@@ -389,32 +391,20 @@ def _combined_handler() -> Any:
     return handler
 
 
-class _StubConfig:
-    """Minimal stand-in exposing only the fields Hydrator.load reads off RuntimeConfig."""
-
-    class _Agent:
-        name = "classifier"
-
-    class _Ach:
-        base_url = BASE_URL
-        environment = "platform"
-
-        class identity:
-            env = "ACH_SECRET_IDENTITY"
-
-    class _Model:
-        name = "gemini.gemini-flash-latest"
-
-    agent = _Agent()
-    ach = _Ach()
-    model = _Model()
+SOURCE = HydrationInput(
+    agent="classifier",
+    base_url=BASE_URL,
+    environment="platform",
+    key_env="ACH_SECRET_IDENTITY",
+    model="gemini.gemini-flash-latest",
+)
 
 
 async def test_hydrator_load_builds_catalog_with_metadata_and_mcp_and_skills() -> None:
     client = httpx.AsyncClient(transport=_transport(_combined_handler()))
     hydrator = Hydrator(resolve_ek=lambda name: "ek-abc", client=client)
 
-    catalog = await hydrator.load(_StubConfig())  # type: ignore[arg-type]
+    catalog = await hydrator.load(SOURCE)
     await client.aclose()
 
     assert catalog.environment == "platform"
@@ -443,7 +433,7 @@ async def test_hydration_retains_peer_grants() -> None:
 
     client = httpx.AsyncClient(transport=_transport(handler))
     catalog = await Hydrator(resolve_ek=lambda name: "ek-private", client=client).load(
-        _StubConfig()  # type: ignore[arg-type]
+        SOURCE
     )
     await client.aclose()
 
@@ -456,7 +446,7 @@ async def test_hydration_retains_peer_grants() -> None:
 async def test_hydration_without_peer_grants_keeps_empty_tuple() -> None:
     client = httpx.AsyncClient(transport=_transport(_combined_handler()))
     catalog = await Hydrator(resolve_ek=lambda name: "ek-private", client=client).load(
-        _StubConfig()  # type: ignore[arg-type]
+        SOURCE
     )
     await client.aclose()
     assert catalog.a2a_agents == ()
@@ -475,7 +465,7 @@ async def test_hydrator_load_sends_identity_built_from_config_agent_and_environm
     client = httpx.AsyncClient(transport=_transport(handler))
     hydrator = Hydrator(resolve_ek=lambda name: "ek-abc", client=client)
 
-    await hydrator.load(_StubConfig())  # type: ignore[arg-type]
+    await hydrator.load(SOURCE)
     await client.aclose()
 
     assert seen["headers"]["x-ach-agent"] == "classifier"
@@ -490,20 +480,18 @@ async def test_hydrator_load_fails_closed_when_ek_resolver_cannot_resolve() -> N
     hydrator = Hydrator(resolve_ek=failing_resolver, client=client)
 
     with pytest.raises(HydrationError, match="unset"):
-        await hydrator.load(_StubConfig())  # type: ignore[arg-type]
+        await hydrator.load(SOURCE)
     await client.aclose()
 
 
 async def test_hydrator_load_fails_closed_when_model_not_granted() -> None:
-    class _Config(_StubConfig):
-        class model:  # type: ignore[no-redef]
-            name = "not-granted-model"
+    source = dataclasses.replace(SOURCE, model="not-granted-model")
 
     client = httpx.AsyncClient(transport=_transport(_combined_handler()))
     hydrator = Hydrator(resolve_ek=lambda name: "ek-abc", client=client)
 
     with pytest.raises(HydrationError, match="not granted"):
-        await hydrator.load(_Config())  # type: ignore[arg-type]
+        await hydrator.load(source)
     await client.aclose()
 
 
@@ -515,15 +503,13 @@ async def test_hydrator_load_fails_closed_when_model_not_granted_performs_zero_m
         calls.append(request.url.path)
         return httpx.Response(200, json=MANIFEST)
 
-    class _Config(_StubConfig):
-        class model:  # type: ignore[no-redef]
-            name = "not-granted-model"
+    source = dataclasses.replace(SOURCE, model="not-granted-model")
 
     client = httpx.AsyncClient(transport=_transport(handler))
     hydrator = Hydrator(resolve_ek=lambda name: "ek-abc", client=client)
 
     with pytest.raises(HydrationError, match="not granted"):
-        await hydrator.load(_Config())  # type: ignore[arg-type]
+        await hydrator.load(source)
     await client.aclose()
 
     assert calls == ["/platform/hydrate"]
@@ -552,7 +538,7 @@ async def test_hydrator_load_fails_closed_on_empty_selected_endpoint_performs_ze
     hydrator = Hydrator(resolve_ek=lambda name: "ek-abc", client=client)
 
     with pytest.raises(HydrationError, match="empty endpoint"):
-        await hydrator.load(_StubConfig())  # type: ignore[arg-type]
+        await hydrator.load(SOURCE)
     await client.aclose()
 
     assert calls == ["/platform/hydrate"]
@@ -582,7 +568,7 @@ async def test_hydrator_load_fails_closed_on_omitted_selected_endpoint_performs_
     hydrator = Hydrator(resolve_ek=lambda name: "ek-abc", client=client)
 
     with pytest.raises(HydrationError, match="empty endpoint"):
-        await hydrator.load(_StubConfig())  # type: ignore[arg-type]
+        await hydrator.load(SOURCE)
     await client.aclose()
 
     assert calls == ["/platform/hydrate"]
@@ -614,11 +600,9 @@ async def test_hydrator_load_granted_weird_model_name_posts_before_get_in_order(
     client = httpx.AsyncClient(transport=_transport(handler))
     hydrator = Hydrator(resolve_ek=lambda name: "ek-abc", client=client)
 
-    class _Config(_StubConfig):
-        class model:  # type: ignore[no-redef]
-            name = "weird model/name"
+    source = dataclasses.replace(SOURCE, model="weird model/name")
 
-    catalog = await hydrator.load(_Config())  # type: ignore[arg-type]
+    catalog = await hydrator.load(source)
     await client.aclose()
 
     assert calls == ["/platform/hydrate", "/v2/model/info"]
@@ -629,7 +613,6 @@ def test_stage_context_extracts_skill_payload_with_ach_key_only_on_download() ->
     import tarfile
     import tempfile
     from pathlib import Path
-    from types import SimpleNamespace
     from ach_runtime.harness.hydrate import ContextItem, HydratedCatalog, HydratedModel, stage_context
     async def scenario(root: Path) -> None:
         archive = io.BytesIO()
@@ -646,9 +629,7 @@ def test_stage_context_extracts_skill_payload_with_ach_key_only_on_download() ->
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         catalog = HydratedCatalog("prod", HydratedModel("m", "https://model", None), (),
                                   (ContextItem(name="sample", id="1", downloadUrl="https://ach/skill"),), (), ())
-        config = SimpleNamespace(ach=SimpleNamespace(capability=SimpleNamespace(filter=SimpleNamespace(exclude=SimpleNamespace(skills=[])))),
-                                 prompt=None)
-        await stage_context(catalog, config, root, client=client, ek="ek_secret")
+        await stage_context(catalog, root, excluded_skills=[], client=client, ek="ek_secret")
         files = [str(p.relative_to(root)) for p in root.rglob("*")]
         assert "skills/sample/SKILL.md" in files, files
         assert (root / "skills" / "sample" / "SKILL.md").read_bytes() == b"name: sample\n"
@@ -667,7 +648,6 @@ def test_stage_context_nests_root_level_skill_archives_under_their_names() -> No
     import tarfile
     import tempfile
     from pathlib import Path
-    from types import SimpleNamespace
     from ach_runtime.harness.hydrate import ContextItem, HydratedCatalog, HydratedModel, stage_context
 
     def archive(skill: str) -> bytes:
@@ -685,9 +665,7 @@ def test_stage_context_nests_root_level_skill_archives_under_their_names() -> No
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         skills = tuple(ContextItem(name=n, id=n, downloadUrl=f"https://ach/skill/{n}") for n in ("pdf", "docx"))
         catalog = HydratedCatalog("prod", HydratedModel("m", "https://model", None), (), skills, (), ())
-        config = SimpleNamespace(ach=SimpleNamespace(capability=SimpleNamespace(filter=SimpleNamespace(exclude=SimpleNamespace(skills=[])))),
-                                 prompt=None)
-        await stage_context(catalog, config, root, client=client, ek="ek")
+        await stage_context(catalog, root, excluded_skills=[], client=client, ek="ek")
         await client.aclose()
         assert (root / "skills" / "pdf" / "SKILL.md").read_bytes() == b"name: pdf\n"
         assert (root / "skills" / "docx" / "SKILL.md").read_bytes() == b"name: docx\n"

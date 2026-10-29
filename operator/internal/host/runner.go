@@ -145,6 +145,7 @@ func (r *Runner) runAgent(ctx context.Context, a *achv1alpha1.Agent) {
 				API:    &Client{BaseURL: ControlBaseURL(a.Name, a.Namespace), Token: HostToken(key, string(a.UID))},
 				Client: r.Client, Reader: r.Reader, Scheme: r.Scheme, Log: log,
 				Backend: r.NewBackend(client.ObjectKeyFromObject(a), a.UID, r.Reader, r.Client),
+				Status:  &AgentStatusWriter{Client: r.Client, Reader: r.Reader},
 			}
 			if err = h.Run(ctx); !errors.Is(err, ErrUnauthorized) {
 				return

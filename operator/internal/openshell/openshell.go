@@ -20,6 +20,7 @@ import (
 	osv1 "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1"
 	ostypes "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -46,14 +47,6 @@ var callDeadline = 10 * time.Second
 
 func call(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, callDeadline)
-}
-
-// facadeBinaries call the control unit's facades from inside the sandbox. They are paths in
-// the ach-runtime execution image: an image that moves them breaks facade egress (risk noted
-// in the PoC handover).
-var facadeBinaries = []string{
-	"/usr/local/bin/python3.13", "/usr/local/bin/node",
-	"/opt/opencode/node_modules/@opencode/cli/bin/opencode.exe",
 }
 
 // sandboxes is the part of the OpenShell Go SDK's v1.SandboxInterface the backend uses;
@@ -246,29 +239,24 @@ func (b *openShellUnits) Create(ctx context.Context, a *achv1alpha1.Agent, p *ac
 		n, _ := strconv.Atoi(facade.Port())
 		port = uint32(n)
 	}
-	bins := make([]ostypes.PolicyNetworkBinary, 0, len(facadeBinaries))
-	for _, path := range facadeBinaries {
-		bins = append(bins, ostypes.PolicyNetworkBinary{Path: path})
+	var agentPolicy *apiextensionsv1.JSON
+	if a.Spec.Sandbox != nil && a.Spec.Sandbox.OpenShell != nil {
+		agentPolicy = a.Spec.Sandbox.OpenShell.Policy
+	}
+	policy, err := BuildPolicy(p.Spec.Sandbox.OpenShell.Policy, agentPolicy, facade.Hostname(), port)
+	if err != nil {
+		return rejected(err, "SandboxPolicyRejected")
+	}
+	resources, err := Resources(p.Spec.Sandbox.OpenShell.Resources)
+	if err != nil {
+		return rejected(err, "SandboxResourcesUnsupported")
 	}
 	spec := &ostypes.SandboxSpec{
 		Environment:   maps.Clone(w.Launch.Env),
 		Command:       slices.Clone(w.Launch.Command),
-		Template:      &ostypes.SandboxTemplate{Image: image},
+		Template:      &ostypes.SandboxTemplate{Image: image, Resources: resources},
 		RestartPolicy: ostypes.SandboxRestartNever,
-		Policy: &ostypes.SandboxPolicy{
-			Version: 1,
-			Filesystem: &ostypes.FilesystemPolicy{
-				IncludeWorkdir: true,
-				ReadOnly:       []string{"/usr", "/lib", "/etc", "/bin", "/sbin", "/work", "/opt"},
-				ReadWrite:      []string{"/tmp", "/workspace", "/var/lib/ach-runtime", "/home/ach"},
-			},
-			Landlock: &ostypes.LandlockPolicy{Compatibility: "best_effort"},
-			NetworkPolicies: map[string]ostypes.NetworkPolicyRule{"facades": {
-				Name:      "facades",
-				Endpoints: []ostypes.PolicyNetworkEndpoint{{Host: facade.Hostname(), Port: port}},
-				Binaries:  bins,
-			}},
-		},
+		Policy:        policy,
 	}
 	// A unit is never registered without its Service.
 	sandbox := SandboxName(string(b.uid), w.Name)
@@ -286,8 +274,27 @@ func (b *openShellUnits) Create(ctx context.Context, a *achv1alpha1.Agent, p *ac
 	if osv1.IsAlreadyExists(err) {
 		return nil // a pass may repeat
 	}
+	if osv1.IsInvalidArgument(err) {
+		// The gateway refuses the spec: say which input it objects to.
+		if resources != nil && strings.Contains(strings.ToLower(err.Error()), "resource") {
+			return rejected(fmt.Errorf("%w: %v", ErrResourcesUnsupported, err), "SandboxResourcesUnsupported")
+		}
+		return rejected(fmt.Errorf("%w: %v", ErrPolicyRejected, err), "SandboxPolicyRejected")
+	}
 	return err
 }
+
+// reasonError carries the Agent condition reason of a refused sandbox; the host loop writes
+// it onto the Agent (host.StatusWriter).
+type reasonError struct {
+	error
+	reason string
+}
+
+func (e reasonError) Unwrap() error        { return e.error }
+func (e reasonError) StatusReason() string { return e.reason }
+
+func rejected(err error, reason string) error { return reasonError{error: err, reason: reason} }
 
 // Remove requests deletion with a short deadline and reports whether anything remains: the
 // gateway record, or the workload pod, which outlives the record by up to its grace period.

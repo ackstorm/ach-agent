@@ -4,7 +4,9 @@ package openshell
 
 import (
 	"context"
+	"errors"
 	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -33,6 +35,7 @@ type fakeGateway struct {
 	slowDel   bool // Delete waits for ctx (DeadlineExceeded), like the real RPC
 	exposures []ostypes.ServiceExposure
 	hang      bool // Get, ListAll and Create wait for ctx, like a frozen gateway
+	createErr error
 }
 
 func (f *fakeGateway) block(ctx context.Context) error {
@@ -51,6 +54,9 @@ func (f *fakeGateway) Create(ctx context.Context, _ string, name string, spec *o
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.createErr != nil {
+		return nil, f.createErr
+	}
 	cfg := ostypes.ApplyCreateOptions(opts)
 	f.exposures = append(f.exposures, cfg.ServiceExposures()...)
 	s := &ostypes.Sandbox{ID: "id-" + name, Name: name, Labels: cfg.Labels(), Spec: *spec,
@@ -194,18 +200,21 @@ func TestOpenShell_CreateMapsLaunchExactly(t *testing.T) {
 	if len(f.gw.exposures) != 1 || f.gw.exposures[0].TargetPort != 8080 || f.gw.exposures[0].AuthorizationMode != ostypes.ServiceAuthorizationModeBearerPassthrough {
 		t.Errorf("exposures = %+v, want one {8080, BearerPassthrough} (finding 11)", f.gw.exposures)
 	}
-	rule, ok := s.Spec.Policy.NetworkPolicies["facades"]
+	rule, ok := s.Spec.Policy.NetworkPolicies["ach-agent-facades"]
 	if !ok || len(rule.Endpoints) != 1 || rule.Endpoints[0].Host != "ach-facade.ach.svc.cluster.local" || rule.Endpoints[0].Port != 9090 {
 		t.Errorf("facades rule = %+v, want the facadeEndpoint host:port (finding 10)", rule)
 	}
-	if len(rule.Binaries) != len(facadeBinaries) {
-		t.Errorf("binaries = %+v, want %v (finding 10)", rule.Binaries, facadeBinaries)
+	if len(rule.Binaries) != len(runtimeBinaries) {
+		t.Errorf("binaries = %+v, want %v (finding 10)", rule.Binaries, runtimeBinaries)
 	}
-	if fs := s.Spec.Policy.Filesystem; fs == nil || !fs.IncludeWorkdir || len(fs.ReadOnly) != 7 || len(fs.ReadWrite) != 4 {
+	if fs := s.Spec.Policy.Filesystem; fs == nil || !fs.IncludeWorkdir || !slices.Equal(fs.ReadOnly, runtimeReadOnly) || !slices.Equal(fs.ReadWrite, runtimeReadWrite) {
 		t.Errorf("filesystem policy = %+v (finding 10)", fs)
 	}
-	if l := s.Spec.Policy.Landlock; l == nil || l.Compatibility != "best_effort" {
-		t.Errorf("landlock = %+v, want best_effort (finding 10)", l)
+	if l := s.Spec.Policy.Landlock; l == nil || l.Compatibility != "hard_requirement" {
+		t.Errorf("landlock = %+v, want hard_requirement (finding 10)", l)
+	}
+	if s.Spec.Template.Resources != nil {
+		t.Errorf("resources = %v, want none when the profile sets none", s.Spec.Template.Resources)
 	}
 
 	// a repeated pass is a no-op on AlreadyExists is the gateway's job; a wrong release is refused here
@@ -416,7 +425,7 @@ func TestOpenShell_FacadePortDefaultsByScheme(t *testing.T) {
 		if err := f.b.Create(context.Background(), f.a, f.p, f.w); err != nil {
 			t.Fatal(err)
 		}
-		got := f.gw.byName[f.sName].Spec.Policy.NetworkPolicies["facades"].Endpoints[0].Port
+		got := f.gw.byName[f.sName].Spec.Policy.NetworkPolicies["ach-agent-facades"].Endpoints[0].Port
 		if got != want {
 			t.Errorf("%s: port = %d, want %d", url, got, want)
 		}
@@ -519,5 +528,75 @@ func TestOpenShell_RemoveKeepsServiceWhileTheWorkloadPodTerminates(t *testing.T)
 	}
 	if err := f.c.Get(ctx, client.ObjectKey{Namespace: "ach", Name: "default--" + f.sName}, &corev1.Service{}); err != nil {
 		t.Fatalf("service must stay: %v", err)
+	}
+}
+
+func reasonOf(t *testing.T, err error) string {
+	t.Helper()
+	var r interface{ StatusReason() string }
+	if !errors.As(err, &r) {
+		t.Fatalf("err = %v carries no status reason", err)
+	}
+	return r.StatusReason()
+}
+
+func TestOpenShell_CreateMergesProfileAndAgentPolicyAndPassesResources(t *testing.T) {
+	f := newOSFixture(t)
+	f.p.Spec.Sandbox.OpenShell.Policy = raw(`{"network_policies":{"pypi":{"name":"pypi","endpoints":[{"host":"pypi.org","port":443}]}}}`)
+	f.p.Spec.Sandbox.OpenShell.Resources = &achv1alpha1.SandboxResources{CPU: "2", Memory: "4Gi"}
+	f.a.Spec.Sandbox = &achv1alpha1.AgentSandboxSpec{OpenShell: &achv1alpha1.AgentOpenShellSpec{
+		Policy: raw(`{"network_policies":{"serper":{"name":"serper","endpoints":[{"host":"google.serper.dev","port":443}]}}}`),
+	}}
+	if err := f.b.Create(context.Background(), f.a, f.p, f.w); err != nil {
+		t.Fatal(err)
+	}
+	s := f.gw.byName[f.sName]
+	for _, name := range []string{"pypi", "serper", "ach-agent-facades"} {
+		if _, ok := s.Spec.Policy.NetworkPolicies[name]; !ok {
+			t.Errorf("rule %q missing from %v", name, s.Spec.Policy.NetworkPolicies)
+		}
+	}
+	if got := s.Spec.Template.Resources; got["cpu"] != "2" || got["memory"] != "4Gi" {
+		t.Errorf("resources = %v", got)
+	}
+}
+
+func TestOpenShell_CreateRefusesARejectedPolicyBeforeTouchingTheGateway(t *testing.T) {
+	f := newOSFixture(t)
+	f.a.Spec.Sandbox = &achv1alpha1.AgentSandboxSpec{OpenShell: &achv1alpha1.AgentOpenShellSpec{
+		Policy: raw(`{"filesystem":{"read_write":["/usr/local/bin"]}}`),
+	}}
+	err := f.b.Create(context.Background(), f.a, f.p, f.w)
+	if !errors.Is(err, ErrPolicyRejected) || reasonOf(t, err) != "SandboxPolicyRejected" {
+		t.Fatalf("err = %v", err)
+	}
+	if len(f.gw.created) != 0 {
+		t.Fatalf("created = %v, want none", f.gw.created)
+	}
+	var svc corev1.Service
+	if getErr := f.c.Get(context.Background(), client.ObjectKey{Namespace: "ach", Name: "default--" + f.sName}, &svc); !apierrors.IsNotFound(getErr) {
+		t.Fatalf("a per-sandbox Service exists for a refused sandbox: %v", getErr)
+	}
+}
+
+func TestOpenShell_CreateMapsGatewayInvalidArgument(t *testing.T) {
+	for name, tc := range map[string]struct {
+		message   string
+		resources *achv1alpha1.SandboxResources
+		want      error
+		reason    string
+	}{
+		"policy":    {"policy: network rule invalid", nil, ErrPolicyRejected, "SandboxPolicyRejected"},
+		"resources": {"template.resources: unknown key", &achv1alpha1.SandboxResources{CPU: "2"}, ErrResourcesUnsupported, "SandboxResourcesUnsupported"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newOSFixture(t)
+			f.p.Spec.Sandbox.OpenShell.Resources = tc.resources
+			f.gw.createErr = &ostypes.StatusError{Code: ostypes.ErrorInvalidArgument, Message: tc.message}
+			err := f.b.Create(context.Background(), f.a, f.p, f.w)
+			if !errors.Is(err, tc.want) || reasonOf(t, err) != tc.reason || !strings.Contains(err.Error(), tc.message) {
+				t.Fatalf("err = %v, want %v / %s carrying the gateway message", err, tc.want, tc.reason)
+			}
+		})
 	}
 }

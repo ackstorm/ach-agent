@@ -537,7 +537,10 @@ func (r *AgentReconciler) finish(ctx context.Context, a *achv1alpha1.Agent, cond
 	for _, c := range conds {
 		setCond(&fresh.Status.Conditions, c.Type, c.Status, c.Reason, c.Message, c.ObservedGeneration)
 	}
-	if allTrue(fresh.Status.Conditions, requiredConds...) {
+	if sandboxRefusalStands(&fresh) {
+		// The host loop wrote it for this generation; only a spec change (or a successful
+		// create, which clears it) replaces it.
+	} else if allTrue(fresh.Status.Conditions, requiredConds...) {
 		setCond(&fresh.Status.Conditions, condReady, metav1.ConditionTrue, "Ready", "", a.Generation)
 	} else {
 		// A False condition explains the failure better than one that was not evaluated
@@ -560,6 +563,14 @@ func (r *AgentReconciler) finish(ctx context.Context, a *achv1alpha1.Agent, cond
 		return ctrl.Result{}, fmt.Errorf("update status: %w", err)
 	}
 	return ctrl.Result{}, nil
+}
+
+// sandboxRefusalStands reports whether Ready carries a refused-sandbox reason the host loop
+// wrote for the Agent's current generation.
+func sandboxRefusalStands(a *achv1alpha1.Agent) bool {
+	c := apimeta.FindStatusCondition(a.Status.Conditions, condReady)
+	return c != nil && c.Status == metav1.ConditionFalse && c.ObservedGeneration == a.Generation &&
+		(c.Reason == "SandboxPolicyRejected" || c.Reason == "SandboxResourcesUnsupported")
 }
 
 func setCond(conds *[]metav1.Condition, t string, s metav1.ConditionStatus, reason, msg string, gen int64) {

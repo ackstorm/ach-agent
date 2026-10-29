@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,7 +39,11 @@ type Host struct {
 	Scheme *runtime.Scheme
 	// Backend runs the units.
 	Backend Backend
-	Log     logr.Logger
+	// Status reports what the host loop alone sees. Nil: nothing is reported.
+	Status StatusWriter
+	Log    logr.Logger
+
+	createFailure string // reason of the Ready=False this loop last wrote for a refused create
 }
 
 func (h *Host) load(ctx context.Context) (*achv1alpha1.Agent, *achv1alpha1.AgentProfile, error) {
@@ -56,13 +61,33 @@ func (h *Host) load(ctx context.Context) (*achv1alpha1.Agent, *achv1alpha1.Agent
 	return &a, &p, nil
 }
 
-// create loads the agent and profile, then starts the unit.
+// create loads the agent and profile, then starts the unit. A create the backend refuses for
+// a reason the Agent's author can fix (Backend errors implementing StatusReason) is written to
+// the Agent's Ready condition; the next successful create clears it.
 func (h *Host) create(ctx context.Context, w Workspace) error {
 	a, p, err := h.load(ctx)
 	if err != nil {
 		return err
 	}
-	return h.Backend.Create(ctx, a, p, w)
+	err = h.Backend.Create(ctx, a, p, w)
+	var r reasoned
+	switch {
+	case errors.As(err, &r) && h.Status != nil:
+		h.createFailure = r.StatusReason()
+		if serr := h.Status.SetCondition(ctx, h.Agent, metav1.Condition{
+			Type: "Ready", Status: metav1.ConditionFalse, Reason: h.createFailure, Message: err.Error(), ObservedGeneration: a.Generation,
+		}); serr != nil {
+			h.Log.Error(serr, "report the refused sandbox on the Agent", "reason", h.createFailure)
+		}
+	case err == nil && h.createFailure != "" && h.Status != nil:
+		h.createFailure = ""
+		if serr := h.Status.SetCondition(ctx, h.Agent, metav1.Condition{
+			Type: "Ready", Status: metav1.ConditionUnknown, Reason: "SandboxCreated", ObservedGeneration: a.Generation,
+		}); serr != nil {
+			h.Log.Error(serr, "clear the refused-sandbox condition")
+		}
+	}
+	return err
 }
 
 func (h *Host) ensureRunning(ctx context.Context, w Workspace) (pending bool, err error) {

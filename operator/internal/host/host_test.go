@@ -518,3 +518,49 @@ func TestPass_LostUnitIsNotReportedAgainstAnotherRegistration(t *testing.T) {
 		t.Errorf("Pass = (%v, %v) calls = %v, want pending and no DELETE: the registration is not this unit's", pending, err, rt.Calls())
 	}
 }
+
+type fakeStatus struct{ conds []metav1.Condition }
+
+func (f *fakeStatus) SetCondition(_ context.Context, _ types.NamespacedName, c metav1.Condition) error {
+	f.conds = append(f.conds, c)
+	return nil
+}
+
+type refusal struct{ error }
+
+func (refusal) StatusReason() string { return "SandboxPolicyRejected" }
+
+func TestPass_RefusedCreateIsReportedOnTheAgentAndClearedOnSuccess(t *testing.T) {
+	rt, u := &fakeRuntime{}, newFakeUnits()
+	h := newHost(t, rt, u)
+	st := &fakeStatus{}
+	h.Status = st
+	l := listing(ws("w1", "running", nil))
+
+	u.createErr = refusal{errors.New("rule name \"ach-agent-x\" is reserved")}
+	if _, err := h.Pass(context.Background(), l); err == nil {
+		t.Fatal("a refused create must fail the pass")
+	}
+	if len(st.conds) != 1 || st.conds[0].Type != "Ready" || st.conds[0].Status != metav1.ConditionFalse ||
+		st.conds[0].Reason != "SandboxPolicyRejected" || !strings.Contains(st.conds[0].Message, "reserved") {
+		t.Fatalf("conditions = %+v", st.conds)
+	}
+
+	u.createErr = nil
+	if _, err := h.Pass(context.Background(), l); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.conds) != 2 || st.conds[1].Status != metav1.ConditionUnknown || st.conds[1].Reason != "SandboxCreated" {
+		t.Fatalf("conditions = %+v, want the refusal cleared", st.conds)
+	}
+	// An ordinary error is not the Agent author's to fix: nothing is reported.
+	u2 := newFakeUnits()
+	u2.createErr = errors.New("gateway exploded")
+	h2 := newHost(t, rt, u2)
+	st2 := &fakeStatus{}
+	h2.Status = st2
+	_, _ = h2.Pass(context.Background(), l)
+	if len(st2.conds) != 0 {
+		t.Fatalf("conditions = %+v, want none", st2.conds)
+	}
+}

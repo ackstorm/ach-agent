@@ -118,8 +118,22 @@ DROP_REQUEST_HEADERS = frozenset(
         "authorization",
         "x-ach-key",
         "x-goog-api-key",
+        "x-api-key",
         "x-ach-agent",
         "x-ach-environment",
+    }
+)
+# RFC 9110 hop-by-hop fields are per-connection: never forwarded upstream.
+HOP_BY_HOP_HEADERS = frozenset(
+    {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "proxy-connection",
+        "te",
+        "trailer",
+        "upgrade",
     }
 )
 DROP_RESPONSE_HEADERS = frozenset({"content-length", "transfer-encoding", "content-encoding"})
@@ -215,7 +229,7 @@ async def forward(
     """Forward `request` to `target`, streaming the response body chunk-by-chunk so SSE
     (`text/event-stream`) is never fully buffered.
 
-    `inject_headers` is the caller's credential (e.g. `{"x-ach-key": ek}`); `identity` is
+    `inject_headers` are the caller's upstream credentials (e.g. `{"x-ach-key": ek}`); they replace any inbound header of the same name, case-insensitively; `identity` is
     always stamped on, replacing any caller-supplied value; `correlation` is an optional
     trusted snapshot — its absence strips caller correlation and adds none, never a failure.
     `mcp=True` additionally injects `correlation` into a JSON-RPC request body's
@@ -234,10 +248,14 @@ async def forward(
     response whose body was never iterated by the ASGI layer (unstarted generators never
     run their own `finally`). Not a public interface; each facade owns exactly one set.
     """
+    injected = {name.lower() for name in inject_headers}
     headers = {
         key: value
         for key, value in request.headers.items()
-        if key.lower() not in DROP_REQUEST_HEADERS and not is_correlation_header(key)
+        if key.lower() not in DROP_REQUEST_HEADERS
+        and key.lower() not in HOP_BY_HOP_HEADERS
+        and key.lower() not in injected
+        and not is_correlation_header(key)
     }
     headers.update(inject_headers)
     headers = with_identity_headers(headers, identity)
@@ -299,6 +317,7 @@ async def forward(
 __all__ = [
     "DROP_REQUEST_HEADERS",
     "DROP_RESPONSE_HEADERS",
+    "HOP_BY_HOP_HEADERS",
     "ProcessIdentity",
     "forward",
     "inject_meta",

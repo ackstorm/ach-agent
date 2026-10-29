@@ -225,7 +225,7 @@ async def test_public_catalog_call_emits_no_credential_or_raw_backend_sentinel_i
     upstream = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     facade = ModelFacade(
         endpoint="https://ach.example.com/v1",
-        ek="ek-super-secret-sentinel",
+        headers={"x-ach-key": "ek-super-secret-sentinel"},
         key=b"fixture-key",
         owned_workspace=_owned,
         identity=ProcessIdentity(agent="classifier", environment="platform"),

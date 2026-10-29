@@ -102,14 +102,14 @@ def _without_excluded_tools(exclude_tools: frozenset[str]) -> Callable[[bytes], 
 
 
 class McpFacade:
-    """`ek`/`key` live only in this instance's handler closure — never on an attribute
+    """`server_headers`/`key` live only in this instance's handler closure — never on an attribute
     reachable from outside this module (old-ach-agent invariant)."""
 
     def __init__(
         self,
         *,
         servers: dict[str, str],
-        ek: str,
+        server_headers: Mapping[str, Mapping[str, str]],
         key: bytes,
         owned_workspace: OwnedWorkspace,
         exclude: frozenset[str],
@@ -122,6 +122,7 @@ class McpFacade:
         self._client = client or httpx.AsyncClient(timeout=_INTERNAL_CLIENT_TIMEOUT)
         self._responses: set[httpx.Response] = set()
         endpoints = {sid: ep.rstrip("/") for sid, ep in servers.items() if sid not in exclude}
+        headers_by_server = {sid: dict(h) for sid, h in server_headers.items()}
 
         async def handle(request: Request) -> Response:
             token = request.path_params["token"]
@@ -151,7 +152,7 @@ class McpFacade:
                 self._client,
                 target,
                 request,
-                {"x-ach-key": ek},
+                headers_by_server.get(server_id, {}),
                 identity=identity,
                 correlation=correlation,
                 mcp=True,

@@ -469,7 +469,7 @@ async def test_excluded_server_id_aliases_stay_404_and_absent_from_catalog_when_
     proxy_client, proxy_requests = _counting_proxy_client()
     mcp_facade = McpFacade(
         servers=servers,
-        ek="ek-xyz",
+        server_headers={sid: {"x-ach-key": "ek-xyz"} for sid in servers},
         key=KEY,
         owned_workspace=_owned,
         exclude=frozenset(exclude),
@@ -531,7 +531,7 @@ async def test_excluded_endpoint_aliases_stay_404_and_absent_from_catalog_when_d
     proxy_client, proxy_requests = _counting_proxy_client()
     mcp_facade = McpFacade(
         servers=servers,
-        ek="ek-xyz",
+        server_headers={sid: {"x-ach-key": "ek-xyz"} for sid in servers},
         key=KEY,
         owned_workspace=_owned,
         exclude=frozenset(exclude),
@@ -599,7 +599,7 @@ async def test_failed_context_composition_keeps_aliases_excluded_without_generic
     async with httpx.AsyncClient(transport=httpx.MockTransport(count_proxy_request)) as proxy_client:
         mcp_facade = McpFacade(
             servers=servers,
-            ek="ek-xyz",
+            server_headers={sid: {"x-ach-key": "ek-xyz"} for sid in servers},
             key=KEY,
             owned_workspace=_owned,
             exclude=frozenset(exclude),

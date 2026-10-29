@@ -147,7 +147,7 @@ class _RawChunkedUpstream:
 def _facade(upstream_port: int, *, client: httpx.AsyncClient | None = None) -> ModelFacade:
     return ModelFacade(
         endpoint=f"http://127.0.0.1:{upstream_port}/v1",
-        ek="ek-xyz",
+        headers={"x-ach-key": "ek-xyz"},
         key=KEY,
         owned_workspace=_owned,
         identity=IDENTITY,
@@ -175,7 +175,7 @@ def _mcp_streaming_facade(
 ) -> tuple[McpFacade, Callable[..., dict[str, Any]]]:
     facade = McpFacade(
         servers={"m1": f"http://127.0.0.1:{upstream_port}/mcp"},
-        ek="ek-xyz",
+        server_headers={"m1": {"x-ach-key": "ek-xyz"}},
         key=KEY,
         owned_workspace=_owned,
         exclude=frozenset(),
@@ -422,7 +422,7 @@ async def test_injected_client_stays_open_after_aclose_internally_owned_client_c
 async def test_mcp_facade_also_exposes_aclose_for_its_internally_owned_client() -> None:
     facade = McpFacade(
         servers={"m1": "https://ach.example.com/mcp/m1"},
-        ek="ek-xyz",
+        server_headers={"m1": {"x-ach-key": "ek-xyz"}},
         key=KEY,
         owned_workspace=_owned,
         exclude=frozenset(),
@@ -438,7 +438,7 @@ async def test_mcp_facade_also_exposes_aclose_for_its_internally_owned_client() 
 
 def test_model_facade_internal_client_has_no_read_timeout_and_thirty_second_connect_bound() -> None:
     facade = ModelFacade(
-        endpoint="https://ach.example.com/v1", ek="ek-xyz", key=KEY, owned_workspace=_owned, identity=IDENTITY
+        endpoint="https://ach.example.com/v1", headers={"x-ach-key": "ek-xyz"}, key=KEY, owned_workspace=_owned, identity=IDENTITY
     )
     timeout = facade._client.timeout
     assert timeout.read is None
@@ -449,7 +449,7 @@ def test_model_facade_injected_client_timeout_is_preserved() -> None:
     custom = httpx.AsyncClient(timeout=httpx.Timeout(5.0))
     facade = ModelFacade(
         endpoint="https://ach.example.com/v1",
-        ek="ek-xyz",
+        headers={"x-ach-key": "ek-xyz"},
         key=KEY,
         owned_workspace=_owned,
         identity=IDENTITY,
@@ -461,7 +461,7 @@ def test_model_facade_injected_client_timeout_is_preserved() -> None:
 def test_mcp_facade_internal_client_has_no_read_timeout_and_thirty_second_connect_bound() -> None:
     facade = McpFacade(
         servers={"m1": "https://ach.example.com/mcp/m1"},
-        ek="ek-xyz",
+        server_headers={"m1": {"x-ach-key": "ek-xyz"}},
         key=KEY,
         owned_workspace=_owned,
         exclude=frozenset(),
@@ -477,7 +477,7 @@ def test_mcp_facade_injected_client_timeout_is_preserved() -> None:
     custom = httpx.AsyncClient(timeout=httpx.Timeout(5.0))
     facade = McpFacade(
         servers={"m1": "https://ach.example.com/mcp/m1"},
-        ek="ek-xyz",
+        server_headers={"m1": {"x-ach-key": "ek-xyz"}},
         key=KEY,
         owned_workspace=_owned,
         exclude=frozenset(),
@@ -491,7 +491,7 @@ def test_mcp_facade_injected_client_timeout_is_preserved() -> None:
 async def test_mcp_facade_app_lifespan_shutdown_closes_owned_client() -> None:
     facade = McpFacade(
         servers={"m1": "https://ach.example.com/mcp/m1"},
-        ek="ek-xyz",
+        server_headers={"m1": {"x-ach-key": "ek-xyz"}},
         key=KEY,
         owned_workspace=_owned,
         exclude=frozenset(),

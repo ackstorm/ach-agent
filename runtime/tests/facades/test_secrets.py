@@ -82,13 +82,29 @@ def _model_facade(*, handler: Any, owned_workspace: Any = None, correlation_head
     upstream = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     return ModelFacade(
         endpoint="https://ach.example.com/v1",
-        ek="ek-xyz",
+        headers={"x-ach-key": "ek-xyz"},
         key=KEY,
         owned_workspace=owned_workspace or _owned_once(),
         identity=IDENTITY,
         correlation_headers=correlation_headers,
         client=upstream,
     )
+
+
+async def test_model_facade_drops_inbound_x_api_key_when_no_header_is_configured_for_it() -> None:
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["headers"] = {k.lower(): v for k, v in request.headers.items()}
+        return _streamed(200, b"{}")
+
+    facade = _model_facade(handler=handler)
+    token = facade_token(KEY, "owned-ws")
+    resp = await _call(
+        facade.app(), "POST", f"/t/{token}/chat/completions", json={}, headers={"x-api-key": "local-proxy"}
+    )
+    assert resp.status_code == 200
+    assert "x-api-key" not in seen["headers"]
 
 
 async def test_model_facade_injects_ek_and_identity_strips_inbound_auth_and_impersonation() -> None:
@@ -365,7 +381,7 @@ def _mcp_facade(
     upstream = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     return McpFacade(
         servers=servers,
-        ek="ek-xyz",
+        server_headers={sid: {"x-ach-key": "ek-xyz"} for sid in servers},
         key=KEY,
         owned_workspace=owned_workspace or _owned_once(),
         exclude=exclude,

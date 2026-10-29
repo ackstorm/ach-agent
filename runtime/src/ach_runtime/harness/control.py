@@ -970,13 +970,13 @@ async def assemble(
     model_client = httpx.AsyncClient(transport=facade_transport, timeout=facade_timeout)
     control.facade_clients.extend((mcp_client, model_client))
     mcp = McpFacade(
-        servers=mcp_servers, ek=ek, key=key, owned_workspace=control._owned_live,
+        servers=mcp_servers, server_headers=mcp_headers, key=key, owned_workspace=control._owned_live,
         exclude=excluded | frozenset(memory_excluded),
         exclude_tools=frozenset(config.capability.filter.exclude.tools), identity=identity,
         client=mcp_client,
     )
     model = ModelFacade(
-        endpoint=model_endpoint, ek=ek, key=key,
+        endpoint=model_endpoint, headers=model_headers, key=key,
         owned_workspace=control._owned_live, identity=identity,
         client=model_client,
     )

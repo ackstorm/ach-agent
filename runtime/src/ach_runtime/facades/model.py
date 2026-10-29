@@ -40,14 +40,14 @@ CorrelationHeaders = Callable[[], Mapping[str, str]] | None
 
 
 class ModelFacade:
-    """`ek`/`key` live only in this instance's handler closure — never on an attribute
+    """`headers`/`key` live only in this instance's handler closure — never on an attribute
     reachable from outside this module (old-ach-agent invariant)."""
 
     def __init__(
         self,
         *,
         endpoint: str,
-        ek: str,
+        headers: Mapping[str, str],
         key: bytes,
         owned_workspace: OwnedWorkspace,
         identity: ProcessIdentity,
@@ -58,6 +58,7 @@ class ModelFacade:
         self._client = client or httpx.AsyncClient(timeout=_INTERNAL_CLIENT_TIMEOUT)
         self._responses: set[httpx.Response] = set()
         target_base = endpoint.rstrip("/")
+        upstream_headers = dict(headers)
 
         async def handle(request: Request) -> Response:
             token = request.path_params["token"]
@@ -74,7 +75,7 @@ class ModelFacade:
                 self._client,
                 target,
                 request,
-                {"x-ach-key": ek},
+                upstream_headers,
                 identity=identity,
                 correlation=correlation,
                 _responses=self._responses,

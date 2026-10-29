@@ -24,7 +24,7 @@ func TestBuildPolicy_ReservedFacadeRuleAndDefaults(t *testing.T) {
 	if !ok || rule.Endpoints[0].Host != "agent-r.ns.svc.cluster.local" || rule.Endpoints[0].Port != 8081 {
 		t.Fatalf("facade rule = %#v", p.NetworkPolicies)
 	}
-	if len(rule.Binaries) != 2 {
+	if len(rule.Binaries) != 3 {
 		t.Fatalf("binaries = %#v", rule.Binaries)
 	}
 	if p.Landlock.Compatibility != "hard_requirement" {
@@ -159,5 +159,26 @@ func TestResources_MapsCpuMemory(t *testing.T) {
 	}
 	if m, err := Resources(&v1.SandboxResources{}); m != nil || err != nil {
 		t.Fatalf("empty resources = %v, %v", m, err)
+	}
+}
+
+// The engine that calls the model facade is the native opencode.exe that
+// node_modules/.bin/opencode2 symlinks to; leaving it out denies every model call.
+func TestBuildPolicy_FacadeRuleBindsExactlyTheRuntimeBinaries(t *testing.T) {
+	p, err := BuildPolicy(nil, nil, "f", 8081)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, b := range p.NetworkPolicies["ach-agent-facades"].Binaries {
+		got = append(got, b.Path)
+	}
+	want := []string{
+		"/usr/local/bin/python3.13",
+		"/usr/local/bin/node",
+		"/opt/opencode/node_modules/@opencode/cli/bin/opencode.exe",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("binaries = %v, want %v", got, want)
 	}
 }

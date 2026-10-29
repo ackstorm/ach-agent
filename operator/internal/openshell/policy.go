@@ -32,6 +32,9 @@ const reservedPrefix = "ach-agent-"
 var runtimeBinaries = []string{
 	"/usr/local/bin/python3.13",
 	"/usr/local/bin/node",
+	// node_modules/.bin/opencode2 symlinks to this native ELF binary, not a node script: the
+	// engine process that calls the model facade is this executable.
+	"/opt/opencode/node_modules/@opencode/cli/bin/opencode.exe",
 }
 
 var (

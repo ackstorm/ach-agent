@@ -279,7 +279,9 @@ func (b *openShellUnits) Create(ctx context.Context, a *achv1alpha1.Agent, p *ac
 		return err
 	}
 	// launch.port is not in launch.env: the gateway record keeps it for the inventory.
-	cctx, cancel := call(ctx)
+	// Not derived from the loop context: Stop waits for a create already sent, so the
+	// finalizer's inventory sees the sandbox. callDeadline bounds it.
+	cctx, cancel := call(context.WithoutCancel(ctx))
 	defer cancel()
 	_, err = b.gw().Create(cctx, b.Config.Workspace, sandbox, spec,
 		ostypes.WithLabels(map[string]string{AgentUIDLabel: string(b.uid), NameLabel: w.Name, portLabel: strconv.Itoa(int(w.Launch.Port))}),
@@ -342,7 +344,7 @@ func (o *OpenShell) removeSandbox(ctx context.Context, reader client.Reader, san
 	case !osv1.IsNotFound(err):
 		return false, err
 	}
-	if reader == nil { // the finalizer: no process confirmation needed, the runtime is gone
+	if reader == nil {
 		return false, nil
 	}
 	pod, err := o.workloadPod(ctx, reader, sandbox)
@@ -385,14 +387,15 @@ func (b *openShellUnits) Live(ctx context.Context) ([]host.InventoryUnit, error)
 }
 
 // RemoveAgentSandboxes requests deletion of every sandbox labelled with agentUID and reports
-// whether any remains on the gateway. Used by the Agent finalizer.
-func (o *OpenShell) RemoveAgentSandboxes(ctx context.Context, agentUID string) (bool, error) {
+// whether any remains: on the gateway, or as a workload pod that outlives its record (reader
+// is the uncached client that can read pods in the sandbox namespace). Used by the Agent finalizer.
+func (o *OpenShell) RemoveAgentSandboxes(ctx context.Context, reader client.Reader, agentUID string) (bool, error) {
 	l, err := o.forUID(ctx, agentUID)
 	if err != nil {
 		return false, err
 	}
 	for _, s := range l {
-		if _, err := o.removeSandbox(ctx, nil, s.Name); err != nil {
+		if _, err := o.removeSandbox(ctx, reader, s.Name); err != nil {
 			return true, err
 		}
 	}

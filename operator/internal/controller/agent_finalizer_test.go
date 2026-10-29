@@ -30,7 +30,7 @@ type fakeRemover struct {
 	err       error
 }
 
-func (f *fakeRemover) RemoveAgentSandboxes(_ context.Context, uid string) (bool, error) {
+func (f *fakeRemover) RemoveAgentSandboxes(_ context.Context, _ client.Reader, uid string) (bool, error) {
 	f.calls = append(f.calls, uid)
 	return f.remaining[min(len(f.calls), len(f.remaining))-1], f.err
 }
@@ -182,9 +182,9 @@ type orderedRemover struct {
 	fakeRemover
 }
 
-func (r *orderedRemover) RemoveAgentSandboxes(ctx context.Context, uid string) (bool, error) {
+func (r *orderedRemover) RemoveAgentSandboxes(ctx context.Context, rd client.Reader, uid string) (bool, error) {
 	r.o.steps = append(r.o.steps, "inventory")
-	return r.fakeRemover.RemoveAgentSandboxes(ctx, uid)
+	return r.fakeRemover.RemoveAgentSandboxes(ctx, rd, uid)
 }
 
 func finalizerReconcileWithHost(t *testing.T, c client.Client, key types.NamespacedName, s sandboxRemover, h hostStopper) (ctrl.Result, error) {

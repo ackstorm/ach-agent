@@ -42,6 +42,10 @@ type fakeGateway struct {
 	hang      bool // Get, ListAll and Create wait for ctx, like a frozen gateway
 	createErr error
 	err       error // returned by every call, like an unreachable gateway
+	// createGate, when set, holds Create until it is closed; Create then fails if its ctx
+	// was cancelled meanwhile, like an RPC aborted on the client side.
+	createGate    chan struct{}
+	createEntered chan struct{}
 }
 
 func (f *fakeGateway) block(ctx context.Context) error {
@@ -60,6 +64,14 @@ func newFakeGateway() *fakeGateway { return &fakeGateway{byName: map[string]*ost
 func (f *fakeGateway) Create(ctx context.Context, _ string, name string, spec *ostypes.SandboxSpec, opts ...ostypes.CreateOption) (*ostypes.Sandbox, error) {
 	if err := f.block(ctx); err != nil {
 		return nil, err
+	}
+	if f.createGate != nil {
+		close(f.createEntered)
+		select {
+		case <-f.createGate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -393,14 +405,14 @@ func TestOpenShell_RemoveAgentSandboxesSelectsByUIDOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	remaining, err := o.RemoveAgentSandboxes(ctx, "uid-1")
+	remaining, err := o.RemoveAgentSandboxes(ctx, nil, "uid-1")
 	if err != nil || !remaining {
 		t.Fatalf("first call remaining = %v err = %v, want true (a sandbox was listed)", remaining, err)
 	}
 	if len(gw.deleted) != 1 || gw.deleted[0] != SandboxName("uid-1", "w1") {
 		t.Fatalf("deleted = %v, want only uid-1's sandbox (finding 2: select by UID, never by name)", gw.deleted)
 	}
-	if remaining, err = o.RemoveAgentSandboxes(ctx, "uid-1"); err != nil || remaining {
+	if remaining, err = o.RemoveAgentSandboxes(ctx, nil, "uid-1"); err != nil || remaining {
 		t.Fatalf("second call remaining = %v err = %v, want false", remaining, err)
 	}
 }
@@ -457,7 +469,7 @@ func TestOpenShell_GatewayCallsAreBounded(t *testing.T) {
 		"Create":    func() error { return f.b.Create(ctx, f.a, f.p, f.w) },
 		"Owned":     func() error { _, err := f.b.Owned(ctx); return err },
 		"Remove":    func() error { _, err := f.b.Remove(ctx, f.w.Name); return err },
-		"Finalizer": func() error { _, err := o.RemoveAgentSandboxes(ctx, string(f.a.UID)); return err },
+		"Finalizer": func() error { _, err := o.RemoveAgentSandboxes(ctx, o.reader, string(f.a.UID)); return err },
 	} {
 		start := time.Now()
 		if err := fn(); err == nil || time.Since(start) > 2*time.Second {
@@ -666,6 +678,23 @@ func TestOpenShell_BackendMarksAnUnavailableGatewayForTheHost(t *testing.T) {
 	}
 }
 
+func TestOpenShell_CreateInFlightSurvivesTheLoopBeingStopped(t *testing.T) {
+	f := newOSFixture(t)
+	f.gw.createGate, f.gw.createEntered = make(chan struct{}), make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- f.b.Create(ctx, f.a, f.p, f.w) }()
+	<-f.gw.createEntered
+	cancel() // Stop lands mid-Create
+	close(f.gw.createGate)
+	if err := <-done; err != nil {
+		t.Fatalf("Create = %v: an in-flight create must run to completion so the finalizer can see it", err)
+	}
+	if len(f.gw.created) != 1 {
+		t.Fatalf("created = %v", f.gw.created)
+	}
+}
+
 func TestOpenShell_CreateDoesNotStartASandboxForACancelledLoop(t *testing.T) {
 	f := newOSFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -779,5 +808,43 @@ func TestRebuilding_FactoryErrorIsReturnedAndRetried(t *testing.T) {
 	}
 	if _, err := r.ListAll(context.Background(), "default"); err != nil {
 		t.Fatalf("second call: %v", err)
+	}
+}
+
+// listedGoneGateway lists a sandbox that a Get no longer finds: the record is dropped while
+// the workload pod is still terminating.
+type listedGoneGateway struct{ *fakeGateway }
+
+func (listedGoneGateway) Get(context.Context, string, string) (*ostypes.Sandbox, error) {
+	return nil, &ostypes.StatusError{Code: ostypes.ErrorNotFound, Message: "gone"}
+}
+
+func TestOpenShell_FinalizerWaitsForTheWorkloadPodOfADroppedRecord(t *testing.T) {
+	ctx := context.Background()
+	f := newOSFixture(t, workloadPod(SandboxName(string(testUID), "w1"), corev1.PodRunning, true))
+	ub := f.b.(*openShellUnits)
+	if _, err := f.gw.Create(ctx, "default", SandboxName(string(testUID), "w1"), &ostypes.SandboxSpec{},
+		ostypes.WithLabels(map[string]string{AgentUIDLabel: string(testUID), NameLabel: "w1"})); err != nil {
+		t.Fatal(err)
+	}
+	o := &OpenShell{Sandboxes: listedGoneGateway{f.gw}, Config: ub.Config}
+	remaining, err := o.RemoveAgentSandboxes(ctx, ub.reader, string(testUID))
+	if err != nil || !remaining {
+		t.Fatalf("remaining = %v err = %v, want the pod to keep the finalizer", remaining, err)
+	}
+}
+
+func TestMarkUnavailable_CountsAnUnrequestedCancelAsAnOutage(t *testing.T) {
+	closing := status.Error(codes.Canceled, "grpc: the client connection is closing")
+	gw := newFakeGateway()
+	gw.err = closing
+	m := markUnavailable{gw}
+	if _, err := m.Get(context.Background(), "default", "x"); !errors.Is(err, host.ErrGatewayUnavailable) {
+		t.Fatalf("err = %v, want the outage", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := m.Get(ctx, "default", "x"); errors.Is(err, host.ErrGatewayUnavailable) {
+		t.Fatalf("err = %v: a cancel the caller asked for is no outage", err)
 	}
 }

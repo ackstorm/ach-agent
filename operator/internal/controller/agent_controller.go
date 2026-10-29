@@ -106,7 +106,7 @@ const executionFinalizer = openshell.SandboxFinalizer
 
 // sandboxRemover is *openshell.OpenShell.
 type sandboxRemover interface {
-	RemoveAgentSandboxes(ctx context.Context, agentUID string) (remaining bool, err error)
+	RemoveAgentSandboxes(ctx context.Context, reader client.Reader, agentUID string) (remaining bool, err error)
 }
 
 // ensureExecutionFinalizer adds the sandbox finalizer and reports whether it changed the
@@ -151,11 +151,15 @@ func (r *AgentReconciler) finalizeExecutionUnits(ctx context.Context, a *achv1al
 		logger.Info("no OpenShell gateway configured; keeping the sandbox finalizer")
 		return ctrl.Result{RequeueAfter: finalizeRetryWait}, nil
 	}
-	remaining, err := r.Sandboxes.RemoveAgentSandboxes(ctx, string(a.UID))
+	remaining, err := r.Sandboxes.RemoveAgentSandboxes(ctx, r.APIReader, string(a.UID))
 	if err != nil {
 		logger.Info("sandbox inventory failed; keeping the sandbox finalizer", "error", err.Error())
+		reason := "SandboxCleanupFailed"
+		if openshell.IsUnavailable(err) {
+			reason = "GatewayUnavailable"
+		}
 		r.setGatewayCondition(ctx, a, metav1.Condition{
-			Type: condGatewayAvailable, Status: metav1.ConditionFalse, Reason: "GatewayUnavailable",
+			Type: condGatewayAvailable, Status: metav1.ConditionFalse, Reason: reason,
 			Message: fmt.Sprintf("cannot remove the sandboxes of %s: %v", a.Name, err), ObservedGeneration: a.Generation,
 		})
 		return ctrl.Result{RequeueAfter: finalizeRetryWait}, nil

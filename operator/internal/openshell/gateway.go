@@ -43,7 +43,12 @@ func IsUnavailable(err error) bool {
 // host.ErrGatewayUnavailable (the original stays in the chain).
 type markUnavailable struct{ sandboxes }
 
-func mark(err error) error {
+// mark also counts a gRPC Canceled the caller did not ask for (ctx still live) as an outage:
+// replacing the shared client closes it under the calls still in flight on it.
+func mark(ctx context.Context, err error) error {
+	if status.Code(err) == codes.Canceled && ctx.Err() == nil {
+		return fmt.Errorf("%w: %w", host.ErrGatewayUnavailable, err)
+	}
 	if IsUnavailable(err) && !errors.Is(err, host.ErrGatewayUnavailable) {
 		return fmt.Errorf("%w: %w", host.ErrGatewayUnavailable, err)
 	}
@@ -52,22 +57,22 @@ func mark(err error) error {
 
 func (m markUnavailable) Create(ctx context.Context, workspace, name string, spec *ostypes.SandboxSpec, opts ...ostypes.CreateOption) (*ostypes.Sandbox, error) {
 	s, err := m.sandboxes.Create(ctx, workspace, name, spec, opts...)
-	return s, mark(err)
+	return s, mark(ctx, err)
 }
 
 func (m markUnavailable) Get(ctx context.Context, workspace, name string) (*ostypes.Sandbox, error) {
 	s, err := m.sandboxes.Get(ctx, workspace, name)
-	return s, mark(err)
+	return s, mark(ctx, err)
 }
 
 func (m markUnavailable) ListAll(ctx context.Context, workspace string, opts ...ostypes.ListOptions) ([]*ostypes.Sandbox, error) {
 	l, err := m.sandboxes.ListAll(ctx, workspace, opts...)
-	return l, mark(err)
+	return l, mark(ctx, err)
 }
 
 func (m markUnavailable) Delete(ctx context.Context, workspace, name string, opts ...ostypes.DeleteOptions) (*ostypes.DeletionResult, error) {
 	r, err := m.sandboxes.Delete(ctx, workspace, name, opts...)
-	return r, mark(err)
+	return r, mark(ctx, err)
 }
 
 // clientBox is an SDK sandbox client that can be closed when it is replaced.

@@ -1,0 +1,32 @@
+apiVersion: ach-agent.ackstorm.ai/v1alpha1
+kind: AgentProfile
+metadata: {name: e2e, namespace: ach-agent-e2e}
+spec:
+  control:
+    image: ach-agent-control:e2e
+    terminationGracePeriodSeconds: 60
+  sandbox:
+    openshell:
+      image: ach-agent-execution:e2e
+      resources: {cpu: "1", memory: 1Gi}
+      readyTimeoutSeconds: 180
+  defaults:
+    limits:
+      maxActiveWorkspaces: 4
+      maxConcurrentInvocations: 4
+      maxConcurrentScripts: 2
+      maxInvocationSeconds: 300
+      maxQueuedTotal: 100
+      idempotencyWindowSeconds: 3600
+      maxSteps: 10
+    engine:
+      compaction: {auto: true, keep: {tokens: 8000}, buffer: 20000}
+    workspace:
+      idleTimeoutSeconds: 600
+      shutdownTimeoutSeconds: 30
+      maxConcurrentSessions: 1
+      persistence: {enabled: false, retentionDays: 1}
+      session:
+        idleTimeoutSeconds: 300
+        persistence: {enabled: false, retentionDays: 1}
+    artifacts: {enabled: false, maxArtifactBytes: 1048576, retentionDays: 1}

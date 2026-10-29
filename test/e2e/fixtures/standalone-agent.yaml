@@ -1,0 +1,27 @@
+apiVersion: ach-agent.ackstorm.ai/v1alpha1
+kind: Agent
+metadata: {name: "${NAME}", namespace: ach-agent-e2e}
+spec:
+  profileRef: {name: e2e}
+  capabilityServer: standalone
+  standalone:
+    model:
+      name: e2e-model
+      api: openai
+      baseUrl: http://e2e-stub.ach-agent-e2e.svc.cluster.local:8090/v1
+      headers:
+        x-litellm-api-key: {secretKeyRef: {name: e2e-model, key: apiKey}}
+    mcpServers:
+      - name: serper
+        url: http://e2e-stub.ach-agent-e2e.svc.cluster.local:8091/mcp
+        headers:
+          X-API-KEY: {secretKeyRef: {name: e2e-serper, key: apiKey}}
+  channels:
+    - name: hook
+      type: webhook
+      source: generic
+      routing: {sessionKey: "e2e"}
+      prompt: "Reply briefly. {{ payload | json }}"
+      webhook:
+        auth: {type: header_token, header: X-E2E-Token, secretRef: {name: e2e-hook, key: token}}
+  expose: {service: true}

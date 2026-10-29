@@ -851,6 +851,12 @@ def resolve_headers(headers: Mapping[str, SecretAlias], env: Mapping[str, str]) 
     return resolved
 
 
+def merge_headers(base: Mapping[str, str], over: Mapping[str, str]) -> dict[str, str]:
+    """`over` wins over `base` on the same header name, compared case-insensitively."""
+    names = {name.lower() for name in over}
+    return {name: value for name, value in base.items() if name.lower() not in names} | dict(over)
+
+
 async def assemble(
     config: RuntimeConfig,
     *,
@@ -915,11 +921,13 @@ async def assemble(
                                               resolve_secret=lambda alias: env.get(alias))
         if ok:
             memory_headers = headers
+            if config.capability.standalone is not None and params.mcp_server_id in mcp_headers:
+                memory_headers = merge_headers(mcp_headers[params.mcp_server_id], headers)
         memory_excluded = excluded_mcp_server_ids(
             mcp_server_id=params.mcp_server_id, endpoint=params.endpoint, mcp_servers=mcp_servers)
         if ok and memory_endpoint:
             memory = AchMemoryFacade(
-                endpoint=memory_endpoint, headers=headers, project=memory_project,
+                endpoint=memory_endpoint, headers=memory_headers, project=memory_project,
                 key=key, owned_workspace=lambda claim: control._owned_live(claim), identity=identity,
                 exclude_tools=frozenset(config.capability.filter.exclude.tools),
             )

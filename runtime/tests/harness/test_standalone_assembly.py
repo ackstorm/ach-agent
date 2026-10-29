@@ -80,3 +80,33 @@ async def test_memory_bearer_secret_is_registered_for_redaction():
         assert redact("log memory-token-value-1 line") == "log [redacted] line"
     finally:
         await control.close()
+
+
+def _memory_config(auth):
+    wire = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    wire["workspace"]["persistence"]["enabled"] = False
+    wire["workspace"]["session"]["persistence"]["enabled"] = False
+    wire["artifacts"]["enabled"] = False
+    params = {"mcpServerId": "serper"}
+    if auth:
+        params["auth"] = auth
+    wire["memory"] = {"type": "ach-memory", "achMemory": params}
+    wire["configVersion"] = compute_config_version(wire)
+    return parse_config(wire)
+
+
+async def test_memory_on_a_standalone_server_keeps_that_servers_headers():
+    control = await assemble(_memory_config(None), environ=ENV)
+    try:
+        assert control._memory_headers == {"X-API-KEY": "serper-secret-1"}
+    finally:
+        await control.close()
+
+
+async def test_memory_auth_header_wins_over_the_servers_header_case_insensitively():
+    auth = {"type": "bearer", "env": "ACH_MEM_TOKEN", "header": "x-api-key"}
+    control = await assemble(_memory_config(auth), environ={**ENV, "ACH_MEM_TOKEN": "memory-token-value-1"})
+    try:
+        assert control._memory_headers == {"x-api-key": "memory-token-value-1"}
+    finally:
+        await control.close()

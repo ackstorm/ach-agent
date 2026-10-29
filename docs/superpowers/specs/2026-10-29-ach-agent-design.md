@@ -20,8 +20,9 @@ gateway high availability; per-endpoint facade bypass.
 
 ## 2. Repository and artifacts
 
-- New public repo `github.com/ackstorm/ach-agent`, local path `../ach-agent`, MIT licence.
-- One repo, two languages, one version (starts at `0.1.0`), one chart:
+- Public repo `github.com/ackstorm/ach-agent` (reused: its legacy runtime history is kept, the
+  last legacy release is `v0.18.0`), local path `../ach-agent`, MIT licence.
+- One repo, two languages, one version (starts at `0.19.0`), one chart:
 
 ```
 ach-agent/
@@ -106,7 +107,8 @@ env and rolls the pod when they change. The runtime learns cluster state only fr
   `automountServiceAccountToken: false`.
 - Operator RBAC: Agents, AgentProfiles and their status; StatefulSets, Services, ConfigMaps,
   Secrets (create the key Secret, read referenced Secrets) in agent namespaces; Pods
-  read-only in agent namespaces and the sandbox namespace; HTTPRoutes when `expose.route`
+  read-only in the sandbox namespace, and in agent namespaces read plus delete of a control
+  pod stuck on an old revision; HTTPRoutes when `expose.route`
   is used; Events.
 
 ## 4. Resources (`ach-agent.ackstorm.ai/v1alpha1`)
@@ -347,7 +349,7 @@ admitting only the ach-agent operator and control ServiceAccounts. The same mesh
 ### Policy per sandbox
 
 1. Start from the profile's `sandbox.openshell.policy`.
-2. Merge the Agent's: `network_policies` by name (Agent wins), `filesystem_policy` lists
+2. Merge the Agent's: `network_policies` by name (Agent wins), `filesystem` lists
    concatenated, scalars (e.g. `landlock`) Agent over profile. Extra egress is external
    only: an endpoint with a dotless host, a host ending `.svc`, `.svc.cluster.local` or
    `.cluster.local`, or an IP host or `allowed_ips` range overlapping loopback, link-local,
@@ -355,15 +357,18 @@ admitting only the ach-agent operator and control ServiceAccounts. The same mesh
    a facade passes. Landlock settings are the Agent author's choice (see "Trust boundary").
 3. Apply the reserved `ach-agent-*` rules last; they cannot be overridden:
    - egress to the facades, bound to the runtime binaries;
-   - the runtime binaries and their directories read-only: an Agent `filesystem_policy`
+   - the runtime binaries and their directories read-only: an Agent `filesystem`
      entry that makes any of them writable is rejected (`SandboxPolicyRejected`), so a
      sandboxed process cannot replace a binary that other rules trust;
    - the runtime's base read-write paths (workspace root, `/tmp`).
 4. `landlock.compatibility` defaults to `hard_requirement` when nobody sets it.
-5. Decode strictly into the OpenShell Go SDK type (unknown fields rejected). A gateway
+5. Decode strictly with `protojson` into the SDK's public proto (`proto/sandboxv1`), so field
+   names follow the proto (`network_policies`, `filesystem`, `landlock`, `process`) and
+   unknown fields are rejected; convert with the SDK's converter, vendored under
+   `operator/third_party/openshellconv` (Apache-2.0) because the SDK keeps it internal. A gateway
    rejection sets `Ready=False`, reason `SandboxPolicyRejected`, with the gateway message.
 
-New OpenShell policy fields need an SDK bump, not a CRD change.
+New OpenShell policy fields need an SDK bump (and a re-vendored converter), not a CRD change.
 
 ### Lifecycle
 
@@ -381,7 +386,8 @@ Service), so a gateway outage stops invocations even though sandboxes keep runni
 API carries the operator's view: `PUT /host/v1/gateway {"available": bool}`, sent on every
 change and after each adoption inventory.
 
-- Operator: gRPC keepalive; the client is rebuilt after a transport error (fixes the observed
+- Operator: the gRPC client is rebuilt after an `Unavailable` error (the SDK exposes no
+  keepalive option) (fixes the observed
   "connection reset by peer" that lasted until the operator restarted); condition
   `GatewayAvailable=False`; `available: false` sent on `/host/v1/gateway`; no
   sandbox is deleted or reported lost (never confirm an unconfirmed stop).
@@ -434,7 +440,9 @@ template annotation, so any change rolls the control unit. A missing Secret or k
 
 ## 8. Release
 
-A `vX.Y.Z` tag on GitHub Actions builds and publishes the three images and the OCI chart.
+A `chore(release): vX.Y.Z` commit on `main` (the ach-runtime convention) runs CI, publishes
+the three images and the OCI chart, then creates the `vX.Y.Z` tag and GitHub release. The
+runtime package version and the chart's `version`/`appVersion` must all equal `X.Y.Z`.
 
 ## 9. Open items for later specs
 

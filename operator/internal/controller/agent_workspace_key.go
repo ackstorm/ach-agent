@@ -16,11 +16,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	achv1alpha1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
+	"github.com/ackstorm/ach-agent/operator/internal/host"
 )
 
-const workspaceKeyDataKey = "key"
+const workspaceKeyDataKey = host.KeySecretDataKey
 
-func workspaceKeySecretName(uid string) string { return "ach-agent-key-" + uid }
+func workspaceKeySecretName(uid string) string { return host.KeySecretName(uid) }
 
 // ensureWorkspaceKey ensures the legacy Harness key exists without ever returning
 // or replacing its secret value. K is the UTF-8 encoding of the stored hex string.

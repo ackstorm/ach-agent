@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -52,10 +54,40 @@ type Host struct {
 	gatewayDown     bool  // the last backend call saw the gateway unavailable
 	gatewayReported *bool // the availability the control unit was last told, nil: never told
 	conditionDown   *bool // the outage state the GatewayAvailable condition last got, nil: never written
+
+	lastRefusal    *refusalKey // what Ready last got for a refused create, nil: nothing written since the last clear
+	refusalChecked bool        // the live Agent was read once for a refusal an earlier loop wrote
+	refusedInPass  bool        // a create was refused in the current Pass
 }
 
-// refusalReasons are the Ready reasons this loop writes for a refused create.
-var refusalReasons = map[string]bool{"SandboxPolicyRejected": true, "SandboxResourcesUnsupported": true}
+// The Ready reasons this loop writes for a refused create.
+const (
+	ReasonSandboxPolicyRejected       = "SandboxPolicyRejected"
+	ReasonSandboxResourcesUnsupported = "SandboxResourcesUnsupported"
+)
+
+// IsRefusalReason reports whether a Ready reason is a refused-sandbox reason this loop writes.
+func IsRefusalReason(reason string) bool {
+	return reason == ReasonSandboxPolicyRejected || reason == ReasonSandboxResourcesUnsupported
+}
+
+var profileGenSuffix = regexp.MustCompile(` \(AgentProfile generation (\d+)\)$`)
+
+// RefusalProfileGeneration returns the AgentProfile generation a refusal message was written for.
+func RefusalProfileGeneration(message string) (int64, bool) {
+	m := profileGenSuffix.FindStringSubmatch(message)
+	if m == nil {
+		return 0, false
+	}
+	g, err := strconv.ParseInt(m[1], 10, 64)
+	return g, err == nil
+}
+
+// refusalKey is what the Ready condition was last told for a refused create.
+type refusalKey struct {
+	reason, message string
+	generation      int64
+}
 
 func (h *Host) load(ctx context.Context) (*achv1alpha1.Agent, *achv1alpha1.AgentProfile, error) {
 	var a achv1alpha1.Agent
@@ -85,16 +117,35 @@ func (h *Host) create(ctx context.Context, w Workspace) error {
 	var r reasoned
 	switch {
 	case errors.As(err, &r) && h.Status != nil:
-		reason := r.StatusReason()
-		if serr := h.Status.SetCondition(ctx, h.Agent, metav1.Condition{
-			Type: "Ready", Status: metav1.ConditionFalse, Reason: reason, Message: err.Error(), ObservedGeneration: a.Generation,
-		}); serr != nil {
-			h.Log.Error(serr, "report the refused sandbox on the Agent", "reason", reason)
+		h.refusedInPass = true
+		key := refusalKey{r.StatusReason(), fmt.Sprintf("%s (AgentProfile generation %d)", err, p.Generation), a.Generation}
+		if h.lastRefusal != nil && *h.lastRefusal == key {
+			break // unchanged: the retry every pass must not write the status every pass
 		}
-	case err == nil && h.Status != nil:
-		h.clearRefusal(ctx, a.Generation)
+		if serr := h.Status.SetCondition(ctx, h.Agent, metav1.Condition{
+			Type: "Ready", Status: metav1.ConditionFalse, Reason: key.reason, Message: key.message, ObservedGeneration: key.generation,
+		}); serr != nil {
+			h.Log.Error(serr, "report the refused sandbox on the Agent", "reason", key.reason)
+			break
+		}
+		h.lastRefusal = &key
 	}
 	return err
+}
+
+// settleRefusal runs after a Pass that reached the end without errors: when no running
+// Workspace was refused, a refusal on the Agent (written by this loop or an earlier one) is
+// stale and is cleared. The live Agent is read once per Host and then only after this loop
+// wrote a refusal itself.
+func (h *Host) settleRefusal(ctx context.Context) {
+	if h.Status == nil || h.refusedInPass || (h.refusalChecked && h.lastRefusal == nil) {
+		return
+	}
+	a, _, err := h.load(ctx)
+	if err != nil {
+		return
+	}
+	h.clearRefusal(ctx, a.Generation)
 }
 
 // clearRefusal resets a Ready=False refused-sandbox condition on the live Agent.
@@ -104,15 +155,19 @@ func (h *Host) clearRefusal(ctx context.Context, generation int64) {
 		h.Log.Error(err, "read the Agent to clear the refused-sandbox condition")
 		return
 	}
+	h.refusalChecked = true
 	c := apimeta.FindStatusCondition(live.Status.Conditions, "Ready")
-	if c == nil || c.Status != metav1.ConditionFalse || !refusalReasons[c.Reason] {
+	if c == nil || c.Status != metav1.ConditionFalse || !IsRefusalReason(c.Reason) {
+		h.lastRefusal = nil
 		return
 	}
 	if serr := h.Status.SetCondition(ctx, h.Agent, metav1.Condition{
 		Type: "Ready", Status: metav1.ConditionUnknown, Reason: "SandboxCreated", ObservedGeneration: generation,
 	}); serr != nil {
 		h.Log.Error(serr, "clear the refused-sandbox condition")
+		return
 	}
+	h.lastRefusal = nil
 }
 
 func (h *Host) ensureRunning(ctx context.Context, w Workspace) (pending bool, err error) {
@@ -227,6 +282,7 @@ func (h *Host) Pass(ctx context.Context, l *Listing) (pending bool, err error) {
 		return false, err
 	}
 	var errs []error
+	h.refusedInPass = false
 	defer func() {
 		h.noteGateway(ctx, errors.Join(errs...))
 		h.syncGateway(ctx)
@@ -270,6 +326,9 @@ func (h *Host) Pass(ctx context.Context, l *Listing) (pending bool, err error) {
 			continue
 		}
 		pending = pending || remaining
+	}
+	if len(errs) == 0 {
+		h.settleRefusal(ctx)
 	}
 	return pending, errors.Join(errs...)
 }

@@ -26,11 +26,12 @@ const (
 	// inventory (T04), and for debugging.
 	PauseAnnotation = "ach-agent.ackstorm.ai/pause-host"
 
-	// KeySecretName and KeySecretDataKey name the per-agent sandbox key the reconciler creates
-	// (controller/ach.workspaceKeySecretName); a test in that package pins the equality.
+	// KeySecretDataKey is the data key of the per-agent sandbox key Secret the reconciler
+	// creates and this package reads.
 	KeySecretDataKey = "key"
 )
 
+// KeySecretName is the name of the per-agent sandbox key Secret.
 func KeySecretName(agentUID string) string { return "ach-agent-key-" + agentUID }
 
 // Runner starts one Host per Agent whose control pod is Running and stops it when the

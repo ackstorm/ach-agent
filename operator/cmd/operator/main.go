@@ -4,8 +4,10 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"os"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -27,6 +29,21 @@ import (
 )
 
 const leaderElectionID = "ach-agent-operator.ackstorm.ai"
+
+const serviceAccountNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+// leaderElectionNamespace is ACH_AGENT_NAMESPACE, else the namespace of the pod's service
+// account. Leader election cannot run without one.
+func leaderElectionNamespace(env, saFile string) (string, error) {
+	if env != "" {
+		return env, nil
+	}
+	b, err := os.ReadFile(saFile)
+	if ns := strings.TrimSpace(string(b)); err == nil && ns != "" {
+		return ns, nil
+	}
+	return "", errors.New("leader election needs a namespace: set ACH_AGENT_NAMESPACE (not running in a pod, no service account namespace)")
+}
 
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
@@ -76,6 +93,15 @@ func main() {
 		}
 	}
 
+	leaderNS := os.Getenv("ACH_AGENT_NAMESPACE")
+	if leaderElect {
+		var err error
+		if leaderNS, err = leaderElectionNamespace(leaderNS, serviceAccountNamespaceFile); err != nil {
+			setupLog.Error(err, "leader election")
+			os.Exit(1)
+		}
+	}
+
 	sandboxes, err := openshell.OpenShellFromEnv()
 	if err != nil {
 		setupLog.Error(err, "OpenShell gateway")
@@ -88,7 +114,7 @@ func main() {
 		HealthProbeBindAddress:  probeAddr,
 		LeaderElection:          leaderElect,
 		LeaderElectionID:        leaderElectionID,
-		LeaderElectionNamespace: os.Getenv("ACH_AGENT_NAMESPACE"),
+		LeaderElectionNamespace: leaderNS,
 	})
 	if err != nil {
 		setupLog.Error(err, "create manager")

@@ -255,11 +255,11 @@ func (b *openShellUnits) Create(ctx context.Context, a *achv1alpha1.Agent, p *ac
 	}
 	policy, err := BuildPolicy(p.Spec.Sandbox.OpenShell.Policy, agentPolicy, facade.Hostname(), port)
 	if err != nil {
-		return rejected(err, "SandboxPolicyRejected")
+		return rejected(err, host.ReasonSandboxPolicyRejected)
 	}
 	resources, err := Resources(p.Spec.Sandbox.OpenShell.Resources)
 	if err != nil {
-		return rejected(err, "SandboxResourcesUnsupported")
+		return rejected(err, host.ReasonSandboxResourcesUnsupported)
 	}
 	spec := &ostypes.SandboxSpec{
 		Environment:   maps.Clone(w.Launch.Env),
@@ -294,9 +294,9 @@ func (b *openShellUnits) Create(ctx context.Context, a *achv1alpha1.Agent, p *ac
 	if osv1.IsInvalidArgument(err) {
 		// The gateway refuses the spec: say which input it objects to.
 		if resources != nil && strings.Contains(strings.ToLower(err.Error()), "resource") {
-			return rejected(fmt.Errorf("%w: %v", ErrResourcesUnsupported, err), "SandboxResourcesUnsupported")
+			return rejected(fmt.Errorf("%w: %v", ErrResourcesUnsupported, err), host.ReasonSandboxResourcesUnsupported)
 		}
-		return rejected(fmt.Errorf("%w: %v", ErrPolicyRejected, err), "SandboxPolicyRejected")
+		return rejected(fmt.Errorf("%w: %v", ErrPolicyRejected, err), host.ReasonSandboxPolicyRejected)
 	}
 	return err
 }

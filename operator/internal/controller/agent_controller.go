@@ -72,6 +72,7 @@ var requiredConds = []string{condProfileResolved, condSecretsResolved, condWorkl
 // Pods: delete only for replaceStaleControlPod.
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
 
 // AgentReconciler reconciles Agent objects. APIReader is the UNCACHED client used for
@@ -602,7 +603,7 @@ func (r *AgentReconciler) finish(ctx context.Context, a *achv1alpha1.Agent, cond
 	for _, c := range conds {
 		setCond(&fresh.Status.Conditions, c.Type, c.Status, c.Reason, c.Message, c.ObservedGeneration)
 	}
-	if sandboxRefusalStands(&fresh) {
+	if sandboxRefusalStands(&fresh, r.profileGeneration(ctx, &fresh)) {
 		// The host loop wrote it for this generation; only a spec change (or a successful
 		// create, which clears it) replaces it.
 	} else if allTrue(fresh.Status.Conditions, requiredConds...) {
@@ -630,12 +631,25 @@ func (r *AgentReconciler) finish(ctx context.Context, a *achv1alpha1.Agent, cond
 	return ctrl.Result{}, nil
 }
 
+// profileGeneration is the generation of the Agent's AgentProfile, or -1 when it cannot be read.
+func (r *AgentReconciler) profileGeneration(ctx context.Context, a *achv1alpha1.Agent) int64 {
+	var p achv1alpha1.AgentProfile
+	if err := r.Get(ctx, types.NamespacedName{Namespace: a.Namespace, Name: a.Spec.ProfileRef.Name}, &p); err != nil {
+		return -1
+	}
+	return p.Generation
+}
+
 // sandboxRefusalStands reports whether Ready carries a refused-sandbox reason the host loop
-// wrote for the Agent's current generation.
-func sandboxRefusalStands(a *achv1alpha1.Agent) bool {
+// wrote for the Agent's current generation and the AgentProfile's current generation
+// (profileGen, -1: unknown, the profile does not void the refusal).
+func sandboxRefusalStands(a *achv1alpha1.Agent, profileGen int64) bool {
 	c := apimeta.FindStatusCondition(a.Status.Conditions, condReady)
-	return c != nil && c.Status == metav1.ConditionFalse && c.ObservedGeneration == a.Generation &&
-		(c.Reason == "SandboxPolicyRejected" || c.Reason == "SandboxResourcesUnsupported")
+	if c == nil || c.Status != metav1.ConditionFalse || c.ObservedGeneration != a.Generation || !host.IsRefusalReason(c.Reason) {
+		return false
+	}
+	g, ok := host.RefusalProfileGeneration(c.Message)
+	return !ok || profileGen < 0 || g == profileGen
 }
 
 func setCond(conds *[]metav1.Condition, t string, s metav1.ConditionStatus, reason, msg string, gen int64) {

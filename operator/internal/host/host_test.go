@@ -827,3 +827,49 @@ func TestSync_InventoryLoadFailureDoesNotMarkTheGatewayAvailable(t *testing.T) {
 		t.Fatalf("gatewayDown = %v conditions = %+v: a load failure is no evidence about the gateway", h.gatewayDown, st.conds)
 	}
 }
+
+func TestPass_AStandingRefusalIsWrittenOnceNotEveryPass(t *testing.T) {
+	rt, u := &fakeRuntime{}, newFakeUnits()
+	h := newHost(t, rt, u)
+	st := &fakeStatus{}
+	h.Status = st
+	u.createErr = refusal{errors.New("rule rejected")}
+	l := listing(ws("w1", "running", nil))
+	for range 3 {
+		if _, err := h.Pass(context.Background(), l); err == nil {
+			t.Fatal("a refused create must fail the pass")
+		}
+	}
+	rc := condsOf(st, "Ready")
+	if len(rc) != 1 {
+		t.Fatalf("Ready written %d times, want once: %+v", len(rc), rc)
+	}
+	if g, ok := RefusalProfileGeneration(rc[0].Message); !ok || g != 0 {
+		t.Errorf("message %q does not record the AgentProfile generation", rc[0].Message)
+	}
+	// A changed message is written again.
+	u.createErr = refusal{errors.New("another rule rejected")}
+	_, _ = h.Pass(context.Background(), l)
+	if rc := condsOf(st, "Ready"); len(rc) != 2 {
+		t.Fatalf("Ready written %d times, want a second write for a new message", len(rc))
+	}
+}
+
+func TestPass_RefusalIsClearedOnceNoRunningWorkspaceIsRefused(t *testing.T) {
+	rt, u := &fakeRuntime{}, newFakeUnits()
+	h := newHost(t, rt, u)
+	st := &fakeStatus{}
+	h.Status = st
+	u.createErr = refusal{errors.New("rule rejected")}
+	if _, err := h.Pass(context.Background(), listing(ws("w1", "running", nil))); err == nil {
+		t.Fatal("a refused create must fail the pass")
+	}
+	setReady(t, h, "SandboxPolicyRejected") // what the status writer stored
+	// The refused Workspace is released; nothing is running-desired any more.
+	if _, err := h.Pass(context.Background(), listing(ws("w1", "released", nil))); err != nil {
+		t.Fatal(err)
+	}
+	if rc := condsOf(st, "Ready"); len(rc) != 2 || rc[1].Status != metav1.ConditionUnknown {
+		t.Fatalf("conditions = %+v, want the refusal cleared", st.conds)
+	}
+}

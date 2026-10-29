@@ -139,6 +139,16 @@ HOP_BY_HOP_HEADERS = frozenset(
 DROP_RESPONSE_HEADERS = frozenset({"content-length", "transfer-encoding", "content-encoding"})
 
 
+def has_encoded_body(headers: Any) -> bool:
+    """True when any `Content-Encoding` value (repeated fields and comma lists included)
+    is not `identity`: such a body cannot be inspected."""
+    return any(
+        token.strip().lower() not in ("", "identity")
+        for value in headers.getlist("content-encoding")
+        for token in value.split(",")
+    )
+
+
 def join_tail(base: str, tail: str) -> str | None:
     """`base` plus the client-controlled path `tail`, or None when the tail climbs out of
     `base`'s path. httpx normalizes literal `..`/`.` segments (also once Starlette has
@@ -320,6 +330,7 @@ __all__ = [
     "HOP_BY_HOP_HEADERS",
     "ProcessIdentity",
     "forward",
+    "has_encoded_body",
     "inject_meta",
     "is_correlation_header",
     "join_tail",

@@ -4,10 +4,11 @@ execution pod (contract §5/§11). Adapted from old-ach-agent `engine/mcp_proxy.
 not ported: `CostAccountant`/`CostObserver` (unused accounting, contract §9/Task 8) and the
 module-global `_MODEL_PROXIES` startup registry (task-7-reuse-handoff.md).
 
-The facade fronts the provider's API prefix (`/v1`, `/gemini/v1beta`, `/anthropic`), not
-one model: the model id in the body (or Gemini path) is forwarded as sent, so which models
-the engine can reach is decided by the `ek`'s grants in ACH, not here. Requests whose path
-would climb out of that prefix are refused (`join_tail`).
+The facade fronts the provider's API prefix (`/v1`, `/gemini/v1beta`, `/anthropic`) for the
+ONE configured model: `check_model_request` allow-lists the method, path and query, requires
+the body (or Gemini path) to name exactly that model, and rejects body fields an LLM gateway
+routes on. Anything else is refused before any upstream call. Requests whose path would climb
+out of that prefix are refused as well (`join_tail`).
 
 Authentication is the accepted Workspace HMAC (`harness/tokens.py::authenticate_facade`):
 the capability/resolver/clock machinery this module used to carry is gone (root-reviewed
@@ -30,7 +31,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from ach_runtime.facades._proxy import ProcessIdentity, forward, join_tail
+from ach_runtime.facades._proxy import ProcessIdentity, forward, has_encoded_body, join_tail
 from ach_runtime.harness.hydrate import HydratedCatalog, ModelMetadata
 from ach_runtime.harness.tokens import WorkspaceAuthenticationFailed, authenticate_facade
 
@@ -39,11 +40,25 @@ _BODY_MODEL_PATHS = {
     "openai": frozenset({"chat/completions", "responses"}),
     "anthropic": frozenset({"messages", "messages/count_tokens"}),
 }
+# Top-level body fields an LLM gateway such as LiteLLM routes or authenticates on.
+_ROUTING_FIELDS = frozenset({"fallbacks", "user_config", "api_base", "base_url", "api_key"})
 _GEMINI_PATH = re.compile(r"models/([^/:]+):(generateContent|streamGenerateContent|countTokens)")
 _INTERNAL_CLIENT_TIMEOUT = httpx.Timeout(None, connect=30.0)
 
 OwnedWorkspace = Callable[[str], Awaitable[bool]]
 CorrelationHeaders = Callable[[], Mapping[str, str]] | None
+
+
+class _DuplicateKey(ValueError):
+    pass
+
+
+def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Parsers disagree on which duplicate wins, so a body with one is refused."""
+    keys = [key for key, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise _DuplicateKey(keys)
+    return dict(pairs)
 
 
 def check_model_request(
@@ -53,7 +68,7 @@ def check_model_request(
     tail: str,
     raw_path: bytes,
     query: Mapping[str, str],
-    headers: Mapping[str, str],
+    encoded_body: bool,
     body: bytes,
 ) -> tuple[int, str] | None:
     """(status, reason) when the request must not leave the facade; None when it may."""
@@ -61,7 +76,7 @@ def check_model_request(
         return 405, "method not allowed"
     if b"%" in raw_path:
         return 400, "encoded path not allowed"
-    if headers.get("content-encoding", "identity").lower() != "identity":
+    if encoded_body:
         return 400, "encoded body not allowed"
     if api == "gemini":
         match = _GEMINI_PATH.fullmatch(tail)
@@ -77,11 +92,15 @@ def check_model_request(
     if query:
         return 400, "query not allowed"
     try:
-        document = json.loads(body)
+        document = json.loads(body, object_pairs_hook=_no_duplicate_keys)
+    except _DuplicateKey:
+        return 400, "duplicate key"
     except ValueError:
         return 400, "body is not JSON"
     if not isinstance(document, dict) or document.get("model") != model:
         return 400, "model not allowed"
+    if _ROUTING_FIELDS & document.keys():
+        return 400, "routing field not allowed"
     return None
 
 
@@ -119,7 +138,7 @@ class ModelFacade:
             body = await request.body()
             rejected = check_model_request(
                 api, model, request.method, tail, request.scope.get("raw_path", b""),
-                request.query_params, request.headers, body,
+                request.query_params, has_encoded_body(request.headers), body,
             )
             if rejected is not None:
                 status, reason = rejected

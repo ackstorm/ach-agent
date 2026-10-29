@@ -62,6 +62,15 @@ async def test_allowed_gemini_paths_reach_upstream(action):
     ("openai", "GET", "models", {}, 405),
     ("openai", "POST", "chat%2Fcompletions", {"json": {"model": MODEL}}, 400),
     ("anthropic", "POST", "messages", {"json": {"model": "claude-other"}}, 400),
+    ("openai", "POST", "chat/completions", {"content": b'{"model": "other", "model": "%s"}' % MODEL.encode()}, 400),
+    ("openai", "POST", "chat/completions",
+     {"json": {"model": MODEL}, "headers": [("content-encoding", "identity"), ("content-encoding", "gzip")]}, 400),
+    ("openai", "POST", "chat/completions",
+     {"json": {"model": MODEL}, "headers": {"content-encoding": "identity, gzip"}}, 400),
+    *[("openai", "POST", "chat/completions", {"json": {"model": MODEL, field: "x"}}, 400)
+      for field in ("fallbacks", "user_config", "api_base", "base_url", "api_key")],
+    *[("anthropic", "POST", "messages", {"json": {"model": MODEL, field: "x"}}, 400)
+      for field in ("fallbacks", "user_config", "api_base", "base_url", "api_key")],
     ("gemini", "POST", "models/other:generateContent", {"json": {}}, 400),
     ("gemini", "POST", f"models/{GEMINI}:generateContent?key=x", {"json": {}}, 400),
     ("gemini", "POST", f"models/{GEMINI}:embedContent", {"json": {}}, 404),

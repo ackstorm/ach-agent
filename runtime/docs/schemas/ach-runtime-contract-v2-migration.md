@@ -65,7 +65,7 @@ Size estimate from the PoC review:
 | Nothing creates execution pods (`achagent_workload.go:349-356`) | New: a Workspace reconciler per ACHAgent. It long-polls the control unit's `/host/v1/workspaces` with the HMAC host token derived from `ach-key-<uid>`. It then creates, replaces and deletes execution units, and `PUT`s or `DELETE`s registrations. The backend is a StatefulSet today and could be OpenShell or Agent Sandbox later; that choice is the operator's. |
 | No finalizer; cleanup relies on garbage collection of owner references, which the Harness sets today | Execution units get the ACHAgent owner reference from the operator (Kubernetes backend). Backends that cannot be owned, such as OpenShell sandboxes, need a finalizer that selects by agent UID and tolerates retries and gateway outages (PoC evidence `13-agent-delete.txt`). |
 | `WorkloadReady` read from control pod status only | Unchanged. Optionally also surfaces execution units' states from `/host/v1/workspaces`. |
-| Config rendering and the vendored-schema drift test (`schema_test.go:42`) | Rendered for `workspace-v2` (decision D1). The fixture `testdata/pr-review-runtime.json` and the render tests change together with it. |
+| Config rendering and the vendored-schema drift test (`schema_test.go:42`) | Rendered for `workspace-v3` (decision D1). The fixture `testdata/pr-review-runtime.json` and the render tests change together with it. |
 
 Operator behaviour that is unchanged:
 
@@ -83,7 +83,7 @@ Operator behaviour that is unchanged:
 3. **Self-minted instance ID:** `X-ACH-Instance-Id`, and the writer identity in storage.
 4. **Facade ownership check:** based on Harness state.
 5. **Bootstrap from `ACH_BOOTSTRAP_JSON`:** accepted as an alternative to the file.
-6. **Schema `workspace-v2`:** infrastructure fields removed, `infrastructure.facadeEndpoint` added.
+6. **Schema `workspace-v3`:** infrastructure fields removed, `infrastructure.facadeEndpoint` added.
 7. **Removals:** `harness/kubernetes.py` and the Kubernetes paths in `workspaces.py` and `control.py`.
 8. **Reference single-unit host:** a container-stack example under `examples/hosts/`, outside the contract. It contains:
    - the runtime in the `agent` role;

@@ -414,7 +414,7 @@ The `capability` block replaces the `ach` block and the root `model`:
 
 | ID | Question | Proposal |
 |---|---|---|
-| D1 | Should removing the infrastructure fields bump the schema to `workspace-v2`, or should v1 tolerate and ignore them during migration? | **Decided 2026-10-26:** bump to `workspace-v2`. The vendored schema and drift test in the operator move together with it. |
+| D1 | Should removing the infrastructure fields bump the schema to `workspace-v3`, or should v1 tolerate and ignore them during migration? | **Decided 2026-10-26:** bump to `workspace-v3`. The vendored schema and drift test in the operator move together with it. |
 | D2 | Who owns the instance identity? | **Decided 2026-10-26:** the execution process mints it (5.6). |
 | D3 | Where does the host API live? | **Decided 2026-10-26:** `control` `8081` under `/host/v1`. |
 | D4 | Pull or push for Workspace demand? | **Decided 2026-10-26: pull with long-poll**, returning full desired state each time (level-triggered). The runtime never calls the host. Plain periodic polling is an allowed degraded form. |

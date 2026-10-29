@@ -71,7 +71,7 @@ async def test_generic_stable_id_required_and_priority() -> None:
         max_invocation_seconds=20, workspace_max_concurrent_sessions=1,
         channel_concurrency={"hooks": 1}, clock=lambda: datetime.now(timezone.utc), runner=_hold_runner,
     )
-    app = create_app(SimpleNamespace(config=SimpleNamespace(channels=[channel]), admission=admission, _stopping=False))
+    app = create_app(SimpleNamespace(config=SimpleNamespace(channels=[channel], agent=SimpleNamespace(name="test-agent"), identity_environment="test-env"), admission=admission, _stopping=False))
     app.state.ready = True
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://control") as client:
@@ -93,7 +93,7 @@ async def _hold_runner(event, ticket) -> None:
 
 def _deferred_app():
     channel = _channel()
-    config = SimpleNamespace(channels=[channel])
+    config = SimpleNamespace(channels=[channel], agent=SimpleNamespace(name="test-agent"), identity_environment="test-env")
     entered = asyncio.Event()
     release = asyncio.Event()
 
@@ -219,7 +219,7 @@ async def test_auth_body_cap_and_ignored_gitlab(monkeypatch: pytest.MonkeyPatch)
         max_invocation_seconds=20, workspace_max_concurrent_sessions=1,
         channel_concurrency={"hooks": 1}, clock=lambda: datetime.now(timezone.utc), runner=_hold_runner,
     )
-    app = create_app(SimpleNamespace(config=SimpleNamespace(channels=[gitlab]), admission=admission, _stopping=False))
+    app = create_app(SimpleNamespace(config=SimpleNamespace(channels=[gitlab], agent=SimpleNamespace(name="test-agent"), identity_environment="test-env"), admission=admission, _stopping=False))
     app.state.ready = True
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://control") as client:
@@ -287,7 +287,7 @@ async def test_github_legacy_payload_auth_and_identity(monkeypatch: pytest.Monke
             )
 
     app = create_app(SimpleNamespace(
-        config=SimpleNamespace(channels=[channel]), admission=Admission(), _stopping=False
+        config=SimpleNamespace(channels=[channel], agent=SimpleNamespace(name="test-agent"), identity_environment="test-env"), admission=Admission(), _stopping=False
     ))
     app.state.ready = True
     raw = json.dumps(payload, separators=(",", ":")).encode()

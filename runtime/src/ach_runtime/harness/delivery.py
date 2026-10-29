@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 
@@ -27,6 +28,11 @@ MAX_RESPONSE_BYTES = 1024 * 1024
 Prepare = Callable[[AdmissionTicket, WorkspaceEndpoint], Awaitable[StartRequest]]
 Clock = Callable[[], datetime]
 Alarm = Callable[[str, AdmissionTicket | RecoveredRun], None]
+
+
+# A connect that hangs must fail as httpx.ConnectTimeout (nothing sent) before the overall
+# asyncio deadline fires as a bare TimeoutError (ambiguous).
+_CONNECT_TIMEOUT_SECONDS = 10.0
 
 
 class DeliveryError(RuntimeError):
@@ -107,7 +113,8 @@ class Delivery:
         timeout = self._remaining(deadline_at) if deadline_at is not None else 10.0
         request = self.client.build_request(
             method, endpoint.base_url.rstrip("/") + path,
-            headers=self._headers(endpoint), json=payload, timeout=timeout,
+            headers=self._headers(endpoint), json=payload,
+            timeout=httpx.Timeout(timeout, connect=min(timeout, _CONNECT_TIMEOUT_SECONDS)),
         )
         response: httpx.Response | None = None
         try:
@@ -163,7 +170,12 @@ class Delivery:
             config_version = public.config_version
             if ticket.namespace != public.agent.namespace or ticket.agent_uid != public.agent.uid:
                 raise DeliveryError("ticket identity does not match PublicConfig")
-            self._remaining(ticket.deadline_at)
+            remaining = self._remaining(ticket.deadline_at)
+            if not self.manager.gateway_available() and not await self.manager.wait_gateway(
+                time.monotonic() + remaining
+            ):
+                # Nothing has been sent, so waiting for the gateway leaves no ambiguity.
+                raise GatewayUnavailable("gateway_unavailable")
             endpoint = await asyncio.wait_for(self._endpoint(ticket), self._remaining(ticket.deadline_at))
             self._remaining(ticket.deadline_at)
             request = await asyncio.wait_for(
@@ -189,15 +201,17 @@ class Delivery:
                 except DeliveryError as rejection:
                     self.alarm(str(rejection), ticket)
                     raise StartOutcomeUnknown("could not prove exact Started receipt") from rejection
-                except (httpx.ConnectError, httpx.ConnectTimeout) as error:
-                    # Nothing was sent: retrying is safe until the admission deadline.
-                    if self._remaining(ticket.deadline_at) <= delay:
-                        if not self.manager.gateway_available():
-                            raise GatewayUnavailable("gateway_unavailable") from error
-                        raise DeliveryError("workspace unreachable") from error
-                    await asyncio.sleep(delay)
-                    delay = min(delay * 2, 5.0)
                 except (httpx.TransportError, TimeoutError) as first_error:
+                    if isinstance(
+                        first_error, (httpx.ConnectError, httpx.ConnectTimeout)
+                    ) and not self.manager.gateway_available():
+                        # The connection was refused while the host reports its gateway
+                        # down: nothing was sent, so retrying is safe until the deadline.
+                        if self._remaining(ticket.deadline_at) <= delay:
+                            raise GatewayUnavailable("gateway_unavailable") from first_error
+                        await asyncio.sleep(delay)
+                        delay = min(delay * 2, 5.0)
+                        continue
                     # An ambiguous first send may only be resolved against the same pod's
                     # retained run record, followed by an identical idempotent Start.
                     try:

@@ -40,6 +40,9 @@ class Manager:
     def gateway_available(self):
         return True
 
+    async def wait_gateway(self, deadline):
+        return self.gateway_available()
+
     def report_lost(self, endpoint):
         self.lost.append(endpoint)
 
@@ -477,6 +480,12 @@ async def test_recovered_delivery_status_validation(public_config_fixture):
         Delivery._validate_status(valid, pinned)
 
 
+def _up_then_down():
+    """Gateway reported available at admission, down once the connection fails."""
+    answers = iter([True])
+    return lambda: next(answers, False)
+
+
 def _real_clock():
     started = time.monotonic()
     return lambda: NOW + timedelta(seconds=time.monotonic() - started)
@@ -493,7 +502,9 @@ async def test_connect_failure_is_retried_until_it_succeeds(public_config_fixtur
         return pod_response(202, json={"invocationId": payload["invocationId"], "sessionRef": payload["sessionRef"],
                                        "runId": "run-1", "configVersion": payload["configVersion"]})
 
-    delivery = make_delivery(handler, public_config_fixture, clock=_real_clock())
+    manager = Manager(public_config_fixture.agent.uid)
+    manager.gateway_available = _up_then_down()
+    delivery = make_delivery(handler, public_config_fixture, clock=_real_clock(), manager=manager)
     started = await delivery.start(ticket(seconds=30))
     assert calls == ["/start", "/start", "/start"]
     assert started.run_id == "run-1"
@@ -507,8 +518,77 @@ async def test_connect_failure_until_deadline_fails_without_replay(public_config
         raise httpx.ConnectError("refused", request=request)
 
     manager = Manager(public_config_fixture.agent.uid)
-    manager.gateway_available = lambda: False
+    manager.gateway_available = _up_then_down()
     delivery = make_delivery(handler, public_config_fixture, clock=_real_clock(), manager=manager)
     with pytest.raises(GatewayUnavailable, match="gateway_unavailable"):
         await delivery.start(ticket(seconds=2))
     assert set(calls) == {"/start"}
+
+
+async def test_connect_failure_with_the_gateway_available_is_not_retried(public_config_fixture):
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        raise httpx.ConnectError("refused", request=request)
+
+    delivery = make_delivery(handler, public_config_fixture, clock=_real_clock())
+    with pytest.raises(StartOutcomeUnknown):
+        await delivery.start(ticket(seconds=30))
+    assert calls.count("/start") == 1
+
+
+async def test_start_waits_for_the_gateway_before_sending_anything(public_config_fixture):
+    calls: list[str] = []
+    waits: list[float] = []
+    state = {"up": False}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        payload = json.loads(request.content)
+        return pod_response(202, json={"invocationId": payload["invocationId"], "sessionRef": payload["sessionRef"],
+                                       "runId": "run-1", "configVersion": payload["configVersion"]})
+
+    manager = Manager(public_config_fixture.agent.uid)
+    manager.gateway_available = lambda: state["up"]
+
+    async def wait_gateway(deadline):
+        waits.append(deadline)
+        state["up"] = True
+        return True
+
+    manager.wait_gateway = wait_gateway
+    delivery = make_delivery(handler, public_config_fixture, clock=_real_clock(), manager=manager)
+    started = await delivery.start(ticket(seconds=30))
+    assert len(waits) == 1 and started.run_id == "run-1" and calls == ["/start"]
+
+
+async def test_start_fails_without_sending_when_the_gateway_stays_down(public_config_fixture):
+    calls: list[str] = []
+    manager = Manager(public_config_fixture.agent.uid)
+    manager.gateway_available = lambda: False
+
+    async def wait_gateway(deadline):
+        return False
+
+    manager.wait_gateway = wait_gateway
+    delivery = make_delivery(
+        lambda request: calls.append(request.url.path), public_config_fixture, clock=_real_clock(), manager=manager
+    )
+    with pytest.raises(GatewayUnavailable):
+        await delivery.start(ticket(seconds=30))
+    assert calls == []
+
+
+async def test_connect_timeout_is_bounded_below_the_overall_deadline(public_config_fixture):
+    seen: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.extensions["timeout"]["connect"])
+        payload = json.loads(request.content)
+        return pod_response(202, json={"invocationId": payload["invocationId"], "sessionRef": payload["sessionRef"],
+                                       "runId": "run-1", "configVersion": payload["configVersion"]})
+
+    delivery = make_delivery(handler, public_config_fixture, clock=_real_clock())
+    await delivery.start(ticket(seconds=30))
+    assert seen and seen[0] <= 10

@@ -583,6 +583,14 @@ class WorkspaceManager:
     def gateway_available(self) -> bool:
         return self._source.gateway_available()
 
+    async def wait_gateway(self, deadline: float) -> bool:
+        """True once the gateway is available; False if still down at the absolute
+        `time.monotonic()` `deadline`. A source that cannot signal a return just reports."""
+        wait = getattr(self._source, "wait_gateway", None)
+        if wait is None:
+            return self._source.gateway_available()
+        return await wait(deadline)
+
     async def _adopt_when_gateway_returns(self, ref: WorkspaceRef, placement: Placement) -> None:
         wait = getattr(self._source, "wait_gateway", None)
         while not self._source.gateway_available():

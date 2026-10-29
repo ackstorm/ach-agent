@@ -10,11 +10,11 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-29-ach-agent-design.md` (copied into the new repo in Task 1). Plan 2 (operator) and Plan 3 (chart, e2e, release) follow.
 
-**Assumed answers (confirm before Task 1):** the existing public repo `ackstorm/ach-agent` is reused; its history is kept and a commit retires the legacy tree; the first release is `v0.18.0`; the old local checkout moves to `../ach-agent-legacy`.
+**Assumed answers (confirm before Task 1):** the existing public repo `ackstorm/ach-agent` is reused; its history is kept and a commit retires the legacy tree; the first release is `v0.19.0`; the old local checkout moves to `../ach-agent-legacy`.
 
 ## Global Constraints
 
-- Repo `github.com/ackstorm/ach-agent`, local path `/home/coder/workspace/local/ach-agent`, MIT licence. Runtime lives in `runtime/`; Python package stays `ach_runtime`; distribution name `ach-agent-runtime`; version `0.18.0`.
+- Repo `github.com/ackstorm/ach-agent`, local path `/home/coder/workspace/local/ach-agent`, MIT licence. Runtime lives in `runtime/`; Python package stays `ach_runtime`; distribution name `ach-agent-runtime`; version `0.19.0`.
 - Config schema literal `workspace-v3` for `RuntimeConfig.schemaVersion` and `ExecutionBootstrap.bootstrapVersion`. One version; no compatibility with `workspace-v2`.
 - The runtime never calls the Kubernetes API or the OpenShell gateway API.
 - No credential value in the config document, the public projection, the catalog sent to execution, or logs. Credentials are env names (`{"env": NAME}`), resolved only in the control role.
@@ -129,7 +129,7 @@ If `git archive` fails because a listed path does not exist at `$SRC_SHA`, drop 
 
 - [ ] **Step 4: Rename the distribution, add repo files and the full-suite target**
 
-`runtime/pyproject.toml`: set `name = "ach-agent-runtime"`, `version = "0.18.0"`, description `"ach-agent runtime: control and execution roles (workspace-v3)"`. Update `tests/test_version.py` if it asserts the old name or version.
+`runtime/pyproject.toml`: set `name = "ach-agent-runtime"`, `version = "0.19.0"`, description `"ach-agent runtime: control and execution roles (workspace-v3)"`. Update `tests/test_version.py` if it asserts the old name or version.
 
 Append to `runtime/Makefile` (and add `test-unit` to `.PHONY`):
 

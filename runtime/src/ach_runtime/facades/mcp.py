@@ -32,7 +32,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from ach_runtime.facades._proxy import ProcessIdentity, forward, join_tail
+from ach_runtime.facades._proxy import ProcessIdentity, forward, has_encoded_body, join_tail
 from ach_runtime.harness.tokens import WorkspaceAuthenticationFailed, authenticate_facade
 
 _METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
@@ -137,7 +137,7 @@ class McpFacade:
                 return JSONResponse({"detail": "unknown or excluded mcp server"}, status_code=404)
 
             body = await request.body()
-            if exclude_tools and request.headers.get("content-encoding", "identity").lower() != "identity":
+            if exclude_tools and has_encoded_body(request.headers):
                 # An encoded body cannot be inspected for an excluded tools/call.
                 return JSONResponse({"detail": "encoded request body not accepted"}, status_code=415)
             if _excluded_tool_call(body, exclude_tools):

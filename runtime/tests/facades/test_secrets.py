@@ -991,3 +991,28 @@ async def test_facade_does_not_forward_the_client_accept_encoding() -> None:
                 headers={"accept-encoding": "x-unsupported"})
 
     assert "x-unsupported" not in seen["accept-encoding"]
+
+
+async def test_mcp_facade_refuses_an_excluded_tool_call_hidden_behind_a_second_content_encoding() -> None:
+    import gzip
+    import json
+
+    called = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return _streamed(200, b"{}")
+
+    facade = _mcp_facade(
+        handler=handler, servers={"m": "https://ach.example.com/mcp/m"}, exclude_tools=frozenset({"m.secret"})
+    )
+    token = facade_token(KEY, "owned-ws")
+    body = gzip.compress(json.dumps(
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "m.secret"}}).encode())
+    resp = await _call(
+        facade.app(), "POST", f"/t/{token}/mcp/m", content=body,
+        headers=[("content-encoding", "identity"), ("content-encoding", "gzip")],
+    )
+    assert resp.status_code == 415
+    assert not called

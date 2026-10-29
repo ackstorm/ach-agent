@@ -210,7 +210,7 @@ func newHost(t *testing.T, rt *fakeRuntime, units *fakeUnits) *Host {
 		Spec: achv1alpha1.AgentSpec{ProfileRef: achv1alpha1.LocalObjectRef{Name: "prof"}}}
 	p := &achv1alpha1.AgentProfile{ObjectMeta: metav1.ObjectMeta{Name: "prof", Namespace: "ach"}}
 	scheme := testScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(a, p).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(a, p).WithStatusSubresource(a).Build()
 	srv := httptest.NewServer(rt.handler())
 	t.Cleanup(srv.Close)
 	return &Host{
@@ -566,6 +566,16 @@ func (f *fakeStatus) SetCondition(_ context.Context, _ types.NamespacedName, c m
 	return nil
 }
 
+func condsOf(f *fakeStatus, typ string) []metav1.Condition {
+	var out []metav1.Condition
+	for _, c := range f.conds {
+		if c.Type == typ {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 type refusal struct{ error }
 
 func (refusal) StatusReason() string { return "SandboxPolicyRejected" }
@@ -581,16 +591,17 @@ func TestPass_RefusedCreateIsReportedOnTheAgentAndClearedOnSuccess(t *testing.T)
 	if _, err := h.Pass(context.Background(), l); err == nil {
 		t.Fatal("a refused create must fail the pass")
 	}
-	if len(st.conds) != 1 || st.conds[0].Type != "Ready" || st.conds[0].Status != metav1.ConditionFalse ||
-		st.conds[0].Reason != "SandboxPolicyRejected" || !strings.Contains(st.conds[0].Message, "reserved") {
+	if rc := condsOf(st, "Ready"); len(rc) != 1 || rc[0].Status != metav1.ConditionFalse ||
+		rc[0].Reason != "SandboxPolicyRejected" || !strings.Contains(rc[0].Message, "reserved") {
 		t.Fatalf("conditions = %+v", st.conds)
 	}
+	setReady(t, h, "SandboxPolicyRejected") // what the status writer stored
 
 	u.createErr = nil
 	if _, err := h.Pass(context.Background(), l); err != nil {
 		t.Fatal(err)
 	}
-	if len(st.conds) != 2 || st.conds[1].Status != metav1.ConditionUnknown || st.conds[1].Reason != "SandboxCreated" {
+	if rc := condsOf(st, "Ready"); len(rc) != 2 || rc[1].Status != metav1.ConditionUnknown || rc[1].Reason != "SandboxCreated" {
 		t.Fatalf("conditions = %+v, want the refusal cleared", st.conds)
 	}
 	// An ordinary error is not the Agent author's to fix: nothing is reported.
@@ -600,8 +611,8 @@ func TestPass_RefusedCreateIsReportedOnTheAgentAndClearedOnSuccess(t *testing.T)
 	st2 := &fakeStatus{}
 	h2.Status = st2
 	_, _ = h2.Pass(context.Background(), l)
-	if len(st2.conds) != 0 {
-		t.Fatalf("conditions = %+v, want none", st2.conds)
+	if rc := condsOf(st2, "Ready"); len(rc) != 0 {
+		t.Fatalf("conditions = %+v, want no Ready", st2.conds)
 	}
 }
 
@@ -712,5 +723,107 @@ func TestSync_InventoryWithTheGatewayDownIsNotSentAndTheOutageIsReported(t *test
 	}
 	if got := rt.gatewayCalls(); len(got) != 1 || got[0] {
 		t.Fatalf("gateway reports = %v, want available=false", got)
+	}
+}
+
+func setReady(t *testing.T, h *Host, reason string) {
+	t.Helper()
+	var a achv1alpha1.Agent
+	if err := h.Reader.Get(context.Background(), h.Agent, &a); err != nil {
+		t.Fatal(err)
+	}
+	a.Status.Conditions = []metav1.Condition{{Type: "Ready", Status: metav1.ConditionFalse, Reason: reason, LastTransitionTime: metav1.Now()}}
+	if err := h.Client.Status().Update(context.Background(), &a); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPass_ARestartedLoopClearsARefusalAnEarlierLoopWrote(t *testing.T) {
+	rt, u := &fakeRuntime{}, newFakeUnits()
+	h := newHost(t, rt, u) // a fresh Host: it never saw the refusal itself
+	st := &fakeStatus{}
+	h.Status = st
+	setReady(t, h, "SandboxPolicyRejected")
+	if _, err := h.Pass(context.Background(), listing(ws("w1", "running", nil))); err != nil {
+		t.Fatal(err)
+	}
+	if rc := condsOf(st, "Ready"); len(rc) != 1 || rc[0].Reason != "SandboxCreated" {
+		t.Fatalf("conditions = %+v, want the refusal cleared", st.conds)
+	}
+	// Any other Ready state is left alone.
+	h2 := newHost(t, rt, newFakeUnits())
+	st2 := &fakeStatus{}
+	h2.Status = st2
+	setReady(t, h2, "SecretMissing")
+	if _, err := h2.Pass(context.Background(), listing(ws("w1", "running", nil))); err != nil {
+		t.Fatal(err)
+	}
+	if rc := condsOf(st2, "Ready"); len(rc) != 0 {
+		t.Fatalf("conditions = %+v, want Ready untouched", st2.conds)
+	}
+}
+
+func TestPass_NewHostWritesGatewayAvailableAndRetriesAFailedWrite(t *testing.T) {
+	rt, u := &fakeRuntime{}, newFakeUnits()
+	h := newHost(t, rt, u)
+	st := &failingStatus{fakeStatus: &fakeStatus{}, fail: 1}
+	h.Status = st
+	for range 3 {
+		if _, err := h.Pass(context.Background(), listing()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if gc := condsOf(st.fakeStatus, "GatewayAvailable"); len(gc) != 1 || gc[0].Status != metav1.ConditionTrue {
+		t.Fatalf("conditions = %+v, want one True after the failed first write", st.conds)
+	}
+	if st.attempts != 2 {
+		t.Fatalf("attempts = %d, want 2 (one failure, one retry, then settled)", st.attempts)
+	}
+}
+
+type failingStatus struct {
+	*fakeStatus
+	fail, attempts int
+}
+
+func (f *failingStatus) SetCondition(ctx context.Context, k types.NamespacedName, c metav1.Condition) error {
+	f.attempts++
+	if f.attempts <= f.fail {
+		return errors.New("apiserver unavailable")
+	}
+	return f.fakeStatus.SetCondition(ctx, k, c)
+}
+
+func TestSync_NewEpochWhileDownReportsTheOutageAgain(t *testing.T) {
+	rt, u := &fakeRuntime{listing: Listing{Cursor: "e1.1", RuntimeEpoch: "e1"}}, newFakeUnits()
+	u.err = errDown
+	h := newHost(t, rt, u)
+	s := &State{}
+	_ = h.Sync(context.Background(), s) // epoch e1, down: reported false
+	if got := rt.gatewayCalls(); len(got) != 1 || got[0] {
+		t.Fatalf("gateway reports = %v, want [false]", got)
+	}
+	// The control container restarted in place: a new epoch that starts with the gateway up.
+	rt.mu.Lock()
+	rt.listing = Listing{Cursor: "e2.1", RuntimeEpoch: "e2", Adopting: true}
+	rt.mu.Unlock()
+	_ = h.Sync(context.Background(), s)
+	if got := rt.gatewayCalls(); len(got) != 2 || got[1] {
+		t.Fatalf("gateway reports = %v, want a second available=false for the new epoch", got)
+	}
+}
+
+func TestSync_InventoryLoadFailureDoesNotMarkTheGatewayAvailable(t *testing.T) {
+	rt, u := &fakeRuntime{listing: Listing{Cursor: "e1.1", RuntimeEpoch: "e1", Adopting: true}}, newFakeUnits()
+	h := newHost(t, rt, u)
+	st := &fakeStatus{}
+	h.Status = st
+	h.gatewayDown = true
+	h.UID = "other" // load fails with errAgentGone, not a gateway error
+	if err := h.Sync(context.Background(), &State{}); err == nil {
+		t.Fatal("want the load error")
+	}
+	if !h.gatewayDown || len(st.conds) != 0 {
+		t.Fatalf("gatewayDown = %v conditions = %+v: a load failure is no evidence about the gateway", h.gatewayDown, st.conds)
 	}
 }

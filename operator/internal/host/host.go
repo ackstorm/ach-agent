@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -48,11 +49,13 @@ type Host struct {
 	Status StatusWriter
 	Log    logr.Logger
 
-	createFailure string // reason of the Ready=False this loop last wrote for a refused create
-
 	gatewayDown     bool  // the last backend call saw the gateway unavailable
 	gatewayReported *bool // the availability the control unit was last told, nil: never told
+	conditionDown   *bool // the outage state the GatewayAvailable condition last got, nil: never written
 }
+
+// refusalReasons are the Ready reasons this loop writes for a refused create.
+var refusalReasons = map[string]bool{"SandboxPolicyRejected": true, "SandboxResourcesUnsupported": true}
 
 func (h *Host) load(ctx context.Context) (*achv1alpha1.Agent, *achv1alpha1.AgentProfile, error) {
 	var a achv1alpha1.Agent
@@ -71,7 +74,8 @@ func (h *Host) load(ctx context.Context) (*achv1alpha1.Agent, *achv1alpha1.Agent
 
 // create loads the agent and profile, then starts the unit. A create the backend refuses for
 // a reason the Agent's author can fix (Backend errors implementing StatusReason) is written to
-// the Agent's Ready condition; the next successful create clears it.
+// the Agent's Ready condition; the next successful create clears it, judged from the live
+// Agent so a restarted loop clears a refusal an earlier loop wrote.
 func (h *Host) create(ctx context.Context, w Workspace) error {
 	a, p, err := h.load(ctx)
 	if err != nil {
@@ -81,21 +85,34 @@ func (h *Host) create(ctx context.Context, w Workspace) error {
 	var r reasoned
 	switch {
 	case errors.As(err, &r) && h.Status != nil:
-		h.createFailure = r.StatusReason()
+		reason := r.StatusReason()
 		if serr := h.Status.SetCondition(ctx, h.Agent, metav1.Condition{
-			Type: "Ready", Status: metav1.ConditionFalse, Reason: h.createFailure, Message: err.Error(), ObservedGeneration: a.Generation,
+			Type: "Ready", Status: metav1.ConditionFalse, Reason: reason, Message: err.Error(), ObservedGeneration: a.Generation,
 		}); serr != nil {
-			h.Log.Error(serr, "report the refused sandbox on the Agent", "reason", h.createFailure)
+			h.Log.Error(serr, "report the refused sandbox on the Agent", "reason", reason)
 		}
-	case err == nil && h.createFailure != "" && h.Status != nil:
-		h.createFailure = ""
-		if serr := h.Status.SetCondition(ctx, h.Agent, metav1.Condition{
-			Type: "Ready", Status: metav1.ConditionUnknown, Reason: "SandboxCreated", ObservedGeneration: a.Generation,
-		}); serr != nil {
-			h.Log.Error(serr, "clear the refused-sandbox condition")
-		}
+	case err == nil && h.Status != nil:
+		h.clearRefusal(ctx, a.Generation)
 	}
 	return err
+}
+
+// clearRefusal resets a Ready=False refused-sandbox condition on the live Agent.
+func (h *Host) clearRefusal(ctx context.Context, generation int64) {
+	var live achv1alpha1.Agent
+	if err := h.Reader.Get(ctx, h.Agent, &live); err != nil {
+		h.Log.Error(err, "read the Agent to clear the refused-sandbox condition")
+		return
+	}
+	c := apimeta.FindStatusCondition(live.Status.Conditions, "Ready")
+	if c == nil || c.Status != metav1.ConditionFalse || !refusalReasons[c.Reason] {
+		return
+	}
+	if serr := h.Status.SetCondition(ctx, h.Agent, metav1.Condition{
+		Type: "Ready", Status: metav1.ConditionUnknown, Reason: "SandboxCreated", ObservedGeneration: generation,
+	}); serr != nil {
+		h.Log.Error(serr, "clear the refused-sandbox condition")
+	}
 }
 
 func (h *Host) ensureRunning(ctx context.Context, w Workspace) (pending bool, err error) {
@@ -165,24 +182,25 @@ func (h *Host) retire(ctx context.Context, w Workspace) (pending bool, err error
 // GatewayDown reports whether the last backend call found the gateway unavailable.
 func (h *Host) GatewayDown() bool { return h.gatewayDown }
 
-// noteGateway records the outcome of the backend calls of one step and, on a transition,
-// tells the Agent's status; syncGateway tells the control unit.
+// noteGateway records the outcome of the backend calls of one step and makes the Agent's
+// GatewayAvailable condition match it. The condition is written on the first pass of every
+// Host and whenever the state differs from what was last written; a failed write is retried
+// by the next pass. syncGateway tells the control unit.
 func (h *Host) noteGateway(ctx context.Context, err error) {
-	down := errors.Is(err, ErrGatewayUnavailable)
-	if down == h.gatewayDown {
+	h.gatewayDown = errors.Is(err, ErrGatewayUnavailable)
+	if h.Status == nil || (h.conditionDown != nil && *h.conditionDown == h.gatewayDown) {
 		return
 	}
-	h.gatewayDown = down
-	if h.Status == nil {
-		return
-	}
+	down := h.gatewayDown
 	cond := metav1.Condition{Type: "GatewayAvailable", Status: metav1.ConditionTrue, Reason: "GatewayAvailable"}
 	if down {
 		cond = metav1.Condition{Type: "GatewayAvailable", Status: metav1.ConditionFalse, Reason: "GatewayUnavailable", Message: err.Error()}
 	}
 	if serr := h.Status.SetCondition(ctx, h.Agent, cond); serr != nil {
 		h.Log.Error(serr, "report the gateway on the Agent")
+		return
 	}
+	h.conditionDown = &down
 }
 
 // syncGateway tells the control unit about a change of the gateway's availability. A failed
@@ -262,6 +280,7 @@ func (h *Host) Inventory(ctx context.Context) ([]InventoryUnit, error) {
 		return nil, err
 	}
 	units, err := h.Backend.Live(ctx)
+	h.noteGateway(ctx, err)
 	if units == nil {
 		units = []InventoryUnit{}
 	}
@@ -286,9 +305,12 @@ func (h *Host) Sync(ctx context.Context, s *State) error {
 		s.Cursor = ""
 		return err
 	}
+	if l.RuntimeEpoch != s.Epoch {
+		// A new runtime epoch starts with the gateway available: tell it the real state.
+		h.gatewayReported = nil
+	}
 	if l.RuntimeEpoch != s.Epoch && l.Adopting {
 		units, err := h.Inventory(ctx)
-		h.noteGateway(ctx, err)
 		if err != nil {
 			h.syncGateway(ctx) // best effort: the inventory itself cannot be sent
 			return err
@@ -301,8 +323,6 @@ func (h *Host) Sync(ctx context.Context, s *State) error {
 			return err
 		}
 		s.Epoch, s.Cursor = l.RuntimeEpoch, ""
-		// A new inventory starts a new epoch on the control unit: tell it the gateway's state.
-		h.gatewayReported = nil
 		h.syncGateway(ctx)
 		return nil
 	}

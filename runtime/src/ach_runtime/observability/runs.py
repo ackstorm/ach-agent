@@ -96,6 +96,7 @@ AnomalyKind = Literal[
     "configuration_invalid", "limit_reached", "artifact_publication_failed",
     "suspend_hook_failed", "usage_invalid", "workspace_start_failed", "workspace_stop_failed",
     "workspace_unhosted", "workspace_retire_timeout", "lifecycle_tick_failed",
+    "gateway_unavailable",
 ]
 
 

@@ -175,42 +175,53 @@ class Delivery:
             ):
                 raise DeliveryError("prepared StartRequest does not match immutable ticket/config")
             payload = request.model_dump(by_alias=True, mode="json")
-            try:
-                return await self._started(endpoint, payload, ticket.deadline_at)
-            except _StartRejected:
-                raise
-            except DeliveryError as rejection:
-                self.alarm(str(rejection), ticket)
-                raise StartOutcomeUnknown("could not prove exact Started receipt") from rejection
-            except (httpx.TransportError, TimeoutError) as first_error:
-                # An ambiguous first send may only be resolved against the same pod's
-                # retained run record, followed by an identical idempotent Start.
+            delay = 0.5
+            while True:
                 try:
-                    current_endpoint = await asyncio.wait_for(
-                        self._endpoint(ticket), self._remaining(ticket.deadline_at)
-                    )
-                    if current_endpoint.instance_id != endpoint.instance_id:
-                        raise StartOutcomeUnknown("Workspace instance ID changed after ambiguous Start")
-                    status_code, raw = await self._request(
-                        current_endpoint, "GET", f"/status/{ticket.invocation_id}",
-                        deadline_at=ticket.deadline_at,
-                    )
-                    if status_code != 200:
-                        raise StartOutcomeUnknown("no retained run record proves Start outcome")
-                    run_status = RunStatus.model_validate(self._json(raw))
-                    self._validate_status(run_status, request)
-                    # preparing/sending can have a run ID before native acceptance;
-                    # replaying the exact body to the same pod waits for cached Started.
-                    # Re-read ownership again immediately before the only permitted retry.
-                    retry_endpoint = await asyncio.wait_for(
-                        self._endpoint(ticket), self._remaining(ticket.deadline_at)
-                    )
-                    if retry_endpoint.instance_id != endpoint.instance_id:
-                        raise StartOutcomeUnknown("Workspace instance ID changed before cached retry")
-                    return await self._started(retry_endpoint, payload, ticket.deadline_at)
-                except Exception as recovery_error:
-                    self.alarm(str(recovery_error), ticket)
-                    raise StartOutcomeUnknown("could not prove exact Started receipt") from first_error
+                    return await self._started(endpoint, payload, ticket.deadline_at)
+                except _StartRejected:
+                    raise
+                except DeliveryError as rejection:
+                    self.alarm(str(rejection), ticket)
+                    raise StartOutcomeUnknown("could not prove exact Started receipt") from rejection
+                except (httpx.ConnectError, httpx.ConnectTimeout) as error:
+                    # Nothing was sent: retrying is safe until the admission deadline.
+                    if self._remaining(ticket.deadline_at) <= delay:
+                        raise DeliveryError(
+                            "gateway_unavailable" if not self.manager.gateway_available()
+                            else "workspace unreachable"
+                        ) from error
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, 5.0)
+                except (httpx.TransportError, TimeoutError) as first_error:
+                    # An ambiguous first send may only be resolved against the same pod's
+                    # retained run record, followed by an identical idempotent Start.
+                    try:
+                        current_endpoint = await asyncio.wait_for(
+                            self._endpoint(ticket), self._remaining(ticket.deadline_at)
+                        )
+                        if current_endpoint.instance_id != endpoint.instance_id:
+                            raise StartOutcomeUnknown("Workspace instance ID changed after ambiguous Start")
+                        status_code, raw = await self._request(
+                            current_endpoint, "GET", f"/status/{ticket.invocation_id}",
+                            deadline_at=ticket.deadline_at,
+                        )
+                        if status_code != 200:
+                            raise StartOutcomeUnknown("no retained run record proves Start outcome")
+                        run_status = RunStatus.model_validate(self._json(raw))
+                        self._validate_status(run_status, request)
+                        # preparing/sending can have a run ID before native acceptance;
+                        # replaying the exact body to the same pod waits for cached Started.
+                        # Re-read ownership again immediately before the only permitted retry.
+                        retry_endpoint = await asyncio.wait_for(
+                            self._endpoint(ticket), self._remaining(ticket.deadline_at)
+                        )
+                        if retry_endpoint.instance_id != endpoint.instance_id:
+                            raise StartOutcomeUnknown("Workspace instance ID changed before cached retry")
+                        return await self._started(retry_endpoint, payload, ticket.deadline_at)
+                    except Exception as recovery_error:
+                        self.alarm(str(recovery_error), ticket)
+                        raise StartOutcomeUnknown("could not prove exact Started receipt") from first_error
         except StartOutcomeUnknown:
             raise
 

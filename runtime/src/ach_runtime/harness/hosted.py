@@ -70,6 +70,32 @@ class HostedSource:
         self._changed = asyncio.Event()
         self._lost: Callable[[str, str | None], Awaitable[None]] | None = None
         self._tasks: set[asyncio.Task[Any]] = set()
+        self._gateway = True
+        self._gateway_back = asyncio.Event()
+        self._gateway_back.set()
+
+    # -- gateway availability (reported by the host) -----------------------------------------
+    def gateway_available(self) -> bool:
+        return self._gateway
+
+    def set_gateway(self, available: bool) -> None:
+        self._gateway = available
+        if available:
+            self._gateway_back.set()
+        else:
+            self._gateway_back.clear()
+
+    async def wait_gateway(self, deadline: float) -> bool:
+        """True once the gateway is available; False if it is still down at `deadline`
+        (absolute `time.monotonic()` value)."""
+        remaining = deadline - time.monotonic()
+        if self._gateway or remaining <= 0:
+            return self._gateway
+        try:
+            await asyncio.wait_for(self._gateway_back.wait(), remaining)
+        except TimeoutError:
+            pass
+        return self._gateway
 
     # -- change notification (every mutation wakes every waiter) ------------------------------
     def _touch(self) -> None:
@@ -304,9 +330,18 @@ def create_host_app(source: HostedSource, token: str) -> Starlette:
             return Response(status_code=422)
         return Response(status_code=source.accept_inventory(payload["runtimeEpoch"], units))
 
+    async def put_gateway(request: Request) -> Response:
+        payload = await body(request)
+        available = None if payload is None else payload.get("available")
+        if not isinstance(available, bool):
+            return JSONResponse({"error": "available must be a boolean"}, status_code=422)
+        source.set_gateway(available)
+        return Response(status_code=204)
+
     return Starlette(routes=[
         Route("/workspaces", guarded(list_workspaces), methods=["GET"]),
         Route("/workspaces/{name}/instance", guarded(put_instance), methods=["PUT"]),
         Route("/workspaces/{name}/instance", guarded(delete_instance), methods=["DELETE"]),
         Route("/inventory", guarded(put_inventory), methods=["PUT"]),
+        Route("/gateway", guarded(put_gateway), methods=["PUT"]),
     ])

@@ -127,6 +127,7 @@ def _alarm(
         "Workspace owner is not published; run ownership remains held": "run_outcome_unknown",
         "Workspace owner was lost; run outcome is unknown": "run_outcome_unknown",
         "run observation is unavailable; ownership remains held": "run_outcome_unknown",
+        "gateway_unavailable": "gateway_unavailable",
         "Harness lifecycle tick failed": "lifecycle_tick_failed",
         "Harness Workspace persistence failed": "persistence_failed",
         "Harness session persistence failed": "persistence_failed",

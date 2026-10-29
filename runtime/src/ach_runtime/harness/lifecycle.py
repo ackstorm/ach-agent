@@ -511,6 +511,8 @@ class Lifecycle:
             except Exception:
                 health_status = None
             if health_status != 200:
+                if not self.control.manager.gateway_available():
+                    return
                 self._saw_activity = True
                 await self.control.manager.recover(endpoint.ref, endpoint.instance_id)
                 return

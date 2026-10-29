@@ -425,3 +425,20 @@ async def test_oversized_launch_value_fails_before_publishing(source) -> None:
     with pytest.raises(WorkspaceAssemblyUnavailable):
         await source.place(_ref(), _name(), deadline=_deadline())
     assert source.revision == revision
+
+
+async def test_gateway_flag_is_set_by_the_host(source, client):
+    assert source.gateway_available() is True
+    response = await client.put("/gateway", json={"available": False}, headers=AUTH)
+    assert response.status_code == 204
+    assert source.gateway_available() is False
+    assert (await client.put("/gateway", json={"available": "no"}, headers=AUTH)).status_code == 422
+
+
+async def test_wait_gateway_wakes_when_the_gateway_returns(source, client):
+    await client.put("/gateway", json={"available": False}, headers=AUTH)
+    waiter = asyncio.ensure_future(source.wait_gateway(_deadline(5)))
+    await asyncio.sleep(0)
+    assert not waiter.done()
+    await client.put("/gateway", json={"available": True}, headers=AUTH)
+    assert await asyncio.wait_for(waiter, 1) is True

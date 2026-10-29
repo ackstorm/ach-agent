@@ -27,6 +27,9 @@ class _Manager:
     def report_lost(self, endpoint):
         self.lost.append(endpoint)
 
+    def gateway_available(self):
+        return True
+
     close = staticmethod(lambda ref: _close(ref))
 
     def bind_callbacks(self, *, restore=None, commit=None, **_):
@@ -204,6 +207,35 @@ def test_owner_health_failure_calls_recover_under_operation_lock() -> None:
         assert alarms == []
         assert calls.count((workspace_ref, "/healthz")) == 2
         assert calls.count((workspace_ref, "/sessions")) == 0
+        await lifecycle.close()
+
+    asyncio.run(scenario())
+
+
+def test_health_failure_does_not_recover_while_gateway_unavailable() -> None:
+    from ach_runtime.harness.workspaces import WorkspaceEndpoint, WorkspaceRef
+
+    async def scenario():
+        control = _Control()
+        ref = "a" * 64
+        endpoint = WorkspaceEndpoint(WorkspaceRef("ach", control.config.agent.uid, ref), "ws", "pod", "http://mini")
+        control.manager._active = {ref: endpoint}
+        control.manager.gateway_available = lambda: False
+        control.delivery = _Delivery()
+        recovered = []
+
+        async def mini_json(observed, method, path, payload=None):
+            return 503, {"status": "unhealthy"}
+
+        async def recover(ref, lost_instance_id):
+            recovered.append(ref)
+            return endpoint
+
+        control._mini_json = mini_json
+        control.manager.recover = recover
+        lifecycle = Lifecycle(control, alarm=lambda *_: None)
+        await lifecycle.tick(datetime(2026, 10, 1, tzinfo=UTC))
+        assert recovered == []
         await lifecycle.close()
 
     asyncio.run(scenario())

@@ -44,6 +44,9 @@ class LocalRoutingTransport(httpx.AsyncBaseTransport):
 class LocalSource:
     """`WorkspaceSource` whose units are execution apps living in this process."""
 
+    def gateway_available(self) -> bool:
+        return True
+
     def __init__(
         self, bootstrap: ExecutionBootstrap, *, verify_key: str, data_dir: Path, transport: LocalRoutingTransport
     ) -> None:

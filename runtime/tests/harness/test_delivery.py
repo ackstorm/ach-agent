@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -35,6 +36,9 @@ class Manager:
         )
         self.ensure_deadlines: list[datetime | None] = []
         self.lost: list[WorkspaceEndpoint] = []
+
+    def gateway_available(self):
+        return True
 
     def report_lost(self, endpoint):
         self.lost.append(endpoint)
@@ -471,3 +475,40 @@ async def test_recovered_delivery_status_validation(public_config_fixture):
     pinned = valid.model_copy(update={"run_id": "run-pinned"})
     with pytest.raises(DeliveryError, match="RunStatus identity"):
         Delivery._validate_status(valid, pinned)
+
+
+def _real_clock():
+    started = time.monotonic()
+    return lambda: NOW + timedelta(seconds=time.monotonic() - started)
+
+
+async def test_connect_failure_is_retried_until_it_succeeds(public_config_fixture):
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if len(calls) < 3:
+            raise httpx.ConnectError("refused", request=request)
+        payload = json.loads(request.content)
+        return pod_response(202, json={"invocationId": payload["invocationId"], "sessionRef": payload["sessionRef"],
+                                       "runId": "run-1", "configVersion": payload["configVersion"]})
+
+    delivery = make_delivery(handler, public_config_fixture, clock=_real_clock())
+    started = await delivery.start(ticket(seconds=30))
+    assert calls == ["/start", "/start", "/start"]
+    assert started.run_id == "run-1"
+
+
+async def test_connect_failure_until_deadline_fails_without_replay(public_config_fixture):
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        raise httpx.ConnectError("refused", request=request)
+
+    manager = Manager(public_config_fixture.agent.uid)
+    manager.gateway_available = lambda: False
+    delivery = make_delivery(handler, public_config_fixture, clock=_real_clock(), manager=manager)
+    with pytest.raises(DeliveryError, match="gateway_unavailable"):
+        await delivery.start(ticket(seconds=2))
+    assert set(calls) == {"/start"}

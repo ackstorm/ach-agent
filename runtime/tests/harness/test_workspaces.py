@@ -409,6 +409,25 @@ async def test_failed_adoption_keeps_the_slot_until_the_host_confirms() -> None:
     assert h.source.retire_calls == [bad_name]
 
 
+async def test_failed_adoption_is_deferred_while_gateway_unavailable() -> None:
+    h = _Harness(_config(capacity=2))
+    bad = _ref(h.config, "fa-gw")
+    h.adopt_unit(bad)
+    bad_name = _name(h.config, bad)
+    h.probe_fail.add(bad_name)
+    h.source.gateway = False
+
+    await h.manager.adopt()
+    assert bad_name not in h.source.released
+    assert bad.workspace_ref not in h.manager.active_endpoints()
+
+    h.probe_fail.clear()
+    h.source.gateway = True
+    await h.manager._adopt_when_gateway_returns(bad, h.source.adopted[0][1])
+    assert bad.workspace_ref in h.manager.active_endpoints()
+    assert bad_name not in h.source.released
+
+
 async def test_failed_adoption_with_retire_timeout_never_places() -> None:
     h = _Harness(_config(shutdown=0.05))
     bad = _ref(h.config, "fa-timeout")

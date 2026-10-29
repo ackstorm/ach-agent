@@ -142,6 +142,10 @@ class WorkspaceSource(Protocol):
     def on_lost(self, callback: Callable[[str, str | None], Awaitable[None]]) -> None:
         """Register the manager's handler for 'unit gone without being asked': (name, instance_id)."""
 
+    def gateway_available(self) -> bool:
+        """Whether the host reports its sandbox gateway as reachable. While it is not,
+        failures are expected and neither recovery nor retirement acts on them."""
+
     def close(self) -> None:
         """Called by `Control.close()`; release anything that blocks shutdown."""
 
@@ -576,6 +580,17 @@ class WorkspaceManager:
         )
         self._wake_slot_waiters()
 
+    def gateway_available(self) -> bool:
+        return self._source.gateway_available()
+
+    async def _adopt_when_gateway_returns(self, ref: WorkspaceRef, placement: Placement) -> None:
+        wait = getattr(self._source, "wait_gateway", None)
+        while not self._source.gateway_available():
+            if wait is None:
+                return
+            await wait(time.monotonic() + 30)
+        await self._adopt_one(ref, placement)
+
     async def _adopt_one(self, ref: WorkspaceRef, placement: Placement) -> None:
         key = ref.workspace_ref
         try:
@@ -588,6 +603,12 @@ class WorkspaceManager:
         except BaseException as exc:
             if isinstance(exc, asyncio.CancelledError):
                 raise
+            if not self._source.gateway_available():
+                _LOG.warning("Workspace adoption deferred: gateway unavailable: workspace_ref=%s", key)
+                task = asyncio.ensure_future(self._adopt_when_gateway_returns(ref, placement))
+                self._loss_tasks.add(task)
+                task.add_done_callback(self._loss_tasks.discard)
+                return
             _LOG.error("Workspace adoption failed: workspace_ref=%s error=%s", key, type(exc).__name__)
             # Readiness does not wait for the host's DELETE, but `ensure()` must not place
             # again before it: run the retire through `_run` so it is the ref's pending

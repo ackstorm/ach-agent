@@ -28,6 +28,7 @@ class FakeSource:
         self.adopt_gate: asyncio.Event | None = None
         self.lost: Callable[[str, str | None], Awaitable[None]] | None = None
         self._registration = 0
+        self.gateway = True
 
     def placement(self, name: str) -> Placement:
         self._registration += 1
@@ -64,6 +65,9 @@ class FakeSource:
     def serving(self, placement: Placement, instance_id: str) -> bool:
         self.events.append("serving")
         return self.serving_ok
+
+    def gateway_available(self) -> bool:
+        return self.gateway
 
     def on_lost(self, callback: Callable[[str, str | None], Awaitable[None]]) -> None:
         self.lost = callback

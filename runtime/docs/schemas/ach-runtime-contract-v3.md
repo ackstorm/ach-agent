@@ -271,6 +271,16 @@ All routes are on `control` `8081`, under `/host/v1`, and are served from proces
 - Every listed unit is adopted, regardless of `limits.maxActiveWorkspaces`: probed, checked and reconnected, and runs that are still executing are recovered (v1 §3). Adopted units count against the limit, so new Workspaces wait until enough of them close.
 - A unit that cannot be adopted is listed as `released`. That covers a unit unreachable until its probe deadline, one of another release, and one whose reconnect fails. Its uncommitted work is lost, as for any lost unit (v1 §7). Its slot stays held until the host's `DELETE`.
 
+**`PUT /host/v1/gateway`** reports whether the host's sandbox gateway is reachable. Body: `{"available": true|false}`.
+
+| Status | When |
+|---|---|
+| 204 | Recorded. |
+| 422 | `available` is missing or not a boolean. |
+
+- The flag starts `true`. While it is `false`, a failed health probe does not trigger recovery, an adoption that fails stays deferred instead of being retired, and a `Start` whose connection fails is retried with backoff until the invocation deadline.
+- When the flag returns to `true`, deferred adoptions run again.
+
 ### 5.4 Host obligations
 
 1. **Talk to the host API before readiness.** The control unit's `/readyz` waits for the inventory, so the host must not wait for that readiness before calling `/host/v1`.
@@ -281,7 +291,8 @@ All routes are on `control` `8081`, under `/host/v1`, and are served from proces
    - Remove the units of Workspaces that are not listed.
 4. **Report loss, optionally.** `DELETE` with the listed `instanceId` when a unit stops without being asked. The runtime also detects restarts and loss by itself (5.6), so this only makes recovery faster.
 5. **Clean up.** When the agent is removed, stop and delete all its execution units. The runtime may not be running at that point. Durable state in storage stays until the host or an operator deletes it.
-6. **Respect capacity.** Apart from adopted units, the runtime never lists more `running` Workspaces than `limits.maxActiveWorkspaces`. The host may delay a start, for example while waiting for capacity. A Workspace that is not registered before the invocation deadline fails that invocation (v1 §3).
+6. **Report gateway availability.** `PUT /host/v1/gateway` on every change of the gateway's availability and after each adoption inventory. The runtime defers recovery and retirement while it is `false`.
+7. **Respect capacity.** Apart from adopted units, the runtime never lists more `running` Workspaces than `limits.maxActiveWorkspaces`. The host may delay a start, for example while waiting for capacity. A Workspace that is not registered before the invocation deadline fails that invocation (v1 §3).
 
 ### 5.5 Launch spec
 

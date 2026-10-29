@@ -1,0 +1,7 @@
+# Single-node cluster for the ach-agent e2e. No host port mappings: the shared ach-e2e cluster owns 8080.
+apiVersion: kind.x-k8s.io/v1alpha4
+kind: Cluster
+name: ach-agent-e2e
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.31.0

@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: e2e-stub, namespace: ach-agent-e2e}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: e2e-stub}}
+  template:
+    metadata: {labels: {app: e2e-stub}}
+    spec:
+      containers:
+        - name: stub
+          image: ach-agent-e2e-stub:e2e
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8090}, {containerPort: 8091}, {containerPort: 8092}]
+          readinessProbe: {httpGet: {path: /healthz, port: 8090}}
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: e2e-stub, namespace: ach-agent-e2e}
+spec:
+  selector: {app: e2e-stub}
+  ports:
+    - {name: model, port: 8090}
+    - {name: mcp, port: 8091}
+    - {name: ach, port: 8092}

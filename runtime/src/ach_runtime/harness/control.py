@@ -47,7 +47,7 @@ from ach_runtime.harness.admission import (
     ScriptAdmissionTicket,
     WorkspaceOwnerLost,
 )
-from ach_runtime.harness.delivery import Delivery, StartOutcomeUnknown
+from ach_runtime.harness.delivery import Delivery, GatewayUnavailable, StartOutcomeUnknown
 from ach_runtime.observability.runs import register_secrets
 from ach_runtime.harness.hydrate import (
     HydratedCatalog,
@@ -616,6 +616,10 @@ class Control:
             # and permits while observing the pinned pod; never replay a possibly-sent
             # prompt or release uncertain active work.
             pass  # Delivery's fixed anomaly adapter counted this ambiguous Start once.
+        except GatewayUnavailable:
+            _alarm("gateway_unavailable", ticket)
+            self._prepared.pop(ticket.invocation_id, None)
+            raise
         except Exception as exc:
             if isinstance(exc, TimeoutError) and ticket.deadline_at <= _clock():
                 _alarm("invocation deadline exceeded", ticket)

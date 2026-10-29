@@ -33,6 +33,11 @@ class DeliveryError(RuntimeError):
     """The remote HTTP operation was rejected or returned an invalid contract record."""
 
 
+class GatewayUnavailable(DeliveryError):
+    """No Start was sent: the workspace was unreachable until the deadline while the host
+    reported its gateway down."""
+
+
 class StartOutcomeUnknown(DeliveryError):
     """A Start may have reached the mini, but exact engine acceptance was not proven."""
 
@@ -187,10 +192,9 @@ class Delivery:
                 except (httpx.ConnectError, httpx.ConnectTimeout) as error:
                     # Nothing was sent: retrying is safe until the admission deadline.
                     if self._remaining(ticket.deadline_at) <= delay:
-                        raise DeliveryError(
-                            "gateway_unavailable" if not self.manager.gateway_available()
-                            else "workspace unreachable"
-                        ) from error
+                        if not self.manager.gateway_available():
+                            raise GatewayUnavailable("gateway_unavailable") from error
+                        raise DeliveryError("workspace unreachable") from error
                     await asyncio.sleep(delay)
                     delay = min(delay * 2, 5.0)
                 except (httpx.TransportError, TimeoutError) as first_error:

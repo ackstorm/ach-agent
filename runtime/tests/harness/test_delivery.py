@@ -13,7 +13,7 @@ import pytest
 
 from ach_runtime.execution.wire import CancelRequest, RunStatus, Started, StartRequest
 from ach_runtime.harness.admission import AdmissionTicket
-from ach_runtime.harness.delivery import Delivery, DeliveryError, StartOutcomeUnknown
+from ach_runtime.harness.delivery import Delivery, DeliveryError, GatewayUnavailable, StartOutcomeUnknown
 from ach_runtime.harness.workspaces import WorkspaceEndpoint, WorkspaceManager, WorkspaceRef
 from fake_source import FakeSource
 
@@ -509,6 +509,6 @@ async def test_connect_failure_until_deadline_fails_without_replay(public_config
     manager = Manager(public_config_fixture.agent.uid)
     manager.gateway_available = lambda: False
     delivery = make_delivery(handler, public_config_fixture, clock=_real_clock(), manager=manager)
-    with pytest.raises(DeliveryError, match="gateway_unavailable"):
+    with pytest.raises(GatewayUnavailable, match="gateway_unavailable"):
         await delivery.start(ticket(seconds=2))
     assert set(calls) == {"/start"}

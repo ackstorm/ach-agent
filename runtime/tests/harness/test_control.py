@@ -1091,6 +1091,36 @@ async def test_start_timeout_is_limit_only_after_original_deadline(expired, monk
     assert kinds == ["invocation deadline exceeded" if expired else "run start failed"]
 
 
+async def test_gateway_unavailable_start_failure_raises_the_gateway_alarm(monkeypatch):
+    from types import SimpleNamespace
+
+    from ach_runtime.harness import control as control_module
+    from ach_runtime.harness.delivery import GatewayUnavailable
+    import ach_runtime.observability as observability
+
+    kinds: list[str] = []
+    monkeypatch.setattr(observability, "alarm", lambda kind, **_refs: kinds.append(kind))
+
+    class DownDelivery:
+        async def start(self, _ticket):
+            raise GatewayUnavailable("gateway_unavailable")
+
+    control = Control.__new__(Control)
+    control.delivery = DownDelivery()
+    control._prepared = {"inv-gw": None}
+    ticket = SimpleNamespace(
+        invocation_id="inv-gw", workspace_ref="a" * 64, session_ref="s",
+        deadline_at=datetime.now(timezone.utc) + timedelta(seconds=30),
+    )
+    event = RoutedEvent(Event("evt-gw", "channel", "kind", "source"), "workspace", "session")
+
+    with pytest.raises(GatewayUnavailable):
+        await control.run(event, ticket)
+
+    assert kinds == ["gateway_unavailable"]
+    assert "inv-gw" not in control._prepared
+
+
 @pytest.mark.parametrize("fault", [
     "401", "404", "pod", "unknown", "invocation_id", "channel", "workspace_ref",
     "session_ref", "config_version", "deadline_at", "run_id",

@@ -106,3 +106,8 @@ async def test_aclose_retires_every_unit(parts) -> None:
     await source.aclose()
     with pytest.raises(httpx.ConnectError):
         await _health(transport, placement.base_url)
+
+
+async def test_local_gateway_is_always_available(parts) -> None:
+    source, _, _ = parts
+    assert source.gateway_available() and await source.wait_gateway(time.monotonic() - 1)

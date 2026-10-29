@@ -47,6 +47,9 @@ class LocalSource:
     def gateway_available(self) -> bool:
         return True
 
+    async def wait_gateway(self, deadline: float) -> bool:
+        return True
+
     def __init__(
         self, bootstrap: ExecutionBootstrap, *, verify_key: str, data_dir: Path, transport: LocalRoutingTransport
     ) -> None:

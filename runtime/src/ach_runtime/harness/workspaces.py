@@ -146,6 +146,10 @@ class WorkspaceSource(Protocol):
         """Whether the host reports its sandbox gateway as reachable. While it is not,
         failures are expected and neither recovery nor retirement acts on them."""
 
+    async def wait_gateway(self, deadline: float) -> bool:
+        """True once the gateway is available; False if still down at the absolute
+        `time.monotonic()` `deadline`."""
+
     def close(self) -> None:
         """Called by `Control.close()`; release anything that blocks shutdown."""
 
@@ -588,17 +592,12 @@ class WorkspaceManager:
 
     async def wait_gateway(self, deadline: float) -> bool:
         """True once the gateway is available; False if still down at the absolute
-        `time.monotonic()` `deadline`. A source that cannot signal a return just reports."""
-        wait = getattr(self._source, "wait_gateway", None)
-        if wait is None:
-            return self._source.gateway_available()
-        return await wait(deadline)
+        `time.monotonic()` `deadline`."""
+        return await self._source.wait_gateway(deadline)
 
     async def _adopt_when_gateway_returns(self, ref: WorkspaceRef, placement: Placement) -> None:
         while not self._source.gateway_available():
             await self.wait_gateway(time.monotonic() + 30)
-            if not self._source.gateway_available() and getattr(self._source, "wait_gateway", None) is None:
-                await asyncio.sleep(1)
         await self._adopt_one(ref, placement)
 
     def _defer_adoption(self, ref: WorkspaceRef, placement: Placement) -> None:

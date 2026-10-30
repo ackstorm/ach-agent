@@ -120,16 +120,16 @@ Environments.
 apiVersion: ach.ackstorm.ai/v1alpha1
 kind: KeyGrant
 metadata:
-  name: ai-run-k8s-doctor
+  name: ai-run-agent-k8s-doctor
   namespace: ach
 spec:
   identity: ai.run@ackstorm.com          # exactly one email, lower-cased; no patterns
-  environments: [k8s-doctor]             # exact Environment names
+  environments: [agent-k8s-doctor]       # exact Environment names
   requesters:
     serviceAccounts:                     # exact "<namespace>/<name>"
-      - ach-agent/agent-k8s-doctor
+      - ach-agent/ach-agent-control
   budget:                                # optional, per key this grant covers
-    maxBudget: 50
+    maxBudget: 120
     budgetDuration: 30d
 status:
   conditions:
@@ -137,8 +137,8 @@ status:
       status: "True"
 ```
 
-- A grant allows every combination of its `environments` and its `requesters.serviceAccounts`. To
-  keep agents apart, write one grant per agent, as above.
+- A grant allows every combination of its `environments` and its `requesters.serviceAccounts`.
+  One grant per Environment, as above, lets each key carry its own budget.
 - A request is allowed when one grant contains its identity, Environment and requester together;
   lists from different grants are never combined.
 - Validation: `identity` is an email with no glob characters; every list has at least one exact
@@ -263,7 +263,7 @@ spec:
   capabilityServer: ach
   ach:
     baseUrl: https://api.ackstorm.ai    # https required with tokenExchange
-    environment: k8s-doctor             # required with tokenExchange
+    environment: agent-k8s-doctor       # required with tokenExchange
     keyFrom:
       tokenExchange:
         identity: ai.run@ackstorm.com
@@ -281,9 +281,9 @@ CEL validation: exactly one of `tokenExchange` and `secretKeyRef`; with `tokenEx
 
 For `tokenExchange` agents only:
 
-- The control pod runs as ServiceAccount `agent-<agent name>`, created and owned by the Agent. A
-  profile's `control.serviceAccountName` does not apply to these agents, so no profile can point a
-  pod at another agent's grant. Other agents keep today's naming.
+- The control pod keeps today's ServiceAccount (the profile's `control.serviceAccountName`, else
+  `ach-agent-control-<agent uid>`). In production every agent shares `ach-agent-control`, which
+  already has S3 access through EKS Pod Identity; adding an agent needs no Terraform change.
 - A projected token is mounted: audience `spec.ach.baseUrl` without a trailing slash (it must equal
   ACH's `ACH_BASE_URL`, 4.4), `expirationSeconds: 3600`, path
   `/var/run/secrets/ach/token`. The kubelet renews it.
@@ -292,15 +292,15 @@ For `tokenExchange` agents only:
   and the operator's Secret discovery (`render.go:491`) change together.
 - No Secret is referenced, so rotation never rolls the pod.
 
-**Trust boundary.** Anyone who can create a pod in the agent's namespace can run it as
-`agent-<name>` and exchange as that agent. Recreating an Agent with the same name inherits its grant
-on purpose; creating Agents is the same privilege. The install docs require:
+**Trust boundary.** The requester is a ServiceAccount, and agents in a namespace share one. Any
+pod running that ServiceAccount, and anyone who can create pods in the namespace, can exchange
+every grant that names it. Separation between agents is therefore the namespace: agents that must
+not reach each other's Environments go in different namespaces with different ServiceAccounts. The
+install docs require a namespace dedicated to agents, where only Flux and the ach-agent operator can
+create pods, StatefulSets and Agents.
 
-- a namespace dedicated to agents, where only Flux and the ach-agent operator can create pods,
-  StatefulSets and Agents;
-- optionally, a ValidatingAdmissionPolicy (shipped in the chart, off by default) that admits a pod
-  using an `agent-*` ServiceAccount only when the StatefulSet controller creates it for a
-  StatefulSet owned by an Agent.
+Per-agent separation inside one namespace (for example by a pod label read through the pod binding
+TokenReview returns) is out of scope for now.
 
 ### 5.3 Harness
 
@@ -375,20 +375,20 @@ ach-agent:
 - Refresh at 80% on the monotonic clock; backoff clamped before expiry; not-ready after expiry.
 - Rejected credential: concurrent callers share one re-exchange; upstream 401s are not retried.
 - Redaction: JWT, `ek_` and ServiceAccount token never appear in logs from any facade.
-- Operator: `agent-<name>` ServiceAccount and projected token only for `tokenExchange`; profile
-  ServiceAccount ignored for them; CEL rejects both or neither `keyFrom` fields and `http://` with
-  `tokenExchange`.
+- Operator: projected token and `capability.ach.key.exchange` only for `tokenExchange`; the
+  control ServiceAccount is unchanged; CEL rejects both or neither `keyFrom` fields and `http://`
+  with `tokenExchange`.
 
 ## 7. Order of work and rollout
 
 1. **ACH 1.1.0** (additive): `KeyGrant` CRD, projection, operator cleanup, exchange endpoint, JWT
    resolver in forwarder, content-service and platform API, schema migration for `issued_via` and
    `requester`, audit action, TokenReview binding, RBAC roles, `CLAUDE.md`.
-2. **ach-agent 0.2.0** (breaking at 0.x): `keyFrom`, ServiceAccount and projected token,
-   `KeySource` across all consumers, exchange and rotation, global redaction, metrics, alert,
-   optional admission policy.
-3. **GitOps**, one commit: one `KeyGrant` per agent for `ai.run@ackstorm.com`, each with
-   `spec.budget`; the four agents switched to `keyFrom.tokenExchange`. `ai.run` has already logged in
+2. **ach-agent 0.2.0** (breaking at 0.x): `keyFrom`, projected token, `KeySource` across all
+   consumers, exchange and rotation, global redaction, metrics, alert.
+3. **GitOps**, one commit: one `KeyGrant` per Environment for `ai.run@ackstorm.com`, requester
+   `ach-agent/ach-agent-control`, each with `spec.budget`; the four agents switched to
+   `keyFrom.tokenExchange` with their `environment` set; chart pin `0.2.x`. No Terraform change. `ai.run` has already logged in
    to ACH, so its grants become `Ready`. After the agents run on exchanged
    credentials, a second commit deletes the four `*-ek` ExternalSecrets, their Secrets Manager
    entries and Terraform variables, and revokes the old manual keys.

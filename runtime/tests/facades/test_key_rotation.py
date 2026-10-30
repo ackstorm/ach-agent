@@ -5,6 +5,7 @@ restart, and retry once only when ACH itself rejected the credential."""
 from __future__ import annotations
 
 import asyncio
+import itertools
 
 import httpx
 
@@ -35,10 +36,12 @@ async def _keys(tmp_path, exchanges: list[httpx.Request]) -> KeySource:
 
     def handler(request: httpx.Request) -> httpx.Response:
         exchanges.append(request)
-        return httpx.Response(200, json={"token": f"jwt-{len(exchanges)}", "expires_in": 900, "key_id": "ekid_1"})
+        return httpx.Response(200, json={"token": f"jwt-{len(exchanges)}", "expires_in": 10**6, "key_id": "ekid_1"})
 
+    ticks = itertools.count(step=11.0)  # every read of the clock is past the rejection cooldown
     keys = KeySource(exchange=Exchange("https://ach.example", "ai.run@example.com", "prod", str(token)),
-                     client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+                     client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+                     clock=lambda: next(ticks))
     assert await keys.refresh_rejected(0)
     return keys
 

@@ -79,8 +79,10 @@ def _failures() -> float:
 
 async def test_each_exchange_reads_the_token_file_and_posts_identity_and_environment(tmp_path) -> None:
     calls: list[httpx.Request] = []
-    keys = _keys(tmp_path, [ok("jwt-1"), ok("jwt-2")], calls)
+    time = FakeTime(stop_after=99)
+    keys = _keys(tmp_path, [ok("jwt-1"), ok("jwt-2")], calls, time)
     assert await keys.refresh_rejected(0)
+    time.now += 11
     (tmp_path / "token").write_text("sa-2")
     assert await keys.refresh_rejected(1)
     assert [c.headers["authorization"] for c in calls] == ["Bearer sa-1", "Bearer sa-2"]
@@ -147,8 +149,10 @@ async def test_not_ready_after_expiry_until_an_exchange_succeeds(tmp_path) -> No
 
 async def test_concurrent_rejections_share_one_reexchange(tmp_path) -> None:
     calls: list[httpx.Request] = []
-    keys = _keys(tmp_path, [ok("jwt-1"), ok("jwt-2")], calls)
+    time = FakeTime(stop_after=99)
+    keys = _keys(tmp_path, [ok("jwt-1"), ok("jwt-2")], calls, time)
     assert await keys.refresh_rejected(0)
+    time.now += 11
     results = await asyncio.gather(*(keys.refresh_rejected(1) for _ in range(5)))
     assert results == [True] * 5 and len(calls) == 2 and keys.generation == 2
     await keys.close()
@@ -156,8 +160,10 @@ async def test_concurrent_rejections_share_one_reexchange(tmp_path) -> None:
 
 async def test_concurrent_rejections_share_one_failed_reexchange(tmp_path) -> None:
     calls: list[httpx.Request] = []
-    keys = _keys(tmp_path, [ok("jwt-1"), refused(503, "not_ready")], calls)
+    time = FakeTime(stop_after=99)
+    keys = _keys(tmp_path, [ok("jwt-1"), refused(503, "not_ready")], calls, time)
     assert await keys.refresh_rejected(0)
+    time.now += 11
     before = _failures()
     results = await asyncio.gather(*(keys.refresh_rejected(1) for _ in range(5)))
     assert results == [False] * 5 and len(calls) == 2 and _failures() - before == 1
@@ -181,8 +187,10 @@ def _upstream(seen: list[str], reply: Callable[[str], httpx.Response]) -> httpx.
 
 async def test_keyauth_retries_once_with_the_new_generation_when_ach_rejects(tmp_path) -> None:
     calls, seen = [], []
-    keys = _keys(tmp_path, [ok("jwt-1"), ok("jwt-2")], calls)
+    time = FakeTime(stop_after=99)
+    keys = _keys(tmp_path, [ok("jwt-1"), ok("jwt-2")], calls, time)
     await keys.refresh_rejected(0)
+    time.now += 11
     client = _upstream(seen, lambda key: httpx.Response(401, json=REJECTED) if key == "jwt-1" else httpx.Response(200))
     response = await client.get("https://ach.example/v1/models", auth=keys.auth)
     assert response.status_code == 200 and seen == ["jwt-1", "jwt-2"] and len(calls) == 2
@@ -208,3 +216,56 @@ async def test_keyauth_with_a_static_key_does_not_retry() -> None:
     keys = KeySource("ek_static")
     response = await _upstream(seen, lambda key: httpx.Response(401, json=REJECTED)).get("https://ach.example/x", auth=keys.auth)
     assert response.status_code == 401 and seen == ["ek_static"]
+
+
+async def test_a_cancelled_initiator_does_not_abort_the_shared_reexchange(tmp_path) -> None:
+    gate, started, calls = asyncio.Event(), asyncio.Event(), []
+    replies = [ok("jwt-1"), ok("jwt-2")]
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if len(calls) == 2:
+            started.set()
+            await gate.wait()
+        return replies.pop(0)
+
+    time = FakeTime(stop_after=99)
+    keys = KeySource(exchange=replace(EX, token_path=_token(tmp_path)), clock=time.clock, wall=time.wall,
+                     client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    await keys.start()
+    keys._task.cancel()
+    time.now += 11
+    initiator = asyncio.create_task(keys.refresh_rejected(1))
+    await started.wait()
+    waiters = [asyncio.create_task(keys.refresh_rejected(1)) for _ in range(3)]
+    await asyncio.sleep(0)
+    initiator.cancel()
+    gate.set()
+    assert await asyncio.gather(*waiters) == [True] * 3
+    assert (len(calls), keys.generation, keys.current()) == (2, 2, "jwt-2")
+
+
+async def test_a_rejection_right_after_an_exchange_is_not_reexchanged(tmp_path) -> None:
+    calls: list[httpx.Request] = []
+    time = FakeTime(stop_after=99)
+    keys = _keys(tmp_path, [ok("jwt-1"), ok("jwt-2")], calls, time)
+    assert await keys.refresh_rejected(0)
+    time.now += 9
+    assert not await keys.refresh_rejected(1) and len(calls) == 1
+    time.now += 2
+    assert await keys.refresh_rejected(1) and len(calls) == 2
+    await keys.close()
+
+
+async def test_retry_after_on_429_sets_the_retry_delay_within_the_clamps(tmp_path) -> None:
+    def limited(seconds: str) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": seconds}, json={"error": {"code": "rate_limited"}})
+
+    time, calls = FakeTime(stop_after=4), []
+    keys = _keys(tmp_path, [ok("jwt-1", 100), limited("5"), limited("500"), limited("30")], calls, time)
+    await keys.start()
+    await asyncio.gather(keys._task, return_exceptions=True)
+    # Due at 1080 (expiry 1100): Retry-After 5 is honoured; 500 is clamped by half the time
+    # left to expiry (1085 -> 7.5); 30 by the same rule (1092.5 -> 3.75).
+    assert time.sleeps == pytest.approx([80, 5, 7.5, 3.75])
+    await keys.close()

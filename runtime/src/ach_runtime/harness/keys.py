@@ -29,12 +29,16 @@ MAX_BACKOFF_SECONDS = 60.0
 # ACH's Authn answers a credential it does not accept with 401 and this code, before it
 # proxies anything; an upstream's own 401 carries another code and is never retried.
 REJECTED_CODE = "expired_or_revoked"
+# A credential obtained this recently is not exchanged again because of a rejection: a
+# forwarder that refuses fresh JWTs would otherwise cost one exchange per request.
+REJECTION_COOLDOWN_SECONDS = 10.0
 
 
 class ExchangeRefused(Exception):
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, retry_after: float | None = None) -> None:
         super().__init__(f"ACH token exchange refused: {code}")
         self.code = code
+        self.retry_after = retry_after
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +47,14 @@ class Exchange:
     identity: str
     environment: str
     token_path: str
+
+
+def _retry_after(response: httpx.Response) -> float | None:
+    """The seconds form of Retry-After on a 429, else None."""
+    if response.status_code != 429:
+        return None
+    value = response.headers.get("retry-after", "").strip()
+    return float(value) if value.isdigit() else None
 
 
 def error_code(response: httpx.Response) -> str:
@@ -66,7 +78,7 @@ async def _exchange(client: httpx.AsyncClient, exchange: Exchange) -> tuple[str,
         follow_redirects=False,
     )
     if response.status_code != 200:
-        raise ExchangeRefused(error_code(response))
+        raise ExchangeRefused(error_code(response), _retry_after(response))
     try:
         body = response.json()
         jwt, expires_in = body["token"], float(body["expires_in"])
@@ -98,6 +110,9 @@ class KeySource:
         self._task: asyncio.Task[None] | None = None
         self.generation = 0
         self._attempts = 0
+        self._obtained_at = float("-inf")
+        self._shared: asyncio.Task[None] | None = None
+        self._shared_generation = -1
         self._backoff = MIN_BACKOFF_SECONDS
         self.auth = KeyAuth(self)
 
@@ -127,15 +142,25 @@ class KeySource:
         exchange attempt, whatever its outcome; True when a newer credential is there to retry with."""
         if self._exchange is None:
             return False
-        seen = self._attempts
-        async with self._lock:
-            if self.generation == generation and self._attempts == seen:
-                try:
-                    await self._renew()
-                except Exception as exc:  # noqa: BLE001 - the caller keeps ACH's answer
-                    KEY_REFRESH_FAILURES.inc()
-                    log.warning("ACH credential re-exchange failed (%s)", exc)
+        task = self._shared
+        if task is None or task.done() or self._shared_generation != generation:
+            task = self._shared = asyncio.create_task(self._reexchange(generation, self._attempts))
+            self._shared_generation = generation
+        # Shielded: the caller that started the exchange being cancelled must not abort it for the others.
+        await asyncio.shield(task)
         return self.generation != generation
+
+    async def _reexchange(self, generation: int, seen: int) -> None:
+        async with self._lock:
+            if self.generation != generation or self._attempts != seen:
+                return
+            if self._clock() - self._obtained_at < REJECTION_COOLDOWN_SECONDS:
+                return
+            try:
+                await self._renew()
+            except Exception as exc:  # noqa: BLE001 - the caller keeps ACH's answer
+                KEY_REFRESH_FAILURES.inc()
+                log.warning("ACH credential re-exchange failed (%s)", exc)
 
     async def _renew(self) -> None:
         try:
@@ -144,7 +169,7 @@ class KeySource:
             # Counted when finished, so a caller that arrived during it sees it as its own outcome.
             self._attempts += 1
         now = self._clock()
-        self._value, self.generation = jwt, self.generation + 1
+        self._value, self.generation, self._obtained_at = jwt, self.generation + 1, now
         self._backoff = MIN_BACKOFF_SECONDS
         self._expires_at, self._refresh_at = now + expires_in, now + REFRESH_AT * expires_in
         KEY_EXPIRY_TIMESTAMP.set(self._wall() + expires_in)
@@ -164,7 +189,8 @@ class KeySource:
                 log.warning("ACH credential refresh failed (%s)", exc)
                 remaining = self._expires_at - self._clock()
                 # Clamped so a retry still happens before the current credential expires.
-                delay = min(self._backoff, max(remaining / 2, MIN_BACKOFF_SECONDS)) if remaining > 0 else self._backoff
+                wanted = min(getattr(exc, "retry_after", None) or self._backoff, MAX_BACKOFF_SECONDS)
+                delay = min(wanted, max(remaining / 2, MIN_BACKOFF_SECONDS)) if remaining > 0 else wanted
                 self._backoff = min(self._backoff * 2, MAX_BACKOFF_SECONDS)
                 await self._sleep(delay)
 

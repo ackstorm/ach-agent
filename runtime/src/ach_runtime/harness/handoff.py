@@ -11,9 +11,26 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from ach_runtime.observability.runs import redact
+
 
 class HandoffFailed(RuntimeError):
     """A handoff hook failed, timed out or could not be spawned."""
+
+
+_STDERR_TAIL_LINES = 3
+_STDERR_TAIL_CHARS = 240  # fits whole in control._failure_reason (300)
+
+
+def _stderr_tail(stderr: bytes, secrets: list[str]) -> str:
+    """The last non-empty stderr lines, one line, with the hook's secrets and known token
+    shapes redacted: enough to trace a failed `git clone` without leaking its credentials."""
+    lines = [line.strip() for line in stderr.decode("utf-8", "replace").splitlines() if line.strip()]
+    text = " | ".join(lines[-_STDERR_TAIL_LINES:])
+    for secret in sorted(secrets, key=len, reverse=True):
+        text = text.replace(secret, "[redacted]")
+    text = redact(text)
+    return text if len(text) <= _STDERR_TAIL_CHARS else "..." + text[-_STDERR_TAIL_CHARS:]
 
 
 _PRINTABLE = re.compile(r"[\x20-\x7e]{1,512}")
@@ -93,10 +110,12 @@ async def run_handoff(cfg: Any, event: Any, ticket: Any, workspace: Path, *, env
     workspace.mkdir(parents=True, exist_ok=True)
     env = {key: environ[key] for key in ("PATH", "SHELL", "LANG", "LANGUAGE", "TZ", "TMPDIR") if key in environ}
     env.update(cfg.env)
+    secrets: list[str] = []
     for name, alias in cfg.secret_env.items():
         secret = environ.get(alias.env)
         if secret:
             env[name] = secret
+            secrets.append(secret)
     env.update(_event_env(event))
     env.update({
         "ACH_WORKSPACE": str(workspace),
@@ -128,4 +147,5 @@ async def run_handoff(cfg: Any, event: Any, ticket: Any, workspace: Path, *, env
             await _kill_tree(proc)
             raise
         if proc.returncode != 0:
-            raise HandoffFailed(f"handoff hook exited {proc.returncode}")
+            tail = _stderr_tail(stderr or b"", secrets)
+            raise HandoffFailed(f"handoff hook exited {proc.returncode}" + (f": {tail}" if tail else ""))

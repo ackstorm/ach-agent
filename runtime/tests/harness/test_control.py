@@ -2439,6 +2439,7 @@ async def test_start_failure_logs_redacted_reason(monkeypatch, caplog):
             await control.run(event, ticket)
 
     record = next(r for r in caplog.records if r.getMessage().startswith("run start failed"))
+    assert record.getMessage().endswith(" (channel channel, event evt-fail)")
     assert record.reason.startswith("ConnectionError: pod unreachable")
     assert "hunter2" not in record.reason and secret not in record.reason
     assert len(record.reason) <= 303

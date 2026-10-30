@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from ach_runtime.channels.event import Event, RoutedEvent
 from ach_runtime.channels.gitlab import normalize_gitlab
 from ach_runtime.harness.admission import AdmissionTicket
-from ach_runtime.harness.handoff import _event_env, run_handoff
+from ach_runtime.harness.handoff import HandoffFailed, _event_env, run_handoff
 
 
 def test_handoff_uses_pinned_workspace_and_event_environment() -> None:
@@ -138,3 +138,32 @@ def test_a2a_headers_never_become_event_env() -> None:
                            "headers": {"x-litellm-user-id": "alice"}})
     assert not [k for k in _event_env(event) if "HEADERS" in k or "ALICE" in k.upper()]
     assert "alice" not in _event_env(event).values()
+
+
+def test_handoff_failure_carries_redacted_stderr_tail(tmp_path: Path) -> None:
+    secret = "glpat-handoff-secret-value"
+    cfg = SimpleNamespace(
+        script=(
+            "echo 'Cloning into repo...' >&2\n"
+            "echo \"fatal: could not read from $GITLAB_REPO_BASEURL with $GITLAB_TOKEN\" >&2\n"
+            "exit 128\n"
+        ),
+        env={"GITLAB_REPO_BASEURL": "https://git.example.com"},
+        secret_env={"GITLAB_TOKEN": SimpleNamespace(env="ACH_SECRET_HANDOFF_GITLAB_TOKEN")},
+        timeout_seconds=5, destination="handoff", scope="event",
+    )
+
+    async def scenario() -> str:
+        routed = RoutedEvent(Event("evt", "ch", "push", "webhook"), "key", "sess")
+        ticket = AdmissionTicket("inv", "ach", "3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77", "w"*64, "s"*64,
+                                 routed, datetime.now(UTC)+timedelta(seconds=10),
+                                 asyncio.get_running_loop().create_future(), asyncio.get_running_loop().create_future())
+        with pytest.raises(HandoffFailed) as failure:
+            await run_handoff(cfg, routed.event, ticket, tmp_path,
+                              environ={"PATH": "/bin:/usr/bin", "ACH_SECRET_HANDOFF_GITLAB_TOKEN": secret})
+        return str(failure.value)
+
+    message = asyncio.run(scenario())
+    assert message.startswith("handoff hook exited 128: ")
+    assert "Cloning into repo... | fatal: could not read from https://git.example.com with [redacted]" in message
+    assert secret not in message

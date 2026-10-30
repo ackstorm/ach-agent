@@ -628,7 +628,8 @@ class Control:
                 reason = _failure_reason(exc)
                 # The control process prints only the message text, so the reason goes in it.
                 log.error(
-                    "run start failed: %s", reason,
+                    "run start failed: %s (channel %s, event %s)",
+                    reason, event.event.channel, event.event.event_id,
                     extra={"invocation_id": ticket.invocation_id, "reason": reason},
                 )
             self._prepared.pop(ticket.invocation_id, None)

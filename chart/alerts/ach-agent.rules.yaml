@@ -90,3 +90,19 @@ groups:
           At least two unhealthy pod events were observed for agent
           {{ $labels.agent }} in namespace {{ $labels.namespace }} and
           environment {{ $labels.environment }} within 10m.
+    # An exchanged credential is refreshed at 80% of its lifetime, so a healthy agent always
+    # has at least 20% left. Under 10% means refresh has failed for half of that window or
+    # longer; a negative remainder means it expired. Static ek_ agents export lifetime 0.
+    - alert: ACHAgentKeyRefreshFailing
+      expr: |
+        min by (namespace, agent, environment) (ach_agent_key_expiry_timestamp_seconds - time())
+        < 0.1 * max by (namespace, agent, environment) (ach_agent_key_lifetime_seconds > 0)
+      labels:
+        severity: warning
+      annotations:
+        summary: ACH agent {{ $labels.agent }} cannot refresh its ACH credential
+        description: >-
+          Agent {{ $labels.agent }} in namespace {{ $labels.namespace }} has
+          {{ $value | printf "%.0f" }}s left on its exchanged ACH credential (negative means
+          expired and the agent is not ready). See ach_agent_key_refresh_failures_total and the
+          control pod log for ACH's error code.

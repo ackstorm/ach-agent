@@ -295,3 +295,39 @@ tests:
             exp_annotations:
               summary: ACH restore failed for agent beta
               description: Restore failed for agent beta in namespace other and environment staging.
+  - name: exchanged credential healthy, failing, expired, static
+    interval: 30s
+    input_series:
+      # Refreshed at 80% of a 900 s lifetime: expiry jumps by 720 s every 720 s.
+      - series: 'ach_agent_key_expiry_timestamp_seconds{namespace="ns", agent="ok", environment="prod"}'
+        values: '900x23 1620x23 2340x23'
+      - series: 'ach_agent_key_lifetime_seconds{namespace="ns", agent="ok", environment="prod"}'
+        values: '900x71'
+      # Never refreshed after boot.
+      - series: 'ach_agent_key_expiry_timestamp_seconds{namespace="ns", agent="stuck", environment="prod"}'
+        values: '900x71'
+      - series: 'ach_agent_key_lifetime_seconds{namespace="ns", agent="stuck", environment="prod"}'
+        values: '900x71'
+      # A static ek_ agent exports both gauges at 0.
+      - series: 'ach_agent_key_expiry_timestamp_seconds{namespace="ns", agent="static", environment="prod"}'
+        values: '0x71'
+      - series: 'ach_agent_key_lifetime_seconds{namespace="ns", agent="static", environment="prod"}'
+        values: '0x71'
+    alert_rule_test:
+      - eval_time: 13m
+        alertname: ACHAgentKeyRefreshFailing
+        exp_alerts: []
+      - eval_time: 14m
+        alertname: ACHAgentKeyRefreshFailing
+        exp_alerts:
+          - exp_labels: {namespace: ns, agent: stuck, environment: prod, severity: warning}
+            exp_annotations:
+              summary: ACH agent stuck cannot refresh its ACH credential
+              description: Agent stuck in namespace ns has 60s left on its exchanged ACH credential (negative means expired and the agent is not ready). See ach_agent_key_refresh_failures_total and the control pod log for ACH's error code.
+      - eval_time: 20m
+        alertname: ACHAgentKeyRefreshFailing
+        exp_alerts:
+          - exp_labels: {namespace: ns, agent: stuck, environment: prod, severity: warning}
+            exp_annotations:
+              summary: ACH agent stuck cannot refresh its ACH credential
+              description: Agent stuck in namespace ns has -300s left on its exchanged ACH credential (negative means expired and the agent is not ready). See ach_agent_key_refresh_failures_total and the control pod log for ACH's error code.

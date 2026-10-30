@@ -97,6 +97,8 @@ class KeySource:
         self._lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
         self.generation = 0
+        self._attempts = 0
+        self._backoff = MIN_BACKOFF_SECONDS
         self.auth = KeyAuth(self)
 
     def current(self) -> str:
@@ -122,11 +124,12 @@ class KeySource:
 
     async def refresh_rejected(self, generation: int) -> bool:
         """ACH rejected a request sent with `generation`. Concurrent callers wait on one shared
-        re-exchange; True when a newer credential is there to retry with."""
+        exchange attempt, whatever its outcome; True when a newer credential is there to retry with."""
         if self._exchange is None:
             return False
+        seen = self._attempts
         async with self._lock:
-            if self.generation == generation:
+            if self.generation == generation and self._attempts == seen:
                 try:
                     await self._renew()
                 except Exception as exc:  # noqa: BLE001 - the caller keeps ACH's answer
@@ -135,15 +138,16 @@ class KeySource:
         return self.generation != generation
 
     async def _renew(self) -> None:
+        self._attempts += 1
         jwt, expires_in = await _exchange(self._client, self._exchange)
         now = self._clock()
         self._value, self.generation = jwt, self.generation + 1
+        self._backoff = MIN_BACKOFF_SECONDS
         self._expires_at, self._refresh_at = now + expires_in, now + REFRESH_AT * expires_in
         KEY_EXPIRY_TIMESTAMP.set(self._wall() + expires_in)
         KEY_LIFETIME.set(expires_in)
 
     async def _rotate(self) -> None:
-        backoff = MIN_BACKOFF_SECONDS
         while True:
             wait = self._refresh_at - self._clock()
             if wait > 0:
@@ -157,11 +161,9 @@ class KeySource:
                 log.warning("ACH credential refresh failed (%s)", exc)
                 remaining = self._expires_at - self._clock()
                 # Clamped so a retry still happens before the current credential expires.
-                delay = min(backoff, max(remaining / 2, MIN_BACKOFF_SECONDS)) if remaining > 0 else backoff
-                backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
+                delay = min(self._backoff, max(remaining / 2, MIN_BACKOFF_SECONDS)) if remaining > 0 else self._backoff
+                self._backoff = min(self._backoff * 2, MAX_BACKOFF_SECONDS)
                 await self._sleep(delay)
-            else:
-                backoff = MIN_BACKOFF_SECONDS
 
 
 class KeyAuth(httpx.Auth):

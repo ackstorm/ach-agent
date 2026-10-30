@@ -154,6 +154,16 @@ async def test_concurrent_rejections_share_one_reexchange(tmp_path) -> None:
     await keys.close()
 
 
+async def test_concurrent_rejections_share_one_failed_reexchange(tmp_path) -> None:
+    calls: list[httpx.Request] = []
+    keys = _keys(tmp_path, [ok("jwt-1"), refused(503, "not_ready")], calls)
+    assert await keys.refresh_rejected(0)
+    before = _failures()
+    results = await asyncio.gather(*(keys.refresh_rejected(1) for _ in range(5)))
+    assert results == [False] * 5 and len(calls) == 2 and _failures() - before == 1
+    await keys.close()
+
+
 async def test_a_static_key_never_reexchanges() -> None:
     keys = KeySource("ek_static")
     await keys.start()

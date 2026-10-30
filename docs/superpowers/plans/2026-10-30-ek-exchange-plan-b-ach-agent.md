@@ -4,7 +4,7 @@
 
 **Goal:** An ACH-mode Agent can take its ACH credential from `spec.ach.keyFrom.tokenExchange`: the control pod exchanges its own projected ServiceAccount token for a short-lived ACH JWT and rotates it with zero failed requests; then the four production agents move to it in GitOps.
 
-**Architecture:** The operator gives a `tokenExchange` Agent its own ServiceAccount `agent-<name>` and a projected token (audience = `spec.ach.baseUrl` without trailing slash) and renders `capability.ach.key = {"exchange": {...}}`. The runtime holds the credential in one `KeySource` (static `ek_` or exchanged JWT with a generation number) that every ACH consumer reads per request, either through `current()` or through an `httpx.Auth` (`KeyAuth`) installed on its client; `KeyAuth` also re-exchanges once (single-flight) and resends when ACH's own Authn rejects the credential. A process-wide log-record factory scrubs `ek-`/`ek_`, compact JWS and provider keys.
+**Architecture:** The operator mounts a projected token into a `tokenExchange` Agent's control pod (audience = `spec.ach.baseUrl` without trailing slash; the pod keeps its usual control ServiceAccount) and renders `capability.ach.key = {"exchange": {...}}`. The runtime holds the credential in one `KeySource` (static `ek_` or exchanged JWT with a generation number) that every ACH consumer reads per request, either through `current()` or through an `httpx.Auth` (`KeyAuth`) installed on its client; `KeyAuth` also re-exchanges once (single-flight) and resends when ACH's own Authn rejects the credential. A process-wide log-record factory scrubs `ek-`/`ek_`, compact JWS and provider keys.
 
 **Tech Stack:** Go 1.26 / controller-runtime / controller-gen v0.20.0 / envtest 1.36; Python 3.13, httpx 0.28, pydantic 2, prometheus_client, mcp 1.30, a2a-sdk 1.3; Helm, promtool (prom/prometheus:v3.5.0), kind e2e (`make e2e`).
 
@@ -27,7 +27,8 @@
 - ACH's rejection of a credential before proxying is HTTP `401` with `{"error": {"code": "expired_or_revoked"}}` (ach `internal/platformapi/middleware/middleware.go:474`, `Authn`, `info == nil`). LiteLLM's own 401 carries `"code": "401"`. Only `expired_or_revoked` triggers a re-exchange and one retry.
 - Projected token: path `/var/run/secrets/ach/token`, `expirationSeconds: 3600`.
 - Refresh at 80% of `expires_in` on `time.monotonic`; backoff 1 s doubling to 60 s, clamped so a retry happens before expiry; not-ready after expiry until an exchange succeeds.
-- ServiceAccount of a `tokenExchange` control pod: `render.ControlName(agent.Name)`, which is `agent-<agent name>` for names of up to 46 characters without dots (longer or dotted names get the same hashed form as the StatefulSet).
+- Control ServiceAccount resolution is unchanged for every Agent, `tokenExchange` included: the profile's `control.serviceAccountName`, else the operator-owned `ach-agent-control-<uid>`. In production that is the shared `ach-agent-control`, which already has S3 through EKS Pod Identity (ADR-001: one association per ServiceAccount, no wildcards; no agent names in Terraform). The exchange requester ACH sees is `<namespace>/<that ServiceAccount>`.
+- Trust boundary: any pod running a namespace's control ServiceAccount can exchange every grant that names `<namespace>/<serviceaccount>`; grant granularity is the namespace and ServiceAccount, not the Agent.
 - Metrics: `ach_agent_key_refresh_failures_total` (counter), `ach_agent_key_expiry_timestamp_seconds` (gauge, Unix time), `ach_agent_key_lifetime_seconds` (gauge, `expires_in`). Alert `ACHAgentKeyRefreshFailing`.
 - `keyFrom.secretKeyRef` agents behave exactly as before: same env `ACH_SECRET_IDENTITY`, same rendered `{"env": "ACH_SECRET_IDENTITY"}` (byte-identical config, so their pods do not roll).
 - Release: version `0.2.0` (breaking at 0.x), `make release-bump VERSION=0.2.0`, commit `chore(release): v0.2.0`.
@@ -38,13 +39,13 @@
 
 ## Spec facts corrected while grounding this plan
 
-1. **S3 access is tied to the profile ServiceAccount** (blocks the rollout, not the code). GitOps `workloads/agents/agentprofiles/default.yaml:7` sets `control.serviceAccountName: ach-agent-control`, and that ServiceAccount carries the ach-agent S3 backend through EKS Pod Identity (`workloads/agents/serviceaccount.yaml:1-3`; Terraform `nglz-genai/terraform-genai-blueprint-module/terraform.tfvars:36-38`, `modules/genai/ach-agent.tf:103-123`). Spec 5.2 moves `tokenExchange` pods to `agent-<name>`, so `k8s-doctor` (workspace persistence) and `observability-assistant` (session persistence) would lose S3. Task 10 adds Pod Identity associations for the four `agent-<name>` ServiceAccounts before the GitOps commit.
+1. **No per-Agent ServiceAccount (decision overriding spec 5.2).** GitOps `workloads/agents/agentprofiles/default.yaml:7` sets `control.serviceAccountName: ach-agent-control`, and that ServiceAccount carries the ach-agent S3 backend through EKS Pod Identity (`workloads/agents/serviceaccount.yaml:1-3`; ADR-001: one association per ServiceAccount, no wildcards). A per-Agent `agent-<name>` would cut S3 for `k8s-doctor` (workspace persistence) and `observability-assistant` (session persistence) unless every agent name were listed in Terraform, which is ruled out. `tokenExchange` Agents therefore keep today's control ServiceAccount resolution, the spec 5.2 "profile ServiceAccount does not apply" rule and the optional `agent-*` ValidatingAdmissionPolicy are dropped, and the KeyGrants name `ach-agent/ach-agent-control`.
 2. **Environment names** (spec 4.2/5.1 examples use `k8s-doctor`): the real Environments are `agent-k8s-doctor`, `agent-observability-assistant`, `agent-zohodesk-classifier`, `agent-gitlab` (for Agent `gitlab-reviewer`) (`gitops/workloads/ach/environments/*.yaml`). None of the four Agents sets `spec.ach.environment` today; `tokenExchange` requires it.
 3. **Chart version pin**: `gitops/apps/ach-agent/base/helm.yaml:13` pins `version: 0.1.x`; 0.2.0 is never picked up without changing it. Spec 7.3 omits it.
 4. **Relative alert threshold needs the lifetime**: with only the two metrics of spec 5.4, PromQL cannot express a threshold relative to the JWT lifetime. This plan adds `ach_agent_key_lifetime_seconds`.
 5. **Redaction exists in two places, not one**: besides `control.py:83-95` (`_failure_reason`), `observability/runs.py:17-44` (`redact`, `register_secrets`) is used by the run formatter, `harness/workspaces.py:423,657` and `harness/handoff.py:32`. Neither covers JWS. Task 5 extends `runs.redact` and applies it to every record; `_failure_reason` stays as the length-capping reason formatter whose output is then also scrubbed.
 6. **ACH-side assumption to confirm with plan A**: the exchange resolver must answer an invalid or expired exchange JWT with `(nil, nil)` so Authn returns `401 expired_or_revoked` (as `oauthresolver.go:59` does). If it returned an error, Authn would answer 500 and the agent would not re-exchange.
-7. `zohodesk-classifier`'s Environment has no `spec.budget` (`gitops/workloads/ach/environments/agent-zohodesk-classifier.yaml`); its grant budget below is a proposal.
+7. `zohodesk-classifier`'s Environment has no `spec.budget` (`gitops/workloads/ach/environments/agent-zohodesk-classifier.yaml`); its grant gets `maxBudget: 30` / `30d`.
 
 ## File Structure
 
@@ -54,21 +55,20 @@
 | `runtime/docs/schemas/ach-workspace-config-v3.schema.json` (regenerated) + `operator/internal/render/testdata/` copy | wire schema shared by runtime and operator |
 | `runtime/docs/schemas/ach-runtime-contract-v3.md` (modify) | contract text for the exchange key |
 | `operator/api/v1alpha1/agent_types.go` (modify) | `AchKeyFrom`, `AchTokenExchange`, CEL |
-| `operator/internal/render/wsconfig.go`, `render.go` (modify) | rendered key, SA name, audience, Secret discovery |
-| `operator/internal/controller/agent_workload.go`, `agent_controller.go` (modify) | per-Agent SA, projected token volume |
+| `operator/internal/render/wsconfig.go`, `render.go` (modify) | rendered key, audience, Secret discovery |
+| `operator/internal/controller/agent_workload.go` (modify) | projected token volume |
 | `runtime/src/ach_runtime/harness/keys.py` (create) | `KeySource`, `KeyAuth`, exchange client, rotation |
 | `runtime/src/ach_runtime/observability/metrics.py` (modify) | three key metrics |
 | `runtime/src/ach_runtime/facades/{_proxy,model,mcp,memory,_memory_client,_mcp_session,a2a}.py` (modify) | take an `httpx.Auth` |
 | `runtime/src/ach_runtime/harness/{hydrate,control,app}.py` (modify) | wire `KeySource`; readiness |
 | `runtime/src/ach_runtime/observability/runs.py` (modify) | JWS in `redact`; process-wide record factory |
-| `chart/alerts/ach-agent.rules.yaml`, `chart/tests/alerts.test.yaml` (modify) | alert + promtool cases |
-| `chart/templates/agent-pod-policy.yaml` (create), `chart/values.yaml`, `chart/values.schema.json`, `chart/tests/render_test.sh` (modify) | optional ValidatingAdmissionPolicy |
-| `docs/install.md`, `operator/CLAUDE.md`, `CLAUDE.md` (modify) | operator docs |
+| `chart/alerts/ach-agent.rules.yaml`, `chart/tests/alerts.test.yaml`, `chart/tests/render_test.sh` (modify) | alert + promtool cases |
+| `docs/install.md`, `operator/CLAUDE.md`, `CLAUDE.md` (modify) | ACH Agent install docs, trust boundary, repo notes |
 | `test/e2e/stubs/{stub.py,test_stub.py,load.py,Dockerfile}`, `test/e2e/{stub.yaml,cluster.sh,control-ca.Dockerfile,e2e_test.go,helpers_test.go}`, `test/e2e/fixtures/{ach-agent.yaml,ach-exchange-agent.yaml}` | exchange stub with real TokenReview, acceptance test |
 | `CHANGELOG.md`, `chart/Chart.yaml`, `runtime/pyproject.toml` | release 0.2.0 |
-| GitOps repo (Task 10, described only) | KeyGrants, Agents, images, cleanup |
+| GitOps repo (Task 9, described only) | KeyGrants, Agents, images, cleanup |
 
-Task order: 1 → 2 (operator needs the schema) and 1 → 3 → 4 (runtime); 5, 6, 7 are independent of each other after 4; 8 needs 2 and 4-7; 9 needs all; 10 needs the published 0.2.0 and ACH 1.1.0.
+Task order: 1 → 2 (operator needs the schema) and 1 → 3 → 4 (runtime); 5 and 6 are independent of each other after 4; 7 needs 2 and 4-6; 8 needs all; 9 needs the published 0.2.0 and ACH 1.1.0.
 
 ---
 
@@ -204,45 +204,27 @@ Expected: PASS (no schema drift).
 
 ---
 
-### Task 2: Operator `keyFrom` API, rendering and per-Agent ServiceAccount
+### Task 2: Operator `keyFrom` API, rendering and the projected token
 
 **Files:**
 - Modify: `operator/api/v1alpha1/agent_types.go:463-478`
 - Regenerate: `operator/api/v1alpha1/zz_generated.deepcopy.go`, `operator/config/crd/*`, `chart/crds/*` (`make gen`, `make chart-sync`)
-- Modify: `operator/internal/render/wsconfig.go:124-131` (`ControlServiceAccountName`), `:214-220` (`WSAchServer`), `:291-298` (ach key)
+- Modify: `operator/internal/render/wsconfig.go:124` (add constants and helpers before `ControlServiceAccountName`, which is unchanged), `:214-220` (`WSAchServer`), `:291-298` (ach key)
 - Modify: `operator/internal/render/render.go:491-493` (`ReferencedSecrets`)
-- Modify: `operator/internal/controller/agent_workload.go:23-49` (consts), `:57-61`, `:187-196`, `:267-277`
-- Modify: `operator/internal/controller/agent_controller.go:248-260`, `:337-342`
-- Modify tests: `operator/internal/render/render_v3_test.go:83-118,153-176`, `operator/internal/render/wsconfig_test.go:101-102`, `operator/internal/controller/agent_envtest_test.go:354-393`, `operator/internal/controller/agent_workload_test.go`
+- Modify: `operator/internal/controller/agent_workload.go:23-49` (consts), `:267-277` (`buildStatefulSet`)
+- Modify tests: `operator/internal/render/render_v3_test.go:83-118,153-165`, `operator/internal/render/wsconfig_test.go:101-102`, `operator/internal/controller/agent_envtest_test.go:354-393`, `operator/internal/controller/agent_workload_test.go`
 - Modify: `test/e2e/fixtures/ach-agent.yaml:10`, `operator/CLAUDE.md`
 
 **Interfaces:**
 - Consumes: Task 1 schema (vendored in `testdata`).
-- Produces (Go, package `render`): `AchTokenDir = "/var/run/secrets/ach"`, `AchTokenFile = "token"`, `AchTokenPath = AchTokenDir + "/" + AchTokenFile`; `type WSAchKey struct{ Env string; Exchange *WSExchangeKey }`; `type WSExchangeKey struct{ Identity, Environment, TokenPath string }`; `func TokenExchange(a *v1.Agent) *v1.AchTokenExchange`; `func ExchangeAudience(baseURL string) string`; `func ControlServiceAccountName(a *v1.Agent, p *v1.AgentProfile) string` (signature change).
+- Produces (Go, package `render`): `AchTokenDir = "/var/run/secrets/ach"`, `AchTokenFile = "token"`, `AchTokenPath = AchTokenDir + "/" + AchTokenFile`; `type WSAchKey struct{ Env string; Exchange *WSExchangeKey }`; `type WSExchangeKey struct{ Identity, Environment, TokenPath string }`; `func TokenExchange(a *v1.Agent) *v1.AchTokenExchange`; `func ExchangeAudience(baseURL string) string`. `ControlServiceAccountName(agentUID, profile)` is unchanged: a `tokenExchange` pod runs as the profile's `control.serviceAccountName`, else `ach-agent-control-<uid>`.
 - Produces (API): `AchServerSpec.KeyFrom AchKeyFrom`; `AchKeyFrom{TokenExchange *AchTokenExchange; SecretKeyRef *SecretKeyRef}`; `AchTokenExchange{Identity string}`.
 
 - [ ] **Step 1: Write the failing tests**
 
-`operator/internal/render/render_v3_test.go`: replace the three `KeySecretRef: v1.SecretKeyRef{...}` literals (lines 88, 110, 160) with `KeyFrom: v1.AchKeyFrom{SecretKeyRef: &v1.SecretKeyRef{...}}` (same names/keys), and replace `TestControlServiceAccountName` (lines 167-176) with:
+`operator/internal/render/render_v3_test.go`: replace the three `KeySecretRef: v1.SecretKeyRef{...}` literals (lines 88, 110, 160) with `KeyFrom: v1.AchKeyFrom{SecretKeyRef: &v1.SecretKeyRef{...}}` (same names/keys), and append:
 
 ```go
-func TestControlServiceAccountName(t *testing.T) {
-	p, a := minimalFixture()
-	if got, want := ControlServiceAccountName(&a, &p), "ach-agent-control-"+fixtureAgentUID; got != want {
-		t.Fatalf("unset = %q, want %q", got, want)
-	}
-	p.Spec.Control.ServiceAccountName = "shared-control"
-	if got := ControlServiceAccountName(&a, &p); got != "shared-control" {
-		t.Fatalf("set = %q", got)
-	}
-	a.Spec.CapabilityServer, a.Spec.Standalone = "ach", nil
-	a.Spec.Ach = &v1.AchServerSpec{BaseURL: "https://ach.example.com", Environment: "prod",
-		KeyFrom: v1.AchKeyFrom{TokenExchange: &v1.AchTokenExchange{Identity: "ai.run@example.com"}}, Model: v1.AchModelSpec{Name: "m"}}
-	if got := ControlServiceAccountName(&a, &p); got != "agent-a" {
-		t.Fatalf("tokenExchange = %q, want agent-a (the profile's ServiceAccount never applies)", got)
-	}
-}
-
 func TestRender_AchTokenExchangeRendersTheExchangeKeyAndNoSecret(t *testing.T) {
 	p, a := minimalFixture()
 	a.Spec.CapabilityServer, a.Spec.Standalone = "ach", nil
@@ -300,13 +282,13 @@ func tokenExchangeAgent() *achv1alpha1.Agent {
 	return a
 }
 
-func TestBuildStatefulSet_TokenExchangeRunsAsTheAgentServiceAccountWithAProjectedToken(t *testing.T) {
+func TestBuildStatefulSet_TokenExchangeMountsAProjectedTokenAndKeepsTheControlServiceAccount(t *testing.T) {
 	a := tokenExchangeAgent()
 	p := &achv1alpha1.AgentProfile{}
-	p.Spec.Control.ServiceAccountName = "shared-control" // never applies to a tokenExchange agent
+	p.Spec.Control.ServiceAccountName = "ach-agent-control" // the shared, Pod Identity-backed SA
 	ps := buildStatefulSet(a, p, "h", nil).Spec.Template.Spec
-	if ps.ServiceAccountName != "agent-doctor" {
-		t.Fatalf("serviceAccountName = %q, want agent-doctor", ps.ServiceAccountName)
+	if ps.ServiceAccountName != "ach-agent-control" {
+		t.Fatalf("serviceAccountName = %q, want the profile's ach-agent-control", ps.ServiceAccountName)
 	}
 	if ps.AutomountServiceAccountToken == nil || *ps.AutomountServiceAccountToken {
 		t.Fatal("the API token must stay unmounted; only the audience-bound projected token is mounted")
@@ -327,12 +309,13 @@ func TestBuildStatefulSet_TokenExchangeRunsAsTheAgentServiceAccountWithAProjecte
 	if !mounted {
 		t.Fatalf("mounts = %+v, want ach-token read-only at /var/run/secrets/ach", ps.Containers[0].VolumeMounts)
 	}
-	if sa := buildControlServiceAccount(a); sa.Name != "agent-doctor" {
-		t.Fatalf("operator-built ServiceAccount = %q, want agent-doctor", sa.Name)
+	p.Spec.Control.ServiceAccountName = ""
+	if got := buildStatefulSet(a, p, "h", nil).Spec.Template.Spec.ServiceAccountName; got != "ach-agent-control-"+string(a.UID) {
+		t.Fatalf("default serviceAccountName = %q, want ach-agent-control-<uid>", got)
 	}
 }
 
-func TestBuildStatefulSet_SecretKeyAgentKeepsItsServiceAccountAndNoToken(t *testing.T) {
+func TestBuildStatefulSet_SecretKeyAgentMountsNoToken(t *testing.T) {
 	a := tokenExchangeAgent()
 	a.Spec.Ach.KeyFrom = achv1alpha1.AchKeyFrom{SecretKeyRef: &achv1alpha1.SecretKeyRef{Name: "ek", Key: "ek"}}
 	p := &achv1alpha1.AgentProfile{}
@@ -399,29 +382,31 @@ and after the existing `"route with service is accepted"` subtest:
 Fix the other compile site at line 359 the same way. Append the reconcile test:
 
 ```go
-func TestAgent_TokenExchange_OwnsItsServiceAccountAndIgnoresTheProfileOne(t *testing.T) {
+func TestAgent_TokenExchange_RunsAsTheProfileServiceAccountWithAProjectedToken(t *testing.T) {
 	ctx := context.Background()
 	const name = "aa-exchange"
+	mustApply(t, ctx, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "aa-exchange-control", Namespace: WatchNamespace}})
 	p := testProfile("aa-exchange-p")
-	p.Spec.Control.ServiceAccountName = "never-created"
+	p.Spec.Control.ServiceAccountName = "aa-exchange-control"
 	mustApply(t, ctx, p)
 	a := testAgentObject(name, "aa-exchange-p")
 	a.Spec.CapabilityServer, a.Spec.Standalone = "ach", nil
-	a.Spec.Ach = &achv1alpha1.AchServerSpec{BaseURL: "https://ach.example.com", Environment: "prod",
+	a.Spec.Ach = &achv1alpha1.AchServerSpec{BaseURL: "https://ach.example.com/", Environment: "prod",
 		KeyFrom: achv1alpha1.AchKeyFrom{TokenExchange: &achv1alpha1.AchTokenExchange{Identity: "ai.run@example.com"}},
 		Model:   achv1alpha1.AchModelSpec{Name: "m"}}
 	mustApply(t, ctx, a)
 	waitAgentCond(t, ctx, name, condWorkloadApplied, metav1.ConditionTrue)
-	agent := getAgent(t, ctx, name)
-	var sa corev1.ServiceAccount
-	if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: WatchNamespace, Name: render.ControlName(name)}, &sa); err != nil {
-		t.Fatalf("get agent ServiceAccount: %v", err)
+	ps := getControlStatefulSet(t, ctx, name).Spec.Template.Spec
+	if ps.ServiceAccountName != "aa-exchange-control" {
+		t.Errorf("pod ServiceAccount = %q, want the profile's aa-exchange-control", ps.ServiceAccountName)
 	}
-	if owner := metav1.GetControllerOf(&sa); owner == nil || owner.UID != agent.UID {
-		t.Errorf("ServiceAccount controller = %+v, want the Agent", owner)
+	found := false
+	for _, v := range ps.Volumes {
+		found = found || (v.Name == "ach-token" && v.Projected != nil &&
+			v.Projected.Sources[0].ServiceAccountToken.Audience == "https://ach.example.com")
 	}
-	if got := getControlStatefulSet(t, ctx, name).Spec.Template.Spec.ServiceAccountName; got != render.ControlName(name) {
-		t.Errorf("pod ServiceAccount = %q, want %q", got, render.ControlName(name))
+	if !found {
+		t.Errorf("volumes = %+v, want ach-token with audience https://ach.example.com", ps.Volumes)
 	}
 }
 ```
@@ -436,7 +421,7 @@ Expected: FAIL to compile (`unknown field KeyFrom`, `undefined: AchKeyFrom`).
 ```go
 // AchTokenExchange exchanges the control pod's projected ServiceAccount token for a
 // short-lived ACH credential. ACH issues it only when a KeyGrant names this identity, the
-// Environment and the ServiceAccount <namespace>/agent-<agent name>.
+// Environment and the pod's control ServiceAccount as <namespace>/<serviceaccount>.
 type AchTokenExchange struct {
 	// Identity is the ACH identity (an email) the credential acts as.
 	// +kubebuilder:validation:Required
@@ -477,7 +462,7 @@ type AchServerSpec struct {
 
 - [ ] **Step 4: Implement rendering** (`operator/internal/render/wsconfig.go`)
 
-Replace `ControlServiceAccountName` (lines 124-131) with:
+Insert before `ControlServiceAccountName` (line 124; the function itself is unchanged):
 
 ```go
 // AchTokenDir/AchTokenPath are where a tokenExchange control pod reads its projected
@@ -499,20 +484,6 @@ func TokenExchange(a *v1.Agent) *v1.AchTokenExchange {
 // ExchangeAudience is the projected token's audience: spec.ach.baseUrl without trailing
 // slashes, which ACH compares with its own ACH_BASE_URL normalised the same way.
 func ExchangeAudience(baseURL string) string { return strings.TrimRight(baseURL, "/") }
-
-// ControlServiceAccountName is the effective control ServiceAccount. A tokenExchange agent
-// always runs as its own ControlName (agent-<agent name>), so no profile can point a pod at
-// another agent's KeyGrant; otherwise the profile's control.serviceAccountName, else
-// ach-agent-control-<uid>.
-func ControlServiceAccountName(a *v1.Agent, p *v1.AgentProfile) string {
-	if TokenExchange(a) != nil {
-		return ControlName(a.Name)
-	}
-	if p.Spec.Control.ServiceAccountName != "" {
-		return p.Spec.Control.ServiceAccountName
-	}
-	return "ach-agent-control-" + string(a.UID)
-}
 ```
 
 Replace `WSAchServer` (lines 214-220) with:
@@ -579,31 +550,6 @@ In the `const` block (after `tmpMountDir`, line 33) add:
 	achTokenExpirationSeconds = int64(3600)
 ```
 
-Lines 57-61:
-
-```go
-// effectiveControlServiceAccountName is what the control pod runs as (render.ControlServiceAccountName).
-func effectiveControlServiceAccountName(a *achv1alpha1.Agent, p *achv1alpha1.AgentProfile) string {
-	return render.ControlServiceAccountName(a, p)
-}
-```
-
-Lines 187-196:
-
-```go
-// buildControlServiceAccount is the operator-owned control identity: agent-<agent name> for
-// a tokenExchange agent, ach-agent-control-<uid> otherwise. It automounts no API token and
-// has no Role: the operator owns the sandboxes. Not applied when a non-tokenExchange agent's
-// profile sets control.serviceAccountName (that SA is external).
-func buildControlServiceAccount(a *achv1alpha1.Agent) *corev1.ServiceAccount {
-	falseVal := false
-	return &corev1.ServiceAccount{
-		ObjectMeta:                   metav1.ObjectMeta{Name: render.ControlServiceAccountName(a, &achv1alpha1.AgentProfile{}), Namespace: a.Namespace, Labels: agentLabels(a)},
-		AutomountServiceAccountToken: &falseVal,
-	}
-}
-```
-
 In `buildStatefulSet`, after the persistence block (after line 277) add:
 
 ```go
@@ -620,25 +566,7 @@ In `buildStatefulSet`, after the persistence block (after line 277) add:
 	}
 ```
 
-`agent_controller.go:248-250` (step 1b) — change the condition to:
-
-```go
-	// 1b. A profile-named control SA is external: it must already exist. Created later, the
-	// ServiceAccount watch (agentsForControlServiceAccount) re-enqueues this agent. A
-	// tokenExchange agent never uses it.
-	if name := profile.Spec.Control.ServiceAccountName; name != "" && render.TokenExchange(&agent) == nil {
-```
-
-`agent_controller.go:337-342`:
-
-```go
-	// The operator owns the control SA unless a non-tokenExchange agent's profile names an external one.
-	if profile.Spec.Control.ServiceAccountName == "" || render.TokenExchange(&agent) != nil {
-		if err := r.apply(ctx, &agent, buildControlServiceAccount(&agent)); err != nil {
-			return r.applyFail(ctx, &agent, conds, "ServiceAccount", err)
-		}
-	}
-```
+The control ServiceAccount (`effectiveControlServiceAccountName`, `buildControlServiceAccount`, reconcile steps 1b and 7) stays as it is.
 
 - [ ] **Step 6: Regenerate and fix the e2e fixture**
 
@@ -650,9 +578,9 @@ In `test/e2e/fixtures/ach-agent.yaml` line 10 replace `keySecretRef: {name: e2e-
 
 In `operator/CLAUDE.md`, replace the invariant sentence `The ACH key is \`ACH_SECRET_IDENTITY\`.` with:
 ```markdown
-  The ACH key from `keyFrom.secretKeyRef` is `ACH_SECRET_IDENTITY`. A `keyFrom.tokenExchange` Agent gets no key env: its
-  pod runs as ServiceAccount `ControlName` (`agent-<name>`, owned by the Agent; the profile's `serviceAccountName`
-  never applies) with a projected token (audience `baseUrl` without trailing slash, 3600 s) at `/var/run/secrets/ach/token`.
+  The ACH key from `keyFrom.secretKeyRef` is `ACH_SECRET_IDENTITY`. A `keyFrom.tokenExchange` Agent gets no key env:
+  its pod keeps the usual control ServiceAccount (profile `serviceAccountName`, else `ach-agent-control-<uid>`) and gets a
+  projected token (audience `baseUrl` without trailing slash, 3600 s) at `/var/run/secrets/ach/token`.
 ```
 
 - [ ] **Step 7: Run the tests**
@@ -1796,12 +1724,12 @@ Expected: PASS.
 
 ---
 
-### Task 6: Alert `ACHAgentKeyRefreshFailing`
+### Task 6: Alert `ACHAgentKeyRefreshFailing` and ACH Agent install docs
 
 **Files:**
 - Modify: `chart/alerts/ach-agent.rules.yaml` (append to group `ach-runtime`)
 - Modify: `chart/tests/alerts.test.yaml` (append cases)
-- Modify: `chart/tests/render_test.sh:49` (`len(alerts) == 5` → 6), `docs/install.md:71` (Five → Six)
+- Modify: `chart/tests/render_test.sh:49` (`len(alerts) == 5` → 6), `docs/install.md:71` (Five → Six) and new section 7 (ACH Agent, trust boundary)
 
 **Interfaces:**
 - Consumes: the three gauges/counter from Task 3 (labels `agent`, `environment` from `IdentityRegistry`, `namespace` from the PodMonitor).
@@ -1880,118 +1808,7 @@ Expected: FAIL (alert `ACHAgentKeyRefreshFailing` not found / expected alerts mi
 Run: `timeout 600 make chart-test > /tmp/chart-test.log 2>&1; echo "EXIT=$?"; grep -E 'SUCCESS|FAIL|PASS' /tmp/chart-test.log`
 Expected: `EXIT=0`, promtool `SUCCESS`, render `PASS`.
 
-- [ ] **Step 5: Commit**
-
-```bash
-/usr/bin/git add chart/alerts chart/tests docs/install.md
-/usr/bin/git commit -m "feat(chart): alert when an agent cannot refresh its ACH credential"
-```
-
----
-
-### Task 7: Optional agent pod admission policy and install docs
-
-**Files:**
-- Create: `chart/templates/agent-pod-policy.yaml`
-- Modify: `chart/values.yaml` (after `admissionPolicy`), `chart/values.schema.json` (`properties`), `chart/tests/render_test.sh`
-- Modify: `docs/install.md` (new section 7), `CLAUDE.md` (chart line)
-
-**Interfaces:**
-- Produces: value `agentPodPolicy.enabled` (bool, default `false`); ValidatingAdmissionPolicy `ach-agent-operator-agent-pods` + binding.
-
-- [ ] **Step 1: Write the failing render assertions** (append to `chart/tests/render_test.sh`, before `echo PASS`)
-
-```bash
-out=$(helm template t . "${base[@]}" --set agentPodPolicy.enabled=true)
-python3 - "$out" <<'PY'
-import sys, yaml
-docs = [d for d in yaml.safe_load_all(sys.argv[1]) if d]
-vaps = {d["metadata"]["name"]: d for d in docs if d["kind"] == "ValidatingAdmissionPolicy"}
-pol = vaps["ach-agent-operator-agent-pods"]
-text = str(pol["spec"])
-assert "system:serviceaccount:kube-system:statefulset-controller" in text, text
-assert "system:serviceaccount:ach-agent-system:ach-agent-operator" in text, text
-assert {r["resources"][0] for r in pol["spec"]["matchConstraints"]["resourceRules"]} == {"pods", "statefulsets"}
-binding = [d for d in docs if d["kind"] == "ValidatingAdmissionPolicyBinding" and d["spec"]["policyName"] == "ach-agent-operator-agent-pods"]
-assert binding and binding[0]["spec"]["validationActions"] == ["Deny"]
-print("agent pod policy ok")
-PY
-```
-(The existing default render keeps asserting exactly one ValidatingAdmissionPolicy, which proves the policy is off by default.)
-
-- [ ] **Step 2: Run to verify it fails**
-
-Run (repo root): `timeout 300 env PATH="$PWD/runtime/.venv/bin:$PATH" bash chart/tests/render_test.sh`
-Expected: FAIL with `KeyError: 'ach-agent-operator-agent-pods'`.
-
-- [ ] **Step 3: Implement**
-
-`chart/templates/agent-pod-policy.yaml`:
-
-```yaml
-{{- if .Values.agentPodPolicy.enabled }}
-# A pod running as an agent-* ServiceAccount can exchange that Agent's ACH credential. Admit
-# one only when the StatefulSet controller creates it for the StatefulSet of the same name, and
-# let only the operator create or change such StatefulSets.
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicy
-metadata:
-  name: {{ include "ach-agent.fullname" . }}-agent-pods
-  labels:
-    {{- include "ach-agent.labels" . | nindent 4 }}
-spec:
-  failurePolicy: Fail
-  matchConstraints:
-    resourceRules:
-      - apiGroups: [""]
-        apiVersions: ["v1"]
-        operations: ["CREATE"]
-        resources: ["pods"]
-      - apiGroups: ["apps"]
-        apiVersions: ["v1"]
-        operations: ["CREATE", "UPDATE"]
-        resources: ["statefulsets"]
-  matchConditions:
-    - name: agent-service-account
-      expression: >-
-        (request.kind.kind == "Pod" && has(object.spec.serviceAccountName) &&
-         object.spec.serviceAccountName.startsWith("agent-")) ||
-        (request.kind.kind == "StatefulSet" && has(object.spec.template.spec.serviceAccountName) &&
-         object.spec.template.spec.serviceAccountName.startsWith("agent-"))
-  validations:
-    - expression: >-
-        request.kind.kind != "Pod" ||
-        (request.userInfo.username == "system:serviceaccount:kube-system:statefulset-controller" &&
-         has(object.metadata.ownerReferences) &&
-         object.metadata.ownerReferences.exists(r, r.kind == "StatefulSet" && r.name == object.spec.serviceAccountName))
-      message: "a pod may run as an agent-* ServiceAccount only when the StatefulSet controller creates it for the StatefulSet of that name"
-    # A StatefulSet being deleted stays updatable: the garbage collector removes its finalizers.
-    - expression: >-
-        request.kind.kind != "StatefulSet" || has(object.metadata.deletionTimestamp) ||
-        request.userInfo.username == "system:serviceaccount:{{ .Release.Namespace }}:{{ include "ach-agent.serviceAccountName" . }}"
-      message: "only the ach-agent operator may create or change a StatefulSet whose pods run as an agent-* ServiceAccount"
----
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicyBinding
-metadata:
-  name: {{ include "ach-agent.fullname" . }}-agent-pods
-  labels:
-    {{- include "ach-agent.labels" . | nindent 4 }}
-spec:
-  policyName: {{ include "ach-agent.fullname" . }}-agent-pods
-  validationActions: [Deny]
-{{- end }}
-```
-
-`chart/values.yaml`, after the `admissionPolicy` block:
-```yaml
-# Admits a pod running as an agent-* ServiceAccount (a tokenExchange Agent's identity) only from the
-# StatefulSet controller for the Agent's own StatefulSet, and lets only the operator create those
-# StatefulSets. Profile ServiceAccount names must not start with agent- when this is on.
-agentPodPolicy:
-  enabled: false
-```
-`chart/values.schema.json`, add to `properties`: `"agentPodPolicy": {"type": "object", "properties": {"enabled": {"type": "boolean"}}}`.
+- [ ] **Step 5: Install docs**
 
 `docs/install.md`: append section
 
@@ -2001,11 +1818,11 @@ agentPodPolicy:
 With `capabilityServer: ach` the Agent takes its model, MCP servers and context from an ACH Environment,
 with a credential for one identity in that Environment from exactly one of:
 
-- `keyFrom.tokenExchange` (ACH 1.1.0 or later). The control pod runs as its own ServiceAccount
-  `agent-<agent name>` (created by the operator; a profile's `control.serviceAccountName` does not apply)
-  and exchanges that ServiceAccount's token at ACH for a short-lived credential, which it renews at 80% of
-  its lifetime. No key is stored in the cluster. `environment` is required and `baseUrl` must be
-  `https://` and equal ACH's `ACH_BASE_URL` (a trailing slash is ignored): it is the token's audience.
+- `keyFrom.tokenExchange` (ACH 1.1.0 or later). The control pod exchanges a projected token of its control
+  ServiceAccount (the profile's `control.serviceAccountName`, else `ach-agent-control-<uid>`) at ACH for a
+  short-lived credential, which it renews at 80% of its lifetime. No key is stored in the cluster.
+  `environment` is required and `baseUrl` must be `https://` and equal ACH's `ACH_BASE_URL` (a trailing
+  slash is ignored): it is the token's audience.
 - `keyFrom.secretKeyRef`: a static `ek_` in a Secret, for an ACH outside this cluster or a manual key.
 
 ```yaml
@@ -2013,7 +1830,7 @@ apiVersion: ach-agent.ackstorm.ai/v1alpha1
 kind: Agent
 metadata: {name: k8s-doctor, namespace: ach-agent}
 spec:
-  profileRef: {name: default}
+  profileRef: {name: default}          # control.serviceAccountName: ach-agent-control
   capabilityServer: ach
   ach:
     baseUrl: https://api.example.com
@@ -2028,37 +1845,32 @@ spec:
 ```
 
 ACH issues the credential only when a platform admin's `KeyGrant` names the identity, the Environment and
-the ServiceAccount `<namespace>/agent-<agent name>` (see the ACH documentation). Without one the control pod
-fails to start and logs ACH's code, for example `ACH token exchange refused: not_granted`.
+the requester `<namespace>/<control ServiceAccount>`, for example `ach-agent/ach-agent-control` (see the ACH
+documentation). Without one the control pod fails to start and logs ACH's code, for example
+`ACH token exchange refused: not_granted`.
 
-Anyone who can create a pod in the Agent's namespace can run it as `agent-<name>` and act as that Agent's
-identity. Keep Agents in a namespace where only Flux and the ach-agent operator create pods, StatefulSets
-and Agents, and consider `--set agentPodPolicy.enabled=true` (needs the controller manager's
-`--use-service-account-credentials`, the default on kubeadm and EKS). ACH reviews the token with a
-TokenReview, whose request body contains it: keep `tokenreviews` at audit level `Metadata`.
+Trust boundary: any pod that runs as a namespace's control ServiceAccount can exchange every grant that
+names `<namespace>/<serviceaccount>`, so the granularity of a grant is the namespace and ServiceAccount, not
+the Agent. Agents sharing a profile ServiceAccount can use each other's grants. Keep Agents in a namespace
+where only Flux and the ach-agent operator create pods, StatefulSets and Agents, and give Agents that must
+not share grants different namespaces or profile ServiceAccounts. ACH reviews the token with a TokenReview,
+whose request body contains it: keep `tokenreviews` at audit level `Metadata`.
 
 The control pod exports `ach_agent_key_expiry_timestamp_seconds`, `ach_agent_key_lifetime_seconds` and
 `ach_agent_key_refresh_failures_total`; `ACHAgentKeyRefreshFailing` fires when less than 10% of the
 credential's lifetime is left.
 ````
 
-`CLAUDE.md` line 6: `- \`chart/\` Helm chart (operator, CRDs, RBAC, Secret admission policy, optional agent pod policy); \`make chart-test\`.`
-
-- [ ] **Step 4: Run the tests**
-
-Run: `timeout 600 make chart-test > /tmp/chart-test.log 2>&1; echo "EXIT=$?"; grep -E 'ok|PASS|FAIL' /tmp/chart-test.log`
-Expected: `EXIT=0`, `agent pod policy ok`, `PASS`.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-/usr/bin/git add chart docs/install.md CLAUDE.md
-/usr/bin/git commit -m "feat(chart): optional admission policy for agent ServiceAccounts"
+/usr/bin/git add chart/alerts chart/tests docs/install.md
+/usr/bin/git commit -m "feat(chart): alert when an agent cannot refresh its ACH credential"
 ```
 
 ---
 
-### Task 8: e2e exchange stub with a real TokenReview and the rotation acceptance test
+### Task 7: e2e exchange stub with a real TokenReview and the rotation acceptance test
 
 **Files:**
 - Modify: `test/e2e/stubs/stub.py` (full replacement below), `test/e2e/stubs/test_stub.py`, `test/e2e/stubs/Dockerfile`
@@ -2082,7 +1894,7 @@ def exchange():
     def review(token):
         reviews.append(token)
         return {"authenticated": token == "good-sa", "audiences": [stub.EXCHANGE_BASE],
-                "user": {"username": "system:serviceaccount:ach-agent-e2e:agent-x",
+                "user": {"username": "system:serviceaccount:ach-agent-e2e:ach-agent-control-x",
                          "extra": {"authentication.kubernetes.io/pod-name": ["agent-x-0"]}}}
 
     state = stub.State(review=review)
@@ -2169,7 +1981,8 @@ ACH_BASE = os.environ.get("STUB_ACH_BASE", "http://e2e-stub.ach-agent-e2e.svc.cl
 # The exchange server's URL is also the audience the Agent's projected token must carry.
 EXCHANGE_BASE = os.environ.get("STUB_EXCHANGE_BASE", "https://e2e-stub.ach-agent-e2e.svc.cluster.local:8093")
 EXCHANGE_IDENTITY = os.environ.get("STUB_EXCHANGE_IDENTITY", "ai.run@example.com")
-EXCHANGE_SA_PREFIX = "system:serviceaccount:ach-agent-e2e:agent-"
+# The e2e profile names no control ServiceAccount, so Agents run as ach-agent-control-<uid>.
+EXCHANGE_SA_PREFIX = "system:serviceaccount:ach-agent-e2e:ach-agent-control-"
 JWT_TTL = int(os.environ.get("STUB_JWT_TTL_SECONDS", "60"))
 SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
 # kind -> (header, accepted value); PUT /_creds replaces a value.
@@ -2619,7 +2432,7 @@ in `deploy`, before `k apply -f "$HERE/stub.yaml"`:
   k -n "$AGENT_NS" create secret tls e2e-stub-tls --cert "$TLS_DIR/tls.crt" --key "$TLS_DIR/tls.key" \
     --dry-run=client -o yaml | k apply -f -
 ```
-and add `--set agentPodPolicy.enabled=true` to the `helm upgrade --install ach-agent` line. In the `up)` case call `gen_tls` before `build_images`; in `load)` call `gen_tls` after `guard`.
+In the `up)` case call `gen_tls` before `build_images`; in `load)` call `gen_tls` after `guard`.
 
 `.gitignore`: add `test/e2e/.tls/`.
 `CLAUDE.md` e2e line: append ` The exchange stub (8093, HTTPS) uses a CA generated into the gitignored \`test/e2e/.tls/\`; the e2e control image trusts it via \`SSL_CERT_FILE\`.`
@@ -2694,20 +2507,13 @@ type loadSummary struct {
 		apply(t, "fixtures/ach-exchange-agent.yaml", map[string]string{"NAME": name})
 		t.Cleanup(func() { kubectl("", "-n", agentNS, "delete", "agent", name, "--wait=false") })
 		waitCond(t, name, "Ready", "True", 5*time.Minute)
-		if sa := jsonpath(t, "-n", agentNS, "get", "pod", pod, "-o", "jsonpath={.spec.serviceAccountName}"); sa != "agent-"+name {
-			t.Fatalf("control pod runs as %q, want agent-%s", sa, name)
-		}
-		// agentPodPolicy: a pod created by hand cannot borrow the Agent's ServiceAccount.
-		if out, err := kubectl("", "-n", agentNS, "run", "sa-borrow", "--image=busybox:1.36", "--restart=Never",
-			`--overrides={"apiVersion":"v1","spec":{"serviceAccountName":"agent-`+name+`"}}`); err == nil {
-			kubectl("", "-n", agentNS, "delete", "pod", "sa-borrow", "--wait=false")
-			t.Errorf("a hand-made pod was admitted as agent-%s:\n%s", name, out)
-		} else if !strings.Contains(out, "StatefulSet controller") {
-			t.Errorf("the hand-made pod was refused for another reason:\n%s", out)
+		uid := agentUID(t, name)
+		// The exchange keeps the usual control ServiceAccount (no profile SA here: the default).
+		if sa := jsonpath(t, "-n", agentNS, "get", "pod", pod, "-o", "jsonpath={.spec.serviceAccountName}"); sa != "ach-agent-control-"+uid {
+			t.Fatalf("control pod runs as %q, want ach-agent-control-%s", sa, uid)
 		}
 		postAccepted(t, name, 2*time.Minute)
 		waitChat(t, 8093, 4*time.Minute)
-		uid := agentUID(t, name)
 		workspaces := sandboxes(t, uid)
 		if len(workspaces) == 0 {
 			t.Fatalf("no workspace for agent uid %s\n%s", uid, agentYAML(name)())
@@ -2767,13 +2573,13 @@ Expected: `EXIT=0`, `--- PASS: TestE2E/token-exchange`, every other subtest PASS
 
 ---
 
-### Task 9: Release 0.2.0
+### Task 8: Release 0.2.0
 
 **Files:**
 - Modify: `runtime/pyproject.toml`, `chart/Chart.yaml`, `CHANGELOG.md` (via `make release-bump`), `chart/tests/render_test.sh:26`, `docs/install.md:55,118-119`
 
 **Interfaces:**
-- Consumes: Tasks 1-8 merged on the branch.
+- Consumes: Tasks 1-7 merged on the branch.
 
 - [ ] **Step 1: Bump**
 
@@ -2793,16 +2599,14 @@ Then `chart/tests/render_test.sh:26` → `assert c["image"].endswith(":0.2.0"), 
 
 ### Added
 
-- `spec.ach.keyFrom.tokenExchange.identity` (needs ACH 1.1.0 and a `KeyGrant`): the control pod runs as its own
-  ServiceAccount `agent-<name>`, exchanges a projected token (audience `spec.ach.baseUrl`) at
+- `spec.ach.keyFrom.tokenExchange.identity` (needs ACH 1.1.0 and a `KeyGrant` naming the control ServiceAccount
+  as `<namespace>/<serviceaccount>`): the control pod keeps its usual ServiceAccount, exchanges a projected token
+  of it (audience `spec.ach.baseUrl`) at
   `POST /platform/keys/exchange` for a short-lived ACH credential and renews it at 80% of its lifetime with no
   failed request; a credential ACH rejects is re-exchanged once and the request retried. `environment` and an
   `https://` `baseUrl` are required. No Secret is referenced, so rotation never restarts the pod.
 - Metrics `ach_agent_key_refresh_failures_total`, `ach_agent_key_expiry_timestamp_seconds`,
   `ach_agent_key_lifetime_seconds` and the alert `ACHAgentKeyRefreshFailing`.
-- `agentPodPolicy.enabled` (off by default): a ValidatingAdmissionPolicy that admits a pod running as an
-  `agent-*` ServiceAccount only from the StatefulSet controller for the StatefulSet of that name, and lets only
-  the operator create those StatefulSets.
 
 ### Security
 
@@ -2820,7 +2624,7 @@ L=/tmp/rel-envtest.log; timeout 2400 make -C operator test-envtest > $L 2>&1; ec
 L=/tmp/rel-chart.log; timeout 900 make chart-test > $L 2>&1; echo "chart EXIT=$?"; tail -3 $L
 L=/tmp/rel-runtime.log; timeout 3600 make -C runtime test-unit > $L 2>&1; echo "runtime EXIT=$?"; tail -5 $L
 ```
-Expected: `release-check ok: 0.2.0` and every `EXIT=0`. The e2e of Task 8 is not rerun unless a file under `operator/`, `runtime/src`, `chart/` or `test/e2e/` changed after it (`/usr/bin/git diff --stat <task-8 commit>..HEAD -- operator runtime/src chart test/e2e`).
+Expected: `release-check ok: 0.2.0` and every `EXIT=0`. The e2e of Task 7 is not rerun unless a file under `operator/`, `runtime/src`, `chart/` or `test/e2e/` changed after it (`/usr/bin/git diff --stat <task-7 commit>..HEAD -- operator runtime/src chart test/e2e`).
 
 - [ ] **Step 4: Commit (do not push)**
 
@@ -2832,30 +2636,17 @@ The user fast-forwards `main` to this commit and pushes; `.github/workflows/rele
 
 ---
 
-### Task 10: GitOps rollout (exact manifests; not executed by this plan)
+### Task 9: GitOps rollout (exact manifests; not executed by this plan)
 
 Repositories (read-only for this plan; the change is applied by the user or a separate session):
 - GitOps: `/workspace/private/ackstorm/blueprints/genai-blueprint/gitops`
-- Terraform: `/workspace/private/ackstorm/nglz-genai/terraform-genai-blueprint-module`
+- Terraform (commit 2 cleanup only): `/workspace/private/ackstorm/nglz-genai/terraform-genai-blueprint-module`
 
 **Prerequisites (all must hold before commit 1):**
 1. ACH 1.1.0 is deployed (plan A), with `KeyGrant` CRD; `gitops/apps/ach/base/helm.yaml:13` pins `version: 1.0.x` today and must allow 1.1.x. ACH's `ACH_BASE_URL` is `https://api.${GENAI_BASE_DOMAIN}` (`apps/ach/base/helm.yaml:131-132`) = `https://api.ackstorm.ai`, equal to the Agents' `baseUrl`.
-2. ach-agent 0.2.0 is published (Task 9).
+2. ach-agent 0.2.0 is published (Task 8).
 3. `ai.run@ackstorm.com` has logged in to ACH once (spec 4.2).
-4. **Terraform applied** (S3 for the per-agent ServiceAccounts; spec fact 1). In `terraform-genai-blueprint-module/terraform.tfvars:36-38` replace the list with:
-
-```hcl
-# ach-agent: control pod ServiceAccounts in namespace `ach-agent` that use the S3 backend.
-# A keyFrom.tokenExchange Agent runs as its own agent-<name>.
-ach_agent_service_accounts = [
-  "ach-agent-control",
-  "agent-gitlab-reviewer",
-  "agent-k8s-doctor",
-  "agent-observability-assistant",
-  "agent-zohodesk-classifier",
-]
-```
-then `terraform plan` shows only four new `aws_eks_pod_identity_association` resources in `module.ach_agent_pod_identity`; apply.
+4. No Terraform or Pod Identity change: the Agents keep the profile ServiceAccount `ach-agent-control`, which already has S3 through EKS Pod Identity (ADR-001).
 
 **Commit 1 (`feat(agents): ACH credentials by token exchange, ach-agent 0.2.0`)**
 
@@ -2869,18 +2660,20 @@ resources:
 ```
 b) Create `workloads/ach/keygrants/ai-run-agents.yaml`:
 ```yaml
-# One KeyGrant per agent: ai.run@ackstorm.com in exactly that agent's Environment, for exactly that
-# agent's control ServiceAccount (ach-agent runs a keyFrom.tokenExchange Agent as agent-<name>).
-# spec.budget caps that agent's exchange key; the Environment budget still caps the pool.
+# One KeyGrant per Environment, so each keeps its own spec.budget: ai.run@ackstorm.com in that
+# Environment, requested by the shared control ServiceAccount ach-agent/ach-agent-control (the
+# AgentProfile's control.serviceAccountName). Any pod running as that ServiceAccount can use all four
+# grants: the grant boundary is the namespace and ServiceAccount, not the Agent.
+# spec.budget caps the Environment's exchange key; the Environment budget still caps the pool.
 apiVersion: ach.ackstorm.ai/v1alpha1
 kind: KeyGrant
 metadata:
-  name: ai-run-gitlab-reviewer
+  name: ai-run-agent-gitlab
 spec:
   identity: ai.run@ackstorm.com
   environments: [agent-gitlab]
   requesters:
-    serviceAccounts: [ach-agent/agent-gitlab-reviewer]
+    serviceAccounts: [ach-agent/ach-agent-control]
   budget:
     maxBudget: 50
     budgetDuration: 30d
@@ -2888,12 +2681,12 @@ spec:
 apiVersion: ach.ackstorm.ai/v1alpha1
 kind: KeyGrant
 metadata:
-  name: ai-run-k8s-doctor
+  name: ai-run-agent-k8s-doctor
 spec:
   identity: ai.run@ackstorm.com
   environments: [agent-k8s-doctor]
   requesters:
-    serviceAccounts: [ach-agent/agent-k8s-doctor]
+    serviceAccounts: [ach-agent/ach-agent-control]
   budget:
     maxBudget: 120
     budgetDuration: 30d
@@ -2901,12 +2694,12 @@ spec:
 apiVersion: ach.ackstorm.ai/v1alpha1
 kind: KeyGrant
 metadata:
-  name: ai-run-observability-assistant
+  name: ai-run-agent-observability-assistant
 spec:
   identity: ai.run@ackstorm.com
   environments: [agent-observability-assistant]
   requesters:
-    serviceAccounts: [ach-agent/agent-observability-assistant]
+    serviceAccounts: [ach-agent/ach-agent-control]
   budget:
     maxBudget: 30
     budgetDuration: 30d
@@ -2914,12 +2707,12 @@ spec:
 apiVersion: ach.ackstorm.ai/v1alpha1
 kind: KeyGrant
 metadata:
-  name: ai-run-zohodesk-classifier
+  name: ai-run-agent-zohodesk-classifier
 spec:
   identity: ai.run@ackstorm.com
   environments: [agent-zohodesk-classifier]
   requesters:
-    serviceAccounts: [ach-agent/agent-zohodesk-classifier]
+    serviceAccounts: [ach-agent/ach-agent-control]
   budget:
     maxBudget: 30
     budgetDuration: 30d
@@ -2962,13 +2755,6 @@ d) Agents — replace each `ach:` key block:
 ```
 e) `workloads/agents/agentprofiles/default.yaml`: `ghcr.io/ackstorm/ach-agent-control:0.1.5` → `:0.2.0`; `ghcr.io/ackstorm/ach-agent-execution:0.1.5` → `:0.2.0`.
 f) `apps/ach-agent/base/helm.yaml:13`: `version: 0.1.x` → `version: 0.2.x`.
-g) Optional (recommended by spec 5.2): in `apps/ach-agent/base/helm.yaml` `values:` add
-```yaml
-    # Pods running as agent-* (a tokenExchange Agent's identity) only from the StatefulSet controller.
-    agentPodPolicy:
-      enabled: true
-```
-
 Local check before committing: `for layer in infra observability platform-services apps workloads; do timeout 120 kustomize build "$layer" > /dev/null || echo "FAIL $layer"; done` (expected: no `FAIL`).
 
 Expected transient during reconcile: until Helm has replaced the Agent CRD, Flux's apply of the four Agents fails validation (`keyFrom` unknown, `keySecretRef` required); it succeeds on the next Flux retry. The running pods keep serving until their StatefulSets change.
@@ -2990,7 +2776,7 @@ q 'ALERTS{alertname="ACHAgentKeyRefreshFailing"}'
 q 'increase(ach_agent_anomalies_total{namespace="ach-agent",kind=~"persistence_failed|restore_failed|configuration_invalid|start_failed"}[1h])'
 q 'increase(ach_agent_runs_total{namespace="ach-agent",outcome="completed"}[1h])'
 ```
-Expected: four grants `Ready=True`; Agents `Ready=True`; each pod `sa=agent-<name> aud=https://api.ackstorm.ai ready=true`; key `{'exchange': {...}}`; `ACH_SECRET_IDENTITY` count 0; log matches 0; expiry remainder between 180 and 900 s; refresh failures 0; no alert; anomaly increases 0 (S3 works for `k8s-doctor` and `observability-assistant`); completed runs > 0 for agents that ran. Wait at least 45 minutes (three 12-minute rotations of a 15-minute JWT) with these results before commit 2.
+Expected: four grants `Ready=True`; Agents `Ready=True`; each pod `sa=ach-agent-control aud=https://api.ackstorm.ai ready=true`; key `{'exchange': {...}}`; `ACH_SECRET_IDENTITY` count 0; log matches 0; expiry remainder between 180 and 900 s; refresh failures 0; no alert; anomaly increases 0 (S3 works for `k8s-doctor` and `observability-assistant`); completed runs > 0 for agents that ran. Wait at least 45 minutes (three 12-minute rotations of a 15-minute JWT) with these results before commit 2.
 
 **Commit 2 (`chore(agents): drop the manual ek_ ExternalSecrets`)**
 - `workloads/agents/achagents/k8s-doctor.yaml`: delete lines 11-29 (the `ExternalSecret k8s-doctor-ek` document, its `---` and the blank line).
@@ -2999,7 +2785,7 @@ Expected: four grants `Ready=True`; Agents `Ready=True`; each pod `sa=agent-<nam
 - `workloads/agents/achagents/gitlab-pr.yaml`: delete lines 46-65 (blank line, `# ek_ for Agent gitlab-reviewer …` comment, `ExternalSecret gitlab-reviewer-ek`, its `---`).
   `creationPolicy: Owner` makes External Secrets delete the four `*-ek` Secrets.
 
-Terraform, same change window (`terraform-genai-blueprint-module`):
+Terraform cleanup of the now-unused ek_ containers, same change window (`terraform-genai-blueprint-module`; Pod Identity untouched):
 - `modules/genai/ach.tf:67-80`: delete the `ACH - AGENT ENVIRONMENT KEYS` comment block and `resource "aws_secretsmanager_secret" "ach_agent_ek"`.
 - `modules/genai/kubernetes.tf:54-57`: delete `GENAI_SM_ACH_AGENT_GITLAB_REVIEWER`, `GENAI_SM_ACH_AGENT_K8S_DOCTOR`, `GENAI_SM_ACH_AGENT_OBSERVABILITY_ASSISTANT`, `GENAI_SM_ACH_AGENT_ZOHODESK_CLASSIFIER`.
 - `terraform plan` destroys the Secrets Manager secrets `terraform/pro-ack-ai-platform/ach-agent-gitlab-reviewer`, `…/ach-agent-k8s-doctor`, `…/ach-agent-observability-assistant`, `…/ach-agent-zohodesk-classifier` (AWS keeps them for the default recovery window) and updates the `terraform-genai-data` Secret. Apply only after GitOps commit 2 is reconciled (no manifest references `${GENAI_SM_ACH_AGENT_*}`: `grep -rn GENAI_SM_ACH_AGENT_ workloads apps` returns only `docs/`).
@@ -3009,12 +2795,10 @@ Revoke the old manual keys (as an ACH admin; never `revoke --owner`, which would
 for env in agent-gitlab agent-k8s-doctor agent-observability-assistant agent-zohodesk-classifier; do
   ach-cli admin keys list --owner ai.run@ackstorm.com --type ek --env "$env" -o json
 done
-# For each row whose name is not "exchange:ach-agent/agent-<name>":
+# For each row whose name is not "exchange:ach-agent/ach-agent-control":
 ach-cli admin keys revoke ekid_<id from the listing>
 ```
 Verify again with the commands after commit 1 (the agents keep `Ready=True`; `kubectl -n ach-agent get externalsecrets` lists none of the `*-ek`).
-
-Optional cleanup once every Agent uses `tokenExchange` (not required by the spec): remove `serviceAccountName: ach-agent-control` from `agentprofiles/default.yaml`, delete `workloads/agents/serviceaccount.yaml` and its kustomization entry, drop `"ach-agent-control"` from `ach_agent_service_accounts`, and update the comment in `apps/ach-agent/base/helm.yaml:35-36` and `apps/openshell/base/mesh.yaml:10-11`.
 
 ---
 
@@ -3022,10 +2806,10 @@ Optional cleanup once every Agent uses `tokenExchange` (not required by the spec
 
 **Spec coverage**
 - 5.1 API `keyFrom`, CEL (exactly one; environment and https with tokenExchange): Task 2 (types, envtest CEL cases).
-- 5.2 SA `agent-<name>` owned by the Agent, profile SA ignored, projected token (audience, 3600, path), workspace config `exchange`, schema/vendored/hydration/Secret discovery together, no Secret: Tasks 1-2 (and `HydrationInput` in Task 4). Trust boundary docs + optional VAP: Task 7.
-- 5.3 KeySource per request (model, MCP, memory auth + memory MCP client incl. initialize/cleanup, A2A long-lived client, context downloads, hydrate): Tasks 3-4. Exchange before hydrate, refusal fails boot with code, no redirects: Tasks 3-4. Rotation at 80% monotonic, swap one reference: Task 3. Refresh failure backoff clamped, not-ready after expiry: Tasks 3-4 (`/readyz`). Single-flight re-exchange on ACH rejection only, no double upstream: Tasks 3-4. Global redaction filter incl. memory/A2A exception text: Task 5. secretKeyRef unchanged: Tasks 2, 4, 8 (`ach-mode`).
+- 5.2 projected token (audience, 3600, path) and workspace config `exchange` for `tokenExchange` Agents only, schema/vendored/hydration/Secret discovery together, no Secret: Tasks 1-2 (and `HydrationInput` in Task 4). The per-Agent ServiceAccount, the "profile ServiceAccount does not apply" rule and the optional admission policy are deliberately not implemented (spec fact 1); the ServiceAccount resolution is tested unchanged for `tokenExchange` Agents (Task 2 unit + envtest, Task 7 e2e). Trust boundary docs: Task 6.
+- 5.3 KeySource per request (model, MCP, memory auth + memory MCP client incl. initialize/cleanup, A2A long-lived client, context downloads, hydrate): Tasks 3-4. Exchange before hydrate, refusal fails boot with code, no redirects: Tasks 3-4. Rotation at 80% monotonic, swap one reference: Task 3. Refresh failure backoff clamped, not-ready after expiry: Tasks 3-4 (`/readyz`). Single-flight re-exchange on ACH rejection only, no double upstream: Tasks 3-4. Global redaction filter incl. memory/A2A exception text: Task 5. secretKeyRef unchanged: Tasks 2, 4, 7 (`ach-mode`).
 - 5.4 metrics + alert: Tasks 3, 6 (plus the lifetime gauge, spec fact 4).
-- 6 ach-agent tests: KeySource consumers (Task 4 `test_key_rotation.py`), refresh/backoff/not-ready (Task 3), concurrent re-exchange and upstream 401 not retried (Tasks 3-4), redaction (Task 5, e2e log check), operator SA/projected token/profile SA/CEL (Task 2). Acceptance on kind, 1-minute JWT, model + MCP session + long stream, >= 3 rotations, zero failures, real TokenReview: Task 8.
-- 7.2 release 0.2.0 breaking: Task 9. 7.3 GitOps commit 1 / commit 2: Task 10.
+- 6 ach-agent tests: KeySource consumers (Task 4 `test_key_rotation.py`), refresh/backoff/not-ready (Task 3), concurrent re-exchange and upstream 401 not retried (Tasks 3-4), redaction (Task 5, e2e log check), operator projected token only for `tokenExchange`, unchanged ServiceAccount, CEL (Task 2). Acceptance on kind, 1-minute JWT, model + MCP session + long stream, >= 3 rotations, zero failures, real TokenReview: Task 7.
+- 7.2 release 0.2.0 breaking: Task 8. 7.3 GitOps commit 1 / commit 2: Task 9 (grants name `ach-agent/ach-agent-control`, one per Environment).
 
-**Open points that change scope if answered differently:** budgets in the KeyGrants (Environment budgets mirrored; `zohodesk-classifier` 30 proposed), enabling `agentPodPolicy` in production, and the ACH resolver behaviour in spec fact 6.
+**Open point to confirm with plan A:** the ACH resolver behaviour in spec fact 6. KeyGrant budgets are fixed (gitlab 50, k8s-doctor 120, observability 30, zohodesk 30).

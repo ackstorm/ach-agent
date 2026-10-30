@@ -18,6 +18,7 @@ EK = "ek_live_0123456789abcdef"
 @pytest.fixture
 def redacting():
     previous = logging.getLogRecordFactory()
+    logging.setLogRecordFactory(logging.LogRecord)
     install_redaction()
     yield
     logging.setLogRecordFactory(previous)
@@ -46,3 +47,13 @@ def test_install_is_idempotent(redacting) -> None:
     factory = logging.getLogRecordFactory()
     install_redaction()
     assert logging.getLogRecordFactory() is factory
+
+
+@pytest.mark.parametrize("text", ["week-long", "task-runner", "disk-usage", "risk-free", "desk-3"])
+def test_redact_leaves_words_containing_ek_or_sk_alone(text: str) -> None:
+    assert redact(text) == text
+
+
+@pytest.mark.parametrize("text", [EK, f"x-ach-key={EK.replace('ek_', 'ek-')}", "Bearer sk-abc123", JWT])
+def test_redact_still_scrubs_credentials_in_context(text: str) -> None:
+    assert "[redacted]" in redact(text) and "abc123" not in redact(text) and "0123456789" not in redact(text)

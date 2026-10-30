@@ -15,7 +15,7 @@ from typing import Literal
 from ach_runtime.execution.wire import JsonValue
 
 _SECRET = re.compile(
-    r"(ek[-_][A-Za-z0-9_\-]+|sk-[A-Za-z0-9_\-]+"
+    r"((?<![A-Za-z0-9])ek[-_][A-Za-z0-9_\-]+|(?<![A-Za-z0-9])sk-[A-Za-z0-9_\-]+"
     # A compact JWS (an ACH JWT, a ServiceAccount token): the base64url JSON header starts eyJ.
     r"|eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*)"
 )

@@ -29,19 +29,19 @@ const (
 	pvcVolumeName      = "ach-agent-state"
 	// tmpVolumeName/tmpMountDir: the control process's single writable path under a
 	// read-only root filesystem (ach-runtime: TMPDIR only; handoff/script children inherit it).
-	tmpVolumeName        = "ach-tmp"
-	tmpMountDir          = "/tmp"
+	tmpVolumeName = "ach-tmp"
+	tmpMountDir   = "/tmp"
 	// achTokenVolumeName holds a tokenExchange control pod's projected ServiceAccount token
 	// (render.AchTokenPath); the kubelet renews it.
 	achTokenVolumeName        = "ach-token"
 	achTokenExpirationSeconds = int64(3600)
-	configHashAnnotation = "ach-agent.ackstorm.ai/config-hash"
-	agentLabelKey        = "ach-agent.ackstorm.ai/agent"
-	componentLabelKey    = "ach-agent.ackstorm.ai/component"
-	componentControl     = "control"
-	defaultGraceSeconds  = int64(120)
-	agentUID             = int64(10001)
-	controlServicePort   = 8081
+	configHashAnnotation      = "ach-agent.ackstorm.ai/config-hash"
+	agentLabelKey             = "ach-agent.ackstorm.ai/agent"
+	componentLabelKey         = "ach-agent.ackstorm.ai/component"
+	componentControl          = "control"
+	defaultGraceSeconds       = int64(120)
+	agentUID                  = int64(10001)
+	controlServicePort        = 8081
 
 	// controlProbePort is the fixed control HTTP port: the container's health and event
 	// server binds it, the probes and the -http Service target it. controlServicePort carries

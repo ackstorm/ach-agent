@@ -121,7 +121,7 @@ type WSInfrastructureBlock struct {
 // controlEndpoint.
 const controlPort = 8081
 
-// AchTokenDir/AchTokenPath are where a tokenExchange control pod reads its projected
+// AchTokenDir, AchTokenFile and AchTokenPath locate where a tokenExchange control pod reads its projected
 // ServiceAccount token.
 const (
 	AchTokenDir  = "/var/run/secrets/ach"

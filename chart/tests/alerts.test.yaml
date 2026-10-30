@@ -1,0 +1,297 @@
+rule_files:
+  - ../alerts/ach-agent.rules.yaml
+
+evaluation_interval: 30s
+tests:
+  - name: missing series does not fire
+    interval: 30s
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: ACHPersistenceFailed
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: ACHRestoreFailed
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: ACHStartOutcomeUnknown
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: ACHRepeatedPodFailures
+        exp_alerts: []
+
+  - name: initialized zero counters do not fire
+    interval: 30s
+    input_series:
+      - series: 'ach_agent_anomalies_total{kind="persistence_failed", namespace="ns", agent="alpha", environment="prod"}'
+        values: '0+0x12'
+      - series: 'ach_agent_anomalies_total{kind="restore_failed", namespace="ns", agent="alpha", environment="prod"}'
+        values: '0+0x12'
+      - series: 'ach_agent_anomalies_total{kind="start_outcome_unknown", namespace="ns", agent="alpha", environment="prod"}'
+        values: '0+0x12'
+      - series: 'ach_agent_anomalies_total{kind="pod_unhealthy", namespace="ns", agent="alpha", environment="prod"}'
+        values: '0+0x12'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: ACHPersistenceFailed
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: ACHRestoreFailed
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: ACHStartOutcomeUnknown
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: ACHRepeatedPodFailures
+        exp_alerts: []
+
+  - name: first observed persistence and restore counters fire
+    interval: 30s
+    input_series:
+      - series: 'ach_agent_anomalies_total{kind="persistence_failed", namespace="ns", agent="alpha", environment="prod"}'
+        values: '1+0x1'
+      - series: 'ach_agent_anomalies_total{kind="restore_failed", namespace="ns", agent="alpha", environment="prod"}'
+        values: '1+0x1'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: ACHPersistenceFailed
+        exp_alerts:
+          - exp_labels:
+              namespace: ns
+              agent: alpha
+              environment: prod
+              severity: warning
+            exp_annotations:
+              summary: ACH persistence failed for agent alpha
+              description: Persistence failed for agent alpha in namespace ns and environment prod.
+      - eval_time: 30s
+        alertname: ACHRestoreFailed
+        exp_alerts:
+          - exp_labels:
+              namespace: ns
+              agent: alpha
+              environment: prod
+              severity: warning
+            exp_annotations:
+              summary: ACH restore failed for agent alpha
+              description: Restore failed for agent alpha in namespace ns and environment prod.
+
+  - name: both unknown kinds select the same alert
+    interval: 30s
+    input_series:
+      - series: 'ach_agent_anomalies_total{kind="start_outcome_unknown", namespace="ns", agent="alpha", environment="prod"}'
+        values: '1+0x1'
+      - series: 'ach_agent_anomalies_total{kind="run_outcome_unknown", namespace="ns", agent="beta", environment="staging"}'
+        values: '1+0x1'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: ACHStartOutcomeUnknown
+        exp_alerts:
+          - exp_labels:
+              namespace: ns
+              agent: alpha
+              environment: prod
+              severity: warning
+            exp_annotations:
+              summary: ACH run outcome is unknown for agent alpha
+              description: An ACH start or run outcome is unknown for agent alpha in namespace ns and environment prod. Investigate the run state before retrying; do not blindly replay it.
+          - exp_labels:
+              namespace: ns
+              agent: beta
+              environment: staging
+              severity: warning
+            exp_annotations:
+              summary: ACH run outcome is unknown for agent beta
+              description: An ACH start or run outcome is unknown for agent beta in namespace ns and environment staging. Investigate the run state before retrying; do not blindly replay it.
+
+  - name: zero to one counter increment fires
+    interval: 30s
+    input_series:
+      - series: 'ach_agent_anomalies_total{kind="persistence_failed", namespace="ns", agent="alpha", environment="prod"}'
+        values: '0+0x10 1+0x2'
+    alert_rule_test:
+      - eval_time: 5m30s
+        alertname: ACHPersistenceFailed
+        exp_alerts:
+          - exp_labels:
+              namespace: ns
+              agent: alpha
+              environment: prod
+              severity: warning
+            exp_annotations:
+              summary: ACH persistence failed for agent alpha
+              description: Persistence failed for agent alpha in namespace ns and environment prod.
+
+  - name: increment after counter reset fires
+    interval: 30s
+    input_series:
+      - series: 'ach_agent_anomalies_total{kind="persistence_failed", namespace="ns", agent="alpha", environment="prod"}'
+        values: '5+0x10 1 2'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: ACHPersistenceFailed
+        exp_alerts:
+          - exp_labels:
+              namespace: ns
+              agent: alpha
+              environment: prod
+              severity: warning
+            exp_annotations:
+              summary: ACH persistence failed for agent alpha
+              description: Persistence failed for agent alpha in namespace ns and environment prod.
+
+  - name: one pod failure does not satisfy repeated threshold
+    interval: 30s
+    input_series:
+      - series: 'ach_agent_anomalies_total{kind="pod_unhealthy", namespace="ns", agent="alpha", environment="prod"}'
+        values: '1+0x21'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: ACHRepeatedPodFailures
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: ACHRepeatedPodFailures
+        exp_alerts: []
+      - eval_time: 9m30s
+        alertname: ACHRepeatedPodFailures
+        exp_alerts: []
+
+  - name: established and newly appearing series contribute to one agent threshold
+    interval: 30s
+    input_series:
+      - series: 'ach_agent_anomalies_total{kind="pod_unhealthy", namespace="ns", agent="alpha", environment="prod", instance="old"}'
+        values: '0+0x20 1+0x3'
+      - series: 'ach_agent_anomalies_total{kind="pod_unhealthy", namespace="ns", agent="alpha", environment="prod", instance="new"}'
+        values: '_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 1+0x3'
+    alert_rule_test:
+      - eval_time: 10m30s
+        alertname: ACHRepeatedPodFailures
+        exp_alerts:
+          - exp_labels:
+              namespace: ns
+              agent: alpha
+              environment: prod
+              severity: warning
+            exp_annotations:
+              summary: ACH pod failures repeated for agent alpha
+              description: At least two unhealthy pod events were observed for agent alpha in namespace ns and environment prod within 10m.
+      - eval_time: 11m
+        alertname: ACHRepeatedPodFailures
+        exp_alerts:
+          - exp_labels:
+              namespace: ns
+              agent: alpha
+              environment: prod
+              severity: warning
+            exp_annotations:
+              summary: ACH pod failures repeated for agent alpha
+              description: At least two unhealthy pod events were observed for agent alpha in namespace ns and environment prod within 10m.
+
+  - name: initial pod counter increment to two stays firing within the window
+    interval: 30s
+    input_series:
+      - series: 'ach_agent_anomalies_total{kind="pod_unhealthy", namespace="ns", agent="alpha", environment="prod"}'
+        values: '1 2+0x22'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: ACHRepeatedPodFailures
+        exp_alerts:
+          - exp_labels:
+              namespace: ns
+              agent: alpha
+              environment: prod
+              severity: warning
+            exp_annotations:
+              summary: ACH pod failures repeated for agent alpha
+              description: At least two unhealthy pod events were observed for agent alpha in namespace ns and environment prod within 10m.
+      - eval_time: 5m
+        alertname: ACHRepeatedPodFailures
+        exp_alerts:
+          - exp_labels:
+              namespace: ns
+              agent: alpha
+              environment: prod
+              severity: warning
+            exp_annotations:
+              summary: ACH pod failures repeated for agent alpha
+              description: At least two unhealthy pod events were observed for agent alpha in namespace ns and environment prod within 10m.
+      - eval_time: 9m30s
+        alertname: ACHRepeatedPodFailures
+        exp_alerts:
+          - exp_labels:
+              namespace: ns
+              agent: alpha
+              environment: prod
+              severity: warning
+            exp_annotations:
+              summary: ACH pod failures repeated for agent alpha
+              description: At least two unhealthy pod events were observed for agent alpha in namespace ns and environment prod within 10m.
+      - eval_time: 10m
+        alertname: ACHRepeatedPodFailures
+        exp_alerts: []
+
+  - name: pod failure counter reset then second event still fires
+    interval: 30s
+    input_series:
+      - series: 'ach_agent_anomalies_total{kind="pod_unhealthy", namespace="ns", agent="alpha", environment="prod"}'
+        values: '5+0x10 1 2+0x9'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ACHRepeatedPodFailures
+        exp_alerts:
+          - exp_labels:
+              namespace: ns
+              agent: alpha
+              environment: prod
+              severity: warning
+            exp_annotations:
+              summary: ACH pod failures repeated for agent alpha
+              description: At least two unhealthy pod events were observed for agent alpha in namespace ns and environment prod within 10m.
+
+  - name: old anomaly resolves after its event window
+    interval: 30s
+    input_series:
+      - series: 'ach_agent_anomalies_total{kind="persistence_failed", namespace="ns", agent="alpha", environment="prod"}'
+        values: '0 1+0x12'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: ACHPersistenceFailed
+        exp_alerts:
+          - exp_labels:
+              namespace: ns
+              agent: alpha
+              environment: prod
+              severity: warning
+            exp_annotations:
+              summary: ACH persistence failed for agent alpha
+              description: Persistence failed for agent alpha in namespace ns and environment prod.
+      - eval_time: 6m
+        alertname: ACHPersistenceFailed
+        exp_alerts: []
+
+  - name: separate agents retain separate alert labels
+    interval: 30s
+    input_series:
+      - series: 'ach_agent_anomalies_total{kind="restore_failed", namespace="ns", agent="alpha", environment="prod"}'
+        values: '1+0x1'
+      - series: 'ach_agent_anomalies_total{kind="restore_failed", namespace="other", agent="beta", environment="staging"}'
+        values: '1+0x1'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: ACHRestoreFailed
+        exp_alerts:
+          - exp_labels:
+              namespace: ns
+              agent: alpha
+              environment: prod
+              severity: warning
+            exp_annotations:
+              summary: ACH restore failed for agent alpha
+              description: Restore failed for agent alpha in namespace ns and environment prod.
+          - exp_labels:
+              namespace: other
+              agent: beta
+              environment: staging
+              severity: warning
+            exp_annotations:
+              summary: ACH restore failed for agent beta
+              description: Restore failed for agent beta in namespace other and environment staging.

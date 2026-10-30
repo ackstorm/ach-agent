@@ -1,5 +1,6 @@
 VERSION ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' runtime/pyproject.toml)
 PY ?= runtime/.venv/bin/python
+PROMTOOL_IMAGE ?= prom/prometheus:v3.5.0
 
 .PHONY: chart-sync chart-test release-check release-bump e2e-up e2e-down e2e-run e2e
 
@@ -10,6 +11,7 @@ chart-test: chart-sync ## lint and render-test the chart; fails on drift in char
 	@/usr/bin/git diff --exit-code -- chart || { echo "FAIL: chart/ drifted; commit the output of make chart-sync" >&2; exit 1; }
 	helm lint chart --set openshell.gateway=http://x:8080
 	PATH="$(CURDIR)/runtime/.venv/bin:$$PATH" bash chart/tests/render_test.sh
+	docker run --rm --entrypoint promtool -v "$(CURDIR)/chart:/chart:ro" -w /chart/tests $(PROMTOOL_IMAGE) test rules alerts.test.yaml
 
 e2e-up: ## create the ach-agent-e2e kind cluster and deploy everything
 	test/e2e/cluster.sh up

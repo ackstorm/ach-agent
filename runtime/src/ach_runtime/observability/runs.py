@@ -82,6 +82,21 @@ class _StderrHandler(logging.StreamHandler):
 
 
 _REDACTING = "_ach_redacting"
+
+
+def _redact_arg(arg: object) -> object:
+    """Strings are scrubbed; an object (an exception, say) is replaced by its scrubbed text only
+    when its text holds a secret; numbers and None keep their type for %d-style formats."""
+    if isinstance(arg, str):
+        return redact(arg)
+    if arg is None or isinstance(arg, (int, float)):
+        return arg
+    try:
+        text = str(arg)
+    except Exception:  # noqa: BLE001 - a broken __str__ must not break the caller
+        return arg
+    scrubbed = redact(text)
+    return scrubbed if scrubbed != text else arg
 _TRACEBACK = logging.Formatter()
 
 
@@ -95,11 +110,13 @@ def install_redaction() -> None:
 
     def factory(*args: object, **kwargs: object) -> logging.LogRecord:
         record = previous(*args, **kwargs)
-        try:
-            message = record.getMessage()
-        except Exception:  # noqa: BLE001 - a malformed format string must not break the caller
-            message = str(record.msg)
-        record.msg, record.args = redact(message), None
+        # Arguments are scrubbed one by one and keep their shape: a formatter that unpacks
+        # `record.args` (uvicorn's access log) must still find the tuple it expects.
+        record.msg = redact(str(record.msg))
+        if isinstance(record.args, tuple):
+            record.args = tuple(_redact_arg(a) for a in record.args)
+        elif isinstance(record.args, dict):
+            record.args = {k: _redact_arg(v) for k, v in record.args.items()}
         if record.exc_info:
             record.exc_text = redact(_TRACEBACK.formatException(record.exc_info))
             record.exc_info = None

@@ -57,3 +57,20 @@ def test_redact_leaves_words_containing_ek_or_sk_alone(text: str) -> None:
 @pytest.mark.parametrize("text", [EK, f"x-ach-key={EK.replace('ek_', 'ek-')}", "Bearer sk-abc123", JWT])
 def test_redact_still_scrubs_credentials_in_context(text: str) -> None:
     assert "[redacted]" in redact(text) and "abc123" not in redact(text) and "0123456789" not in redact(text)
+
+
+def test_uvicorn_access_lines_keep_their_args_and_lose_the_secret(redacting, capsys) -> None:
+    import logging.config
+
+    from uvicorn.config import LOGGING_CONFIG
+    from uvicorn.logging import AccessFormatter
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(AccessFormatter(LOGGING_CONFIG["formatters"]["access"]["fmt"]))
+    logger = logging.getLogger("test.uvicorn.access")
+    logger.propagate, logger.handlers = False, [handler]
+    logging.raiseExceptions = True
+    logger.warning('%s - "%s %s HTTP/%s" %d', "10.0.0.1:1", "GET", f"/x?key={EK}&t={JWT}", "1.1", 200)
+    err = capsys.readouterr().err
+    assert "Logging error" not in err and "TypeError" not in err
+    assert "GET /x?key=[redacted]" in err and EK not in err and "eyJ" not in err and "200" in err

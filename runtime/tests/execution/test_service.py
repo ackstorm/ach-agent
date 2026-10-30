@@ -2178,7 +2178,11 @@ async def test_cleanup_checks_failed_or_stalled_owner(
     owner_stop_task = inv.owner_stop_task
     assert engine_cancel_task is not None and engine_cancel_task.done()
     assert engine_cancel_task.exception() is None
-    assert owner_stop_task is not None and owner_stop_task.done()
+    assert owner_stop_task is not None
+    # Cleanup and the owner-stop join both time out on the same deadline but on separate
+    # timers, so cleanup may resolve (retaining the unresolved join) a tick before the join
+    # raises its own TimeoutError. Observe the join past that tick, without cancelling it.
+    assert await _observe_task(owner_stop_task, deadline=time.monotonic() + 5)
     assert owner_stop_task.exception() is not None
 
     assert inv.state == "unknown"

@@ -1,7 +1,8 @@
 FROM python:3.13-alpine
 RUN adduser -D -u 10001 stub
 COPY stub.py /app/stub.py
+COPY load.py /app/load.py
 USER 10001
 WORKDIR /app
-EXPOSE 8090 8091 8092
+EXPOSE 8090 8091 8092 8093
 CMD ["python", "-u", "/app/stub.py"]

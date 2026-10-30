@@ -3,6 +3,10 @@
 package e2e
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -166,10 +170,10 @@ type recorded struct {
 	Body       string            `json:"body"`
 }
 
-// stubRequests returns what the stub received on one port (8090 model, 8091 MCP, 8092 ACH).
+// stubRequests returns what the stub received on one port (8090 model, 8091 MCP, 8092 ACH, 8093 exchange).
 func stubRequests(t *testing.T, port int) []recorded {
 	t.Helper()
-	out, err := kubectl("", "get", "--raw", fmt.Sprintf("/api/v1/namespaces/%s/services/e2e-stub:%d/proxy/_requests?port=%d", agentNS, port, port))
+	out, err := kubectl("", "get", "--raw", fmt.Sprintf("/api/v1/namespaces/%s/services/e2e-stub:8090/proxy/_requests?port=%d", agentNS, port))
 	if err != nil {
 		t.Fatalf("stub requests: %v\n%s", err, out)
 	}
@@ -299,4 +303,28 @@ func podUIDs(t *testing.T, names []string) string {
 		out = append(out, n+"="+jsonpath(t, "-n", "openshell", "get", "pod", n, "-o", "jsonpath={.metadata.uid}"))
 	}
 	return strings.Join(out, ",")
+}
+
+// facadeToken is the Workspace facade token the runtime derives (harness/tokens.py
+// facade_token): <claim>.<hex HMAC-SHA256(K, "facade:<claim>")>, K = the agent key Secret's value.
+func facadeToken(t *testing.T, agentUID, claim string) string {
+	t.Helper()
+	raw := mustKubectl(t, "", "-n", agentNS, "get", "secret", "ach-agent-key-"+agentUID, "-o", "jsonpath={.data.key}")
+	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(raw))
+	if err != nil {
+		t.Fatalf("decode agent key: %v", err)
+	}
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte("facade:" + claim))
+	return claim + "." + hex.EncodeToString(mac.Sum(nil))
+}
+
+type loadSummary struct {
+	ModelOK     int      `json:"model_ok"`
+	ModelFailed int      `json:"model_failed"`
+	McpOK       int      `json:"mcp_ok"`
+	McpFailed   int      `json:"mcp_failed"`
+	StreamOK    bool     `json:"stream_ok"`
+	StreamError string   `json:"stream_error"`
+	Errors      []string `json:"errors"`
 }

@@ -3,6 +3,8 @@
 package e2e
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -107,6 +109,59 @@ func TestE2E(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("the ACH stub never saw /platform/hydrate with x-ach-key e2e-ek: %+v", stubRequests(t, 8092))
+		}
+	})
+
+	t.Run("token-exchange", func(t *testing.T) {
+		const name = "exchange"
+		pod := "agent-" + name + "-0"
+		clearStub(t)
+		apply(t, "fixtures/ach-exchange-agent.yaml", map[string]string{"NAME": name})
+		t.Cleanup(func() { kubectl("", "-n", agentNS, "delete", "agent", name, "--wait=false") })
+		waitCond(t, name, "Ready", "True", 5*time.Minute)
+		uid := agentUID(t, name)
+		// The exchange keeps the usual control ServiceAccount (no profile SA here: the default).
+		if sa := jsonpath(t, "-n", agentNS, "get", "pod", pod, "-o", "jsonpath={.spec.serviceAccountName}"); sa != "ach-agent-control-"+uid {
+			t.Fatalf("control pod runs as %q, want ach-agent-control-%s", sa, uid)
+		}
+		postAccepted(t, name, 2*time.Minute)
+		waitChat(t, 8093, 4*time.Minute)
+		workspaces := sandboxes(t, uid)
+		if len(workspaces) == 0 {
+			t.Fatalf("no workspace for agent uid %s\n%s", uid, agentYAML(name)())
+		}
+		clearStub(t)
+		facade := fmt.Sprintf("http://agent-%s.%s.svc.cluster.local:8081/facades", name, agentNS)
+		// JWT lifetime 60 s, refreshed every 48 s: 200 s spans at least three rotations.
+		out, err := kubectl("", "-n", agentNS, "exec", "deploy/e2e-stub", "--", "python", "/app/load.py",
+			"--facade", facade, "--token", facadeToken(t, uid, workspaces[0]), "--seconds", "200")
+		if err != nil {
+			t.Fatalf("load driver: %v\n%s", err, out)
+		}
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		var sum loadSummary
+		if err := json.Unmarshal([]byte(lines[len(lines)-1]), &sum); err != nil {
+			t.Fatalf("load summary: %v\n%s", err, out)
+		}
+		if sum.ModelFailed != 0 || sum.McpFailed != 0 || !sum.StreamOK || sum.ModelOK == 0 || sum.McpOK == 0 {
+			t.Errorf("requests failed across rotations: %+v", sum)
+		}
+		exchanges, jwts := 0, map[string]bool{}
+		for _, r := range stubRequests(t, 8093) {
+			if r.Path == "/platform/keys/exchange" {
+				exchanges++
+			}
+			if strings.HasSuffix(r.Path, "/chat/completions") {
+				for _, v := range r.headerValues("x-ach-key") {
+					jwts[v] = true
+				}
+			}
+		}
+		if exchanges < 3 || len(jwts) < 4 {
+			t.Errorf("want >= 3 rotations in the window: %d exchanges, %d distinct credentials on model calls", exchanges, len(jwts))
+		}
+		if logs, _ := kubectl("", "-n", agentNS, "logs", pod, "-c", "agent"); strings.Contains(logs, "eyJ") {
+			t.Error("a JWT or ServiceAccount token reached the control log")
 		}
 	})
 

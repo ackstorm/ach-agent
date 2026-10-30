@@ -1,0 +1,21 @@
+apiVersion: ach-agent.ackstorm.ai/v1alpha1
+kind: Agent
+metadata: {name: "${NAME}", namespace: ach-agent-e2e}
+spec:
+  profileRef: {name: e2e}
+  capabilityServer: ach
+  ach:
+    baseUrl: https://e2e-stub.ach-agent-e2e.svc.cluster.local:8093
+    environment: e2e
+    keyFrom:
+      tokenExchange: {identity: ai.run@example.com}
+    model: {name: e2e-model, api: openai}
+  channels:
+    - name: hook
+      type: webhook
+      source: generic
+      routing: {sessionKey: "e2e"}
+      prompt: "Reply briefly. {{ payload | json }}"
+      webhook:
+        auth: {type: header_token, header: X-E2E-Token, secretRef: {name: e2e-hook, key: token}}
+  expose: {service: true}

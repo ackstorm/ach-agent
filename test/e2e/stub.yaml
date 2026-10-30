@@ -1,3 +1,14 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: e2e-stub, namespace: ach-agent-e2e}
+---
+# The exchange stub reviews ServiceAccount tokens like ACH does.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: ach-agent-e2e-stub-tokenreview}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:auth-delegator}
+subjects: [{kind: ServiceAccount, name: e2e-stub, namespace: ach-agent-e2e}]
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata: {name: e2e-stub, namespace: ach-agent-e2e}
@@ -7,11 +18,16 @@ spec:
   template:
     metadata: {labels: {app: e2e-stub}}
     spec:
+      serviceAccountName: e2e-stub
+      volumes: [{name: tls, secret: {secretName: e2e-stub-tls}}]
       containers:
         - name: stub
           image: ach-agent-e2e-stub:e2e
           imagePullPolicy: IfNotPresent
-          ports: [{containerPort: 8090}, {containerPort: 8091}, {containerPort: 8092}]
+          ports: [{containerPort: 8090}, {containerPort: 8091}, {containerPort: 8092}, {containerPort: 8093}]
+          env:
+            - {name: STUB_JWT_TTL_SECONDS, value: "60"}
+          volumeMounts: [{name: tls, mountPath: /tls, readOnly: true}]
           readinessProbe: {httpGet: {path: /healthz, port: 8090}}
           securityContext:
             runAsNonRoot: true
@@ -28,3 +44,4 @@ spec:
     - {name: model, port: 8090}
     - {name: mcp, port: 8091}
     - {name: ach, port: 8092}
+    - {name: exchange, port: 8093}

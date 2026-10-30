@@ -12,6 +12,8 @@ SANDBOX_VERSION=v1.0.8
 AGENT_NS=ach-agent-e2e
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HERE="$ROOT/test/e2e"
+STUB_HOST=e2e-stub.$AGENT_NS.svc.cluster.local
+TLS_DIR="$HERE/.tls"
 
 k() { kubectl --context "$CTX" "$@"; }
 h() { helm --kube-context "$CTX" "$@"; }
@@ -62,10 +64,27 @@ install_prereqs() {
   sed "s/<AGENT_NAMESPACE>/$AGENT_NS/" "$ROOT/docs/mesh/openshell-mesh.yaml" | k apply -f -
 }
 
+gen_tls() {
+  [ -s "$TLS_DIR/tls.crt" ] && return 0
+  log "generating the exchange stub's CA and certificate"
+  mkdir -p "$TLS_DIR"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=ach-agent-e2e-ca" \
+    -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" \
+    -keyout "$TLS_DIR/ca.key" -out "$TLS_DIR/ca.crt" 2>/dev/null
+  openssl req -newkey rsa:2048 -nodes -subj "/CN=$STUB_HOST" \
+    -keyout "$TLS_DIR/tls.key" -out "$TLS_DIR/tls.csr" 2>/dev/null
+  printf '%s\n' "subjectAltName=DNS:$STUB_HOST" "basicConstraints=CA:FALSE" \
+    "keyUsage=critical,digitalSignature,keyEncipherment" "extendedKeyUsage=serverAuth" \
+    "subjectKeyIdentifier=hash" "authorityKeyIdentifier=keyid,issuer" > "$TLS_DIR/ext.cnf"
+  openssl x509 -req -in "$TLS_DIR/tls.csr" -CA "$TLS_DIR/ca.crt" -CAkey "$TLS_DIR/ca.key" -CAcreateserial \
+    -days 30 -extfile "$TLS_DIR/ext.cnf" -out "$TLS_DIR/tls.crt" 2>/dev/null
+}
+
 build_images() {
   log "building images"
   docker build -q -t ach-agent-operator:e2e "$ROOT/operator"
   docker build -q --target control -t ach-agent-control:e2e "$ROOT/runtime"
+  docker build -q -t ach-agent-control:e2e -f "$HERE/control-ca.Dockerfile" "$TLS_DIR"
   docker build -q --target execution -t ach-agent-execution:e2e "$ROOT/runtime"
   docker build -q -t ach-agent-e2e-stub:e2e "$HERE/stubs"
   for img in ach-agent-operator ach-agent-control ach-agent-execution ach-agent-e2e-stub; do
@@ -74,6 +93,8 @@ build_images() {
 }
 
 deploy() {
+  k -n "$AGENT_NS" create secret tls e2e-stub-tls --cert "$TLS_DIR/tls.crt" --key "$TLS_DIR/tls.key" \
+    --dry-run=client -o yaml | k apply -f -
   k apply -f "$HERE/stub.yaml"
   h upgrade --install ach-agent "$ROOT/chart" -n ach-agent-system \
     --set image.operator=ach-agent-operator --set image.tag=e2e \
@@ -86,11 +107,13 @@ case "${1:-}" in
   up)
     create_cluster
     install_prereqs
+    gen_tls
     build_images
     deploy
     ;;
   load)
     guard
+    gen_tls
     build_images
     k -n ach-agent-system rollout restart deploy/ach-agent-operator
     k -n "$AGENT_NS" rollout restart deploy/e2e-stub

@@ -33,6 +33,7 @@ from typing import Any, Protocol
 from ach_runtime.config.schema import RuntimeConfig
 from ach_runtime.harness.refs import workspace_name
 from ach_runtime.observability import alarm
+from ach_runtime.observability.runs import redact
 from ach_runtime.storage.api import PersistReceipt, SnapshotTransientFailure
 
 _FULL_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -84,6 +85,12 @@ class WorkspaceAssemblyUnavailable(Exception):
     """A required callback seam is missing, a commit receipt does not match the
     workspace it claims to persist, or a launch spec cannot be built -- raised before any
     host-visible change is attempted or accepted."""
+
+
+class ReleaseMismatch(WorkspaceAssemblyUnavailable):
+    """The execution unit runs another runtime release than this control process. Expected
+    when adopting units across an upgrade; an anomaly when a freshly placed unit reports it
+    (the profile points at the wrong execution image)."""
 
 
 class WorkspaceConflict(Exception):
@@ -409,9 +416,11 @@ class WorkspaceManager:
             if not self._source.serving(placement, endpoint.instance_id):
                 raise WorkspaceConflict(f"{name}: registration was replaced during activation")
         except BaseException as exc:
+            if isinstance(exc, ReleaseMismatch):
+                alarm("pod_unhealthy", workspace_ref=key)
             _LOG.error(
-                "Workspace activation failed: workspace_ref=%s workspace_name=%s phase=%s error=%s",
-                key, name, phase, type(exc).__name__,
+                "Workspace activation failed: workspace_ref=%s workspace_name=%s phase=%s error=%s: %s",
+                key, name, phase, type(exc).__name__, redact(str(exc)),
             )
             await self._retire(key, name)
             raise
@@ -641,7 +650,11 @@ class WorkspaceManager:
                 _LOG.warning("Workspace adoption deferred: gateway unavailable: workspace_ref=%s", key)
                 self._defer_adoption(ref, placement)
                 return
-            _LOG.error("Workspace adoption failed: workspace_ref=%s error=%s", key, type(exc).__name__)
+            if isinstance(exc, ReleaseMismatch):
+                _LOG.info("Workspace adoption: retiring a unit of another release: workspace_ref=%s %s", key, exc)
+            else:
+                _LOG.error("Workspace adoption failed: workspace_ref=%s error=%s: %s",
+                           key, type(exc).__name__, redact(str(exc)))
             # Readiness does not wait for the host's DELETE, but `ensure()` must not place
             # again before it: run the retire through `_run` so it is the ref's pending
             # "retire" task (`ensure()` awaits it, and the per-ref lock serializes any

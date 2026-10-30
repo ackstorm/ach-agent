@@ -65,6 +65,7 @@ from ach_runtime.storage.archive import _run_owned, pack
 from ach_runtime.harness.tokens import engine_bearer, engine_verify_key, facade_token, load_harness_key
 from ach_runtime.harness.tokens import WorkspaceAuthenticationFailed, authenticate_facade
 from ach_runtime.harness.workspaces import (
+    ReleaseMismatch,
     WorkspaceAssemblyUnavailable,
     WorkspaceEndpoint,
     WorkspaceManager,
@@ -381,11 +382,8 @@ class Control:
                 raise WorkspaceAssemblyUnavailable(f"mini-harness health check rejected: {response.status_code}")
             release = _json_or_empty(response).get("release")
             if release != __version__:
-                from ach_runtime.observability import alarm
-
-                alarm("pod_unhealthy")  # the exception text below carries both releases
-                raise WorkspaceAssemblyUnavailable(
-                    f"execution unit runs release {release!r}, control runs {__version__!r}")
+                # The caller decides whether this is an anomaly (see ReleaseMismatch).
+                raise ReleaseMismatch(f"execution unit runs release {release!r}, control runs {__version__!r}")
             return instance_id
 
     async def run_workspace_hook(self, endpoint: WorkspaceEndpoint, phase: str, *,

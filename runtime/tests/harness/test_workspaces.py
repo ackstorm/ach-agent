@@ -80,6 +80,7 @@ class _Harness:
         self.reconnected: list[WorkspaceEndpoint] = []
         self.commit_error: BaseException | None = None
         self.probe_fail: set[str] = set()
+        self.probe_error: dict[str, BaseException] = {}
         self.probes = 0
         self.manager = WorkspaceManager(
             config, self.source,
@@ -91,6 +92,8 @@ class _Harness:
         self.source.events.append("probe")
         if name in self.probe_fail:
             raise RuntimeError("probe failed")
+        if name in self.probe_error:
+            raise self.probe_error[name]
         self.probes += 1
         return f"id-{self.probes}"
 
@@ -483,3 +486,45 @@ def test_reconnect_callback_is_required() -> None:
     with pytest.raises(WorkspaceAssemblyUnavailable):
         WorkspaceManager(_config(), FakeSource(), restore_workspace=None,
                          commit_workspace=None, reconnect_workspace=None)
+
+
+async def test_adopting_a_unit_of_another_release_retires_it_without_an_anomaly(
+    alarms: list[str], caplog: pytest.LogCaptureFixture,
+) -> None:
+    h = _Harness(_config())
+    ref = _ref(h.config, "upgrade")
+    h.adopt_unit(ref)
+    name = _name(h.config, ref)
+    h.probe_error[name] = ws.ReleaseMismatch("execution unit runs release '0.1.1', control runs '0.1.2'")
+
+    with caplog.at_level(logging.INFO, logger=ws.__name__):
+        await h.manager.adopt()
+        await _settle()
+
+    assert alarms == []
+    assert h.source.retire_calls == [name]
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any("release '0.1.1'" in r.getMessage() for r in caplog.records)
+
+
+async def test_activating_a_unit_of_another_release_is_an_anomaly(alarms: list[str]) -> None:
+    h = _Harness(_config())
+    ref = _ref(h.config, "wrong-image")
+    h.probe_error[_name(h.config, ref)] = ws.ReleaseMismatch("execution unit runs release '9', control runs '1'")
+
+    with pytest.raises(ws.ReleaseMismatch):
+        await h.manager.ensure(ref)
+    assert alarms == ["pod_unhealthy"]
+
+
+async def test_failed_adoption_logs_its_reason(caplog: pytest.LogCaptureFixture) -> None:
+    h = _Harness(_config())
+    ref = _ref(h.config, "rejected")
+    h.adopt_unit(ref)
+    h.probe_error[_name(h.config, ref)] = ws.WorkspaceAssemblyUnavailable("mini-harness health check rejected: 403")
+
+    with caplog.at_level(logging.ERROR, logger=ws.__name__):
+        await h.manager.adopt()
+        await _settle()
+
+    assert any("health check rejected: 403" in r.getMessage() for r in caplog.records)

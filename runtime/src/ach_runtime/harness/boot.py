@@ -20,6 +20,9 @@ from ach_runtime.observability.runs import configure_logging
 
 log = logging.getLogger(__name__)
 
+# Seconds the facade listener waits for open connections once every admitted run settled.
+FACADE_DRAINED_GRACE_SECONDS = 5
+
 
 async def _stop_channel_sources(sources: list[Any]) -> None:
     for source in reversed(sources):
@@ -172,6 +175,9 @@ async def run_control(
                 await asyncio.sleep(0.05)
             if control.admission.queued_total:
                 log.warning("control drain reached configured shutdown timeout")
+            # No run is left to serve: what still holds the facade listener open is the
+            # engines' long-lived MCP streams, which end only with their Workspace.
+            servers[1].config.timeout_graceful_shutdown = FACADE_DRAINED_GRACE_SECONDS
             servers[1].should_exit = True
             await tasks[1]
             shutdown_task.cancel()

@@ -171,6 +171,7 @@ async def test_run_control_keeps_root_signal_owner_and_facades_through_ingress_d
     class FakeConfig:
         def __init__(self, app, *, host, port, lifespan, timeout_graceful_shutdown, access_log=True):
             self.app, self.port, self.access_log = app, port, access_log
+            self.timeout_graceful_shutdown = timeout_graceful_shutdown
 
     class FakeServer:
         def __init__(self, config):
@@ -250,6 +251,11 @@ async def test_run_control_keeps_root_signal_owner_and_facades_through_ingress_d
     assert ingress.state.ready is False
     assert events.index(("listener-exit", 8080)) < events.index(("listener-exit", 8081))
     assert events.index(("listener-exit", 8081)) < events.index(("close", None))
+    # Ingress keeps the configured grace; the drained facade listener stops idle MCP streams fast.
+    shutdown_timeout = _supported_config().workspace.shutdown_timeout_seconds
+    assert [s.config.timeout_graceful_shutdown for s in instances] == [
+        shutdown_timeout, boot.FACADE_DRAINED_GRACE_SECONDS,
+    ]
     # The host API is mounted once on the facade listener, before either listener starts.
     assert [path for path, _app in facades.mounts] == ["/host/v1"]
     assert events.index("source-close") < events.index(("listener-exit", 8080)), "the ready path closes the source with `_stopping`"

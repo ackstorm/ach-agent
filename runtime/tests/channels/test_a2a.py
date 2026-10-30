@@ -77,7 +77,7 @@ def _completed(ticket, text: str = "answer") -> RunStatus:
 def test_sdk_card_has_legacy_aliases_and_native_interface() -> None:
     app = FastAPI()
     bridge = A2AAgentExecutorBridge(_control(_channel(), lambda *_: None), _channel())
-    app.mount("/a2a/review", build_a2a_app(make_a2a_agent_card("review"), bridge))
+    app.mount("/a2a/review", build_a2a_app(make_a2a_agent_card("reviewer", "review"), bridge))
 
     async def scenario() -> None:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
@@ -86,7 +86,9 @@ def test_sdk_card_has_legacy_aliases_and_native_interface() -> None:
                 card = response.json()
                 assert response.status_code == 200
                 assert card["url"].endswith("/a2a/review")
-                assert card["skills"] == []
+                assert card["name"] == "reviewer"
+                assert [skill["id"] for skill in card["skills"]] == ["review"]
+                assert card["supportedInterfaces"][0]["url"] == card["url"]
                 assert card["defaultInputModes"] == ["text"]
                 assert card["defaultOutputModes"] == ["text"]
                 assert card["supportedInterfaces"][0]["protocolVersion"] == "1.0"
@@ -102,7 +104,7 @@ def test_sdk_auth_guard_protects_all_task_operations_and_exact_exemptions(monkey
     control = _control(config, lambda *_: None)
     bridge = A2AAgentExecutorBridge(control, config)
     app = FastAPI()
-    app.mount("/a2a/review", build_a2a_app(make_a2a_agent_card("review"), bridge))
+    app.mount("/a2a/review", build_a2a_app(make_a2a_agent_card("reviewer", "review"), bridge))
 
     async def scenario() -> None:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:

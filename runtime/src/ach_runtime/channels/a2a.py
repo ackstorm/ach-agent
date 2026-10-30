@@ -336,16 +336,31 @@ class A2AAgentExecutorBridge:
         await event_queue.enqueue_event(_status_event("canceled", None, task_id, context_id))
 
 
-def make_a2a_agent_card(channel_name: str) -> Any:
-    from a2a.types.a2a_pb2 import AgentCapabilities, AgentCard
+def make_a2a_agent_card(agent_name: str, channel_name: str) -> Any:
+    """The card of one A2A channel. Its interface URL is the mount path: the served card
+    replaces it with the absolute URL the caller reached it on."""
+    from a2a.types.a2a_pb2 import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 
     return AgentCard(
-        name=channel_name,
-        description=f"ach-runtime A2A receiver for channel {channel_name}",
+        name=agent_name,
+        description=f"Agent {agent_name}, A2A channel {channel_name}: send a text message, get a text answer.",
         version="1.0.0",
         capabilities=AgentCapabilities(),
         default_input_modes=["text"],
         default_output_modes=["text"],
+        supported_interfaces=[
+            AgentInterface(url=f"/a2a/{channel_name}", protocol_binding="JSONRPC", protocol_version="1.0")
+        ],
+        skills=[
+            AgentSkill(
+                id=channel_name,
+                name=channel_name,
+                description=f"Answers a text message as agent {agent_name}.",
+                tags=["chat"],
+                input_modes=["text"],
+                output_modes=["text"],
+            )
+        ],
     )
 
 
@@ -378,13 +393,12 @@ def build_a2a_app(agent_card: Any, executor: A2AAgentExecutorBridge) -> Any:
         card = agent_card_to_dict(agent_card)
         prefix = request.url.path.split("/.well-known/")[0]
         endpoint = f"{str(request.base_url).rstrip('/')}{prefix}"
-        card.setdefault("skills", [])
-        card.setdefault("url", endpoint)
+        card["url"] = endpoint
         card.setdefault("protocolVersion", "1.0")
         card.setdefault("preferredTransport", "JSONRPC")
-        card.setdefault("supportedInterfaces", [
+        card["supportedInterfaces"] = [
             {"url": endpoint, "protocolBinding": "JSONRPC", "protocolVersion": "1.0"}
-        ])
+        ]
         return JSONResponse(card)
 
     card_routes = [

@@ -49,7 +49,7 @@ def create_app(control: Control) -> FastAPI:
         app.state.a2a_bridges[configured.name] = bridge
         app.mount(
             f"/a2a/{configured.name}",
-            build_a2a_app(make_a2a_agent_card(configured.name), bridge),
+            build_a2a_app(make_a2a_agent_card(control.config.agent.name, configured.name), bridge),
         )
 
     @app.get("/healthz")

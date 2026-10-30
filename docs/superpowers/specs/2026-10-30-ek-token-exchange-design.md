@@ -108,7 +108,8 @@ LiteLLM metadata keeps `ach_issuer` (the base URL) and adds `ach_issued_via=exch
 `ach_requester`.
 
 One stable key per tuple keeps one LiteLLM key, one continuous spend history and a meaningful
-per-key budget (the existing `POST /platform/keys/{id}/budget` applies).
+per-key budget (4.2, `spec.budget`). Removing a grant entry and adding it back revokes the key and
+later creates a new one, so spend history and per-key budget start over; that is accepted.
 
 ### 4.2 `KeyGrant` CRD
 
@@ -127,6 +128,9 @@ spec:
   requesters:
     serviceAccounts:                     # exact "<namespace>/<name>"
       - ach-agent/agent-k8s-doctor
+  budget:                                # optional, per key this grant covers
+    maxBudget: 50
+    budgetDuration: 30d
 status:
   conditions:
     - type: Ready
@@ -140,8 +144,13 @@ status:
 - Validation: `identity` is an email with no glob characters; every list has at least one exact
   entry; ServiceAccount entries are `<ns>/<name>`, both DNS-1123. `requesters` is a block so other
   requester kinds can be added later.
-- `Ready=False` reasons: `IdentityUnknown` (the identity never logged in to ACH, so it has no LiteLLM
-  user or teams), `EnvironmentMissing`.
+- `spec.budget` is written by the operator to the `key:<id>` budget of every exchange key the grant
+  covers, so per-key budgets are declarative. `PATCH /platform/keys/{id}/budget` cannot do this: it
+  only serves the key's owner (`envkeys/budget.go:73`). When several grants cover one tuple, the
+  lowest `maxBudget` applies.
+- `Ready=False` reasons: `IdentityUnknown`, `EnvironmentMissing`. The operator detects
+  `IdentityUnknown` by asking LiteLLM `/user/info` for the identity. Teams are enrolled at login, so
+  the identity (`ai.run@ackstorm.com`) must log in to ACH once by hand before its first exchange.
 
 **Who may write grants.** Writing a `KeyGrant` is the power to act as its identity. The ACH chart:
 
@@ -171,6 +180,16 @@ The route is mounted outside the `pk_`/`ek_` authentication subtree. Authenticat
 `Authorization: Bearer <ServiceAccount token>`; a `pk_`, `ek_` or ACH JWT is refused.
 
 Request: `{"identity": "ai.run@ackstorm.com", "environment": "k8s-doctor"}`.
+
+The route is reachable without credentials and every TokenReview is a call to the API server, so two
+cheap guards come first: the bearer must be a compact JWS whose unverified `aud` contains the
+exchange audience (else 401 `invalid_token`, no TokenReview), and requests are rate-limited per
+client address and globally (429).
+
+The exchange audience is `ACH_BASE_URL` with any trailing slash removed. The agent sets the projected
+token's audience from `spec.ach.baseUrl`, normalised the same way, so `spec.ach.baseUrl` must equal
+ACH's `ACH_BASE_URL`. Agents therefore exchange through ACH's public URL over HTTPS, which is how
+they reach ACH today; reaching ACH through an internal Service is out of scope.
 
 Checks, in order; the first failure answers:
 
@@ -204,12 +223,19 @@ seconds (Kubernetes' pending-deletion allowance).
 
 ### 4.5 JWT resolution
 
-A resolver modeled on `NewOAuthResolver` wraps the existing chain in the forwarder, content-service
-and platform API. A compact JWS with audience `ach-ek` is verified with the shared signer, its `sub`
-is looked up as an exchange key row, the live grant check (4.3) runs, and the row becomes the
-`KeyInfo` an `ek_` would have produced. Anything else falls through unchanged. The JWT is accepted
-wherever an `ek_` is accepted today (`x-ach-key`), so `EkOwnerGate`, budgets and LiteLLM routing are
-unchanged.
+A resolver modeled on `NewOAuthResolver` is added in the forwarder, content-service and platform API.
+A compact JWS with audience `ach-ek` is verified with the shared signer, its `sub` is looked up as an
+exchange key row, the live grant check (4.3) runs, and the row becomes the `KeyInfo` an `ek_` would
+have produced.
+
+Order is load-bearing. The OAuth resolver turns any JWS that fails verification against audience
+`ach` into a 401 instead of falling through (`internal/keystore/oauthresolver.go`). The exchange
+resolver therefore wraps the OAuth resolver: a JWS whose audience is not `ach-ek` goes to the OAuth
+resolver unchanged, and a JWS with audience `ach-ek` that fails verification is a 401.
+
+The JWT is accepted wherever an `ek_` is accepted today, in `x-ach-key` and in `Authorization`
+(where the forwarder already treats a JWS as an ACH credential), so `EkOwnerGate`, budgets and
+LiteLLM routing are unchanged.
 
 Because the backing key never changes during rotation, a new JWT does not affect any request already
 authenticated: long streams and MCP sessions keep their upstream LiteLLM key.
@@ -222,7 +248,7 @@ authenticated: long streams and MCP sessions keep their upstream LiteLLM key.
 - The API server stores TokenReview bodies (which contain the token) only under audit level
   `Request` or `RequestResponse`. The install docs require `Metadata` level for `tokenreviews`;
   EKS control-plane audit policy is checked during rollout.
-- `ACH_BASE_URL` sets the exchange audience on both sides; nothing is hard-coded.
+- The exchange audience is derived, never hard-coded (4.4).
 - ach's `CLAUDE.md` is updated: the platform API gains a cluster-wide `system:auth-delegator`
   binding (TokenReview) in addition to its Dex leg.
 
@@ -258,7 +284,8 @@ For `tokenExchange` agents only:
 - The control pod runs as ServiceAccount `agent-<agent name>`, created and owned by the Agent. A
   profile's `control.serviceAccountName` does not apply to these agents, so no profile can point a
   pod at another agent's grant. Other agents keep today's naming.
-- A projected token is mounted: audience `ACH_BASE_URL`, `expirationSeconds: 3600`, path
+- A projected token is mounted: audience `spec.ach.baseUrl` without a trailing slash (it must equal
+  ACH's `ACH_BASE_URL`, 4.4), `expirationSeconds: 3600`, path
   `/var/run/secrets/ach/token`. The kubelet renews it.
 - The workspace config carries `capability.ach.key = {"exchange": {"identity": …, "environment": …,
   "tokenPath": …}}`. The Python schema (`config/schema.py`), the vendored schemas, hydration input
@@ -307,8 +334,8 @@ on purpose; creating Agents is the same privilege. The install docs require:
 ### 5.5 Budgets
 
 All agents granted `ai.run@ackstorm.com` share that user's LiteLLM user budget, so one runaway agent
-can exhaust it for all. The Environment's pooled budget and, with stable keys, a per-key budget
-contain this. The GitOps rollout sets a per-key budget on each agent's exchange key.
+can exhaust it for all. The Environment's pooled budget and the grant's per-key `spec.budget` contain
+this. The GitOps rollout sets `spec.budget` on each agent's grant.
 
 ## 6. Tests
 
@@ -327,7 +354,14 @@ ACH:
 - Live authorization: removing a grant entry makes the JWT and the key unusable within the cache
   window; the operator revokes the key; an exchange racing the removal never yields a usable
   credential.
-- JWT: wrong audience (`ach` vs `ach-ek`), expired, unknown `kid`, `sub` of a manual key, revoked key.
+- JWT: expired, unknown `kid`, `sub` of a manual key, revoked key. An exchange JWT is accepted by the
+  exchange resolver and refused by the OAuth one, and an OAuth JWT the other way round, with the
+  resolvers in their production order. An exchange JWT works in `x-ach-key` and in `Authorization`.
+- Exchange guards: a non-JWS bearer or a JWS with a foreign `aud` gets 401 with no TokenReview call;
+  the rate limit returns 429.
+- Audience: `https://api.ackstorm.ai/` and `https://api.ackstorm.ai` match.
+- Budget: `spec.budget` reaches the `key:<id>` budget of every covered key; the lowest of two grants
+  wins.
 - RBAC: `admin`/`edit` aggregations exclude `keygrants` writes.
 - Audit: one `platform.ek.exchange` per outcome; no token or JWT in any field.
 - `ach_issuer` unchanged on exchange keys; the orphan reaper keeps them.
@@ -353,8 +387,9 @@ ach-agent:
 2. **ach-agent 0.2.0** (breaking at 0.x): `keyFrom`, ServiceAccount and projected token,
    `KeySource` across all consumers, exchange and rotation, global redaction, metrics, alert,
    optional admission policy.
-3. **GitOps**, one commit: one `KeyGrant` per agent for `ai.run@ackstorm.com`; the four agents
-   switched to `keyFrom.tokenExchange`; per-key budgets. After the agents run on exchanged
+3. **GitOps**, one commit: one `KeyGrant` per agent for `ai.run@ackstorm.com`, each with
+   `spec.budget`; the four agents switched to `keyFrom.tokenExchange`. `ai.run` has already logged in
+   to ACH, so its grants become `Ready`. After the agents run on exchanged
    credentials, a second commit deletes the four `*-ek` ExternalSecrets, their Secrets Manager
    entries and Terraform variables, and revokes the old manual keys.
 

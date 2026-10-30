@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-10-30
+
+### Added
+
+- The chart ships the agent Grafana dashboards (`metrics.dashboards`), a PodMonitor for the control
+  pods (`metrics.podMonitor`) and the agent alert rules (`metrics.prometheusRule`), all off by default.
+  The dashboards list every agent from `ach_agent_info`, so an agent with no event since its pod
+  started is still listed.
+
+### Fixed
+
+- MCP tools reach the model without the gateway's `<server>.` prefix: opencode adds its own server
+  prefix, so models saw `mcp-x_mcp-x_tool` and kept calling names that do not exist. A call by the
+  bare name is mapped back to the upstream name; `filter.exclude.tools` keeps the `<server>.<tool>`
+  form and also blocks a bare call to an excluded tool.
+- The A2A agent card is spec-compliant: named after the agent, one skill per channel and a supported
+  interface at the URL the caller reached, so the A2A SDK no longer warns on every card fetch.
+- A terminating control pod no longer waits up to `shutdownTimeoutSeconds` for the engines' MCP
+  streams: once every admitted run has settled, the facade listener closes within 5 seconds.
+
 ## [0.1.3] - 2026-10-30
 
 ### Fixed

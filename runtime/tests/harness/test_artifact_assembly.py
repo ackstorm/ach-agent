@@ -38,6 +38,9 @@ class _Manager:
     def is_lost(self, instance_id: str) -> bool:
         return False
 
+    async def wait_adopted(self, timeout: float) -> None:
+        return None
+
 
 def _endpoint(instance_id: str = "pod-live") -> WorkspaceEndpoint:
     return WorkspaceEndpoint(

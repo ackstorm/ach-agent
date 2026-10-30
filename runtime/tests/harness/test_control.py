@@ -384,6 +384,26 @@ async def test_owned_live_answers_from_the_manager_without_any_request(monkeypat
         await control.close()
 
 
+async def test_owned_live_waits_for_adoption_to_publish_the_unit(monkeypatch) -> None:
+    config = _config()
+    control = await assemble(
+        config, environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},
+        ach_transport=httpx.MockTransport(_catalog_handler),
+    )
+    unit = WorkspaceEndpoint(
+        WorkspaceRef(config.agent.namespace, config.agent.uid, "a" * 64), "ws-adopting", "i-1", "http://mini"
+    )
+
+    async def adopt_meanwhile(timeout: float) -> None:
+        _publish(control, unit)
+
+    try:
+        monkeypatch.setattr(control.manager, "wait_adopted", adopt_meanwhile)
+        assert await control._owned_live("ws-adopting"), "a call racing adoption is not refused"
+    finally:
+        await control.close()
+
+
 async def test_a_response_from_another_instance_reports_the_loss_and_raises() -> None:
     config = _config()
 

@@ -577,6 +577,15 @@ class WorkspaceManager:
             self._adoption = asyncio.ensure_future(self._run_adoption())
         await asyncio.shield(self._adoption)
 
+    async def wait_adopted(self, timeout: float) -> None:
+        """Let a request that arrives while the units that already run are still being
+        adopted (a unit calling its facade right after a control restart) wait for that
+        instead of being refused. Returns once adoption settled, or after `timeout`; the
+        caller re-reads ownership either way."""
+        if self._adoption is None:
+            self._adoption = asyncio.ensure_future(self._run_adoption())
+        await asyncio.wait({self._adoption}, timeout=timeout)
+
     def cancel_adoption(self) -> None:
         """Shutdown: an adoption still waiting for the host's inventory is cancelled."""
         if self._adoption is not None and not self._adoption.done():

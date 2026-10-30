@@ -79,6 +79,8 @@ from ach_runtime.storage.refs import StateRef
 log = logging.getLogger(__name__)
 _TEMPLATE = re.compile(r'\{\{\s*([A-Za-z0-9_.\-]+)(?:\s*\|\s*(?:default\(\s*"([^"]*)"\s*\)|(json)))?\s*\}\}')
 _MISSING = object()
+# Longest a facade call waits for adoption to publish its unit; the unit's own client timeout bounds it anyway.
+_ADOPTION_WAIT_SECONDS = 30.0
 # A Workspace object name (`refs.workspace_name`) is long enough to look like a token,
 # so it is matched first, as group 1, and kept verbatim.
 _SECRET = re.compile(
@@ -236,7 +238,14 @@ class Control:
     _hook_endpoints: dict[str, WorkspaceEndpoint] = field(default_factory=dict, repr=False)
 
     async def _owned_live(self, claim: str) -> bool:
-        # Kept async for `authenticate_facade`; nothing here awaits (spec 6.3: no I/O).
+        # No I/O (spec 6.3). The only wait is for adoption of the units that already run: a
+        # unit's facade call that lands before its endpoint is published is not foreign.
+        if self._owned_now(claim):
+            return True
+        await self.manager.wait_adopted(_ADOPTION_WAIT_SECONDS)
+        return self._owned_now(claim)
+
+    def _owned_now(self, claim: str) -> bool:
         for endpoint in (*self.manager.active_endpoints().values(), *self._hook_endpoints.values()):
             if endpoint.name == claim and not self.manager.is_lost(endpoint.instance_id):
                 return True

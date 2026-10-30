@@ -96,6 +96,8 @@ deploy() {
   k -n "$AGENT_NS" create secret tls e2e-stub-tls --cert "$TLS_DIR/tls.crt" --key "$TLS_DIR/tls.key" \
     --dry-run=client -o yaml | k apply -f -
   k apply -f "$HERE/stub.yaml"
+  # helm never updates CRDs of an installed release.
+  k apply --server-side --force-conflicts -f "$ROOT/chart/crds"
   h upgrade --install ach-agent "$ROOT/chart" -n ach-agent-system \
     --set image.operator=ach-agent-operator --set image.tag=e2e \
     --set openshell.gateway=http://openshell.openshell.svc.cluster.local:8080 \

@@ -14,7 +14,11 @@ from typing import Literal
 
 from ach_runtime.execution.wire import JsonValue
 
-_SECRET = re.compile(r"(ek[-_][A-Za-z0-9_\-]+|sk-[A-Za-z0-9_\-]+)")
+_SECRET = re.compile(
+    r"(ek[-_][A-Za-z0-9_\-]+|sk-[A-Za-z0-9_\-]+"
+    # A compact JWS (an ACH JWT, a ServiceAccount token): the base64url JSON header starts eyJ.
+    r"|eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*)"
+)
 
 
 _registered: tuple[str, ...] = ()
@@ -36,8 +40,7 @@ def register_secrets(values: Iterable[str]) -> None:
 
 
 def redact(text: str) -> str:
-    """Scrub legacy ACH bearer and provider tokens, plus registered process secrets,
-    without truncating the value."""
+    """Scrub ACH keys, compact JWS and provider keys, plus registered process secrets, without truncating the value."""
     text = _SECRET.sub("[redacted]", text)
     for value in _registered:
         text = text.replace(value, "[redacted]")
@@ -78,12 +81,44 @@ class _StderrHandler(logging.StreamHandler):
         super().emit(record)
 
 
+_REDACTING = "_ach_redacting"
+_TRACEBACK = logging.Formatter()
+
+
+def install_redaction() -> None:
+    """Scrub every log record of the process when it is created: message, arguments, traceback
+    and stack. A record factory rather than a handler filter, so uvicorn's handlers and any
+    handler configured later are covered too. Idempotent."""
+    previous = logging.getLogRecordFactory()
+    if getattr(previous, _REDACTING, False):
+        return
+
+    def factory(*args: object, **kwargs: object) -> logging.LogRecord:
+        record = previous(*args, **kwargs)
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001 - a malformed format string must not break the caller
+            message = str(record.msg)
+        record.msg, record.args = redact(message), None
+        if record.exc_info:
+            record.exc_text = redact(_TRACEBACK.formatException(record.exc_info))
+            record.exc_info = None
+        if record.stack_info:
+            record.stack_info = redact(record.stack_info)
+        return record
+
+    setattr(factory, _REDACTING, True)
+    logging.setLogRecordFactory(factory)
+
+
 def configure_logging() -> None:
     """Install one owned INFO stderr handler on this module's logger, rendering only the
     safe allowlisted record_run/alarm fields through a current stdlib formatter (no
     structlog, no logging package/platform). Idempotent -- a repeated call never installs
     a second owned handler. Never touches uvicorn's own loggers, and leaves propagation on
-    so caplog (which attaches at the root) keeps working in tests."""
+    so caplog (which attaches at the root) keeps working in tests. Installs the process-wide
+    redaction first."""
+    install_redaction()
     # httpx logs every request at INFO; the control loop polls each sandbox every few
     # seconds, which buries every useful line.
     logging.getLogger("httpx").setLevel(logging.WARNING)

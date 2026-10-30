@@ -19,6 +19,7 @@ from starlette.routing import Mount
 from ach_runtime.facades._proxy import ProcessIdentity, with_identity_headers
 from ach_runtime.facades.memory import _AuthGuard
 from ach_runtime.harness.hydrate import A2AAgentEntry
+from ach_runtime.observability.runs import redact
 
 log = logging.getLogger(__name__)
 OwnedWorkspace = Callable[[str], Awaitable[bool]]
@@ -200,14 +201,14 @@ def _make_agent_tools(name: str, client: A2AAgentClient) -> list[ToolSpec]:
             return {"ok": True, "result": await client.send_task(prompt, context_id=context_id)}
         except Exception as exc:
             log.warning("a2a egress blocking call failed agent=%s error=%s", name, exc)
-            return {"ok": False, "error": str(exc)}
+            return {"ok": False, "error": redact(str(exc))}
 
     async def fire(prompt: str, context_id: str | None = None) -> dict[str, Any]:
         try:
             return {"ok": True, "task_id": await client.send_task_async(prompt, context_id=context_id)}
         except Exception as exc:
             log.warning("a2a egress async call failed agent=%s error=%s", name, exc)
-            return {"ok": False, "error": str(exc)}
+            return {"ok": False, "error": redact(str(exc))}
 
     async def status(task_id: str, wait: bool = False, timeout: float = 300.0) -> dict[str, Any]:
         try:
@@ -220,7 +221,7 @@ def _make_agent_tools(name: str, client: A2AAgentClient) -> list[ToolSpec]:
             return {"ok": True, "status": resolved.get("status"), "result": resolved.get("result")}
         except Exception as exc:
             log.warning("a2a egress status call failed agent=%s error=%s", name, exc)
-            return {"ok": False, "error": str(exc)}
+            return {"ok": False, "error": redact(str(exc))}
 
     return [
         ToolSpec(name=f"a2a_{name}",

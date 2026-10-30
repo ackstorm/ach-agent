@@ -470,3 +470,11 @@ async def test_peer_close_preserves_cancellation_and_other_cleanup_failure() -> 
     # Repeat close remains idempotent: no further attempts, no re-raise.
     await facade.aclose()
     assert client_a.close_calls == 1 and client_b.close_calls == 1
+
+
+async def test_a2a_tool_errors_returned_to_the_engine_are_redacted() -> None:
+    jwt = "eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiJ4In0.c2ln"
+    broken = FakeClient(raises=RuntimeError(f"401 with x-ach-key {jwt}"))
+    tool = _by_name(build_a2a_tools([_agent("rev")], client_factory=_factory(broken), identity=IDENTITY), "a2a_rev")
+    result = await tool.handler(prompt="go")
+    assert result["ok"] is False and jwt not in result["error"] and "[redacted]" in result["error"]

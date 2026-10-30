@@ -305,18 +305,45 @@ func podUIDs(t *testing.T, names []string) string {
 	return strings.Join(out, ",")
 }
 
-// facadeToken is the Workspace facade token the runtime derives (harness/tokens.py
-// facade_token): <claim>.<hex HMAC-SHA256(K, "facade:<claim>")>, K = the agent key Secret's value.
-func facadeToken(t *testing.T, agentUID, claim string) string {
+// agentKey is the Agent's workspace key K (the value of its key Secret).
+func agentKey(t *testing.T, agentUID string) []byte {
 	t.Helper()
 	raw := mustKubectl(t, "", "-n", agentNS, "get", "secret", "ach-agent-key-"+agentUID, "-o", "jsonpath={.data.key}")
 	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(raw))
 	if err != nil {
 		t.Fatalf("decode agent key: %v", err)
 	}
+	return key
+}
+
+func hmacHex(key []byte, msg string) string {
 	mac := hmac.New(sha256.New, key)
-	mac.Write([]byte("facade:" + claim))
-	return claim + "." + hex.EncodeToString(mac.Sum(nil))
+	mac.Write([]byte(msg))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// facadeToken is the Workspace facade token the runtime derives (harness/tokens.py
+// facade_token): <claim>.<hex HMAC-SHA256(K, "facade:<claim>")>. The claim is the Workspace name
+// (see workspaceClaim), not the OpenShell sandbox name.
+func facadeToken(t *testing.T, agentUID, claim string) string {
+	t.Helper()
+	return claim + "." + hmacHex(agentKey(t, agentUID), "facade:"+claim)
+}
+
+// workspaceClaim returns the name of the Agent's running Workspace, read from the control unit's
+// host API (bearer = hex HMAC-SHA256(K, "host:<uid>")).
+func workspaceClaim(t *testing.T, agent, agentUID string) string {
+	t.Helper()
+	code := fmt.Sprintf(`import urllib.request as u,json
+r=u.Request('http://agent-%s.%s.svc.cluster.local:8081/host/v1/workspaces',headers={'Authorization':'Bearer %s'})
+for w in json.load(u.urlopen(r,timeout=20))['workspaces']:
+    if w['desired']=='running':
+        print(w['name']);break`, agent, agentNS, hmacHex(agentKey(t, agentUID), "host:"+agentUID))
+	out, err := stubExec(t, code)
+	if err != nil || strings.TrimSpace(out) == "" {
+		t.Fatalf("no running workspace for %s: %v\n%s", agent, err, out)
+	}
+	return strings.TrimSpace(out)
 }
 
 type loadSummary struct {

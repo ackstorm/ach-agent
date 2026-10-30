@@ -134,7 +134,7 @@ func TestE2E(t *testing.T) {
 		facade := fmt.Sprintf("http://agent-%s.%s.svc.cluster.local:8081/facades", name, agentNS)
 		// JWT lifetime 60 s, refreshed every 48 s: 200 s spans at least three rotations.
 		out, err := kubectl("", "-n", agentNS, "exec", "deploy/e2e-stub", "--", "python", "/app/load.py",
-			"--facade", facade, "--token", facadeToken(t, uid, workspaces[0]), "--seconds", "200")
+			"--facade", facade, "--token", facadeToken(t, uid, workspaceClaim(t, name, uid)), "--seconds", "200")
 		if err != nil {
 			t.Fatalf("load driver: %v\n%s", err, out)
 		}

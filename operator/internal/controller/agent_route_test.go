@@ -7,6 +7,7 @@ import (
 
 	achv1alpha1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
 	"github.com/ackstorm/ach-agent/operator/internal/render"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 func routeAgent(name string, route *achv1alpha1.RouteSpec) *achv1alpha1.Agent {
@@ -48,5 +49,20 @@ func TestBuildHTTPRoute_AgentParentRefWinsAndPathDefaultsToRoot(t *testing.T) {
 	}
 	if *route.Spec.Rules[0].Matches[0].Path.Value != "/" {
 		t.Fatalf("path = %q, want /", *route.Spec.Rules[0].Matches[0].Path.Value)
+	}
+	if len(route.Spec.Rules[0].Filters) != 0 {
+		t.Fatalf("filters = %#v, want none on the root path", route.Spec.Rules[0].Filters)
+	}
+}
+
+func TestBuildHTTPRoute_StripsThePathPrefix(t *testing.T) {
+	a := routeAgent("a", &achv1alpha1.RouteSpec{Hostname: "api.example.com", Path: "/agents/a"})
+	filters := buildHTTPRoute(a, achv1alpha1.ParentRef{Name: "public"}).Spec.Rules[0].Filters
+	if len(filters) != 1 || filters[0].Type != gatewayv1.HTTPRouteFilterURLRewrite {
+		t.Fatalf("filters = %#v, want one URLRewrite", filters)
+	}
+	p := filters[0].URLRewrite.Path
+	if p == nil || p.Type != gatewayv1.PrefixMatchHTTPPathModifier || p.ReplacePrefixMatch == nil || *p.ReplacePrefixMatch != "/" {
+		t.Fatalf("rewrite = %#v, want ReplacePrefixMatch /", p)
 	}
 }

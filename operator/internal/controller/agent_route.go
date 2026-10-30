@@ -19,8 +19,9 @@ func needsRoute(a *achv1alpha1.Agent) bool {
 	return a.Spec.Expose != nil && a.Spec.Expose.Route != nil
 }
 
-// buildHTTPRoute routes route.hostname + route.path to the Agent's -http Service. The parentRef
-// is route.parentRef, else def.
+// buildHTTPRoute routes route.hostname + route.path to the Agent's -http Service, stripping a
+// non-root path so the control pod sees /channels/... at its root. The parentRef is
+// route.parentRef, else def.
 func buildHTTPRoute(a *achv1alpha1.Agent, def achv1alpha1.ParentRef) *gatewayv1.HTTPRoute {
 	route := a.Spec.Expose.Route
 	parent := def
@@ -38,6 +39,15 @@ func buildHTTPRoute(a *achv1alpha1.Agent, def achv1alpha1.ParentRef) *gatewayv1.
 	if path == "" {
 		path = "/"
 	}
+	var filters []gatewayv1.HTTPRouteFilter
+	if path != "/" {
+		filters = []gatewayv1.HTTPRouteFilter{{
+			Type: gatewayv1.HTTPRouteFilterURLRewrite,
+			URLRewrite: &gatewayv1.HTTPURLRewriteFilter{Path: &gatewayv1.HTTPPathModifier{
+				Type: gatewayv1.PrefixMatchHTTPPathModifier, ReplacePrefixMatch: ptr.To("/"),
+			}},
+		}}
+	}
 	return &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{Name: render.ControlName(a.Name), Namespace: a.Namespace, Labels: agentLabels(a)},
 		Spec: gatewayv1.HTTPRouteSpec{
@@ -47,6 +57,7 @@ func buildHTTPRoute(a *achv1alpha1.Agent, def achv1alpha1.ParentRef) *gatewayv1.
 				Matches: []gatewayv1.HTTPRouteMatch{{Path: &gatewayv1.HTTPPathMatch{
 					Type: ptr.To(gatewayv1.PathMatchPathPrefix), Value: ptr.To(path),
 				}}},
+				Filters: filters,
 				BackendRefs: []gatewayv1.HTTPBackendRef{{BackendRef: gatewayv1.BackendRef{
 					BackendObjectReference: gatewayv1.BackendObjectReference{
 						Name: gatewayv1.ObjectName(httpServiceName(a.Name)),

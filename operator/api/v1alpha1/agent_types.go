@@ -509,6 +509,7 @@ type RouteSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Hostname string `json:"hostname"`
+	// Path is the URL prefix on hostname; the HTTPRoute strips it before the control pod.
 	// +kubebuilder:default="/"
 	// +optional
 	Path string `json:"path,omitempty"`

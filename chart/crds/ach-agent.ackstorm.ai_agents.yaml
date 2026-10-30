@@ -665,6 +665,8 @@ spec:
                         type: object
                       path:
                         default: /
+                        description: Path is the URL prefix on hostname; the HTTPRoute
+                          strips it before the control pod.
                         type: string
                     required:
                     - hostname

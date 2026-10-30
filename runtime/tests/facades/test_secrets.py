@@ -583,7 +583,7 @@ async def test_mcp_facade_hides_excluded_tools_from_tools_list(sse: bool) -> Non
     if sse:
         assert text.startswith("event: message\ndata: ")
         text = text.split("data: ", 1)[1]
-    assert [t["name"] for t in json.loads(text)["result"]["tools"]] == ["m1.safe_tool"]
+    assert [t["name"] for t in json.loads(text)["result"]["tools"]] == ["safe_tool"]
 
 
 async def test_mcp_facade_tools_list_filter_keeps_sse_crlf_and_meta() -> None:
@@ -606,7 +606,7 @@ async def test_mcp_facade_tools_list_filter_keeps_sse_crlf_and_meta() -> None:
     assert end == b"\r\n"
     result = json.loads(data.removeprefix(b"data: "))["result"]
     assert result["_meta"] == meta
-    assert [t["name"] for t in result["tools"]] == ["m1.safe_tool"]
+    assert [t["name"] for t in result["tools"]] == ["safe_tool"]
 
 
 @pytest.mark.parametrize(
@@ -628,19 +628,17 @@ async def test_mcp_facade_tools_list_unfilterable_reply_passes_through(reply: by
     assert resp.content == reply
 
 
-@pytest.mark.parametrize(
-    ("exclude_tools", "streams"), [(frozenset(), True), (frozenset({"m1.dangerous_tool"}), False)]
-)
-async def test_mcp_facade_tools_list_streams_unless_filtering(exclude_tools: frozenset[str], streams: bool) -> None:
+@pytest.mark.parametrize(("method", "streams"), [("tools/list", False), ("tools/call", True)])
+async def test_mcp_facade_only_tools_list_is_buffered(method: str, streams: bool) -> None:
     """`_call` reads the whole body at once, so it cannot tell streamed from buffered: ask
-    the handler directly which response type it built. Only a filtered `tools/list` buffers."""
+    the handler directly which response type it built. Only `tools/list`, which the facade
+    rewrites, buffers."""
     facade = _mcp_facade(
         handler=lambda request: _streamed(200, b'{"result": {"tools": []}}'),
         servers={"m1": "https://ach.example.com/mcp/m1"},
-        exclude_tools=exclude_tools,
     )
     token = facade_token(KEY, "owned-ws")
-    body = json.dumps({"jsonrpc": "2.0", "method": "tools/list", "id": 1}).encode()
+    body = json.dumps({"jsonrpc": "2.0", "method": method, "params": {"name": "t"}, "id": 1}).encode()
     messages: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
     messages.put_nowait({"type": "http.request", "body": body, "more_body": False})
 
@@ -657,6 +655,52 @@ async def test_mcp_facade_tools_list_streams_unless_filtering(exclude_tools: fro
         assert isinstance(response, StreamingResponse) is streams
     finally:
         await facade.aclose()
+
+
+def _listing_upstream(seen: list[Any], tools: list[str]) -> Any:
+    def handler(request: httpx.Request) -> httpx.Response:
+        message = json.loads(request.read())
+        seen.append(message)
+        if message.get("method") == "tools/list":
+            reply = {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": t} for t in tools]}}
+            return _streamed(200, json.dumps(reply).encode(), headers={"content-type": "application/json"})
+        return _streamed(200, b'{"result": "ok"}')
+
+    return handler
+
+
+async def test_mcp_facade_advertises_bare_names_and_calls_upstream_names() -> None:
+    seen: list[Any] = []
+    facade = _mcp_facade(
+        handler=_listing_upstream(seen, ["m1.desk_get_ticket", "other"]),
+        servers={"m1": "https://ach.example.com/mcp/m1"},
+    )
+    token = facade_token(KEY, "owned-ws")
+    path = f"/t/{token}/mcp/m1"
+    listed = await _call(facade.app(), "POST", path, json={"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+    assert [t["name"] for t in listed.json()["result"]["tools"]] == ["desk_get_ticket", "other"]
+
+    for name in ("desk_get_ticket", "m1.desk_get_ticket", "other"):
+        call = {"jsonrpc": "2.0", "method": "tools/call", "params": {"name": name, "arguments": {"a": 1}}, "id": 2}
+        assert (await _call(facade.app(), "POST", path, json=call)).status_code == 200
+    assert [m["params"]["name"] for m in seen[1:]] == ["m1.desk_get_ticket", "m1.desk_get_ticket", "other"]
+    assert seen[1]["params"]["arguments"] == {"a": 1}
+
+
+@pytest.mark.parametrize("name", ["dangerous_tool", "m1.dangerous_tool"])
+async def test_mcp_facade_blocks_an_excluded_tool_by_bare_or_upstream_name(name: str) -> None:
+    seen: list[Any] = []
+    facade = _mcp_facade(
+        handler=_listing_upstream(seen, ["m1.safe_tool", "m1.dangerous_tool"]),
+        servers={"m1": "https://ach.example.com/mcp/m1"},
+        exclude_tools=frozenset({"m1.dangerous_tool"}),
+    )
+    token = facade_token(KEY, "owned-ws")
+    call = {"jsonrpc": "2.0", "method": "tools/call", "params": {"name": name}, "id": 1}
+    resp = await _call(facade.app(), "POST", f"/t/{token}/mcp/m1", json=call)
+
+    assert resp.status_code == 403
+    assert seen == []
 
 
 async def test_mcp_facade_allows_non_excluded_tool_call() -> None:
@@ -803,7 +847,7 @@ async def test_mcp_facade_relays_query_non_200_status_and_preserves_session_head
         facade.app(),
         "POST",
         f"/t/{token}/mcp/m1?sessionId=abc&foo=bar",
-        json={"jsonrpc": "2.0", "method": "tools/list", "id": 1},
+        json={"jsonrpc": "2.0", "method": "initialize", "id": 1},
     )
 
     assert resp.status_code == 201

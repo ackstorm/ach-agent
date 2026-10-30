@@ -14,6 +14,12 @@ per-server exclude):
   reply (JSON or SSE) so the model never sees them; any other method/body passes through
   unexamined. Names are as the upstream lists them (`<server>.<tool>` through LiteLLM).
 
+The engine prefixes every MCP tool with its server id itself, so a gateway prefix would
+reach the model twice (`mcp-x_mcp-x.tool`) and weak models then call names that do not
+exist. A `tools/list` reply therefore advertises `<server>.<tool>` as the bare `<tool>`, and
+a `tools/call` naming a bare tool is mapped back to the upstream name before the exclusion
+check and the upstream call.
+
 Authentication is the accepted Workspace HMAC (`harness/tokens.py::authenticate_facade`);
 see `facades/model.py`'s module docstring for the same removed capability machinery.
 """
@@ -52,8 +58,37 @@ def _jsonrpc_method(body: bytes) -> tuple[str | None, Any]:
     return parsed.get("method"), parsed.get("params")
 
 
-def _excluded_tool_call(body: bytes, exclude_tools: frozenset[str]) -> bool:
-    """True when the body, or any message of a JSON-RPC batch, calls an excluded tool."""
+def _tool_calls(parsed: Any) -> list[dict[str, Any]]:
+    """The `params` of every `tools/call` message in a JSON-RPC body or batch."""
+    return [
+        message["params"]
+        for message in (parsed if isinstance(parsed, list) else [parsed])
+        if isinstance(message, dict)
+        and message.get("method") == "tools/call"
+        and isinstance(message.get("params"), dict)
+    ]
+
+
+def _upstream_tool_names(body: bytes, upstream: Mapping[str, str]) -> bytes:
+    """Map the bare tool names a `tools/list` reply advertised back to the upstream's names.
+    A body without such a call passes through byte for byte."""
+    if not upstream or not body:
+        return body
+    try:
+        parsed = json.loads(body)
+    except (ValueError, TypeError):
+        return body
+    calls = [p for p in _tool_calls(parsed) if isinstance(p.get("name"), str) and p["name"] in upstream]
+    if not calls:
+        return body
+    for params in calls:
+        params["name"] = upstream[params["name"]]
+    return json.dumps(parsed, separators=(",", ":")).encode()
+
+
+def _excluded_tool_call(body: bytes, exclude_tools: frozenset[str], prefix: str) -> bool:
+    """True when the body, or any message of a JSON-RPC batch, calls an excluded tool, by its
+    upstream name or by the bare name under this server's prefix."""
     if not exclude_tools or not body:
         return False
     try:
@@ -61,16 +96,18 @@ def _excluded_tool_call(body: bytes, exclude_tools: frozenset[str]) -> bool:
     except (ValueError, TypeError):
         return False
     return any(
-        isinstance(message, dict)
-        and message.get("method") == "tools/call"
-        and isinstance(message.get("params"), dict)
-        and (not isinstance(name := message["params"].get("name"), str) or name in exclude_tools)
-        for message in (parsed if isinstance(parsed, list) else [parsed])
+        not isinstance(name := params.get("name"), str)
+        or name in exclude_tools
+        or prefix + name in exclude_tools
+        for params in _tool_calls(parsed)
     )
 
 
-def _without_excluded_tools(exclude_tools: frozenset[str]) -> Callable[[bytes], bytes]:
-    """Drop excluded tools from a `tools/list` reply, plain JSON or SSE `data:` lines.
+def _listed_tools(
+    exclude_tools: frozenset[str], prefix: str, upstream: dict[str, str]
+) -> Callable[[bytes], bytes]:
+    """Drop excluded tools from a `tools/list` reply, plain JSON or SSE `data:` lines, and
+    advertise each `<prefix><tool>` as `<tool>`, recording the upstream name in `upstream`.
     Anything that does not parse as a JSON-RPC result with a `tools` list is left as is:
     the filter never fails the request."""
 
@@ -80,9 +117,13 @@ def _without_excluded_tools(exclude_tools: frozenset[str]) -> Callable[[bytes], 
             tools = parsed["result"]["tools"]
             if not isinstance(tools, list):
                 return message
-            parsed["result"]["tools"] = [
-                t for t in tools if not (isinstance(t, dict) and t.get("name") in exclude_tools)
-            ]
+            kept = [t for t in tools if not (isinstance(t, dict) and t.get("name") in exclude_tools)]
+            for tool in kept:
+                name = tool.get("name") if isinstance(tool, dict) else None
+                if isinstance(name, str) and name.startswith(prefix) and len(name) > len(prefix):
+                    upstream[name[len(prefix):]] = name
+                    tool["name"] = name[len(prefix):]
+            parsed["result"]["tools"] = kept
         except Exception:  # noqa: BLE001 - an unfilterable reply passes through unchanged
             return message
         return json.dumps(parsed, separators=(",", ":")).encode()
@@ -123,6 +164,8 @@ class McpFacade:
         self._responses: set[httpx.Response] = set()
         endpoints = {sid: ep.rstrip("/") for sid, ep in servers.items() if sid not in exclude}
         headers_by_server = {sid: dict(h) for sid, h in server_headers.items()}
+        # Per server: bare tool name -> upstream name, learnt from its `tools/list` replies.
+        upstream_names: dict[str, dict[str, str]] = {sid: {} for sid in endpoints}
 
         async def handle(request: Request) -> Response:
             token = request.path_params["token"]
@@ -140,14 +183,16 @@ class McpFacade:
             if exclude_tools and has_encoded_body(request.headers):
                 # An encoded body cannot be inspected for an excluded tools/call.
                 return JSONResponse({"detail": "encoded request body not accepted"}, status_code=415)
-            if _excluded_tool_call(body, exclude_tools):
+            prefix = f"{server_id}."
+            body = _upstream_tool_names(body, upstream_names[server_id])
+            if _excluded_tool_call(body, exclude_tools, prefix):
                 return JSONResponse({"detail": "tool excluded by capability filter"}, status_code=403)
 
             target = join_tail(endpoint, request.path_params.get("tail", ""))
             if target is None:
                 return JSONResponse({"detail": "path escapes the mcp server"}, status_code=400)
             correlation = correlation_headers() if correlation_headers is not None else None
-            hide_tools = bool(exclude_tools) and _jsonrpc_method(body)[0] == "tools/list"
+            listing = _jsonrpc_method(body)[0] == "tools/list"
             return await forward(
                 self._client,
                 target,
@@ -157,7 +202,7 @@ class McpFacade:
                 correlation=correlation,
                 mcp=True,
                 body=body,
-                transform=_without_excluded_tools(exclude_tools) if hide_tools else None,
+                transform=_listed_tools(exclude_tools, prefix, upstream_names[server_id]) if listing else None,
                 _responses=self._responses,
             )
 

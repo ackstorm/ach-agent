@@ -54,29 +54,54 @@ spec:
                   from ACH.
                 properties:
                   baseUrl:
+                    description: |-
+                      BaseURL is ACH's public URL. With tokenExchange it is also the projected token's
+                      audience (trailing slashes removed) and must equal ACH's ACH_BASE_URL.
                     minLength: 1
                     pattern: ^https?://[^/\s]+
                     type: string
                   environment:
-                    description: |-
-                      Environment is the ACH Hub Environment name. The key already scopes the environment
-                      server-side.
+                    description: Environment is the ACH Hub Environment name. Required
+                      with tokenExchange.
                     type: string
-                  keySecretRef:
-                    description: KeySecretRef points at a Secret holding the ACH key.
+                  keyFrom:
+                    description: |-
+                      AchKeyFrom is where the ACH credential comes from: exactly one of tokenExchange or
+                      secretKeyRef.
                     properties:
-                      key:
-                        description: Key is the data key inside the Secret.
-                        minLength: 1
-                        type: string
-                      name:
-                        description: Name is the Kubernetes Secret name.
-                        minLength: 1
-                        type: string
-                    required:
-                    - key
-                    - name
+                      secretKeyRef:
+                        description: SecretKeyRef is a Secret holding a static ek_.
+                        properties:
+                          key:
+                            description: Key is the data key inside the Secret.
+                            minLength: 1
+                            type: string
+                          name:
+                            description: Name is the Kubernetes Secret name.
+                            minLength: 1
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      tokenExchange:
+                        description: |-
+                          AchTokenExchange exchanges the control pod's projected ServiceAccount token for a
+                          short-lived ACH credential. ACH issues it only when a KeyGrant names this identity, the
+                          Environment and the pod's control ServiceAccount as <namespace>/<serviceaccount>.
+                        properties:
+                          identity:
+                            description: Identity is the ACH identity (an email) the
+                              credential acts as.
+                            pattern: ^[^@\s*?\[\]]+@[^@\s*?\[\]]+$
+                            type: string
+                        required:
+                        - identity
+                        type: object
                     type: object
+                    x-kubernetes-validations:
+                    - message: 'ach.keyFrom: set exactly one of tokenExchange or secretKeyRef'
+                      rule: has(self.tokenExchange) != has(self.secretKeyRef)
                   model:
                     description: AchModelSpec selects the ACH-served model.
                     properties:
@@ -108,9 +133,15 @@ spec:
                     type: object
                 required:
                 - baseUrl
-                - keySecretRef
+                - keyFrom
                 - model
                 type: object
+                x-kubernetes-validations:
+                - message: ach.environment is required with keyFrom.tokenExchange
+                  rule: '!has(self.keyFrom.tokenExchange) || (has(self.environment)
+                    && size(self.environment) > 0)'
+                - message: ach.baseUrl must be https:// with keyFrom.tokenExchange
+                  rule: '!has(self.keyFrom.tokenExchange) || self.baseUrl.startsWith(''https://'')'
               artifacts:
                 description: Artifacts is the Harness Artifacts policy (contract §8).
                 properties:

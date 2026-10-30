@@ -555,3 +555,65 @@ func TestGraceBelowDrainPlus15IsRejected(t *testing.T) {
 		t.Fatal("the 120s default grace must be rejected against a 300s drain")
 	}
 }
+
+func tokenExchangeAgent() *achv1alpha1.Agent {
+	a := &achv1alpha1.Agent{}
+	a.Name, a.Namespace, a.UID = "doctor", "ns", "3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77"
+	a.Spec.CapabilityServer = "ach"
+	a.Spec.Ach = &achv1alpha1.AchServerSpec{BaseURL: "https://api.example.com/", Environment: "prod",
+		KeyFrom: achv1alpha1.AchKeyFrom{TokenExchange: &achv1alpha1.AchTokenExchange{Identity: "ai.run@example.com"}},
+		Model:   achv1alpha1.AchModelSpec{Name: "m"}}
+	return a
+}
+
+func TestBuildStatefulSet_TokenExchangeMountsAProjectedTokenAndKeepsTheControlServiceAccount(t *testing.T) {
+	a := tokenExchangeAgent()
+	p := &achv1alpha1.AgentProfile{}
+	p.Spec.Control.ServiceAccountName = "ach-agent-control" // the shared, Pod Identity-backed SA
+	ps := buildStatefulSet(a, p, "h", nil).Spec.Template.Spec
+	if ps.ServiceAccountName != "ach-agent-control" {
+		t.Fatalf("serviceAccountName = %q, want the profile's ach-agent-control", ps.ServiceAccountName)
+	}
+	if ps.AutomountServiceAccountToken == nil || *ps.AutomountServiceAccountToken {
+		t.Fatal("the API token must stay unmounted; only the audience-bound projected token is mounted")
+	}
+	var tok *corev1.ServiceAccountTokenProjection
+	for _, v := range ps.Volumes {
+		if v.Name == "ach-token" && v.Projected != nil && len(v.Projected.Sources) == 1 {
+			tok = v.Projected.Sources[0].ServiceAccountToken
+		}
+	}
+	if tok == nil || tok.Audience != "https://api.example.com" || tok.ExpirationSeconds == nil || *tok.ExpirationSeconds != 3600 || tok.Path != "token" {
+		t.Fatalf("projected token = %+v", tok)
+	}
+	mounted := false
+	for _, m := range ps.Containers[0].VolumeMounts {
+		mounted = mounted || (m.Name == "ach-token" && m.MountPath == "/var/run/secrets/ach" && m.ReadOnly)
+	}
+	if !mounted {
+		t.Fatalf("mounts = %+v, want ach-token read-only at /var/run/secrets/ach", ps.Containers[0].VolumeMounts)
+	}
+	p.Spec.Control.ServiceAccountName = ""
+	if got := buildStatefulSet(a, p, "h", nil).Spec.Template.Spec.ServiceAccountName; got != "ach-agent-control-"+string(a.UID) {
+		t.Fatalf("default serviceAccountName = %q, want ach-agent-control-<uid>", got)
+	}
+}
+
+func TestBuildStatefulSet_SecretKeyAgentMountsNoToken(t *testing.T) {
+	a := tokenExchangeAgent()
+	a.Spec.Ach.KeyFrom = achv1alpha1.AchKeyFrom{SecretKeyRef: &achv1alpha1.SecretKeyRef{Name: "ek", Key: "ek"}}
+	p := &achv1alpha1.AgentProfile{}
+	ps := buildStatefulSet(a, p, "h", nil).Spec.Template.Spec
+	if ps.ServiceAccountName != "ach-agent-control-"+string(a.UID) {
+		t.Fatalf("serviceAccountName = %q", ps.ServiceAccountName)
+	}
+	for _, v := range ps.Volumes {
+		if v.Name == "ach-token" {
+			t.Fatal("a secretKeyRef agent must not mount a projected token")
+		}
+	}
+	p.Spec.Control.ServiceAccountName = "shared-control"
+	if got := buildStatefulSet(a, p, "h", nil).Spec.Template.Spec.ServiceAccountName; got != "shared-control" {
+		t.Fatalf("profile ServiceAccount = %q, want shared-control", got)
+	}
+}

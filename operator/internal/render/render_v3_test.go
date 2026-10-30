@@ -85,7 +85,7 @@ func TestRender_AchProducesKeyAliasAndModelApi(t *testing.T) {
 	a.Spec.CapabilityServer = "ach"
 	a.Spec.Standalone = nil
 	a.Spec.Ach = &v1.AchServerSpec{BaseURL: "https://api.example", Environment: "prod",
-		KeySecretRef: v1.SecretKeyRef{Name: "ek", Key: "token"}, Model: v1.AchModelSpec{Name: "ackstorm.smart", API: "anthropic"}}
+		KeyFrom: v1.AchKeyFrom{SecretKeyRef: &v1.SecretKeyRef{Name: "ek", Key: "token"}}, Model: v1.AchModelSpec{Name: "ackstorm.smart", API: "anthropic"}}
 	cfg, env, err := Render(p, a)
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestRender_AchProducesKeyAliasAndModelApi(t *testing.T) {
 func TestRender_AchModelApiDefaultsToOpenai(t *testing.T) {
 	p, a := minimalFixture()
 	a.Spec.CapabilityServer, a.Spec.Standalone = "ach", nil
-	a.Spec.Ach = &v1.AchServerSpec{BaseURL: "https://api.example", KeySecretRef: v1.SecretKeyRef{Name: "ek", Key: "t"}, Model: v1.AchModelSpec{Name: "m"}}
+	a.Spec.Ach = &v1.AchServerSpec{BaseURL: "https://api.example", KeyFrom: v1.AchKeyFrom{SecretKeyRef: &v1.SecretKeyRef{Name: "ek", Key: "t"}}, Model: v1.AchModelSpec{Name: "m"}}
 	cfg, _, err := Render(p, a)
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +157,7 @@ func TestReferencedSecrets_IncludesHeadersAndAchKey(t *testing.T) {
 		t.Fatalf("standalone secrets = %v", got)
 	}
 	a.Spec.CapabilityServer, a.Spec.Standalone = "ach", nil
-	a.Spec.Ach = &v1.AchServerSpec{BaseURL: "x", KeySecretRef: v1.SecretKeyRef{Name: "ek", Key: "token"}, Model: v1.AchModelSpec{Name: "m"}}
+	a.Spec.Ach = &v1.AchServerSpec{BaseURL: "x", KeyFrom: v1.AchKeyFrom{SecretKeyRef: &v1.SecretKeyRef{Name: "ek", Key: "token"}}, Model: v1.AchModelSpec{Name: "m"}}
 	got = ReferencedSecrets(p, a)
 	if len(got) != 1 || got["ek"][0] != "token" {
 		t.Fatalf("ach secrets = %v", got)
@@ -172,5 +172,35 @@ func TestControlServiceAccountName(t *testing.T) {
 	p.Spec.Control.ServiceAccountName = "shared-control"
 	if got := ControlServiceAccountName(fixtureAgentUID, &p); got != "shared-control" {
 		t.Fatalf("set = %q", got)
+	}
+}
+
+func TestRender_AchTokenExchangeRendersTheExchangeKeyAndNoSecret(t *testing.T) {
+	p, a := minimalFixture()
+	a.Spec.CapabilityServer, a.Spec.Standalone = "ach", nil
+	a.Spec.Ach = &v1.AchServerSpec{BaseURL: "https://api.example/", Environment: "prod",
+		KeyFrom: v1.AchKeyFrom{TokenExchange: &v1.AchTokenExchange{Identity: "ai.run@example.com"}}, Model: v1.AchModelSpec{Name: "m"}}
+	cfg, env, err := Render(p, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(cfg)
+	want := `"key":{"exchange":{"identity":"ai.run@example.com","environment":"prod","tokenPath":"/var/run/secrets/ach/token"}}`
+	if !strings.Contains(string(raw), want) {
+		t.Errorf("config lacks %s: %s", want, raw)
+	}
+	if len(env) != 0 {
+		t.Errorf("env bindings = %#v, want none", env)
+	}
+	if got := ReferencedSecrets(p, a); len(got) != 0 {
+		t.Errorf("referenced Secrets = %v, want none", got)
+	}
+}
+
+func TestExchangeAudience(t *testing.T) {
+	for in, want := range map[string]string{"https://api.ackstorm.ai": "https://api.ackstorm.ai", "https://api.ackstorm.ai/": "https://api.ackstorm.ai", "https://h/p//": "https://h/p"} {
+		if got := ExchangeAudience(in); got != want {
+			t.Errorf("ExchangeAudience(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

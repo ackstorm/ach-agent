@@ -121,6 +121,26 @@ type WSInfrastructureBlock struct {
 // controlEndpoint.
 const controlPort = 8081
 
+// AchTokenDir/AchTokenPath are where a tokenExchange control pod reads its projected
+// ServiceAccount token.
+const (
+	AchTokenDir  = "/var/run/secrets/ach"
+	AchTokenFile = "token"
+	AchTokenPath = AchTokenDir + "/" + AchTokenFile
+)
+
+// TokenExchange is the Agent's spec.ach.keyFrom.tokenExchange, or nil.
+func TokenExchange(a *v1.Agent) *v1.AchTokenExchange {
+	if a.Spec.CapabilityServer != "ach" || a.Spec.Ach == nil {
+		return nil
+	}
+	return a.Spec.Ach.KeyFrom.TokenExchange
+}
+
+// ExchangeAudience is the projected token's audience: spec.ach.baseUrl without trailing
+// slashes, which ACH compares with its own ACH_BASE_URL normalised the same way.
+func ExchangeAudience(baseURL string) string { return strings.TrimRight(baseURL, "/") }
+
 // ControlServiceAccountName is the effective control ServiceAccount: the profile's
 // control.serviceAccountName when set, else ach-agent-control-<uid>.
 func ControlServiceAccountName(agentUID string, p *v1.AgentProfile) string {
@@ -213,10 +233,24 @@ type WSMcpServer struct {
 
 // WSAchServer is capability.ach (schema AchServer).
 type WSAchServer struct {
-	BaseURL     string        `json:"baseUrl"`
-	Environment string        `json:"environment"`
-	Key         WSSecretAlias `json:"key"`
-	Model       ModelBlock    `json:"model"`
+	BaseURL     string     `json:"baseUrl"`
+	Environment string     `json:"environment"`
+	Key         WSAchKey   `json:"key"`
+	Model       ModelBlock `json:"model"`
+}
+
+// WSAchKey is capability.ach.key: {"env": NAME} for a Secret, {"exchange": {...}} for
+// tokenExchange. omitempty keeps the Secret form byte-identical to {"env": ...}.
+type WSAchKey struct {
+	Env      string         `json:"env,omitempty"`
+	Exchange *WSExchangeKey `json:"exchange,omitempty"`
+}
+
+// WSExchangeKey is capability.ach.key.exchange (schema ExchangeKeyParams).
+type WSExchangeKey struct {
+	Identity    string `json:"identity"`
+	Environment string `json:"environment"`
+	TokenPath   string `json:"tokenPath"`
 }
 
 // WSConfig is the full workspace-v3 wire document (schema root).
@@ -291,11 +325,19 @@ func renderCapability(a *v1.Agent) (WSCapabilityBlock, []EnvBinding, error) {
 			api = DefaultModelType
 		}
 		cap.Ach = &WSAchServer{
-			BaseURL: ach.BaseURL, Environment: ach.Environment, Key: WSSecretAlias{Env: AchKeyEnv},
+			BaseURL: ach.BaseURL, Environment: ach.Environment,
 			Model: ModelBlock{Name: ach.Model.Name, Type: api, Params: params, Thinking: renderThinking(ach.Model.Thinking)},
 		}
-		key := ach.KeySecretRef
-		return cap, []EnvBinding{{Name: AchKeyEnv, SecretKeyRef: &key}}, nil
+		switch kf := ach.KeyFrom; {
+		case kf.TokenExchange != nil:
+			cap.Ach.Key = WSAchKey{Exchange: &WSExchangeKey{Identity: kf.TokenExchange.Identity, Environment: ach.Environment, TokenPath: AchTokenPath}}
+			return cap, nil, nil
+		case kf.SecretKeyRef != nil:
+			cap.Ach.Key = WSAchKey{Env: AchKeyEnv}
+			key := *kf.SecretKeyRef
+			return cap, []EnvBinding{{Name: AchKeyEnv, SecretKeyRef: &key}}, nil
+		}
+		return cap, nil, fmt.Errorf("spec.ach.keyFrom needs tokenExchange or secretKeyRef")
 	case "standalone", "":
 		cap.Server = "standalone"
 		st := a.Spec.Standalone

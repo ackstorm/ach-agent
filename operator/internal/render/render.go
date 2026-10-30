@@ -488,8 +488,8 @@ func ReferencedSecrets(p v1.AgentProfile, a v1.Agent) map[string][]string {
 			}
 		}
 	}
-	if ach := a.Spec.Ach; ach != nil {
-		add(ach.KeySecretRef.Name, ach.KeySecretRef.Key)
+	if ach := a.Spec.Ach; ach != nil && ach.KeyFrom.SecretKeyRef != nil {
+		add(ach.KeyFrom.SecretKeyRef.Name, ach.KeyFrom.SecretKeyRef.Key)
 	}
 	out := make(map[string][]string, len(set))
 	for name, keys := range set {

@@ -354,9 +354,34 @@ func TestAgent_ExposeServiceDisabled_PrunesService(t *testing.T) {
 func TestAgent_CEL_Rejections(t *testing.T) {
 	ctx := context.Background()
 	mustApply(t, ctx, testProfile("aa-cel-p"))
+	exchange := func(base, env string) *achv1alpha1.AchServerSpec {
+		return &achv1alpha1.AchServerSpec{BaseURL: base, Environment: env,
+			KeyFrom: achv1alpha1.AchKeyFrom{TokenExchange: &achv1alpha1.AchTokenExchange{Identity: "ai.run@example.com"}},
+			Model:   achv1alpha1.AchModelSpec{Name: "m"}}
+	}
+	achOnly := func(a *achv1alpha1.Agent, s *achv1alpha1.AchServerSpec) {
+		a.Spec.CapabilityServer, a.Spec.Standalone, a.Spec.Ach = "ach", nil, s
+	}
 	for name, mutate := range map[string]func(*achv1alpha1.Agent){
 		"both servers": func(a *achv1alpha1.Agent) {
-			a.Spec.Ach = &achv1alpha1.AchServerSpec{BaseURL: "https://a", KeySecretRef: achv1alpha1.SecretKeyRef{Name: "k", Key: "k"}, Model: achv1alpha1.AchModelSpec{Name: "m"}}
+			a.Spec.Ach = &achv1alpha1.AchServerSpec{BaseURL: "https://a", KeyFrom: achv1alpha1.AchKeyFrom{SecretKeyRef: &achv1alpha1.SecretKeyRef{Name: "k", Key: "k"}}, Model: achv1alpha1.AchModelSpec{Name: "m"}}
+		},
+		"keyFrom with both": func(a *achv1alpha1.Agent) {
+			s := exchange("https://a", "e")
+			s.KeyFrom.SecretKeyRef = &achv1alpha1.SecretKeyRef{Name: "k", Key: "k"}
+			achOnly(a, s)
+		},
+		"keyFrom with neither": func(a *achv1alpha1.Agent) {
+			s := exchange("https://a", "e")
+			s.KeyFrom = achv1alpha1.AchKeyFrom{}
+			achOnly(a, s)
+		},
+		"tokenExchange over http":           func(a *achv1alpha1.Agent) { achOnly(a, exchange("http://a", "e")) },
+		"tokenExchange without environment": func(a *achv1alpha1.Agent) { achOnly(a, exchange("https://a", "")) },
+		"tokenExchange identity pattern": func(a *achv1alpha1.Agent) {
+			s := exchange("https://a", "e")
+			s.KeyFrom.TokenExchange.Identity = "*@example.com"
+			achOnly(a, s)
 		},
 		"ach selected without ach block": func(a *achv1alpha1.Agent) {
 			a.Spec.CapabilityServer = "ach"
@@ -391,4 +416,39 @@ func TestAgent_CEL_Rejections(t *testing.T) {
 			t.Fatalf("route + service must be accepted: %v", err)
 		}
 	})
+	t.Run("tokenExchange over https with an environment is accepted", func(t *testing.T) {
+		a := testAgentObject("aa-cel-exchange-ok", "aa-cel-p")
+		achOnly(a, exchange("https://a", "e"))
+		if err := k8sClient.Create(ctx, a); err != nil {
+			t.Fatalf("tokenExchange must be accepted: %v", err)
+		}
+	})
+}
+
+func TestAgent_TokenExchange_RunsAsTheProfileServiceAccountWithAProjectedToken(t *testing.T) {
+	ctx := context.Background()
+	const name = "aa-exchange"
+	mustApply(t, ctx, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "aa-exchange-control", Namespace: WatchNamespace}})
+	p := testProfile("aa-exchange-p")
+	p.Spec.Control.ServiceAccountName = "aa-exchange-control"
+	mustApply(t, ctx, p)
+	a := testAgentObject(name, "aa-exchange-p")
+	a.Spec.CapabilityServer, a.Spec.Standalone = "ach", nil
+	a.Spec.Ach = &achv1alpha1.AchServerSpec{BaseURL: "https://ach.example.com/", Environment: "prod",
+		KeyFrom: achv1alpha1.AchKeyFrom{TokenExchange: &achv1alpha1.AchTokenExchange{Identity: "ai.run@example.com"}},
+		Model:   achv1alpha1.AchModelSpec{Name: "m"}}
+	mustApply(t, ctx, a)
+	waitAgentCond(t, ctx, name, condWorkloadApplied, metav1.ConditionTrue)
+	ps := getControlStatefulSet(t, ctx, name).Spec.Template.Spec
+	if ps.ServiceAccountName != "aa-exchange-control" {
+		t.Errorf("pod ServiceAccount = %q, want the profile's aa-exchange-control", ps.ServiceAccountName)
+	}
+	found := false
+	for _, v := range ps.Volumes {
+		found = found || (v.Name == "ach-token" && v.Projected != nil &&
+			v.Projected.Sources[0].ServiceAccountToken.Audience == "https://ach.example.com")
+	}
+	if !found {
+		t.Errorf("volumes = %+v, want ach-token with audience https://ach.example.com", ps.Volumes)
+	}
 }

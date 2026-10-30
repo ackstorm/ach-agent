@@ -7,7 +7,7 @@ spec:
   ach:
     baseUrl: http://e2e-stub.ach-agent-e2e.svc.cluster.local:8092
     environment: e2e
-    keySecretRef: {name: e2e-ek, key: token}
+    keyFrom: {secretKeyRef: {name: e2e-ek, key: token}}
     model: {name: e2e-model, api: openai}
   channels:
     - name: hook

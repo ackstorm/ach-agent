@@ -460,19 +460,42 @@ type AchModelSpec struct {
 	Thinking *ThinkingSpec `json:"thinking,omitempty"`
 }
 
+// AchTokenExchange exchanges the control pod's projected ServiceAccount token for a
+// short-lived ACH credential. ACH issues it only when a KeyGrant names this identity, the
+// Environment and the pod's control ServiceAccount as <namespace>/<serviceaccount>.
+type AchTokenExchange struct {
+	// Identity is the ACH identity (an email) the credential acts as.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[^@\s*?\[\]]+@[^@\s*?\[\]]+$`
+	Identity string `json:"identity"`
+}
+
+// AchKeyFrom is where the ACH credential comes from: exactly one of tokenExchange or
+// secretKeyRef.
+// +kubebuilder:validation:XValidation:rule="has(self.tokenExchange) != has(self.secretKeyRef)",message="ach.keyFrom: set exactly one of tokenExchange or secretKeyRef"
+type AchKeyFrom struct {
+	// +optional
+	TokenExchange *AchTokenExchange `json:"tokenExchange,omitempty"`
+	// SecretKeyRef is a Secret holding a static ek_.
+	// +optional
+	SecretKeyRef *SecretKeyRef `json:"secretKeyRef,omitempty"`
+}
+
 // AchServerSpec is the capability source of an Agent hydrated from ACH.
+// +kubebuilder:validation:XValidation:rule="!has(self.keyFrom.tokenExchange) || (has(self.environment) && size(self.environment) > 0)",message="ach.environment is required with keyFrom.tokenExchange"
+// +kubebuilder:validation:XValidation:rule="!has(self.keyFrom.tokenExchange) || self.baseUrl.startsWith('https://')",message="ach.baseUrl must be https:// with keyFrom.tokenExchange"
 type AchServerSpec struct {
+	// BaseURL is ACH's public URL. With tokenExchange it is also the projected token's
+	// audience (trailing slashes removed) and must equal ACH's ACH_BASE_URL.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:Pattern=`^https?://[^/\s]+`
 	BaseURL string `json:"baseUrl"`
-	// Environment is the ACH Hub Environment name. The key already scopes the environment
-	// server-side.
+	// Environment is the ACH Hub Environment name. Required with tokenExchange.
 	// +optional
 	Environment string `json:"environment,omitempty"`
-	// KeySecretRef points at a Secret holding the ACH key.
 	// +kubebuilder:validation:Required
-	KeySecretRef SecretKeyRef `json:"keySecretRef"`
+	KeyFrom AchKeyFrom `json:"keyFrom"`
 	// +kubebuilder:validation:Required
 	Model AchModelSpec `json:"model"`
 }

@@ -31,6 +31,10 @@ const (
 	// read-only root filesystem (ach-runtime: TMPDIR only; handoff/script children inherit it).
 	tmpVolumeName        = "ach-tmp"
 	tmpMountDir          = "/tmp"
+	// achTokenVolumeName holds a tokenExchange control pod's projected ServiceAccount token
+	// (render.AchTokenPath); the kubelet renews it.
+	achTokenVolumeName        = "ach-token"
+	achTokenExpirationSeconds = int64(3600)
 	configHashAnnotation = "ach-agent.ackstorm.ai/config-hash"
 	agentLabelKey        = "ach-agent.ackstorm.ai/agent"
 	componentLabelKey    = "ach-agent.ackstorm.ai/component"
@@ -274,6 +278,18 @@ func buildStatefulSet(a *achv1alpha1.Agent, p *achv1alpha1.AgentProfile, configH
 	if p.Spec.Control.Persistence != nil && p.Spec.Control.Persistence.Enabled {
 		volumes = append(volumes, corev1.Volume{Name: pvcVolumeName, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName(a.Name)}}})
 		mounts = append(mounts, corev1.VolumeMount{Name: pvcVolumeName, MountPath: p.Spec.Control.Persistence.MountPath})
+	}
+
+	if render.TokenExchange(a) != nil {
+		exp := achTokenExpirationSeconds
+		volumes = append(volumes, corev1.Volume{Name: achTokenVolumeName, VolumeSource: corev1.VolumeSource{
+			Projected: &corev1.ProjectedVolumeSource{Sources: []corev1.VolumeProjection{{
+				ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+					Audience: render.ExchangeAudience(a.Spec.Ach.BaseURL), ExpirationSeconds: &exp, Path: render.AchTokenFile,
+				},
+			}}},
+		}})
+		mounts = append(mounts, corev1.VolumeMount{Name: achTokenVolumeName, MountPath: render.AchTokenDir, ReadOnly: true})
 	}
 
 	grace := defaultGraceSeconds

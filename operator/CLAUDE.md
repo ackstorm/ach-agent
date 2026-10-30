@@ -40,7 +40,9 @@ port of the ach `v0.14.2` agent operator (read it with `git -C <ach> archive v0.
   (`network_policies`, `filesystem`, `landlock`).
 - Header env names: `ACH_AGENT_MODEL_H<i>`, `ACH_AGENT_MCP_<NAME>_H<i>` (index in the
   case-insensitive sorted header names, literals included); only `secretKeyRef` headers get one.
-  A literal renders as `{"value": ...}` with no binding. The ACH key is `ACH_SECRET_IDENTITY`.
+  A literal renders as `{"value": ...}` with no binding. The ACH key from `keyFrom.secretKeyRef` is `ACH_SECRET_IDENTITY`. A `keyFrom.tokenExchange` Agent gets no key env:
+  its pod keeps the usual control ServiceAccount (profile `serviceAccountName`, else `ach-agent-control-<uid>`) and gets a
+  projected token (audience `baseUrl` without trailing slash, 3600 s) at `/var/run/secrets/ach/token`.
 - CEL cost: map keys cannot be bounded, so rules over header names live in `render`, not the CRD.
 - Operator env: `ACH_AGENT_OPENSHELL_GATEWAY` (required), `ACH_AGENT_OPENSHELL_WORKSPACE`,
   `ACH_AGENT_OPENSHELL_SERVICE_URL`, `ACH_AGENT_OPENSHELL_POD_NAMESPACE`, `ACH_AGENT_NAMESPACE`,

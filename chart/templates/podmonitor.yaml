@@ -1,0 +1,26 @@
+{{- if .Values.metrics.podMonitor.enabled }}
+# Scrapes the control pod of every Agent. The operator is cluster-wide, so Agents can run in any namespace.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: ach-agent-control
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ach-agent.labels" . | nindent 4 }}
+    {{- with .Values.metrics.podMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    any: true
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ach-agent
+      ach-agent.ackstorm.ai/component: control
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_label_ach_agent_ackstorm_ai_agent]
+          targetLabel: agent
+{{- end }}

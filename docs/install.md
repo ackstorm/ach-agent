@@ -61,6 +61,19 @@ The chart refuses to render unless `openshell.gateway` is set and `openshell.mes
 It also installs a ValidatingAdmissionPolicy that limits the operator to Opaque Secrets named
 `ach-agent-key-*` (`admissionPolicy.enabled=false` disables it).
 
+### Observability (optional)
+
+Each block under `metrics` is off by default so the chart renders without the Prometheus Operator.
+
+| Value | Renders | Notes |
+|-------|---------|-------|
+| `metrics.podMonitor.enabled` | PodMonitor `ach-agent-control` | Scrapes `:http/metrics` of every Agent control pod in any namespace and sets the `agent` label from the pod label `ach-agent.ackstorm.ai/agent`. `labels` adds labels to the PodMonitor. |
+| `metrics.prometheusRule.enabled` | PrometheusRule `ach-agent` | Five alerts on `ach_agent_anomalies_total` and `ach_agent_runs_total`. `labels` must match the Prometheus `ruleSelector`. |
+| `metrics.dashboards.enabled` | One ConfigMap per dashboard (Agents, Agent Detail, FinOps) | `labels` must match the Grafana sidecar label (default `grafana_dashboard: "1"`). `annotations` choose the folder, for example `--set-string 'metrics.dashboards.annotations.grafana_folder=100 - Application - ACH Agents'`; the sidecar needs `folderAnnotation=grafana_folder` and `provider.foldersFromFilesStructure=true` to honour it. |
+
+The sidecar must watch the release namespace. The dashboards list agents from `ach_agent_info`, which
+each Agent pod exports from its first scrape.
+
 ## 6. A standalone Agent
 
 An Agent namespace needs the ambient label, the Secrets the Agent references, one AgentProfile and one

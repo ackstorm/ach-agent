@@ -34,7 +34,7 @@
           "type": "prometheus",
           "uid": "${datasource}"
         },
-        "query": "label_values(ach_agent_sessions_total, namespace)",
+        "query": "label_values(ach_agent_info, namespace)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -80,7 +80,7 @@
     {
       "id": 2,
       "type": "stat",
-      "title": "Agents Up",
+      "title": "Agents",
       "gridPos": {
         "h": 5,
         "w": 4,
@@ -94,7 +94,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "count(up{namespace=~\"$namespace\", pod=~\"agent-.*\"} == 1)",
+          "expr": "count(ach_agent_info{namespace=~\"$namespace\"})",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"

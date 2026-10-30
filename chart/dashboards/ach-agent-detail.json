@@ -34,7 +34,7 @@
           "type": "prometheus",
           "uid": "${datasource}"
         },
-        "query": "label_values(ach_agent_sessions_total, namespace)",
+        "query": "label_values(ach_agent_info, namespace)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -53,14 +53,15 @@
           "type": "prometheus",
           "uid": "${datasource}"
         },
-        "query": "label_values(ach_agent_sessions_total{namespace=~\"$namespace\"}, agent)",
+        "query": "label_values(ach_agent_info{namespace=~\"$namespace\"}, agent)",
         "refresh": 2,
         "includeAll": false,
         "multi": false,
         "hide": 0,
         "current": {},
         "sort": 1,
-        "label": "Agent"
+        "label": "Agent",
+        "description": "Every agent pod, listed from ach_agent_info, which each pod exports from its first scrape, before any event."
       }
     ]
   },

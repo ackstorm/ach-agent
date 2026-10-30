@@ -1,0 +1,92 @@
+groups:
+- name: ach-runtime
+  interval: 30s
+  rules:
+    - alert: ACHPersistenceFailed
+      expr: |
+        sum by (namespace, agent, environment) (
+          (increase(ach_agent_anomalies_total{kind="persistence_failed"}[5m]) > 0)
+          or
+          (ach_agent_anomalies_total{kind="persistence_failed"}
+           unless ach_agent_anomalies_total{kind="persistence_failed"} offset 5m)
+        ) > 0
+      labels:
+        severity: warning
+      annotations:
+        summary: ACH persistence failed for agent {{ $labels.agent }}
+        description: >-
+          Persistence failed for agent {{ $labels.agent }} in namespace
+          {{ $labels.namespace }} and environment {{ $labels.environment }}.
+    - alert: ACHRestoreFailed
+      expr: |
+        sum by (namespace, agent, environment) (
+          (increase(ach_agent_anomalies_total{kind="restore_failed"}[5m]) > 0)
+          or
+          (ach_agent_anomalies_total{kind="restore_failed"}
+           unless ach_agent_anomalies_total{kind="restore_failed"} offset 5m)
+        ) > 0
+      labels:
+        severity: warning
+      annotations:
+        summary: ACH restore failed for agent {{ $labels.agent }}
+        description: >-
+          Restore failed for agent {{ $labels.agent }} in namespace
+          {{ $labels.namespace }} and environment {{ $labels.environment }}.
+    - alert: ACHStartOutcomeUnknown
+      expr: |
+        sum by (namespace, agent, environment) (
+          (increase(ach_agent_anomalies_total{kind=~"start_outcome_unknown|run_outcome_unknown"}[5m]) > 0)
+          or
+          (ach_agent_anomalies_total{kind=~"start_outcome_unknown|run_outcome_unknown"}
+           unless ach_agent_anomalies_total{kind=~"start_outcome_unknown|run_outcome_unknown"} offset 5m)
+        ) > 0
+      labels:
+        severity: warning
+      annotations:
+        summary: ACH run outcome is unknown for agent {{ $labels.agent }}
+        description: >-
+          An ACH start or run outcome is unknown for agent {{ $labels.agent }} in
+          namespace {{ $labels.namespace }} and environment {{ $labels.environment }}.
+          Investigate the run state before retrying; do not blindly replay it.
+    # A pod can stay Ready while every invocation fails to start; this is the
+    # only signal. >= 3 rather than 4: a */15 schedule gives exactly 4 per hour
+    # and increase() extrapolation can land just under it.
+    - alert: ACHAgentStartFailing
+      expr: |
+        sum by (namespace, agent) (increase(ach_agent_anomalies_total{kind="start_failed"}[1h])) >= 3
+        unless on (namespace, agent)
+        sum by (namespace, agent) (increase(ach_agent_runs_total[1h])) > 0
+      labels:
+        severity: warning
+      annotations:
+        summary: ACH agent {{ $labels.agent }} keeps failing to start
+        description: >-
+          {{ $value | printf "%.0f" }} invocations of agent {{ $labels.agent }} in
+          namespace {{ $labels.namespace }} failed to start in the last hour and
+          none completed. Check the agent pod logs for the start_failed cause.
+    - alert: ACHRepeatedPodFailures
+      expr: |
+        sum by (namespace, agent, environment) (
+          max without (ach_count_source) (
+            label_replace(
+              increase(ach_agent_anomalies_total{kind="pod_unhealthy"}[10m]),
+              "ach_count_source", "increase", "kind", ".*"
+            )
+            or
+            label_replace(
+              (
+                ach_agent_anomalies_total{kind="pod_unhealthy"}
+                unless ach_agent_anomalies_total{kind="pod_unhealthy"} offset 10m
+              ),
+              "ach_count_source", "initial", "kind", ".*"
+            )
+          )
+        ) >= 2
+      labels:
+        severity: warning
+      annotations:
+        summary: ACH pod failures repeated for agent {{ $labels.agent }}
+        description: >-
+          At least two unhealthy pod events were observed for agent
+          {{ $labels.agent }} in namespace {{ $labels.namespace }} and
+          environment {{ $labels.environment }} within 10m.

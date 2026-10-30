@@ -33,3 +33,16 @@ operator:
 
 admissionPolicy:
   enabled: true
+
+metrics:
+  # Needs the Prometheus Operator CRDs. Agents run in any namespace, so it selects their control pods cluster-wide.
+  podMonitor: {enabled: false, labels: {}}
+  # Needs the Prometheus Operator CRDs. labels must match the Prometheus ruleSelector.
+  prometheusRule: {enabled: false, labels: {}}
+  # Plain ConfigMaps for the Grafana sidecar. labels must match the sidecar's label. annotations place the
+  # dashboards in a folder, e.g. {grafana_folder: "100 - Application - ACH Agents"}; the sidecar needs
+  # folderAnnotation=grafana_folder and provider.foldersFromFilesStructure=true to honour it.
+  dashboards:
+    enabled: false
+    labels: {grafana_dashboard: "1"}
+    annotations: {}

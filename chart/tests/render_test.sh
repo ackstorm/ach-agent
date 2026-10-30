@@ -38,4 +38,28 @@ for r in cr["rules"]:
     assert "leases" not in r.get("resources", []), r
 print("render ok")
 PY
+for f in dashboards/*.json; do python3 -m json.tool "$f" >/dev/null || fail "$f is not valid JSON"; done
+
+on=(--set metrics.podMonitor.enabled=true --set metrics.prometheusRule.enabled=true --set metrics.dashboards.enabled=true)
+out=$(helm template t . "${base[@]}" "${on[@]}" --set-string 'metrics.dashboards.annotations.grafana_folder=100 - Application - ACH Agents')
+python3 - "$out" <<'PY'
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(sys.argv[1]) if d]
+def of(kind): return [d for d in docs if d["kind"] == kind]
+pm, = of("PodMonitor")
+assert pm["spec"]["namespaceSelector"] == {"any": True}
+assert pm["spec"]["selector"]["matchLabels"]["ach-agent.ackstorm.ai/component"] == "control"
+assert pm["spec"]["podMetricsEndpoints"][0]["port"] == "http"
+rule, = of("PrometheusRule")
+alerts = [r["alert"] for g in rule["spec"]["groups"] for r in g["rules"]]
+assert len(alerts) == 5 and "ACHAgentStartFailing" in alerts, alerts
+assert "$labels.agent" in str(rule["spec"]), "alert templates must reach Prometheus verbatim"
+cms = [d for d in of("ConfigMap") if d["metadata"]["labels"].get("grafana_dashboard") == "1"]
+assert len(cms) == 3, len(cms)
+for cm in cms:
+    assert cm["metadata"]["annotations"]["grafana_folder"] == "100 - Application - ACH Agents"
+    import json
+    [json.loads(v) for v in cm["data"].values()]
+print("observability ok")
+PY
 echo PASS

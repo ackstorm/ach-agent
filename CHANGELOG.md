@@ -5,6 +5,37 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-10-30
+
+### Changed
+
+- **Breaking:** `Agent.spec.ach.keySecretRef` is `spec.ach.keyFrom.secretKeyRef`. Rename it in every ACH Agent
+  when upgrading. Until it is renamed the operator reports `WorkloadApplied=False` (`RenderFailed`) for that Agent
+  and leaves its running pod untouched.
+- `make -C runtime test-unit` starts the S3 fixture the storage and e2e tests need, so the full suite runs
+  locally as it does in CI.
+
+### Added
+
+- `spec.ach.keyFrom.tokenExchange.identity` (needs ACH 1.1.0 and a `KeyGrant` naming the control ServiceAccount
+  as `<namespace>/<serviceaccount>`): the control pod keeps its usual ServiceAccount, exchanges a projected token
+  of it (audience `spec.ach.baseUrl`) at `POST /platform/keys/exchange` for a short-lived ACH credential and
+  renews it at 80% of its lifetime with no failed request; a credential ACH rejects is re-exchanged once and the
+  request retried. `environment` and an `https://` `baseUrl` are required. No Secret is referenced, so rotation
+  never restarts the pod. Every pod running a namespace's control ServiceAccount can use every grant that names it.
+- Metrics `ach_agent_key_refresh_failures_total`, `ach_agent_key_expiry_timestamp_seconds`,
+  `ach_agent_key_lifetime_seconds` and the alert `ACHAgentKeyRefreshFailing`.
+
+### Fixed
+
+- After a control restart, a unit's facade call that arrived before adoption published the unit was refused
+  with 403 and failed its run; it now waits up to 30 seconds for adoption.
+
+### Security
+
+- The control process scrubs ACH keys (`ek-`/`ek_`), compact JWS (ACH credentials, ServiceAccount tokens) and
+  provider keys from every log record, tracebacks included, and from A2A tool errors returned to the engine.
+
 ## [0.1.5] - 2026-10-30
 
 ### Fixed

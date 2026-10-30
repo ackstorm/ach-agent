@@ -44,6 +44,15 @@ RUNS_TOTAL = Counter(
 AGENT_INFO = Gauge(
     "ach_agent_info", "Always 1; the scrape identity adds the agent and environment labels"
 )
+KEY_REFRESH_FAILURES = Counter(
+    "ach_agent_key_refresh_failures_total", "Failed exchanges of the ACH credential after boot"
+)
+KEY_EXPIRY_TIMESTAMP = Gauge(
+    "ach_agent_key_expiry_timestamp_seconds", "Unix time at which the current exchanged ACH credential expires"
+)
+KEY_LIFETIME = Gauge(
+    "ach_agent_key_lifetime_seconds", "Lifetime (expires_in) of the current exchanged ACH credential; 0 for a static key"
+)
 
 _COST_UNPRICED_REASONS = ("usage_missing",)
 
@@ -140,7 +149,8 @@ class IdentityRegistry:
             yield metric
 
 __all__ = [
-    "AGENT_INFO", "ANOMALIES_TOTAL", "COST_UNPRICED", "IdentityRegistry", "SESSIONS_TOTAL",
+    "AGENT_INFO", "ANOMALIES_TOTAL", "COST_UNPRICED", "IdentityRegistry", "KEY_EXPIRY_TIMESTAMP",
+    "KEY_LIFETIME", "KEY_REFRESH_FAILURES", "SESSIONS_TOTAL",
     "TURN_COST_USD_TOTAL", "TURN_DURATION_SECONDS", "TURN_TOKENS_TOTAL", "TURNS_TOTAL",
     "_TURN_BUCKETS", "initialise", "observe",
 ]

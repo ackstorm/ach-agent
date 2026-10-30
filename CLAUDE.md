@@ -20,6 +20,7 @@ uv venv .venv --python 3.13 && uv pip install --python .venv/bin/python -e ".[de
 # per file
 PYTHONPATH=src:tests/storage:tests/engine:tests/facades:tests/harness \
   .venv/bin/pytest --import-mode=importlib tests/<path>.py -q -p no:cacheprovider
-# full suite, as CI runs it
+# full suite, as CI runs it: starts the S3 fixture and runs in the devtools image (opencode inside).
+# The host venv has neither, so tests/e2e, tests/storage S3 and tests/engine fail there.
 make -C runtime test-unit
 ```

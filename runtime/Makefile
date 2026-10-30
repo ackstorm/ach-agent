@@ -104,7 +104,19 @@ e2e:
 compose-e2e:
 	timeout 1500 bash examples/hosts/compose/ci/run.sh
 
-test-unit: ## Full unit suite in the devtools execution image, as CI runs it
+# The SeaweedFS fixture CI starts; its credentials are the fixture's own, not secrets.
+ACH_STORAGE_TEST_S3_ENDPOINT ?= http://127.0.0.1:19000
+ACH_STORAGE_TEST_S3_BUCKET ?= ach-storage-test
+ACH_STORAGE_TEST_S3_ACCESS_KEY ?= ach-storage-test
+ACH_STORAGE_TEST_S3_SECRET_KEY ?= ach-storage-test-secret
+export ACH_STORAGE_TEST_S3_ENDPOINT ACH_STORAGE_TEST_S3_BUCKET ACH_STORAGE_TEST_S3_ACCESS_KEY ACH_STORAGE_TEST_S3_SECRET_KEY
+
+.PHONY: s3-fixture
+s3-fixture: ## Start the local S3 fixture the storage and e2e tests need
+	docker network inspect ach-runtime-seaweed-e2e_test >/dev/null 2>&1 || docker network create ach-runtime-seaweed-e2e_test
+	timeout 180 docker compose --profile fixture up -d --wait --wait-timeout 120 s3
+
+test-unit: s3-fixture ## Full unit suite in the devtools execution image, as CI runs it
 	docker build --target python-execution -f Dockerfile.devtools -t ach-agent-runtime-execution-devtools .
 	docker run --rm --network host -e PYTHONDONTWRITEBYTECODE=1 \
 	  -e PYTHONPATH=/work/src:/work/tests/storage:/work/tests/engine:/work/tests/facades:/work/tests/harness \

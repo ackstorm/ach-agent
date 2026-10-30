@@ -64,6 +64,7 @@ class State:
     def record(self, port, entry):
         with self.lock:
             self.records.setdefault(port, []).append(entry)
+        return entry
 
     def listing(self, port):
         with self.lock:
@@ -217,7 +218,7 @@ def handler_for(state, kind):
                 return self._admin(url)
             body = self._body()
             headers = {k.lower(): v for k, v in self.headers.items()}
-            state.record(self.server.server_address[1], {
+            entry = state.record(self.server.server_address[1], {
                 "method": self.command, "path": url.path, "headers": headers,
                 "raw_headers": [[k.lower(), v] for k, v in self.headers.items()],
                 "body": body[:BODY_LIMIT].decode("utf-8", "replace"), "time": time.time()})
@@ -227,6 +228,9 @@ def handler_for(state, kind):
                 if url.path == "/platform/keys/exchange" and self.command == "POST":
                     return self._exchange(body)
                 if not state.jwt_valid(headers.get("x-ach-key", "")):
+                    # Listed with the request, so a test can tell a rotated client (never rejected)
+                    # from one that was rejected and re-exchanged.
+                    entry["rejected"] = REJECTED["error"]["code"]
                     return self._send(401, REJECTED)
             else:
                 name, want = state.creds[kind]

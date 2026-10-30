@@ -168,6 +168,7 @@ type recorded struct {
 	Headers    map[string]string `json:"headers"`
 	RawHeaders [][2]string       `json:"raw_headers"`
 	Body       string            `json:"body"`
+	Rejected   string            `json:"rejected"`
 }
 
 // stubRequests returns what the stub received on one port (8090 model, 8091 MCP, 8092 ACH, 8093 exchange).

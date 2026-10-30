@@ -146,8 +146,11 @@ func TestE2E(t *testing.T) {
 		if sum.ModelFailed != 0 || sum.McpFailed != 0 || !sum.StreamOK || sum.ModelOK == 0 || sum.McpOK == 0 {
 			t.Errorf("requests failed across rotations: %+v", sum)
 		}
-		exchanges, jwts := 0, map[string]bool{}
+		exchanges, rejected, jwts := 0, 0, map[string]bool{}
 		for _, r := range stubRequests(t, 8093) {
+			if r.Rejected == "expired_or_revoked" {
+				rejected++
+			}
 			if r.Path == "/platform/keys/exchange" {
 				exchanges++
 			}
@@ -157,11 +160,21 @@ func TestE2E(t *testing.T) {
 				}
 			}
 		}
+		if rejected > 0 {
+			t.Errorf("%d requests carried an expired credential (401 expired_or_revoked): rotation must replace the JWT before it expires", rejected)
+		}
 		if exchanges < 3 || len(jwts) < 4 {
 			t.Errorf("want >= 3 rotations in the window: %d exchanges, %d distinct credentials on model calls", exchanges, len(jwts))
 		}
-		if logs, _ := kubectl("", "-n", agentNS, "logs", pod, "-c", "agent"); strings.Contains(logs, "eyJ") {
+		logs, err := kubectl("", "-n", agentNS, "logs", pod, "-c", "agent")
+		if err != nil {
+			t.Fatalf("control log: %v\n%s", err, logs)
+		}
+		if strings.Contains(logs, "eyJ") {
 			t.Error("a JWT or ServiceAccount token reached the control log")
+		}
+		if strings.Contains(logs, "Logging error") {
+			t.Errorf("the control log holds a logging failure:\n%s", logs)
 		}
 	})
 

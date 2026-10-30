@@ -117,6 +117,10 @@ def test_exchange_issues_a_jwt_accepted_until_it_expires(exchange):
     state.jwts[reply["token"]] = 0  # expired
     status, text = call(url + "/v1/chat/completions", "POST", {"x-ach-key": reply["token"]}, chat)
     assert status == 401 and json.loads(text)["error"]["code"] == "expired_or_revoked"
+    port = int(url.rsplit(":", 1)[1])
+    listed = json.loads(call(f"{url}/_requests?port={port}")[1])
+    chats = [r for r in listed if r["path"].endswith("/chat/completions")]
+    assert [r.get("rejected") for r in chats] == [None, "expired_or_revoked"]
 
 
 def test_exchange_refusals_carry_achs_codes(exchange):

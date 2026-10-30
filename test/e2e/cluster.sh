@@ -65,7 +65,9 @@ install_prereqs() {
 }
 
 gen_tls() {
-  [ -s "$TLS_DIR/tls.crt" ] && return 0
+  if [ -s "$TLS_DIR/tls.crt" ] && openssl x509 -checkend 604800 -noout -in "$TLS_DIR/tls.crt" >/dev/null; then
+    return 0
+  fi
   log "generating the exchange stub's CA and certificate"
   mkdir -p "$TLS_DIR"
   openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=ach-agent-e2e-ca" \

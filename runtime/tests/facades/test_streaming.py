@@ -758,8 +758,10 @@ async def test_explicit_task_cancellation_closes_tracked_response_within_two_sec
     assert isinstance(response, StreamingResponse)
 
     first_body = asyncio.Event()
+    sent: list[Message] = []
 
     async def send(message: Message) -> None:
+        sent.append(message)
         if message["type"] == "http.response.body" and message.get("body"):
             first_body.set()
 
@@ -777,6 +779,9 @@ async def test_explicit_task_cancellation_closes_tracked_response_within_two_sec
         await asyncio.wait_for(asyncio.gather(stream_task, return_exceptions=True), timeout=2)
         await asyncio.wait_for(upstream.connection_closed.wait(), timeout=2)
 
+        # A cancelled stream ends its response instead of raising into the ASGI server.
+        assert stream_task.exception() is None
+        assert sent[-1] == {"type": "http.response.body", "body": b"", "more_body": False}
         assert tracked.is_closed is True
         assert facade._responses == set()
     finally:

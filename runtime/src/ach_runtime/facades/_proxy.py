@@ -174,8 +174,23 @@ class _UpstreamGuardedStreamingResponse(StreamingResponse):
         self._cleanup = cleanup
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        started = False
+
+        async def tracked_send(message: Any) -> None:
+            nonlocal started
+            started = started or message["type"] == "http.response.start"
+            await send(message)
+
         try:
-            await super().__call__(scope, receive, send)
+            await super().__call__(scope, receive, tracked_send)
+        except asyncio.CancelledError:
+            # The server cancels streams still open at the end of its graceful shutdown (an
+            # engine's MCP GET stream lives as long as its Workspace): end the response
+            # instead of surfacing the cancellation as an ASGI application error.
+            if not started:
+                raise
+            with contextlib.suppress(Exception):
+                await send({"type": "http.response.body", "body": b"", "more_body": False})
         finally:
             await self._cleanup()
 

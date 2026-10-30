@@ -84,6 +84,9 @@ def configure_logging() -> None:
     structlog, no logging package/platform). Idempotent -- a repeated call never installs
     a second owned handler. Never touches uvicorn's own loggers, and leaves propagation on
     so caplog (which attaches at the root) keeps working in tests."""
+    # httpx logs every request at INFO; the control loop polls each sandbox every few
+    # seconds, which buries every useful line.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
     if any(getattr(handler, _OWNED_HANDLER_ATTR, False) for handler in logger.handlers):

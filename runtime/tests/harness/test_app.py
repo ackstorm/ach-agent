@@ -303,3 +303,17 @@ async def test_create_app_initialises_metrics_for_configured_channels(monkeypatc
     )
     create_app(control)
     assert seen == [["presence-ch"]]
+
+
+async def test_readyz_follows_the_ach_credential() -> None:
+    state = {"ready": True}
+    control = SimpleNamespace(
+        config=SimpleNamespace(channels=[], agent=SimpleNamespace(name="a"), identity_environment="e"),
+        admission=SimpleNamespace(), _stopping=False, ach_key=SimpleNamespace(ready=lambda: state["ready"]),
+    )
+    app = create_app(control)
+    app.state.ready = True
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://control") as client:
+        assert (await client.get("/readyz")).status_code == 200
+        state["ready"] = False
+        assert (await client.get("/readyz")).status_code == 503

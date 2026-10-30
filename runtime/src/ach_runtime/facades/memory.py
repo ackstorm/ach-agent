@@ -19,6 +19,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Annotated, Any, Literal
 
+import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field
@@ -142,7 +143,9 @@ class AchMemoryFacade:
         owned_workspace: OwnedWorkspace,
         identity: ProcessIdentity,
         exclude_tools: frozenset[str] = frozenset(),
+        auth: httpx.Auth | None = None,
     ) -> None:
+        self._auth = auth
         self._endpoint = endpoint
         # Already resolved for whichever auth mode the operator chose; instance-local,
         # never logged, reaches no config file the agent can read.
@@ -173,7 +176,7 @@ class AchMemoryFacade:
         payload["project_slug"] = self._project
         try:
             return await call_ach_memory(
-                self._endpoint, self._headers, tool, payload, identity=self._identity
+                self._endpoint, self._headers, tool, payload, identity=self._identity, auth=self._auth
             )
         except Exception as exc:
             log.warning("ach-memory facade: call failed tool=%s error=%s", tool, _describe(exc))

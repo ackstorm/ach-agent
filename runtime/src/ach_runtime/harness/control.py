@@ -24,7 +24,7 @@ from starlette.routing import Mount
 from ach_runtime import __version__
 from ach_runtime.channels.event import Event, RoutedEvent
 from ach_runtime.config.public import ExecutionBootstrap, PublicConfig, public_config
-from ach_runtime.config.schema import HeaderLiteral, HeaderValue, RuntimeConfig
+from ach_runtime.config.schema import AchServer, HeaderLiteral, HeaderValue, RuntimeConfig, SecretAlias
 from ach_runtime.execution.wire import CancelRequest, RunStatus, StartRequest
 from ach_runtime.facades._memory_client import (
     TOOLS_SPEC,
@@ -57,6 +57,7 @@ from ach_runtime.harness.hydrate import (
     standalone_catalog,
 )
 from ach_runtime.harness.hosted import HostedSource
+from ach_runtime.harness.keys import Exchange, KeySource
 from ach_runtime.harness.lifecycle import Lifecycle
 from ach_runtime.harness.handoff import run_handoff
 from ach_runtime.harness.scripts import run_webhook_script
@@ -217,7 +218,8 @@ class Control:
     _stopping: bool = False
     lifecycle: Lifecycle | None = None
     _private_env: dict[str, str] = field(default_factory=dict, repr=False)
-    _ek: str = field(default="", repr=False)
+    ach_key: KeySource | None = field(default=None, repr=False)
+    _memory_auth: Any = field(default=None, repr=False)
     # Resolved upstream header values (log redaction) and per-upstream headers for the facades.
     upstream_secrets: tuple[str, ...] = field(default=(), repr=False)
     # False when the catalog carries no per-token cost: run cost is then reported unpriced.
@@ -515,7 +517,7 @@ class Control:
             # `load_context` IS the reachability test -- no separate health probe.
             memory_available, memory_section = await prepare_ach_memory(
                 self._memory_endpoint, self._memory_project, self._memory_headers,
-                identity=self._memory_identity,
+                identity=self._memory_identity, auth=getattr(self, "_memory_auth", None),
             )
             prompt = f"{prompt}\n\n{memory_section}"
         if channel.type == "a2a":
@@ -533,16 +535,16 @@ class Control:
         return request
 
     async def _transfer_context(self, ticket: AdmissionTicket, endpoint: WorkspaceEndpoint) -> None:
-        # assemble() resolves credentials from its private environment; never put the
-        # value in the archive or request body.
-        ek = getattr(self, "_ek", "")
+        # The credential travels only in the download requests (KeyAuth), never in the archive
+        # or the request body.
+        ach_key = getattr(self, "ach_key", None)
         with tempfile.TemporaryDirectory(prefix="ach-context-") as temporary:
             root = Path(temporary) / "context"
             root.mkdir()
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=30, auth=ach_key.auth if ach_key else None) as client:
                 await stage_context(
                     self.catalog, root, excluded_skills=self.config.capability.filter.exclude.skills,
-                    client=client, ek=ek,
+                    client=client,
                 )
             archive = Path(temporary) / "context.tar.gz"
             _, cancelled, error = await _run_owned(pack, root, archive, max_bytes=512 * 1024**2)
@@ -793,6 +795,9 @@ class Control:
         if self.a2a_facade is not None:
             closers.append(self.a2a_facade.aclose)
         closers.extend((self.delivery.close, self.mini_client.aclose))
+        ach_key = getattr(self, "ach_key", None)
+        if ach_key is not None:
+            closers.append(ach_key.close)
         for closer in closers:
             try:
                 await closer()
@@ -873,6 +878,26 @@ def merge_headers(base: Mapping[str, str], over: Mapping[str, str]) -> dict[str,
     return {name: value for name, value in base.items() if name.lower() not in names} | dict(over)
 
 
+async def _ach_key(ach: AchServer, env: Mapping[str, str],
+                   transport: httpx.AsyncBaseTransport | None) -> KeySource:
+    """The static ek_ named by the env alias, or a credential exchanged for the pod's projected
+    ServiceAccount token. A refused exchange raises ExchangeRefused with ACH's code."""
+    if isinstance(ach.key, SecretAlias):
+        value = env.get(ach.key.env, "")
+        if not value:
+            raise WorkspaceAssemblyUnavailable("ACH identity credential is not configured")
+        return KeySource(value)
+    params = ach.key.exchange
+    key = KeySource(exchange=Exchange(ach.base_url, params.identity, params.environment, params.token_path),
+                    client=httpx.AsyncClient(transport=transport, timeout=30))
+    try:
+        await key.start()
+    except BaseException:
+        await key.close()
+        raise
+    return key
+
+
 async def assemble(
     config: RuntimeConfig,
     *,
@@ -893,23 +918,25 @@ async def assemble(
     verify_key = engine_verify_key(key)
     if config.capability.ach is not None:
         ach = config.capability.ach
-        ek = env.get(ach.key.env, "")
-        if not ek:
-            raise WorkspaceAssemblyUnavailable("ACH identity credential is not configured")
+        ach_key = await _ach_key(ach, env, ach_transport)
         ach_client = httpx.AsyncClient(transport=ach_transport, timeout=30)
-        hydrator = Hydrator(resolve_ek=lambda name: env.get(name, ""), client=ach_client)
+        hydrator = Hydrator(resolve_ek=ach_key.current, client=ach_client)
         try:
             catalog = await hydrator.load(HydrationInput.from_config(config))
+        except BaseException:
+            await ach_key.close()
+            raise
         finally:
             await ach_client.aclose()
         prefix = {"openai": "v1", "gemini": "gemini/v1beta", "anthropic": "anthropic"}[config.model.type]
         model_endpoint = f"{ach.base_url.rstrip('/')}/{prefix}"
-        model_headers = {"x-ach-key": ek}
-        mcp_headers = {item.id: {"x-ach-key": ek} for item in catalog.mcp_servers}
-        upstream_secrets = (ek,)
+        # The ACH credential is set per request by ach_key.auth, never fixed in a header dict.
+        model_headers: dict[str, str] = {}
+        mcp_headers = {item.id: {} for item in catalog.mcp_servers}
+        upstream_secrets = (ach_key.current(),) if isinstance(ach.key, SecretAlias) else ()
     else:
         server = config.capability.standalone
-        ek = ""
+        ach_key = None
         catalog = standalone_catalog(config)
         model_endpoint = server.model.base_url
         model_headers, model_secrets = resolve_headers(server.model.headers, env)
@@ -928,13 +955,16 @@ async def assemble(
     memory_project = ""
     memory_headers: dict[str, str] = {}
     memory_auth_secrets: tuple[str, ...] = ()
+    memory_auth = None
     if config.memory is not None:
         params = config.memory.ach_memory
         memory_endpoint = resolve_endpoint(endpoint=params.endpoint, mcp_server_id=params.mcp_server_id,
                                            mcp_servers=mcp_servers)
         memory_project = resolve_project(params, config.agent.name, namespace=config.agent.namespace)
-        ok, headers = resolve_ach_memory_auth(params.auth, ek,
+        ok, headers = resolve_ach_memory_auth(params.auth, ach_key.current() if ach_key else None,
                                               resolve_secret=lambda alias: env.get(alias))
+        if ok and params.auth is not None and params.auth.type == "ach":
+            headers, memory_auth = {}, ach_key.auth
         if ok:
             memory_headers = headers
             memory_auth_secrets = tuple(headers.values())
@@ -946,7 +976,7 @@ async def assemble(
             memory = AchMemoryFacade(
                 endpoint=memory_endpoint, headers=memory_headers, project=memory_project,
                 key=key, owned_workspace=lambda claim: control._owned_live(claim), identity=identity,
-                exclude_tools=frozenset(config.capability.filter.exclude.tools),
+                exclude_tools=frozenset(config.capability.filter.exclude.tools), auth=memory_auth,
             )
     # Facades close over Control for the owned-live check, so construct the bundle first.
     mini_client = httpx.AsyncClient(transport=mini_transport, timeout=10)
@@ -972,7 +1002,7 @@ async def assemble(
     control.config, control.key, control.verify_key = config, key, verify_key
     control.catalog, control.public, control.storage = catalog, public, storage
     control._private_env = dict(env)
-    control._ek = ek
+    control.ach_key, control._memory_auth = ach_key, memory_auth
     control.upstream_secrets = upstream_secrets
     control._model_headers, control._mcp_headers = model_headers, mcp_headers
     control.source, control.manager, control.delivery = source, manager, None
@@ -1008,13 +1038,13 @@ async def assemble(
         servers=mcp_servers, server_headers=mcp_headers, key=key, owned_workspace=control._owned_live,
         exclude=excluded | frozenset(memory_excluded),
         exclude_tools=frozenset(config.capability.filter.exclude.tools), identity=identity,
-        client=mcp_client,
+        client=mcp_client, auth=ach_key.auth if ach_key else None,
     )
     model = ModelFacade(
         endpoint=model_endpoint, headers=model_headers, api=config.model.type, model=config.model.name,
         key=key,
         owned_workspace=control._owned_live, identity=identity,
-        client=model_client,
+        client=model_client, auth=ach_key.auth if ach_key else None,
     )
     control.model_facade, control.mcp_facade = model, mcp
     control.memory_facade = memory
@@ -1026,7 +1056,7 @@ async def assemble(
     if catalog.a2a_agents:
         control.a2a_facade = A2AEgressFacade(
             agents=catalog.a2a_agents,
-            ek=ek,
+            auth=ach_key.auth if ach_key else None,
             identity=identity,
             key=key,
             owned_workspace=control._owned_live,

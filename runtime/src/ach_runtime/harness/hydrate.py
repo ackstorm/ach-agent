@@ -26,7 +26,6 @@ values).
 from __future__ import annotations
 
 import math
-import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -326,7 +325,6 @@ class HydrationInput:
     agent: str
     base_url: str
     environment: str
-    key_env: str
     model: str
 
     @classmethod
@@ -338,7 +336,6 @@ class HydrationInput:
             agent=config.agent.name,
             base_url=ach.base_url,
             environment=ach.environment,
-            key_env=ach.key.env,
             model=ach.model.name,
         )
 
@@ -360,34 +357,20 @@ def standalone_catalog(config: RuntimeConfig) -> HydratedCatalog:
     )
 
 
-EkResolver = Callable[[str], str]
-
-
-def _default_ek_resolver(env_name: str) -> str:
-    """Reads the Harness control pod's own process env (contract §5: SecretRefs become
-    private control-pod env vars) — the real ek_ never leaves this process."""
-    value = os.environ.get(env_name)
-    if not value:
-        raise HydrationError(f"capability.ach.key env {env_name!r} is unset")
-    return value
+EkResolver = Callable[[], str]
 
 
 class Hydrator:
-    """`resolve_ek` is injected (tests supply a fixture; production reads the real env) —
-    same DI convention as `Admission`'s injected `clock`/`runner` (harness/admission.py)."""
+    """`resolve_ek` returns the current ACH credential (`KeySource.current`); tests supply a
+    fixture — same DI convention as `Admission`'s injected `clock`/`runner`."""
 
-    def __init__(
-        self,
-        *,
-        resolve_ek: EkResolver = _default_ek_resolver,
-        client: httpx.AsyncClient | None = None,
-    ) -> None:
+    def __init__(self, *, resolve_ek: EkResolver, client: httpx.AsyncClient | None = None) -> None:
         self._resolve_ek = resolve_ek
         self._client = client
 
     async def load(self, source: HydrationInput) -> HydratedCatalog:
         identity = ProcessIdentity(agent=source.agent, environment=source.environment)
-        ek = self._resolve_ek(source.key_env)
+        ek = self._resolve_ek()
         manifest = await fetch_hydration_manifest(
             source.base_url, ek, source.environment, identity=identity, client=self._client
         )
@@ -410,9 +393,8 @@ async def stage_context(
     *,
     excluded_skills: Iterable[str],
     client: httpx.AsyncClient,
-    ek: str,
 ) -> None:
-    """Download authorized context into the legacy on-disk skills/prompts layout."""
+    """Download authorized context into the legacy on-disk skills/prompts layout; `client` carries the ACH credential (KeyAuth)."""
     import shutil
     import tempfile
     from pathlib import PurePosixPath
@@ -420,7 +402,6 @@ async def stage_context(
 
     root.mkdir(parents=True, exist_ok=True)
     excluded = set(excluded_skills)
-    headers = {"x-ach-key": ek}
     for kind in ("skills", "prompts", "artifacts"):
         items = getattr(catalog, kind)
         for item in items:
@@ -428,12 +409,10 @@ async def stage_context(
                 continue
             if not item.download_url:
                 continue
-            if not ek:
-                raise HydrationError("ACH identity credential is not configured")
             path = PurePosixPath(item.name)
             if path.is_absolute() or not path.parts or ".." in path.parts:
                 raise HydrationError("hydrated context item has an unsafe name")
-            response = await client.get(item.download_url, headers=headers, timeout=_REQUEST_TIMEOUT_SECONDS)
+            response = await client.get(item.download_url, timeout=_REQUEST_TIMEOUT_SECONDS)
             response.raise_for_status()
             if len(response.content) > 512 * 1024**2:
                 raise HydrationError("hydrated context archive exceeds transfer byte limit")

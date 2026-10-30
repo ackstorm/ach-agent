@@ -202,7 +202,7 @@ async def test_a2a_lifespan_and_control_close_close_clients(monkeypatch):
             self.closed += 1
 
     from ach_runtime.facades.a2a import A2AEgressFacade
-    monkeypatch.setattr(A2AEgressFacade, "_default_client", staticmethod(lambda entry, ek, identity: Client()))
+    monkeypatch.setattr(A2AEgressFacade, "_default_client", staticmethod(lambda entry, auth, identity: Client()))
     control = await assemble(
         _config(), environ=KEY_ENV, ach_transport=httpx.MockTransport(_catalog_handler()),
     )

@@ -19,6 +19,7 @@ from ach_runtime.facades._proxy import ProcessIdentity
 from ach_runtime.facades.a2a import A2AAgentClient, ToolSpec, build_a2a_tools
 from ach_runtime.facades.a2a import A2AEgressFacade
 from ach_runtime.harness.hydrate import A2AAgentEntry
+from ach_runtime.harness.keys import KeyAuth, KeySource
 from ach_runtime.harness.tokens import facade_token
 
 IDENTITY = ProcessIdentity(agent="classifier", environment="platform")
@@ -175,9 +176,10 @@ async def test_real_a2a_client_receives_process_identity_headers(monkeypatch: py
     captured: dict[str, Any] = {}
 
     class FakeAsyncClient:
-        def __init__(self, *, headers: dict[str, str], timeout: httpx.Timeout) -> None:
+        def __init__(self, *, headers: dict[str, str], timeout: httpx.Timeout, auth: object = None) -> None:
             captured["headers"] = dict(headers)
             captured["timeout"] = timeout
+            captured["auth"] = auth
 
         async def aclose(self) -> None:
             captured["closed"] = True
@@ -194,12 +196,11 @@ async def test_real_a2a_client_receives_process_identity_headers(monkeypatch: py
     monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
     monkeypatch.setattr(a2a.client, "ClientConfig", FakeClientConfig)
     monkeypatch.setattr(a2a.client, "create_client", fake_create_client)
-    client = A2AAgentClient("https://peer.example/a2a", "ek-peer", identity=IDENTITY)
+    client = A2AAgentClient("https://peer.example/a2a", KeySource("ek-peer").auth, identity=IDENTITY)
     await client._ensure_client()
     await client.close()
-    assert captured["headers"] == {
-        "x-ach-key": "ek-peer", "x-ach-agent": "classifier", "x-ach-environment": "platform"
-    }
+    assert captured["headers"] == {"x-ach-agent": "classifier", "x-ach-environment": "platform"}
+    assert isinstance(captured["auth"], KeyAuth)
     assert captured["agent"] == "https://peer.example/a2a"
     assert captured["streaming"] is False and captured["closed"] is True
 
@@ -211,7 +212,7 @@ async def test_concurrent_first_calls_share_one_discovery_and_close_client(monke
     allow_discovery = asyncio.Event()
 
     class FakeAsyncClient:
-        def __init__(self, *, headers: dict[str, str], timeout: httpx.Timeout) -> None:
+        def __init__(self, *, headers: dict[str, str], timeout: httpx.Timeout, auth: object = None) -> None:
             self.closed = False
             allocated.append(self)
 
@@ -253,7 +254,7 @@ async def test_failed_discovery_closes_allocation_before_retry(monkeypatch: pyte
     discoveries = 0
 
     class FakeAsyncClient:
-        def __init__(self, *, headers: dict[str, str], timeout: httpx.Timeout) -> None:
+        def __init__(self, *, headers: dict[str, str], timeout: httpx.Timeout, auth: object = None) -> None:
             self.closed = False
             allocated.append(self)
 
@@ -373,7 +374,7 @@ async def test_real_a2a_client_status_shape_and_wait_timeout(monkeypatch: pytest
 async def test_a2a_guard_denies_invalid_tokens_before_mcp(token_kind: str) -> None:
     peer = FakeClient()
     facade = A2AEgressFacade(
-        agents=(_agent("review"),), ek="ek-private", identity=IDENTITY, key=KEY,
+        agents=(_agent("review"),), auth=None, identity=IDENTITY, key=KEY,
         owned_workspace=_owned, exclude_tools=frozenset(), client_factory=lambda _: peer,
     )
     app = facade.app()
@@ -401,7 +402,7 @@ async def test_a2a_ownership_flip_denies_post_get_delete_without_peer_calls(base
 
     peer = FakeClient()
     facade = A2AEgressFacade(
-        agents=(_agent("review"),), ek="ek-private", identity=IDENTITY, key=KEY,
+        agents=(_agent("review"),), auth=None, identity=IDENTITY, key=KEY,
         owned_workspace=owns, exclude_tools=frozenset(), client_factory=lambda _: peer,
     )
     app = facade.app()
@@ -455,7 +456,7 @@ async def test_peer_close_preserves_cancellation_and_other_cleanup_failure() -> 
     client_b = RaisingClient(broken)
     clients = {"peer-a": client_a, "peer-b": client_b}
     facade = A2AEgressFacade(
-        agents=(_agent("peer-a"), _agent("peer-b")), ek="ek", identity=IDENTITY, key=KEY,
+        agents=(_agent("peer-a"), _agent("peer-b")), auth=None, identity=IDENTITY, key=KEY,
         owned_workspace=_owned, exclude_tools=frozenset(),
         client_factory=lambda agent: clients[agent.id],
     )

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 from uuid import uuid4
 
+import httpx
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.routing import Mount
@@ -31,13 +32,13 @@ class A2AAgentClient:
     def __init__(
         self,
         url: str,
-        api_key: str | None = None,
+        auth: httpx.Auth | None = None,
         timeout: float = 120.0,
         *,
         identity: ProcessIdentity,
     ) -> None:
         self._url = url
-        self._api_key = api_key
+        self._auth = auth
         self._timeout = timeout
         self._identity = identity
         self._client: Any = None
@@ -48,15 +49,14 @@ class A2AAgentClient:
         if self._client is None:
             async with self._client_lock:
                 if self._client is None:
-                    import httpx
                     from a2a.client import ClientConfig, create_client
 
-                    headers: dict[str, str] = {}
-                    if self._api_key:
-                        headers["x-ach-key"] = self._api_key
-                    headers = with_identity_headers(headers, self._identity)
+                    # The credential comes from `auth` per request, so a rotation reaches
+                    # this long-lived client.
+                    headers = with_identity_headers({}, self._identity)
                     httpx_client = httpx.AsyncClient(
                         headers=headers,
+                        auth=self._auth,
                         timeout=httpx.Timeout(timeout=300.0),
                     )
                     self._httpx_client = httpx_client
@@ -179,14 +179,14 @@ class ToolSpec:
 
 def build_a2a_tools(
     agents: list[A2AAgentEntry],
-    ek: str | None = None,
+    auth: httpx.Auth | None = None,
     client_factory: Callable[[A2AAgentEntry], A2AAgentClient] | None = None,
     *,
     identity: ProcessIdentity,
 ) -> list[ToolSpec]:
     if client_factory is None:
         client_factory = lambda agent: A2AAgentClient(
-            url=agent.endpoint, api_key=ek, timeout=120.0, identity=identity
+            url=agent.endpoint, auth=auth, timeout=120.0, identity=identity
         )
     tools: list[ToolSpec] = []
     for agent in agents:
@@ -252,7 +252,7 @@ class A2AEgressFacade:
         self,
         *,
         agents: tuple[A2AAgentEntry, ...],
-        ek: str,
+        auth: httpx.Auth | None,
         identity: ProcessIdentity,
         key: bytes,
         owned_workspace: OwnedWorkspace,
@@ -261,7 +261,7 @@ class A2AEgressFacade:
     ) -> None:
         self._key = key
         self._owned_workspace = owned_workspace
-        make_client = client_factory or (lambda agent: self._default_client(agent, ek, identity))
+        make_client = client_factory or (lambda agent: self._default_client(agent, auth, identity))
         self._clients: list[A2AAgentClient] = []
 
         def owned_client_factory(agent: A2AAgentEntry) -> A2AAgentClient:
@@ -270,7 +270,7 @@ class A2AEgressFacade:
             return client
 
         tools = build_a2a_tools(
-            list(agents), ek=ek, client_factory=owned_client_factory, identity=identity
+            list(agents), auth=auth, client_factory=owned_client_factory, identity=identity
         )
         self._tools = [tool for tool in tools if tool.name not in exclude_tools]
         self._mcp = build_a2a_mcp_server(self._tools, streamable_http_path="/")
@@ -278,9 +278,9 @@ class A2AEgressFacade:
 
     @staticmethod
     def _default_client(
-        agent: A2AAgentEntry, ek: str, identity: ProcessIdentity
+        agent: A2AAgentEntry, auth: httpx.Auth | None, identity: ProcessIdentity
     ) -> A2AAgentClient:
-        return A2AAgentClient(agent.endpoint, api_key=ek, timeout=120.0, identity=identity)
+        return A2AAgentClient(agent.endpoint, auth=auth, timeout=120.0, identity=identity)
 
     def app(self) -> Starlette:
         mcp_app = self._mcp.streamable_http_app()

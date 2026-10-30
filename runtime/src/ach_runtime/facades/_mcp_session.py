@@ -14,18 +14,23 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import httpx
+
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
 
 @asynccontextmanager
-async def mcp_session(endpoint: str, headers: dict[str, str] | None) -> AsyncIterator[ClientSession]:
-    """Open an initialized MCP session against `endpoint` with `headers` injected.
+async def mcp_session(
+    endpoint: str, headers: dict[str, str] | None, auth: httpx.Auth | None = None
+) -> AsyncIterator[ClientSession]:
+    """Open an initialized MCP session against `endpoint` with `headers` injected and `auth`
+    applied to every request of the session (initialize, calls and the closing DELETE).
 
-    Empty/absent headers -> unauthenticated client (the internal/no-auth URL path).
+    Empty/absent headers and no auth -> unauthenticated client (the internal/no-auth URL path).
     """
-    async with create_mcp_http_client(headers=headers or None) as http_client:
+    async with create_mcp_http_client(headers=headers or None, auth=auth) as http_client:
         async with streamable_http_client(endpoint, http_client=http_client) as (read, write, _):
             async with ClientSession(read, write) as session:
                 await session.initialize()

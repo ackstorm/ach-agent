@@ -203,7 +203,8 @@ async def _wait_for_disconnect(request: Request) -> None:
 
 
 async def _send_until_headers_or_disconnect(
-    client: httpx.AsyncClient, upstream_request: httpx.Request, request: Request
+    client: httpx.AsyncClient, upstream_request: httpx.Request, request: Request,
+    auth: httpx.Auth | None = None,
 ) -> httpx.Response | None:
     """Race the upstream header wait against the downstream client disconnecting, so a
     client that leaves before headers arrive does not leave the owned upstream socket
@@ -211,7 +212,7 @@ async def _send_until_headers_or_disconnect(
     httpx's own `except BaseException` cleanup, which closes the real connection since the
     h11 request/response cycle never reached DONE/DONE. Whichever side loses the race is
     cancelled and joined before this returns — no watcher survives past this call."""
-    send_task = asyncio.create_task(client.send(upstream_request, stream=True))
+    send_task = asyncio.create_task(client.send(upstream_request, stream=True, auth=auth))
     listener_task = asyncio.create_task(_wait_for_disconnect(request))
     response: httpx.Response | None = None
     try:
@@ -249,6 +250,7 @@ async def forward(
     mcp: bool = False,
     body: bytes | None = None,
     transform: Callable[[bytes], bytes] | None = None,
+    auth: httpx.Auth | None = None,
     _responses: set[httpx.Response] | None = None,
 ) -> Response:
     """Forward `request` to `target`, streaming the response body chunk-by-chunk so SSE
@@ -266,6 +268,8 @@ async def forward(
 
     `transform` rewrites the response body before it is sent. It buffers the whole body,
     so it is for small, finite replies only (e.g. an MCP `tools/list`), never a stream.
+
+    `auth` sets the upstream credential per request (`KeyAuth`), after `inject_headers`.
 
     `_responses` is a private, caller-owned tracking set (one per facade instance) that
     this response is added to immediately after the upstream send succeeds and removed
@@ -299,7 +303,7 @@ async def forward(
         params=request.query_params,
         content=body or None,
     )
-    upstream = await _send_until_headers_or_disconnect(client, upstream_request, request)
+    upstream = await _send_until_headers_or_disconnect(client, upstream_request, request, auth)
     if upstream is None:
         # The client left before upstream headers (e.g. OpenCode closing an idle MCP GET
         # stream): nothing to send, but return normally so the server does not log it as

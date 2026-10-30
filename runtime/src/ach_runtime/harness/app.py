@@ -38,13 +38,17 @@ def create_app(control: Control) -> FastAPI:
     app.state.ready = False
     app.state.a2a_bridges = {}
 
+    def serving() -> bool:
+        ach_key = getattr(control, "ach_key", None)
+        return app.state.ready and not control._stopping and (ach_key is None or ach_key.ready())
+
     for configured in control.config.channels:
         if configured.type != "a2a":
             continue
         bridge = A2AAgentExecutorBridge(
             control,
             configured,
-            ready=lambda app=app, control=control: app.state.ready and not control._stopping,
+            ready=serving,
         )
         app.state.a2a_bridges[configured.name] = bridge
         app.mount(
@@ -58,14 +62,14 @@ def create_app(control: Control) -> FastAPI:
 
     @app.get("/readyz")
     async def readyz() -> Response:
-        return Response(status_code=200 if app.state.ready and not control._stopping else 503)
+        return Response(status_code=200 if serving() else 503)
 
     @app.post("/channels/{channel}/events")
     async def webhook(channel: str, request: Request) -> Response:
         configured = next((item for item in control.config.channels if item.name == channel), None)
         if configured is None:
             return JSONResponse({"detail": "unknown channel"}, status_code=404)
-        if not app.state.ready or control._stopping:
+        if not serving():
             return JSONResponse({"detail": "control is not ready"}, status_code=503)
         if configured.type not in {"webhook", "webhook-script"} or configured.source not in {"generic", "gitlab", "github"} or configured.webhook is None:
             return JSONResponse({"detail": "adapter is unsupported by this control integration"}, status_code=501)

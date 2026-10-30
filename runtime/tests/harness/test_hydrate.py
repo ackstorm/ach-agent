@@ -395,14 +395,13 @@ SOURCE = HydrationInput(
     agent="classifier",
     base_url=BASE_URL,
     environment="platform",
-    key_env="ACH_SECRET_IDENTITY",
     model="gemini.gemini-flash-latest",
 )
 
 
 async def test_hydrator_load_builds_catalog_with_metadata_and_mcp_and_skills() -> None:
     client = httpx.AsyncClient(transport=_transport(_combined_handler()))
-    hydrator = Hydrator(resolve_ek=lambda name: "ek-abc", client=client)
+    hydrator = Hydrator(resolve_ek=lambda: "ek-abc", client=client)
 
     catalog = await hydrator.load(SOURCE)
     await client.aclose()
@@ -432,7 +431,7 @@ async def test_hydration_retains_peer_grants() -> None:
         return httpx.Response(200, json={"data": []})
 
     client = httpx.AsyncClient(transport=_transport(handler))
-    catalog = await Hydrator(resolve_ek=lambda name: "ek-private", client=client).load(
+    catalog = await Hydrator(resolve_ek=lambda: "ek-private", client=client).load(
         SOURCE
     )
     await client.aclose()
@@ -445,7 +444,7 @@ async def test_hydration_retains_peer_grants() -> None:
 
 async def test_hydration_without_peer_grants_keeps_empty_tuple() -> None:
     client = httpx.AsyncClient(transport=_transport(_combined_handler()))
-    catalog = await Hydrator(resolve_ek=lambda name: "ek-private", client=client).load(
+    catalog = await Hydrator(resolve_ek=lambda: "ek-private", client=client).load(
         SOURCE
     )
     await client.aclose()
@@ -463,7 +462,7 @@ async def test_hydrator_load_sends_identity_built_from_config_agent_and_environm
         return httpx.Response(200, json={"data": [entry]})
 
     client = httpx.AsyncClient(transport=_transport(handler))
-    hydrator = Hydrator(resolve_ek=lambda name: "ek-abc", client=client)
+    hydrator = Hydrator(resolve_ek=lambda: "ek-abc", client=client)
 
     await hydrator.load(SOURCE)
     await client.aclose()
@@ -473,8 +472,8 @@ async def test_hydrator_load_sends_identity_built_from_config_agent_and_environm
 
 
 async def test_hydrator_load_fails_closed_when_ek_resolver_cannot_resolve() -> None:
-    def failing_resolver(name: str) -> str:
-        raise HydrationError(f"ach.identity env {name!r} is unset")
+    def failing_resolver() -> str:
+        raise HydrationError("ACH credential is unset")
 
     client = httpx.AsyncClient(transport=_transport(_combined_handler()))
     hydrator = Hydrator(resolve_ek=failing_resolver, client=client)
@@ -488,7 +487,7 @@ async def test_hydrator_load_fails_closed_when_model_not_granted() -> None:
     source = dataclasses.replace(SOURCE, model="not-granted-model")
 
     client = httpx.AsyncClient(transport=_transport(_combined_handler()))
-    hydrator = Hydrator(resolve_ek=lambda name: "ek-abc", client=client)
+    hydrator = Hydrator(resolve_ek=lambda: "ek-abc", client=client)
 
     with pytest.raises(HydrationError, match="not granted"):
         await hydrator.load(source)
@@ -506,7 +505,7 @@ async def test_hydrator_load_fails_closed_when_model_not_granted_performs_zero_m
     source = dataclasses.replace(SOURCE, model="not-granted-model")
 
     client = httpx.AsyncClient(transport=_transport(handler))
-    hydrator = Hydrator(resolve_ek=lambda name: "ek-abc", client=client)
+    hydrator = Hydrator(resolve_ek=lambda: "ek-abc", client=client)
 
     with pytest.raises(HydrationError, match="not granted"):
         await hydrator.load(source)
@@ -535,7 +534,7 @@ async def test_hydrator_load_fails_closed_on_empty_selected_endpoint_performs_ze
         raise AssertionError("metadata must not be fetched for an unusable selected endpoint")
 
     client = httpx.AsyncClient(transport=_transport(handler))
-    hydrator = Hydrator(resolve_ek=lambda name: "ek-abc", client=client)
+    hydrator = Hydrator(resolve_ek=lambda: "ek-abc", client=client)
 
     with pytest.raises(HydrationError, match="empty endpoint"):
         await hydrator.load(SOURCE)
@@ -565,7 +564,7 @@ async def test_hydrator_load_fails_closed_on_omitted_selected_endpoint_performs_
         raise AssertionError("metadata must not be fetched for an omitted selected endpoint")
 
     client = httpx.AsyncClient(transport=_transport(handler))
-    hydrator = Hydrator(resolve_ek=lambda name: "ek-abc", client=client)
+    hydrator = Hydrator(resolve_ek=lambda: "ek-abc", client=client)
 
     with pytest.raises(HydrationError, match="empty endpoint"):
         await hydrator.load(SOURCE)
@@ -598,7 +597,7 @@ async def test_hydrator_load_granted_weird_model_name_posts_before_get_in_order(
         return httpx.Response(200, json={"data": [entry]})
 
     client = httpx.AsyncClient(transport=_transport(handler))
-    hydrator = Hydrator(resolve_ek=lambda name: "ek-abc", client=client)
+    hydrator = Hydrator(resolve_ek=lambda: "ek-abc", client=client)
 
     source = dataclasses.replace(SOURCE, model="weird model/name")
 
@@ -614,6 +613,7 @@ def test_stage_context_extracts_skill_payload_with_ach_key_only_on_download() ->
     import tempfile
     from pathlib import Path
     from ach_runtime.harness.hydrate import ContextItem, HydratedCatalog, HydratedModel, stage_context
+    from ach_runtime.harness.keys import KeySource
     async def scenario(root: Path) -> None:
         archive = io.BytesIO()
         with tarfile.open(fileobj=archive, mode="w:gz") as tf:
@@ -626,10 +626,10 @@ def test_stage_context_extracts_skill_payload_with_ach_key_only_on_download() ->
         async def handler(request):
             requests.append(request)
             return httpx.Response(200, content=expected)
-        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler), auth=KeySource("ek_secret").auth)
         catalog = HydratedCatalog("prod", HydratedModel("m", "https://model", None), (),
                                   (ContextItem(name="sample", id="1", downloadUrl="https://ach/skill"),), (), ())
-        await stage_context(catalog, root, excluded_skills=[], client=client, ek="ek_secret")
+        await stage_context(catalog, root, excluded_skills=[], client=client)
         files = [str(p.relative_to(root)) for p in root.rglob("*")]
         assert "skills/sample/SKILL.md" in files, files
         assert (root / "skills" / "sample" / "SKILL.md").read_bytes() == b"name: sample\n"
@@ -665,7 +665,7 @@ def test_stage_context_nests_root_level_skill_archives_under_their_names() -> No
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         skills = tuple(ContextItem(name=n, id=n, downloadUrl=f"https://ach/skill/{n}") for n in ("pdf", "docx"))
         catalog = HydratedCatalog("prod", HydratedModel("m", "https://model", None), (), skills, (), ())
-        await stage_context(catalog, root, excluded_skills=[], client=client, ek="ek")
+        await stage_context(catalog, root, excluded_skills=[], client=client)
         await client.aclose()
         assert (root / "skills" / "pdf" / "SKILL.md").read_bytes() == b"name: pdf\n"
         assert (root / "skills" / "docx" / "SKILL.md").read_bytes() == b"name: docx\n"

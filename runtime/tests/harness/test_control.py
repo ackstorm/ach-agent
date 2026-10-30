@@ -2019,7 +2019,7 @@ async def test_harness_hydrates_prompt_tar_before_real_mini_engine_start(monkeyp
 async def test_context_files_before_started(monkeypatch) -> None:
     from ach_runtime.harness.hydrate import ContextItem
     seen: list[str] = []
-    async def stage(catalog, root, *, excluded_skills, client, ek):
+    async def stage(catalog, root, *, excluded_skills, client):
         (root / "skills").mkdir(parents=True)
         (root / "skills" / "demo").write_text("skill")
     monkeypatch.setattr("ach_runtime.harness.control.stage_context", stage)
@@ -2162,10 +2162,10 @@ async def test_assembled_memory_context_reaches_start_and_managed_system_once(
 
     calls: list[dict[str, object]] = []
 
-    async def fake_call(endpoint, headers, tool, args, *, identity):
+    async def fake_call(endpoint, headers, tool, args, *, identity, auth=None):
         calls.append({
             "endpoint": endpoint, "headers": dict(headers), "tool": tool,
-            "args": dict(args), "identity": identity,
+            "args": dict(args), "identity": identity, "auth": auth,
         })
         return json.dumps({"text": f"standing-marker-{len(calls)}"})
 
@@ -2227,7 +2227,8 @@ async def test_assembled_memory_context_reaches_start_and_managed_system_once(
         # Same private boot-resolved project/identity/auth both times.
         assert calls[0]["endpoint"] == calls[1]["endpoint"] == "https://memory.example/mcp"
         assert calls[0]["identity"] is calls[1]["identity"]
-        assert calls[0]["headers"] == calls[1]["headers"] == {"x-ach-key": "ek-value"}
+        assert calls[0]["headers"] == calls[1]["headers"] == {}
+        assert calls[0]["auth"] is calls[1]["auth"] is control.ach_key.auth
         assert calls[0]["args"]["project_slug"] == calls[1]["args"]["project_slug"]
         assert calls[0]["args"]["project_slug"]
 
@@ -2302,7 +2303,7 @@ async def test_assembled_memory_absent_and_degraded_match_legacy(monkeypatch) ->
         type="bearer", env="ACH_MEMORY_BEARER_NEVER_SET"
     )
 
-    async def fail_without_headers(endpoint, headers, tool, args, *, identity):
+    async def fail_without_headers(endpoint, headers, tool, args, *, identity, auth=None):
         if not headers:
             raise RuntimeError("unauthenticated")
         return json.dumps({"text": "should not be reached"})
@@ -2326,7 +2327,7 @@ async def test_assembled_memory_absent_and_degraded_match_legacy(monkeypatch) ->
     failing_config = _config()
     failing_config.memory.ach_memory.endpoint = "https://memory.example/mcp"
 
-    async def fail_call(endpoint, headers, tool, args, *, identity):
+    async def fail_call(endpoint, headers, tool, args, *, identity, auth=None):
         raise RuntimeError("backend unreachable")
 
     monkeypatch.setattr(_memory_client, "call_ach_memory", fail_call)
@@ -2340,7 +2341,7 @@ async def test_assembled_memory_absent_and_degraded_match_legacy(monkeypatch) ->
     empty_config = _config()
     empty_config.memory.ach_memory.endpoint = "https://memory.example/mcp"
 
-    async def empty_call(endpoint, headers, tool, args, *, identity):
+    async def empty_call(endpoint, headers, tool, args, *, identity, auth=None):
         return json.dumps({"text": ""})
 
     monkeypatch.setattr(_memory_client, "call_ach_memory", empty_call)
@@ -2363,7 +2364,7 @@ async def test_concurrent_memory_availability_is_captured_per_start(monkeypatch,
 
     call_count = {"n": 0}
 
-    async def alternating_call(endpoint, headers, tool, args, *, identity):
+    async def alternating_call(endpoint, headers, tool, args, *, identity, auth=None):
         call_count["n"] += 1
         if call_count["n"] == 1:
             raise RuntimeError("backend unreachable for the first Start")

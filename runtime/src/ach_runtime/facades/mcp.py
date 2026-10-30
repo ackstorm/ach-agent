@@ -158,6 +158,7 @@ class McpFacade:
         identity: ProcessIdentity,
         correlation_headers: CorrelationHeaders = None,
         client: httpx.AsyncClient | None = None,
+        auth: httpx.Auth | None = None,
     ) -> None:
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(timeout=_INTERNAL_CLIENT_TIMEOUT)
@@ -203,6 +204,7 @@ class McpFacade:
                 mcp=True,
                 body=body,
                 transform=_listed_tools(exclude_tools, prefix, upstream_names[server_id]) if listing else None,
+                auth=auth,
                 _responses=self._responses,
             )
 

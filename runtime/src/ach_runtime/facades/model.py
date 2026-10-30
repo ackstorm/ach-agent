@@ -122,6 +122,7 @@ class ModelFacade:
         identity: ProcessIdentity,
         correlation_headers: CorrelationHeaders = None,
         client: httpx.AsyncClient | None = None,
+        auth: httpx.Auth | None = None,
     ) -> None:
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(timeout=_INTERNAL_CLIENT_TIMEOUT)
@@ -158,6 +159,7 @@ class ModelFacade:
                 identity=identity,
                 correlation=correlation,
                 body=body,
+                auth=auth,
                 _responses=self._responses,
             )
 

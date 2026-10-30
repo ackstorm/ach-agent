@@ -16,6 +16,8 @@ import os
 import re
 from collections.abc import Callable
 
+import httpx
+
 from ach_runtime.config.schema import AchMemoryAuth, AchMemoryParams
 from ach_runtime.facades._mcp_session import mcp_session
 from ach_runtime.facades._proxy import ProcessIdentity, with_identity_headers
@@ -158,6 +160,7 @@ async def call_ach_memory(
     args: dict[str, object],
     *,
     identity: ProcessIdentity,
+    auth: httpx.Auth | None = None,
 ) -> str:
     """Call one ach-memory MCP tool through a fresh initialized session; return the first
     text content ('' if none). `endpoint` is used VERBATIM -- the operator configures the
@@ -170,7 +173,7 @@ async def call_ach_memory(
     text masquerading as a valid memory or standing-context section (legacy
     `call_ach_memory`).
     """
-    async with mcp_session(endpoint, with_identity_headers(headers, identity)) as session:
+    async with mcp_session(endpoint, with_identity_headers(headers, identity), auth) as session:
         try:
             wire_name = advertised_name({t.name for t in (await session.list_tools()).tools}, tool)
         except Exception as exc:  # a server that will not enumerate can still dispatch
@@ -184,7 +187,8 @@ async def call_ach_memory(
 
 
 async def fetch_context(
-    endpoint: str, headers: dict[str, str], project: str, *, identity: ProcessIdentity
+    endpoint: str, headers: dict[str, str], project: str, *, identity: ProcessIdentity,
+    auth: httpx.Auth | None = None,
 ) -> str:
     """The ``## Memory`` prompt section, from one ``load_context`` call. The service has
     already ordered sections, neutralised forged headings and applied every budget; the
@@ -192,7 +196,8 @@ async def fetch_context(
     `fetch_context`, D-02 fail-open)."""
     try:
         raw = await call_ach_memory(
-            endpoint, headers, ACH_MEMORY_LOAD_CONTEXT, {"project_slug": project}, identity=identity
+            endpoint, headers, ACH_MEMORY_LOAD_CONTEXT, {"project_slug": project}, identity=identity,
+            auth=auth,
         )
         payload = json.loads(raw) if raw else {}
         text = payload.get("text", "") if isinstance(payload, dict) else ""
@@ -205,7 +210,8 @@ async def fetch_context(
 
 
 async def prepare_ach_memory(
-    endpoint: str, project: str, headers: dict[str, str], *, identity: ProcessIdentity
+    endpoint: str, project: str, headers: dict[str, str], *, identity: ProcessIdentity,
+    auth: httpx.Auth | None = None,
 ) -> tuple[bool, str]:
     """Load standing context and build the prompt section. Returns (available, section).
     Never raises (legacy `prepare_ach_memory`, D-02 fail-open). No health probe:
@@ -213,7 +219,7 @@ async def prepare_ach_memory(
     if not endpoint:
         return False, "## Memory\n\nUnavailable (no endpoint)."
     try:
-        section = await fetch_context(endpoint, headers, project, identity=identity)
+        section = await fetch_context(endpoint, headers, project, identity=identity, auth=auth)
         if section.startswith("## Memory\n\nUnavailable"):
             return False, section
         return True, section

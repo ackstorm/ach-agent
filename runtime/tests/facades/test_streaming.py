@@ -387,7 +387,7 @@ class _ImmediateSendClient:
     def __init__(self, response: httpx.Response) -> None:
         self._response = response
 
-    async def send(self, request: httpx.Request, *, stream: bool = False) -> httpx.Response:
+    async def send(self, request: httpx.Request, *, stream: bool = False, auth: object = None) -> httpx.Response:
         return self._response
 
 

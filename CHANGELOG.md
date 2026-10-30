@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-10-30
+
+### Fixed
+
+- A stream still open when the facade listener's shutdown grace expires (an engine's MCP stream)
+  ends its response instead of logging an `Exception in ASGI application` traceback.
+
+### Added
+
+- `make chart-test` unit-tests the chart's alert rules with `promtool test rules`.
+
 ## [0.1.4] - 2026-10-30
 
 ### Added

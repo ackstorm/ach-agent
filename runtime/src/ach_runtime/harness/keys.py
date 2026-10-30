@@ -138,8 +138,11 @@ class KeySource:
         return self.generation != generation
 
     async def _renew(self) -> None:
-        self._attempts += 1
-        jwt, expires_in = await _exchange(self._client, self._exchange)
+        try:
+            jwt, expires_in = await _exchange(self._client, self._exchange)
+        finally:
+            # Counted when finished, so a caller that arrived during it sees it as its own outcome.
+            self._attempts += 1
         now = self._clock()
         self._value, self.generation = jwt, self.generation + 1
         self._backoff = MIN_BACKOFF_SECONDS

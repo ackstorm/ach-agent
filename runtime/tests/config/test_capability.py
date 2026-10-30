@@ -104,3 +104,31 @@ def test_standalone_endpoints_must_be_http_urls_with_a_host(bad):
     server["capability"]["standalone"]["mcpServers"][0]["url"] = bad
     with pytest.raises(ConfigError, match="url"):
         _parse(server)
+
+
+def _exchange_wire() -> dict:
+    wire = _wire("pr-review-runtime.json")
+    ach = wire["capability"]["ach"]
+    ach["key"] = {"exchange": {"identity": "ai.run@example.com", "environment": ach["environment"],
+                               "tokenPath": "/var/run/secrets/ach/token"}}
+    return wire
+
+
+def test_ach_key_accepts_an_exchange_block():
+    cfg = _parse(_exchange_wire())
+    exchange = cfg.capability.ach.key.exchange
+    assert (exchange.identity, exchange.environment, exchange.token_path) == (
+        "ai.run@example.com", "engineering-prod", "/var/run/secrets/ach/token")
+
+
+@pytest.mark.parametrize("mutate,match", [
+    (lambda ach: ach.update(baseUrl="http://ach.ackstorm.ai"), "https"),
+    (lambda ach: ach["key"]["exchange"].update(environment="other"), "environment"),
+    (lambda ach: ach["key"]["exchange"].update(tokenPath="relative/token"), "pattern"),
+    (lambda ach: ach["key"].update(env="ACH_SECRET_IDENTITY"), "Extra inputs"),
+])
+def test_exchange_key_rules(mutate, match):
+    wire = _exchange_wire()
+    mutate(wire["capability"]["ach"])
+    with pytest.raises(ConfigError, match=match):
+        _parse(wire)

@@ -79,7 +79,7 @@ The host sets these environment variables. Values are single-line strings.
 | Variable | Roles | Required | Meaning |
 |---|---|---|---|
 | `ACH_SANDBOX_KEY` | `agent`, `control` | yes | Runtime master key. 32 random bytes, hex. The host generates it once per agent, keeps it stable and never gives it to execution units. Everything the runtime signs or verifies derives from it, including the host API credential (5.2). |
-| The variable named by `capability.ach.key.env` | `agent`, `control` | when `capability.server` is `ach` | The agent's ACH `ek_` credential. |
+| The variable named by `capability.ach.key.env` | `agent`, `control` | when `capability.ach.key` is `{"env": …}` | The agent's static ACH `ek_` credential. With `{"exchange": {identity, environment, tokenPath}}` there is no variable: the control role reads the projected ServiceAccount token at `tokenPath` and exchanges it at `POST {baseUrl}/platform/keys/exchange` for a short-lived credential it renews at 80% of `expires_in`. |
 | Variables named by config aliases | `agent`, `control` | when configured | Channel auth (`channels[].auth.env`, A2A `auth.env`), handoff and script `secretEnv.*.env`, memory `auth.env`. Each name the config references must exist. |
 | Literal `engine.env` values | — | — | These are in the configuration document, not in the environment (v1 §5). |
 | `ACH_STORAGE_S3_BUCKET`, `ACH_STORAGE_S3_REGION`, `ACH_STORAGE_S3_ENDPOINT_URL`, `ACH_STORAGE_S3_PREFIX` | `agent`, `control` | bucket required when Workspace persistence, session persistence or artifacts is enabled | S3-compatible storage. Credentials come from the standard AWS SDK chain (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`, or ambient). A missing bucket when storage is required is a configuration error; there is no volatile fallback. |
@@ -124,7 +124,7 @@ The runtime calls only these endpoints. Every call carries the agent credential 
 
 Rules:
 
-- `capability.ach.key` names an environment variable, but its value is opaque to the runtime. A stand-in may accept any value.
+- `capability.ach.key` is `{"env": NAME}` (a static credential, opaque to the runtime; a stand-in may accept any value) or `{"exchange": {...}}` (a stand-in answers `POST {baseUrl}/platform/keys/exchange` with `{"token", "expires_in", "key_id"}` and accepts that token in `x-ach-key` until it expires).
 - Memory (`memory.*`) and A2A egress are optional features that need their own endpoints when configured.
 - Anything the stand-in does not provide must be absent from the catalog and the configuration; it must not fail at call time.
 

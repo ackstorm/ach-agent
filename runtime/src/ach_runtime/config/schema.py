@@ -43,7 +43,7 @@ class ConfigError(ValueError):
 class SecretAlias(BaseModel):
     """A private environment-variable NAME the Harness/control pod resolves — never a value.
 
-    Wire shape for `capability.ach.key`, `handoff.secretEnv.<name>`: `{"env": "ACH_SECRET_..."}`.
+    Wire shape for `capability.ach.key` (static key) and `handoff.secretEnv.<name>`: `{"env": "ACH_SECRET_..."}`.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -56,6 +56,26 @@ class SecretAlias(BaseModel):
         if not _ENV_NAME_RE.match(v):
             raise ValueError(f"not a valid environment variable name alias: {v!r}")
         return v
+
+
+class ExchangeKeyParams(BaseModel):
+    """`capability.ach.key.exchange`: the control pod exchanges its projected ServiceAccount
+    token, read from `tokenPath`, at `{baseUrl}/platform/keys/exchange` for a short-lived ACH
+    credential granted to `identity` in `environment`."""
+
+    model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
+
+    identity: str = Field(min_length=1)
+    environment: str = Field(min_length=1)
+    token_path: str = Field(alias="tokenPath", pattern=r"^/")
+
+
+class ExchangeKey(BaseModel):
+    """Wire shape `{"exchange": {...}}` of `capability.ach.key`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    exchange: ExchangeKeyParams
 
 
 class AgentIdentity(BaseModel):
@@ -229,8 +249,17 @@ class AchServer(BaseModel):
 
     base_url: str = Field(alias="baseUrl")
     environment: str
-    key: SecretAlias
+    key: SecretAlias | ExchangeKey
     model: ModelBlock
+
+    @model_validator(mode="after")
+    def _exchange_rules(self) -> AchServer:
+        if isinstance(self.key, ExchangeKey):
+            if not self.base_url.startswith("https://"):
+                raise ValueError("capability.ach.key.exchange needs an https:// baseUrl")
+            if self.key.exchange.environment != self.environment:
+                raise ValueError("capability.ach.key.exchange.environment must equal capability.ach.environment")
+        return self
 
 
 class CapabilityBlock(BaseModel):

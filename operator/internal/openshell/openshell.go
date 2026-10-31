@@ -124,11 +124,47 @@ func OpenShellFromEnv() (*OpenShell, error) {
 	}}, nil
 }
 
-// SandboxName is stable and at most 19 characters (the OpenShell limit); the Workspace name
-// is never parsed back out of it.
-func SandboxName(agentUID, workspaceName string) string {
+// SandboxName is stable and at most 19 characters (the OpenShell limit): up to 10 characters
+// of the Agent name, so pod lists show whose sandbox it is, then 8 hex of a hash of the Agent
+// UID and the Workspace name. Neither name is ever parsed back out of it.
+func SandboxName(agentName, agentUID, workspaceName string) string {
+	sum := sha256.Sum256([]byte(agentUID + "/" + workspaceName))
+	prefix := strings.TrimRight(strings.ReplaceAll(agentName[:min(len(agentName), 10)], ".", "-"), "-")
+	return prefix + "-" + hex.EncodeToString(sum[:])[:8]
+}
+
+// legacySandboxName is the name operators up to 0.2.0 gave a sandbox; one still running
+// after an upgrade is found and removed under it.
+func legacySandboxName(agentUID, workspaceName string) string {
 	sum := sha256.Sum256([]byte(agentUID + "/" + workspaceName))
 	return "ws-" + hex.EncodeToString(sum[:])[:16]
+}
+
+// sandboxFor names the Workspace's sandbox: the legacy name while a sandbox or workload pod of
+// that name exists, else the current one.
+func (b *openShellUnits) sandboxFor(ctx context.Context, name string) (string, error) {
+	current := SandboxName(b.agent.Name, string(b.uid), name)
+	cctx, cancel := call(ctx)
+	_, err := b.gw().Get(cctx, b.Config.Workspace, current)
+	cancel()
+	if !osv1.IsNotFound(err) {
+		return current, err
+	}
+	legacy := legacySandboxName(string(b.uid), name)
+	cctx, cancel = call(ctx)
+	_, err = b.gw().Get(cctx, b.Config.Workspace, legacy)
+	cancel()
+	switch {
+	case err == nil:
+		return legacy, nil
+	case !osv1.IsNotFound(err):
+		return "", err
+	}
+	pod, err := b.workloadPod(ctx, b.reader, legacy)
+	if err != nil || pod == nil {
+		return current, err
+	}
+	return legacy, nil
 }
 
 type openShellUnits struct {
@@ -170,11 +206,14 @@ func (b *openShellUnits) ensureService(ctx context.Context, a *achv1alpha1.Agent
 }
 
 func (b *openShellUnits) BaseURL(w host.Workspace) string {
-	return b.url(b.agent.Namespace, SandboxName(string(b.uid), w.Name), w.Launch.Port)
+	return b.url(b.agent.Namespace, SandboxName(b.agent.Name, string(b.uid), w.Name), w.Launch.Port)
 }
 
 func (b *openShellUnits) State(ctx context.Context, name string) (host.UnitState, error) {
-	sandbox := SandboxName(string(b.uid), name)
+	sandbox, err := b.sandboxFor(ctx, name)
+	if err != nil {
+		return 0, err
+	}
 	cctx, cancel := call(ctx)
 	s, err := b.gw().Get(cctx, b.Config.Workspace, sandbox)
 	cancel()
@@ -274,7 +313,7 @@ func (b *openShellUnits) Create(ctx context.Context, a *achv1alpha1.Agent, p *ac
 		return err
 	}
 	// A unit is never registered without its Service.
-	sandbox := SandboxName(string(b.uid), w.Name)
+	sandbox := SandboxName(b.agent.Name, string(b.uid), w.Name)
 	if err := b.ensureService(ctx, a, sandbox); err != nil {
 		return err
 	}
@@ -316,7 +355,10 @@ func rejected(err error, reason string) error { return reasonError{error: err, r
 // Remove requests deletion with a short deadline and reports whether anything remains: the
 // gateway record, or the workload pod, which outlives the record by up to its grace period.
 func (b *openShellUnits) Remove(ctx context.Context, name string) (bool, error) {
-	sandbox := SandboxName(string(b.uid), name)
+	sandbox, err := b.sandboxFor(ctx, name)
+	if err != nil {
+		return false, err
+	}
 	remaining, err := b.removeSandbox(ctx, b.reader, sandbox)
 	if remaining || err != nil {
 		return remaining, err

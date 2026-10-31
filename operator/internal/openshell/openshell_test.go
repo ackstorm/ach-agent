@@ -173,7 +173,7 @@ func newOSFixture(t *testing.T, pods ...client.Object) *osFixture {
 		GatewayHost: "openshell.openshell.svc.cluster.local",
 	}}
 	return &osFixture{gw: gw, b: o.ForAgent(types.NamespacedName{Namespace: "ach", Name: a.Name}, a.UID, c, c), a: a, p: p, w: w, c: c,
-		sName: SandboxName(string(a.UID), w.Name)}
+		sName: SandboxName(a.Name, string(a.UID), w.Name)}
 }
 
 func workloadPod(sandbox string, phase corev1.PodPhase, terminating bool) *corev1.Pod {
@@ -186,13 +186,38 @@ func workloadPod(sandbox string, phase corev1.PodPhase, terminating bool) *corev
 	return pod
 }
 
-func TestSandboxName_StableShortAndOpaque(t *testing.T) {
-	a := SandboxName("uid-1", "agent-x-0123456789abcdef0123")
-	if a != SandboxName("uid-1", "agent-x-0123456789abcdef0123") || len(a) > 19 || !strings.HasPrefix(a, "ws-") {
-		t.Fatalf("name %q: want stable, <= 19 chars, ws- prefix (finding 1)", a)
+func TestSandboxName_StableShortAndPrefixedByAgent(t *testing.T) {
+	a := SandboxName("observability-assistant", "uid-1", "agent-x-0123456789abcdef0123")
+	if a != SandboxName("observability-assistant", "uid-1", "agent-x-0123456789abcdef0123") || len(a) > 19 || !strings.HasPrefix(a, "observabil-") {
+		t.Fatalf("name %q: want stable, <= 19 chars, agent-name prefix", a)
 	}
-	if a == SandboxName("uid-2", "agent-x-0123456789abcdef0123") {
-		t.Fatal("same Workspace name under another agent UID must map to another sandbox (finding 1)")
+	if a == SandboxName("observability-assistant", "uid-2", "agent-x-0123456789abcdef0123") {
+		t.Fatal("same Workspace name under another agent UID must map to another sandbox")
+	}
+	for agent, want := range map[string]string{"k8s-doctor": "k8s-doctor-", "a.b": "a-b-", "abcdefghi-x": "abcdefghi-"} {
+		if got := SandboxName(agent, "uid-1", "w"); !strings.HasPrefix(got, want) || len(got) > 19 {
+			t.Errorf("SandboxName(%q) = %q, want prefix %q and <= 19 chars", agent, got, want)
+		}
+	}
+}
+
+func TestOpenShell_FindsAndRemovesALegacyNamedSandbox(t *testing.T) {
+	ctx := context.Background()
+	f := newOSFixture(t)
+	legacy := legacySandboxName(string(f.a.UID), f.w.Name)
+	if _, err := f.gw.Create(ctx, "default", legacy, &ostypes.SandboxSpec{},
+		ostypes.WithLabels(map[string]string{AgentUIDLabel: string(f.a.UID), NameLabel: f.w.Name})); err != nil {
+		t.Fatal(err)
+	}
+	f.gw.setPhase(legacy, ostypes.SandboxReady)
+	if st, err := f.b.State(ctx, f.w.Name); err != nil || st != host.UnitLost {
+		t.Fatalf("State = %v, %v; want the legacy sandbox seen (Ready, no pod: lost)", st, err)
+	}
+	if remaining, err := f.b.Remove(ctx, f.w.Name); err != nil || !remaining {
+		t.Fatalf("Remove = %v, %v; want the legacy sandbox deleted and reported remaining", remaining, err)
+	}
+	if len(f.gw.deleted) != 1 || f.gw.deleted[0] != legacy {
+		t.Fatalf("deleted = %v, want [%s]", f.gw.deleted, legacy)
 	}
 }
 
@@ -273,7 +298,7 @@ func TestOpenShell_StateFollowsGatewayPhase(t *testing.T) {
 	if st := state(); st != host.UnitTerminating {
 		t.Fatalf("Deleting state = %v, want host.UnitTerminating", st)
 	}
-	g := newOSFixture(t, workloadPod(SandboxName(string(f.a.UID), f.w.Name), corev1.PodRunning, false))
+	g := newOSFixture(t, workloadPod(SandboxName(f.a.Name, string(f.a.UID), f.w.Name), corev1.PodRunning, false))
 	if err := g.b.Create(ctx, g.a, g.p, g.w); err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +310,7 @@ func TestOpenShell_StateFollowsGatewayPhase(t *testing.T) {
 
 func TestOpenShell_StateIsLostWhenAReadySandboxHasNoRunningPod(t *testing.T) {
 	ctx := context.Background()
-	name := SandboxName(string(testUID), "agent-gitlab-reviewer-1a2b3c4d5e6f7a8b9c0d")
+	name := SandboxName("gitlab-reviewer", string(testUID), "agent-gitlab-reviewer-1a2b3c4d5e6f7a8b9c0d")
 	for _, tc := range []struct {
 		name  string
 		pod   *corev1.Pod
@@ -325,7 +350,7 @@ func TestOpenShell_StateIsLostWhenAReadySandboxHasNoRunningPod(t *testing.T) {
 func TestOpenShell_RemoveNeverConfirmsWhileTheWorkloadPodRemains(t *testing.T) {
 	ctx := context.Background()
 	_, _, w := unitFixture()
-	pod := workloadPod(SandboxName(string(testUID), w.Name), corev1.PodRunning, false)
+	pod := workloadPod(SandboxName("gitlab-reviewer", string(testUID), w.Name), corev1.PodRunning, false)
 	f := newOSFixture(t, pod) // the gateway holds no record: it forgot the sandbox at once
 	remaining, err := f.b.Remove(ctx, w.Name)
 	if err != nil || !remaining {
@@ -368,8 +393,8 @@ func TestOpenShell_LiveReportsReadySandboxesWithTheirRefAndURL(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	f.gw.setPhase(SandboxName(string(f.a.UID), "w-a"), ostypes.SandboxReady)
-	f.gw.setPhase(SandboxName(string(f.a.UID), "w-b"), ostypes.SandboxReady)
+	f.gw.setPhase(SandboxName(f.a.Name, string(f.a.UID), "w-a"), ostypes.SandboxReady)
+	f.gw.setPhase(SandboxName(f.a.Name, string(f.a.UID), "w-b"), ostypes.SandboxReady)
 	// a Ready sandbox of another agent UID
 	other := newOSFixture(t)
 	other.gw = f.gw
@@ -377,7 +402,7 @@ func TestOpenShell_LiveReportsReadySandboxesWithTheirRefAndURL(t *testing.T) {
 	if err := other.b.Create(ctx, f.a, f.p, f.w); err != nil {
 		t.Fatal(err)
 	}
-	f.gw.setPhase(SandboxName("uid-other", f.w.Name), ostypes.SandboxReady)
+	f.gw.setPhase(SandboxName("other", "uid-other", f.w.Name), ostypes.SandboxReady)
 
 	got, err := f.b.Live(ctx)
 	if err != nil {
@@ -387,7 +412,7 @@ func TestOpenShell_LiveReportsReadySandboxesWithTheirRefAndURL(t *testing.T) {
 		t.Fatalf("Live = %+v, want the two Ready sandboxes of this agent only (finding 5)", got)
 	}
 	for _, u := range got {
-		sb := SandboxName(string(f.a.UID), u.Name)
+		sb := SandboxName(f.a.Name, string(f.a.UID), u.Name)
 		wantURL := "http://default--" + sb + ".ach.svc.cluster.local:8080"
 		if u.BaseURL != wantURL || u.WorkspaceRef != strings.Repeat(u.Name[2:], 64) {
 			t.Errorf("unit %+v, want baseUrl %s and the ref from ACH_WORKSPACE_REF (findings 3, 4)", u, wantURL)
@@ -400,7 +425,7 @@ func TestOpenShell_RemoveAgentSandboxesSelectsByUIDOnly(t *testing.T) {
 	gw := newFakeGateway()
 	o := &OpenShell{Sandboxes: gw, Config: OpenShellConfig{Workspace: "default", PodNamespace: "openshell", ServiceURL: "x"}}
 	for _, uid := range []string{"uid-1", "uid-2"} {
-		if _, err := gw.Create(ctx, "default", SandboxName(uid, "w1"), &ostypes.SandboxSpec{},
+		if _, err := gw.Create(ctx, "default", SandboxName("a", uid, "w1"), &ostypes.SandboxSpec{},
 			ostypes.WithLabels(map[string]string{AgentUIDLabel: uid, NameLabel: "w1"})); err != nil {
 			t.Fatal(err)
 		}
@@ -409,7 +434,7 @@ func TestOpenShell_RemoveAgentSandboxesSelectsByUIDOnly(t *testing.T) {
 	if err != nil || !remaining {
 		t.Fatalf("first call remaining = %v err = %v, want true (a sandbox was listed)", remaining, err)
 	}
-	if len(gw.deleted) != 1 || gw.deleted[0] != SandboxName("uid-1", "w1") {
+	if len(gw.deleted) != 1 || gw.deleted[0] != SandboxName("a", "uid-1", "w1") {
 		t.Fatalf("deleted = %v, want only uid-1's sandbox (finding 2: select by UID, never by name)", gw.deleted)
 	}
 	if remaining, err = o.RemoveAgentSandboxes(ctx, nil, "uid-1"); err != nil || remaining {
@@ -420,7 +445,7 @@ func TestOpenShell_RemoveAgentSandboxesSelectsByUIDOnly(t *testing.T) {
 func TestOpenShell_StateOnNotFoundChecksTheWorkloadPod(t *testing.T) {
 	ctx := context.Background()
 	_, _, w := unitFixture()
-	pod := workloadPod(SandboxName(string(testUID), w.Name), corev1.PodRunning, true)
+	pod := workloadPod(SandboxName("gitlab-reviewer", string(testUID), w.Name), corev1.PodRunning, true)
 	f := newOSFixture(t, pod) // the gateway forgot the sandbox, the pod is still terminating
 	if st, err := f.b.State(ctx, w.Name); err != nil || st != host.UnitTerminating {
 		t.Fatalf("state = %v err = %v, want host.UnitTerminating while the pod remains (a new sandbox would collide)", st, err)
@@ -541,7 +566,7 @@ func TestGatewayHost(t *testing.T) {
 
 func TestOpenShell_RemoveKeepsServiceWhileTheWorkloadPodTerminates(t *testing.T) {
 	_, _, w := unitFixture()
-	f := newOSFixture(t, workloadPod(SandboxName(string(testUID), w.Name), corev1.PodRunning, true))
+	f := newOSFixture(t, workloadPod(SandboxName("gitlab-reviewer", string(testUID), w.Name), corev1.PodRunning, true))
 	ctx := context.Background()
 	if err := f.b.Create(ctx, f.a, f.p, f.w); err != nil {
 		t.Fatal(err)
@@ -821,9 +846,9 @@ func (listedGoneGateway) Get(context.Context, string, string) (*ostypes.Sandbox,
 
 func TestOpenShell_FinalizerWaitsForTheWorkloadPodOfADroppedRecord(t *testing.T) {
 	ctx := context.Background()
-	f := newOSFixture(t, workloadPod(SandboxName(string(testUID), "w1"), corev1.PodRunning, true))
+	f := newOSFixture(t, workloadPod(SandboxName("gitlab-reviewer", string(testUID), "w1"), corev1.PodRunning, true))
 	ub := f.b.(*openShellUnits)
-	if _, err := f.gw.Create(ctx, "default", SandboxName(string(testUID), "w1"), &ostypes.SandboxSpec{},
+	if _, err := f.gw.Create(ctx, "default", SandboxName("gitlab-reviewer", string(testUID), "w1"), &ostypes.SandboxSpec{},
 		ostypes.WithLabels(map[string]string{AgentUIDLabel: string(testUID), NameLabel: "w1"})); err != nil {
 		t.Fatal(err)
 	}

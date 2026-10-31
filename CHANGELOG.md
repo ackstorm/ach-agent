@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Sandbox pods carry the Agent's name: `default--k8s-doctor-9f0456d5` instead of `default--ws-9f0456d5c4515e7e`
+  (up to 10 characters of the name plus 8 of hash, within OpenShell's 19-character limit). Sandboxes created by
+  earlier versions are still found and removed under their old name.
+
+### Fixed
+
+- opencode no longer checks for updates inside the sandbox (`OPENCODE_DISABLE_AUTOUPDATE=1`); the sandbox allows
+  egress only to the facades, so the check was a denied `connect`.
+
 ## [0.2.0] - 2026-10-30
 
 ### Changed

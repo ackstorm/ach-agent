@@ -52,7 +52,7 @@ Label every Agent namespace `istio.io/dataplane-mode=ambient`.
 ## 5. Operator
 
 ```bash
-helm install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --version 0.2.0 \
+helm install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --version 0.2.1 \
   -n ach-agent-system --create-namespace \
   --set openshell.gateway=http://openshell.openshell.svc.cluster.local:8080
 ```
@@ -115,8 +115,8 @@ spec:
 ```
 
 The AgentProfile (image, resources, defaults) is in `test/e2e/fixtures/profile.yaml`; copy it and
-change the images to `ghcr.io/ackstorm/ach-agent-control:0.2.0` and
-`ghcr.io/ackstorm/ach-agent-execution:0.2.0`. `test/e2e/fixtures/` holds tested examples of a
+change the images to `ghcr.io/ackstorm/ach-agent-control:0.2.1` and
+`ghcr.io/ackstorm/ach-agent-execution:0.2.1`. `test/e2e/fixtures/` holds tested examples of a
 standalone Agent and an ACH Agent.
 
 ## 7. An ACH Agent

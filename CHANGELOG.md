@@ -5,13 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.1] - 2026-10-31
 
 ### Changed
 
 - Sandbox pods carry the Agent's name: `default--k8s-doctor-9f0456d5` instead of `default--ws-9f0456d5c4515e7e`
   (up to 10 characters of the name plus 8 of hash, within OpenShell's 19-character limit). Sandboxes created by
   earlier versions are still found and removed under their old name.
+- The operator creates its configured OpenShell workspace (`openshell.workspace`) on the first sandbox create; a
+  workspace the gateway does not know holds no sandboxes.
+- The e2e cluster runs sandboxes in the OpenShell workspace `ach-agent`, so pods read `ach-agent--<agent>-<hash>`.
+  Changing `openshell.workspace` on a running install leaves sandboxes of the previous workspace unseen: delete
+  them once (`<old-workspace>--*` pods in the sandbox namespace).
 
 ### Fixed
 

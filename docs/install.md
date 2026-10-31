@@ -165,3 +165,34 @@ whose request body contains it: keep `tokenreviews` at audit level `Metadata`.
 The control pod exports `ach_agent_key_expiry_timestamp_seconds`, `ach_agent_key_lifetime_seconds` and
 `ach_agent_key_refresh_failures_total`; `ACHAgentKeyRefreshFailing` fires when less than 10% of the
 credential's lifetime is left.
+
+## 8. Reply latency
+
+A message pays one of three costs, depending on what is still running for its Workspace:
+
+| State | Cost (EKS, measured) |
+|---|---|
+| opencode running | ~1.3s, the model call |
+| sandbox up, opencode retired | ~8s: S3 restore of the session HOME, opencode boot, MCP connect |
+| no sandbox | ~22s: Sandbox CR, scheduling, OpenShell's `/sandbox` PVC (~12s on EBS), containers, opencode boot |
+
+Two timers decide the state, in order. `workspace.session.idleTimeoutSeconds` after its last turn a
+session's opencode is stopped, its HOME saved and the session retired. Only once every session of
+the Workspace is retired does `workspace.idleTimeoutSeconds` start; when it runs out the Workspace
+is committed and the sandbox deleted. Both are per Agent, not per channel.
+
+`routing.workspaceKey` decides how often a message lands on a new sandbox. `session` gives every
+conversation its own sandbox, so every new conversation pays the full cold start. For a chat
+channel, a per-user key (`"{{ event.headers.x-litellm-user-id }}"`) sends a user's new conversations
+to their running sandbox; set `workspace.maxConcurrentSessions` to the channel concurrency. A user's
+conversations then share `/workspace`, and a channel with a `handoff` needs `workspaceKey: session`.
+
+The trade-off is pods held against restore cost: each active Workspace keeps one sandbox (the
+profile's resources) for `session.idleTimeoutSeconds + idleTimeoutSeconds` after its last message.
+A long session timeout with a short Workspace timeout keeps opencode alive for as long as the
+sandbox exists.
+
+The runtime never writes to `/sandbox` (its data is in `/workspace` and `/var/lib/ach-runtime`;
+durable state goes to S3), so OpenShell's per-sandbox PVC is pure start-up cost. OpenShell 0.1.5
+cannot skip it per sandbox; the gateway-level `workspace_volume = "empty_dir"` setting proposed in
+NVIDIA/OpenShell#4473 removes it.

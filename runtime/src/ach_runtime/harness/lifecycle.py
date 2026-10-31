@@ -11,7 +11,7 @@ import time
 import traceback
 import uuid
 from collections.abc import Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -40,6 +40,21 @@ async def _owned(func, /, *args, **kwargs):
     if error is not None:
         raise error
     return result
+
+
+@contextmanager
+def _storage_timer(operation: str, domain: str):
+    """Observe ach_agent_storage_<operation>_seconds{domain, outcome} for the block. The block
+    sets timer["outcome"]; a block that raises, or sets none, counts as "error"."""
+    from ach_runtime.observability.metrics import STORAGE_PERSIST_SECONDS, STORAGE_RESTORE_SECONDS
+
+    histogram = STORAGE_PERSIST_SECONDS if operation == "persist" else STORAGE_RESTORE_SECONDS
+    timer = {"outcome": "error"}
+    started = time.monotonic()
+    try:
+        yield timer
+    finally:
+        histogram.labels(domain=domain, outcome=timer["outcome"]).observe(time.monotonic() - started)
 
 
 def _new_close_archive() -> Path:
@@ -202,12 +217,14 @@ class Lifecycle:
         retention_days = self.control.config.workspace.persistence.retention_days
         ref = self.workspace_state_ref(endpoint)
         try:
-            receipt = await self.control.storage.restore(ref, retention_days=retention_days)
-            if receipt is not None:
-                await put_archive(self.control.mini_client, endpoint, self.control._headers(endpoint),
-                                  "/workspace/archive", receipt.open(),
-                                  on_mismatch=self.control.manager.report_lost)
-                self._bases[(ref.workspace_ref, None)] = receipt.etag
+            with _storage_timer("restore", DOMAIN_WORKSPACE) as timer:
+                receipt = await self.control.storage.restore(ref, retention_days=retention_days)
+                if receipt is not None:
+                    await put_archive(self.control.mini_client, endpoint, self.control._headers(endpoint),
+                                      "/workspace/archive", receipt.open(),
+                                      on_mismatch=self.control.manager.report_lost)
+                    self._bases[(ref.workspace_ref, None)] = receipt.etag
+                timer["outcome"] = "ok" if receipt is not None else "empty"
             lease = await self.control.storage.acquire_writer(ref, endpoint.instance_id)
             self._leases[(ref.workspace_ref, None, endpoint.instance_id)] = lease
             self._bases[(ref.workspace_ref, None)] = lease.base_etag
@@ -326,10 +343,13 @@ class Lifecycle:
             return None
         ref = self._ref(endpoint, DOMAIN_WORKSPACE)
         try:
-            return await self._persist_close(
-                endpoint, ref, "/workspace/archive",
-                retention_days=self.control.config.workspace.persistence.retention_days,
-            )
+            with _storage_timer("persist", DOMAIN_WORKSPACE) as timer:
+                receipt = await self._persist_close(
+                    endpoint, ref, "/workspace/archive",
+                    retention_days=self.control.config.workspace.persistence.retention_days,
+                )
+                timer["outcome"] = "ok"
+            return receipt
         except Exception as exc:
             self._report_failure(exc, "Harness Workspace persistence failed")
             raise
@@ -349,15 +369,18 @@ class Lifecycle:
                     return
             elif status != 404:
                 raise RuntimeError("mini-harness returned invalid session information")
-            receipt = await self.control.storage.restore(ref, retention_days=retention_days)
+            with _storage_timer("restore", DOMAIN_SESSION) as timer:
+                receipt = await self.control.storage.restore(ref, retention_days=retention_days)
+                if receipt is not None:
+                    await put_archive(
+                        self.control.mini_client, endpoint, self.control._headers(endpoint),
+                        f"/sessions/{ticket.session_ref}/archive", receipt.open(),
+                        params={"deadline_at": ticket.deadline_at.isoformat()},
+                        on_mismatch=self.control.manager.report_lost,
+                    )
+                timer["outcome"] = "ok" if receipt is not None else "empty"
             if receipt is None:
                 return
-            await put_archive(
-                self.control.mini_client, endpoint, self.control._headers(endpoint),
-                f"/sessions/{ticket.session_ref}/archive", receipt.open(),
-                params={"deadline_at": ticket.deadline_at.isoformat()},
-                on_mismatch=self.control.manager.report_lost,
-            )
             lease = await self.control.storage.acquire_writer(ref, endpoint.instance_id)
             self._leases[(ref.workspace_ref, ref.session_ref, endpoint.instance_id)] = lease
             self._bases[(ref.workspace_ref, ref.session_ref)] = lease.base_etag
@@ -399,10 +422,12 @@ class Lifecycle:
                 raise
         else:
             try:
-                await self._persist_close(
-                    endpoint, ref, f"/sessions/{session_ref}/archive",
-                    retention_days=self.control.config.workspace.session.persistence.retention_days,
-                )
+                with _storage_timer("persist", DOMAIN_SESSION) as timer:
+                    await self._persist_close(
+                        endpoint, ref, f"/sessions/{session_ref}/archive",
+                        retention_days=self.control.config.workspace.session.persistence.retention_days,
+                    )
+                    timer["outcome"] = "ok"
             except Exception as exc:
                 self._report_failure(exc, "Harness session persistence failed")
                 raise

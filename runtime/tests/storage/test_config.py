@@ -138,9 +138,12 @@ async def test_storage_from_env_compatible_settings(
     }
     storage = storage_from_env(cfg, env)
 
-    client_mock.assert_called_once_with(
-        "s3", region_name="us-east-1", endpoint_url="http://seaweedfs:8333"
-    )
+    client_mock.assert_called_once()
+    args, kwargs = client_mock.call_args
+    assert args == ("s3",)
+    assert kwargs["region_name"] == "us-east-1"
+    assert kwargs["endpoint_url"] == "http://seaweedfs:8333"
+    assert kwargs["config"].s3 == {"addressing_style": "path"}
     assert isinstance(storage, S3Storage)
 
     assert await storage.restore(_ref(cfg)) is None

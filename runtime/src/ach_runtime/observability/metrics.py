@@ -53,6 +53,17 @@ KEY_EXPIRY_TIMESTAMP = Gauge(
 KEY_LIFETIME = Gauge(
     "ach_agent_key_lifetime_seconds", "Lifetime (expires_in) of the current exchanged ACH credential; 0 for a static key"
 )
+# A save covers the archive export from the unit and every retry inside the close window; a
+# restore covers the Storage read and streaming the archive into the unit.
+_STORAGE_BUCKETS = (0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, float("inf"))
+STORAGE_PERSIST_SECONDS = Histogram(
+    "ach_agent_storage_persist_seconds", "Workspace or session save duration",
+    ["domain", "outcome"], buckets=_STORAGE_BUCKETS,
+)
+STORAGE_RESTORE_SECONDS = Histogram(
+    "ach_agent_storage_restore_seconds", "Workspace or session restore duration",
+    ["domain", "outcome"], buckets=_STORAGE_BUCKETS,
+)
 
 _COST_UNPRICED_REASONS = ("usage_missing",)
 
@@ -151,6 +162,7 @@ class IdentityRegistry:
 __all__ = [
     "AGENT_INFO", "ANOMALIES_TOTAL", "COST_UNPRICED", "IdentityRegistry", "KEY_EXPIRY_TIMESTAMP",
     "KEY_LIFETIME", "KEY_REFRESH_FAILURES", "SESSIONS_TOTAL",
+    "STORAGE_PERSIST_SECONDS", "STORAGE_RESTORE_SECONDS",
     "TURN_COST_USD_TOTAL", "TURN_DURATION_SECONDS", "TURN_TOKENS_TOTAL", "TURNS_TOTAL",
     "_TURN_BUCKETS", "initialise", "observe",
 ]

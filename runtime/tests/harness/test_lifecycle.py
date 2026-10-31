@@ -64,6 +64,12 @@ class _Control:
 async def _close(ref): pass
 
 
+def _storage_count(metric: str, domain: str, outcome: str) -> float:
+    from prometheus_client import REGISTRY
+
+    return REGISTRY.get_sample_value(f"{metric}_count", {"domain": domain, "outcome": outcome}) or 0.0
+
+
 def test_lifecycle_exposes_manager_callbacks_and_owned_close() -> None:
     async def scenario():
         control = _Control()
@@ -549,7 +555,9 @@ def test_close_transient_export_and_save_retry_one_id_and_bytes(monkeypatch, dom
         assert delays == [1, 2, 4]
         await control.mini_client.aclose()
 
+    before = _storage_count("ach_agent_storage_persist_seconds", domain, "ok")
     asyncio.run(scenario())
+    assert _storage_count("ach_agent_storage_persist_seconds", domain, "ok") == before + 1
 
 
 def test_close_exhaustion_retains_owner_until_cooldown_recovery(monkeypatch) -> None:
@@ -2225,3 +2233,62 @@ def test_workspace_stop_hook_failure_alarms_but_never_blocks_the_close() -> None
         assert ANOMALIES_TOTAL.labels(kind="workspace_stop_failed")._value.get() == before + 1
         await lifecycle.close()
     asyncio.run(scenario())
+
+
+def test_storage_histograms_record_domain_and_outcome() -> None:
+    import httpx
+    from ach_runtime.harness.workspaces import WorkspaceEndpoint, WorkspaceRef
+    from ach_runtime.storage.api import RestoreReceipt, WriterLease
+
+    restore = "ach_agent_storage_restore_seconds"
+    persist = "ach_agent_storage_persist_seconds"
+    expected = [(restore, "empty"), (restore, "ok"), (restore, "error"), (persist, "error")]
+    before = {key: _storage_count(key[0], "workspace", key[1]) for key in expected}
+
+    async def scenario():
+        results = iter([None, "receipt", RuntimeError("restore down")])
+
+        class Storage:
+            async def restore(self, ref, *, retention_days=0):
+                result = next(results)
+                if isinstance(result, Exception):
+                    raise result
+                if result is None:
+                    return None
+
+                async def opened():
+                    yield b"stored"
+
+                return RestoreReceipt(ref, "snapshot-1", 4, 1, "etag", "checksum", 6, 1, opened)
+
+            async def acquire_writer(self, ref, writer_instance_id):
+                return WriterLease(ref, writer_instance_id, 5, "etag")
+
+            async def persist(self, ref, snapshot_id, stream, lease, expected_base, *, retention_days=0):
+                raise RuntimeError("storage rejected the save")
+
+        async def mini(request):
+            if request.method == "GET":
+                return httpx.Response(200, headers={"X-ACH-Instance-Id": "instance-id"}, content=b"archive")
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": "instance-id"}, json={"status": "restored"})
+
+        control = _Control()
+        control.config.workspace.persistence.enabled = True
+        control.storage = Storage()
+        control.mini_client = httpx.AsyncClient(transport=httpx.MockTransport(mini))
+        control._headers = lambda endpoint: {"X-ACH-Instance-Id": endpoint.instance_id}
+        endpoint = WorkspaceEndpoint(WorkspaceRef("ach", control.config.agent.uid, "a" * 64),
+                                     "workspace", "instance-id", "http://mini")
+        lifecycle = Lifecycle(control, alarm=lambda _reason: None)
+        await lifecycle.restore_workspace(endpoint)
+        await lifecycle.restore_workspace(endpoint)
+        with pytest.raises(RuntimeError, match="restore down"):
+            await lifecycle.restore_workspace(endpoint)
+        with pytest.raises(RuntimeError, match="storage rejected the save"):
+            await lifecycle.commit_workspace(endpoint)
+        await control.mini_client.aclose()
+        await lifecycle.close()
+
+    asyncio.run(scenario())
+    for key, value in before.items():
+        assert _storage_count(key[0], "workspace", key[1]) == value + 1, key

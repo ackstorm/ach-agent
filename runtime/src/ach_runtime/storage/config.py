@@ -9,8 +9,10 @@ is not startup wiring — later control assembly owns actually calling it.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any
 
 import boto3
+from botocore.config import Config
 
 from ach_runtime.config.schema import RuntimeConfig
 from ach_runtime.storage.api import StorageUnavailable
@@ -40,13 +42,15 @@ def storage_from_env(config: RuntimeConfig, env: Mapping[str, str]) -> S3Storage
     if not bucket:
         raise StorageUnavailable("ACH_STORAGE_S3_BUCKET is required when storage is enabled")
 
-    client_kwargs: dict[str, str] = {}
+    client_kwargs: dict[str, Any] = {}
     region = env.get("ACH_STORAGE_S3_REGION")
     if region:
         client_kwargs["region_name"] = region
     endpoint = env.get("ACH_STORAGE_S3_ENDPOINT_URL")
     if endpoint:
         client_kwargs["endpoint_url"] = endpoint
+        # In-cluster endpoints such as the storage server have no per-bucket DNS names.
+        client_kwargs["config"] = Config(s3={"addressing_style": "path"})
 
     client = boto3.client("s3", **client_kwargs)
     prefix = env.get("ACH_STORAGE_S3_PREFIX") or _DEFAULT_PREFIX

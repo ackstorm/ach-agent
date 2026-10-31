@@ -1,6 +1,6 @@
 # Storage server — design
 
-Status: draft, 2026-10-31. Conditional on the SeaweedFS spike (section 9).
+Status: draft, 2026-10-31. SeaweedFS spike passed with caveats (section 9): SeaweedFS 4.51 or newer.
 Next spec: `2026-10-31-durable-runs-design.md`, which depends on this one.
 
 ## 1. Goal
@@ -56,13 +56,18 @@ control pod ──S3 API (path-style, static key)──▶ ach-agent-storage (St
 - **StatefulSet `ach-agent-storage`**, one replica on one RWO volume, so two pods never share
   the cache. No PodDisruptionBudget that blocks drains: a drain moves it, and saves retry
   through the short outage (section 7).
-- **Init step** (idempotent): `remote.configure` the AWS bucket, `remote.mount` it at the
-  bucket path the runtime uses, with lazy metadata.
+- **Init step** (idempotent): `remote.configure -type=wasabi` with the AWS regional endpoint
+  and no keys (the `s3` type signs anonymously without static keys; `wasabi` uses the default
+  AWS chain, so Pod Identity), then `remote.mount -nonempty` of the bucket.
 - **`filer.remote.sync`** runs as a second container, writing local changes back to S3. It
-  resumes from its saved offset after a restart.
+  resumes from its saved offset after a graceful restart.
+- **Reconcile**: on every start, and every 10 minutes, `remote.copy.local` uploads any local
+  change the sync stream missed. A `kill -9` loses the change events of the last 1–2 minutes
+  (the data stays on the volume); the reconcile uploads it.
 - **Evictor**: a small loop container. Above a high watermark (default 80 % of the volume) it
-  runs `remote.uncache` on the least recently used paths until the low watermark (70 %),
-  never on a path whose latest change is not yet synced.
+  runs `remote.uncache` on the oldest paths first until the low watermark (70 %).
+  `remote.uncache` skips paths with unsynced changes (verified), and has no LRU or
+  target-size option of its own, so the loop picks the order.
 - **Service** `ach-agent-storage:8333`, reachable only from the namespace's control pods
   (Istio AuthorizationPolicy on the control ServiceAccount; sandboxes are denied).
 - **Credentials**
@@ -104,7 +109,8 @@ Small on purpose: the runtime keeps its S3 client.
 | Failure | Effect | Handling |
 |---|---|---|
 | Storage pod restarting or moving | Saves and restores fail for its duration. | Existing close retries (backoff to 30 s within `shutdownTimeoutSeconds`); a failed restore fails activation and the next message retries it. |
-| S3 unreachable | Saves keep being acknowledged; the backlog grows on the volume. | Alert `ACHAgentStorageSyncLagging` on sync lag age and backlog size. |
+| S3 unreachable | Saves keep being acknowledged, but each write of a new key waits about 30 s on the remote lookup (measured with a refused connection; a blackholed endpoint may be slower). The backlog grows on the volume. | Close retries absorb it; durable-run saves at SIGTERM may not fit the grace period during an outage. Alert `ACHAgentStorageSyncLagging`. |
+| Storage pod killed (`kill -9`) | The last 1–2 minutes of changes stay local but miss the sync stream. | The start-up reconcile uploads them. |
 | Volume lost | Acknowledged changes not yet in S3 are lost. | Bounded by the sync lag; the same alert. EBS volume loss is rare. |
 | Volume full | Writes fail once eviction cannot free space (all unsynced). | Alert at the high watermark; size the volume for the backlog of an S3 outage. |
 | Zone failure | The RWO EBS volume is pinned to one zone; the pod waits for it. | Accepted for v1; same exposure as today's single control pod per agent. |
@@ -113,35 +119,35 @@ Small on purpose: the runtime keeps its S3 client.
 
 - Runtime histograms (section 5).
 - SeaweedFS's own Prometheus metrics, scraped by a ServiceMonitor.
-- Sync lag and backlog: from `filer.remote.sync` if it exposes them (spike check 6), else a
-  probe in the evictor that compares the newest local change with the newest synced offset.
+- Sync lag: `SeaweedFS_filer_last_send_timestamp_of_subscribe{clientName="filer.remote.sync"}`
+  on the filer's metrics port. Backlog size: the evictor loop exports the count of
+  `remote.copy.local -dryRun` entries.
 - Alerts: `ACHAgentStorageSyncLagging`, `ACHAgentStorageDiskHigh`, `ACHAgentStorageDown`,
   each with a promtool test in `make chart-test`.
 
-## 9. Spike (gate for this design)
+## 9. Spike results (2026-10-31)
 
-Run in kind with the SeaweedFS image to be pinned, a second S3 endpoint standing in for AWS,
-and the runtime's own storage tests pointed at the storage server. Each check passes or the
-design falls back to section 10.
+Docker, SeaweedFS 4.51 (`chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8`),
+a second SeaweedFS standing in for AWS. 4.48 fails check 3: objects created through the
+storage server are never marked synced, so they can never be evicted.
 
-1. **Conditional writes through the mounted bucket**: `IfNoneMatch="*"` returns 412 on an
-   existing key, for a small object and for a multipart upload (> 8 MiB); `IfMatch` CAS on
-   `registry.json` succeeds with the current ETag and fails with a stale one, also after a
-   storage pod restart. The runtime's existing `tests/storage` suite passes against it.
-2. **Credentials**: the S3 replica is reached with the default AWS chain (Pod Identity, or
-   IRSA via `AWS_WEB_IDENTITY_TOKEN_FILE`), with no static AWS keys.
-3. **Eviction safety**: `remote.uncache` never drops a path with unsynced changes; with S3
-   unreachable, eviction frees nothing and writes still succeed until the disk is full.
-4. **Restart durability**: `kill -9` of both containers while an upload is pending; after
-   restart the object reaches S3 unchanged.
-5. **Layout**: keys written through the storage server appear in S3 under exactly the same
-   names; objects written to S3 before the switch are readable through it.
-6. **Sync lag**: a measurable signal for backlog age and size exists or can be derived.
-7. **Speed**: persist and restore of a 50 MiB and a 300 MiB snapshot, before and after.
+| # | Check | Result |
+|---|---|---|
+| 1 | Conditional writes (small, 20 MiB, multipart), CAS after restart, runtime `tests/storage` (222) | Pass |
+| 2 | Default AWS chain, no static keys | Pass with `-type=wasabi` (Pod Identity endpoint emulated); `-type=s3` goes anonymous |
+| 3 | Eviction never drops unsynced data; writes succeed with S3 down | Pass, but ~30 s per new-key write while S3 is down |
+| 4 | `kill -9` with uploads pending | Data kept; last 1–2 min of changes need `remote.copy.local` (in the design) |
+| 5 | Same key layout; existing objects readable; read-through after eviction | Pass; objects written to S3 directly after the mount need a metadata sync (not our case) |
+| 6 | Sync lag signal | Partial: last-send timestamp metric; backlog from `remote.copy.local -dryRun` |
+| 7 | Speed (local, relative) | Put 50 MiB on par, get on par; read-through after eviction 0.2 s (50 MiB) |
+
+Other findings: a remote endpoint resolving to a private IP (an S3 interface VPC endpoint) needs
+the three `*.allowUntrustedRemoteEndpoints` flags; `remote.copy.local` also uploads leftover
+parts of failed multipart uploads (an S3 lifecycle rule aborting incomplete uploads covers it).
 
 ## 10. Fallback: our own narrow service
 
-Only if the spike fails. A Python service in the runtime image implementing the existing
+Kept for reference; the spike passed. A Python service in the runtime image implementing the existing
 `Storage` protocol over HTTP:
 
 - Snapshots are immutable, so write-back is a queue of local files not yet uploaded; the
@@ -152,7 +158,6 @@ Only if the spike fails. A Python service in the runtime image implementing the 
 
 ## 11. Testing
 
-- Spike results recorded in this spec's follow-up plan.
 - e2e (kind): storage server in front of a stand-in S3; the existing sleep/wake and
   persistence scenarios pass unchanged; a storage pod restart during an idle close is
   retried and commits.

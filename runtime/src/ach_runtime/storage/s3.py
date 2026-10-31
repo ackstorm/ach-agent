@@ -98,7 +98,8 @@ class PreconditionFailed(Exception):
 
 
 def _error_code(exc: BaseException) -> str:
-    return getattr(exc, "response", {}).get("Error", {}).get("Code", "")
+    # botocore's ReadTimeoutError has `response = None`.
+    return (getattr(exc, "response", None) or {}).get("Error", {}).get("Code", "")
 
 
 def _is_not_found(exc: BaseException) -> bool:

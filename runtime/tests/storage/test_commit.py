@@ -255,6 +255,28 @@ async def test_s3_storage_classifies_supported_transient_backend_failures(monkey
     assert ref.snapshot_key("pfx", "transient") not in client.objects
 
 
+
+async def test_s3_storage_treats_a_read_timeout_as_transient(monkeypatch) -> None:
+    """botocore's ReadTimeoutError carries `response = None`: it must classify as transient,
+    not crash the precondition check."""
+    from botocore.exceptions import ReadTimeoutError
+
+    client = FakeS3Client()
+    storage = _storage(client)
+    ref = _ref()
+    lease = await storage.acquire_writer(ref, "pod-1")
+    original_put = client.put_object
+
+    def time_out_snapshot_upload(**kwargs):
+        if kwargs["Key"] == ref.snapshot_key("pfx", "timeout"):
+            raise ReadTimeoutError(endpoint_url="http://ach-agent-storage:8333")
+        return original_put(**kwargs)
+
+    monkeypatch.setattr(client, "put_object", time_out_snapshot_upload)
+    with pytest.raises(SnapshotTransientFailure) as failure:
+        await storage.persist(ref, "timeout", _bytes(b"data"), lease, None)
+    assert isinstance(failure.value.__cause__, ReadTimeoutError)
+
 async def test_historical_receipt_recovered_after_intervening_commit() -> None:
     """This is the exact round-2 fix: committing B, then retrying the OLDER A with
     `expected_base=None` (exactly as a client that lost A's original ack and never learned

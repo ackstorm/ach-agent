@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `runtime.storage.s3.region`, or `storage.enabled=false` to keep control pods on S3 directly. The bucket's
   Pod Identity association moves from the control ServiceAccount to `<namespace>/ach-agent-storage`.
 
+### Fixed
+
+- A read timeout from S3 (botocore `ReadTimeoutError`) is a transient failure that the close retries; it used
+  to fail the save with `AttributeError: 'NoneType' object has no attribute 'get'`.
+
 ## [0.2.1] - 2026-10-31
 
 ### Changed

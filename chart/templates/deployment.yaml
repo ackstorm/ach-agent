@@ -1,6 +1,11 @@
 {{- include "ach-agent.validate" . -}}
 {{- $s3 := .Values.runtime.storage.s3 -}}
 {{- $parent := .Values.route.parent -}}
+{{- $storage := eq (include "ach-agent.storage.active" .) "true" -}}
+{{- /* With gcs the control pods' S3 bucket is the storage server's bucket, named after the GCS bucket; the
+region only names the signing scope, which the storage server accepts for any region. */ -}}
+{{- $gcs := eq .Values.storage.remote.type "gcs" -}}
+{{- $gcsRemote := .Values.storage.remote.gcs -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -63,15 +68,15 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: ACH_AGENT_STORAGE_S3_BUCKET
-              value: {{ $s3.bucket | quote }}
+              value: {{ ternary $gcsRemote.bucket $s3.bucket $gcs | quote }}
             - name: ACH_AGENT_STORAGE_S3_REGION
-              value: {{ $s3.region | quote }}
+              value: {{ ternary "us-east-1" $s3.region $gcs | quote }}
             - name: ACH_AGENT_STORAGE_S3_ENDPOINT_URL
-              value: {{ $s3.endpointUrl | quote }}
+              value: {{ ternary "http://ach-agent-storage:8333" $s3.endpointUrl $storage | quote }}
             - name: ACH_AGENT_STORAGE_S3_PREFIX
-              value: {{ $s3.prefix | quote }}
+              value: {{ ternary $gcsRemote.prefix $s3.prefix $gcs | quote }}
             - name: ACH_AGENT_STORAGE_S3_CREDENTIALS_SECRET
-              value: {{ $s3.credentialsSecret | quote }}
+              value: {{ ternary "ach-agent-storage-s3" $s3.credentialsSecret $storage | quote }}
             - name: ACH_AGENT_ROUTE_PARENT_NAME
               value: {{ $parent.name | quote }}
             - name: ACH_AGENT_ROUTE_PARENT_NAMESPACE

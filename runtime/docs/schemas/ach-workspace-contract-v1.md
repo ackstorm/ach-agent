@@ -245,6 +245,8 @@ El perfil define imágenes y recursos separados para control y ejecución, image
 
 La implementación usa un contenedor Channels + Harness en el StatefulSet de control de una réplica por ACHAgent. Storage access is global, operator-configured infrastructure (D1): when persistence or artifacts are requested without a configured backend, the corresponding operations fail explicitly. This is not authority for a compulsory auth/Storage service when persistence and artifacts are disabled — no such service is required in that case.
 
+With the chart's storage server enabled, the Harness's S3 endpoint is the storage server of its namespace (`http://ach-agent-storage:8333`, path-style, a static key the chart generates). It is an S3 endpoint, not a new protocol, and it alone holds the AWS credentials; it replicates to the configured bucket in the background. A write it acknowledges counts as stored, and it evaluates `If-None-Match`/`If-Match` against its own state, so the registry CAS and fencing hold because every writer of the namespace goes through it. This reverses the "Harness owns the S3 client, no Storage broker" choice of D1 for that deployment; without the storage server the Harness talks to S3 directly as above.
+
 | Rol | Comando | Puertos |
 | --- | --- | --- |
 | Control | `python -m ach_runtime control --config /etc/ach-runtime/config.json` | 8080 Channels/health; 8081 HTTP(S) for Workspace control and facades (current Service endpoint, not a mandated TLS/CA channel). |

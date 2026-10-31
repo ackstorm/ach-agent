@@ -24,3 +24,27 @@ spec:
         - sourceLabels: [__meta_kubernetes_pod_label_ach_agent_ackstorm_ai_agent]
           targetLabel: agent
 {{- end }}
+{{- if and .Values.metrics.podMonitor.enabled (eq (include "ach-agent.storage.active" .) "true") }}
+---
+# Scrapes the storage server of every Agent namespace: SeaweedFS (metrics) and the reconcile gauges.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: ach-agent-storage
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ach-agent.labels" . | nindent 4 }}
+    {{- with .Values.metrics.podMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    matchNames:
+      {{- toYaml .Values.storage.namespaces | nindent 6 }}
+  selector:
+    matchLabels:
+      {{- include "ach-agent.storage.selectorLabels" . | nindent 6 }}
+  podMetricsEndpoints:
+    - {port: metrics, path: /metrics}
+    - {port: reconcile, path: /metrics}
+{{- end }}

@@ -5,6 +5,31 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- The control pod exports `ach_agent_storage_persist_seconds` and `ach_agent_storage_restore_seconds`
+  histograms, labelled `domain` (`workspace` | `session`) and `outcome` (`ok` | `error`, and `empty` for a
+  restore with nothing stored). A save includes the archive export and its retries; a restore includes
+  streaming the archive into the sandbox.
+- Storage server: with a bucket configured and `storage.enabled` (the default), the chart runs a SeaweedFS 4.51
+  storage server, `ach-agent-storage`, in each namespace of `storage.namespaces`. Control pods save to it and it
+  replicates to the bucket in the background, so a save no longer waits for the bucket. The bucket is AWS S3
+  (`storage.remote.type: s3`, `runtime.storage.s3.*`) or Google Cloud Storage (`gcs`,
+  `storage.remote.gcs.*`, Workload Identity or a key Secret). Only the storage server holds cloud credentials.
+  `make storage-smoke` checks a SeaweedFS version in docker against a stand-in S3 and a fake GCS. See
+  `docs/install.md`.
+- Storage server observability: with `metrics.podMonitor.enabled`, PodMonitor `ach-agent-storage`; alerts
+  `ACHAgentStorageDown` (needs kube-state-metrics), `ACHAgentStorageDiskHigh` and `ACHAgentStorageSyncLagging`.
+
+### Changed
+
+- The runtime uses path-style S3 addressing whenever `runtime.storage.s3.endpointUrl` is set.
+- **Breaking:** with a bucket configured, the chart requires `storage.namespaces` (the Agent namespaces) and
+  `runtime.storage.s3.region`, or `storage.enabled=false` to keep control pods on S3 directly. The bucket's
+  Pod Identity association moves from the control ServiceAccount to `<namespace>/ach-agent-storage`.
+
 ## [0.2.1] - 2026-10-31
 
 ### Changed

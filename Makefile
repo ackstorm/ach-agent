@@ -2,7 +2,7 @@ VERSION ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' runtime/pyproject.toml)
 PY ?= runtime/.venv/bin/python
 PROMTOOL_IMAGE ?= prom/prometheus:v3.5.0
 
-.PHONY: chart-sync chart-test release-check release-bump e2e-up e2e-down e2e-run e2e
+.PHONY: chart-sync chart-test storage-smoke release-check release-bump e2e-up e2e-down e2e-run e2e
 
 chart-sync: ## copy CRDs and render the ClusterRole from operator/config
 	$(PY) hack/chart-sync.py
@@ -12,6 +12,10 @@ chart-test: chart-sync ## lint and render-test the chart; fails on drift in char
 	helm lint chart --set openshell.gateway=http://x:8080
 	PATH="$(CURDIR)/runtime/.venv/bin:$$PATH" bash chart/tests/render_test.sh
 	docker run --rm --entrypoint promtool -v "$(CURDIR)/chart:/chart:ro" -w /chart/tests $(PROMTOOL_IMAGE) test rules alerts.test.yaml
+
+storage-smoke: ## run the storage server's containers against a stand-in S3 and a fake GCS in docker (before changing storage.image)
+	bash chart/tests/storage_smoke.sh s3
+	bash chart/tests/storage_smoke.sh gcs
 
 e2e-up: ## create the ach-agent-e2e kind cluster and deploy everything
 	test/e2e/cluster.sh up

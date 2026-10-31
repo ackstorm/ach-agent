@@ -46,3 +46,31 @@ metrics:
     enabled: false
     labels: {grafana_dashboard: "1"}
     annotations: {}
+
+storage:
+  # One storage server per Agent namespace in front of a real bucket: control pods save to it and it
+  # replicates to the bucket in the background. Runs when enabled and the selected remote has a bucket;
+  # then namespaces (the Agent namespaces) are required.
+  enabled: true
+  namespaces: []
+  remote:
+    # s3: runtime.storage.s3.{bucket,region,endpointUrl,prefix}; credentials from Pod Identity on the
+    # ServiceAccount ach-agent-storage, or runtime.storage.s3.credentialsSecret. region is required.
+    # gcs: the bucket below, reachable only through the storage server; credentials from Workload Identity
+    # (serviceAccount.annotations) or credentialsSecret, a Secret with the key credentials.json.
+    type: s3
+    gcs: {bucket: "", project: "", prefix: ach, credentialsSecret: ""}
+  serviceAccount:
+    # For example iam.gke.io/gcp-service-account for GKE Workload Identity.
+    annotations: {}
+  # SeaweedFS 4.51 or newer: 4.48 never marks objects written through the server as replicated. Run
+  # make storage-smoke before changing it.
+  image: chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8
+  # The volume holds a cache of the bucket plus whatever S3 does not have yet.
+  size: 50Gi
+  storageClass: ""
+  # Disk usage above which data already in S3 is dropped from the volume, oldest first.
+  evictThreshold: 0.8
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 1Gi}

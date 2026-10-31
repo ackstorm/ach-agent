@@ -1,0 +1,242 @@
+{{- if eq (include "ach-agent.storage.active" .) "true" }}
+{{- $s3 := .Values.runtime.storage.s3 }}
+{{- $st := .Values.storage }}
+{{- $remote := $st.remote }}
+{{- $gcs := eq $remote.type "gcs" }}
+{{- $gcsKey := and $gcs $remote.gcs.credentialsSecret }}
+{{- $scripts := dict "reconcile.sh" (.Files.Get "files/storage/reconcile.sh") "sync.sh" (.Files.Get "files/storage/sync.sh") "metrics.sh" (.Files.Get "files/storage/metrics.sh") }}
+{{- $env := list (dict "name" "HOME" "value" "/tmp") (dict "name" "BUCKET" "value" (include "ach-agent.storage.bucket" .)) (dict "name" "REMOTE_TYPE" "value" $remote.type) (dict "name" "RECONCILE_INTERVAL" "value" "600") }}
+{{- if $gcs }}
+{{- $env = concat $env (list (dict "name" "GCS_PROJECT" "value" $remote.gcs.project) (dict "name" "GOOGLE_CLOUD_PROJECT" "value" $remote.gcs.project)) }}
+{{- if $gcsKey }}
+{{- $env = append $env (dict "name" "GOOGLE_APPLICATION_CREDENTIALS" "value" "/etc/gcs/credentials.json") }}
+{{- end }}
+{{- else }}
+{{- $endpoint := $s3.endpointUrl | default (printf "https://s3.%s.amazonaws.com" $s3.region) }}
+{{- $env = concat $env (list (dict "name" "AWS_REGION" "value" $s3.region) (dict "name" "REMOTE_ENDPOINT" "value" $endpoint)) }}
+{{- with $s3.credentialsSecret }}
+{{- $env = concat $env (list (dict "name" "AWS_ACCESS_KEY_ID" "valueFrom" (dict "secretKeyRef" (dict "name" . "key" "AWS_ACCESS_KEY_ID"))) (dict "name" "AWS_SECRET_ACCESS_KEY" "valueFrom" (dict "secretKeyRef" (dict "name" . "key" "AWS_SECRET_ACCESS_KEY"))) (dict "name" "AWS_SESSION_TOKEN" "valueFrom" (dict "secretKeyRef" (dict "name" . "key" "AWS_SESSION_TOKEN" "optional" true)))) }}
+{{- end }}
+{{- end }}
+{{- $containerSecurity := dict "allowPrivilegeEscalation" false "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL")) }}
+{{- range $ns := $st.namespaces }}
+{{- /* The control pods' S3 key: generated once per namespace, kept across upgrades. */}}
+{{- $old := lookup "v1" "Secret" $ns "ach-agent-storage-s3" }}
+{{- $ak := randAlphaNum 20 }}
+{{- $sk := randAlphaNum 40 }}
+{{- if $old }}
+{{- $ak = index $old.data "AWS_ACCESS_KEY_ID" | b64dec }}
+{{- $sk = index $old.data "AWS_SECRET_ACCESS_KEY" | b64dec }}
+{{- end }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ach-agent-storage-s3
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ach-agent.storage.labels" $ | nindent 4 }}
+type: Opaque
+data:
+  AWS_ACCESS_KEY_ID: {{ $ak | b64enc }}
+  AWS_SECRET_ACCESS_KEY: {{ $sk | b64enc }}
+  identities.json: {{ dict "identities" (list (dict "name" "control" "credentials" (list (dict "accessKey" $ak "secretKey" $sk)) "actions" (list "Read" "Write" "List" "Tagging"))) | toJson | b64enc }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ach-agent-storage-scripts
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ach-agent.storage.labels" $ | nindent 4 }}
+data:
+  {{- toYaml $scripts | nindent 2 }}
+---
+# The bucket's cloud identity binds to this ServiceAccount: EKS Pod Identity, or GKE Workload
+# Identity through storage.serviceAccount.annotations.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ach-agent-storage
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ach-agent.storage.labels" $ | nindent 4 }}
+  {{- with $st.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ach-agent-storage
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ach-agent.storage.labels" $ | nindent 4 }}
+spec:
+  selector:
+    {{- include "ach-agent.storage.selectorLabels" $ | nindent 4 }}
+  ports:
+    - {name: s3, port: 8333, targetPort: s3}
+---
+# One replica on one RWO volume: two pods never share the cache. No PodDisruptionBudget, so a
+# drain moves it; saves retry through the short outage.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ach-agent-storage
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ach-agent.storage.labels" $ | nindent 4 }}
+spec:
+  replicas: 1
+  serviceName: ach-agent-storage
+  selector:
+    matchLabels:
+      {{- include "ach-agent.storage.selectorLabels" $ | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ach-agent.storage.selectorLabels" $ | nindent 8 }}
+      annotations:
+        checksum/scripts: {{ toJson $scripts | sha256sum }}
+        checksum/s3-key: {{ $ak | sha256sum }}
+    spec:
+      serviceAccountName: ach-agent-storage
+      # SIGTERM lets filer.remote.sync save its offset; a kill is covered by the reconcile loop.
+      terminationGracePeriodSeconds: 60
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        # Shared /tmp: the server's unix sockets, the mount marker and the reconcile gauges.
+        - {name: tmp, emptyDir: {}}
+        - {name: scripts, configMap: {name: ach-agent-storage-scripts, defaultMode: 0555}}
+        - name: identities
+          secret:
+            secretName: ach-agent-storage-s3
+            items: [{key: identities.json, path: identities.json}]
+        {{- if $gcsKey }}
+        - name: gcs-credentials
+          secret:
+            secretName: {{ $remote.gcs.credentialsSecret }}
+            items: [{key: credentials.json, path: credentials.json}]
+        {{- end }}
+      containers:
+        - name: server
+          image: {{ $st.image }}
+          command: [/usr/bin/weed]
+          args:
+            - -logtostderr=true
+            - server
+            - -dir=/data
+            - -filer
+            - -s3
+            - -s3.config=/etc/seaweedfs/identities.json
+            # All ports bind to every interface: bound to loopback, the volume server also dials S3
+            # from loopback and read-through fails. The AuthorizationPolicy admits S3 and metrics only.
+            - -ip=127.0.0.1
+            - -ip.bind=0.0.0.0
+            - -metricsPort=9327
+            - -volume.max=0
+            - -master.volumeSizeLimitMB=256
+            - -filer.remoteCacheEvictThreshold={{ $st.evictThreshold }}
+            # The remote endpoint is set only by this chart; an S3 VPC endpoint or an in-cluster S3
+            # resolves to private addresses, which SeaweedFS rejects without these. GCS ignores them.
+            - -volume.allowUntrustedRemoteEndpoints
+            - -filer.allowUntrustedRemoteEndpoints
+            - -s3.allowUntrustedRemoteEndpoints
+          env:
+            {{- toYaml $env | nindent 12 }}
+          ports:
+            - {name: s3, containerPort: 8333}
+            - {name: metrics, containerPort: 9327}
+          readinessProbe:
+            tcpSocket: {port: s3}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+            - {name: identities, mountPath: /etc/seaweedfs, readOnly: true}
+            {{- if $gcsKey }}
+            - {name: gcs-credentials, mountPath: /etc/gcs, readOnly: true}
+            {{- end }}
+          securityContext:
+            {{- toYaml $containerSecurity | nindent 12 }}
+          resources:
+            {{- toYaml $st.resources | nindent 12 }}
+        - name: sync
+          image: {{ $st.image }}
+          command: [/bin/sh, /scripts/sync.sh]
+          env:
+            {{- toYaml $env | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: scripts, mountPath: /scripts, readOnly: true}
+            {{- if $gcsKey }}
+            - {name: gcs-credentials, mountPath: /etc/gcs, readOnly: true}
+            {{- end }}
+          securityContext:
+            {{- toYaml $containerSecurity | nindent 12 }}
+        - name: reconcile
+          image: {{ $st.image }}
+          command: [/bin/sh, /scripts/reconcile.sh]
+          env:
+            {{- toYaml $env | nindent 12 }}
+          ports:
+            - {name: reconcile, containerPort: 9328}
+          # The Service gets the pod only once the bucket is mounted.
+          readinessProbe:
+            exec: {command: [sh, -c, "test -f /tmp/mounted"]}
+            periodSeconds: 5
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: scripts, mountPath: /scripts, readOnly: true}
+            {{- if $gcsKey }}
+            - {name: gcs-credentials, mountPath: /etc/gcs, readOnly: true}
+            {{- end }}
+          securityContext:
+            {{- toYaml $containerSecurity | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with $st.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $st.size }}
+---
+# Control pods (ServiceAccounts ach-agent-control*) may use S3; sandboxes run elsewhere and are
+# denied. Metrics are open to the scraper.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: ach-agent-storage
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ach-agent.storage.labels" $ | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "ach-agent.storage.selectorLabels" $ | nindent 6 }}
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals: ["cluster.local/ns/{{ $ns }}/sa/ach-agent-control*"]
+      to:
+        - operation: {ports: ["8333"]}
+    - to:
+        - operation: {ports: ["9327", "9328"]}
+{{- end }}
+{{- end }}

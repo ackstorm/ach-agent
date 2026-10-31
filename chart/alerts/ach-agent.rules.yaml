@@ -106,3 +106,54 @@ groups:
           {{ $value | printf "%.0f" }}s left on its exchanged ACH credential (negative means
           expired and the agent is not ready). See ach_agent_key_refresh_failures_total and the
           control pod log for ACH's error code.
+- name: ach-agent-storage
+  interval: 30s
+  rules:
+    # Ready replicas come from kube-state-metrics: a pod that does not exist has no scrape target.
+    - alert: ACHAgentStorageDown
+      expr: |
+        max by (namespace) (kube_statefulset_status_replicas_ready{statefulset="ach-agent-storage"}) < 1
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: ACH agent storage server is down in namespace {{ $labels.namespace }}
+        description: >-
+          The storage server ach-agent-storage in namespace {{ $labels.namespace }} has had no
+          ready pod for 5 minutes. Workspace and session saves and restores in that namespace
+          fail until it is back.
+    # The server evicts data already in S3 above storage.evictThreshold (default 0.8); usage that
+    # stays above 0.85 is data S3 does not have yet.
+    - alert: ACHAgentStorageDiskHigh
+      expr: |
+        max by (namespace, pod) (
+          SeaweedFS_volumeServer_resource{type="used", pod=~"ach-agent-storage-.*"}
+          / ignoring (type)
+          SeaweedFS_volumeServer_resource{type="all", pod=~"ach-agent-storage-.*"}
+        ) > 0.85
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: ACH agent storage volume is {{ $value | humanizePercentage }} full in namespace {{ $labels.namespace }}
+        description: >-
+          The storage server in namespace {{ $labels.namespace }} cannot evict below
+          storage.evictThreshold, so most of its volume holds data S3 does not have yet. Check S3
+          reachability and the sync container; grow the volume if the backlog is legitimate.
+    # The reconcile loop compares with S3 every 10 minutes: unsynced files are older than 5
+    # minutes and missing from S3; the timestamp stops while S3 cannot be listed.
+    - alert: ACHAgentStorageSyncLagging
+      expr: |
+        max by (namespace) (ach_agent_storage_unsynced_files) > 0
+        or
+        max by (namespace) (time() - ach_agent_storage_reconcile_ok_timestamp_seconds) > 1800
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: ACH agent storage in namespace {{ $labels.namespace }} is not keeping S3 up to date
+        description: >-
+          The storage server in namespace {{ $labels.namespace }} holds files S3 does not have, or
+          has not been able to compare with S3, for over 15 minutes. Saves still succeed, but
+          losing its volume would lose them. Check S3 reachability, the bucket credentials and the
+          sync and reconcile containers.

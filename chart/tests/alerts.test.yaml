@@ -331,3 +331,94 @@ tests:
             exp_annotations:
               summary: ACH agent stuck cannot refresh its ACH credential
               description: Agent stuck in namespace ns has -300s left on its exchanged ACH credential (negative means expired and the agent is not ready). See ach_agent_key_refresh_failures_total and the control pod log for ACH's error code.
+
+  - name: storage server down fires after five minutes without a ready replica
+    interval: 30s
+    input_series:
+      - series: 'kube_statefulset_status_replicas_ready{namespace="ach-agent", statefulset="ach-agent-storage"}'
+        values: '0x20'
+      - series: 'kube_statefulset_status_replicas_ready{namespace="team-b", statefulset="ach-agent-storage"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: ACHAgentStorageDown
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: ACHAgentStorageDown
+        exp_alerts:
+          - exp_labels:
+              namespace: ach-agent
+              severity: critical
+            exp_annotations:
+              summary: ACH agent storage server is down in namespace ach-agent
+              description: The storage server ach-agent-storage in namespace ach-agent has had no ready pod for 5 minutes. Workspace and session saves and restores in that namespace fail until it is back.
+
+  - name: storage disk high fires when usage stays above 85 percent
+    interval: 30s
+    input_series:
+      - series: 'SeaweedFS_volumeServer_resource{namespace="ach-agent", pod="ach-agent-storage-0", name="/data", type="used"}'
+        values: '90x40'
+      - series: 'SeaweedFS_volumeServer_resource{namespace="ach-agent", pod="ach-agent-storage-0", name="/data", type="all"}'
+        values: '100x40'
+      - series: 'SeaweedFS_volumeServer_resource{namespace="team-b", pod="ach-agent-storage-0", name="/data", type="used"}'
+        values: '50x40'
+      - series: 'SeaweedFS_volumeServer_resource{namespace="team-b", pod="ach-agent-storage-0", name="/data", type="all"}'
+        values: '100x40'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: ACHAgentStorageDiskHigh
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: ACHAgentStorageDiskHigh
+        exp_alerts:
+          - exp_labels:
+              namespace: ach-agent
+              pod: ach-agent-storage-0
+              severity: warning
+            exp_annotations:
+              summary: ACH agent storage volume is 90% full in namespace ach-agent
+              description: The storage server in namespace ach-agent cannot evict below storage.evictThreshold, so most of its volume holds data S3 does not have yet. Check S3 reachability and the sync container; grow the volume if the backlog is legitimate.
+
+  - name: storage sync lag fires on old unsynced files or a stale reconcile
+    interval: 30s
+    input_series:
+      - series: 'ach_agent_storage_unsynced_files{namespace="ach-agent", pod="ach-agent-storage-0"}'
+        values: '3x100'
+      - series: 'ach_agent_storage_reconcile_ok_timestamp_seconds{namespace="ach-agent", pod="ach-agent-storage-0"}'
+        values: '0+30x100'
+      - series: 'ach_agent_storage_unsynced_files{namespace="team-b", pod="ach-agent-storage-0"}'
+        values: '0x100'
+      - series: 'ach_agent_storage_reconcile_ok_timestamp_seconds{namespace="team-b", pod="ach-agent-storage-0"}'
+        values: '0x100'
+      - series: 'ach_agent_storage_unsynced_files{namespace="team-c", pod="ach-agent-storage-0"}'
+        values: '0x100'
+      - series: 'ach_agent_storage_reconcile_ok_timestamp_seconds{namespace="team-c", pod="ach-agent-storage-0"}'
+        values: '0+30x100'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: ACHAgentStorageSyncLagging
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: ACHAgentStorageSyncLagging
+        exp_alerts:
+          - exp_labels:
+              namespace: ach-agent
+              severity: warning
+            exp_annotations:
+              summary: ACH agent storage in namespace ach-agent is not keeping S3 up to date
+              description: The storage server in namespace ach-agent holds files S3 does not have, or has not been able to compare with S3, for over 15 minutes. Saves still succeed, but losing its volume would lose them. Check S3 reachability, the bucket credentials and the sync and reconcile containers.
+      - eval_time: 46m
+        alertname: ACHAgentStorageSyncLagging
+        exp_alerts:
+          - exp_labels:
+              namespace: ach-agent
+              severity: warning
+            exp_annotations:
+              summary: ACH agent storage in namespace ach-agent is not keeping S3 up to date
+              description: The storage server in namespace ach-agent holds files S3 does not have, or has not been able to compare with S3, for over 15 minutes. Saves still succeed, but losing its volume would lose them. Check S3 reachability, the bucket credentials and the sync and reconcile containers.
+          - exp_labels:
+              namespace: team-b
+              severity: warning
+            exp_annotations:
+              summary: ACH agent storage in namespace team-b is not keeping S3 up to date
+              description: The storage server in namespace team-b holds files S3 does not have, or has not been able to compare with S3, for over 15 minutes. Saves still succeed, but losing its volume would lose them. Check S3 reachability, the bucket credentials and the sync and reconcile containers.

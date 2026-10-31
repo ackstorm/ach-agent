@@ -61,14 +61,69 @@ The chart refuses to render unless `openshell.gateway` is set and `openshell.mes
 It also installs a ValidatingAdmissionPolicy that limits the operator to Opaque Secrets named
 `ach-agent-key-*` (`admissionPolicy.enabled=false` disables it).
 
+### Storage server
+
+With a bucket configured and `storage.enabled` (the default), the chart runs one storage server,
+`ach-agent-storage` (SeaweedFS), in every namespace listed in `storage.namespaces`. Control pods in that
+namespace save and restore workspaces and sessions through it; it keeps them on its volume and
+replicates them to a real bucket in the background: AWS S3 (`storage.remote.type: s3`, the default) or
+Google Cloud Storage (`gcs`). A save is done once the storage server has it.
+
+```bash
+helm upgrade --install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --version <version> \
+  -n ach-agent-system \
+  --set openshell.gateway=http://openshell.openshell.svc.cluster.local:8080 \
+  --set runtime.storage.s3.bucket=<bucket> --set runtime.storage.s3.region=<region> \
+  --set 'storage.namespaces={ach-agent}'
+```
+
+| Value | Default | Notes |
+|-------|---------|-------|
+| `storage.enabled` | `true` | `false` keeps control pods on S3 directly, with their own credentials. |
+| `storage.namespaces` | `[]` | The Agent namespaces; required when a bucket is set. An Agent elsewhere with persistence or artifacts enabled waits for the Secret `ach-agent-storage-s3`. |
+| `storage.remote.type` | `s3` | `s3` replicates to `runtime.storage.s3.bucket`; `gcs` to `storage.remote.gcs.bucket`. |
+| `storage.remote.gcs.{bucket,project,prefix,credentialsSecret}` | `prefix: ach` | GCS only; `project` is required. `credentialsSecret` names an existing Secret with the key `credentials.json` (a service account key); leave it empty for Workload Identity. |
+| `storage.serviceAccount.annotations` | `{}` | Annotations on the ServiceAccount `ach-agent-storage`, for example `iam.gke.io/gcp-service-account` for GKE Workload Identity. |
+| `storage.size`, `storage.storageClass` | `50Gi`, cluster default | A cache of the bucket plus what S3 does not have yet: size it for the backlog of an S3 outage. A StatefulSet cannot resize its claim; grow the PVC by hand. |
+| `storage.evictThreshold` | `0.8` | Above this disk usage the server drops data already in S3, oldest first; a later read fetches it again. Data not yet in S3 is never dropped. |
+| `storage.image` | SeaweedFS 4.51, pinned by digest | 4.51 or newer: 4.48 never marks objects written through the server as replicated, so it never evicts them. Run `make storage-smoke` before changing it. |
+
+- **S3.** The storage server replicates to `runtime.storage.s3.bucket` in `region`, at `endpointUrl`
+  (default `https://s3.<region>.amazonaws.com`). It is the only component with AWS credentials, from the
+  default AWS chain: on EKS, one Pod Identity association per namespace for the ServiceAccount
+  `ach-agent-storage`, with the bucket policy the control ServiceAccount had; remove the association on the
+  control ServiceAccount after the switch. `runtime.storage.s3.credentialsSecret` instead names a Secret
+  with `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (optionally `AWS_SESSION_TOKEN`) in each listed
+  namespace.
+- **GCS.** With `storage.remote.type=gcs` the storage server replicates to `storage.remote.gcs.bucket`
+  with Application Default Credentials: on GKE, Workload Identity, binding a Google service account with
+  access to the bucket to `<namespace>/ach-agent-storage` and setting
+  `storage.serviceAccount.annotations."iam.gke.io/gcp-service-account"`; elsewhere, the key Secret in
+  `storage.remote.gcs.credentialsSecret`. Control pods still speak S3 to the storage server, which names
+  its bucket after the GCS bucket and keeps the same keys under `prefix`, so GCS needs the storage server
+  (`storage.enabled=false` with `gcs` does not render).
+- **Control pods.** The operator points them at `http://ach-agent-storage:8333` with the S3 key the chart
+  generates into the Secret `ach-agent-storage-s3`. Helm `lookup` keeps the key across upgrades, so install
+  with `helm` or Flux, not through a `helm template` pipeline. An Istio AuthorizationPolicy admits only
+  ServiceAccounts named `ach-agent-control*` to port 8333 (the default per-Agent name and the usual profile
+  name); an Agent whose profile sets another `control.serviceAccountName` cannot reach it.
+- **Existing data.** Objects already in the bucket stay readable. The first start reads the bucket's
+  object list, which takes a while for a large bucket.
+- **Failures.** While the storage pod restarts, saves retry within `workspace.shutdownTimeoutSeconds` and
+  a failed restore is retried by the next message. While S3 is unreachable, saves still succeed but each
+  new object waits on S3 (about 30 s when the connection is refused, about 90 s when the endpoint does not
+  resolve) and the backlog grows on the volume. A killed pod's last minute or two of changes reach S3
+  through the reconcile loop, which runs at start and every 10 minutes. Losing the volume loses what S3
+  does not have yet.
+
 ### Observability (optional)
 
 Each block under `metrics` is off by default so the chart renders without the Prometheus Operator.
 
 | Value | Renders | Notes |
 |-------|---------|-------|
-| `metrics.podMonitor.enabled` | PodMonitor `ach-agent-control` | Scrapes `:http/metrics` of every Agent control pod in any namespace and sets the `agent` label from the pod label `ach-agent.ackstorm.ai/agent`. `labels` adds labels to the PodMonitor. |
-| `metrics.prometheusRule.enabled` | PrometheusRule `ach-agent` | Six alerts on `ach_agent_anomalies_total`, `ach_agent_runs_total` and the exchanged ACH credential (`ACHAgentKeyRefreshFailing`). `labels` must match the Prometheus `ruleSelector`. |
+| `metrics.podMonitor.enabled` | PodMonitor `ach-agent-control`, and `ach-agent-storage` when the storage server runs | `ach-agent-control` scrapes `:http/metrics` of every Agent control pod in any namespace and sets the `agent` label from the pod label `ach-agent.ackstorm.ai/agent`. `ach-agent-storage` scrapes SeaweedFS (`:metrics`) and the reconcile gauges (`:reconcile`) in `storage.namespaces`. `labels` adds labels to both. |
+| `metrics.prometheusRule.enabled` | PrometheusRule `ach-agent` | Nine alerts: six on `ach_agent_anomalies_total`, `ach_agent_runs_total` and the exchanged ACH credential (`ACHAgentKeyRefreshFailing`), and three on the storage server (`ACHAgentStorageDown`, which needs kube-state-metrics, `ACHAgentStorageDiskHigh`, `ACHAgentStorageSyncLagging`). `labels` must match the Prometheus `ruleSelector`. |
 | `metrics.dashboards.enabled` | One ConfigMap per dashboard (Agents, Agent Detail, FinOps) | `labels` must match the Grafana sidecar label (default `grafana_dashboard: "1"`). `annotations` choose the folder, for example `--set-string 'metrics.dashboards.annotations.grafana_folder=100 - Application - ACH Agents'`; the sidecar needs `folderAnnotation=grafana_folder` and `provider.foldersFromFilesStructure=true` to honour it. |
 
 The sidecar must watch the release namespace. The dashboards list agents from `ach_agent_info`, which

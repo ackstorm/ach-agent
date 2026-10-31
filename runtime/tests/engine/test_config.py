@@ -41,6 +41,7 @@ def test_build_env_disables_project_config_and_models_fetch(tmp_path: Path) -> N
     env = build_env(home=tmp_path / "h", scratch=tmp_path / "s", approved_env={}, password="x")
     assert env["OPENCODE_DISABLE_PROJECT_CONFIG"] == "1"
     assert env["OPENCODE_DISABLE_MODELS_FETCH"] == "1"
+    assert env["OPENCODE_DISABLE_AUTOUPDATE"] == "1"
     assert env["OPENCODE_SERVER_PASSWORD"] == "x"
 
 

@@ -52,6 +52,8 @@ def build_env(*, home: Path, scratch: Path, approved_env: dict[str, str], passwo
     env["OPENCODE_SERVER_PASSWORD"] = password
     env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "1"
     env["OPENCODE_DISABLE_MODELS_FETCH"] = "1"
+    # The sandbox allows egress only to the facades: an update check is a denied connect.
+    env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
     return env
 
 

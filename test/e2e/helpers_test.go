@@ -356,3 +356,49 @@ type loadSummary struct {
 	StreamError string   `json:"stream_error"`
 	Errors      []string `json:"errors"`
 }
+
+// storageCount reads ach_agent_storage_<op>_seconds_count{domain, outcome} from an Agent's control
+// pod through its -http Service; -1 when the pod cannot be reached.
+func storageCount(t *testing.T, agent, op, domain, outcome string) float64 {
+	t.Helper()
+	out, err := stubExec(t, fmt.Sprintf(
+		"import urllib.request as u;print(u.urlopen('http://agent-%s-http.%s.svc.cluster.local:8080/metrics',timeout=10).read().decode())",
+		agent, agentNS))
+	if err != nil {
+		return -1
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "ach_agent_storage_"+op+"_seconds_count{") &&
+			strings.Contains(line, `domain="`+domain+`"`) && strings.Contains(line, `outcome="`+outcome+`"`) {
+			var v float64
+			fmt.Sscanf(line[strings.LastIndex(line, " ")+1:], "%g", &v)
+			return v
+		}
+	}
+	return 0
+}
+
+// standinLs lists one directory of the stand-in S3's filer ("" when it does not exist).
+func standinLs(path string) string {
+	out, err := kubectl("", "-n", "ach-agent-e2e-s3", "exec", "deploy/s3-standin", "--", "sh", "-c",
+		"printf 'fs.ls "+path+"\\n' | weed shell -master=127.0.0.1:9333")
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
+// standinRegistries counts the Workspace registry.json objects of one Agent in the stand-in S3.
+func standinRegistries(t *testing.T, uid string) int {
+	t.Helper()
+	base := "/buckets/ach-e2e/ach/" + agentNS + "/" + uid
+	n := 0
+	for _, ws := range strings.Fields(standinLs(base)) {
+		for _, name := range strings.Fields(standinLs(base + "/" + ws)) {
+			if name == "registry.json" {
+				n++
+			}
+		}
+	}
+	return n
+}

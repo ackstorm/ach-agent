@@ -98,12 +98,23 @@ deploy() {
   k -n "$AGENT_NS" create secret tls e2e-stub-tls --cert "$TLS_DIR/tls.crt" --key "$TLS_DIR/tls.key" \
     --dry-run=client -o yaml | k apply -f -
   k apply -f "$HERE/stub.yaml"
+  k apply -f "$HERE/s3-standin.yaml"
+  k -n ach-agent-e2e-s3 rollout status deploy/s3-standin --timeout=180s
+  k -n ach-agent-e2e-s3 exec deploy/s3-standin -- sh -c \
+    'printf "s3.bucket.list\n" | weed shell -master=127.0.0.1:9333 | grep -qw ach-e2e ||
+     printf "s3.bucket.create -name ach-e2e\n" | weed shell -master=127.0.0.1:9333'
+  k -n "$AGENT_NS" create secret generic e2e-s3 --from-literal=AWS_ACCESS_KEY_ID=e2e-s3 \
+    --from-literal=AWS_SECRET_ACCESS_KEY=e2e-s3-secret --dry-run=client -o yaml | k apply -f -
   # helm never updates CRDs of an installed release.
   k apply --server-side --force-conflicts -f "$ROOT/chart/crds"
   h upgrade --install ach-agent "$ROOT/chart" -n ach-agent-system \
     --set image.operator=ach-agent-operator --set image.tag=e2e \
     --set openshell.gateway=http://openshell.openshell.svc.cluster.local:8080 \
     --set openshell.workspace=ach-agent \
+    --set runtime.storage.s3.bucket=ach-e2e --set runtime.storage.s3.region=us-east-1 \
+    --set runtime.storage.s3.endpointUrl=http://s3-standin.ach-agent-e2e-s3.svc.cluster.local:8333 \
+    --set runtime.storage.s3.credentialsSecret=e2e-s3 \
+    --set "storage.namespaces={$AGENT_NS}" --set storage.size=2Gi \
     --wait --timeout 6m
   # The :e2e tag does not change, so helm leaves a running operator on its old image.
   k -n ach-agent-system rollout restart deploy/ach-agent-operator

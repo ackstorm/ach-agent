@@ -1,0 +1,49 @@
+# Stands in for AWS S3 behind the storage server: a plain SeaweedFS S3 with one static identity.
+apiVersion: v1
+kind: Namespace
+metadata: {name: ach-agent-e2e-s3}
+---
+apiVersion: v1
+kind: Secret
+metadata: {name: s3-standin, namespace: ach-agent-e2e-s3}
+stringData:
+  identities.json: '{"identities":[{"name":"storage","credentials":[{"accessKey":"e2e-s3","secretKey":"e2e-s3-secret"}],"actions":["Admin","Read","Write","List","Tagging"]}]}'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: s3-standin, namespace: ach-agent-e2e-s3}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: s3-standin}}
+  template:
+    metadata: {labels: {app: s3-standin}}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000}
+      volumes:
+        - {name: data, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+        - {name: identities, secret: {secretName: s3-standin}}
+      containers:
+        - name: s3
+          image: chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8
+          command: [/usr/bin/weed]
+          args: [-logtostderr=true, server, -dir=/data, -s3, -s3.config=/etc/seaweedfs/identities.json,
+                 -ip=127.0.0.1, -ip.bind=0.0.0.0, -volume.max=0, -master.volumeSizeLimitMB=64]
+          env: [{name: HOME, value: /tmp}]
+          ports: [{name: s3, containerPort: 8333}]
+          readinessProbe: {tcpSocket: {port: s3}}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+            - {name: identities, mountPath: /etc/seaweedfs, readOnly: true}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: s3-standin, namespace: ach-agent-e2e-s3}
+spec:
+  selector: {app: s3-standin}
+  ports: [{name: s3, port: 8333, targetPort: s3}]

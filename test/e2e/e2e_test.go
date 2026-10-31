@@ -195,6 +195,49 @@ func TestE2E(t *testing.T) {
 		})
 	})
 
+	t.Run("storage-persistence", func(t *testing.T) {
+		const name = "persist"
+		clearStub(t)
+		apply(t, "fixtures/persist-agent.yaml", map[string]string{"NAME": name})
+		t.Cleanup(func() { kubectl("", "-n", agentNS, "delete", "agent", name, "--wait=false") })
+		waitCond(t, name, "Ready", "True", 5*time.Minute)
+		postAccepted(t, name, 2*time.Minute)
+		waitChat(t, 8090, 4*time.Minute)
+		uid := agentUID(t, name)
+
+		// The session's idle close (60 s after its turn) starts while the storage server is down.
+		mustKubectl(t, "", "-n", agentNS, "scale", "statefulset/ach-agent-storage", "--replicas=0")
+		until(t, 2*time.Minute, "the storage pod did not terminate", nil, func() bool {
+			_, err := kubectl("", "-n", agentNS, "get", "pod", "ach-agent-storage-0")
+			return err != nil
+		})
+		time.Sleep(90 * time.Second)
+		if n := storageCount(t, name, "persist", "session", "ok"); n > 0 {
+			t.Fatalf("a session save committed while the storage server was down (count %v)", n)
+		}
+		mustKubectl(t, "", "-n", agentNS, "scale", "statefulset/ach-agent-storage", "--replicas=1")
+		mustKubectl(t, "", "-n", agentNS, "rollout", "status", "statefulset/ach-agent-storage", "--timeout=300s")
+
+		// The retried close commits the session, then the Workspace closes and its sandbox goes.
+		until(t, 10*time.Minute, "the session and workspace saves never committed", agentYAML(name), func() bool {
+			return storageCount(t, name, "persist", "session", "ok") >= 1 &&
+				storageCount(t, name, "persist", "workspace", "ok") >= 1
+		})
+		until(t, 3*time.Minute, "the stand-in S3 never received the workspace registry", nil, func() bool {
+			return standinRegistries(t, uid) >= 1
+		})
+		until(t, 3*time.Minute, "the sandbox stayed after the workspace close", agentYAML(name), func() bool {
+			return len(sandboxes(t, uid)) == 0
+		})
+
+		// A new message restores the Workspace through the storage server.
+		clearStub(t)
+		postAccepted(t, name, 2*time.Minute)
+		waitChat(t, 8090, 4*time.Minute)
+		until(t, 2*time.Minute, "the workspace restore never succeeded", agentYAML(name), func() bool {
+			return storageCount(t, name, "restore", "workspace", "ok") >= 1
+		})
+	})
 	t.Run("gateway-restart", func(t *testing.T) {
 		opPod := jsonpath(t, "-n", "ach-agent-system", "get", "pods", "-l", "app.kubernetes.io/name=ach-agent-operator", "-o", "jsonpath={.items[0].metadata.uid}")
 		uidsBefore := podUIDs(t, sandboxNames)

@@ -103,6 +103,7 @@ deploy() {
   h upgrade --install ach-agent "$ROOT/chart" -n ach-agent-system \
     --set image.operator=ach-agent-operator --set image.tag=e2e \
     --set openshell.gateway=http://openshell.openshell.svc.cluster.local:8080 \
+    --set openshell.workspace=ach-agent \
     --wait --timeout 6m
   # The :e2e tag does not change, so helm leaves a running operator on its old image.
   k -n ach-agent-system rollout restart deploy/ach-agent-operator

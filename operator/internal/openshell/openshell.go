@@ -111,7 +111,7 @@ func OpenShellFromEnv() (*OpenShell, error) {
 		if err != nil {
 			return nil, fmt.Errorf("OpenShell gateway %s: %w", addr, err)
 		}
-		return clientBox{SandboxInterface: c.Sandboxes(), client: c}, nil
+		return clientBox{SandboxInterface: c.Sandboxes(), workspaces: c.Workspaces(), client: c}, nil
 	}
 	if _, err := factory(); err != nil { // fail the start on an address the SDK refuses
 		return nil, err

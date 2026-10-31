@@ -75,13 +75,40 @@ func (m markUnavailable) Delete(ctx context.Context, workspace, name string, opt
 	return r, mark(ctx, err)
 }
 
-// clientBox is an SDK sandbox client that can be closed when it is replaced.
+// workspaceCreator is the part of osv1.WorkspaceInterface the gateway client uses.
+type workspaceCreator interface {
+	Create(ctx context.Context, name string, labels map[string]string) (*osv1.Workspace, error)
+}
+
+// clientBox is an SDK sandbox client that can be closed when it is replaced. The gateway
+// answers NotFound for a workspace it does not know (a fresh or emptied gateway database): a
+// list finds no sandbox there, and a create makes the workspace first.
 type clientBox struct {
 	osv1.SandboxInterface
-	client *osv1.Client
+	workspaces workspaceCreator
+	client     *osv1.Client
 }
 
 func (c clientBox) Close() error { return c.client.Close() }
+
+func (c clientBox) ListAll(ctx context.Context, workspace string, opts ...ostypes.ListOptions) ([]*ostypes.Sandbox, error) {
+	l, err := c.SandboxInterface.ListAll(ctx, workspace, opts...)
+	if osv1.IsNotFound(err) {
+		return nil, nil
+	}
+	return l, err
+}
+
+func (c clientBox) Create(ctx context.Context, workspace, name string, spec *ostypes.SandboxSpec, opts ...ostypes.CreateOption) (*ostypes.Sandbox, error) {
+	s, err := c.SandboxInterface.Create(ctx, workspace, name, spec, opts...)
+	if !osv1.IsNotFound(err) {
+		return s, err
+	}
+	if _, err := c.workspaces.Create(ctx, workspace, nil); err != nil && !osv1.IsAlreadyExists(err) {
+		return nil, fmt.Errorf("create OpenShell workspace %q: %w", workspace, err)
+	}
+	return c.SandboxInterface.Create(ctx, workspace, name, spec, opts...)
+}
 
 // Rebuilding holds the current SDK client and replaces it after a call that found the gateway
 // unavailable, at most once per `every`: the SDK offers no keepalive or reconnect hook, so a

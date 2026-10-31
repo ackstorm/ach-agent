@@ -26,6 +26,7 @@ their current path until a later change moves them), changing the snapshot forma
 | Topology | One storage server per Agent namespace, installed by the chart. |
 | Source of truth | The storage server. A save is done when it acknowledges it, before any S3 upload. Keeping it durable in S3 is the storage server's job. |
 | S3 role | Asynchronous replica and the source for cache misses. |
+| Remote bucket | Production always replicates to a real bucket: AWS S3 (today's bucket, same keys, existing objects readable) or Google Cloud Storage (section 4.1). Every stand-in S3 or GCS server is test-only. |
 | Local disk | A bounded cache with least-recently-used eviction. Only data already in S3 can be evicted. |
 | Software | SeaweedFS remote storage, if the spike passes (section 9). Otherwise a narrow service of our own (section 10). |
 | Contract | Reverses decision D1 ("Harness owns the S3 client, no Storage broker", `runtime/docs/schemas/ach-workspace-contract-v1.md:246-263`). The runtime still speaks S3; the storage server is an S3 endpoint, not a new protocol. |
@@ -78,6 +79,24 @@ control pod ──S3 API (path-style, static key)──▶ ach-agent-storage (St
     `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` on control pods
     (`operator/internal/render/storageconfig.go`).
 
+### 4.1 Remote bucket: S3 or GCS
+
+`storage.remote.type` picks the bucket the storage server replicates to (default `s3`). The
+runtime speaks S3 to SeaweedFS in both cases, so GCS needs no runtime change; it does need
+`storage.enabled`, because control pods reach GCS only through the storage server.
+
+| | `s3` | `gcs` |
+|---|---|---|
+| Bucket, prefix | `runtime.storage.s3.{bucket,region,prefix}` (and `endpointUrl` for an S3-compatible service) | `storage.remote.gcs.{bucket,project,prefix}` |
+| SeaweedFS remote | `remote.configure -type=wasabi` (default AWS chain) | `remote.configure -type=gcs -gcs.projectId=<project>` (Application Default Credentials) |
+| Credentials | Pod Identity on ServiceAccount `ach-agent-storage`, or `runtime.storage.s3.credentialsSecret` | GKE Workload Identity through an annotation on ServiceAccount `ach-agent-storage` (`storage.serviceAccount.annotations`), or an existing key Secret `storage.remote.gcs.credentialsSecret` (`GOOGLE_APPLICATION_CREDENTIALS`) |
+
+With `gcs` the SeaweedFS bucket carries the GCS bucket's name, so the operator gives control
+pods `storage.remote.gcs.bucket` and `prefix` as their S3 bucket and prefix. Verified on
+2026-10-31 against `fsouza/fake-gcs-server` through the Go SDK's `STORAGE_EMULATOR_HOST`:
+mount, sync of objects written through S3, create-only 412, eviction, read-through and
+objects present before the mount. Real Workload Identity is not verified.
+
 ## 5. Runtime and operator changes
 
 Small on purpose: the runtime keeps its S3 client.
@@ -90,7 +109,9 @@ Small on purpose: the runtime keeps its S3 client.
   histograms, labelled `domain` (`workspace` | `session`) and `outcome`.
 - Chart: `storage.enabled` (default `true`), `storage.size`, `storage.storageClass`,
   `storage.watermarks.{high,low}`, `storage.image` (pinned SeaweedFS version),
-  `storage.s3.{bucket,region,prefix}`.
+  `storage.s3.{bucket,region,prefix}`, `storage.remote.type` (`s3` | `gcs`),
+  `storage.remote.gcs.{bucket,project,prefix,credentialsSecret}`,
+  `storage.serviceAccount.annotations`.
 
 ## 6. Semantics
 
@@ -162,7 +183,9 @@ Kept for reference; the spike passed. A Python service in the runtime image impl
   persistence scenarios pass unchanged; a storage pod restart during an idle close is
   retried and commits.
 - `make chart-test`: render checks for the StatefulSet, Service, AuthorizationPolicy and
-  alerts.
+  alerts, for both remote types.
+- Docker smoke (`make storage-smoke`): the storage server in front of a stand-in SeaweedFS S3
+  and in front of `fake-gcs-server`. The kind e2e runs the S3 variant only.
 
 ## 12. Rollout
 
@@ -172,3 +195,7 @@ Kept for reference; the spike passed. A Python service in the runtime image impl
 3. GitOps: bump the chart; the operator rolls control pods onto the storage endpoint.
    Agents with a session in flight finish it on the old path; new saves go through the
    storage server.
+
+For a GCS bucket instead, step 1 is the GCS bucket and a Workload Identity binding for
+`<namespace>/ach-agent-storage` (user-owned infrastructure), and the chart sets
+`storage.remote.type: gcs`.

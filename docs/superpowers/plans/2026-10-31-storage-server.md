@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** One SeaweedFS storage server per Agent namespace sits between the control pods and S3: saves land on its volume and replicate to the bucket in the background; only it holds AWS credentials.
+**Goal:** One SeaweedFS storage server per Agent namespace sits between the control pods and a real bucket (AWS S3, today's bucket, or Google Cloud Storage): saves land on its volume and replicate to the bucket in the background; only it holds cloud credentials. Stand-in S3 and GCS servers are test-only.
 
-**Architecture:** The chart renders, for each namespace in `storage.namespaces`, a one-replica StatefulSet `ach-agent-storage` (SeaweedFS `weed server -s3`, a `filer.remote.sync` container, and a shell loop around `weed shell` that mounts the bucket and reconciles), its Service, a generated static S3 key Secret and an Istio AuthorizationPolicy. The operator needs no code change: the chart hands it the endpoint `http://ach-agent-storage:8333` and the namespace-local Secret through the env it already reads, and it already wires both into control pods. The runtime switches to path-style addressing when an endpoint is set and exports save and restore histograms.
+**Architecture:** The chart renders, for each namespace in `storage.namespaces`, a one-replica StatefulSet `ach-agent-storage` (SeaweedFS `weed server -s3`, a `filer.remote.sync` container, and a shell loop around `weed shell` that mounts the bucket and reconciles), its Service, a generated static S3 key Secret and an Istio AuthorizationPolicy. The operator needs no code change: the chart hands it the endpoint `http://ach-agent-storage:8333` and the namespace-local Secret through the env it already reads, and it already wires both into control pods. The runtime switches to path-style addressing when an endpoint is set and exports save and restore histograms. `storage.remote.type` (`s3` | `gcs`) picks the bucket SeaweedFS replicates to; the runtime speaks S3 to SeaweedFS either way.
 
 **Tech Stack:** Python 3.13 runtime (boto3, prometheus_client, pytest), Helm 3 chart (PyYAML render tests, promtool), SeaweedFS 4.51, Go e2e on kind with Istio ambient.
 
@@ -27,11 +27,14 @@ Spec: `docs/superpowers/specs/2026-10-31-storage-server-design.md`.
 
 13. **Bind addresses.** The spike's "config we would ship" (`-ip=127.0.0.1`) binds every port to loopback, so the Service could not reach S3 on 8333. Binding only the internal ports to loopback (`-ip.bind=127.0.0.1 -s3.ip.bind=0.0.0.0`) breaks read-through: the volume server dials S3 from its bind address (`dial tcp 127.0.0.1:0->…: invalid argument`). Resolution: `-ip=127.0.0.1 -ip.bind=0.0.0.0`; the AuthorizationPolicy admits only 8333, 9327 and 9328.
 
-The scripts, `storage.yaml`, the render tests, the promtool tests and `storage_smoke.sh` in this plan were assembled into a scratch copy of the chart and pass (helm 3.16, promtool 3.5.0, SeaweedFS 4.51 in docker) as of 2026-10-31. The runtime and e2e steps were not run.
+The scripts, `storage.yaml`, the render tests, the promtool tests and `storage_smoke.sh` (both `s3` and `gcs`) in this plan were assembled into a scratch copy of the chart and pass (helm 3.16, promtool 3.5.0, SeaweedFS 4.51 and fake-gcs-server 1.52.2 in docker) as of 2026-10-31. The runtime and e2e steps were not run.
+
+14. **GCS (added after the spec's first approval, now in the spec's section 4.1).** Folded into Task 2: `storage.remote.type: gcs` configures `remote.configure -type=gcs -gcs.projectId=<project>` (Application Default Credentials: GKE Workload Identity through `storage.serviceAccount.annotations`, or `storage.remote.gcs.credentialsSecret` mounted as `GOOGLE_APPLICATION_CREDENTIALS`). The operator gives control pods `storage.remote.gcs.{bucket,prefix}` as their S3 bucket and prefix and `us-east-1` as the signing region. GCS requires `storage.enabled`. Verified in docker against `fsouza/fake-gcs-server:1.52.2` through the Go SDK's `STORAGE_EMULATOR_HOST` (no endpoint flag needed): mount, sync of objects written through S3, create-only 412, eviction, read-through and objects present before the mount. The kind e2e stays S3-only.
 
 ## Open questions (not blocking; recorded in the report)
 
 - `remote.copy.local` uploads files missing from S3. An overwrite of an existing key (`registry.json` CAS) whose change event a `kill -9` lost is not re-uploaded: S3 keeps the previous registry until the next commit of that ref. Only matters if the volume is then lost (restore falls back one snapshot). Not probed.
+- Real GKE Workload Identity for SeaweedFS's GCS client is untested (the emulator path skips authentication).
 - Pod Identity on real EKS: the spike emulated it with `AWS_CONTAINER_AUTHORIZATION_TOKEN`; EKS injects `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`. aws-sdk-go 1.55.8 reads the file variant by source, untested.
 - `remote.copy.local` running every 10 minutes alongside `filer.remote.sync` was not probed (only after a restart).
 
@@ -47,6 +50,7 @@ Release 0.3.0 (`make release-bump VERSION=0.3.0`, `chore(release): v0.3.0`), Ter
 - English only: code, comments, docs, commit messages.
 - Comments state what the code does now and why. No history ("now", "no longer", "replaced"), no task/plan/finding IDs in code, comments or docs.
 - SeaweedFS image, everywhere, exactly: `chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8`.
+- fake-gcs-server (smoke test only), exactly: `fsouza/fake-gcs-server:1.52.2@sha256:d47b4cf8b87006cab8fbbecfa5f06a2a3c5722e464abddc0d107729663d40ec4`.
 - Python: the uv venv at `runtime/.venv` only; never a system-wide pip install.
 - Wrap every long command in `timeout`. Never pipe a gate into `tail`/`grep` and trust the exit code: redirect to a log, `echo "EXIT=$?"`, then grep the log.
 - Kubernetes calls use `--context kind-ach-agent-e2e` only (`test/e2e/cluster.sh` and the e2e helpers already do).
@@ -65,7 +69,7 @@ Release 0.3.0 (`make release-bump VERSION=0.3.0`, `chore(release): v0.3.0`), Ter
 | `runtime/src/ach_runtime/observability/metrics.py` | 1 | `STORAGE_PERSIST_SECONDS`, `STORAGE_RESTORE_SECONDS` |
 | `runtime/src/ach_runtime/harness/lifecycle.py` | 1 | `_storage_timer` around the two restores and two saves |
 | `runtime/tests/storage/test_config.py`, `runtime/tests/harness/test_lifecycle.py` | 1 | Tests |
-| `chart/files/storage/{reconcile,sync,metrics}.sh` | 2 | Shell around `weed shell` in the SeaweedFS image |
+| `chart/files/storage/{reconcile,sync,metrics}.sh` | 2 | Shell around `weed shell` in the SeaweedFS image (S3 or GCS remote) |
 | `chart/templates/storage.yaml` | 2 | Per-namespace Secret, ConfigMap, ServiceAccount, Service, StatefulSet, AuthorizationPolicy |
 | `chart/templates/_helpers.tpl`, `deployment.yaml`, `values.yaml`, `values.schema.json` | 2 | Activation, validation, operator env switch, values |
 | `chart/tests/render_test.sh`, `chart/tests/storage_smoke.sh`, `Makefile` | 2 | Render checks; docker smoke of the scripts (`make storage-smoke`) |
@@ -441,7 +445,7 @@ EOF
 
 ---
 
-### Task 2: Chart: storage server per Agent namespace
+### Task 2: Chart: storage server per Agent namespace (S3 or GCS)
 
 **Files:**
 - Create: `chart/files/storage/reconcile.sh`, `chart/files/storage/sync.sh`, `chart/files/storage/metrics.sh` (mode 0755)
@@ -469,8 +473,8 @@ and `make chart-test` once after the commit.
   - Helper `ach-agent.storage.active` renders `true` when `storage.enabled` and `runtime.storage.s3.bucket` are set; helpers `ach-agent.storage.selectorLabels` (`app.kubernetes.io/name: ach-agent-storage`, `app.kubernetes.io/instance: <release>`) and `ach-agent.storage.labels`.
   - In each namespace of `storage.namespaces`: StatefulSet/Service/ServiceAccount/AuthorizationPolicy `ach-agent-storage`, pod `ach-agent-storage-0`, Secret `ach-agent-storage-s3` (keys `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `identities.json`), ConfigMap `ach-agent-storage-scripts`.
   - Container ports: `server` exposes `s3` 8333 and `metrics` 9327 (SeaweedFS); `reconcile` exposes `reconcile` 9328 (gauges `ach_agent_storage_unsynced_files`, `ach_agent_storage_reconcile_ok_timestamp_seconds`).
-  - Values: `storage.{enabled,namespaces,image,size,storageClass,evictThreshold,resources}`.
-  - Make target `storage-smoke`.
+  - Values: `storage.{enabled,namespaces,image,size,storageClass,evictThreshold,resources}`, `storage.remote.type` (`s3` | `gcs`), `storage.remote.gcs.{bucket,project,prefix,credentialsSecret}`, `storage.serviceAccount.annotations`; helper `ach-agent.storage.bucket` (the bucket of the selected remote).
+  - Make target `storage-smoke` (runs `chart/tests/storage_smoke.sh s3` and `gcs`).
 
 - [ ] **Step 1: Write the scripts**
 
@@ -482,8 +486,10 @@ and `make chart-test` once after the commit.
 # bucket and mounts it, then uploads the files the sync stream missed: a killed pod loses the
 # change events of its last minute or two while the data stays on the volume. Exports two
 # gauges on :9328.
-# Env: BUCKET, AWS_REGION, REMOTE_ENDPOINT, RECONCILE_INTERVAL. AWS credentials come from the
-# default chain (Pod Identity) or from AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY.
+# Env: BUCKET, REMOTE_TYPE (s3 | gcs), RECONCILE_INTERVAL; for s3 AWS_REGION and REMOTE_ENDPOINT,
+# for gcs GCS_PROJECT. Credentials: the default AWS chain (Pod Identity, or AWS_ACCESS_KEY_ID/
+# AWS_SECRET_ACCESS_KEY) for s3; Application Default Credentials (Workload Identity, or
+# GOOGLE_APPLICATION_CREDENTIALS) for gcs.
 set -u
 DIR="/buckets/${BUCKET}"
 METRICS=/tmp/metrics
@@ -513,13 +519,18 @@ until curl -s -o /dev/null -m 2 http://127.0.0.1:8888/; do
   sleep 2
 done
 
-# The wasabi type uses the default AWS credential chain; the s3 type signs anonymously when it has no keys.
-weed_sh 60 "remote.configure -name=aws -type=wasabi -wasabi.endpoint=${REMOTE_ENDPOINT} -wasabi.region=${AWS_REGION}" >/dev/null || exit 1
+# For S3 the wasabi type uses the default AWS credential chain; the s3 type signs anonymously
+# when it has no keys.
+case "$REMOTE_TYPE" in
+  gcs) configure="remote.configure -name=remote -type=gcs -gcs.projectId=${GCS_PROJECT}" ;;
+  *) configure="remote.configure -name=remote -type=wasabi -wasabi.endpoint=${REMOTE_ENDPOINT} -wasabi.region=${AWS_REGION}" ;;
+esac
+weed_sh 60 "$configure" >/dev/null || exit 1
 if ! weed_sh 60 "remote.mount" | grep -qF "\"${DIR}\":"; then
-  weed_sh 1800 "remote.mount -dir=${DIR} -remote=aws/${BUCKET} -nonempty" || exit 1
+  weed_sh 1800 "remote.mount -dir=${DIR} -remote=remote/${BUCKET} -nonempty" || exit 1
 fi
 touch /tmp/mounted
-echo "mounted ${DIR} on aws/${BUCKET} at ${REMOTE_ENDPOINT}"
+echo "mounted ${DIR} on the ${REMOTE_TYPE} bucket ${BUCKET}"
 
 weed_sh 3600 "remote.copy.local -dir=${DIR}" >/dev/null ||
   echo "start-up reconcile failed; retrying every ${RECONCILE_INTERVAL}s" >&2
@@ -580,17 +591,20 @@ cd /home/coder/workspace/local/ach-agent/.worktrees/specs && chmod 0755 chart/fi
 ```bash
 #!/usr/bin/env bash
 # Runs the storage server's three containers as the chart wires them (shared /tmp, non-root,
-# read-only root) in front of a second SeaweedFS standing in for S3, then checks: create-only
-# writes, replication to the stand-in, eviction of a replicated object (SeaweedFS 4.48 never
-# marks objects written through the server as replicated) and read-through, and the reconcile
-# gauges. The docker volume reports the host disk, so the built-in evictor gets a 0.99 threshold
-# here to keep it out of the explicit uncache check. Needs docker and runtime/.venv (boto3).
-# Run before changing storage.image.
+# read-only root) in front of a stand-in bucket, then checks: create-only writes, replication to
+# the bucket, eviction of a replicated object (SeaweedFS 4.48 never marks objects written through
+# the server as replicated) and read-through, and the reconcile gauges.
+# Usage: storage_smoke.sh s3|gcs. s3 stands in with a second SeaweedFS; gcs with fake-gcs-server,
+# which the GCS Go SDK reaches through STORAGE_EMULATOR_HOST. The docker volume reports the host
+# disk, so the built-in evictor gets a 0.99 threshold to keep it out of the explicit uncache check.
+# Needs docker and runtime/.venv (boto3). Run before changing storage.image.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+MODE=${1:?usage: storage_smoke.sh s3|gcs}
 IMG=$(sed -n 's/^  image: *//p' chart/values.yaml | grep seaweedfs)
+FAKE_GCS=fsouza/fake-gcs-server:1.52.2@sha256:d47b4cf8b87006cab8fbbecfa5f06a2a3c5722e464abddc0d107729663d40ec4
 N=ach-storage-smoke
-fail() { echo "FAIL: $*" >&2; exit 1; }
+fail() { echo "FAIL ($MODE): $*" >&2; exit 1; }
 cleanup() {
   docker rm -f smoke-remote smoke-ss smoke-sync smoke-loop >/dev/null 2>&1 || true
   docker volume rm -f smoke-tmp smoke-data >/dev/null 2>&1 || true
@@ -603,20 +617,37 @@ retry() { # retry <tries> <command...>: every 2 s
   for _ in $(seq 1 "$n"); do "$@" >/dev/null 2>&1 && return 0; sleep 2; done
   return 1
 }
+netcurl() { docker run --rm --network "$N" --entrypoint curl "$IMG" -s -m 5 "$@"; }
 
 docker network create "$N" >/dev/null
-docker run -d --name smoke-remote --network "$N" "$IMG" server -dir=/data -s3 -ip=smoke-remote -ip.bind=0.0.0.0 >/dev/null
-retry 60 docker exec smoke-remote curl -s -o /dev/null -m 2 http://127.0.0.1:8333/ || fail "stand-in S3 not up"
-printf '%s\n' 's3.configure -user=remote -access_key=remote -secret_key=remote-secret -actions=Admin -apply' \
-  's3.bucket.create -name smoke' | docker exec -i smoke-remote weed shell -master=127.0.0.1:9333 >/dev/null
+# grep without -q reads all input: an early exit would fail the pipeline under pipefail.
+if [ "$MODE" = gcs ]; then
+  docker run -d --name smoke-remote --network "$N" "$FAKE_GCS" -scheme http -port 4443 \
+    -public-host smoke-remote:4443 >/dev/null
+  retry 30 netcurl -f http://smoke-remote:4443/storage/v1/b || fail "fake GCS not up"
+  netcurl -f -X POST 'http://smoke-remote:4443/storage/v1/b?project=smoke' \
+    -H 'Content-Type: application/json' -d '{"name":"smoke"}' >/dev/null
+  remote_env=(-e REMOTE_TYPE=gcs -e GCS_PROJECT=smoke -e GOOGLE_CLOUD_PROJECT=smoke
+    -e STORAGE_EMULATOR_HOST=smoke-remote:4443)
+  in_remote() { netcurl 'http://smoke-remote:4443/storage/v1/b/smoke/o?prefix=ach/ns/uid/ws/' |
+    grep '"name":"ach/ns/uid/ws/registry.json"' >/dev/null; }
+else
+  docker run -d --name smoke-remote --network "$N" "$IMG" server -dir=/data -s3 -ip=smoke-remote -ip.bind=0.0.0.0 >/dev/null
+  retry 60 docker exec smoke-remote curl -s -o /dev/null -m 2 http://127.0.0.1:8333/ || fail "stand-in S3 not up"
+  printf '%s\n' 's3.configure -user=remote -access_key=remote -secret_key=remote-secret -actions=Admin -apply' \
+    's3.bucket.create -name smoke' | docker exec -i smoke-remote weed shell -master=127.0.0.1:9333 >/dev/null
+  remote_env=(-e REMOTE_TYPE=s3 -e AWS_REGION=us-east-1 -e REMOTE_ENDPOINT=http://smoke-remote:8333
+    -e AWS_ACCESS_KEY_ID=remote -e AWS_SECRET_ACCESS_KEY=remote-secret)
+  in_remote() { printf 'fs.ls /buckets/smoke/ach/ns/uid/ws\n' |
+    docker exec -i smoke-remote weed shell -master=127.0.0.1:9333 | grep -x registry.json >/dev/null; }
+fi
 
 docker volume create smoke-tmp >/dev/null
 docker volume create smoke-data >/dev/null
 docker run --rm -v smoke-tmp:/tmp -v smoke-data:/data --entrypoint chown "$IMG" 1000:1000 /tmp /data
 ident='{"identities":[{"name":"control","credentials":[{"accessKey":"ctl","secretKey":"ctl-secret"}],"actions":["Read","Write","List","Tagging"]}]}'
-common=(--user 1000:1000 --read-only -v smoke-tmp:/tmp -e HOME=/tmp -e BUCKET=smoke -e AWS_REGION=us-east-1
-  -e REMOTE_ENDPOINT=http://smoke-remote:8333 -e RECONCILE_INTERVAL=15
-  -e AWS_ACCESS_KEY_ID=remote -e AWS_SECRET_ACCESS_KEY=remote-secret)
+common=(--user 1000:1000 --read-only -v smoke-tmp:/tmp -e HOME=/tmp -e BUCKET=smoke -e RECONCILE_INTERVAL=15
+  "${remote_env[@]}")
 docker run -d --name smoke-ss --network "$N" "${common[@]}" -v smoke-data:/data \
   --entrypoint sh "$IMG" -c "mkdir -p /tmp/s3 && printf '%s' '$ident' > /tmp/s3/identities.json && exec /usr/bin/weed -logtostderr=true server \
   -dir=/data -filer -s3 -s3.config=/tmp/s3/identities.json -ip=127.0.0.1 -ip.bind=0.0.0.0 \
@@ -653,9 +684,7 @@ except bad.exceptions.ClientError:
 print("create-only put and auth ok")
 PY
 
-# grep without -q reads all input: an early exit would fail the pipeline under pipefail.
-in_remote() { printf 'fs.ls /buckets/smoke/ach/ns/uid/ws\n' | docker exec -i smoke-remote weed shell -master=127.0.0.1:9333 | grep -x registry.json >/dev/null; }
-retry 60 in_remote || { docker logs smoke-sync; fail "object never reached the stand-in S3"; }
+retry 60 in_remote || { docker logs smoke-sync; fail "object never reached the stand-in bucket"; }
 uncached() { printf 'remote.uncache -dir=/buckets/smoke\n' | docker exec -i smoke-ss weed shell -master=127.0.0.1:9333 | grep 'registry.json ... Done' >/dev/null; }
 retry 30 uncached || fail "the replicated object cannot be evicted"
 runtime/.venv/bin/python - "$ip" <<'PY'
@@ -672,11 +701,11 @@ gauges() { docker exec smoke-ss curl -s -m 5 http://127.0.0.1:9328/metrics; }
 start=$(gauges | sed -n 's/^ach_agent_storage_reconcile_ok_timestamp_seconds //p')
 [ -n "$start" ] || fail "no reconcile gauges on :9328"
 fresh() { [ "$(gauges | sed -n 's/^ach_agent_storage_reconcile_ok_timestamp_seconds //p')" -gt "$start" ]; }
-retry 30 fresh || { docker logs smoke-loop; fail "the reconcile loop never compared with S3"; }
+retry 30 fresh || { docker logs smoke-loop; fail "the reconcile loop never compared with the bucket"; }
 gauges | grep -x 'ach_agent_storage_unsynced_files 0' >/dev/null || fail "unexpected unsynced files: $(gauges)"
 docker exec smoke-ss curl -s -m 5 http://127.0.0.1:9327/metrics | grep '^SeaweedFS_volumeServer_resource' >/dev/null ||
   fail "no SeaweedFS metrics on :9327"
-echo PASS
+echo "PASS ($MODE)"
 ```
 
 ```bash
@@ -688,8 +717,9 @@ cd /home/coder/workspace/local/ach-agent/.worktrees/specs && chmod 0755 chart/te
 In `Makefile`, add `storage-smoke` to `.PHONY` and, after the `chart-test` target:
 
 ```make
-storage-smoke: ## run the storage server's containers against a stand-in S3 in docker (before changing storage.image)
-	bash chart/tests/storage_smoke.sh
+storage-smoke: ## run the storage server's containers against a stand-in S3 and a fake GCS in docker (before changing storage.image)
+	bash chart/tests/storage_smoke.sh s3
+	bash chart/tests/storage_smoke.sh gcs
 ```
 
 ```bash
@@ -706,12 +736,21 @@ Append to `chart/values.yaml`:
 ```yaml
 
 storage:
-  # One storage server per Agent namespace in front of runtime.storage.s3: control pods save to it and it
-  # replicates to the bucket in the background. Runs when enabled and runtime.storage.s3.bucket is set; then
-  # namespaces (the Agent namespaces) and runtime.storage.s3.region are required. Credentials for the bucket:
-  # Pod Identity on the ServiceAccount ach-agent-storage, or runtime.storage.s3.credentialsSecret.
+  # One storage server per Agent namespace in front of a real bucket: control pods save to it and it
+  # replicates to the bucket in the background. Runs when enabled and the selected remote has a bucket;
+  # then namespaces (the Agent namespaces) are required.
   enabled: true
   namespaces: []
+  remote:
+    # s3: runtime.storage.s3.{bucket,region,endpointUrl,prefix}; credentials from Pod Identity on the
+    # ServiceAccount ach-agent-storage, or runtime.storage.s3.credentialsSecret. region is required.
+    # gcs: the bucket below, reachable only through the storage server; credentials from Workload Identity
+    # (serviceAccount.annotations) or credentialsSecret, a Secret with the key credentials.json.
+    type: s3
+    gcs: {bucket: "", project: "", prefix: ach, credentialsSecret: ""}
+  serviceAccount:
+    # For example iam.gke.io/gcp-service-account for GKE Workload Identity.
+    annotations: {}
   # SeaweedFS 4.51 or newer: 4.48 never marks objects written through the server as replicated. Run
   # make storage-smoke before changing it.
   image: chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8
@@ -737,7 +776,23 @@ In `chart/values.schema.json`, add after the `"admissionPolicy"` property:
         "size": {"type": "string", "minLength": 1},
         "storageClass": {"type": "string"},
         "evictThreshold": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
-        "resources": {"type": "object"}
+        "resources": {"type": "object"},
+        "remote": {
+          "type": "object",
+          "properties": {
+            "type": {"type": "string", "enum": ["s3", "gcs"]},
+            "gcs": {
+              "type": "object",
+              "properties": {
+                "bucket": {"type": "string"},
+                "project": {"type": "string"},
+                "prefix": {"type": "string"},
+                "credentialsSecret": {"type": "string"}
+              }
+            }
+          }
+        },
+        "serviceAccount": {"type": "object", "properties": {"annotations": {"type": "object"}}}
       }
     },
 ```
@@ -747,9 +802,14 @@ In `chart/values.schema.json`, add after the `"admissionPolicy"` property:
 Append to `chart/templates/_helpers.tpl`:
 
 ```
+{{/* The bucket the storage server replicates to: the GCS bucket, or the S3 bucket control pods use without it. */}}
+{{- define "ach-agent.storage.bucket" -}}
+{{- if eq .Values.storage.remote.type "gcs" }}{{ .Values.storage.remote.gcs.bucket }}{{ else }}{{ .Values.runtime.storage.s3.bucket }}{{ end -}}
+{{- end -}}
+
 {{/* The storage server runs when it is enabled and there is a bucket to replicate to. */}}
 {{- define "ach-agent.storage.active" -}}
-{{- if and .Values.storage.enabled .Values.runtime.storage.s3.bucket }}true{{ end -}}
+{{- if and .Values.storage.enabled (include "ach-agent.storage.bucket" .) }}true{{ end -}}
 {{- end -}}
 
 {{- define "ach-agent.storage.selectorLabels" -}}
@@ -767,11 +827,18 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 In the same file, inside `ach-agent.validate`, before its final `{{- end -}}`:
 
 ```
+{{- if and (eq .Values.storage.remote.type "gcs") (not .Values.storage.enabled) -}}
+{{- fail "storage.remote.type=gcs needs storage.enabled: control pods reach GCS only through the storage server" -}}
+{{- end -}}
 {{- if eq (include "ach-agent.storage.active" .) "true" -}}
 {{- if not .Values.storage.namespaces -}}
 {{- fail "storage.namespaces must list the Agent namespaces that get a storage server (or set storage.enabled=false)" -}}
 {{- end -}}
-{{- if not .Values.runtime.storage.s3.region -}}
+{{- if eq .Values.storage.remote.type "gcs" -}}
+{{- if not .Values.storage.remote.gcs.project -}}
+{{- fail "storage.remote.gcs.project is required with storage.remote.type=gcs" -}}
+{{- end -}}
+{{- else if not .Values.runtime.storage.s3.region -}}
 {{- fail "runtime.storage.s3.region is required when the storage server is enabled" -}}
 {{- end -}}
 {{- end -}}
@@ -781,9 +848,27 @@ In `chart/templates/deployment.yaml`, after `{{- $parent := .Values.route.parent
 
 ```
 {{- $storage := eq (include "ach-agent.storage.active" .) "true" -}}
+{{- /* With gcs the control pods' S3 bucket is the storage server's bucket, named after the GCS bucket; the
+region only names the signing scope, which the storage server accepts for any region. */ -}}
+{{- $gcs := eq .Values.storage.remote.type "gcs" -}}
+{{- $gcsRemote := .Values.storage.remote.gcs -}}
 ```
 
-and replace the two env values:
+replace the bucket, region and prefix values:
+
+```yaml
+            - name: ACH_AGENT_STORAGE_S3_BUCKET
+              value: {{ ternary $gcsRemote.bucket $s3.bucket $gcs | quote }}
+            - name: ACH_AGENT_STORAGE_S3_REGION
+              value: {{ ternary "us-east-1" $s3.region $gcs | quote }}
+```
+
+```yaml
+            - name: ACH_AGENT_STORAGE_S3_PREFIX
+              value: {{ ternary $gcsRemote.prefix $s3.prefix $gcs | quote }}
+```
+
+and replace the endpoint and credentials values:
 
 ```yaml
             - name: ACH_AGENT_STORAGE_S3_ENDPOINT_URL
@@ -839,6 +924,7 @@ for x in c.values():
     e = {v["name"]: v for v in x["env"]}
     assert e["BUCKET"]["value"] == "ach-bucket" and e["AWS_REGION"]["value"] == "eu-west-1", e
     assert e["REMOTE_ENDPOINT"]["value"] == "https://s3.eu-west-1.amazonaws.com", e
+    assert e["REMOTE_TYPE"]["value"] == "s3", e
     assert "AWS_ACCESS_KEY_ID" not in e, "without credentialsSecret the default AWS chain (Pod Identity) applies"
 args = c["server"]["args"]
 for flag in ("-filer.remoteCacheEvictThreshold=0.8", "-s3.config=/etc/seaweedfs/identities.json",
@@ -893,6 +979,49 @@ assert env["ACH_AGENT_STORAGE_S3_ENDPOINT_URL"] == "http://minio.minio:9000", en
 assert env["ACH_AGENT_STORAGE_S3_CREDENTIALS_SECRET"] == "s3-keys", env
 print("storage disabled ok")
 PY
+
+gcs=(--set storage.remote.type=gcs --set storage.remote.gcs.bucket=ach-gcs --set storage.remote.gcs.project=ach-prod)
+helm template t . "${base[@]}" "${gcs[@]}" --set storage.enabled=false >/dev/null 2>&1 && fail "renders gcs without the storage server"
+helm template t . "${base[@]}" --set storage.remote.type=gcs --set storage.remote.gcs.bucket=ach-gcs \
+  --set 'storage.namespaces={ach-agent}' >/dev/null 2>&1 && fail "renders gcs without a project"
+out=$(helm template t . "${base[@]}" "${gcs[@]}" --set 'storage.namespaces={ach-agent}' \
+  --set 'storage.serviceAccount.annotations.iam\.gke\.io/gcp-service-account=ach-storage@ach-prod.iam.gserviceaccount.com')
+python3 - "$out" <<'PY'
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(sys.argv[1]) if d]
+dep, = [d for d in docs if d["kind"] == "Deployment"]
+env = {e["name"]: e.get("value") for e in dep["spec"]["template"]["spec"]["containers"][0]["env"]}
+assert env["ACH_AGENT_STORAGE_S3_ENDPOINT_URL"] == "http://ach-agent-storage:8333", env
+assert env["ACH_AGENT_STORAGE_S3_BUCKET"] == "ach-gcs" and env["ACH_AGENT_STORAGE_S3_PREFIX"] == "ach", env
+assert env["ACH_AGENT_STORAGE_S3_REGION"] == "us-east-1", env
+assert env["ACH_AGENT_STORAGE_S3_CREDENTIALS_SECRET"] == "ach-agent-storage-s3", env
+sa, = [d for d in docs if d["kind"] == "ServiceAccount" and d["metadata"]["name"] == "ach-agent-storage"]
+assert sa["metadata"]["annotations"] == {"iam.gke.io/gcp-service-account": "ach-storage@ach-prod.iam.gserviceaccount.com"}, sa
+sts, = [d for d in docs if d["kind"] == "StatefulSet"]
+pod = sts["spec"]["template"]["spec"]
+assert "gcs-credentials" not in [v["name"] for v in pod["volumes"]]
+for x in pod["containers"]:
+    e = {v["name"]: v.get("value") for v in x["env"]}
+    assert e["REMOTE_TYPE"] == "gcs" and e["BUCKET"] == "ach-gcs" and e["GCS_PROJECT"] == "ach-prod", e
+    assert not {"REMOTE_ENDPOINT", "AWS_REGION", "AWS_ACCESS_KEY_ID", "GOOGLE_APPLICATION_CREDENTIALS"} & set(e), e
+print("storage gcs ok")
+PY
+
+out=$(helm template t . "${base[@]}" "${gcs[@]}" --set 'storage.namespaces={ach-agent}' \
+  --set storage.remote.gcs.credentialsSecret=gcs-key)
+python3 - "$out" <<'PY'
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(sys.argv[1]) if d]
+sts, = [d for d in docs if d["kind"] == "StatefulSet"]
+pod = sts["spec"]["template"]["spec"]
+vol, = [v for v in pod["volumes"] if v["name"] == "gcs-credentials"]
+assert vol["secret"]["secretName"] == "gcs-key", vol
+for x in pod["containers"]:
+    e = {v["name"]: v.get("value") for v in x["env"]}
+    assert e["GOOGLE_APPLICATION_CREDENTIALS"] == "/etc/gcs/credentials.json", e
+    assert {"name": "gcs-credentials", "mountPath": "/etc/gcs", "readOnly": True} in x["volumeMounts"], x["volumeMounts"]
+print("storage gcs key ok")
+PY
 ```
 
 Run the chart checks (top of this task). Expected: `EXIT=1`; `render ok` prints, then the first storage check fails (no StatefulSet rendered yet).
@@ -905,11 +1034,22 @@ Run the chart checks (top of this task). Expected: `EXIT=1`; `render ok` prints,
 {{- if eq (include "ach-agent.storage.active" .) "true" }}
 {{- $s3 := .Values.runtime.storage.s3 }}
 {{- $st := .Values.storage }}
-{{- $endpoint := $s3.endpointUrl | default (printf "https://s3.%s.amazonaws.com" $s3.region) }}
+{{- $remote := $st.remote }}
+{{- $gcs := eq $remote.type "gcs" }}
+{{- $gcsKey := and $gcs $remote.gcs.credentialsSecret }}
 {{- $scripts := dict "reconcile.sh" (.Files.Get "files/storage/reconcile.sh") "sync.sh" (.Files.Get "files/storage/sync.sh") "metrics.sh" (.Files.Get "files/storage/metrics.sh") }}
-{{- $env := list (dict "name" "HOME" "value" "/tmp") (dict "name" "BUCKET" "value" $s3.bucket) (dict "name" "AWS_REGION" "value" $s3.region) (dict "name" "REMOTE_ENDPOINT" "value" $endpoint) (dict "name" "RECONCILE_INTERVAL" "value" "600") }}
+{{- $env := list (dict "name" "HOME" "value" "/tmp") (dict "name" "BUCKET" "value" (include "ach-agent.storage.bucket" .)) (dict "name" "REMOTE_TYPE" "value" $remote.type) (dict "name" "RECONCILE_INTERVAL" "value" "600") }}
+{{- if $gcs }}
+{{- $env = concat $env (list (dict "name" "GCS_PROJECT" "value" $remote.gcs.project) (dict "name" "GOOGLE_CLOUD_PROJECT" "value" $remote.gcs.project)) }}
+{{- if $gcsKey }}
+{{- $env = append $env (dict "name" "GOOGLE_APPLICATION_CREDENTIALS" "value" "/etc/gcs/credentials.json") }}
+{{- end }}
+{{- else }}
+{{- $endpoint := $s3.endpointUrl | default (printf "https://s3.%s.amazonaws.com" $s3.region) }}
+{{- $env = concat $env (list (dict "name" "AWS_REGION" "value" $s3.region) (dict "name" "REMOTE_ENDPOINT" "value" $endpoint)) }}
 {{- with $s3.credentialsSecret }}
 {{- $env = concat $env (list (dict "name" "AWS_ACCESS_KEY_ID" "valueFrom" (dict "secretKeyRef" (dict "name" . "key" "AWS_ACCESS_KEY_ID"))) (dict "name" "AWS_SECRET_ACCESS_KEY" "valueFrom" (dict "secretKeyRef" (dict "name" . "key" "AWS_SECRET_ACCESS_KEY"))) (dict "name" "AWS_SESSION_TOKEN" "valueFrom" (dict "secretKeyRef" (dict "name" . "key" "AWS_SESSION_TOKEN" "optional" true)))) }}
+{{- end }}
 {{- end }}
 {{- $containerSecurity := dict "allowPrivilegeEscalation" false "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL")) }}
 {{- range $ns := $st.namespaces }}
@@ -945,7 +1085,8 @@ metadata:
 data:
   {{- toYaml $scripts | nindent 2 }}
 ---
-# EKS Pod Identity binds the bucket's IAM role to this ServiceAccount.
+# The bucket's cloud identity binds to this ServiceAccount: EKS Pod Identity, or GKE Workload
+# Identity through storage.serviceAccount.annotations.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -953,6 +1094,10 @@ metadata:
   namespace: {{ $ns }}
   labels:
     {{- include "ach-agent.storage.labels" $ | nindent 4 }}
+  {{- with $st.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 ---
 apiVersion: v1
 kind: Service
@@ -1012,6 +1157,12 @@ spec:
           secret:
             secretName: ach-agent-storage-s3
             items: [{key: identities.json, path: identities.json}]
+        {{- if $gcsKey }}
+        - name: gcs-credentials
+          secret:
+            secretName: {{ $remote.gcs.credentialsSecret }}
+            items: [{key: credentials.json, path: credentials.json}]
+        {{- end }}
       containers:
         - name: server
           image: {{ $st.image }}
@@ -1032,7 +1183,7 @@ spec:
             - -master.volumeSizeLimitMB=256
             - -filer.remoteCacheEvictThreshold={{ $st.evictThreshold }}
             # The remote endpoint is set only by this chart; an S3 VPC endpoint or an in-cluster S3
-            # resolves to private addresses, which SeaweedFS rejects without these.
+            # resolves to private addresses, which SeaweedFS rejects without these. GCS ignores them.
             - -volume.allowUntrustedRemoteEndpoints
             - -filer.allowUntrustedRemoteEndpoints
             - -s3.allowUntrustedRemoteEndpoints
@@ -1047,6 +1198,9 @@ spec:
             - {name: data, mountPath: /data}
             - {name: tmp, mountPath: /tmp}
             - {name: identities, mountPath: /etc/seaweedfs, readOnly: true}
+            {{- if $gcsKey }}
+            - {name: gcs-credentials, mountPath: /etc/gcs, readOnly: true}
+            {{- end }}
           securityContext:
             {{- toYaml $containerSecurity | nindent 12 }}
           resources:
@@ -1059,6 +1213,9 @@ spec:
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
             - {name: scripts, mountPath: /scripts, readOnly: true}
+            {{- if $gcsKey }}
+            - {name: gcs-credentials, mountPath: /etc/gcs, readOnly: true}
+            {{- end }}
           securityContext:
             {{- toYaml $containerSecurity | nindent 12 }}
         - name: reconcile
@@ -1075,6 +1232,9 @@ spec:
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
             - {name: scripts, mountPath: /scripts, readOnly: true}
+            {{- if $gcsKey }}
+            - {name: gcs-credentials, mountPath: /etc/gcs, readOnly: true}
+            {{- end }}
           securityContext:
             {{- toYaml $containerSecurity | nindent 12 }}
   volumeClaimTemplates:
@@ -1124,7 +1284,7 @@ cd /home/coder/workspace/local/ach-agent/.worktrees/specs
 timeout 600 make storage-smoke > /tmp/smoke.log 2>&1; echo "EXIT=$?"; grep -E 'FAIL|ok|PASS' /tmp/smoke.log
 ```
 
-Expected: both `EXIT=0`; render prints `storage ok`, `storage custom endpoint ok`, `storage disabled ok`, `PASS`; promtool `SUCCESS`; the smoke prints `create-only put and auth ok`, `read-through after eviction ok`, `PASS`.
+Expected: both `EXIT=0`; render prints `storage ok`, `storage custom endpoint ok`, `storage disabled ok`, `storage gcs ok`, `storage gcs key ok`, `PASS`; promtool `SUCCESS`; the smoke prints `create-only put and auth ok`, `read-through after eviction ok` and `PASS (s3)`, then the same with `PASS (gcs)`.
 
 - [ ] **Step 9: Docs**
 
@@ -1133,10 +1293,11 @@ Expected: both `EXIT=0`; render prints `storage ok`, `storage custom endpoint ok
 ````markdown
 ### Storage server
 
-With `runtime.storage.s3.bucket` set and `storage.enabled` (the default), the chart runs one storage
-server, `ach-agent-storage` (SeaweedFS), in every namespace listed in `storage.namespaces`. Control pods
-in that namespace save and restore workspaces and sessions through it; it keeps them on its volume and
-replicates them to the bucket in the background. A save is done once the storage server has it.
+With a bucket configured and `storage.enabled` (the default), the chart runs one storage server,
+`ach-agent-storage` (SeaweedFS), in every namespace listed in `storage.namespaces`. Control pods in that
+namespace save and restore workspaces and sessions through it; it keeps them on its volume and
+replicates them to a real bucket in the background: AWS S3 (`storage.remote.type: s3`, the default) or
+Google Cloud Storage (`gcs`). A save is done once the storage server has it.
 
 ```bash
 helm upgrade --install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --version <version> \
@@ -1150,6 +1311,9 @@ helm upgrade --install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --versi
 |-------|---------|-------|
 | `storage.enabled` | `true` | `false` keeps control pods on S3 directly, with their own credentials. |
 | `storage.namespaces` | `[]` | The Agent namespaces; required when a bucket is set. An Agent elsewhere with persistence or artifacts enabled waits for the Secret `ach-agent-storage-s3`. |
+| `storage.remote.type` | `s3` | `s3` replicates to `runtime.storage.s3.bucket`; `gcs` to `storage.remote.gcs.bucket`. |
+| `storage.remote.gcs.{bucket,project,prefix,credentialsSecret}` | `prefix: ach` | GCS only; `project` is required. `credentialsSecret` names an existing Secret with the key `credentials.json` (a service account key); leave it empty for Workload Identity. |
+| `storage.serviceAccount.annotations` | `{}` | Annotations on the ServiceAccount `ach-agent-storage`, for example `iam.gke.io/gcp-service-account` for GKE Workload Identity. |
 | `storage.size`, `storage.storageClass` | `50Gi`, cluster default | A cache of the bucket plus what S3 does not have yet: size it for the backlog of an S3 outage. A StatefulSet cannot resize its claim; grow the PVC by hand. |
 | `storage.evictThreshold` | `0.8` | Above this disk usage the server drops data already in S3, oldest first; a later read fetches it again. Data not yet in S3 is never dropped. |
 | `storage.image` | SeaweedFS 4.51, pinned by digest | 4.51 or newer: 4.48 never marks objects written through the server as replicated, so it never evicts them. Run `make storage-smoke` before changing it. |
@@ -1161,6 +1325,13 @@ helm upgrade --install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --versi
   control ServiceAccount after the switch. `runtime.storage.s3.credentialsSecret` instead names a Secret
   with `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (optionally `AWS_SESSION_TOKEN`) in each listed
   namespace.
+- **GCS.** With `storage.remote.type=gcs` the storage server replicates to `storage.remote.gcs.bucket`
+  with Application Default Credentials: on GKE, Workload Identity, binding a Google service account with
+  access to the bucket to `<namespace>/ach-agent-storage` and setting
+  `storage.serviceAccount.annotations."iam.gke.io/gcp-service-account"`; elsewhere, the key Secret in
+  `storage.remote.gcs.credentialsSecret`. Control pods still speak S3 to the storage server, which names
+  its bucket after the GCS bucket and keeps the same keys under `prefix`, so GCS needs the storage server
+  (`storage.enabled=false` with `gcs` does not render).
 - **Control pods.** The operator points them at `http://ach-agent-storage:8333` with the S3 key the chart
   generates into the Secret `ach-agent-storage-s3`. Helm `lookup` keeps the key across upgrades, so install
   with `helm` or Flux, not through a `helm template` pipeline. An Istio AuthorizationPolicy admits only
@@ -1186,10 +1357,12 @@ With the chart's storage server enabled, the Harness's S3 endpoint is the storag
 `CHANGELOG.md`, under `## [Unreleased]`: append to `### Added`:
 
 ```markdown
-- Storage server: with `runtime.storage.s3.bucket` set and `storage.enabled` (the default), the chart runs a
-  SeaweedFS 4.51 storage server, `ach-agent-storage`, in each namespace of `storage.namespaces`. Control pods
-  save to it and it replicates to the bucket in the background, so a save no longer waits for S3. Only the
-  storage server holds AWS credentials. `make storage-smoke` checks a SeaweedFS version in docker. See
+- Storage server: with a bucket configured and `storage.enabled` (the default), the chart runs a SeaweedFS 4.51
+  storage server, `ach-agent-storage`, in each namespace of `storage.namespaces`. Control pods save to it and it
+  replicates to the bucket in the background, so a save no longer waits for the bucket. The bucket is AWS S3
+  (`storage.remote.type: s3`, `runtime.storage.s3.*`) or Google Cloud Storage (`gcs`,
+  `storage.remote.gcs.*`, Workload Identity or a key Secret). Only the storage server holds cloud credentials.
+  `make storage-smoke` checks a SeaweedFS version in docker against a stand-in S3 and a fake GCS. See
   `docs/install.md`.
 ```
 
@@ -1770,3 +1943,5 @@ EOF
 1. Terraform (user-owned): a Pod Identity association `ach-agent/ach-agent-storage` on the existing bucket role; remove the one on `ach-agent/ach-agent-control` after step 3.
 2. Release 0.3.0: `make release-bump VERSION=0.3.0`, edit CHANGELOG, `chore(release): v0.3.0` on `main`.
 3. GitOps: bump the chart with `storage.namespaces: [ach-agent]` and the bucket's region; the operator rolls control pods onto the storage endpoint.
+
+For a GCS bucket, step 1 is instead the GCS bucket and a Workload Identity binding for `<namespace>/ach-agent-storage` (user-owned), and step 3 sets `storage.remote.type: gcs`, `storage.remote.gcs.{bucket,project}` and the ServiceAccount annotation.

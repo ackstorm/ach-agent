@@ -1,8 +1,12 @@
 #!/bin/sh
-# Runs beside the SeaweedFS server in the ach-agent-storage pod. Points the server at the S3
-# bucket and mounts it, then uploads the files the sync stream missed: a killed pod loses the
-# change events of its last minute or two while the data stays on the volume. Exports two
-# gauges on :9328.
+# Runs beside the SeaweedFS server in the ach-agent-storage pod. Points the server at the bucket,
+# mounts it and uploads the files the sync stream missed (a killed pod loses the change events of
+# its last minute or two while the data stays on the volume). Only then does the pod take
+# traffic: remote.copy.local writes back the entry it listed, so a write landing during the
+# upload would be undone. Afterwards it only measures what the bucket lacks; a backlog that stays
+# means the sync stream lost events, and restarting the pod uploads it. Exports two gauges on :9328.
+# remote.meta.sync is not run: after it pulls an overwritten object, SeaweedFS 4.51 serves the new
+# bytes with the old stored checksum, which S3 clients reject.
 # Env: BUCKET, REMOTE_TYPE (s3 | gcs), RECONCILE_INTERVAL; for s3 AWS_REGION and REMOTE_ENDPOINT,
 # for gcs GCS_PROJECT. Credentials: the default AWS chain (Pod Identity, or AWS_ACCESS_KEY_ID/
 # AWS_SECRET_ACCESS_KEY) for s3; Application Default Credentials (Workload Identity, or
@@ -46,11 +50,10 @@ weed_sh 60 "$configure" >/dev/null || exit 1
 if ! weed_sh 60 "remote.mount" | grep -qF "\"${DIR}\":"; then
   weed_sh 1800 "remote.mount -dir=${DIR} -remote=remote/${BUCKET} -nonempty" || exit 1
 fi
+weed_sh 600 "remote.copy.local -dir=${DIR}" >/dev/null ||
+  echo "start-up upload failed; restart the pod once the bucket is reachable" >&2
 touch /tmp/mounted
 echo "mounted ${DIR} on the ${REMOTE_TYPE} bucket ${BUCKET}"
-
-weed_sh 3600 "remote.copy.local -dir=${DIR}" >/dev/null ||
-  echo "start-up reconcile failed; retrying every ${RECONCILE_INTERVAL}s" >&2
 
 while true; do
   sleep "$RECONCILE_INTERVAL"
@@ -58,10 +61,7 @@ while true; do
   if out=$(weed_sh 1800 "remote.copy.local -dir=${DIR} -minAge=300 -dryRun=true"); then
     n=$(printf '%s\n' "$out" | sed -n 's/^Files to copy: //p')
     export_metrics "${n:-0}" "$(date +%s)"
-    if [ "${n:-0}" -gt 0 ]; then
-      echo "uploading ${n} files the sync stream missed"
-      weed_sh 3600 "remote.copy.local -dir=${DIR} -minAge=300" >/dev/null || echo "reconcile upload failed" >&2
-    fi
+    [ "${n:-0}" -eq 0 ] || echo "${n} files older than 5 minutes are not in the bucket" >&2
   else
     echo "reconcile: cannot compare with S3; retrying in ${RECONCILE_INTERVAL}s" >&2
   fi

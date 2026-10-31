@@ -20,6 +20,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if ne .Values.openshell.mesh "istio-ambient" -}}
 {{- fail "openshell.mesh must be istio-ambient: ach-agent requires an Istio ambient mesh to protect the OpenShell gateway" -}}
 {{- end -}}
+{{- if and (eq .Values.storage.remote.type "gcs") (not .Values.storage.remote.gcs.bucket) -}}
+{{- fail "storage.remote.gcs.bucket is required with storage.remote.type=gcs" -}}
+{{- end -}}
 {{- if and (eq .Values.storage.remote.type "gcs") (not .Values.storage.enabled) -}}
 {{- fail "storage.remote.type=gcs needs storage.enabled: control pods reach GCS only through the storage server" -}}
 {{- end -}}

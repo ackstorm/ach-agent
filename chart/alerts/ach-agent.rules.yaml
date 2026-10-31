@@ -156,4 +156,5 @@ groups:
           The storage server in namespace {{ $labels.namespace }} holds files S3 does not have, or
           has not been able to compare with S3, for over 15 minutes. Saves still succeed, but
           losing its volume would lose them. Check S3 reachability, the bucket credentials and the
-          sync and reconcile containers.
+          sync and reconcile containers. With S3 reachable, restarting the storage pod uploads what
+          is missing before it takes traffic again.

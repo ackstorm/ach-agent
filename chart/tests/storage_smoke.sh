@@ -114,4 +114,21 @@ retry 30 fresh || { docker logs smoke-loop; fail "the reconcile loop never compa
 gauges | grep -x 'ach_agent_storage_unsynced_files 0' >/dev/null || fail "unexpected unsynced files: $(gauges)"
 docker exec smoke-ss curl -s -m 5 http://127.0.0.1:9327/metrics | grep '^SeaweedFS_volumeServer_resource' >/dev/null ||
   fail "no SeaweedFS metrics on :9327"
+
+# A restart serves again once the start-up upload is done.
+docker exec smoke-loop rm -f /tmp/mounted
+docker stop smoke-sync smoke-loop smoke-ss >/dev/null
+docker start smoke-ss >/dev/null
+docker start smoke-loop smoke-sync >/dev/null
+retry 90 docker exec smoke-loop test -f /tmp/mounted || { docker logs smoke-loop; fail "not serving after a restart"; }
+ip=$(docker inspect smoke-ss -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+runtime/.venv/bin/python - "$ip" <<'PY'
+import sys, boto3
+from botocore.config import Config
+c = boto3.client("s3", endpoint_url=f"http://{sys.argv[1]}:8333", aws_access_key_id="ctl",
+                 aws_secret_access_key="ctl-secret", region_name="us-east-1",
+                 config=Config(s3={"addressing_style": "path"}))
+assert c.get_object(Bucket="smoke", Key="ach/ns/uid/ws/registry.json")["Body"].read() == b'{"v": 1}'
+print("restart ok")
+PY
 echo "PASS ($MODE)"

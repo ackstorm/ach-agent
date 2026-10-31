@@ -98,6 +98,9 @@ spec:
     metadata:
       labels:
         {{- include "ach-agent.storage.selectorLabels" $ | nindent 8 }}
+        # In the ambient mesh whatever the namespace label: the AuthorizationPolicy below is the
+        # only guard of SeaweedFS's unauthenticated internal ports.
+        istio.io/dataplane-mode: ambient
       annotations:
         checksum/scripts: {{ toJson $scripts | sha256sum }}
         checksum/s3-key: {{ $ak | sha256sum }}

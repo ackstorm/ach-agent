@@ -64,6 +64,7 @@ sts, = of("StatefulSet", "ach-agent")
 pod = sts["spec"]["template"]["spec"]
 assert sts["spec"]["replicas"] == 1 and sts["spec"]["serviceName"] == "ach-agent-storage"
 assert pod["serviceAccountName"] == "ach-agent-storage"
+assert sts["spec"]["template"]["metadata"]["labels"]["istio.io/dataplane-mode"] == "ambient"
 assert pod["securityContext"]["runAsNonRoot"] and pod["securityContext"]["runAsUser"] == 1000
 c = {x["name"]: x for x in pod["containers"]}
 assert sorted(c) == ["reconcile", "server", "sync"], sorted(c)
@@ -132,6 +133,8 @@ PY
 
 gcs=(--set storage.remote.type=gcs --set storage.remote.gcs.bucket=ach-gcs --set storage.remote.gcs.project=ach-prod)
 helm template t . "${base[@]}" "${gcs[@]}" --set storage.enabled=false >/dev/null 2>&1 && fail "renders gcs without the storage server"
+helm template t . "${base[@]}" --set storage.remote.type=gcs --set storage.remote.gcs.project=ach-prod \
+  --set 'storage.namespaces={ach-agent}' >/dev/null 2>&1 && fail "renders gcs without a bucket"
 helm template t . "${base[@]}" --set storage.remote.type=gcs --set storage.remote.gcs.bucket=ach-gcs \
   --set 'storage.namespaces={ach-agent}' >/dev/null 2>&1 && fail "renders gcs without a project"
 out=$(helm template t . "${base[@]}" "${gcs[@]}" --set 'storage.namespaces={ach-agent}' \

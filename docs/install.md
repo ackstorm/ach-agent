@@ -79,7 +79,7 @@ helm upgrade --install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --versi
 
 | Value | Default | Notes |
 |-------|---------|-------|
-| `storage.enabled` | `true` | `false` keeps control pods on S3 directly, with their own credentials. |
+| `storage.enabled` | `true` | `false` keeps control pods on S3 directly, with their own credentials. Drain the storage server first (below). |
 | `storage.namespaces` | `[]` | The Agent namespaces; required when a bucket is set. An Agent elsewhere with persistence or artifacts enabled waits for the Secret `ach-agent-storage-s3`. |
 | `storage.remote.type` | `s3` | `s3` replicates to `runtime.storage.s3.bucket`; `gcs` to `storage.remote.gcs.bucket`. |
 | `storage.remote.gcs.{bucket,project,prefix,credentialsSecret}` | `prefix: ach` | GCS only; `project` is required. `credentialsSecret` names an existing Secret with the key `credentials.json` (a service account key); leave it empty for Workload Identity. |
@@ -109,12 +109,23 @@ helm upgrade --install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --versi
   name); an Agent whose profile sets another `control.serviceAccountName` cannot reach it.
 - **Existing data.** Objects already in the bucket stay readable. The first start reads the bucket's
   object list, which takes a while for a large bucket.
+- **Switching on.** Enable it while no workspace of the namespace is active (no sandbox pods, every
+  Workspace asleep). The upgrade rolls the control pods, and a control pod still on the old version saves
+  its active workspaces and sessions to the bucket directly on its way out; the storage server may already
+  have read the bucket by then and would keep serving the older registry. Writing to the bucket other than
+  through the storage server has the same effect at any time.
+- **Switching off.** `storage.enabled=false` or removing a namespace from `storage.namespaces` deletes the
+  storage server and leaves its volume; nothing uploads what is still on it. First let the Agents of that
+  namespace go idle, wait until `ach_agent_storage_unsynced_files` is 0 and the sync container has
+  nothing left to send, then change the value.
 - **Failures.** While the storage pod restarts, saves retry within `workspace.shutdownTimeoutSeconds` and
   a failed restore is retried by the next message. While S3 is unreachable, saves still succeed but each
   new object waits on S3 (about 30 s when the connection is refused, about 90 s when the endpoint does not
   resolve) and the backlog grows on the volume. A killed pod's last minute or two of changes reach S3
-  through the reconcile loop, which runs at start and every 10 minutes. Losing the volume loses what S3
-  does not have yet.
+  at its next start, before it takes traffic; every 10 minutes it measures what S3 lacks
+  (`ACHAgentStorageSyncLagging`). A file overwritten in place (a `registry.json`) whose change a killed pod
+  lost is not uploaded again: S3 keeps its previous version until that state is saved again. Losing the
+  volume loses what S3 does not have yet.
 
 ### Observability (optional)
 

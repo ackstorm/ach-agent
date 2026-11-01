@@ -2,16 +2,18 @@
 """Bounded, safe-extraction archives (dispatch §required-behavior 5).
 
 Ported from `old-ach-agent/src/ach_agent/sandbox/archive.py` verbatim where the contract
-allows it. Review round 1/2 fixes (`task-6-storage-review.md`,
-`task-6-storage-fix-1-review.md`):
+allows it.
   - No public unsafe extraction mode: only PEP 706's `data` filter ever runs.
-  - A full preflight pass validates member count, path traversal/absolute paths, link
-    escape, member type and total expansion — ALL of it before any destination write, not
-    interleaved with extraction and not relying on the `data` filter to catch anything late.
+  - `_MemberCheck` validates member count, path traversal/absolute paths, link escape,
+    member type and total expansion. `extract` runs it on each member before that member
+    is written, in one streaming gzip pass; `pack` runs it while packing, so an archive it
+    returns is one `extract` accepts.
   - Extraction never writes into the caller's `dest` directly: it extracts into a freshly
     created, privately-owned sibling staging directory and only renames it onto `dest` after
-    full success. Any failure — preflight or extraction — removes ONLY that staging
-    directory; a pre-existing `dest` (or no `dest` at all) is never touched or deleted.
+    full success. Any failure — a rejected member or an extraction error — removes ONLY that
+    staging directory; a pre-existing `dest` (or no `dest` at all) is never touched or
+    deleted. A rejected member stops extraction before its own bytes are written, so
+    staging never holds more than the expansion cap.
   - `pack` enforces its byte cap DURING creation via a counting writer, and cleans up on
     ANY failure (not only `ArchiveTooLarge`).
 """
@@ -66,13 +68,21 @@ class _CappedWriter:
         self._fh.close()
 
 
-def pack(src: Path, dest: Path, *, max_bytes: int) -> int:
-    """Write ``src``'s contents to ``dest`` as tar.gz, capped during creation; return size."""
+def pack(
+    src: Path, dest: Path, *, max_bytes: int,
+    member_filter: Callable[[tarfile.TarInfo], tarfile.TarInfo] | None = None,
+) -> int:
+    """Write ``src``'s contents to ``dest`` as tar.gz, capped during creation; return size.
+    ``member_filter`` is `TarFile.add`'s ``filter``: it sees each member before it is added
+    and raises to reject the archive."""
     writer = _CappedWriter(dest, max_bytes)
     try:
-        tar = tarfile.open(fileobj=writer, mode="w:gz")
+        # Level 1: workspaces are mostly git packs and binaries gzip cannot shrink; level 9
+        # took 9.0 s against 7.6 s on a 329 MB clone, and 1.36 s against 0.45 s on its
+        # 35 MB of source for 6 MiB against 7 MiB of output (prod, 1 CPU).
+        tar = tarfile.open(fileobj=writer, mode="w:gz", compresslevel=1)
         try:
-            tar.add(src, arcname=".")
+            tar.add(src, arcname=".", filter=member_filter)
         finally:
             tar.close()
     except BaseException:
@@ -182,71 +192,77 @@ def _resolve_link_target(base: list[str], link: str) -> list[str] | None:
 def _normalize_parent(parts: list[str]) -> list[str]:
     """Drop a member's own redundant `.`/empty path separators before using it as the base
     a relative link target resolves against. A member's name can't itself contain `..`
-    (preflight already rejects that elsewhere), so only `.`/`` need filtering here -- unlike
+    (`_MemberCheck` already rejects that), so only `.`/`` need filtering here -- unlike
     a link target, which legitimately contains `..`. Left unfiltered, a no-op `.` or empty
     component is still popped by a target `..` as if it were a real directory, letting one
     extra level of escape slip past `_resolve_link_target`."""
     return [part for part in parts if part not in ("", ".")]
 
 
-def _preflight(archive: Path, *, max_expanded_bytes: int, max_members: int) -> None:
-    """Validate count, path traversal/absolute paths, link escape, member type and total
-    expansion — entirely before any write (review: "Validate all allowed member/path/link/
-    type constraints before destination writes")."""
-    with tarfile.open(archive, "r:gz") as tar:
-        total_size = 0
-        count = 0
-        for member in tar:
-            count += 1
-            if count > max_members:
-                raise ArchiveTooLarge(f"archive has more than {max_members} members")
-            name = member.name
-            if len(name) > _MAX_MEMBER_NAME_LEN:
-                raise tarfile.TarError(f"member name exceeds {_MAX_MEMBER_NAME_LEN} characters")
-            if name.startswith("/") or name.startswith("\\"):
-                raise tarfile.TarError(f"refusing absolute path in archive: {name!r}")
-            if ".." in _split(name):
-                raise tarfile.TarError(f"refusing path traversal in archive: {name!r}")
-            if member.type not in _ALLOWED_TYPES:
-                raise tarfile.TarError(
-                    f"refusing unsupported member type {member.type!r} for {name!r}"
-                )
-            if member.issym() or member.islnk():
-                link = member.linkname
-                if len(link) > _MAX_MEMBER_NAME_LEN:
-                    raise tarfile.TarError(f"link target exceeds {_MAX_MEMBER_NAME_LEN} characters")
-                if link.startswith("/") or link.startswith("\\"):
-                    raise tarfile.TarError(f"refusing absolute link target: {link!r}")
-                # Hardlinks resolve against the archive root; symlinks resolve against
-                # their own member's parent directory. A `..` is only an escape once it
-                # would pop past that base, not merely for appearing in the target.
-                base = [] if member.islnk() else _normalize_parent(_split(name)[:-1])
-                if _resolve_link_target(base, link) is None:
-                    raise tarfile.TarError(f"refusing escaping link target: {link!r}")
-            total_size += member.size
-            if total_size > max_expanded_bytes:
-                raise ArchiveTooLarge("archive expands past the cap")
+class _MemberCheck:
+    """Validates one archive's members in order: count, path traversal/absolute paths,
+    link escape, member type and running expansion total. Returns the member unchanged, so
+    it also serves as `TarFile.add`'s ``filter``."""
+
+    def __init__(self, *, max_expanded_bytes: int, max_members: int) -> None:
+        self._max_expanded_bytes = max_expanded_bytes
+        self._max_members = max_members
+        self._count = 0
+        self._total_size = 0
+
+    def __call__(self, member: tarfile.TarInfo) -> tarfile.TarInfo:
+        self._count += 1
+        if self._count > self._max_members:
+            raise ArchiveTooLarge(f"archive has more than {self._max_members} members")
+        name = member.name
+        if len(name) > _MAX_MEMBER_NAME_LEN:
+            raise tarfile.TarError(f"member name exceeds {_MAX_MEMBER_NAME_LEN} characters")
+        if name.startswith("/") or name.startswith("\\"):
+            raise tarfile.TarError(f"refusing absolute path in archive: {name!r}")
+        if ".." in _split(name):
+            raise tarfile.TarError(f"refusing path traversal in archive: {name!r}")
+        if member.type not in _ALLOWED_TYPES:
+            raise tarfile.TarError(
+                f"refusing unsupported member type {member.type!r} for {name!r}"
+            )
+        if member.issym() or member.islnk():
+            link = member.linkname
+            if len(link) > _MAX_MEMBER_NAME_LEN:
+                raise tarfile.TarError(f"link target exceeds {_MAX_MEMBER_NAME_LEN} characters")
+            if link.startswith("/") or link.startswith("\\"):
+                raise tarfile.TarError(f"refusing absolute link target: {link!r}")
+            # Hardlinks resolve against the archive root; symlinks resolve against
+            # their own member's parent directory. A `..` is only an escape once it
+            # would pop past that base, not merely for appearing in the target.
+            base = [] if member.islnk() else _normalize_parent(_split(name)[:-1])
+            if _resolve_link_target(base, link) is None:
+                raise tarfile.TarError(f"refusing escaping link target: {link!r}")
+        self._total_size += member.size
+        if self._total_size > self._max_expanded_bytes:
+            raise ArchiveTooLarge("archive expands past the cap")
+        return member
 
 
 def extract(archive: Path, dest: Path, *, max_expanded_bytes: int, max_members: int) -> None:
-    """Extract ``archive`` into ``dest`` with PEP 706's ``data`` filter.
+    """Extract ``archive`` into ``dest`` with PEP 706's ``data`` filter, in one streaming
+    pass that validates each member before writing it.
 
     ``dest`` must not already exist: extraction writes into a freshly created, privately
     owned sibling staging directory and only `rename`s it onto ``dest`` after full success.
-    A failure at any point — preflight or the real extraction pass — removes ONLY that
+    A failure at any point — a rejected member or the extraction itself — removes ONLY that
     staging directory; pre-existing state at (or the absence of) ``dest`` is never touched
-    (review Critical: "failed extraction can delete valid existing state").
+    (review Critical: "failed extraction can delete valid existing state"). One pass instead
+    of validate-then-extract: 1.7 s against 3.4 s for a 312 MB Workspace (prod, 1 CPU).
     """
     if dest.exists():
         raise FileExistsError(f"refusing to extract into an existing destination: {dest}")
 
-    _preflight(archive, max_expanded_bytes=max_expanded_bytes, max_members=max_members)
-
+    check = _MemberCheck(max_expanded_bytes=max_expanded_bytes, max_members=max_members)
     staging = dest.parent / f".{dest.name}.staging-{uuid.uuid4().hex}"
     staging.mkdir(parents=True)
     try:
-        with tarfile.open(archive, "r:gz") as tar:
-            tar.extractall(staging, filter="data")
+        with tarfile.open(archive, "r|gz") as tar:
+            tar.extractall(staging, members=(check(member) for member in tar), filter="data")
         staging.rename(dest)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)

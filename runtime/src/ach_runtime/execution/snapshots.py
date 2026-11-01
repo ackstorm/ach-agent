@@ -15,7 +15,13 @@ from pathlib import Path
 
 from ach_runtime.engine.opencode import SnapshotManifest
 from ach_runtime.execution.service import ExecutionService
-from ach_runtime.storage.archive import _preflight, _run_owned, extract, pack, write_capped
+from ach_runtime.storage.archive import (
+    _MemberCheck,
+    _run_owned,
+    extract,
+    pack,
+    write_capped,
+)
 
 MAX_SNAPSHOT_BYTES = 2 * 1024**3
 MAX_HANDOFF_BYTES = 512 * 1024**2
@@ -38,10 +44,10 @@ def _archive_path(parent: Path) -> Path:
 def _pack_restorable(src: Path, dest: Path) -> None:
     """Pack ``src`` and reject the archive unless the import path would accept it: a
     persisted close snapshot authorizes retiring local state, so it must be restorable."""
-    pack(src, dest, max_bytes=MAX_SNAPSHOT_BYTES)
-    # ponytail: preflight only; extract's `data` filter is not dry-run here. Add a trial
-    # extract if a member preflight accepts is ever seen rejected by that filter.
-    _preflight(dest, max_expanded_bytes=MAX_SNAPSHOT_BYTES * 8, max_members=MAX_ARCHIVE_MEMBERS)
+    # ponytail: the member check only; extract's `data` filter is not dry-run here. Add a
+    # trial extract if a member the check accepts is ever seen rejected by that filter.
+    pack(src, dest, max_bytes=MAX_SNAPSHOT_BYTES, member_filter=_MemberCheck(
+        max_expanded_bytes=MAX_SNAPSHOT_BYTES * 8, max_members=MAX_ARCHIVE_MEMBERS))
 
 
 async def export_session(service: ExecutionService, session_ref: str) -> Path:

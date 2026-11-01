@@ -17,9 +17,22 @@ from unittest import mock
 
 import pytest
 
-from ach_runtime.storage.archive import ArchiveTooLarge, _preflight, extract, pack, write_capped
+from ach_runtime.storage.archive import (
+    ArchiveTooLarge,
+    _MemberCheck,
+    extract,
+    pack,
+    write_capped,
+)
 
 _NO_MEMBER_CAP = 10_000
+
+
+def _check_members(archive: Path, *, max_expanded_bytes: int, max_members: int) -> None:
+    check = _MemberCheck(max_expanded_bytes=max_expanded_bytes, max_members=max_members)
+    with tarfile.open(archive, "r:gz") as tar:
+        for member in tar:
+            check(member)
 
 
 def test_pack_extract_roundtrip(tmp_path) -> None:  # noqa: ANN001
@@ -67,19 +80,18 @@ def test_pack_extract_parent_relative_symlink_roundtrip(tmp_path) -> None:  # no
 def test_pack_extract_rejects_own_pack_root_relative_link_escape(tmp_path) -> None:  # noqa: ANN001
     """I1 regression: our own `pack` emits root members as `./name`, whose parent becomes
     `["."]`  -- a no-op component that must not be treated as poppable by `..`, or a
-    genuinely escaping root-level symlink slips past `_preflight` into extraction."""
+    genuinely escaping root-level symlink slips past `_MemberCheck` into extraction."""
     src = tmp_path / "home"
     src.mkdir()
     (src / "link").symlink_to(Path("../outside"))
     archive = tmp_path / "a.tar.gz"
     pack(src, archive, max_bytes=10_000_000)
 
-    # The escape must be caught by preflight itself -- the stdlib `data` filter's own late
-    # rejection during `extractall` would otherwise mask a regressed preflight: dest/staging
-    # end up absent either way, hiding that invalid links reached the extraction pass
-    # instead of failing before any staging/write (the exact regression review I1 found).
+    # The escape must be caught by the member check itself -- the stdlib `data` filter's own
+    # late rejection during `extractall` would otherwise mask a regressed check: dest/staging
+    # end up absent either way, hiding that invalid links reached the extraction step.
     with pytest.raises(tarfile.TarError):
-        _preflight(archive, max_expanded_bytes=10_000, max_members=_NO_MEMBER_CAP)
+        _check_members(archive, max_expanded_bytes=10_000, max_members=_NO_MEMBER_CAP)
 
     dest = tmp_path / "out"
     with pytest.raises(tarfile.TarError):
@@ -100,13 +112,24 @@ def test_extract_rejects_escaping_link_with_redundant_parent_components(tmp_path
         tar.addfile(info)
 
     with pytest.raises(tarfile.TarError):
-        _preflight(archive, max_expanded_bytes=10_000, max_members=_NO_MEMBER_CAP)
+        _check_members(archive, max_expanded_bytes=10_000, max_members=_NO_MEMBER_CAP)
 
     dest = tmp_path / "out"
     with pytest.raises(tarfile.TarError):
         extract(archive, dest, max_expanded_bytes=10_000, max_members=_NO_MEMBER_CAP)
     assert not dest.exists()
     assert list(tmp_path.glob(".out.staging-*")) == []
+
+
+def test_pack_member_filter_rejects_an_unrestorable_tree_and_removes(tmp_path) -> None:  # noqa: ANN001
+    src = tmp_path / "home"
+    src.mkdir()
+    (src / "link").symlink_to(Path("../outside"))
+    archive = tmp_path / "a.tar.gz"
+    check = _MemberCheck(max_expanded_bytes=10_000, max_members=_NO_MEMBER_CAP)
+    with pytest.raises(tarfile.TarError, match="escaping link target"):
+        pack(src, archive, max_bytes=10_000_000, member_filter=check)
+    assert not archive.exists()
 
 
 def test_pack_over_cap_raises_and_removes(tmp_path) -> None:  # noqa: ANN001
@@ -144,7 +167,7 @@ def test_extract_rejects_traversal(tmp_path, name: str) -> None:  # noqa: ANN001
     dest = tmp_path / "out"
     with pytest.raises(tarfile.TarError):
         extract(archive, dest, max_expanded_bytes=100, max_members=_NO_MEMBER_CAP)
-    assert not dest.exists()  # preflight rejects before any destination write
+    assert not dest.exists()  # the member check rejects before dest exists
 
 
 def test_extract_rejects_bomb(tmp_path) -> None:  # noqa: ANN001
@@ -233,11 +256,9 @@ def test_extract_rejects_special_files(tmp_path) -> None:  # noqa: ANN001
     assert not dest.exists()
 
 
-def test_extract_preflight_rejects_a_hostile_member_before_any_write(tmp_path) -> None:  # noqa: ANN001
-    """A hostile member anywhere in the archive — even after valid ones — is caught by the
-    full preflight pass, entirely before any destination directory is even created, let
-    alone written into (review: "Validate all allowed member/path/link/type constraints
-    before destination writes")."""
+def test_extract_rejects_a_hostile_member_before_dest_exists(tmp_path) -> None:  # noqa: ANN001
+    """A hostile member anywhere in the archive — even after valid ones — is rejected
+    before ``dest`` is created; the valid members already written to staging go with it."""
     archive = tmp_path / "evil.tar.gz"
     with tarfile.open(archive, "w:gz") as tar:
         good = tarfile.TarInfo("ok.txt")
@@ -278,7 +299,7 @@ def test_extract_refuses_pre_existing_destination_without_touching_it(tmp_path) 
 
 
 def test_extract_cleans_up_only_its_own_staging_on_late_failure(tmp_path, monkeypatch) -> None:  # noqa: ANN001
-    """A failure during the real extraction pass (after preflight already passed) must clean
+    """A failure during extraction itself (not a rejected member) must clean
     up only the private staging directory — `dest` itself must never exist afterward, and no
     stray `.{name}.staging-*` directory is left behind either."""
     src = tmp_path / "home"

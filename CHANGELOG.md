@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0-rc.1] - 2026-11-01
 
 ### Added
 
@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** with a bucket configured, the chart requires `storage.namespaces` (the Agent namespaces) and
   `runtime.storage.s3.region`, or `storage.enabled=false` to keep control pods on S3 directly. The bucket's
   Pod Identity association moves from the control ServiceAccount to `<namespace>/ach-agent-storage`.
+- Each storage server mounts only its namespace's folder of the bucket (`{prefix}/{namespace}`).
+- The release workflow also publishes from `rc/**` branches, and a version with a suffix (`0.3.0-rc.1`)
+  becomes a GitHub pre-release.
 
 ### Fixed
 

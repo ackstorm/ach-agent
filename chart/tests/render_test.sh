@@ -60,6 +60,8 @@ assert env["ACH_AGENT_STORAGE_S3_BUCKET"] == "ach-bucket", env
 for kind in ("StatefulSet", "Service", "Secret", "ConfigMap", "ServiceAccount", "AuthorizationPolicy"):
     got = sorted(d["metadata"]["namespace"] for d in of(kind) if d["metadata"]["name"].startswith("ach-agent-storage"))
     assert got == ["ach-agent", "team-b"], (kind, got)
+tb, = of("StatefulSet", "team-b")
+assert {e["name"]: e.get("value") for e in tb["spec"]["template"]["spec"]["containers"][0]["env"]}["MOUNT_PATH"] == "ach/team-b"
 sts, = of("StatefulSet", "ach-agent")
 pod = sts["spec"]["template"]["spec"]
 assert sts["spec"]["replicas"] == 1 and sts["spec"]["serviceName"] == "ach-agent-storage"
@@ -76,6 +78,7 @@ for x in c.values():
     assert e["BUCKET"]["value"] == "ach-bucket" and e["AWS_REGION"]["value"] == "eu-west-1", e
     assert e["REMOTE_ENDPOINT"]["value"] == "https://s3.eu-west-1.amazonaws.com", e
     assert e["REMOTE_TYPE"]["value"] == "s3", e
+    assert e["MOUNT_PATH"]["value"] == "ach/ach-agent", e
     assert "AWS_ACCESS_KEY_ID" not in e, "without credentialsSecret the default AWS chain (Pod Identity) applies"
 args = c["server"]["args"]
 for flag in ("-filer.remoteCacheEvictThreshold=0.8", "-s3.config=/etc/seaweedfs/identities.json",

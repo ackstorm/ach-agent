@@ -2,7 +2,8 @@
 # Runs the storage server's three containers as the chart wires them (shared /tmp, non-root,
 # read-only root) in front of a stand-in bucket, then checks: create-only writes, replication to
 # the bucket, eviction of a replicated object (SeaweedFS 4.48 never marks objects written through
-# the server as replicated) and read-through, and the reconcile gauges.
+# the server as replicated) and read-through, that only the namespace folder (MOUNT_PATH) is
+# mounted, and the reconcile gauges.
 # Usage: storage_smoke.sh s3|gcs. s3 stands in with a second SeaweedFS; gcs with fake-gcs-server,
 # which the GCS Go SDK reaches through STORAGE_EMULATOR_HOST. The docker volume reports the host
 # disk, so the built-in evictor gets a 0.99 threshold to keep it out of the explicit uncache check.
@@ -38,6 +39,8 @@ if [ "$MODE" = gcs ]; then
     -H 'Content-Type: application/json' -d '{"name":"smoke"}' >/dev/null
   remote_env=(-e REMOTE_TYPE=gcs -e GCS_PROJECT=smoke -e GOOGLE_CLOUD_PROJECT=smoke
     -e STORAGE_EMULATOR_HOST=smoke-remote:4443)
+  netcurl -f -X POST 'http://smoke-remote:4443/upload/storage/v1/b/smoke/o?uploadType=media&name=ach/other/x' \
+    --data-binary x >/dev/null
   in_remote() { netcurl 'http://smoke-remote:4443/storage/v1/b/smoke/o?prefix=ach/ns/uid/ws/' |
     grep '"name":"ach/ns/uid/ws/registry.json"' >/dev/null; }
 else
@@ -45,6 +48,8 @@ else
   retry 60 docker exec smoke-remote curl -s -o /dev/null -m 2 http://127.0.0.1:8333/ || fail "stand-in S3 not up"
   printf '%s\n' 's3.configure -user=remote -access_key=remote -secret_key=remote-secret -actions=Admin -apply' \
     's3.bucket.create -name smoke' | docker exec -i smoke-remote weed shell -master=127.0.0.1:9333 >/dev/null
+  remote_ip=$(docker inspect smoke-remote -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+  runtime/.venv/bin/python -c 'import sys, boto3; from botocore.config import Config; boto3.client("s3", endpoint_url=f"http://{sys.argv[1]}:8333", aws_access_key_id="remote", aws_secret_access_key="remote-secret", region_name="us-east-1", config=Config(s3={"addressing_style": "path"})).put_object(Bucket="smoke", Key="ach/other/x", Body=b"x")' "$remote_ip"
   remote_env=(-e REMOTE_TYPE=s3 -e AWS_REGION=us-east-1 -e REMOTE_ENDPOINT=http://smoke-remote:8333
     -e AWS_ACCESS_KEY_ID=remote -e AWS_SECRET_ACCESS_KEY=remote-secret)
   in_remote() { printf 'fs.ls /buckets/smoke/ach/ns/uid/ws\n' |
@@ -55,7 +60,7 @@ docker volume create smoke-tmp >/dev/null
 docker volume create smoke-data >/dev/null
 docker run --rm -v smoke-tmp:/tmp -v smoke-data:/data --entrypoint chown "$IMG" 1000:1000 /tmp /data
 ident='{"identities":[{"name":"control","credentials":[{"accessKey":"ctl","secretKey":"ctl-secret"}],"actions":["Read","Write","List","Tagging"]}]}'
-common=(--user 1000:1000 --read-only -v smoke-tmp:/tmp -e HOME=/tmp -e BUCKET=smoke -e RECONCILE_INTERVAL=15
+common=(--user 1000:1000 --read-only -v smoke-tmp:/tmp -e HOME=/tmp -e BUCKET=smoke -e MOUNT_PATH=ach/ns -e RECONCILE_INTERVAL=15
   "${remote_env[@]}")
 docker run -d --name smoke-ss --network "$N" "${common[@]}" -v smoke-data:/data \
   --entrypoint sh "$IMG" -c "mkdir -p /tmp/s3 && printf '%s' '$ident' > /tmp/s3/identities.json && exec /usr/bin/weed -logtostderr=true server \
@@ -67,6 +72,8 @@ docker run -d --name smoke-loop --network container:smoke-ss "${common[@]}" -v "
 docker run -d --name smoke-sync --network container:smoke-ss "${common[@]}" -v "$PWD/chart/files/storage:/scripts:ro" \
   --entrypoint sh "$IMG" /scripts/sync.sh >/dev/null
 retry 90 docker exec smoke-loop test -f /tmp/mounted || { docker logs smoke-loop; fail "bucket never mounted"; }
+printf 'fs.ls /buckets/smoke/ach\n' | docker exec -i smoke-ss weed shell -master=127.0.0.1:9333 | grep -x other >/dev/null &&
+  fail "another namespace's keys were indexed"
 
 ip=$(docker inspect smoke-ss -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
 runtime/.venv/bin/python - "$ip" <<'PY'
@@ -94,7 +101,7 @@ print("create-only put and auth ok")
 PY
 
 retry 60 in_remote || { docker logs smoke-sync; fail "object never reached the stand-in bucket"; }
-uncached() { printf 'remote.uncache -dir=/buckets/smoke\n' | docker exec -i smoke-ss weed shell -master=127.0.0.1:9333 | grep 'registry.json ... Done' >/dev/null; }
+uncached() { printf 'remote.uncache -dir=/buckets/smoke/ach/ns\n' | docker exec -i smoke-ss weed shell -master=127.0.0.1:9333 | grep 'registry.json ... Done' >/dev/null; }
 retry 30 uncached || fail "the replicated object cannot be evicted"
 runtime/.venv/bin/python - "$ip" <<'PY'
 import sys, boto3

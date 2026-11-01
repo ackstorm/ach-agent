@@ -20,6 +20,9 @@
 {{- end }}
 {{- $containerSecurity := dict "allowPrivilegeEscalation" false "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL")) }}
 {{- range $ns := $st.namespaces }}
+{{- /* Mount only this namespace's keys ({prefix}/{namespace}/...): the server never indexes the rest of the bucket. */}}
+{{- $mount := trimAll "/" (printf "%s/%s" (trimAll "/" (ternary $remote.gcs.prefix $s3.prefix $gcs)) $ns) }}
+{{- $nsEnv := append $env (dict "name" "MOUNT_PATH" "value" $mount) }}
 {{- /* The control pods' S3 key: generated once per namespace, kept across upgrades. */}}
 {{- $old := lookup "v1" "Secret" $ns "ach-agent-storage-s3" }}
 {{- $ak := randAlphaNum 20 }}
@@ -158,7 +161,7 @@ spec:
             - -filer.allowUntrustedRemoteEndpoints
             - -s3.allowUntrustedRemoteEndpoints
           env:
-            {{- toYaml $env | nindent 12 }}
+            {{- toYaml $nsEnv | nindent 12 }}
           ports:
             - {name: s3, containerPort: 8333}
             - {name: metrics, containerPort: 9327}
@@ -179,7 +182,7 @@ spec:
           image: {{ $st.image }}
           command: [/bin/sh, /scripts/sync.sh]
           env:
-            {{- toYaml $env | nindent 12 }}
+            {{- toYaml $nsEnv | nindent 12 }}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
             - {name: scripts, mountPath: /scripts, readOnly: true}
@@ -192,7 +195,7 @@ spec:
           image: {{ $st.image }}
           command: [/bin/sh, /scripts/reconcile.sh]
           env:
-            {{- toYaml $env | nindent 12 }}
+            {{- toYaml $nsEnv | nindent 12 }}
           ports:
             - {name: reconcile, containerPort: 9328}
           # The Service gets the pod only once the bucket is mounted.

@@ -7,4 +7,4 @@ until [ -f /tmp/mounted ]; do
   [ "$i" -lt 900 ] || { echo "FAIL: bucket not mounted after 1800s" >&2; exit 1; }
   sleep 2
 done
-exec weed filer.remote.sync -filer=127.0.0.1:8888 -dir="/buckets/${BUCKET}"
+exec weed filer.remote.sync -filer=127.0.0.1:8888 -dir="/buckets/${BUCKET}/${MOUNT_PATH}"

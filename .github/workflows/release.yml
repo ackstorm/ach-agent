@@ -2,7 +2,8 @@ name: release
 
 on:
   push:
-    branches: [main]
+    # rc/** publishes pre-releases (X.Y.Z-rc.N) for testing without merging into main.
+    branches: [main, 'rc/**']
 
 jobs:
   parse-release:
@@ -196,8 +197,10 @@ jobs:
             /^## \[/ { if (found) exit }
             found { print }
           ' CHANGELOG.md > "$notes"
+          pre=()
+          case "$VERSION" in *-*) pre=(--prerelease) ;; esac
           if [ -s "$notes" ]; then
-            gh release create "v$VERSION" --title "v$VERSION" --notes-file "$notes"
+            gh release create "v$VERSION" --title "v$VERSION" "${pre[@]}" --notes-file "$notes"
           else
-            gh release create "v$VERSION" --title "v$VERSION" --generate-notes
+            gh release create "v$VERSION" --title "v$VERSION" "${pre[@]}" --generate-notes
           fi

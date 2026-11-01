@@ -5,16 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0-rc.2] - 2026-11-01
-
-### Changed
-
-- Workspace and session restores extract in one streaming pass, and snapshots are no longer re-read after
-  packing: a 312 MB Workspace restore drops from about 6.3 s to about 3.4 s in the sandbox.
-- Snapshots compress at gzip level 1 instead of 9: about 1.4 s faster for a 312 MB Workspace and three
-  times faster for source code, for slightly larger snapshots.
-
-## [0.3.0-rc.1] - 2026-11-01
+## [0.3.0] - 2026-11-01
 
 ### Added
 
@@ -35,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The runtime uses path-style S3 addressing whenever `runtime.storage.s3.endpointUrl` is set.
+- Workspace and session restores extract in one streaming pass, and snapshots are not re-read after packing.
+  Snapshots compress at gzip level 1 instead of 9. On prod (312 MB Workspace) a save takes about 15.5 s
+  instead of 18.3 s and a restore about 5.5 s instead of 6.2 s; source code compresses three times faster
+  for slightly larger snapshots.
 - **Breaking:** with a bucket configured, the chart requires `storage.namespaces` (the Agent namespaces) and
   `runtime.storage.s3.region`, or `storage.enabled=false` to keep control pods on S3 directly. The bucket's
   Pod Identity association moves from the control ServiceAccount to `<namespace>/ach-agent-storage`.

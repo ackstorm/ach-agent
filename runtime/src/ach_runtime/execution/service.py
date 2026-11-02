@@ -54,7 +54,6 @@ from ach_runtime.execution.sessions import (
     run_hook,
 )
 from ach_runtime.execution.wire import RunState, RunStatus, StartRequest, Started
-from ach_runtime.facades._mcp_session import mcp_session
 
 MAX_RETAINED_RUNS = 1024
 # sessionStart exit code meaning "decided not to run": the invocation ends `skipped`.
@@ -211,6 +210,10 @@ def _resolve_system_prompt(prompt_block: PromptBlock | None, state_dir: Path) ->
 
 
 async def _count_mcp_tools(url: str, headers: dict[str, str] | None) -> int:
+    # Imported here: the mcp package is slow to import (0.8 s of a 6 s sandbox start in the
+    # 0.3.0 image, measured locally) and only this probe needs it.
+    from ach_runtime.facades._mcp_session import mcp_session
+
     async with asyncio.timeout(MCP_TOOLS_PROBE_TIMEOUT_SECONDS):
         async with mcp_session(url, headers) as session:
             return len((await session.list_tools()).tools)

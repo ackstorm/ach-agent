@@ -24,6 +24,9 @@ RUN apk add --no-cache ca-certificates git openssh-client libstdc++ libgcc tzdat
 COPY --from=builder /work/deps/ /work/deps/
 COPY src/ /work/src/
 COPY plugins/ /work/plugins/
+# Bytecode compiled once here: PYTHONDONTWRITEBYTECODE means a sandbox would otherwise
+# compile every imported module on each start.
+RUN python -m compileall -q -j0 --invalidation-mode unchecked-hash /work/src /work/deps
 RUN rm -rf /usr/local/lib/python3.13/ensurepip \
     /usr/local/lib/python3.13/site-packages/pip \
     /usr/local/lib/python3.13/site-packages/pip-* \

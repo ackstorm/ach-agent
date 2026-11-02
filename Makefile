@@ -33,14 +33,16 @@ release-check: ## runtime, chart and CHANGELOG agree on VERSION (default: the ru
 	chart_v=$$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\}$$/\1/p' chart/Chart.yaml); \
 	chart_a=$$(sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$$/\1/p' chart/Chart.yaml); \
 	run_v=$$(sed -n 's/^version = "\(.*\)"/\1/p' runtime/pyproject.toml); \
-	[ -n "$$v" ] && [ "$$run_v" = "$$v" ] && [ "$$chart_v" = "$$v" ] && [ "$$chart_a" = "$$v" ] || \
-	  { echo "FAIL: versions differ: want $$v, runtime=$$run_v chart=$$chart_v appVersion=$$chart_a" >&2; exit 1; }; \
+	pkg_v=$$(sed -n 's/^__version__ = "\(.*\)"/\1/p' runtime/src/ach_runtime/__init__.py); \
+	[ -n "$$v" ] && [ "$$run_v" = "$$v" ] && [ "$$pkg_v" = "$$v" ] && [ "$$chart_v" = "$$v" ] && [ "$$chart_a" = "$$v" ] || \
+	  { echo "FAIL: versions differ: want $$v, runtime=$$run_v __version__=$$pkg_v chart=$$chart_v appVersion=$$chart_a" >&2; exit 1; }; \
 	grep -Fq "## [$$v]" CHANGELOG.md || { echo "FAIL: CHANGELOG.md has no ## [$$v]" >&2; exit 1; }; \
 	echo "release-check ok: $$v"
 
 release-bump: ## set runtime and chart versions and add a CHANGELOG heading (VERSION=X.Y.Z); never commits
 	@test -n "$(VERSION)" || { echo "usage: make release-bump VERSION=X.Y.Z" >&2; exit 2; }
 	sed -i -E 's/^version = ".*"/version = "$(VERSION)"/' runtime/pyproject.toml
+	sed -i -E 's/^__version__ = ".*"/__version__ = "$(VERSION)"/' runtime/src/ach_runtime/__init__.py
 	sed -i -E 's/^version: .*/version: $(VERSION)/; s/^appVersion: .*/appVersion: "$(VERSION)"/' chart/Chart.yaml
 	grep -Fq "## [$(VERSION)]" CHANGELOG.md || \
 	  sed -i -E '0,/^## \[/s//## [$(VERSION)] - '"$$(date +%F)"'\n\n&/' CHANGELOG.md

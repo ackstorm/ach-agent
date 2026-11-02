@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Dashboards. Cost panels read the billed spend from LiteLLM (`litellm_spend_metric_total`) by the agent's
+  environment; the engine estimate, which counts gateway model aliases as 0, stays as one comparison stat.
+  Counts are over the selected range instead of per-second rates, and "ACH — Agents" opens on a per-agent
+  table (runs, failure rate, p95, spend, LLM errors, anomalies, last run).
+- Every dashboard filters by agent: `$agent` is multi-select with All by default, listed from the agents with
+  a series in the time range. The sandbox pod start, storage server and operator panels are not per agent.
+- "ACH — Agent Detail" adds a Health row (credential expiry and refresh failures, unpriced invocations, LLM
+  gateway errors by status, webhook-script failures, control pod CPU, memory and restarts) and a Logs row
+  (invocations, anomalies, errors) from a Loki datasource.
+- "ACH — Start-up" adds the storage server (unsynced files, last S3 reconcile, volume, bucket size, S3
+  traffic) and the operator (reconciles, reconcile p95, work queue depth).
+
 ## [0.3.2] - 2026-11-02
 
 ### Added

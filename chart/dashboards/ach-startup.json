@@ -1,23 +1,54 @@
 {
   "uid": "ach-startup",
-  "title": "ACH \u2014 Start-up",
+  "title": "ACH — Start-up",
   "tags": [
     "ach",
     "observability"
   ],
+  "timezone": "browser",
   "schemaVersion": 39,
+  "version": 0,
   "editable": true,
+  "refresh": "1m",
   "time": {
     "from": "now-24h",
     "to": "now"
   },
-  "refresh": "1m",
+  "graphTooltip": 1,
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "links": [
+    {
+      "title": "ACH",
+      "type": "dashboards",
+      "tags": [
+        "ach"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true
+    }
+  ],
   "templating": {
     "list": [
       {
         "name": "datasource",
         "type": "datasource",
         "query": "prometheus",
+        "label": "Metrics",
         "current": {
           "text": "Prometheus",
           "value": "prometheus"
@@ -32,7 +63,7 @@
           "type": "prometheus",
           "uid": "${datasource}"
         },
-        "query": "label_values(ach_agent_info, namespace)",
+        "query": "label_values(ach_agent_runs_total, namespace)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -42,8 +73,7 @@
           "value": "$__all"
         },
         "sort": 1,
-        "allValue": ".*",
-        "label": "Namespace"
+        "allValue": ".*"
       },
       {
         "name": "agent",
@@ -52,7 +82,7 @@
           "type": "prometheus",
           "uid": "${datasource}"
         },
-        "query": "label_values(ach_agent_info{namespace=~\"$namespace\"}, agent)",
+        "query": "label_values(ach_agent_runs_total{namespace=~\"$namespace\"}, agent)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -63,54 +93,119 @@
         },
         "sort": 1,
         "allValue": ".*",
-        "label": "Agent"
+        "label": "Agent",
+        "description": "Agents with a series in the selected time range. Each pod exports ach_agent_runs_total from its first scrape, before any event."
       }
     ]
   },
   "panels": [
     {
-      "id": 1,
       "type": "row",
-      "title": "Start-up: $agent",
+      "title": "Start-up: ${agent}",
       "collapsed": false,
+      "panels": [],
+      "id": 1,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
         "y": 0
-      },
-      "panels": []
+      }
     },
     {
-      "id": 2,
       "type": "stat",
-      "title": "Event \u2192 run started (p50)",
-      "description": "From the event admitted to its run started in the unit; includes runs on an already active Workspace.",
+      "title": "Event → run started (p50)",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (increase(ach_agent_workspace_start_seconds_bucket{phase=\"ready\", namespace=~\"$namespace\", agent=~\"$agent\"}[$__range])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto"
+      },
+      "id": 2,
       "gridPos": {
-        "h": 5,
+        "h": 4,
         "w": 6,
         "x": 0,
         "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "New Workspace start (p50)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.5, sum by (le, phase) (rate(ach_agent_workspace_start_seconds_bucket{phase=\"ready\", namespace=~\"$namespace\", agent=~\"$agent\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (le) (increase(ach_agent_workspace_start_seconds_bucket{phase=\"total\", namespace=~\"$namespace\", agent=~\"$agent\"}[$__range])))",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "legendFormat": ""
+          "legendFormat": "",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "decimals": 1
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
         },
         "overrides": []
       },
@@ -123,41 +218,53 @@
           "values": false
         },
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "textMode": "auto"
-      }
-    },
-    {
-      "id": 3,
-      "type": "stat",
-      "title": "New Workspace start (p50)",
-      "description": "Whole activation of a new Workspace: sandbox, unit probe and restore.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
       },
+      "id": 3,
       "gridPos": {
-        "h": 5,
+        "h": 4,
         "w": 6,
         "x": 6,
         "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "New Workspace start (p95)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.5, sum by (le, phase) (rate(ach_agent_workspace_start_seconds_bucket{phase=\"total\", namespace=~\"$namespace\", agent=~\"$agent\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (increase(ach_agent_workspace_start_seconds_bucket{phase=\"total\", namespace=~\"$namespace\", agent=~\"$agent\"}[$__range])))",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "legendFormat": ""
+          "legendFormat": "",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "decimals": 1
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
         },
         "overrides": []
       },
@@ -170,72 +277,24 @@
           "values": false
         },
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "textMode": "auto"
-      }
-    },
-    {
-      "id": 4,
-      "type": "stat",
-      "title": "New Workspace start (p95)",
-      "description": "",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
       },
+      "id": 4,
       "gridPos": {
-        "h": 5,
+        "h": 4,
         "w": 6,
         "x": 12,
         "y": 1
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "histogram_quantile(0.95, sum by (le, phase) (rate(ach_agent_workspace_start_seconds_bucket{phase=\"total\", namespace=~\"$namespace\", agent=~\"$agent\"}[$__rate_interval])))",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "legendFormat": ""
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "decimals": 1
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "textMode": "auto"
       }
     },
     {
-      "id": 5,
       "type": "stat",
       "title": "New Workspaces (range)",
-      "description": "",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 6,
-        "x": 18,
-        "y": 1
       },
       "targets": [
         {
@@ -245,13 +304,27 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "legendFormat": ""
+          "legendFormat": "",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "decimals": 1
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
         },
         "overrides": []
       },
@@ -264,38 +337,37 @@
           "values": false
         },
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "textMode": "auto"
+      },
+      "id": 5,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
       }
     },
     {
-      "id": 6,
       "type": "row",
       "title": "Where the time goes",
       "collapsed": false,
+      "panels": [],
+      "id": 6,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 6
-      },
-      "panels": []
+        "y": 5
+      }
     },
     {
-      "id": 7,
       "type": "timeseries",
       "title": "New Workspace start p50 by phase (stacked)",
-      "description": "place: sandbox created, started and registered by the host. probe: registration to the unit answering. restore: Workspace and session state.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 7
       },
       "targets": [
         {
@@ -312,11 +384,16 @@
         "defaults": {
           "unit": "s",
           "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true,
             "stacking": {
               "mode": "normal"
-            },
-            "fillOpacity": 30
-          }
+            }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -330,29 +407,29 @@
           ]
         },
         "tooltip": {
-          "mode": "multi"
+          "mode": "multi",
+          "sort": "desc"
         }
+      },
+      "id": 7,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
       }
     },
     {
-      "id": 8,
       "type": "timeseries",
       "title": "Sandbox pod start p50 by phase (stacked, all agents)",
-      "description": "From the workload pod's condition timestamps (whole seconds), recorded by the operator: volume (created to scheduled, the workspace volume binds first), init (OpenShell init containers, image pulls included), container (agent container to ready).",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 7
-      },
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.5, sum by (le, phase) (rate(ach_agent_sandbox_start_seconds_bucket{}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (le, phase) (rate(ach_agent_sandbox_start_seconds_bucket[$__rate_interval])))",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -364,11 +441,16 @@
         "defaults": {
           "unit": "s",
           "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true,
             "stacking": {
               "mode": "normal"
-            },
-            "fillOpacity": 30
-          }
+            }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -382,90 +464,29 @@
           ]
         },
         "tooltip": {
-          "mode": "multi"
+          "mode": "multi",
+          "sort": "desc"
         }
-      }
-    },
-    {
-      "id": 9,
-      "type": "timeseries",
-      "title": "Unit boot p50 / p95",
-      "description": "The execution unit's own process start (interpreter and imports) to serving, as it reports it.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 15
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "histogram_quantile(0.5, sum by (le, phase) (rate(ach_agent_workspace_start_seconds_bucket{phase=\"boot\", namespace=~\"$namespace\", agent=~\"$agent\"}[$__rate_interval])))",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "legendFormat": "p50"
-        },
-        {
-          "refId": "B",
-          "expr": "histogram_quantile(0.95, sum by (le, phase) (rate(ach_agent_workspace_start_seconds_bucket{phase=\"boot\", namespace=~\"$namespace\", agent=~\"$agent\"}[$__rate_interval])))",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "legendFormat": "p95"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "stacking": {
-              "mode": "none"
-            },
-            "fillOpacity": 10
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "right",
-          "calcs": [
-            "mean",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      }
-    },
-    {
-      "id": 10,
-      "type": "timeseries",
-      "title": "Event \u2192 run started p50 / p95",
-      "description": "",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "id": 8,
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 15
+        "y": 6
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Unit boot p50 / p95",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.5, sum by (le, phase) (rate(ach_agent_workspace_start_seconds_bucket{phase=\"ready\", namespace=~\"$namespace\", agent=~\"$agent\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (le, phase) (rate(ach_agent_workspace_start_seconds_bucket{phase=~\"boot\", namespace=~\"$namespace\", agent=~\"$agent\"}[$__rate_interval])))",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -474,7 +495,7 @@
         },
         {
           "refId": "B",
-          "expr": "histogram_quantile(0.95, sum by (le, phase) (rate(ach_agent_workspace_start_seconds_bucket{phase=\"ready\", namespace=~\"$namespace\", agent=~\"$agent\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, phase) (rate(ach_agent_workspace_start_seconds_bucket{phase=~\"boot\", namespace=~\"$namespace\", agent=~\"$agent\"}[$__rate_interval])))",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -486,11 +507,16 @@
         "defaults": {
           "unit": "s",
           "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true,
             "stacking": {
               "mode": "none"
-            },
-            "fillOpacity": 10
-          }
+            }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -504,37 +530,103 @@
           ]
         },
         "tooltip": {
-          "mode": "multi"
+          "mode": "multi",
+          "sort": "desc"
         }
-      }
-    },
-    {
-      "id": 11,
-      "type": "row",
-      "title": "State",
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 23
       },
-      "panels": []
-    },
-    {
-      "id": 12,
-      "type": "timeseries",
-      "title": "Restore p95 by domain",
-      "description": "",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "id": 9,
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 24
+        "y": 14
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Event → run started p50 / p95",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le, phase) (rate(ach_agent_workspace_start_seconds_bucket{phase=~\"ready\", namespace=~\"$namespace\", agent=~\"$agent\"}[$__rate_interval])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le, phase) (rate(ach_agent_workspace_start_seconds_bucket{phase=~\"ready\", namespace=~\"$namespace\", agent=~\"$agent\"}[$__rate_interval])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 10,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      }
+    },
+    {
+      "type": "row",
+      "title": "State",
+      "collapsed": false,
+      "panels": [],
+      "id": 11,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Restore p95 by domain",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
       },
       "targets": [
         {
@@ -551,11 +643,16 @@
         "defaults": {
           "unit": "s",
           "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true,
             "stacking": {
               "mode": "none"
-            },
-            "fillOpacity": 10
-          }
+            }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -569,24 +666,24 @@
           ]
         },
         "tooltip": {
-          "mode": "multi"
+          "mode": "multi",
+          "sort": "desc"
         }
+      },
+      "id": 12,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 23
       }
     },
     {
-      "id": 13,
       "type": "timeseries",
       "title": "Save p95 by domain",
-      "description": "",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 24
       },
       "targets": [
         {
@@ -603,11 +700,16 @@
         "defaults": {
           "unit": "s",
           "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true,
             "stacking": {
               "mode": "none"
-            },
-            "fillOpacity": 10
-          }
+            }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -621,8 +723,656 @@
           ]
         },
         "tooltip": {
-          "mode": "multi"
+          "mode": "multi",
+          "sort": "desc"
         }
+      },
+      "id": 13,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 23
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Restores and saves by outcome",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (domain, outcome) (increase(ach_agent_storage_restore_seconds_count{namespace=~\"$namespace\", agent=~\"$agent\"}[$__interval])) > 0",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "restore {{domain}} · {{outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (domain, outcome) (increase(ach_agent_storage_persist_seconds_count{namespace=~\"$namespace\", agent=~\"$agent\"}[$__interval])) > 0",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "save {{domain}} · {{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 70,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "5m",
+      "description": "outcome=empty is a restore that found nothing saved yet (a new Workspace or session).",
+      "id": 14,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 23
+      }
+    },
+    {
+      "type": "row",
+      "title": "Storage server (namespace)",
+      "collapsed": false,
+      "panels": [],
+      "id": 15,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Unsynced files",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(ach_agent_storage_unsynced_files{namespace=~\"$namespace\"})",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto"
+      },
+      "description": "Files older than 5 minutes that S3 does not have yet.",
+      "id": 16,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 32
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Since last S3 reconcile",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(time() - ach_agent_storage_reconcile_ok_timestamp_seconds{namespace=~\"$namespace\"})",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1200
+              },
+              {
+                "color": "red",
+                "value": 1800
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto"
+      },
+      "description": "The reconcile loop compares with S3 every 10 minutes; ACHAgentStorageSyncLagging fires past 30.",
+      "id": 17,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 32
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Volume used",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(SeaweedFS_volumeServer_resource{namespace=~\"$namespace\", type=\"used\", pod=~\"ach-agent-storage-.*\"} / ignoring (type) SeaweedFS_volumeServer_resource{namespace=~\"$namespace\", type=\"all\", pod=~\"ach-agent-storage-.*\"})",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.8
+              },
+              {
+                "color": "red",
+                "value": 0.85
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto"
+      },
+      "id": 18,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 32
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Bucket size",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(SeaweedFS_s3_bucket_size_bytes{namespace=~\"$namespace\", pod=~\"ach-agent-storage-.*\"})",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto"
+      },
+      "id": 19,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 32
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "S3 traffic",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(SeaweedFS_s3_bucket_traffic_received_bytes_total{namespace=~\"$namespace\", pod=~\"ach-agent-storage-.*\"}[$__rate_interval]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "received"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(SeaweedFS_s3_bucket_traffic_sent_bytes_total{namespace=~\"$namespace\", pod=~\"ach-agent-storage-.*\"}[$__rate_interval]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "sent"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 20,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 36
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Storage server memory",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (container) (container_memory_working_set_bytes{namespace=~\"$namespace\", pod=~\"ach-agent-storage-.*\", container!=\"\"})",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "{{container}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 21,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 36
+      }
+    },
+    {
+      "type": "row",
+      "title": "Operator",
+      "collapsed": false,
+      "panels": [],
+      "id": 22,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Reconciles by result",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (controller, result) (increase(controller_runtime_reconcile_total{job=~\".+/ach-agent-operator\"}[$__interval])) > 0",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "{{controller}} · {{result}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 70,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "5m",
+      "id": 23,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 45
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Reconcile p95",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, controller) (rate(controller_runtime_reconcile_time_seconds_bucket{job=~\".+/ach-agent-operator\"}[$__rate_interval])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "{{controller}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 24,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 45
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Work queue depth",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (name) (workqueue_depth{job=~\".+/ach-agent-operator\"})",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "{{name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 25,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 45
       }
     }
   ]

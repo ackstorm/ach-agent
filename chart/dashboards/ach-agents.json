@@ -5,49 +5,16 @@
     "ach",
     "observability"
   ],
+  "timezone": "browser",
   "schemaVersion": 39,
-  "editable": true,
   "version": 0,
+  "editable": true,
+  "refresh": "1m",
   "time": {
-    "from": "now-6h",
+    "from": "now-7d",
     "to": "now"
   },
-  "refresh": "30s",
-  "timezone": "browser",
-  "templating": {
-    "list": [
-      {
-        "name": "datasource",
-        "type": "datasource",
-        "query": "prometheus",
-        "current": {
-          "text": "Prometheus",
-          "value": "prometheus"
-        },
-        "hide": 0,
-        "refresh": 1
-      },
-      {
-        "name": "namespace",
-        "type": "query",
-        "datasource": {
-          "type": "prometheus",
-          "uid": "${datasource}"
-        },
-        "query": "label_values(ach_agent_info, namespace)",
-        "refresh": 2,
-        "includeAll": true,
-        "multi": true,
-        "hide": 0,
-        "current": {
-          "text": "All",
-          "value": "$__all"
-        },
-        "sort": 1,
-        "allValue": ".*"
-      }
-    ]
-  },
+  "graphTooltip": 1,
   "annotations": {
     "list": [
       {
@@ -63,30 +30,91 @@
       }
     ]
   },
+  "links": [
+    {
+      "title": "ACH",
+      "type": "dashboards",
+      "tags": [
+        "ach"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Metrics",
+        "current": {
+          "text": "Prometheus",
+          "value": "prometheus"
+        },
+        "hide": 0,
+        "refresh": 1
+      },
+      {
+        "name": "namespace",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": "label_values(ach_agent_runs_total, namespace)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "hide": 0,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1,
+        "allValue": ".*"
+      },
+      {
+        "name": "agent",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": "label_values(ach_agent_runs_total{namespace=~\"$namespace\"}, agent)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "hide": 0,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1,
+        "allValue": ".*",
+        "label": "Agent",
+        "description": "Agents with a series in the selected time range. Each pod exports ach_agent_runs_total from its first scrape, before any event."
+      }
+    ]
+  },
   "panels": [
     {
-      "id": 1,
       "type": "row",
-      "title": "Fleet at a glance",
+      "title": "Fleet",
       "collapsed": false,
+      "panels": [],
+      "id": 1,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
         "y": 0
-      },
-      "panels": []
+      }
     },
     {
-      "id": 2,
       "type": "stat",
       "title": "Agents",
-      "gridPos": {
-        "h": 5,
-        "w": 4,
-        "x": 0,
-        "y": 1
-      },
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -94,12 +122,14 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "count(ach_agent_info{namespace=~\"$namespace\"})",
+          "expr": "count(ach_agent_info{namespace=~\"$namespace\", agent=~\"$agent\"})",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "legendFormat": ""
+          "legendFormat": "",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
@@ -117,6 +147,9 @@
                 "value": 1
               }
             ]
+          },
+          "color": {
+            "mode": "thresholds"
           }
         },
         "overrides": []
@@ -129,22 +162,22 @@
           "fields": "",
           "values": false
         },
-        "colorMode": "background",
+        "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
         "textMode": "auto"
+      },
+      "id": 2,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
       }
     },
     {
-      "id": 3,
       "type": "stat",
-      "title": "Sessions /s",
-      "gridPos": {
-        "h": 5,
-        "w": 4,
-        "x": 4,
-        "y": 1
-      },
+      "title": "Runs (range)",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -152,210 +185,30 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(ach_agent_sessions_total{namespace=~\"$namespace\"}[5m]))",
+          "expr": "sum (increase(ach_agent_runs_total{namespace=~\"$namespace\", agent=~\"$agent\", outcome!=\"skipped\"}[$__range]))",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "legendFormat": ""
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "reqps"
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "textMode": "auto"
-      }
-    },
-    {
-      "id": 4,
-      "type": "stat",
-      "title": "Turns /s",
-      "gridPos": {
-        "h": 5,
-        "w": 4,
-        "x": 8,
-        "y": 1
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum(rate(ach_agent_turns_total{namespace=~\"$namespace\"}[5m]))",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "legendFormat": ""
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ops"
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "textMode": "auto"
-      }
-    },
-    {
-      "id": 5,
-      "type": "stat",
-      "title": "Cost (range)",
-      "gridPos": {
-        "h": 5,
-        "w": 4,
-        "x": 12,
-        "y": 1
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum(increase(ach_agent_turn_cost_usd_total{namespace=~\"$namespace\"}[$__range]))",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "legendFormat": ""
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "currencyUSD",
-          "decimals": 3
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "textMode": "auto"
-      }
-    },
-    {
-      "id": 6,
-      "type": "stat",
-      "title": "Tokens /s",
-      "gridPos": {
-        "h": 5,
-        "w": 4,
-        "x": 16,
-        "y": 1
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum(rate(ach_agent_turn_tokens_total{namespace=~\"$namespace\"}[5m]))",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "legendFormat": ""
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "textMode": "auto"
-      }
-    },
-    {
-      "id": 7,
-      "type": "stat",
-      "title": "Anomalies (range)",
-      "gridPos": {
-        "h": 5,
-        "w": 4,
-        "x": 20,
-        "y": 1
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum(increase(ach_agent_anomalies_total{namespace=~\"$namespace\"}[$__range])) or vector(0)",
           "legendFormat": "",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          }
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "unit": "none",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "orange",
-                "value": 1
               }
             ]
+          },
+          "color": {
+            "mode": "thresholds"
           },
           "decimals": 0
         },
@@ -369,36 +222,23 @@
           "fields": "",
           "values": false
         },
-        "colorMode": "background",
+        "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
         "textMode": "auto"
       },
-      "description": "Runtime anomalies (start_failed, run_outcome_unknown, …). Should be 0; the Reliability row says which agent and kind."
+      "description": "Invocations that ran (outcome other than skipped).",
+      "id": 3,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      }
     },
     {
-      "id": 8,
-      "type": "row",
-      "title": "Throughput & cost",
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 6
-      },
-      "panels": []
-    },
-    {
-      "id": 9,
-      "type": "timeseries",
-      "title": "Sessions /s by agent",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 7
-      },
+      "type": "stat",
+      "title": "Failed runs (range)",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -406,52 +246,67 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (agent) (rate(ach_agent_sessions_total{namespace=~\"$namespace\"}[5m]))",
+          "expr": "sum (increase(ach_agent_runs_total{namespace=~\"$namespace\", agent=~\"$agent\", outcome=\"failed\"}[$__range])) / sum (increase(ach_agent_runs_total{namespace=~\"$namespace\", agent=~\"$agent\", outcome!=\"skipped\"}[$__range]))",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "legendFormat": "{{agent}}"
+          "legendFormat": "",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "reqps",
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 18,
-            "showPoints": "never",
-            "spanNulls": true
-          }
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.05
+              },
+              {
+                "color": "red",
+                "value": 0.2
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1
         },
         "overrides": []
       },
       "options": {
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        },
-        "legend": {
-          "displayMode": "table",
-          "placement": "right",
+        "reduceOptions": {
           "calcs": [
-            "mean",
-            "max"
-          ]
-        }
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto"
+      },
+      "id": 4,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 1
       }
     },
     {
-      "id": 10,
-      "type": "timeseries",
-      "title": "Cost $/h by agent",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 7
-      },
+      "type": "stat",
+      "title": "LLM spend (range)",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -459,52 +314,60 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (agent) (rate(ach_agent_turn_cost_usd_total{namespace=~\"$namespace\"}[5m])) * 3600",
+          "expr": "sum(sum by (environment) (label_replace(sum by (team_alias, environment) (increase(litellm_spend_metric_total{team_alias=~\"ach-env-.+\"}[$__range])), \"environment\", \"$1\", \"team_alias\", \"ach-env-(.+)\") * on (environment) group_left () group by (environment) (group by (namespace, agent, environment) (max_over_time(ach_agent_info{namespace=~\"$namespace\", agent=~\"$agent\"}[$__range] @ end())))) > 0) or vector(0)",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "legendFormat": "{{agent}}"
+          "legendFormat": "",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "currencyUSD",
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 18,
-            "showPoints": "never",
-            "spanNulls": true
-          }
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2
         },
         "overrides": []
       },
       "options": {
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        },
-        "legend": {
-          "displayMode": "table",
-          "placement": "right",
+        "reduceOptions": {
           "calcs": [
-            "mean",
-            "max"
-          ]
-        }
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto"
+      },
+      "description": "Billed spend from LiteLLM (litellm_spend_metric_total), attributed to an agent through its LiteLLM team ach-env-<environment>. Agents that share an environment each show the environment's whole spend. Empty without LiteLLM metrics in this Prometheus.",
+      "id": 5,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
       }
     },
     {
-      "id": 11,
-      "type": "timeseries",
-      "title": "Tokens /s by direction",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 15
-      },
+      "type": "stat",
+      "title": "Tokens (range)",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -512,116 +375,521 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (direction) (rate(ach_agent_turn_tokens_total{namespace=~\"$namespace\"}[5m]))",
+          "expr": "sum(increase(ach_agent_turn_tokens_total{namespace=~\"$namespace\", agent=~\"$agent\"}[$__range]))",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "legendFormat": "{{direction}}"
+          "legendFormat": "",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto"
+      },
+      "id": 6,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Anomalies (24h)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(ach_agent_anomalies_total{namespace=~\"$namespace\", agent=~\"$agent\"}[24h]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto"
+      },
+      "description": "Fixed 24h window, so an old burst does not hide today.",
+      "id": 7,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      }
+    },
+    {
+      "type": "table",
+      "title": "Agents (range)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (namespace, agent) (increase(ach_agent_runs_total{namespace=~\"$namespace\", agent=~\"$agent\", outcome!=\"skipped\"}[$__range]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (namespace, agent) (increase(ach_agent_runs_total{namespace=~\"$namespace\", agent=~\"$agent\", outcome=\"failed\"}[$__range])) / sum by (namespace, agent) (increase(ach_agent_runs_total{namespace=~\"$namespace\", agent=~\"$agent\", outcome!=\"skipped\"}[$__range]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.95, sum by (namespace, agent, le) (increase(ach_agent_turn_duration_seconds_bucket{namespace=~\"$namespace\", agent=~\"$agent\"}[$__range])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "D",
+          "expr": "sum by (namespace, agent) (group by (namespace, agent, environment) (max_over_time(ach_agent_info{namespace=~\"$namespace\", agent=~\"$agent\"}[$__range] @ end())) * on (environment) group_left () label_replace(sum by (team_alias) (increase(litellm_spend_metric_total{team_alias=~\"ach-env-.+\"}[$__range])), \"environment\", \"$1\", \"team_alias\", \"ach-env-(.+)\"))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "E",
+          "expr": "sum by (namespace, agent) (group by (namespace, agent, environment) (max_over_time(ach_agent_info{namespace=~\"$namespace\", agent=~\"$agent\"}[$__range] @ end())) * on (environment) group_left () label_replace(sum by (team_alias) (increase(litellm_proxy_failed_requests_metric_total{team_alias=~\"ach-env-.+\"}[$__range])), \"environment\", \"$1\", \"team_alias\", \"ach-env-(.+)\"))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "F",
+          "expr": "sum by (namespace, agent) (increase(ach_agent_anomalies_total{namespace=~\"$namespace\", agent=~\"$agent\"}[$__range]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "G",
+          "expr": "time() - max by (namespace, agent) (max_over_time(timestamp(increase(ach_agent_runs_total{namespace=~\"$namespace\", agent=~\"$agent\", outcome!=\"skipped\"}[5m]) > 0)[$__range:5m]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "namespace": 0,
+              "agent": 1,
+              "Value #A": 2,
+              "Value #B": 3,
+              "Value #C": 4,
+              "Value #D": 5,
+              "Value #E": 6,
+              "Value #F": 7,
+              "Value #G": 8
+            },
+            "renameByName": {
+              "Value #A": "Runs",
+              "Value #B": "Failed",
+              "Value #C": "p95 duration",
+              "Value #D": "LLM spend",
+              "Value #E": "LLM errors",
+              "Value #F": "Anomalies",
+              "Value #G": "Last run"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Runs"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Failed"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95 duration"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "LLM spend"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "LLM errors"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Anomalies"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Last run"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "Runs",
+            "desc": true
+          }
+        ]
+      },
+      "description": "One row per agent. LLM spend and LLM errors come from LiteLLM by the agent's environment; Last run is the time since a run (not skipped) last completed.",
+      "id": 8,
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      }
+    },
+    {
+      "type": "row",
+      "title": "Activity",
+      "collapsed": false,
+      "panels": [],
+      "id": 9,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Runs by agent",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent) (increase(ach_agent_runs_total{namespace=~\"$namespace\", agent=~\"$agent\", outcome!=\"skipped\"}[$__interval])) > 0",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "{{agent}}"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "custom": {
-            "drawStyle": "line",
+            "drawStyle": "bars",
             "lineWidth": 1,
-            "fillOpacity": 18,
-            "showPoints": "never",
-            "spanNulls": true,
+            "fillOpacity": 70,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
-              "mode": "normal",
-              "group": "A"
+              "mode": "normal"
             }
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
       "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum",
+            "max"
+          ]
+        },
         "tooltip": {
           "mode": "multi",
           "sort": "desc"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "calcs": []
         }
+      },
+      "interval": "5m",
+      "id": 10,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 15
       }
     },
     {
-      "id": 12,
       "type": "timeseries",
-      "title": "Turns /s by model",
+      "title": "Runs by outcome",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (increase(ach_agent_runs_total{namespace=~\"$namespace\", agent=~\"$agent\"}[$__interval])) > 0",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 70,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "5m",
+      "id": 11,
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
         "y": 15
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum by (model) (rate(ach_agent_turns_total{namespace=~\"$namespace\"}[5m]))",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "legendFormat": "{{model}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ops",
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 18,
-            "showPoints": "never",
-            "spanNulls": true
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "calcs": []
-        }
       }
     },
     {
-      "id": 13,
-      "type": "row",
-      "title": "Latency & runs",
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 23
-      },
-      "panels": []
-    },
-    {
-      "id": 14,
       "type": "timeseries",
-      "title": "Invocation duration p50 / p95 by model",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 24
-      },
+      "title": "Inbound events by channel",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -629,117 +897,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.50, sum by (le, model) (rate(ach_agent_turn_duration_seconds_bucket{namespace=~\"$namespace\"}[5m])))",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "legendFormat": "p50 {{model}}"
-        },
-        {
-          "refId": "B",
-          "expr": "histogram_quantile(0.95, sum by (le, model) (rate(ach_agent_turn_duration_seconds_bucket{namespace=~\"$namespace\"}[5m])))",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "legendFormat": "p95 {{model}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 18,
-            "showPoints": "never",
-            "spanNulls": true
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "calcs": []
-        }
-      }
-    },
-    {
-      "id": 15,
-      "type": "timeseries",
-      "title": "Runs /s by outcome",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 24
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum by (outcome) (rate(ach_agent_runs_total{namespace=~\"$namespace\"}[5m]))",
-          "legendFormat": "{{outcome}}",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ops",
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 18,
-            "showPoints": "never",
-            "spanNulls": true
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "calcs": []
-        }
-      },
-      "description": "Recorded invocations by outcome."
-    },
-    {
-      "id": 16,
-      "type": "timeseries",
-      "title": "Channel inbound events /s",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 32
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum by (channel) (rate(ach_agent_channel_inbound_events_total{namespace=~\"$namespace\"}[5m]))",
+          "expr": "sum by (channel) (increase(ach_agent_channel_inbound_events_total{namespace=~\"$namespace\", agent=~\"$agent\"}[$__interval])) > 0",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -749,52 +907,47 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "ops",
+          "unit": "short",
           "custom": {
-            "drawStyle": "line",
+            "drawStyle": "bars",
             "lineWidth": 1,
-            "fillOpacity": 18,
-            "showPoints": "never",
-            "spanNulls": true
-          }
+            "fillOpacity": 70,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "min": 0
         },
         "overrides": []
       },
       "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum",
+            "max"
+          ]
+        },
         "tooltip": {
           "mode": "multi",
           "sort": "desc"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "calcs": []
         }
+      },
+      "interval": "5m",
+      "id": 12,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 23
       }
     },
     {
-      "id": 17,
-      "type": "row",
-      "title": "Reliability (anomalies — should stay empty)",
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 40
-      },
-      "panels": []
-    },
-    {
-      "id": 18,
       "type": "timeseries",
-      "title": "Anomalies /h by agent × kind",
-      "gridPos": {
-        "h": 8,
-        "w": 16,
-        "x": 0,
-        "y": 41
-      },
+      "title": "LLM gateway errors by agent",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -802,100 +955,307 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (agent, kind) (rate(ach_agent_anomalies_total{namespace=~\"$namespace\"}[5m])) * 3600",
-          "legendFormat": "{{agent}} · {{kind}}",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 18,
-            "showPoints": "never",
-            "spanNulls": true
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "calcs": []
-        }
-      },
-      "description": "Operational anomalies the runtime records, by agent and kind."
-    },
-    {
-      "id": 19,
-      "type": "table",
-      "title": "Anomalies by agent × kind (range)",
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 41
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum by (agent, kind) (increase(ach_agent_anomalies_total{namespace=~\"$namespace\"}[$__range])) > 0",
-          "legendFormat": "",
+          "expr": "sum by (agent) (group by (namespace, agent, environment) (max_over_time(ach_agent_info{namespace=~\"$namespace\", agent=~\"$agent\"}[$__range] @ end())) * on (environment) group_left () label_replace(sum by (team_alias) (increase(litellm_proxy_failed_requests_metric_total{team_alias=~\"ach-env-.+\"}[$__interval])), \"environment\", \"$1\", \"team_alias\", \"ach-env-(.+)\")) > 0",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "instant": true,
-          "format": "table"
+          "legendFormat": "{{agent}}"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "custom": {
-            "drawStyle": "line",
+            "drawStyle": "bars",
             "lineWidth": 1,
-            "fillOpacity": 18,
-            "showPoints": "never",
-            "spanNulls": true
+            "fillOpacity": 70,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "5m",
+      "description": "Requests LiteLLM failed (litellm_proxy_failed_requests_metric_total) for each agent's environment.",
+      "id": 13,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      }
+    },
+    {
+      "type": "row",
+      "title": "Reliability (should stay empty)",
+      "collapsed": false,
+      "panels": [],
+      "id": 14,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Anomalies by agent × kind",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent, kind) (increase(ach_agent_anomalies_total{namespace=~\"$namespace\", agent=~\"$agent\"}[$__interval])) > 0",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "{{agent}} · {{kind}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 70,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            },
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            }
           }
         },
         "overrides": []
       },
       "options": {
-        "showHeader": true,
-        "sortBy": [
-          {
-            "displayName": "Value",
-            "desc": true
-          }
-        ]
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
-      "description": "Totals over the dashboard range; only non-zero rows.",
+      "interval": "5m",
+      "description": "Log scale, so a single burst does not flatten the rest.",
+      "id": 15,
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      }
+    },
+    {
+      "type": "table",
+      "title": "Anomalies (range)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent, kind) (increase(ach_agent_anomalies_total{namespace=~\"$namespace\", agent=~\"$agent\"}[$__range])) > 0",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
       "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
         {
           "id": "organize",
           "options": {
             "excludeByName": {
               "Time": true
+            },
+            "indexByName": {
+              "agent": 0,
+              "kind": 1,
+              "Value #A": 2
+            },
+            "renameByName": {
+              "Value #A": "Count"
             }
           }
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Count"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "Count",
+            "desc": true
+          }
+        ]
+      },
+      "id": 16,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 40
+      }
+    },
+    {
+      "type": "table",
+      "title": "Webhook-script runs (range)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent, channel, status) (increase(ach_agent_webhook_script_runs_total{namespace=~\"$namespace\", agent=~\"$agent\"}[$__range])) > 0",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "agent": 0,
+              "channel": 1,
+              "status": 2,
+              "Value #A": 3
+            },
+            "renameByName": {
+              "Value #A": "Runs"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Runs"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "Runs",
+            "desc": true
+          }
+        ]
+      },
+      "description": "Deterministic webhook-script handlers. status=failed means the script ran after the event was admitted and exited non-zero.",
+      "id": 17,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      }
     }
   ]
 }

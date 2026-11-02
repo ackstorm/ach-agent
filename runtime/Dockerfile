@@ -43,11 +43,11 @@ ENTRYPOINT ["python", "-m", "ach_runtime"]
 CMD ["control", "--config", "/etc/ach-runtime/config.json"]
 
 FROM runtime AS execution
-ENV OPENCODE_BIN=/opt/opencode/node_modules/.bin/opencode2
-COPY --from=opencode-builder /usr/local/bin/node /usr/local/bin/node
-COPY --from=opencode-builder /opt/opencode /opt/opencode
-RUN test -x /usr/local/bin/node \
-    && test -x /opt/opencode/node_modules/.bin/opencode2 \
+# opencode is one self-contained native binary. npm also installs its other platform variants
+# (~585 MB), so only the one the postinstall linked to cli/bin is copied; nothing needs node.
+ENV OPENCODE_BIN=/opt/opencode/node_modules/@opencode/cli/bin/opencode.exe
+COPY --from=opencode-builder /opt/opencode/node_modules/@opencode/cli/bin/opencode.exe /opt/opencode/node_modules/@opencode/cli/bin/opencode.exe
+RUN test -x "$OPENCODE_BIN" \
     && addgroup -S -g 10001 ach \
     && adduser -S -D -u 10001 -G ach -h /home/ach -s /sbin/nologin ach \
     && mkdir -p /workspace /var/lib/ach-runtime/sessions \

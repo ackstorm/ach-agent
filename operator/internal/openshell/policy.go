@@ -32,9 +32,7 @@ const reservedPrefix = "ach-agent-"
 // directories stay read-only so a sandboxed process cannot replace a trusted binary.
 var runtimeBinaries = []string{
 	"/usr/local/bin/python3.13",
-	"/usr/local/bin/node",
-	// node_modules/.bin/opencode2 symlinks to this native ELF binary, not a node script: the
-	// engine process that calls the model facade is this executable.
+	// The engine that calls the model facade: opencode's native binary (OPENCODE_BIN).
 	"/opt/opencode/node_modules/@opencode/cli/bin/opencode.exe",
 }
 

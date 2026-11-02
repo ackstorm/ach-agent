@@ -176,6 +176,7 @@ type openShellUnits struct {
 	reader client.Reader
 	writer client.Client
 	timed  map[string]types.UID // sandbox -> workload pod whose start is recorded
+	since  time.Time            // pods ready before this backend existed are not recorded
 }
 
 // sandboxStartSeconds times a workload pod's start from its condition timestamps, which have
@@ -205,6 +206,9 @@ func (b *openShellUnits) observeStart(sandbox string, pod *corev1.Pod) {
 		return // not ready yet: a later pass records it
 	}
 	b.timed[sandbox] = pod.UID
+	if ready.Before(b.since.Truncate(time.Second)) {
+		return // an earlier operator, or this one before a restart of the agent's loop, saw it start
+	}
 	sandboxStartSeconds.WithLabelValues("volume").Observe(scheduled.Sub(pod.CreationTimestamp.Time).Seconds())
 	sandboxStartSeconds.WithLabelValues("init").Observe(initialized.Sub(scheduled).Seconds())
 	sandboxStartSeconds.WithLabelValues("container").Observe(ready.Sub(initialized).Seconds())
@@ -213,7 +217,7 @@ func (b *openShellUnits) observeStart(sandbox string, pod *corev1.Pod) {
 // ForAgent is the unit backend of one agent.
 func (o *OpenShell) ForAgent(agent types.NamespacedName, uid types.UID, reader client.Reader, writer client.Client) host.Backend {
 	return &openShellUnits{OpenShell: o, agent: agent, uid: uid, reader: reader, writer: writer,
-		timed: map[string]types.UID{}}
+		timed: map[string]types.UID{}, since: time.Now()}
 }
 
 func (o *OpenShell) url(namespace, sandbox string, port int32) string {

@@ -326,7 +326,7 @@ func TestOpenShell_StateRecordsAReadyPodsStartPhasesOnce(t *testing.T) {
 	ctx := context.Background()
 	_, _, w := unitFixture()
 	pod := workloadPod(SandboxName("gitlab-reviewer", string(testUID), w.Name), corev1.PodRunning, false)
-	created := time.Date(2026, 11, 2, 8, 7, 48, 0, time.UTC)
+	created := time.Now().Add(time.Minute).Truncate(time.Second) // after the backend exists
 	pod.CreationTimestamp = metav1.NewTime(created)
 	pod.UID = "pod-1"
 	cond := func(c corev1.PodConditionType, after int) corev1.PodCondition {
@@ -355,6 +355,17 @@ func TestOpenShell_StateRecordsAReadyPodsStartPhasesOnce(t *testing.T) {
 	for p, want := range map[string]float64{"volume": 5, "init": 2, "container": 1} {
 		if count(p)-before[p] != 1 || sum(p)-sums[p] != want {
 			t.Errorf("%s: %d new samples summing %v, want 1 summing %v", p, count(p)-before[p], sum(p)-sums[p], want)
+		}
+	}
+	// A backend created after the pod was ready (an operator restart) does not record it again.
+	later := f.b.(*openShellUnits).OpenShell.ForAgent(f.b.(*openShellUnits).agent, testUID, f.c, f.c)
+	later.(*openShellUnits).since = created.Add(time.Hour)
+	if st, err := later.State(ctx, f.w.Name); err != nil || st != host.UnitStarted {
+		t.Fatalf("state = %v err = %v", st, err)
+	}
+	for _, p := range phases {
+		if count(p)-before[p] != 1 {
+			t.Errorf("%s: recorded again after a restart", p)
 		}
 	}
 }

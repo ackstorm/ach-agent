@@ -5,6 +5,34 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-11-02
+
+### Added
+
+- Start-up metrics. The control pod exports `ach_agent_workspace_start_seconds{phase}`: `place`, `probe`,
+  `restore`, `boot` (the execution unit's own start, which it reports on `/healthz` as `bootSeconds`), `ready`
+  (from admission until the unit takes the run) and `total`. The operator exports
+  `ach_agent_sandbox_start_seconds{phase}` from the workload pod's conditions: `volume`, `init` and
+  `container`.
+- With `metrics.podMonitor.enabled`, PodMonitor `ach-agent-operator`; with `metrics.dashboards.enabled`, the
+  Grafana dashboard "ACH — Start-up".
+
+### Changed
+
+- The execution image is 322 MB instead of 1.1 GB: it ships only opencode's native binary, without node or
+  opencode's other platform builds, and only the execution unit's Python dependencies. The control pod's
+  dependencies are the `control` extra of `ach-agent-runtime`. The sandbox network policy no longer lists
+  `node` as a runtime binary.
+
+### Fixed
+
+- The storage server's reconcile container rewrites each imported `registry.json` through the S3 gateway after
+  a fresh `remote.mount` (a new volume or a `MOUNT_PATH` change). SeaweedFS 4.51 otherwise compares a PUT's
+  `If-Match` with the cached chunk's hash, so every compare-and-swap of that registry failed and the
+  Workspace never activated.
+- Writer acquisition fails at once, naming the storage inconsistency, when storage rejects a registry write
+  whose ETag is unchanged on re-read, instead of retrying twenty times and reporting contention.
+
 ## [0.3.1] - 2026-11-02
 
 ### Changed

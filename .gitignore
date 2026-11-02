@@ -5,3 +5,6 @@ __pycache__/
 *.log
 operator/bin/
 test/e2e/.tls/
+.claude/
+.mcp.json
+docs/superpowers/

@@ -137,8 +137,15 @@ Each block under `metrics` is off by default so the chart renders without the Pr
 | `metrics.prometheusRule.enabled` | PrometheusRule `ach-agent` | Nine alerts: six on `ach_agent_anomalies_total`, `ach_agent_runs_total` and the exchanged ACH credential (`ACHAgentKeyRefreshFailing`), and three on the storage server (`ACHAgentStorageDown`, which needs kube-state-metrics, `ACHAgentStorageDiskHigh`, `ACHAgentStorageSyncLagging`). `labels` must match the Prometheus `ruleSelector`. |
 | `metrics.dashboards.enabled` | One ConfigMap per dashboard (Agents, Agent Detail, FinOps, Start-up) | `labels` must match the Grafana sidecar label (default `grafana_dashboard: "1"`). `annotations` choose the folder, for example `--set-string 'metrics.dashboards.annotations.grafana_folder=100 - Application - ACH Agents'`; the sidecar needs `folderAnnotation=grafana_folder` and `provider.foldersFromFilesStructure=true` to honour it. |
 
-The sidecar must watch the release namespace. The dashboards list agents from `ach_agent_info`, which
-each Agent pod exports from its first scrape.
+The sidecar must watch the release namespace. The `agent` selector lists the agents with an
+`ach_agent_runs_total` series in the time range, which each Agent pod exports from its first scrape. Some panels read other sources and stay empty without them:
+
+- LLM spend and gateway errors: LiteLLM's Prometheus metrics (`litellm_spend_metric_total`,
+  `litellm_proxy_*_requests_metric_total`), attributed to an agent through its LiteLLM team
+  `ach-env-<environment>`, where `<environment>` is the Agent's `ach.environment`. The engine's own
+  estimate (`ach_agent_turn_cost_usd_total`) prices only the models it knows and is shown for comparison.
+- Pod CPU, memory and restarts: cAdvisor and kube-state-metrics.
+- The Logs row of "ACH — Agent Detail": a Loki datasource with the `namespace`, `pod` and `container` labels.
 
 ## 6. A standalone Agent
 

@@ -580,6 +580,33 @@ func TestOpenShell_RemoveKeepsServiceWhileTheWorkloadPodTerminates(t *testing.T)
 	}
 }
 
+func TestOpenShell_OwnedListsAServiceUntilItsWorkloadPodIsGone(t *testing.T) {
+	_, _, w := unitFixture()
+	pod := workloadPod(SandboxName("gitlab-reviewer", string(testUID), w.Name), corev1.PodRunning, true)
+	f := newOSFixture(t, pod)
+	ctx := context.Background()
+	if err := f.b.Create(ctx, f.a, f.p, f.w); err != nil {
+		t.Fatal(err)
+	}
+	delete(f.gw.byName, f.sName) // the gateway forgot the record, the pod lingers
+	if owned, err := f.b.Owned(ctx); err != nil || !slices.Equal(owned, []string{f.w.Name}) {
+		t.Fatalf("owned=%v err=%v, want the Service's Workspace", owned, err)
+	}
+	if remaining, err := f.b.Remove(ctx, f.w.Name); err != nil || !remaining {
+		t.Fatalf("remaining=%v err=%v, want true", remaining, err)
+	}
+	pod.Finalizers = nil
+	if err := f.c.Update(ctx, pod); err != nil { // the fake deletes it once its finalizers are gone
+		t.Fatal(err)
+	}
+	if remaining, err := f.b.Remove(ctx, f.w.Name); err != nil || remaining {
+		t.Fatalf("remaining=%v err=%v, want false", remaining, err)
+	}
+	if owned, err := f.b.Owned(ctx); err != nil || len(owned) != 0 {
+		t.Fatalf("owned=%v err=%v, want none", owned, err)
+	}
+}
+
 func reasonOf(t *testing.T, err error) string {
 	t.Helper()
 	var r interface{ StatusReason() string }

@@ -190,10 +190,10 @@ func (o *OpenShell) url(namespace, sandbox string, port int32) string {
 // routes that Host because *.<ns>.svc.cluster.local is one of its server_sans.
 func (o *OpenShell) serviceName(sandbox string) string { return o.Config.Workspace + "--" + sandbox }
 
-func (b *openShellUnits) ensureService(ctx context.Context, a *achv1alpha1.Agent, sandbox string) error {
+func (b *openShellUnits) ensureService(ctx context.Context, a *achv1alpha1.Agent, sandbox, workspace string) error {
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: b.serviceName(sandbox), Namespace: a.Namespace,
-			Labels: map[string]string{AgentUIDLabel: string(a.UID)}},
+			Labels: map[string]string{AgentUIDLabel: string(a.UID), NameLabel: workspace}},
 		Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeExternalName, ExternalName: b.Config.GatewayHost},
 	}
 	if err := controllerutil.SetOwnerReference(a, svc, b.writer.Scheme()); err != nil {
@@ -314,7 +314,7 @@ func (b *openShellUnits) Create(ctx context.Context, a *achv1alpha1.Agent, p *ac
 	}
 	// A unit is never registered without its Service.
 	sandbox := SandboxName(b.agent.Name, string(b.uid), w.Name)
-	if err := b.ensureService(ctx, a, sandbox); err != nil {
+	if err := b.ensureService(ctx, a, sandbox, w.Name); err != nil {
 		return err
 	}
 	// launch.port is not in launch.env: the gateway record keeps it for the inventory.
@@ -405,7 +405,22 @@ func (b *openShellUnits) Owned(ctx context.Context) ([]string, error) {
 	for _, s := range l {
 		names = append(names, s.Labels[NameLabel])
 	}
-	return names, err
+	if err != nil {
+		return names, err
+	}
+	// The gateway forgets a sandbox before its workload pod is gone, and Remove keeps the
+	// Service until then: list the Service too, so a later pass removes it.
+	var svcs corev1.ServiceList
+	if err := b.writer.List(ctx, &svcs, client.InNamespace(b.agent.Namespace),
+		client.MatchingLabels{AgentUIDLabel: string(b.uid)}); err != nil {
+		return names, err
+	}
+	for _, svc := range svcs.Items {
+		if n := svc.Labels[NameLabel]; n != "" && !slices.Contains(names, n) {
+			names = append(names, n)
+		}
+	}
+	return names, nil
 }
 
 func (b *openShellUnits) Live(ctx context.Context) ([]host.InventoryUnit, error) {

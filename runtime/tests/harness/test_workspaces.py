@@ -145,6 +145,19 @@ async def test_ensure_runs_the_activation_sequence_and_coalesces() -> None:
     assert h.source.events == ["place", "probe", "observed", "restore", "reconnect", "serving"]
 
 
+async def test_activation_records_its_start_phases() -> None:
+    from prometheus_client import REGISTRY
+
+    def count(phase: str) -> float:
+        return REGISTRY.get_sample_value("ach_agent_workspace_start_seconds_count", {"phase": phase}) or 0.0
+
+    phases = ("place", "probe", "restore", "total")
+    before = {p: count(p) for p in phases}
+    h = _Harness(_config())
+    await h.manager.ensure(_ref(h.config, "wk-timed"))
+    assert {p: count(p) - before[p] for p in phases} == dict.fromkeys(phases, 1.0)
+
+
 # 2 ---------------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("flag", ["observed_ok", "serving_ok"])

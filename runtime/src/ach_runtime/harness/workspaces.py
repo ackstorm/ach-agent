@@ -33,6 +33,7 @@ from typing import Any, Protocol
 from ach_runtime.config.schema import RuntimeConfig
 from ach_runtime.harness.refs import workspace_name
 from ach_runtime.observability import alarm
+from ach_runtime.observability.metrics import WORKSPACE_START_SECONDS
 from ach_runtime.observability.runs import redact
 from ach_runtime.storage.api import PersistReceipt, SnapshotTransientFailure
 
@@ -393,8 +394,17 @@ class WorkspaceManager:
         releases the slot once the host confirms it is gone."""
         name = workspace_name(self._config.agent.name, key)
         phase = "place"
+        started = mark = time.monotonic()
+
+        def lap(timed: str) -> None:
+            nonlocal mark
+            now = time.monotonic()
+            WORKSPACE_START_SECONDS.labels(phase=timed).observe(now - mark)
+            mark = now
+
         try:
             placement = await self._source.place(ref, name, deadline=deadline)
+            lap("place")
         except (WorkspaceUnhosted, WorkspaceAssemblyUnavailable, asyncio.CancelledError):
             # The source provably holds nothing: it dropped its entry (unhosted, cancelled
             # before registration) or refused the launch spec before publishing anything.
@@ -404,12 +414,14 @@ class WorkspaceManager:
         # re-raises WITHOUT releasing: the slot stays held for whatever the source holds.
         try:
             endpoint = await self._probe(ref, placement, deadline)
+            lap("probe")
             phase = "observed"
             if not self._source.observed(placement, endpoint.instance_id):
                 raise WorkspaceConflict(f"{name}: registration was replaced during activation")
             if self._restore is not None:
                 phase = "restore"
                 await self._restore(endpoint)
+                lap("restore")
             phase = "reconnect"
             await self._reconnect(endpoint)
             phase = "serving"
@@ -425,6 +437,7 @@ class WorkspaceManager:
             await self._retire(key, name)
             raise
         self._active[key] = endpoint
+        WORKSPACE_START_SECONDS.labels(phase="total").observe(time.monotonic() - started)
         return endpoint
 
     async def _probe(self, ref: WorkspaceRef, placement: Placement, deadline: float) -> WorkspaceEndpoint:

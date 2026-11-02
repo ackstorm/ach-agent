@@ -23,6 +23,8 @@ import (
 
 	osv1 "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1"
 	ostypes "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -305,6 +307,55 @@ func TestOpenShell_StateFollowsGatewayPhase(t *testing.T) {
 	g.gw.setPhase(g.sName, ostypes.SandboxReady)
 	if st, err := g.b.State(ctx, g.w.Name); err != nil || st != host.UnitStarted {
 		t.Fatalf("Ready + Running pod state = %v err = %v, want host.UnitStarted (finding 5)", st, err)
+	}
+}
+
+func TestOpenShell_StateRecordsAReadyPodsStartPhasesOnce(t *testing.T) {
+	count := func(phase string) uint64 {
+		var m dto.Metric
+		if err := sandboxStartSeconds.WithLabelValues(phase).(prometheus.Histogram).Write(&m); err != nil {
+			t.Fatal(err)
+		}
+		return m.GetHistogram().GetSampleCount()
+	}
+	sum := func(phase string) float64 {
+		var m dto.Metric
+		_ = sandboxStartSeconds.WithLabelValues(phase).(prometheus.Histogram).Write(&m)
+		return m.GetHistogram().GetSampleSum()
+	}
+	ctx := context.Background()
+	_, _, w := unitFixture()
+	pod := workloadPod(SandboxName("gitlab-reviewer", string(testUID), w.Name), corev1.PodRunning, false)
+	created := time.Date(2026, 11, 2, 8, 7, 48, 0, time.UTC)
+	pod.CreationTimestamp = metav1.NewTime(created)
+	pod.UID = "pod-1"
+	cond := func(c corev1.PodConditionType, after int) corev1.PodCondition {
+		return corev1.PodCondition{Type: c, Status: corev1.ConditionTrue,
+			LastTransitionTime: metav1.NewTime(created.Add(time.Duration(after) * time.Second))}
+	}
+	pod.Status.Conditions = []corev1.PodCondition{
+		cond(corev1.PodScheduled, 5), cond(corev1.PodInitialized, 7), cond(corev1.ContainersReady, 8),
+	}
+	f := newOSFixture(t, pod)
+	if err := f.b.Create(ctx, f.a, f.p, f.w); err != nil {
+		t.Fatal(err)
+	}
+	f.gw.setPhase(f.sName, ostypes.SandboxReady)
+	phases := []string{"volume", "init", "container"}
+	before := map[string]uint64{}
+	sums := map[string]float64{}
+	for _, p := range phases {
+		before[p], sums[p] = count(p), sum(p)
+	}
+	for range 2 { // a later pass over the same pod records nothing more
+		if st, err := f.b.State(ctx, f.w.Name); err != nil || st != host.UnitStarted {
+			t.Fatalf("state = %v err = %v", st, err)
+		}
+	}
+	for p, want := range map[string]float64{"volume": 5, "init": 2, "container": 1} {
+		if count(p)-before[p] != 1 || sum(p)-sums[p] != want {
+			t.Errorf("%s: %d new samples summing %v, want 1 summing %v", p, count(p)-before[p], sum(p)-sums[p], want)
+		}
 	}
 }
 

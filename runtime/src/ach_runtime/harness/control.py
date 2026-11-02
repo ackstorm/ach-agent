@@ -48,6 +48,7 @@ from ach_runtime.harness.admission import (
     WorkspaceOwnerLost,
 )
 from ach_runtime.harness.delivery import Delivery, GatewayUnavailable, StartOutcomeUnknown
+from ach_runtime.observability.metrics import WORKSPACE_START_SECONDS
 from ach_runtime.observability.runs import register_secrets
 from ach_runtime.harness.hydrate import (
     HydratedCatalog,
@@ -391,10 +392,14 @@ class Control:
             instance_id = response.headers.get("X-ACH-Instance-Id", "")
             if response.status_code != 200 or not instance_id:
                 raise WorkspaceAssemblyUnavailable(f"mini-harness health check rejected: {response.status_code}")
-            release = _json_or_empty(response).get("release")
+            body = _json_or_empty(response)
+            release = body.get("release")
             if release != __version__:
                 # The caller decides whether this is an anomaly (see ReleaseMismatch).
                 raise ReleaseMismatch(f"execution unit runs release {release!r}, control runs {__version__!r}")
+            boot = body.get("bootSeconds")
+            if isinstance(boot, (int, float)) and not isinstance(boot, bool) and boot >= 0:
+                WORKSPACE_START_SECONDS.labels(phase="boot").observe(boot)
             return instance_id
 
     async def run_workspace_hook(self, endpoint: WorkspaceEndpoint, phase: str, *,
@@ -620,6 +625,7 @@ class Control:
         started = None
         try:
             started = await self.delivery.start(ticket)
+            WORKSPACE_START_SECONDS.labels(phase="ready").observe(time.monotonic() - ticket.admitted_at)
         except StartOutcomeUnknown:
             # Delivery has exhausted its same-pod cached-start recovery. Keep the ticket
             # and permits while observing the pinned pod; never replay a possibly-sent

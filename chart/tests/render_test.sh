@@ -184,12 +184,18 @@ PY
 
 on=(--set metrics.podMonitor.enabled=true --set metrics.prometheusRule.enabled=true --set metrics.dashboards.enabled=true)
 out=$(helm template t . "${base[@]}" "${on[@]}" --set-string 'metrics.dashboards.annotations.grafana_folder=100 - Application - ACH Agents')
-python3 - "$out" <<'PY'
+# The rendered dashboards exceed the per-argument limit (128 KiB): pass a file, not argv.
+python3 - <(printf '%s' "$out") <<'PY'
 import sys, yaml
-docs = [d for d in yaml.safe_load_all(sys.argv[1]) if d]
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
 def of(kind): return [d for d in docs if d["kind"] == kind]
-pm, = of("PodMonitor")
+pms = {d["metadata"]["name"]: d for d in of("PodMonitor")}
+assert sorted(pms) == ["ach-agent-control", "ach-agent-operator"], sorted(pms)
+pm = pms["ach-agent-control"]
 assert pm["spec"]["namespaceSelector"] == {"any": True}
+op = pms["ach-agent-operator"]["spec"]
+assert op["selector"]["matchLabels"]["app.kubernetes.io/name"] == "ach-agent-operator", op
+assert [e["port"] for e in op["podMetricsEndpoints"]] == ["metrics"], op
 assert pm["spec"]["selector"]["matchLabels"]["ach-agent.ackstorm.ai/component"] == "control"
 assert pm["spec"]["podMetricsEndpoints"][0]["port"] == "http"
 rule, = of("PrometheusRule")
@@ -198,7 +204,7 @@ assert len(alerts) == 9 and "ACHAgentStartFailing" in alerts and "ACHAgentKeyRef
 assert {"ACHAgentStorageDown", "ACHAgentStorageDiskHigh", "ACHAgentStorageSyncLagging"} <= set(alerts), alerts
 assert "$labels.agent" in str(rule["spec"]), "alert templates must reach Prometheus verbatim"
 cms = [d for d in of("ConfigMap") if d["metadata"]["labels"].get("grafana_dashboard") == "1"]
-assert len(cms) == 3, len(cms)
+assert len(cms) == 4, len(cms)
 for cm in cms:
     assert cm["metadata"]["annotations"]["grafana_folder"] == "100 - Application - ACH Agents"
     import json
@@ -206,11 +212,11 @@ for cm in cms:
 print("observability ok")
 PY
 out=$(helm template t . "${base[@]}" "${on[@]}" "${s3[@]}" --set 'storage.namespaces={ach-agent,team-b}')
-python3 - "$out" <<'PY'
+python3 - <(printf '%s' "$out") <<'PY'
 import sys, yaml
-docs = [d for d in yaml.safe_load_all(sys.argv[1]) if d]
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
 pms = {d["metadata"]["name"]: d for d in docs if d["kind"] == "PodMonitor"}
-assert sorted(pms) == ["ach-agent-control", "ach-agent-storage"], sorted(pms)
+assert sorted(pms) == ["ach-agent-control", "ach-agent-operator", "ach-agent-storage"], sorted(pms)
 spec = pms["ach-agent-storage"]["spec"]
 assert spec["namespaceSelector"] == {"matchNames": ["ach-agent", "team-b"]}, spec
 assert spec["selector"]["matchLabels"]["app.kubernetes.io/name"] == "ach-agent-storage", spec

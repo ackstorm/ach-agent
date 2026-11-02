@@ -146,7 +146,16 @@ def test_healthz_ok_without_a_native_process(tmp_path: Path, public_config_fixtu
     client = _client(tmp_path, public_config_fixture)
     response = client.get("/healthz")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "release": ach_runtime.__version__}
+    body = response.json()
+    assert (body["status"], body["release"]) == ("ok", ach_runtime.__version__)
+    assert body["bootSeconds"] is None or body["bootSeconds"] >= 0
+
+
+def test_process_age_counts_from_this_process_start() -> None:
+    from ach_runtime.execution.app import _process_age
+
+    age = _process_age()
+    assert age is not None and 0 < age < 3600
 
 
 async def test_workspace_export_uses_tempdir_outside_source(tmp_path: Path, monkeypatch) -> None:

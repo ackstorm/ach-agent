@@ -64,6 +64,14 @@ STORAGE_RESTORE_SECONDS = Histogram(
     "ach_agent_storage_restore_seconds", "Workspace or session restore duration",
     ["domain", "outcome"], buckets=_STORAGE_BUCKETS,
 )
+# A new Workspace's start, by phase: place (sandbox created, started and registered by the
+# host), probe (registration to the unit answering), restore, total (the whole activation),
+# boot (the unit's own process start to serving, as it reports it) and ready (event admitted
+# to its run started).
+WORKSPACE_START_SECONDS = Histogram(
+    "ach_agent_workspace_start_seconds", "Workspace start-up duration by phase",
+    ["phase"], buckets=(0.25, 0.5, 1, 2, 3, 5, 8, 13, 21, 34, 60, 120, float("inf")),
+)
 
 _COST_UNPRICED_REASONS = ("usage_missing",)
 

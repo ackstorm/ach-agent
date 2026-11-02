@@ -716,6 +716,27 @@ async def test_wait_mini_health_returns_the_instance_id_the_unit_reports() -> No
         await control.close()
 
 
+async def test_wait_mini_health_records_the_boot_time_the_unit_reports() -> None:
+    from prometheus_client import REGISTRY
+
+    def boot() -> tuple[float, float]:
+        labels = {"phase": "boot"}
+        return (REGISTRY.get_sample_value("ach_agent_workspace_start_seconds_count", labels) or 0.0,
+                REGISTRY.get_sample_value("ach_agent_workspace_start_seconds_sum", labels) or 0.0)
+
+    async def mini(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"X-ACH-Instance-Id": "unit"},
+                              json={"status": "ok", "release": __version__, "bootSeconds": 1.25})
+
+    count, total = boot()
+    control = await _control_answering(mini)
+    try:
+        await control.wait_mini_health("http://unit", "ws", time.monotonic() + 5)
+        assert boot() == (count + 1, total + 1.25)
+    finally:
+        await control.close()
+
+
 async def test_wait_mini_health_refuses_a_unit_of_another_release(monkeypatch) -> None:
     import ach_runtime.observability as observability
 

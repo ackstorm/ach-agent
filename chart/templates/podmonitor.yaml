@@ -23,6 +23,25 @@ spec:
       relabelings:
         - sourceLabels: [__meta_kubernetes_pod_label_ach_agent_ackstorm_ai_agent]
           targetLabel: agent
+---
+# Scrapes the operator: controller metrics and ach_agent_sandbox_start_seconds.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: ach-agent-operator
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ach-agent.labels" . | nindent 4 }}
+    {{- with .Values.metrics.podMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "ach-agent.selectorLabels" . | nindent 6 }}
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
 {{- end }}
 {{- if and .Values.metrics.podMonitor.enabled (eq (include "ach-agent.storage.active" .) "true") }}
 ---

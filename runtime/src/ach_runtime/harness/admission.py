@@ -79,9 +79,10 @@ Round-4 fix (N5 of the fix-3 review):
 from __future__ import annotations
 
 import asyncio
+import time
 import weakref
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -104,6 +105,7 @@ class AdmissionTicket:
     deadline_at: datetime
     started: asyncio.Future[None]
     completed: asyncio.Future[Any]
+    admitted_at: float = field(default_factory=time.monotonic)
 
     def mark_started(self) -> None:
         """The runner's one required signal — nothing else resolves `started` (contract §3)."""

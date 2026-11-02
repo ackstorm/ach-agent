@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import tarfile
 from datetime import datetime
 from pathlib import Path
@@ -107,12 +108,31 @@ def _error_response(exc: Exception) -> JSONResponse:
     return JSONResponse({"type": "Failed", "message": str(exc)}, status_code=502)
 
 
+def _process_age() -> float | None:
+    """Seconds since this process started, interpreter and imports included (Linux /proc);
+    None where /proc cannot be read."""
+    try:
+        with open("/proc/self/stat", encoding="ascii") as f:
+            # Field 22, counted after the parenthesised command name, which may hold spaces.
+            started_ticks = int(f.read().rsplit(")", 1)[1].split()[19])
+        with open("/proc/uptime", encoding="ascii") as f:
+            uptime = float(f.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+    return round(max(0.0, uptime - started_ticks / os.sysconf("SC_CLK_TCK")), 3)
+
+
 def create_app(
     service: ExecutionService, *, bootstrap: ExecutionBootstrap | None = None
 ) -> FastAPI:
     app = FastAPI()
     app.state.service = service
     app.state.ready = False
+    app.state.boot_seconds = None
+
+    @app.on_event("startup")
+    async def record_boot() -> None:
+        app.state.boot_seconds = _process_age()
 
     @app.on_event("shutdown")
     async def close_service() -> None:
@@ -121,7 +141,7 @@ def create_app(
     @app.get("/healthz")
     async def healthz() -> JSONResponse:
         # Cold mini health can succeed without a native process (contract §4).
-        return JSONResponse({"status": "ok", "release": __version__})
+        return JSONResponse({"status": "ok", "release": __version__, "bootSeconds": app.state.boot_seconds})
 
     @app.get("/readyz")
     async def readyz() -> JSONResponse:

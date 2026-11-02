@@ -19,6 +19,7 @@ import (
 
 	osv1 "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1"
 	ostypes "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
+	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -26,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	achv1alpha1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
 	"github.com/ackstorm/ach-agent/operator/internal/host"
@@ -173,11 +175,45 @@ type openShellUnits struct {
 	uid    types.UID
 	reader client.Reader
 	writer client.Client
+	timed  map[string]types.UID // sandbox -> workload pod whose start is recorded
+}
+
+// sandboxStartSeconds times a workload pod's start from its condition timestamps, which have
+// whole-second resolution: volume (created to scheduled; WaitForFirstConsumer binds the
+// workspace volume first), init (OpenShell's init containers) and container (to ready).
+var sandboxStartSeconds = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	Name:    "ach_agent_sandbox_start_seconds",
+	Help:    "Sandbox workload pod start-up duration by phase",
+	Buckets: []float64{0.5, 1, 2, 3, 5, 8, 13, 21, 34, 60, 120},
+}, []string{"phase"})
+
+func init() { metrics.Registry.MustRegister(sandboxStartSeconds) }
+
+// observeStart records the start phases of a ready workload pod, once per pod.
+func (b *openShellUnits) observeStart(sandbox string, pod *corev1.Pod) {
+	if b.timed[sandbox] == pod.UID {
+		return
+	}
+	at := map[corev1.PodConditionType]time.Time{}
+	for _, c := range pod.Status.Conditions {
+		if c.Status == corev1.ConditionTrue {
+			at[c.Type] = c.LastTransitionTime.Time
+		}
+	}
+	scheduled, initialized, ready := at[corev1.PodScheduled], at[corev1.PodInitialized], at[corev1.ContainersReady]
+	if scheduled.IsZero() || initialized.IsZero() || ready.IsZero() {
+		return // not ready yet: a later pass records it
+	}
+	b.timed[sandbox] = pod.UID
+	sandboxStartSeconds.WithLabelValues("volume").Observe(scheduled.Sub(pod.CreationTimestamp.Time).Seconds())
+	sandboxStartSeconds.WithLabelValues("init").Observe(initialized.Sub(scheduled).Seconds())
+	sandboxStartSeconds.WithLabelValues("container").Observe(ready.Sub(initialized).Seconds())
 }
 
 // ForAgent is the unit backend of one agent.
 func (o *OpenShell) ForAgent(agent types.NamespacedName, uid types.UID, reader client.Reader, writer client.Client) host.Backend {
-	return &openShellUnits{OpenShell: o, agent: agent, uid: uid, reader: reader, writer: writer}
+	return &openShellUnits{OpenShell: o, agent: agent, uid: uid, reader: reader, writer: writer,
+		timed: map[string]types.UID{}}
 }
 
 func (o *OpenShell) url(namespace, sandbox string, port int32) string {
@@ -243,6 +279,7 @@ func (b *openShellUnits) State(ctx context.Context, name string) (host.UnitState
 		if pod == nil || !pod.DeletionTimestamp.IsZero() || pod.Status.Phase != corev1.PodRunning {
 			return host.UnitLost, nil
 		}
+		b.observeStart(s.Name, pod)
 		return host.UnitStarted, nil
 	}
 	return host.UnitStarting, nil
@@ -363,6 +400,7 @@ func (b *openShellUnits) Remove(ctx context.Context, name string) (bool, error) 
 	if remaining || err != nil {
 		return remaining, err
 	}
+	delete(b.timed, sandbox)
 	// Agent deletion is covered by the Service's owner reference.
 	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: b.serviceName(sandbox), Namespace: b.agent.Namespace}}
 	return false, client.IgnoreNotFound(b.writer.Delete(ctx, svc))

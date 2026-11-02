@@ -3,11 +3,16 @@ WORKDIR /work
 RUN apk add --no-cache build-base libffi-dev openssl-dev
 COPY pyproject.toml ./pyproject.toml
 COPY src/ ./src/
-RUN python -m pip install --no-cache-dir --target=/work/deps . \
-    && find /work/deps -type d -name __pycache__ -prune -exec rm -rf {} + \
-    && find /work/deps -type d \( -name tests -o -name test \) -prune -exec rm -rf {} + \
-    && find /work/deps -name '*.pyc' -delete \
-    && find /work/deps -name '*.pyi' -delete
+# /work/deps: everything, for the control pod. /work/deps-execution: the base set only (no
+# `control` extra), for the execution unit that every sandbox starts.
+RUN python -m pip install --no-cache-dir --target=/work/deps ".[control]" \
+    && python -m pip install --no-cache-dir --target=/work/deps-execution . \
+    && for d in /work/deps /work/deps-execution; do \
+         find "$d" -type d -name __pycache__ -prune -exec rm -rf {} + \
+         && find "$d" -type d \( -name tests -o -name test \) -prune -exec rm -rf {} + \
+         && find "$d" -name '*.pyc' -delete \
+         && find "$d" -name '*.pyi' -delete; \
+       done
 
 FROM node:22.23.3-alpine3.24 AS opencode-builder
 WORKDIR /opt/opencode
@@ -21,12 +26,11 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/work/src:/work/deps
 RUN apk add --no-cache ca-certificates git openssh-client libstdc++ libgcc tzdata \
     && rm -rf /root/.cache /tmp/* /var/cache/apk/*
-COPY --from=builder /work/deps/ /work/deps/
 COPY src/ /work/src/
 COPY plugins/ /work/plugins/
-# Bytecode compiled once here: PYTHONDONTWRITEBYTECODE means a sandbox would otherwise
-# compile every imported module on each start.
-RUN python -m compileall -q -j0 --invalidation-mode unchecked-hash /work/src /work/deps
+# Bytecode compiled once at build (here and for each stage's /work/deps): PYTHONDONTWRITEBYTECODE
+# means a sandbox would otherwise compile every imported module on each start.
+RUN python -m compileall -q -j0 --invalidation-mode unchecked-hash /work/src
 RUN rm -rf /usr/local/lib/python3.13/ensurepip \
     /usr/local/lib/python3.13/site-packages/pip \
     /usr/local/lib/python3.13/site-packages/pip-* \
@@ -34,7 +38,9 @@ RUN rm -rf /usr/local/lib/python3.13/ensurepip \
     && rm -rf /var/cache/apk/*
 
 FROM runtime AS control
-RUN addgroup -S -g 10001 ach \
+COPY --from=builder /work/deps/ /work/deps/
+RUN python -m compileall -q -j0 --invalidation-mode unchecked-hash /work/deps \
+    && addgroup -S -g 10001 ach \
     && adduser -S -D -u 10001 -G ach -h /home/ach -s /sbin/nologin ach
 ENV HOME=/home/ach
 USER 10001:10001
@@ -47,7 +53,9 @@ FROM runtime AS execution
 # (~585 MB), so only the one the postinstall linked to cli/bin is copied; nothing needs node.
 ENV OPENCODE_BIN=/opt/opencode/node_modules/@opencode/cli/bin/opencode.exe
 COPY --from=opencode-builder /opt/opencode/node_modules/@opencode/cli/bin/opencode.exe /opt/opencode/node_modules/@opencode/cli/bin/opencode.exe
-RUN test -x "$OPENCODE_BIN" \
+COPY --from=builder /work/deps-execution/ /work/deps/
+RUN "$OPENCODE_BIN" --version | grep -Fx "opencode v2.0.20" \
+    && python -m compileall -q -j0 --invalidation-mode unchecked-hash /work/deps \
     && addgroup -S -g 10001 ach \
     && adduser -S -D -u 10001 -G ach -h /home/ach -s /sbin/nologin ach \
     && mkdir -p /workspace /var/lib/ach-runtime/sessions \
@@ -63,6 +71,9 @@ CMD ["execution"]
 
 FROM execution AS agent
 USER root
+# The whole agent in one process needs the control pod's dependencies too.
+COPY --from=builder /work/deps/ /work/deps/
+RUN python -m compileall -q -j0 --invalidation-mode unchecked-hash /work/deps
 RUN mkdir -p /var/lib/ach-runtime/workspaces && chown 10001:10001 /var/lib/ach-runtime/workspaces
 USER 10001:10001
 CMD ["agent", "--config", "/etc/ach-runtime/config.json"]

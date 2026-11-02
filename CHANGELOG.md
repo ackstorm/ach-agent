@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-11-02
+
+### Changed
+
+- The execution unit starts in about half the time: the image ships compiled bytecode, and start-up
+  no longer reads package metadata or imports the `mcp` package. Importing the unit takes 2.3 s instead
+  of 4.9 s (local measurement); the image grows 20 MB.
+
+### Fixed
+
+- The operator removes a sandbox's ExternalName Service once its workload pod is gone; the Service of a
+  Workspace no longer listed used to outlive its sandbox.
+
 ## [0.3.0] - 2026-11-01
 
 ### Added

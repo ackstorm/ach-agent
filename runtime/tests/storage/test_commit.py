@@ -1256,3 +1256,29 @@ async def test_orphan_from_replaced_writer_epoch_stays_ambiguous() -> None:
     with pytest.raises(ConcurrentModification):
         await storage.persist(ref, "snap-A", _bytes(b"a-data"), new, None)
     assert await storage.restore(ref) is None
+
+
+async def test_acquire_writer_fails_fast_when_the_backend_rejects_its_own_etag() -> None:
+    """A backend whose conditional write rejects the ETag its read just served (SeaweedFS 4.51
+    on an imported object) is not contention: re-reading shows the registry unchanged, so
+    acquisition must stop at once with that diagnosis instead of retrying to exhaustion."""
+
+    from fakes import _ClientError
+
+    class _RejectsOwnETag(FakeS3Client):
+        if_match_puts = 0
+
+        def put_object(self, **kwargs):  # noqa: ANN003, ANN201
+            if kwargs.get("IfMatch") is not None:
+                self.if_match_puts += 1
+                raise _ClientError("PreconditionFailed")
+            return super().put_object(**kwargs)
+
+    client = _RejectsOwnETag()
+    storage = _storage(client)
+    ref = _ref()
+    await storage.acquire_writer(ref, "pod-a")  # creates the registry with IfNoneMatch
+
+    with pytest.raises(RuntimeError, match="rejected the ETag it served"):
+        await storage.acquire_writer(ref, "pod-b")
+    assert client.if_match_puts == 1

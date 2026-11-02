@@ -560,9 +560,19 @@ class S3Storage(Storage):
 
     async def acquire_writer(self, ref: StateRef, writer_instance_id: str) -> WriterLease:
         self._require_client()
+        etag: str | None = None
+        rejected: str | None = None
         for _ in range(_CAS_RETRY_LIMIT):
             try:
                 current, etag = await self._read_registry(ref)
+                if etag is not None and etag == rejected:
+                    # Every registry write bumps the epoch, so a racing writer always changes
+                    # the ETag: an unchanged one means the backend's conditional write
+                    # disagrees with its own reads, and retrying cannot help.
+                    raise RuntimeError(
+                        f"acquire_writer: storage rejected the ETag it served for "
+                        f"{ref.registry_key(self._prefix)}; its conditional writes disagree with its reads"
+                    )
                 new_doc = (
                     current.with_new_writer(writer_instance_id)
                     if current is not None
@@ -570,6 +580,7 @@ class S3Storage(Storage):
                 )
                 new_etag = await self._cas_write_registry(ref, new_doc, expected_etag=etag)
             except PreconditionFailed:
+                rejected = etag
                 continue
             except Exception as exc:
                 if _is_snapshot_transient(exc):

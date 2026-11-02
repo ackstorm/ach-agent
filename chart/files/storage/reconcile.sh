@@ -49,7 +49,23 @@ case "$REMOTE_TYPE" in
 esac
 weed_sh 60 "$configure" >/dev/null || exit 1
 if ! weed_sh 60 "remote.mount" | grep -qF "\"${DIR}\":"; then
-  weed_sh 1800 "remote.mount -dir=${DIR} -remote=remote/${BUCKET}/${MOUNT_PATH} -nonempty" || exit 1
+  mounted=$(weed_sh 1800 "remote.mount -dir=${DIR} -remote=remote/${BUCKET}/${MOUNT_PATH} -nonempty") || exit 1
+  printf '%s\n' "$mounted"
+  # SeaweedFS 4.51: once a read caches an imported object, the filer's IfMatch check hashes the
+  # cached chunk instead of using the bucket's ETag that reads return, so every compare-and-swap
+  # write of it fails. Rewriting the registries (the only objects written with IfMatch) through
+  # the S3 gateway stores the ETag both sides then agree on; a filer write cannot (it drops the
+  # gateway's ETag attribute, and GCS ETags are base64 where the filer compares hex).
+  # ponytail: drop once storage.image carries the upstream fix to storedEntryETag (after 4.51).
+  s3="--aws-sigv4 aws:amz:us-east-1:s3 --user ${GATEWAY_ACCESS_KEY}:${GATEWAY_SECRET_KEY}"
+  printf '%s\n' "$mounted" | sed -n "s#^/buckets/\(${BUCKET}/.*/registry\.json\) (create)\$#\1#p" |
+    while read -r key; do
+      # shellcheck disable=SC2086 # $s3 holds several arguments
+      curl -sf -m 30 $s3 -o /tmp/registry.json "http://127.0.0.1:8333/${key}" &&
+        curl -sf -m 30 $s3 -o /dev/null -X PUT -H 'Content-Type: application/json' \
+          --data-binary @/tmp/registry.json "http://127.0.0.1:8333/${key}" ||
+        { echo "FAIL: cannot rewrite ${key}" >&2; exit 1; }
+    done || exit 1
 fi
 weed_sh 600 "remote.copy.local -dir=${DIR}" >/dev/null ||
   echo "start-up upload failed; restart the pod once the bucket is reachable" >&2

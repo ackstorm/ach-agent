@@ -86,6 +86,9 @@ for flag in ("-filer.remoteCacheEvictThreshold=0.8", "-s3.config=/etc/seaweedfs/
     assert flag in args, (flag, args)
 assert {p["name"]: p["containerPort"] for p in c["server"]["ports"]} == {"s3": 8333, "metrics": 9327}
 assert {p["name"]: p["containerPort"] for p in c["reconcile"]["ports"]} == {"reconcile": 9328}
+gw = {e["name"]: e["valueFrom"]["secretKeyRef"] for e in c["reconcile"]["env"] if e["name"].startswith("GATEWAY_")}
+assert gw == {"GATEWAY_ACCESS_KEY": {"name": "ach-agent-storage-s3", "key": "AWS_ACCESS_KEY_ID"},
+              "GATEWAY_SECRET_KEY": {"name": "ach-agent-storage-s3", "key": "AWS_SECRET_ACCESS_KEY"}}, gw
 assert sts["spec"]["volumeClaimTemplates"][0]["spec"]["resources"]["requests"]["storage"] == "50Gi"
 sec, = [d for d in of("Secret", "ach-agent") if d["metadata"]["name"] == "ach-agent-storage-s3"]
 data = {k: base64.b64decode(v).decode() for k, v in sec["data"].items()}

@@ -196,6 +196,11 @@ spec:
           command: [/bin/sh, /scripts/reconcile.sh]
           env:
             {{- toYaml $nsEnv | nindent 12 }}
+            # The server's own S3 key, for the registry rewrite after a fresh mount (reconcile.sh).
+            - name: GATEWAY_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: ach-agent-storage-s3, key: AWS_ACCESS_KEY_ID}}
+            - name: GATEWAY_SECRET_KEY
+              valueFrom: {secretKeyRef: {name: ach-agent-storage-s3, key: AWS_SECRET_ACCESS_KEY}}
           ports:
             - {name: reconcile, containerPort: 9328}
           # The Service gets the pod only once the bucket is mounted.

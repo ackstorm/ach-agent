@@ -41,6 +41,8 @@ if [ "$MODE" = gcs ]; then
     -e STORAGE_EMULATOR_HOST=smoke-remote:4443)
   netcurl -f -X POST 'http://smoke-remote:4443/upload/storage/v1/b/smoke/o?uploadType=media&name=ach/other/x' \
     --data-binary x >/dev/null
+  netcurl -f -X POST 'http://smoke-remote:4443/upload/storage/v1/b/smoke/o?uploadType=media&name=ach/ns/uid/old/registry.json' \
+    --data-binary '{"v": 0}' >/dev/null
   in_remote() { netcurl 'http://smoke-remote:4443/storage/v1/b/smoke/o?prefix=ach/ns/uid/ws/' |
     grep '"name":"ach/ns/uid/ws/registry.json"' >/dev/null; }
 else
@@ -49,7 +51,7 @@ else
   printf '%s\n' 's3.configure -user=remote -access_key=remote -secret_key=remote-secret -actions=Admin -apply' \
     's3.bucket.create -name smoke' | docker exec -i smoke-remote weed shell -master=127.0.0.1:9333 >/dev/null
   remote_ip=$(docker inspect smoke-remote -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
-  runtime/.venv/bin/python -c 'import sys, boto3; from botocore.config import Config; boto3.client("s3", endpoint_url=f"http://{sys.argv[1]}:8333", aws_access_key_id="remote", aws_secret_access_key="remote-secret", region_name="us-east-1", config=Config(s3={"addressing_style": "path"})).put_object(Bucket="smoke", Key="ach/other/x", Body=b"x")' "$remote_ip"
+  runtime/.venv/bin/python -c 'import sys, boto3; from botocore.config import Config; c = boto3.client("s3", endpoint_url=f"http://{sys.argv[1]}:8333", aws_access_key_id="remote", aws_secret_access_key="remote-secret", region_name="us-east-1", config=Config(s3={"addressing_style": "path"})); [c.put_object(Bucket="smoke", Key=k, Body=b) for k, b in (("ach/other/x", b"x"), ("ach/ns/uid/old/registry.json", b"{\"v\": 0}"))]' "$remote_ip"
   remote_env=(-e REMOTE_TYPE=s3 -e AWS_REGION=us-east-1 -e REMOTE_ENDPOINT=http://smoke-remote:8333
     -e AWS_ACCESS_KEY_ID=remote -e AWS_SECRET_ACCESS_KEY=remote-secret)
   in_remote() { printf 'fs.ls /buckets/smoke/ach/ns/uid/ws\n' |
@@ -68,6 +70,7 @@ docker run -d --name smoke-ss --network "$N" "${common[@]}" -v smoke-data:/data 
   -metricsPort=9327 -volume.max=0 -master.volumeSizeLimitMB=256 -filer.remoteCacheEvictThreshold=0.99 \
   -volume.allowUntrustedRemoteEndpoints -filer.allowUntrustedRemoteEndpoints -s3.allowUntrustedRemoteEndpoints" >/dev/null
 docker run -d --name smoke-loop --network container:smoke-ss "${common[@]}" -v "$PWD/chart/files/storage:/scripts:ro" \
+  -e GATEWAY_ACCESS_KEY=ctl -e GATEWAY_SECRET_KEY=ctl-secret \
   --entrypoint sh "$IMG" /scripts/reconcile.sh >/dev/null
 docker run -d --name smoke-sync --network container:smoke-ss "${common[@]}" -v "$PWD/chart/files/storage:/scripts:ro" \
   --entrypoint sh "$IMG" /scripts/sync.sh >/dev/null
@@ -98,6 +101,13 @@ try:
 except bad.exceptions.ClientError:
     pass
 print("create-only put and auth ok")
+# An object the mount imported from the bucket: a read caches it, then a compare-and-swap
+# write with the ETag that read returned must succeed.
+old = "ach/ns/uid/old/registry.json"
+got = c.get_object(Bucket="smoke", Key=old)
+assert got["Body"].read() == b'{"v": 0}'
+c.put_object(Bucket="smoke", Key=old, Body=b'{"v": 1}', IfMatch=got["ETag"])
+print("compare-and-swap on an imported object ok")
 PY
 
 retry 60 in_remote || { docker logs smoke-sync; fail "object never reached the stand-in bucket"; }
@@ -110,6 +120,10 @@ c = boto3.client("s3", endpoint_url=f"http://{sys.argv[1]}:8333", aws_access_key
                  aws_secret_access_key="ctl-secret", region_name="us-east-1",
                  config=Config(s3={"addressing_style": "path"}))
 assert c.get_object(Bucket="smoke", Key="ach/ns/uid/ws/registry.json")["Body"].read() == b'{"v": 1}'
+# The imported object again, now replicated, evicted and cached anew by this read.
+got = c.get_object(Bucket="smoke", Key="ach/ns/uid/old/registry.json")
+assert got["Body"].read() == b'{"v": 1}'
+c.put_object(Bucket="smoke", Key="ach/ns/uid/old/registry.json", Body=b'{"v": 2}', IfMatch=got["ETag"])
 print("read-through after eviction ok")
 PY
 

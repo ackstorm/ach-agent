@@ -57,7 +57,7 @@ _OWNERSHIP_POLL_SECONDS = 0.05
 _STDERR_TAIL_MAX_BYTES = 8192
 SNAPSHOT_VERSION = "session-v1"
 ENGINE_PACKAGE = "@opencode/cli"
-ENGINE_VERSION = "2.0.20"
+ENGINE_VERSION = "2.2.5"
 
 
 class NativeLaunchFailed(RuntimeError):
@@ -393,6 +393,7 @@ class _NativeSession:
         self.scratch = scratch
         self.url: str | None = None
         self.sid: str | None = None
+        self.password: str | None = None
         self.config_version: str | None = None
         self._managed_fingerprint: str | None = None
         self._selected_provider_model: tuple[str, str] | None = None
@@ -466,6 +467,7 @@ class _NativeSession:
         self._events_ready = asyncio.Event()
         env = {**env, "OPENCODE_CONFIG": str(config_path)}
         password = env["OPENCODE_SERVER_PASSWORD"]
+        self.password = password
         self._auth_header = "Basic " + base64.b64encode(f"opencode:{password}".encode()).decode()
         self.home.mkdir(parents=True, exist_ok=True)
         self.scratch.mkdir(parents=True, exist_ok=True)
@@ -1253,6 +1255,13 @@ class OpenCodeEngine:
             self._sessions[session_ref] = session
         return session
 
+    def attach_target(self, session_ref: str) -> tuple[str, str, str] | None:
+        """URL, native session id and server password of a started session, for a local TUI client."""
+        session = self._sessions.get(session_ref)
+        if session is None or None in (session.url, session.sid, session.password):
+            return None
+        return session.url, session.sid, session.password
+
     async def close(self) -> None:
         """Close only native handles this engine actually created."""
         sessions = tuple(self._sessions.values())
@@ -1868,9 +1877,11 @@ class OpenCodeEngine:
         destination authority (finding #11): every identity field is checked against an
         explicit `expected` destination, the archived payload is required, and restoration
         is not complete until the relaunched process answers `GET /api/session/:sid` for the
-        exact restored sid. No synthetic prompt is sent.
+        exact restored sid. No synthetic prompt is sent. The engine version is not an identity
+        field: a session saved by an older opencode release restores under the running one
+        (2.0.20 → 2.2.5 verified), and the sid check above still catches an unreadable store.
         """
-        required = {"engine_package", "engine_version", "workspace_ref", "session_ref", "workspace_path"}
+        required = {"engine_package", "workspace_ref", "session_ref", "workspace_path"}
         missing_expected = required - expected.keys()
         if missing_expected:
             raise RestoreMismatch(

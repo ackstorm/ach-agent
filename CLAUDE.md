@@ -3,6 +3,7 @@
 ## Layout
 - `operator/` Go module: Agent/AgentProfile CRDs, controller, render, OpenShell backend.
 - `runtime/` Python package `ach_runtime` (control and execution roles), distribution `ach-agent-runtime`.
+- `runtime/bin/ach-agent` + `ach-runtime run`: local agent from a YAML manifest in the current directory, opencode TUI attached (`docs/local-agent.md`).
 - `chart/` Helm chart (operator, CRDs, RBAC, Secret admission policy, a SeaweedFS storage server per Agent namespace with its scripts in `chart/files/storage/`); `make chart-test`, `make storage-smoke` (docker).
 - `test/e2e/` kind cluster `ach-agent-e2e` (Istio ambient + OpenShell + stub upstreams) and the Go e2e suite; `make e2e-up|e2e-run|e2e-down`. Every kubectl/helm call uses `--context kind-ach-agent-e2e`; never touch the shared `ach-e2e`. The exchange stub (8093, HTTPS) uses a CA generated into the gitignored `test/e2e/.tls/`; the e2e control image trusts it via `SSL_CERT_FILE`.
 - `docs/install.md`, `docs/mesh/` install guide and reference mesh policy.

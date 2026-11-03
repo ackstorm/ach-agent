@@ -13,9 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   channel and `perKey` entries for a rendered key template (e.g. per ticket or per sender). Webhooks over a
   limit get HTTP 429 naming it, before any model call; the rejection is an `ACH operational anomaly` of kind
   `limit_reached`. Protects agents from loops such as an e-mail auto-responder replying to itself.
+- `ach-agent run --config agent.yaml` runs an agent locally from a short YAML manifest (environment, model,
+  prompt, excluded tools) in one container, with the current directory as its workspace, and attaches the
+  opencode TUI to its session. Published as `ghcr.io/ackstorm/ach-agent-local`. See `docs/local-agent.md`.
 
 ### Changed
 
+- The engine is OpenCode `@opencode/cli@2.2.5`. A session snapshot restores whatever OpenCode release saved it:
+  the engine version is recorded in the snapshot manifest but no longer has to match, so sessions saved by
+  2.0.20 keep working after the upgrade.
 - Dashboards. Cost panels read the billed spend from LiteLLM (`litellm_spend_metric_total`) by the agent's
   environment; the engine estimate, which counts gateway model aliases as 0, stays as one comparison stat.
   Counts are over the selected range instead of per-second rates, and "ACH — Agents" opens on a per-agent

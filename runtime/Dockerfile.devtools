@@ -30,7 +30,7 @@ WORKDIR /work
 
 RUN apk add --no-cache python3 py3-pip git tzdata
 
-RUN npm install --no-save @opencode/cli@2.0.20 \
+RUN npm install --no-save @opencode/cli@2.2.5 \
     && ./node_modules/.bin/opencode2 --version
 ENV OPENCODE_BIN=/work/node_modules/.bin/opencode2
 

@@ -91,7 +91,7 @@ e2e:
 		-e ACH_STORAGE_TEST_S3_ACCESS_KEY=ach-storage-test -e ACH_STORAGE_TEST_S3_SECRET_KEY=ach-storage-test-secret \
 		-e AWS_ACCESS_KEY_ID=ach-storage-test -e AWS_SECRET_ACCESS_KEY=ach-storage-test-secret -e AWS_DEFAULT_REGION=us-east-1 \
 		"$(E2E_IMAGE)" sh -ec ' \
-			"$$OPENCODE_BIN" --version | grep -Fx "opencode v2.0.20"; \
+			"$$OPENCODE_BIN" --version | grep -Fx "opencode v2.2.5"; \
 			node --version >/dev/null; \
 			python -c "import boto3, pytest, httpx, uvicorn, ach_runtime"; \
 			pytest -q -p no:cacheprovider --junitxml=/tmp/ach-e2e-required.xml tests/e2e/test_pr_review.py tests/e2e/test_recovery.py tests/e2e/test_host_scenarios.py tests/storage/test_s3_integration.py; \

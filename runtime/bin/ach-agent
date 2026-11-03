@@ -1,0 +1,38 @@
+#!/bin/sh
+# Run an agent manifest locally: harness and engine in the runtime image, the current
+# directory as the agent's workspace (same path inside the container), opencode TUI attached.
+set -eu
+
+usage() { echo "usage: ach-agent run --config <agent.yaml>" >&2; exit 2; }
+[ "${1:-}" = "run" ] || usage
+shift
+config=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --config) [ $# -ge 2 ] || usage; config=$2; shift 2 ;;
+    *) echo "ach-agent: unknown argument: $1" >&2; usage ;;
+  esac
+done
+[ -n "$config" ] || usage
+[ -f "$config" ] || { echo "ach-agent: no such file: $config" >&2; exit 2; }
+# / and /tmp would cover the container's own /tmp/ach-run state when mounted at the same path.
+case "$PWD" in /|/tmp) echo "ach-agent: refusing to use $PWD as the workspace" >&2; exit 2 ;; esac
+dir=$(cd "$(dirname "$config")" && pwd)
+file=$(basename "$config")
+image=${ACH_AGENT_IMAGE:-ghcr.io/ackstorm/ach-agent-local:latest}
+
+# ACH_URL + ACH_KEY both set (CI) win; otherwise both come from the manifest's ach-cli profile.
+if [ -z "${ACH_URL:-}" ] || [ -z "${ACH_KEY:-}" ]; then
+  command -v ach-cli >/dev/null 2>&1 || { echo "ach-agent: set ACH_URL and ACH_KEY, or install ach-cli" >&2; exit 1; }
+  profile=$(docker run --rm -v "$dir:/agent:ro" "$image" profile --config "/agent/$file") || exit 2
+  ACH_URL=$(ach-cli profile show ${profile:+"$profile"} | awk '$1 == "URL" { print $2 }')
+  ACH_KEY=$(ach-cli token ${profile:+--profile "$profile"} 2>/dev/null) || ACH_KEY=""
+fi
+[ -n "${ACH_URL:-}" ] && [ -n "${ACH_KEY:-}" ] || {
+  echo "ach-agent: no ACH credential: set ACH_URL and ACH_KEY or run \`ach-cli login\`" >&2; exit 1;
+}
+export ACH_URL ACH_KEY  # passed by name below; the key never appears on a command line
+
+exec docker run --rm -it --user "$(id -u):$(id -g)" -e ACH_URL -e ACH_KEY \
+  -v "$PWD:$PWD" -w "$PWD" -v "$dir:/agent:ro" "$image" \
+  run --config "/agent/$file" --workspace "$PWD" --name "$(basename "$dir")" --data-dir /tmp/ach-run

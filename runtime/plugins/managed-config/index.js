@@ -1,6 +1,6 @@
 // Managed-config plugin for OpenCode v2 (Task 4). Ported verbatim from the Task 1 spike
 // (spikes/opencode-v2/managed-config.mjs), which live-verified this plugin surface against
-// the pinned @opencode/cli@2.0.20 release — see docs/reports/opencode-v2-compatibility.md.
+// @opencode/cli@2.0.20 — see docs/reports/opencode-v2-compatibility.md.
 // Packaged here as a single directory entrypoint (index.js) instead of the spike's
 // index.js -> ../managed-config.mjs re-export, which existed only so the spike's Node test
 // harness could import the implementation independently of the plugin package shape; a

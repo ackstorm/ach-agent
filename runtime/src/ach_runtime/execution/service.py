@@ -1127,7 +1127,6 @@ class ExecutionService:
                 raise ValueError("staged HOME session identity does not match")
         expected = {
             "engine_package": "@opencode/cli",
-            "engine_version": "2.0.20",
             "workspace_ref": workspace_ref,
             "session_ref": session_ref,
             "workspace_path": str(self._workspace_dir),

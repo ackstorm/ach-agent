@@ -16,7 +16,7 @@ RUN python -m pip install --no-cache-dir --target=/work/deps ".[control]" \
 
 FROM node:22.23.3-alpine3.24 AS opencode-builder
 WORKDIR /opt/opencode
-RUN npm install --no-save @opencode/cli@2.0.20 \
+RUN npm install --no-save @opencode/cli@2.2.5 \
     && ./node_modules/.bin/opencode2 --version
 
 FROM python:3.13.15-alpine3.24 AS runtime
@@ -54,7 +54,7 @@ FROM runtime AS execution
 ENV OPENCODE_BIN=/opt/opencode/node_modules/@opencode/cli/bin/opencode.exe
 COPY --from=opencode-builder /opt/opencode/node_modules/@opencode/cli/bin/opencode.exe /opt/opencode/node_modules/@opencode/cli/bin/opencode.exe
 COPY --from=builder /work/deps-execution/ /work/deps/
-RUN "$OPENCODE_BIN" --version | grep -Fx "opencode v2.0.20" \
+RUN "$OPENCODE_BIN" --version | grep -Fx "opencode v2.2.5" \
     && python -m compileall -q -j0 --invalidation-mode unchecked-hash /work/deps \
     && addgroup -S -g 10001 ach \
     && adduser -S -D -u 10001 -G ach -h /home/ach -s /sbin/nologin ach \

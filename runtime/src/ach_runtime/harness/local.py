@@ -51,7 +51,13 @@ class LocalSource:
         return True
 
     def __init__(
-        self, bootstrap: ExecutionBootstrap, *, verify_key: str, data_dir: Path, transport: LocalRoutingTransport
+        self,
+        bootstrap: ExecutionBootstrap,
+        *,
+        verify_key: str,
+        data_dir: Path,
+        transport: LocalRoutingTransport,
+        workspace_dir: Path | None = None,
     ) -> None:
         self._bootstrap = bootstrap
         self._bootstrap_json = bootstrap_json(bootstrap)
@@ -59,6 +65,8 @@ class LocalSource:
         self._root = data_dir / "workspaces"
         self._transport = transport
         self._units: dict[str, Any] = {}  # name -> lifespan context of the running app
+        self._workspace_dir = workspace_dir  # set by `run`: the user's directory, never deleted
+        self._apps: dict[str, Any] = {}  # name -> running execution app
         self._registrations = itertools.count(1)
 
     @staticmethod
@@ -75,9 +83,14 @@ class LocalSource:
         unit_dir = self._root / name
         await self._remove(unit_dir)  # local files are never trusted across instances
         try:
-            workspace, sessions = unit_dir / "workspace", unit_dir / "sessions"
-            workspace.mkdir(parents=True)
-            sessions.mkdir()
+            sessions = unit_dir / "sessions"
+            sessions.mkdir(parents=True)
+            if self._workspace_dir is None:
+                workspace = unit_dir / "workspace"
+                workspace.mkdir()
+            else:
+                # ponytail: every unit shares the one given directory; `run` has a single workspace.
+                workspace = self._workspace_dir
             env = launch_env(self._bootstrap_json, self._verify_key, ref, name)
             app = build_execution_app(self._bootstrap, environ=env, workspace_dir=workspace, sessions_root=sessions)
             lifespan = app.router.lifespan_context(app)
@@ -89,10 +102,12 @@ class LocalSource:
             # Spec 8: a startup failure is a probe failure; the manager frees the slot only for these.
             raise WorkspaceAssemblyUnavailable(f"{name}: execution unit failed to start: {exc}") from exc
         self._units[name] = lifespan
+        self._apps[name] = app
         self._transport.register(self._host(name), app)
         return Placement(name, f"http://{self._host(name)}", next(self._registrations))
 
     async def retire(self, name: str) -> None:
+        self._apps.pop(name, None)
         lifespan = self._units.pop(name, None)
         self._transport.unregister(self._host(name))
         if lifespan is not None:
@@ -102,6 +117,11 @@ class LocalSource:
                 await self._remove(self._root / name)
         else:
             await self._remove(self._root / name)
+
+    def engine(self, name: str) -> Any | None:
+        """The engine of running unit `name`, for the `run` role's TUI attach."""
+        app = self._apps.get(name)
+        return None if app is None else app.state.engine
 
     async def adopt(self) -> list[tuple[WorkspaceRef, Placement]]:
         # A restart never adopts local state; the next demand restores from storage.

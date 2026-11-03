@@ -181,6 +181,7 @@ def _patch_channel_config(defs: dict) -> None:
             )
             then["properties"]["prompt"] = {"type": "null"}
             then["properties"]["handoff"] = {"type": "null"}
+            then["properties"]["rateLimit"] = {"type": "null"}
         if type_ == "webhook":
             # If gitlabEvents is present at all, every entry must be a conversational kind —
             # project/system kinds belong to webhook-script (schema.py's `extra` check).

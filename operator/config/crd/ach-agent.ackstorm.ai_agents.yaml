@@ -274,6 +274,40 @@ spec:
                       required:
                       - key
                       type: object
+                    rateLimit:
+                      description: |-
+                        RateLimit caps the invocations this channel admits per sliding hour; events over a
+                        limit are rejected before any model call (webhook: HTTP 429). Omit for no limit.
+                      properties:
+                        maxPerHour:
+                          description: MaxPerHour caps the invocations the whole channel
+                            admits per sliding hour.
+                          format: int64
+                          minimum: 1
+                          type: integer
+                        perKey:
+                          description: PerKey caps the invocations per rendered key,
+                            e.g. per ticket or per sender.
+                          items:
+                            description: RateLimitKeySpec is one channels[].rateLimit.perKey
+                              entry.
+                            properties:
+                              key:
+                                description: |-
+                                  Key is a {{ }} template with the routing context (event.*, payload.*), rendered by
+                                  the Harness; an event whose key fails to render is rejected.
+                                minLength: 1
+                                type: string
+                              maxPerHour:
+                                format: int64
+                                minimum: 1
+                                type: integer
+                            required:
+                            - key
+                            - maxPerHour
+                            type: object
+                          type: array
+                      type: object
                     routing:
                       description: |-
                         Routing overrides the Harness's default Workspace/Session identity for this
@@ -435,6 +469,8 @@ spec:
                     rule: 'self.type==''webhook-script'' ? has(self.script) : !has(self.script)'
                   - message: webhook-script forbids prompt and handoff
                     rule: self.type!='webhook-script' || (!has(self.prompt) && !has(self.handoff))
+                  - message: webhook-script forbids rateLimit
+                    rule: self.type!='webhook-script' || !has(self.rateLimit)
                   - message: generic webhook and queue channels require routing.sessionKey
                     rule: '!(self.type==''queue'' || (self.type==''webhook'' && has(self.source)
                       && self.source==''generic'')) || (has(self.routing) && has(self.routing.sessionKey))'

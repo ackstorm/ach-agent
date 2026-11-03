@@ -10,7 +10,7 @@ import pytest
 
 from ach_runtime.config.schema import WebhookAuthBlock
 from ach_runtime.config.schema import ChannelConfig
-from ach_runtime.harness.admission import Admission
+from ach_runtime.harness.admission import Admission, ChannelRateLimit
 from ach_runtime.harness.app import create_app
 from ach_runtime.harness.control import Control
 
@@ -317,3 +317,42 @@ async def test_readyz_follows_the_ach_credential() -> None:
         assert (await client.get("/readyz")).status_code == 200
         state["ready"] = False
         assert (await client.get("/readyz")).status_code == 503
+
+
+@pytest.fixture
+def generic_app():
+    channel = ChannelConfig.model_validate({
+        "name": "hook",
+        "type": "webhook",
+        "source": "generic",
+        "routing": {"sessionKey": "{{ payload.ticket_id }}"},
+        "rateLimit": {"perKey": [{"key": "{{ payload.ticket_id }}", "maxPerHour": 1}]},
+        "webhook": {"auth": {"type": "none"}},
+    })
+    config = SimpleNamespace(channels=[channel], agent=SimpleNamespace(name="test-agent"),
+                             identity_environment="test-env")
+    admission = Admission(
+        namespace="ns", agent_uid="3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77",
+        max_concurrent_invocations=1, max_queued_total=4, idempotency_window_seconds=1,
+        max_invocation_seconds=20, workspace_max_concurrent_sessions=1,
+        channel_concurrency={"hook": 1},
+        rate_limits={"hook": ChannelRateLimit(max_per_hour=None, per_key=(1,))},
+        clock=lambda: datetime.now(timezone.utc), runner=_runner,
+    )
+    control = SimpleNamespace(config=config, admission=admission, _stopping=False)
+    return create_app(control), admission
+
+
+async def test_generic_webhook_over_rate_limit_is_429(generic_app) -> None:
+    app, admission = generic_app
+    app.state.ready = True
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://control") as client:
+        first = await client.post("/channels/hook/events", headers={"x-request-id": "d1"},
+                                  json={"ticket_id": "#1"})
+        second = await client.post("/channels/hook/events", headers={"x-request-id": "d2"},
+                                   json={"ticket_id": "#1"})
+    assert first.status_code == 202
+    assert second.status_code == 429
+    assert second.json() == {"detail": "rateLimit.perKey[0] (1/h) reached"}
+    await admission.close()

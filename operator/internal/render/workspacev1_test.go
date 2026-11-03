@@ -458,3 +458,29 @@ func TestRenderFilterV1_AbsentFilterStillEmitsEmptyExclude(t *testing.T) {
 		t.Fatalf("filter = %s, want %s", b, want)
 	}
 }
+
+func TestRenderChannelV1RateLimit(t *testing.T) {
+	session := "ticket:{{ payload.ticket_id }}"
+	channelCap := int64(100)
+	ch := v1.ChannelSpec{
+		Name: "webhook", Type: "webhook", Source: "generic",
+		Routing: &v1.RoutingSpec{SessionKey: &session},
+		Webhook: &v1.WebhookSpec{},
+		RateLimit: &v1.RateLimitSpec{MaxPerHour: &channelCap, PerKey: []v1.RateLimitKeySpec{
+			{Key: "ticket:{{ payload.ticket_id }}", MaxPerHour: 3},
+			{Key: "sender:{{ payload.sender }}", MaxPerHour: 10},
+		}},
+	}
+	got, err := RenderChannelV1(&ch, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(got.RateLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"maxPerHour":100,"perKey":[{"key":"ticket:{{ payload.ticket_id }}","maxPerHour":3},{"key":"sender:{{ payload.sender }}","maxPerHour":10}]}`
+	if string(raw) != want {
+		t.Fatalf("got %s, want %s", raw, want)
+	}
+}

@@ -615,6 +615,33 @@ class RoutingBlock(BaseModel):
         return v
 
 
+class RateLimitKeyBlock(BaseModel):
+    """One `channels[].rateLimit.perKey` entry: at most `maxPerHour` invocations per rendered key."""
+
+    model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
+
+    key: str
+    max_per_hour: int = Field(gt=0, alias="maxPerHour")
+
+    @field_validator("key")
+    @classmethod
+    def _nonempty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("rateLimit.perKey[].key must be a non-empty template string")
+        return v
+
+
+class RateLimitBlock(BaseModel):
+    """`channels[].rateLimit`: invocations admitted per sliding hour. `maxPerHour` caps the
+    whole channel; each `perKey` entry caps one rendered key template (same {{ }} context as
+    routing). Every limit is optional and counted on its own."""
+
+    model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
+
+    max_per_hour: int | None = Field(default=None, gt=0, alias="maxPerHour")
+    per_key: list[RateLimitKeyBlock] = Field(default_factory=list, alias="perKey")
+
+
 class WebhookAuthBlock(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
 
@@ -792,6 +819,7 @@ class ChannelConfig(BaseModel):
     concurrency: int = Field(default=1, gt=0)
     source: Literal["gitlab", "github", "generic"] | None = None
     routing: RoutingBlock | None = None
+    rate_limit: RateLimitBlock | None = Field(default=None, alias="rateLimit")
     prompt: str | None = None
     webhook: WebhookBlock | None = None
     handoff: HandoffBlock | None = None
@@ -808,9 +836,9 @@ class ChannelConfig(BaseModel):
                 raise ValueError(f"channel '{self.name}': webhook-script requires a webhook block")
             if self.script is None:
                 raise ValueError(f"channel '{self.name}': webhook-script requires a script block")
-            for field in ("prompt", "handoff"):
+            for field, wire_name in (("prompt", "prompt"), ("handoff", "handoff"), ("rate_limit", "rateLimit")):
                 if getattr(self, field) is not None:
-                    raise ValueError(f"channel '{self.name}': webhook-script forbids '{field}'")
+                    raise ValueError(f"channel '{self.name}': webhook-script forbids '{wire_name}'")
             if self.source != "gitlab":
                 raise ValueError(f"channel '{self.name}': webhook-script requires source=gitlab")
             if self.webhook.gitlab_events is None:

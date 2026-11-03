@@ -25,6 +25,8 @@ from ach_runtime.harness.admission import (
     Admission,
     AdmissionClosedError,
     AdmissionQueueFullError,
+    AdmissionRateLimitedError,
+    ChannelRateLimit,
     AdmissionTicket,
     _Lane,
 )
@@ -103,6 +105,7 @@ def _admission(
     workspace_max_concurrent_sessions: int = 10,
     channel_concurrency: dict[str, int] | None = None,
     max_concurrent_scripts: int | None = None,
+    rate_limits: dict[str, ChannelRateLimit] | None = None,
     alarm=None,
 ) -> Admission:
     options = {}
@@ -117,6 +120,7 @@ def _admission(
         max_invocation_seconds=max_invocation_seconds,
         workspace_max_concurrent_sessions=workspace_max_concurrent_sessions,
         channel_concurrency=channel_concurrency,
+        rate_limits=rate_limits,
         clock=clock,
         runner=runner,
         alarm=alarm,
@@ -1889,4 +1893,90 @@ def test_has_work_uses_owned_unreleased_tickets() -> None:
         await ticket.completed
         assert not admission.has_work(ticket.workspace_ref)
         await admission.close()
+    asyncio.run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# channels[].rateLimit
+# ---------------------------------------------------------------------------
+
+
+def _keyed(event_id: str, *keys: str, channel: str = "ch", session_key: str = "s1") -> RoutedEvent:
+    return dataclasses.replace(_routed(event_id, channel=channel, session_key=session_key), rate_keys=keys)
+
+
+def test_per_key_limit_rejects_after_cap_and_reopens_after_an_hour() -> None:
+    async def scenario() -> None:
+        runner = GatedRunner()
+        clock = FakeClock(datetime(2026, 11, 3, tzinfo=UTC))
+        alarms: list[str] = []
+        admission = _admission(runner, clock=clock,
+                               rate_limits={"ch": ChannelRateLimit(max_per_hour=None, per_key=(2,))},
+                               alarm=lambda reason, _t: alarms.append(reason))
+        tickets = [admission.admit(_keyed("e1", "t1")), admission.admit(_keyed("e2", "t1"))]
+        with pytest.raises(AdmissionRateLimitedError, match=r"rateLimit\.perKey\[0\] \(2/h\)"):
+            admission.admit(_keyed("e3", "t1"))
+        assert alarms == ["rate limit rejected"]
+        # a duplicate delivery of an admitted event is deduplicated, not rejected
+        assert admission.admit(_keyed("e1", "t1")) is tickets[0]
+        # another key value and a channel without limits are unaffected
+        tickets.append(admission.admit(_keyed("e4", "t2", session_key="s2")))
+        tickets.extend(admission.admit(_routed(f"o{i}", channel="other")) for i in range(3))
+        # finish everything before moving the clock, or the invocation deadline fails them
+        for event_id in ("e1", "e2", "e4", "o0", "o1", "o2"):
+            runner.release(event_id)
+        for ticket in tickets:
+            await ticket.completed
+        clock.advance(3600)
+        runner.release("e5")
+        await admission.admit(_keyed("e5", "t1")).completed
+        await admission.close()
+
+    asyncio.run(scenario())
+
+
+def test_channel_cap_and_each_key_are_counted_separately() -> None:
+    async def scenario() -> None:
+        runner = GatedRunner()
+        clock = FakeClock(datetime(2026, 11, 3, tzinfo=UTC))
+        admission = _admission(runner, clock=clock, rate_limits={
+            "ch": ChannelRateLimit(max_per_hour=3, per_key=(1, 1)),
+            "b": ChannelRateLimit(max_per_hour=None, per_key=(1,)),
+        })
+        tickets = [
+            admission.admit(_keyed("e1", "ticket:1", "same", session_key="s1")),
+            # perKey[1] renders "same" again: rejected by perKey[1], not perKey[0]
+        ]
+        with pytest.raises(AdmissionRateLimitedError, match=r"perKey\[1\]"):
+            admission.admit(_keyed("e2", "ticket:2", "same", session_key="s2"))
+        tickets.append(admission.admit(_keyed("e3", "ticket:3", "other", session_key="s3")))
+        # the same rendered key on another channel has its own count
+        tickets.append(admission.admit(_keyed("b1", "ticket:1", channel="b")))
+        tickets.append(admission.admit(_keyed("e4", "ticket:4", "third", session_key="s4")))
+        with pytest.raises(AdmissionRateLimitedError, match=r"rateLimit\.maxPerHour \(3/h\)"):
+            admission.admit(_keyed("e5", "ticket:5", "fourth", session_key="s5"))
+        for event_id in ("e1", "e3", "b1", "e4"):
+            runner.release(event_id)
+        for ticket in tickets:
+            await ticket.completed
+        await admission.close()
+
+    asyncio.run(scenario())
+
+
+def test_rate_sweep_forgets_idle_keys() -> None:
+    async def scenario() -> None:
+        runner = GatedRunner()
+        clock = FakeClock(datetime(2026, 11, 3, tzinfo=UTC))
+        admission = _admission(runner, clock=clock,
+                               rate_limits={"ch": ChannelRateLimit(max_per_hour=5, per_key=(5,))})
+        ticket = admission.admit(_keyed("e1", "t1"))
+        runner.release("e1")
+        await ticket.completed
+        assert len(admission._rate_admits) == 2
+        clock.advance(3600)
+        admission._sweep_expired()
+        assert admission._rate_admits == {}
+        await admission.close()
+
     asyncio.run(scenario())

@@ -93,9 +93,9 @@ def _render_override(template: str, context: dict[str, Any], field: str) -> str:
     try:
         rendered = render_routing_template(template, context)
     except UnresolvedTemplateError as exc:
-        raise RoutingError(f"routing.{field}: {exc}") from exc
+        raise RoutingError(f"{field}: {exc}") from exc
     if not rendered:
-        raise RoutingError(f"routing.{field} rendered to an empty string")
+        raise RoutingError(f"{field} rendered to an empty string")
     return rendered
 
 
@@ -105,7 +105,7 @@ def route(event: Event, channel: ChannelConfig) -> RoutedEvent:
     override_session = routing.session_key if routing is not None else None
 
     session_key = (
-        _render_override(override_session, _routing_context(event), "sessionKey")
+        _render_override(override_session, _routing_context(event), "routing.sessionKey")
         if override_session is not None
         else _default_session_key(event, channel)
     )
@@ -114,8 +114,14 @@ def route(event: Event, channel: ChannelConfig) -> RoutedEvent:
             [_default_workspace_key(event, channel), session_key], separators=(",", ":")
         )
     elif override_workspace is not None:
-        workspace_key = _render_override(override_workspace, _routing_context(event), "workspaceKey")
+        workspace_key = _render_override(override_workspace, _routing_context(event), "routing.workspaceKey")
     else:
         workspace_key = _default_workspace_key(event, channel)
 
-    return RoutedEvent(event=event, workspace_key=workspace_key, session_key=session_key)
+    per_key = channel.rate_limit.per_key if channel.rate_limit is not None else []
+    rate_keys = tuple(
+        _render_override(limit.key, _routing_context(event), f"rateLimit.perKey[{index}].key")
+        for index, limit in enumerate(per_key)
+    )
+    return RoutedEvent(event=event, workspace_key=workspace_key, session_key=session_key,
+                       rate_keys=rate_keys)

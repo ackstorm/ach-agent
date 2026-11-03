@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `channels[].rateLimit` caps the invocations a channel admits per sliding hour: `maxPerHour` for the whole
+  channel and `perKey` entries for a rendered key template (e.g. per ticket or per sender). Webhooks over a
+  limit get HTTP 429 naming it, before any model call; the rejection is an `ACH operational anomaly` of kind
+  `limit_reached`. Protects agents from loops such as an e-mail auto-responder replying to itself.
+
 ### Changed
 
 - Dashboards. Cost panels read the billed spend from LiteLLM (`litellm_spend_metric_total`) by the agent's

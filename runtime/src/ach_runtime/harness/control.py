@@ -43,6 +43,7 @@ from ach_runtime.facades.model import ModelFacade, public_catalog
 from ach_runtime.harness.admission import (
     Admission,
     AdmissionTicket,
+    ChannelRateLimit,
     RecoveredRun,
     ScriptAdmissionTicket,
     WorkspaceOwnerLost,
@@ -118,6 +119,7 @@ def _alarm(
 
     known_reasons = {
         "admission queue capacity rejected": "limit_reached",
+        "rate limit rejected": "limit_reached",
         "deadline exceeded while queued": "limit_reached",
         "deadline exceeded before permit wait": "limit_reached",
         "deadline exceeded while waiting for script permits": "limit_reached",
@@ -1034,6 +1036,14 @@ async def assemble(
         workspace_max_concurrent_sessions=config.workspace.max_concurrent_sessions,
         channel_concurrency={channel.name: channel.concurrency for channel in config.channels},
         max_concurrent_scripts=config.limits.max_concurrent_scripts,
+        rate_limits={
+            channel.name: ChannelRateLimit(
+                max_per_hour=channel.rate_limit.max_per_hour,
+                per_key=tuple(limit.max_per_hour for limit in channel.rate_limit.per_key),
+            )
+            for channel in config.channels
+            if channel.rate_limit is not None
+        },
         clock=_clock, runner=control.run, alarm=_alarm,
     )
     facade_timeout = httpx.Timeout(None, connect=30.0)

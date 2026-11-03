@@ -22,6 +22,7 @@ from ach_runtime.execution.wire import RunStatus
 from ach_runtime.harness.admission import (
     AdmissionClosedError,
     AdmissionQueueFullError,
+    AdmissionRateLimitedError,
     AdmissionTicket,
 )
 from ach_runtime.harness.workspaces import WorkspaceAssemblyUnavailable
@@ -309,8 +310,13 @@ class A2AAgentExecutorBridge:
             await event_queue.enqueue_event(
                 _status_event("completed", reply["text"], task_id, context_id)
             )
-        except (AdmissionClosedError, AdmissionQueueFullError, WorkspaceAssemblyUnavailable, TimeoutError) as exc:
-            failure = "Queue full" if isinstance(exc, AdmissionQueueFullError) else str(exc)
+        except (AdmissionClosedError, AdmissionQueueFullError, AdmissionRateLimitedError,
+                WorkspaceAssemblyUnavailable, TimeoutError) as exc:
+            failure = (
+                "Queue full" if isinstance(exc, AdmissionQueueFullError)
+                else "Rate limited" if isinstance(exc, AdmissionRateLimitedError)
+                else str(exc)
+            )
             await event_queue.enqueue_event(
                 _status_event("failed", failure or "Invocation failed", task_id, context_id)
             )

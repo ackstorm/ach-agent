@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -25,6 +26,13 @@ def _parser() -> argparse.ArgumentParser:
     agent.add_argument("--host", default="0.0.0.0")
     agent.add_argument("--port", type=int, default=8080)
     agent.add_argument("--data-dir", type=Path, default=Path("/var/lib/ach-runtime"))
+    run = commands.add_parser("run", help="run a manifest-defined agent locally with the TUI attached")
+    run.add_argument("--config", type=Path, required=True, help="the agent.yaml manifest")
+    run.add_argument("--workspace", type=Path, default=Path.cwd(), help="the agent's working directory (default: cwd)")
+    run.add_argument("--name", default=None, help="agent name (default: the manifest's directory name)")
+    run.add_argument("--data-dir", type=Path, default=Path("/tmp/ach-run"))
+    profile = commands.add_parser("profile", help="print the manifest's ach.profile (empty line if unset)")
+    profile.add_argument("--config", type=Path, required=True, help="the agent.yaml manifest")
     return parser
 
 
@@ -44,6 +52,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         from ach_runtime.harness.agent import run_agent
 
         asyncio.run(run_agent(args.config, data_dir=args.data_dir, host=args.host, port=args.port))
+    elif args.command == "run":
+        # Lazy: the execution image imports this module and has no PyYAML.
+        from ach_runtime.config.schema import ConfigError
+        from ach_runtime.harness.hydrate import HydrationError
+        from ach_runtime.harness.run import RunError, run_local
+        from ach_runtime.manifest import ManifestError
+
+        log_path = args.data_dir / "run.log"
+        try:
+            return asyncio.run(run_local(
+                args.config, workspace=args.workspace, name=args.name, data_dir=args.data_dir, log_path=log_path,
+            ))
+        except (ConfigError, HydrationError, ManifestError, RunError) as exc:
+            # run_local has restored the terminal's stderr by now (its finally block). The log
+            # lives in the container's /tmp and goes with it, so its tail is shown here.
+            print(f"ach-agent: {exc}", file=sys.stderr)
+            if log_path.is_file():
+                print("ach-agent: last log lines:", file=sys.stderr)
+                print(*log_path.read_text(errors="replace").splitlines()[-20:], sep="\n", file=sys.stderr)
+            return 1
+    elif args.command == "profile":
+        from ach_runtime.manifest import ManifestError, load_manifest
+
+        try:
+            print(load_manifest(args.config).ach.profile or "")
+        except ManifestError as exc:
+            print(f"ach-agent: {exc}", file=sys.stderr)
+            return 2
     return 0
 
 

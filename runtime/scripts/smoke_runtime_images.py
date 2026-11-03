@@ -47,7 +47,7 @@ def check() -> list[str]:
     for value in (
         "python:3.13.15-alpine3.24",
         "node:22.23.3-alpine3.24",
-        "@opencode/cli@2.0.20",
+        "@opencode/cli@2.2.5",
         "COPY pyproject.toml",
         "COPY src/",
         "COPY plugins/",
@@ -203,7 +203,7 @@ def image_checks() -> None:
         "&& test \"$OPENCODE_BIN\" = /opt/opencode/node_modules/.bin/opencode2 "
         "&& test ! -e /usr/bin/npm && test ! -e /usr/local/bin/npm "
         "&& test -d /opt/opencode/node_modules/@opencode/cli "
-        "&& python -c 'import json; assert json.load(open(\"/opt/opencode/node_modules/@opencode/cli/package.json\"))[\"version\"] == \"2.0.20\"'"
+        "&& python -c 'import json; assert json.load(open(\"/opt/opencode/node_modules/@opencode/cli/package.json\"))[\"version\"] == \"2.2.5\"'"
     )
     binary_output = image_command(
         EXECUTION_IMAGE, "-c", f"import subprocess; subprocess.run(['sh','-ec',{execution_binary_probe!r}],check=True)",
@@ -211,8 +211,8 @@ def image_checks() -> None:
     ).splitlines()
     require(any(line.strip() == "v22.23.3" for line in binary_output),
             f"unexpected Node runtime version: {binary_output!r}")
-    require(any("2.0.20" in line for line in binary_output),
-            f"OpenCode 2.0.20 did not execute: {binary_output!r}")
+    require(any("2.2.5" in line for line in binary_output),
+            f"OpenCode 2.2.5 did not execute: {binary_output!r}")
     print(f"PASS: control id={image_ids[CONTROL_IMAGE]} dependencies={versions[CONTROL_IMAGE]}")
     print(f"PASS: execution id={image_ids[EXECUTION_IMAGE]} dependencies={versions[EXECUTION_IMAGE]}")
     print(f"PASS: Node/OpenCode runtime={binary_output!r}; code/plugins and final filesystem checks")

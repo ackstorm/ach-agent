@@ -41,6 +41,8 @@ control = [
     "redis>=5,<9",
     "structlog==26.1.0",
     "a2a-sdk>=1.1.0,<2",
+    # `run` manifests are YAML (ach_runtime.manifest).
+    "pyyaml>=6,<7",
 ]
 dev = [
     "ach-agent-runtime[control]",

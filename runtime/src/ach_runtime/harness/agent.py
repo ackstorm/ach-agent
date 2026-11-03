@@ -26,13 +26,16 @@ SINGLE_UNIT_WARNING = (
 
 
 def make_agent_assembly(
-    data_dir: Path, transport: LocalRoutingTransport, created: list[LocalSource], **assemble_kwargs: Any
+    data_dir: Path, transport: LocalRoutingTransport, created: list[LocalSource], *,
+    workspace_dir: Path | None = None, **assemble_kwargs: Any,
 ):
     """`run_control`'s `assembly` hook: inject the loopback facade default, then assemble
     with a LocalSource that is also appended to `created` so the runner can stop its units."""
 
     def source_factory(bootstrap: ExecutionBootstrap, verify_key: str) -> LocalSource:
-        source = LocalSource(bootstrap, verify_key=verify_key, data_dir=data_dir, transport=transport)
+        source = LocalSource(
+            bootstrap, verify_key=verify_key, data_dir=data_dir, transport=transport, workspace_dir=workspace_dir,
+        )
         created.append(source)
         return source
 

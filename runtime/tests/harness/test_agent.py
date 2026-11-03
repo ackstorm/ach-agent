@@ -110,3 +110,25 @@ def test_cli_agent_subcommand(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("ach_runtime.harness.agent.run_agent", fake_run_agent)
     assert main(["agent", "--config", str(tmp_path / "c.json"), "--data-dir", str(tmp_path), "--port", "9090"]) == 0
     assert calls == {"config_path": tmp_path / "c.json", "data_dir": tmp_path, "host": "0.0.0.0", "port": 9090}
+
+
+async def test_a_given_workspace_directory_is_used_and_kept(tmp_path) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / "notes.md").write_text("keep me")
+    transport, created = LocalRoutingTransport(), []
+    assembly = make_agent_assembly(
+        tmp_path / "data", transport, created, workspace_dir=workspace,
+        environ=ENV, ach_transport=httpx.MockTransport(_catalog),
+    )
+    config = _config()
+    control = await assembly(config)
+    try:
+        ref = WorkspaceRef(config.agent.namespace, config.agent.uid, "b" * 64)
+        endpoint = await control.manager.ensure(ref)
+        assert created[0].engine(endpoint.name) is not None
+    finally:
+        await control.close()
+        await created[0].aclose()
+    assert (workspace / "notes.md").read_text() == "keep me"
+    assert created[0].engine(endpoint.name) is None

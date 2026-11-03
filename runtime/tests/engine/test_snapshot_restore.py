@@ -64,11 +64,14 @@ async def test_restore_rejects_unsupported_snapshot_version(public) -> None:
         )
 
 
-async def test_restore_rejects_engine_version_mismatch(public) -> None:
+async def test_restore_accepts_a_snapshot_from_another_engine_version(public) -> None:
     engine = OpenCodeEngine()
-    with pytest.raises(RestoreMismatch):
+    expected = {"engine_package": ENGINE_PACKAGE, "workspace_ref": "ws", "session_ref": "se",
+                "workspace_path": "/workspace"}
+    # The identity checks pass; the restore then stops for lack of session state, not the version.
+    with pytest.raises(RestoreMismatch, match="no reserved session state"):
         await engine.restore(
-            "se", _manifest(engine_version="2.0.19"), expected={}, **_restore_kwargs(public)
+            "se", _manifest(engine_version="2.0.20"), expected=expected, **_restore_kwargs(public)
         )
 
 

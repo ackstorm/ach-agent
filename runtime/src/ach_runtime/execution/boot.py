@@ -79,6 +79,7 @@ def build_execution_app(
     )
     app.state.bootstrap = bootstrap
     app.state.instance_id = instance_id
+    app.state.engine = engine
     return app
 
 

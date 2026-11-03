@@ -326,3 +326,22 @@ def test_header_template_routes_and_missing_header_rejects() -> None:
                  context={"a2a": {"taskId": "t", "contextId": "c"}, "headers": {}})
     with pytest.raises(RoutingError):
         route(bare, channel)
+
+
+def test_rate_limit_keys_rendered_in_config_order() -> None:
+    channel = ChannelConfig.model_validate({
+        "name": "generic-hook", "type": "webhook", "source": "generic",
+        "webhook": {"auth": {"type": "none"}},
+        "routing": {"sessionKey": "ticket:{{ payload.ticket }}"},
+        "rateLimit": {"perKey": [
+            {"key": "ticket:{{ payload.ticket }}", "maxPerHour": 3},
+            {"key": "sender:{{ payload.sender }}", "maxPerHour": 10},
+        ]},
+    })
+    event = Event(event_id="d1", channel="generic-hook", type="webhook", source="generic",
+                  payload={"ticket": 9, "sender": "a@b.c"})
+    assert route(event, channel).rate_keys == ("ticket:9", "sender:a@b.c")
+    missing = Event(event_id="d2", channel="generic-hook", type="webhook", source="generic",
+                    payload={"ticket": 9})
+    with pytest.raises(RoutingError, match=r"rateLimit\.perKey\[1\]\.key"):
+        route(missing, channel)

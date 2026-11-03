@@ -18,7 +18,7 @@ from ach_runtime.channels.routing import RoutingError, route
 from ach_runtime.channels.webhook import normalize_webhook
 from ach_runtime.channels.metrics import CHANNEL_INBOUND
 from ach_runtime.config.schema import ChannelConfig
-from ach_runtime.harness.admission import AdmissionClosedError, AdmissionQueueFullError
+from ach_runtime.harness.admission import AdmissionClosedError, AdmissionQueueFullError, AdmissionRateLimitedError
 from ach_runtime.harness.control import Control, create_facade_app
 from ach_runtime.facades._proxy import ProcessIdentity
 from ach_runtime.observability import IdentityRegistry
@@ -108,6 +108,8 @@ def create_app(control: Control) -> FastAPI:
             else:
                 assert routed is not None
                 ticket = control.admission.admit(routed)
+        except AdmissionRateLimitedError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=429)
         except (AdmissionQueueFullError, AdmissionClosedError):
             return JSONResponse({"detail": "invocation could not be admitted"}, status_code=503)
         except Exception:

@@ -81,6 +81,7 @@ from __future__ import annotations
 import asyncio
 import time
 import weakref
+from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -153,9 +154,24 @@ class RecoveredRun:
 
 Alarm = Callable[[str, AdmissionTicket | ScriptAdmissionTicket | RecoveredRun | None], None]
 
+_RATE_WINDOW = timedelta(hours=1)
+
 
 class AdmissionQueueFullError(RuntimeError):
     """`limits.maxQueuedTotal` reached for a genuinely new event — explicit, never silent."""
+
+
+class AdmissionRateLimitedError(RuntimeError):
+    """A `channels[].rateLimit` limit is reached — explicit, never silent."""
+
+
+@dataclass(frozen=True, slots=True)
+class ChannelRateLimit:
+    """One channel's `rateLimit`: the whole-channel cap and the `perKey` caps, in config order
+    (aligned with `RoutedEvent.rate_keys`)."""
+
+    max_per_hour: int | None
+    per_key: tuple[int, ...] = ()
 
 
 class AdmissionClosedError(RuntimeError):
@@ -179,6 +195,7 @@ class Admission:
         workspace_max_concurrent_sessions: int,
         channel_concurrency: dict[str, int] | None,
         max_concurrent_scripts: int | None = None,
+        rate_limits: dict[str, ChannelRateLimit] | None = None,
         clock: Clock,
         runner: Runner,
         alarm: Alarm | None = None,
@@ -192,6 +209,11 @@ class Admission:
         self._max_invocation_seconds = max_invocation_seconds
         self._workspace_max_concurrent_sessions = workspace_max_concurrent_sessions
         self._channel_concurrency = dict(channel_concurrency or {})
+        self._rate_limits = dict(rate_limits or {})
+        # Admit times per limit: (channel,) for the channel cap, (channel, index, key) per key.
+        # ponytail: in-memory per control pod, resets on restart; a shared store if the
+        # control role ever runs more than one replica.
+        self._rate_admits: dict[tuple[str, ...], deque[datetime]] = {}
         self._clock = clock
         self._runner = runner
         self._alarm = alarm
@@ -398,6 +420,10 @@ class Admission:
             if key not in active_channels and sem._value == cap:
                 del self._channel_sems[key]
 
+        for key, admits in list(self._rate_admits.items()):
+            if not admits or now - admits[-1] >= _RATE_WINDOW:
+                del self._rate_admits[key]
+
     # -- admission --------------------------------------------------------
 
     def admit(self, routed_event: RoutedEvent) -> AdmissionTicket | RecoveredRun:
@@ -414,6 +440,8 @@ class Admission:
             if isinstance(existing, RecoveredRun):
                 self._alarm_recovered("recovered Started outcome is unknown", existing)
             return existing
+
+        rate_windows = self._check_rate(routed_event)
 
         if self._queued_total >= self._max_queued_total:
             if self._alarm is not None:
@@ -440,6 +468,8 @@ class Admission:
         # even dequeues this ticket must still find it here.
         self._tickets[dedup_key] = ticket
         self._queued_total += 1
+        for admits in rate_windows:
+            admits.append(self._clock())
         self._monitors[dedup_key] = loop.create_task(self._monitor_deadline(dedup_key, ticket))
 
         lane = self._lanes.get(session_ref)
@@ -449,6 +479,30 @@ class Admission:
         lane.put(dedup_key, ticket)
 
         return ticket
+
+    def _check_rate(self, routed_event: RoutedEvent) -> list[deque[datetime]]:
+        """Raise if any of the channel's rate limits is reached; else return their windows."""
+        limits = self._rate_limits.get(routed_event.channel)
+        if limits is None:
+            return []
+        channel = routed_event.channel
+        checks: list[tuple[tuple[str, ...], int, str]] = []
+        if limits.max_per_hour is not None:
+            checks.append(((channel,), limits.max_per_hour, "maxPerHour"))
+        for index, (cap, key) in enumerate(zip(limits.per_key, routed_event.rate_keys, strict=True)):
+            checks.append(((channel, str(index), key), cap, f"perKey[{index}]"))
+        now = self._clock()
+        windows = []
+        for rate_key, cap, name in checks:
+            admits = self._rate_admits.setdefault(rate_key, deque())
+            while admits and now - admits[0] >= _RATE_WINDOW:
+                admits.popleft()
+            if len(admits) >= cap:
+                if self._alarm is not None:
+                    self._alarm("rate limit rejected", None)
+                raise AdmissionRateLimitedError(f"rateLimit.{name} ({cap}/h) reached")
+            windows.append(admits)
+        return windows
 
     def admit_script(self, event: Event) -> ScriptAdmissionTicket:
         """Deduplicate and enqueue a deterministic script without deriving Workspace identity."""

@@ -353,6 +353,39 @@ def test_routing_whitespace_only_override_rejected(pr_review_wire: dict[str, Any
         parse_config(pr_review_wire)
 
 
+def test_rate_limit_parsed(pr_review_wire: dict[str, Any]) -> None:
+    pr_review_wire["channels"][0]["rateLimit"] = {
+        "maxPerHour": 100,
+        "perKey": [{"key": "{{ payload.ticket_id }}", "maxPerHour": 3}],
+    }
+    _resign(pr_review_wire)
+    limit = parse_config(pr_review_wire).channels[0].rate_limit
+    assert limit is not None and limit.max_per_hour == 100
+    assert [(k.key, k.max_per_hour) for k in limit.per_key] == [("{{ payload.ticket_id }}", 3)]
+
+
+def test_rate_limit_forbidden_on_webhook_script(pr_review_wire: dict[str, Any]) -> None:
+    channel = pr_review_wire["channels"][0]
+    channel.update(type="webhook-script", prompt=None, handoff=None, rateLimit={"maxPerHour": 5},
+                   script={"script": "x", "env": {}, "secretEnv": {}, "timeoutSeconds": 10})
+    _resign(pr_review_wire)
+    with pytest.raises(ConfigError, match="webhook-script forbids 'rateLimit'"):
+        parse_config(pr_review_wire)
+
+
+@pytest.mark.parametrize("rate_limit", [
+    {"maxPerHour": 0},
+    {"perKey": [{"key": "{{ payload.x }}", "maxPerHour": 0}]},
+    {"perKey": [{"key": "  ", "maxPerHour": 1}]},
+    {"perKey": [{"maxPerHour": 1}]},
+])
+def test_rate_limit_invalid_rejected(pr_review_wire: dict[str, Any], rate_limit: dict[str, Any]) -> None:
+    pr_review_wire["channels"][0]["rateLimit"] = rate_limit
+    _resign(pr_review_wire)
+    with pytest.raises(ConfigError):
+        parse_config(pr_review_wire)
+
+
 def test_routing_empty_object_is_accepted(pr_review_wire: dict[str, Any]) -> None:
     pr_review_wire["channels"][0]["routing"] = {}
     _resign(pr_review_wire)

@@ -56,6 +56,8 @@ La identidad de Workspace es `(namespace, ACHAgent UID, workspace_key)`. Usar el
 
 `channels[].routing` es opcional. El channel entrega ambas claves ya resueltas al Harness; este no interpreta el payload para deducir conversaciones. Cada override, `workspaceKey` o `sessionKey`, es opcional e independiente: el campo omitido conserva el default del adapter. Un override presente debe ser una plantilla string no vacía y un render inválido falla sin fallback. `workspaceKey: session` es una palabra reservada: un Workspace por sesión, con clave JSON `[<workspace por defecto>, <session key>]` (una `session_key` solo es única dentro de su Workspace: `mr:7` existe en cada proyecto). `null` no es utilizable: el campo del CRD de ACH es un string opcional no nulo y Kubernetes lo poda. Los orígenes sin identidad de conversación estándar (webhook genérico, Redis queue) deben declarar `routing.sessionKey`; sin él la configuración no carga.
 
+`channels[].rateLimit` caps the invocations a channel admits per sliding hour. `maxPerHour` caps the whole channel; each `perKey` entry `{key, maxPerHour}` caps one key, a `{{ }}` template rendered with the same context as `routing` (e.g. `ticket:{{ payload.ticket_id }}`, `sender:{{ payload.sender }}`). Every limit is optional and counted on its own, per channel; a key that fails to render rejects the event like a routing override. Over any limit the event is rejected before admission: HTTP 429 on webhooks, `Rate limited` on A2A; a cron tick is dropped and a Redis queue entry stays pending and is retried later. A duplicate delivery is deduplicated first and does not count. The count lives in the control process and resets when it restarts.
+
 Defaults aprobados el 1 de octubre de 2026:
 
 | Origen | Workspace | Sesión |

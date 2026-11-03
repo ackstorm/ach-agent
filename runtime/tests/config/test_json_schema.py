@@ -196,6 +196,14 @@ def _mutation_webhook_script_keeps_forbidden_prompt(w: dict[str, Any]) -> None:
     w["channels"][0]["handoff"] = None
 
 
+def _mutation_webhook_script_with_rate_limit(w: dict[str, Any]) -> None:
+    w["channels"][0]["type"] = "webhook-script"
+    w["channels"][0]["script"] = {"script": "x", "env": {}, "secretEnv": {}, "timeoutSeconds": 10}
+    w["channels"][0]["prompt"] = None
+    w["channels"][0]["handoff"] = None
+    w["channels"][0]["rateLimit"] = {"maxPerHour": 5}
+
+
 # review I5 follow-up: endpoint/image/quantity leaves, exported alongside the same I2 patch.
 def _mutation_facade_endpoint_missing_scheme(w: dict[str, Any]) -> None:
     w["infrastructure"]["facadeEndpoint"] = "ach-control.ach.svc:8081"
@@ -239,6 +247,7 @@ NEGATIVE_MUTATIONS = {
     "webhook_routing_nonconversational_event": _mutation_webhook_routing_nonconversational_event,
     "webhook_with_foreign_cron_block": _mutation_webhook_with_foreign_cron_block,
     "webhook_script_keeps_forbidden_prompt": _mutation_webhook_script_keeps_forbidden_prompt,
+    "webhook_script_with_rate_limit": _mutation_webhook_script_with_rate_limit,
     "facade_endpoint_missing_scheme": _mutation_facade_endpoint_missing_scheme,
     "webhook_script_source_not_gitlab": _mutation_webhook_script_source_not_gitlab,
     "whitespace_only_handoff_destination": _mutation_whitespace_only_handoff_destination,

@@ -30,6 +30,7 @@ class RoutedEvent:
     event: Event
     workspace_key: str
     session_key: str
+    rate_keys: tuple[str, ...] = ()  # rendered rateLimit.perKey keys, in config order
 
     @property
     def event_id(self) -> str:

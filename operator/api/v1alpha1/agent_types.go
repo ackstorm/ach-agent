@@ -279,11 +279,35 @@ type HandoffSpec struct {
 	Destination string `json:"destination"`
 }
 
+// RateLimitSpec is channels[].rateLimit. Every limit is optional and counted on its own.
+type RateLimitSpec struct {
+	// MaxPerHour caps the invocations the whole channel admits per sliding hour.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxPerHour *int64 `json:"maxPerHour,omitempty"`
+	// PerKey caps the invocations per rendered key, e.g. per ticket or per sender.
+	// +optional
+	PerKey []RateLimitKeySpec `json:"perKey,omitempty"`
+}
+
+// RateLimitKeySpec is one channels[].rateLimit.perKey entry.
+type RateLimitKeySpec struct {
+	// Key is a {{ }} template with the routing context (event.*, payload.*), rendered by
+	// the Harness; an event whose key fails to render is rejected.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Key string `json:"key"`
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Minimum=1
+	MaxPerHour int64 `json:"maxPerHour"`
+}
+
 // ChannelSpec is one inbound channel (config: channels[]).
 // +kubebuilder:validation:XValidation:rule="((self.type=='webhook' || self.type=='webhook-script') && has(self.webhook)) || (self.type=='cron' && has(self.cron)) || (self.type=='queue' && has(self.queue)) || (self.type=='a2a' && has(self.a2a))",message="channels: the block matching type is required"
 // +kubebuilder:validation:XValidation:rule="self.type=='webhook' || self.type=='webhook-script' || !has(self.source)",message="channels.source is only valid for webhook channels"
 // +kubebuilder:validation:XValidation:rule="self.type=='webhook-script' ? has(self.script) : !has(self.script)",message="channels.script is required only for webhook-script"
 // +kubebuilder:validation:XValidation:rule="self.type!='webhook-script' || (!has(self.prompt) && !has(self.handoff))",message="webhook-script forbids prompt and handoff"
+// +kubebuilder:validation:XValidation:rule="self.type!='webhook-script' || !has(self.rateLimit)",message="webhook-script forbids rateLimit"
 // +kubebuilder:validation:XValidation:rule="!(self.type=='queue' || (self.type=='webhook' && has(self.source) && self.source=='generic')) || (has(self.routing) && has(self.routing.sessionKey))",message="generic webhook and queue channels require routing.sessionKey"
 type ChannelSpec struct {
 	// +kubebuilder:validation:Required
@@ -299,6 +323,10 @@ type ChannelSpec struct {
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=1
 	Concurrency *int64 `json:"concurrency,omitempty"`
+	// RateLimit caps the invocations this channel admits per sliding hour; events over a
+	// limit are rejected before any model call (webhook: HTTP 429). Omit for no limit.
+	// +optional
+	RateLimit *RateLimitSpec `json:"rateLimit,omitempty"`
 	// Routing overrides the Harness's default Workspace/Session identity for this
 	// channel (contract §2). Omit for the adapter's default.
 	// +optional

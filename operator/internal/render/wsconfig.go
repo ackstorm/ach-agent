@@ -69,18 +69,19 @@ func RenderScriptV1(ch *v1.ChannelSpec, resolvedEnv []corev1.EnvVar) (*PrepareBl
 // WSChannelBlock is one channels[] entry (schema ChannelConfig — name/type required;
 // routing is always present, explicit null when there is no override).
 type WSChannelBlock struct {
-	Name        string          `json:"name"`
-	Type        string          `json:"type"`
-	Concurrency *int64          `json:"concurrency,omitempty"`
-	Source      string          `json:"source,omitempty"`
-	Routing     *WSRoutingBlock `json:"routing"`
-	Prompt      string          `json:"prompt,omitempty"`
-	Webhook     *WSWebhookBlock `json:"webhook,omitempty"`
-	Handoff     *WSHandoffBlock `json:"handoff,omitempty"`
-	Script      *PrepareBlock   `json:"script,omitempty"`
-	Cron        *CronBlock      `json:"cron,omitempty"`
-	Queue       *WSQueueBlock   `json:"queue,omitempty"`
-	A2A         *WSA2ABlock     `json:"a2a,omitempty"`
+	Name        string            `json:"name"`
+	Type        string            `json:"type"`
+	Concurrency *int64            `json:"concurrency,omitempty"`
+	RateLimit   *v1.RateLimitSpec `json:"rateLimit,omitempty"`
+	Source      string            `json:"source,omitempty"`
+	Routing     *WSRoutingBlock   `json:"routing"`
+	Prompt      string            `json:"prompt,omitempty"`
+	Webhook     *WSWebhookBlock   `json:"webhook,omitempty"`
+	Handoff     *WSHandoffBlock   `json:"handoff,omitempty"`
+	Script      *PrepareBlock     `json:"script,omitempty"`
+	Cron        *CronBlock        `json:"cron,omitempty"`
+	Queue       *WSQueueBlock     `json:"queue,omitempty"`
+	A2A         *WSA2ABlock       `json:"a2a,omitempty"`
 }
 
 // RenderChannelV1 maps one ChannelSpec to the wire shape, reusing the legacy CronBlock
@@ -95,7 +96,7 @@ func RenderChannelV1(ch *v1.ChannelSpec, resolvedEnv []corev1.EnvVar) (WSChannel
 		return WSChannelBlock{}, err
 	}
 	cb := WSChannelBlock{
-		Name: ch.Name, Type: ch.Type, Concurrency: ch.Concurrency, Source: ch.Source,
+		Name: ch.Name, Type: ch.Type, Concurrency: ch.Concurrency, RateLimit: ch.RateLimit, Source: ch.Source,
 		Routing: RenderRoutingV1(ch.Routing), Prompt: ch.Prompt,
 		Webhook: RenderWebhookV1(ch), Handoff: handoff, Script: script,
 		Queue: RenderQueueV1(ch.Queue), A2A: RenderA2AV1(ch),

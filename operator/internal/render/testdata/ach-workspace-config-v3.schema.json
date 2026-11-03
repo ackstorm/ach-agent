@@ -369,6 +369,17 @@
           ],
           "default": null
         },
+        "rateLimit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RateLimitBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "prompt": {
           "anyOf": [
             {
@@ -574,6 +585,9 @@
                 "type": "null"
               },
               "handoff": {
+                "type": "null"
+              },
+              "rateLimit": {
                 "type": "null"
               }
             }
@@ -1240,6 +1254,55 @@
         "key"
       ],
       "title": "QueueBlock",
+      "type": "object"
+    },
+    "RateLimitBlock": {
+      "additionalProperties": false,
+      "description": "`channels[].rateLimit`: invocations admitted per sliding hour. `maxPerHour` caps the\nwhole channel; each `perKey` entry caps one rendered key template (same {{ }} context as\nrouting). Every limit is optional and counted on its own.",
+      "properties": {
+        "maxPerHour": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Maxperhour"
+        },
+        "perKey": {
+          "items": {
+            "$ref": "#/$defs/RateLimitKeyBlock"
+          },
+          "title": "Perkey",
+          "type": "array"
+        }
+      },
+      "title": "RateLimitBlock",
+      "type": "object"
+    },
+    "RateLimitKeyBlock": {
+      "additionalProperties": false,
+      "description": "One `channels[].rateLimit.perKey` entry: at most `maxPerHour` invocations per rendered key.",
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "maxPerHour": {
+          "exclusiveMinimum": 0,
+          "title": "Maxperhour",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "key",
+        "maxPerHour"
+      ],
+      "title": "RateLimitKeyBlock",
       "type": "object"
     },
     "RoutingBlock": {

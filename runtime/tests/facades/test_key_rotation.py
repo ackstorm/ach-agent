@@ -81,6 +81,29 @@ async def test_model_and_mcp_facades_send_the_generation_current_at_each_request
     await keys.close()
 
 
+async def test_an_mcp_server_with_its_own_headers_is_never_sent_the_ach_credential() -> None:
+    seen: dict[str, httpx.Headers] = {}
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        seen[request.url.host] = request.headers
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {}})
+
+    keys = KeySource("ek-static")
+    mcp = McpFacade(servers={"ach": "https://ach.example/mcp/s", "extra": "https://extra.example/mcp"},
+                    server_headers={"ach": {}, "extra": {"Authorization": "Bearer extra-token"}}, key=KEY,
+                    owned_workspace=_owned, exclude=frozenset(), exclude_tools=frozenset(), identity=IDENTITY,
+                    auth=keys.auth, own_servers=frozenset({"extra"}),
+                    client=httpx.AsyncClient(transport=httpx.MockTransport(upstream)))
+    ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=mcp.app()), base_url="http://f") as client:
+        for server in ("ach", "extra"):
+            assert (await client.post(f"/t/{TOKEN}/mcp/{server}", json=ping)).status_code == 200
+    assert seen["ach.example"]["x-ach-key"] == "ek-static"
+    assert "x-ach-key" not in seen["extra.example"]
+    assert seen["extra.example"]["authorization"] == "Bearer extra-token"
+    await keys.close()
+
+
 async def test_a_credential_ach_rejects_is_reexchanged_and_the_request_sent_once_more(tmp_path) -> None:
     exchanges, seen = [], []
     keys = await _keys(tmp_path, exchanges)

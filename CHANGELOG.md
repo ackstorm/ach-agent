@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `spec.ach.mcpServers` (wire `capability.ach.mcpServers`) adds MCP servers to the ones an ACH Environment
+  serves, with the same shape as `standalone.mcpServers`. They authenticate with their own headers and are
+  never sent the ACH credential; a name the Environment already serves fails the control pod's start.
+- `ach-agent run` runs standalone agents: a manifest without `ach:` names its model endpoint (`baseUrl`,
+  `headers`, `limits`) and its `mcpServers`, with no ACH or ach-cli. Header secrets are `{env: NAME}`,
+  passed into the container by name. With `ach:`, `model` also takes `params` and `thinking`, and
+  `mcpServers` adds servers to the environment's. A model on the host is reachable as
+  `host.docker.internal`.
+
 ## [0.3.3] - 2026-11-03
 
 ### Added

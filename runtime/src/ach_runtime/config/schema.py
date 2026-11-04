@@ -251,9 +251,14 @@ class AchServer(BaseModel):
     environment: str
     key: SecretAlias | ExchangeKey
     model: ModelBlock
+    # Added to the environment's MCP servers; never sent the ACH credential.
+    mcp_servers: list[StandaloneMcpServer] = Field(default_factory=list, alias="mcpServers")
 
     @model_validator(mode="after")
     def _exchange_rules(self) -> AchServer:
+        names = [server.name for server in self.mcp_servers]
+        if len(names) != len(set(names)):
+            raise ValueError("capability.ach.mcpServers: duplicate name")
         if isinstance(self.key, ExchangeKey):
             if not self.base_url.startswith("https://"):
                 raise ValueError("capability.ach.key.exchange needs an https:// baseUrl")
@@ -968,9 +973,17 @@ class RuntimeConfig(BaseModel):
 
     @model_validator(mode="after")
     def _memory_fits_the_capability_server(self) -> RuntimeConfig:
-        if self.memory is None or self.capability.standalone is None:
+        if self.memory is None:
             return self
         params = self.memory.ach_memory
+        if self.capability.ach is not None:
+            extra = {server.name for server in self.capability.ach.mcp_servers}
+            if params.mcp_server_id in extra and params.auth is not None and params.auth.type == "ach":
+                raise ValueError(
+                    f"memory.achMemory.auth.type 'ach' would send the ACH credential to "
+                    f"capability.ach.mcpServers {params.mcp_server_id!r}"
+                )
+            return self
         if params.auth is not None and params.auth.type == "ach":
             raise ValueError("memory.achMemory.auth.type 'ach' requires capability.server 'ach'")
         names = {server.name for server in self.capability.standalone.mcp_servers}

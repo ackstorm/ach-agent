@@ -117,6 +117,42 @@ func TestRender_AchModelApiDefaultsToOpenai(t *testing.T) {
 	}
 }
 
+func TestRender_AchExtraMcpServersRenderWithTheirHeaderBindings(t *testing.T) {
+	p, a := minimalFixture()
+	a.Spec.CapabilityServer, a.Spec.Standalone = "ach", nil
+	a.Spec.Ach = &v1.AchServerSpec{BaseURL: "https://api.example", Environment: "prod",
+		KeyFrom: v1.AchKeyFrom{SecretKeyRef: &v1.SecretKeyRef{Name: "ek", Key: "token"}}, Model: v1.AchModelSpec{Name: "m"}}
+	plain, _, err := Render(p, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := json.Marshal(plain.Capability.Ach); strings.Contains(string(raw), "mcpServers") {
+		t.Errorf("an Agent without extra MCP servers renders mcpServers (configVersion churn): %s", raw)
+	}
+	a.Spec.Ach.McpServers = []v1.StandaloneMcpServerSpec{{
+		Name: "serper", URL: "https://mcp.serper.dev/mcp",
+		Headers: map[string]v1.HeaderValue{"X-API-KEY": {SecretKeyRef: &v1.SecretKeyRef{Name: "serper", Key: "apiKey"}}},
+	}}
+	cfg, env, err := Render(p, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(cfg.Capability.Ach)
+	if want := `"mcpServers":[{"name":"serper","url":"https://mcp.serper.dev/mcp","headers":{"X-API-KEY":{"env":"ACH_AGENT_MCP_SERPER_H0"}}}]`; !strings.Contains(string(raw), want) {
+		t.Errorf("ach block lacks %s: %s", want, raw)
+	}
+	got := map[string]string{}
+	for _, b := range env {
+		got[b.Name] = b.SecretKeyRef.Name
+	}
+	if len(got) != 2 || got["ACH_AGENT_MCP_SERPER_H0"] != "serper" || got["ACH_SECRET_IDENTITY"] != "ek" {
+		t.Fatalf("env = %#v", env)
+	}
+	if refs := ReferencedSecrets(p, a); len(refs["serper"]) != 1 || refs["serper"][0] != "apiKey" {
+		t.Fatalf("referenced secrets = %#v", refs)
+	}
+}
+
 func TestRender_McpEnvPrefixCollisionFails(t *testing.T) {
 	p, a := standaloneFixture()
 	a.Spec.Standalone.McpServers = append(a.Spec.Standalone.McpServers,

@@ -22,18 +22,24 @@ def test_token_expiry_is_none_for_keys_and_garbage() -> None:
     assert token_expiry(_jwt({"sub": "no-exp"})) is None
 
 
-def test_profile_command_prints_the_manifest_profile(tmp_path, capsys) -> None:
+def test_inspect_prints_mode_profile_and_header_env_names(tmp_path, capsys) -> None:
     manifest = tmp_path / "agent.yaml"
-    manifest.write_text("ach: {profile: support, environment: e}\nmodel: {name: m, type: openai}\n")
-    assert main(["profile", "--config", str(manifest)]) == 0
-    assert capsys.readouterr().out == "support\n"
-    manifest.write_text("ach: {environment: e}\nmodel: {name: m, type: openai}\n")
-    assert main(["profile", "--config", str(manifest)]) == 0
-    assert capsys.readouterr().out == "\n"
+    manifest.write_text(
+        "ach: {profile: support, environment: e}\nmodel: {name: m, type: openai}\n"
+        "mcpServers: [{name: gh, url: 'https://gh.example/mcp', headers: {Authorization: {env: GH_AUTH}}}]\n"
+    )
+    assert main(["inspect", "--config", str(manifest)]) == 0
+    assert capsys.readouterr().out == "ach\nsupport\nGH_AUTH\n"
+    manifest.write_text(
+        "model: {name: m, type: anthropic, baseUrl: 'https://api.example/v1',"
+        " headers: {x-api-key: {env: API_KEY}, x-tag: {value: lit}}}\n"
+    )
+    assert main(["inspect", "--config", str(manifest)]) == 0
+    assert capsys.readouterr().out == "standalone\n\nAPI_KEY\n"
 
 
-def test_profile_command_rejects_an_invalid_manifest(tmp_path, capsys) -> None:
+def test_inspect_rejects_an_invalid_manifest(tmp_path, capsys) -> None:
     manifest = tmp_path / "agent.yaml"
     manifest.write_text("enviroment: typo\n")
-    assert main(["profile", "--config", str(manifest)]) == 2
+    assert main(["inspect", "--config", str(manifest)]) == 2
     assert "enviroment" in capsys.readouterr().err

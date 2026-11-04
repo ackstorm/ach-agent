@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: MIT
 """The `run` manifest: the few fields an author writes, expanded into a workspace-v3 wire config.
 
+With `ach:` the agent's capability is an ACH environment, plus any `mcpServers`; without it,
+the capability is standalone: `model` names its own endpoint and `mcpServers` lists the tools.
+
 Every local default lives in `_DEFAULTS`. Persistence and artifacts stay off, so the single-unit
 agent needs no S3 store (`storage.config.storage_from_env` returns None).
 """
@@ -8,9 +11,10 @@ agent needs no S3 store (`storage.config.storage_from_env` returns None).
 from __future__ import annotations
 
 import copy
+import re
 import uuid
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -64,15 +68,11 @@ _TUI_CHANNEL: dict[str, Any] = {
 }
 
 
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
 class ManifestError(ValueError):
     """The manifest cannot be read or does not describe a valid agent."""
-
-
-class ModelSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1)
-    type: Literal["openai", "gemini", "anthropic"]
 
 
 class AchSpec(BaseModel):
@@ -98,11 +98,31 @@ class PromptSpec(BaseModel):
 class Manifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    ach: AchSpec
-    model: ModelSpec
+    ach: AchSpec | None = None
+    # Passed through to capability.ach.model or capability.standalone.model; the RuntimeConfig
+    # schema validates it.
+    model: dict[str, Any]
+    # Passed through to capability.<server>.mcpServers; with `ach:`, added to the environment's.
+    mcp_servers: list[dict[str, Any]] = Field(default_factory=list, alias="mcpServers")
     prompt: PromptSpec | None = None
     # Passed through: the RuntimeConfig schema validates the names.
     exclude: dict[str, list[str]] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _checks(self) -> Manifest:
+        if self.ach is None and "baseUrl" not in self.model:
+            raise ValueError("model.baseUrl is required without 'ach'")
+        # The ach-agent script forwards each name as `docker run -e NAME`.
+        if bad := [name for name in secret_env_names(self) if not _ENV_NAME.fullmatch(name)]:
+            raise ValueError(f"headers: invalid env variable name {', '.join(map(repr, bad))}")
+        return self
+
+
+def secret_env_names(manifest: Manifest) -> list[str]:
+    """The environment variables the manifest's `{env: NAME}` headers read."""
+    groups = [manifest.model.get("headers") or {}, *(server.get("headers") or {} for server in manifest.mcp_servers)]
+    return sorted({value["env"] for group in groups for value in group.values()
+                   if isinstance(value, dict) and isinstance(value.get("env"), str)})
 
 
 def load_manifest(path: Path) -> Manifest:
@@ -126,8 +146,26 @@ def _system_prompt(prompt: PromptSpec, base_dir: Path) -> dict[str, Any]:
         raise ManifestError(f"prompt file not found: {path}") from exc
 
 
-def manifest_to_wire(manifest: Manifest, *, base_dir: Path, name: str, base_url: str) -> dict[str, Any]:
-    """The validated wire config for `manifest`; raises ManifestError or ConfigError."""
+def _capability(manifest: Manifest, base_url: str | None) -> dict[str, Any]:
+    if manifest.ach is None:
+        return {"server": "standalone", "standalone": {"model": manifest.model, "mcpServers": manifest.mcp_servers}}
+    return {
+        "server": "ach",
+        "ach": {
+            "baseUrl": base_url,
+            "environment": manifest.ach.environment,
+            "key": {"env": KEY_ENV},
+            "model": manifest.model,
+            "mcpServers": manifest.mcp_servers,
+        },
+    }
+
+
+def manifest_to_wire(
+    manifest: Manifest, *, base_dir: Path, name: str, base_url: str | None = None,
+) -> dict[str, Any]:
+    """The validated wire config for `manifest`; `base_url` is the Hub URL in `ach` mode.
+    Raises ManifestError or ConfigError."""
     wire: dict[str, Any] = {
         "schemaVersion": "workspace-v3",
         "agent": {
@@ -136,18 +174,7 @@ def manifest_to_wire(manifest: Manifest, *, base_dir: Path, name: str, base_url:
             "uid": str(uuid.uuid5(uuid.NAMESPACE_URL, f"ach-agent-run:{name}")),
         },
         "capability": {
-            "server": "ach",
-            "ach": {
-                "baseUrl": base_url,
-                "environment": manifest.ach.environment,
-                "key": {"env": KEY_ENV},
-                "model": {
-                    "name": manifest.model.name,
-                    "type": manifest.model.type,
-                    "params": {},
-                    "thinking": {"enabled": False, "effort": None},
-                },
-            },
+            **_capability(manifest, base_url),
             "filter": {"exclude": {"tools": [], "mcpServers": [], "skills": [], **manifest.exclude}},
         },
         **copy.deepcopy(_DEFAULTS),

@@ -211,6 +211,13 @@
         },
         "model": {
           "$ref": "#/$defs/ModelBlock"
+        },
+        "mcpServers": {
+          "items": {
+            "$ref": "#/$defs/StandaloneMcpServer"
+          },
+          "title": "Mcpservers",
+          "type": "array"
         }
       },
       "required": [

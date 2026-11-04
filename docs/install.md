@@ -223,6 +223,10 @@ spec:
       cron: {schedule: "*/15 * * * *"}
 ```
 
+`ach.mcpServers` (same shape as `standalone.mcpServers`) adds MCP servers the Environment does not have.
+They authenticate with their own headers and are never sent the ACH credential; a name the Environment
+already serves fails the control pod's start.
+
 ACH issues the credential only when a platform admin's `KeyGrant` names the identity, the Environment and
 the requester `<namespace>/<control ServiceAccount>`, for example `ach-agent/ach-agent-control` (see the ACH
 documentation). Without one the control pod fails to start and logs ACH's code, for example

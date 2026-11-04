@@ -33,7 +33,7 @@ from ach_runtime.harness.local import LocalRoutingTransport, LocalSource
 from ach_runtime.harness.refs import session_ref, workspace_name, workspace_ref
 from ach_runtime.manifest import (
     KEY_ENV, LOCAL_NAMESPACE, TUI_CHANNEL, TUI_SESSION, TUI_TOKEN_ENV, TUI_WORKSPACE, URL_ENV,
-    load_manifest, manifest_to_wire,
+    load_manifest, manifest_to_wire, secret_env_names,
 )
 
 log = logging.getLogger(__name__)
@@ -83,12 +83,15 @@ async def run_local(
     manifest_path: Path, *, workspace: Path, name: str | None = None, data_dir: Path,
     tui: Sequence[str] | None = None, log_path: Path | None = None, **assembly_kwargs: Any,
 ) -> int:
+    manifest = load_manifest(manifest_path)
     base_url = os.environ.get(URL_ENV)
-    if not os.environ.get(KEY_ENV) or not base_url:
+    if manifest.ach is not None and (not os.environ.get(KEY_ENV) or not base_url):
         raise RunError(f"no ACH credential: set {URL_ENV} and {KEY_ENV} or run `ach-cli login`")
+    if missing := [env for env in secret_env_names(manifest) if not os.environ.get(env)]:
+        raise RunError(f"the manifest's headers read unset variables: {', '.join(missing)}")
     base_dir = manifest_path.resolve().parent
     name = name or base_dir.name
-    wire = manifest_to_wire(load_manifest(manifest_path), base_dir=base_dir, name=name, base_url=base_url)
+    wire = manifest_to_wire(manifest, base_dir=base_dir, name=name, base_url=base_url)
     data_dir.mkdir(parents=True, exist_ok=True)
     config_path = data_dir / "config.json"
     config_path.write_text(json.dumps(wire), encoding="utf-8")
@@ -154,12 +157,13 @@ async def run_local(
             return None
 
         url, sid, password = await _wait(target, "the TUI session to start", task, deadline)
-        if (expires := token_expiry(os.environ[KEY_ENV])) is not None:
+        if (expires := token_expiry(os.environ.get(KEY_ENV, ""))) is not None:
             minutes = int((expires - datetime.now(UTC)).total_seconds() // 60)
             say(f"warning: the ACH session token expires at {expires:%H:%M} UTC (in {minutes} min); "
                 "restart ach-agent run after that")
         say(f"workspace {workspace}; quit the TUI to stop the agent")
-        env = {k: v for k, v in os.environ.items() if not k.startswith("ACH_")}
+        hidden = set(secret_env_names(manifest))  # the TUI talks only to the session's server
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ACH_") and k not in hidden}
         env["OPENCODE_SERVER_PASSWORD"] = password
         env["HOME"] = str(data_dir / "tui-home")
         Path(env["HOME"]).mkdir(exist_ok=True)

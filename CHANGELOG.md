@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mcpServers` adds servers to the environment's. A model on the host is reachable as
   `host.docker.internal`.
 
+### Changed
+
+- OpenShell 0.1.7: the e2e cluster, `docs/install.md` and the operator's Go SDK (`sdk/go/v0.1.7`). Since
+  OpenShell 0.1.6 a sandbox opens the control connection to its supervisor; under Istio ambient that
+  needs the new `allow-hbone-egress-to-supervisor` NetworkPolicy in `docs/mesh/openshell-mesh.yaml`
+  (egress TCP 15008 from sandbox workloads to supervisors). Apply it before upgrading the gateway, or no
+  supervisor becomes ready. OpenShell 0.1.6 also refuses to start without authentication unless
+  `server.auth.allowUnauthenticatedUsers` is set, as the reference values do.
+
 ## [0.3.3] - 2026-11-03
 
 ### Added

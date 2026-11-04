@@ -29,8 +29,8 @@ spec:
 ---
 # Every workload in the namespace (sandboxes included) accepts the gateway and the sandbox
 # ServiceAccount: the supervisor pod (os-supervisor-*, created by the gateway's driver) runs as
-# openshell-sandbox, like the workload pods, and reaches the workload's boundary port 5500 over
-# HBONE. Trade-off: sandbox-to-sandbox is therefore allowed at L4; OpenShell's in-sandbox egress
+# openshell-sandbox, like the workload pods, and the workload reaches its supervisor's boundary port
+# 5500 over HBONE. Trade-off: sandbox-to-sandbox is therefore allowed at L4; OpenShell's in-sandbox egress
 # policy lets the agent reach only the facade endpoints.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
@@ -56,3 +56,17 @@ spec:
   ingress:
     - ports:
         - {protocol: TCP, port: 15008}
+---
+# Since OpenShell 0.1.6 the sandbox workload opens the control connection to its supervisor. The
+# driver's policies allow that egress on 5500 only, but under ambient it leaves the workload as HBONE
+# to the supervisor's 15008; without this the supervisor never becomes ready ("Runtime-initiated
+# control cannot reach the supervisor").
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-hbone-egress-to-supervisor, namespace: openshell}
+spec:
+  podSelector: {matchLabels: {openshell.ai/boundary-role: workload}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {openshell.ai/boundary-role: supervisor}}}]
+      ports: [{protocol: TCP, port: 15008}]

@@ -5,7 +5,7 @@ go 1.26.0
 toolchain go1.26.10
 
 require (
-	github.com/NVIDIA/OpenShell/sdk/go v0.0.0-20261020123705-bdb956f2cd65
+	github.com/NVIDIA/OpenShell/sdk/go v0.1.7
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
 	github.com/go-logr/logr v1.4.4
 	github.com/prometheus/client_golang v1.23.2

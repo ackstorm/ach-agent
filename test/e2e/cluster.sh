@@ -7,7 +7,7 @@ set -euo pipefail
 CLUSTER=ach-agent-e2e
 CTX=kind-$CLUSTER
 ISTIO_VERSION=1.28.3
-OPENSHELL_VERSION=0.1.5
+OPENSHELL_VERSION=0.1.7
 SANDBOX_VERSION=v1.0.8
 AGENT_NS=ach-agent-e2e
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

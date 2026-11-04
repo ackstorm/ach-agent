@@ -26,7 +26,10 @@ const (
 	configMountDir     = "/etc/ach-runtime"
 	configFileName     = "config.json"
 	configFilePath     = configMountDir + "/" + configFileName
-	pvcVolumeName      = "ach-agent-state"
+	// executionCAFileName holds the OpenShell gateway CA in the config ConfigMap; the control
+	// pod's execution client trusts it for the sandbox service path (ACH_AGENT_EXECUTION_CA_FILE).
+	executionCAFileName = "openshell-ca.crt"
+	pvcVolumeName       = "ach-agent-state"
 	// tmpVolumeName/tmpMountDir: the control process's single writable path under a
 	// read-only root filesystem (ach-runtime: TMPDIR only; handoff/script children inherit it).
 	tmpVolumeName = "ach-tmp"
@@ -179,13 +182,25 @@ func buildAgentEnv(a *achv1alpha1.Agent, p *achv1alpha1.AgentProfile, bindings [
 	return env
 }
 
-// buildConfigMap carries config.json only (contract §11 scope reset — no broker/TLS
-// material rides alongside it any more).
+// buildConfigMap carries config.json; withExecutionCA adds the gateway CA when the gateway uses TLS.
 func buildConfigMap(a *achv1alpha1.Agent, configJSON []byte) *corev1.ConfigMap {
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: configMapName(a.Name), Namespace: a.Namespace, Labels: agentLabels(a)},
 		Data:       map[string]string{configFileName: string(configJSON)},
 	}
+}
+
+// withExecutionCA hands the control pod the OpenShell gateway CA: the PEM as a key of its config
+// ConfigMap (mounted at configMountDir) and ACH_AGENT_EXECUTION_CA_FILE naming that file. Without
+// a CA (plaintext gateway) both stay as they are.
+// ponytail: the CA bytes are not in the config hash; a changed CA reaches a running control pod on
+// its next restart. The CA lives 30 years and is not rotated.
+func withExecutionCA(cm *corev1.ConfigMap, env []corev1.EnvVar, ca []byte) []corev1.EnvVar {
+	if len(ca) == 0 {
+		return env
+	}
+	cm.Data[executionCAFileName] = string(ca)
+	return overrideEnv(env, []corev1.EnvVar{{Name: "ACH_AGENT_EXECUTION_CA_FILE", Value: configMountDir + "/" + executionCAFileName}})
 }
 
 // buildControlServiceAccount is the control pod's identity (ach-agent-control-<uid>). It has

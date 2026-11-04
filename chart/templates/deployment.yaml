@@ -6,6 +6,11 @@
 region only names the signing scope, which the storage server accepts for any region. */ -}}
 {{- $gcs := eq .Values.storage.remote.type "gcs" -}}
 {{- $gcsRemote := .Values.storage.remote.gcs -}}
+{{- $tls := .Values.openshell.tls.secret -}}
+{{- $serviceURL := .Values.openshell.serviceURL -}}
+{{- if and $tls (not $serviceURL) -}}
+{{- $serviceURL = "https://{workspace}--{sandbox}.{namespace}.svc.cluster.local:8080" -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -59,9 +64,13 @@ spec:
               value: {{ .Values.openshell.workspace | quote }}
             - name: ACH_AGENT_OPENSHELL_POD_NAMESPACE
               value: {{ .Values.openshell.podNamespace | quote }}
-            {{- with .Values.openshell.serviceURL }}
+            {{- with $serviceURL }}
             - name: ACH_AGENT_OPENSHELL_SERVICE_URL
               value: {{ . | quote }}
+            {{- end }}
+            {{- with $tls }}
+            - name: ACH_AGENT_OPENSHELL_TLS_SECRET
+              value: {{ printf "%s/%s" .namespace .name | quote }}
             {{- end }}
             - name: ACH_AGENT_NAMESPACE
               valueFrom:
@@ -97,3 +106,13 @@ spec:
               drop: ["ALL"]
           resources:
             {{- toYaml .Values.operator.resources | nindent 12 }}
+          {{- if $tls }}
+          # The operator writes its gateway TLS material here (read-only root filesystem).
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+          {{- end }}
+      {{- if $tls }}
+      volumes:
+        - name: tmp
+          emptyDir: {medium: Memory, sizeLimit: 1Mi}
+      {{- end }}

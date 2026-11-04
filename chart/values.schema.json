@@ -18,7 +18,20 @@
         "mesh": {"type": "string", "enum": ["istio-ambient"]},
         "workspace": {"type": "string"},
         "podNamespace": {"type": "string"},
-        "serviceURL": {"type": "string"}
+        "serviceURL": {"type": "string"},
+        "tls": {
+          "type": "object",
+          "properties": {
+            "secret": {
+              "type": "object",
+              "properties": {
+                "namespace": {"type": "string"},
+                "name": {"type": "string"}
+              },
+              "additionalProperties": false
+            }
+          }
+        }
       }
     },
     "runtime": {

@@ -23,6 +23,9 @@ c = pod["spec"]["containers"][0]
 env = {e["name"]: e for e in c.get("env", [])}
 assert env["ACH_AGENT_OPENSHELL_GATEWAY"]["value"] == "http://openshell.openshell.svc.cluster.local:8080"
 assert env["ACH_AGENT_NAMESPACE"]["valueFrom"]["fieldRef"]["fieldPath"] == "metadata.namespace"
+assert "ACH_AGENT_OPENSHELL_TLS_SECRET" not in env and "ACH_AGENT_OPENSHELL_SERVICE_URL" not in env, env
+assert "volumes" not in pod["spec"] and "volumeMounts" not in c, pod["spec"]
+assert not [d for d in docs if d["kind"] == "RoleBinding" and d["metadata"]["name"].endswith("-openshell-tls")]
 app_version = yaml.safe_load(open("Chart.yaml"))["appVersion"]
 assert c["image"].endswith(f":{app_version}"), c["image"]
 sc = c["securityContext"]
@@ -181,6 +184,44 @@ for x in pod["containers"]:
     assert e["GOOGLE_APPLICATION_CREDENTIALS"] == "/etc/gcs/credentials.json", e
     assert {"name": "gcs-credentials", "mountPath": "/etc/gcs", "readOnly": True} in x["volumeMounts"], x["volumeMounts"]
 print("storage gcs key ok")
+PY
+
+secret=(--set openshell.tls.secret.namespace=openshell --set openshell.tls.secret.name=ach-agent-operator-tls)
+tls=("${base[@]}" --set openshell.gateway=https://openshell.openshell.svc.cluster.local:8080 "${secret[@]}")
+helm template t . "${base[@]}" "${secret[@]}" >/dev/null 2>&1 && fail "renders openshell.tls.secret with an http:// gateway"
+helm template t . "${tls[@]}" --set openshell.tls.secret.name= >/dev/null 2>&1 && fail "renders openshell.tls.secret without a name"
+helm template t . "${tls[@]}" --set openshell.tls.secret.namespace= >/dev/null 2>&1 && fail "renders openshell.tls.secret without a namespace"
+out=$(helm template t . "${tls[@]}")
+python3 - "$out" <<'PY'
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(sys.argv[1]) if d]
+assert not [d for d in docs if d["apiVersion"].startswith("cert-manager.io/")], "the chart renders cert-manager objects"
+role, = [d for d in docs if d["kind"] == "Role" and d["metadata"]["name"] == "ach-agent-operator-openshell-tls"]
+assert role["metadata"]["namespace"] == "openshell", role["metadata"]
+assert role["rules"] == [{"apiGroups": [""], "resources": ["secrets"], "resourceNames": ["ach-agent-operator-tls"],
+                          "verbs": ["get"]}], role["rules"]
+rb, = [d for d in docs if d["kind"] == "RoleBinding" and d["metadata"]["name"] == "ach-agent-operator-openshell-tls"]
+assert rb["metadata"]["namespace"] == "openshell", rb["metadata"]
+assert rb["roleRef"] == {"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "ach-agent-operator-openshell-tls"}, rb
+assert rb["subjects"] == [{"kind": "ServiceAccount", "name": "ach-agent-operator", "namespace": "ach-agent-system"}], rb
+dep, = [d for d in docs if d["kind"] == "Deployment"]
+pod = dep["spec"]["template"]["spec"]
+c = pod["containers"][0]
+env = {e["name"]: e.get("value") for e in c["env"]}
+assert env["ACH_AGENT_OPENSHELL_GATEWAY"] == "https://openshell.openshell.svc.cluster.local:8080", env
+assert env["ACH_AGENT_OPENSHELL_TLS_SECRET"] == "openshell/ach-agent-operator-tls", env
+assert env["ACH_AGENT_OPENSHELL_SERVICE_URL"] == "https://{workspace}--{sandbox}.{namespace}.svc.cluster.local:8080", env
+assert c["volumeMounts"] == [{"name": "tmp", "mountPath": "/tmp"}], c["volumeMounts"]
+assert pod["volumes"] == [{"name": "tmp", "emptyDir": {"medium": "Memory", "sizeLimit": "1Mi"}}], pod["volumes"]
+print("openshell tls ok")
+PY
+out=$(helm template t . "${tls[@]}" --set openshell.serviceURL=https://custom.example:8443)
+python3 - "$out" <<'PY'
+import sys, yaml
+dep, = [d for d in yaml.safe_load_all(sys.argv[1]) if d and d["kind"] == "Deployment"]
+env = {e["name"]: e.get("value") for e in dep["spec"]["template"]["spec"]["containers"][0]["env"]}
+assert env["ACH_AGENT_OPENSHELL_SERVICE_URL"] == "https://custom.example:8443", env
+print("openshell tls service URL override ok")
 PY
 
 on=(--set metrics.podMonitor.enabled=true --set metrics.prometheusRule.enabled=true --set metrics.dashboards.enabled=true)

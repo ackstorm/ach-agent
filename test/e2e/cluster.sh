@@ -9,6 +9,7 @@ CTX=kind-$CLUSTER
 ISTIO_VERSION=1.28.3
 OPENSHELL_VERSION=0.1.7
 SANDBOX_VERSION=v1.0.8
+CERT_MANAGER_VERSION=v1.19.1
 AGENT_NS=ach-agent-e2e
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HERE="$ROOT/test/e2e"
@@ -39,6 +40,29 @@ create_cluster() {
   guard
 }
 
+# The gateway PKI (docs/mesh/openshell-pki.yaml, all in openshell). cert-manager's webhook refuses
+# requests until its serving certificate is injected, so the first applies may fail.
+install_pki() {
+  local applied="" s keys key
+  for _ in $(seq 1 30); do
+    if sed "s/<AGENT_NAMESPACE>/$AGENT_NS/" "$ROOT/docs/mesh/openshell-pki.yaml" | k apply -f - >/dev/null 2>&1; then
+      applied=1
+      break
+    fi
+    sleep 5
+  done
+  [ -n "$applied" ] || { echo "FAIL: cert-manager did not accept docs/mesh/openshell-pki.yaml within 150s" >&2; exit 1; }
+  k -n openshell wait --for=condition=Ready certificate/openshell-server certificate/openshell-client \
+    certificate/ach-agent-operator --timeout=180s
+  # The OpenShell chart and the operator read tls.crt, tls.key and ca.crt (key names only are listed).
+  for s in openshell-server-tls openshell-client-tls ach-agent-operator-tls; do
+    keys="$(k -n openshell get secret "$s" -o go-template='{{range $k, $v := .data}}{{$k}} {{end}}')"
+    for key in ca.crt tls.crt tls.key; do
+      case " $keys" in *" $key "*) ;; *) echo "FAIL: Secret $s has no $key" >&2; exit 1 ;; esac
+    done
+  done
+}
+
 install_prereqs() {
   log "agent-sandbox $SANDBOX_VERSION"
   k apply --server-side -f "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/$SANDBOX_VERSION/sandbox-with-extensions.yaml"
@@ -58,9 +82,19 @@ install_prereqs() {
   done
   k label namespace openshell "$AGENT_NS" istio.io/dataplane-mode=ambient --overwrite
 
+  log "cert-manager $CERT_MANAGER_VERSION"
+  helm repo add jetstack https://charts.jetstack.io --force-update >/dev/null
+  h upgrade --install cert-manager jetstack/cert-manager --version "$CERT_MANAGER_VERSION" -n cert-manager \
+    --create-namespace --set crds.enabled=true --wait --timeout 6m
+  install_pki
+
   log "openshell $OPENSHELL_VERSION"
+  local server_crt
+  server_crt="$(k -n openshell get secret openshell-server-tls -o jsonpath='{.data.tls\.crt}')"
   h upgrade --install openshell oci://ghcr.io/nvidia/openshell/helm-chart --version "$OPENSHELL_VERSION" \
-    -n openshell -f "$HERE/openshell-values.yaml" --wait --timeout 6m
+    -n openshell -f "$HERE/openshell-values.yaml" -f "$HERE/openshell-tls-values.yaml" --wait --timeout 6m
+  [ "$(k -n openshell get secret openshell-server-tls -o jsonpath='{.data.tls\.crt}')" = "$server_crt" ] ||
+    { echo "FAIL: the OpenShell certgen hook replaced the cert-manager certificate in openshell-server-tls" >&2; exit 1; }
   sed "s/<AGENT_NAMESPACE>/$AGENT_NS/" "$ROOT/docs/mesh/openshell-mesh.yaml" | k apply -f -
 }
 
@@ -109,7 +143,8 @@ deploy() {
   k apply --server-side --force-conflicts -f "$ROOT/chart/crds"
   h upgrade --install ach-agent "$ROOT/chart" -n ach-agent-system \
     --set image.operator=ach-agent-operator --set image.tag=e2e \
-    --set openshell.gateway=http://openshell.openshell.svc.cluster.local:8080 \
+    --set openshell.gateway=https://openshell.openshell.svc.cluster.local:8080 \
+    --set openshell.tls.secret.namespace=openshell --set openshell.tls.secret.name=ach-agent-operator-tls \
     --set openshell.workspace=ach-agent \
     --set runtime.storage.s3.bucket=ach-e2e --set runtime.storage.s3.region=us-east-1 \
     --set runtime.storage.s3.endpointUrl=http://s3-standin.ach-agent-e2e-s3.svc.cluster.local:8333 \

@@ -36,7 +36,8 @@ helm upgrade --install openshell oci://ghcr.io/nvidia/openshell/helm-chart --ver
 The values (`test/e2e/openshell-values.yaml`):
 
 - `server.disableTls` and `server.auth.allowUnauthenticatedUsers`: the gateway speaks plaintext and
-  trusts every caller. This is safe only because step 4 restricts who can reach it.
+  trusts every caller. This is safe only because step 4 restricts who can reach it. To have the
+  gateway itself refuse every caller but the operator, see [Gateway mTLS](#gateway-mtls-optional).
 - `server.sandboxUid` / `sandboxGid` `10001`: the execution image runs as 10001, and OpenShell needs
   the agent and the sandbox to share one UID.
 - `pkiInitJob.serverDnsNames`: a wildcard SAN `*.<agent namespace>.svc.cluster.local` per Agent
@@ -60,6 +61,84 @@ helm install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --version 0.2.1 \
 The chart refuses to render unless `openshell.gateway` is set and `openshell.mesh` is `istio-ambient`.
 It also installs a ValidatingAdmissionPolicy that limits the operator to Opaque Secrets named
 `ach-agent-key-*` (`admissionPolicy.enabled=false` disables it).
+
+### Gateway mTLS (optional)
+
+With mTLS the gateway refuses every caller of its API except the operator, which presents a client
+certificate with `OU=operator`. The mesh policy (step 4) stays: the sandbox service path on the same
+port has no gateway authentication. Every certificate comes from an OpenShell CA in cert-manager and
+is valid 30 years (`duration: 262800h`). The whole PKI, the operator's certificate included, lives in
+namespace `openshell` behind namespaced Issuers. Who can mint an `OU=operator` certificate:
+
+- anyone who can read Secrets in `openshell`: the CA key is in Secret `openshell-ca`. This includes
+  the ach-agent operator, whose ClusterRole reads Secrets in every namespace;
+- anyone who can create Pods, Certificates or CertificateRequests in `openshell` (a Pod can mount
+  `openshell-ca`; cert-manager approves every CertificateRequest unless approver-policy is installed).
+
+Keep those rights to the gateway's administrators. Nothing a sandbox runs as may hold them: the
+sandbox workloads run in `openshell` as ServiceAccount `openshell-sandbox`, next to the PKI Secrets,
+and must not read Secrets or create Pods, Certificates or CertificateRequests there. The same holds
+for any sandbox volume configuration: it must never be able to mount a Secret volume.
+
+1. cert-manager v1.19.1:
+
+   ```bash
+   helm repo add jetstack https://charts.jetstack.io --force-update
+   helm upgrade --install cert-manager jetstack/cert-manager --version v1.19.1 -n cert-manager \
+     --create-namespace --set crds.enabled=true --wait
+   ```
+
+2. The PKI, before the OpenShell chart. Replace `<AGENT_NAMESPACE>` in `docs/mesh/openshell-pki.yaml`
+   (one `dnsNames` entry per Agent namespace in `openshell-server`, the same names as
+   `pkiInitJob.serverDnsNames`):
+
+   ```bash
+   sed "s/<AGENT_NAMESPACE>/ach-agent/" docs/mesh/openshell-pki.yaml | kubectl apply -f -
+   kubectl -n openshell wait --for=condition=Ready certificate/openshell-server certificate/openshell-client \
+     certificate/ach-agent-operator --timeout=180s
+   ```
+
+3. OpenShell with `test/e2e/openshell-tls-values.yaml` layered after `test/e2e/openshell-values.yaml`
+   (the values of [OpenShell](#3-openshell-017)):
+
+   ```bash
+   helm upgrade --install openshell oci://ghcr.io/nvidia/openshell/helm-chart --version 0.1.7 \
+     -n openshell -f test/e2e/openshell-values.yaml -f test/e2e/openshell-tls-values.yaml --wait --timeout 6m
+   ```
+
+4. The operator with an `https://` gateway and its certificate Secret:
+
+   ```bash
+   helm upgrade --install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --version <version> \
+     -n ach-agent-system \
+     --set openshell.gateway=https://openshell.openshell.svc.cluster.local:8080 \
+     --set openshell.tls.secret.namespace=openshell --set openshell.tls.secret.name=ach-agent-operator-tls
+   ```
+
+   The chart lets the operator read that one Secret (a Role in `openshell`); the operator reads it at
+   start and fails to start without it. The sandbox URLs become `https://`. Control pods trust the
+   OpenShell CA for those URLs only (`ACH_AGENT_EXECUTION_CA_FILE`); every other connection keeps the
+   system trust store.
+
+Switching an existing install (cert-manager installed, as in item 1):
+
+1. Delete the Secrets the OpenShell chart's certgen hook created, then apply the PKI (item 2):
+
+   ```bash
+   kubectl -n openshell delete secret openshell-server-tls openshell-client-tls
+   ```
+
+   cert-manager keeps an existing Secret whose certificate matches its Certificate's spec, whichever
+   CA signed it. It re-issues the certgen `openshell-server-tls` (its names differ), but keeps the
+   certgen `openshell-client-tls`, signed by the certgen CA: sandbox supervisors then fail the TLS
+   handshake with the gateway (`UnknownCA`) and no sandbox becomes ready. Keep `openshell-jwt-keys`.
+2. Change the OpenShell values and the operator values (items 3 and 4) in the same rollout. The
+   gateway restarts with TLS and refuses the plaintext supervisors of the sandboxes running at the
+   time; it drops those sandboxes, as on any gateway restart, and control creates new ones on the
+   Agent's next event. A sandbox created before the switch that still runs answers 412 until control
+   recreates it; deleting its pods in `openshell` forces that.
+
+A new Agent namespace adds a `dnsNames` entry to `openshell-server` and to `pkiInitJob.serverDnsNames`.
 
 ### Storage server
 

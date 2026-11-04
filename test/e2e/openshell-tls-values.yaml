@@ -1,0 +1,13 @@
+# Layered after openshell-values.yaml: the gateway's own TLS with operator-only mTLS. The server and
+# client certificates come from docs/mesh/openshell-pki.yaml (cert-manager); with both Secrets present
+# the chart's certgen hook creates only the sandbox JWT keys.
+server:
+  disableTls: false
+  auth:
+    # Only a client certificate with OU=operator (the ach-agent operator) is accepted.
+    allowUnauthenticatedUsers: false
+gatewayConfig:
+  openshell.gateway.mtls_auth:
+    operator_enabled: true
+    # Explicit: with TLS, a client CA and no OIDC, user mTLS is on by default.
+    enabled: false

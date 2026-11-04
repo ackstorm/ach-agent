@@ -38,7 +38,7 @@ var runtimeBinaries = []string{
 
 var (
 	runtimeReadOnly  = []string{"/usr", "/lib", "/etc", "/bin", "/sbin", "/opt", "/work"}
-	runtimeReadWrite = []string{"/tmp", "/workspace", "/var/lib/ach-runtime", "/home/ach"}
+	runtimeReadWrite = []string{"/tmp", "/sandbox/ach", "/home/ach"}
 	// /work holds the runtime's code (PYTHONPATH), /usr/local/lib the Python stdlib and site-packages.
 	protectedDirs = []string{"/usr/local/bin", "/usr/local/lib", "/opt/opencode", "/work"}
 )

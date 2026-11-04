@@ -159,8 +159,8 @@ func TestBuildPolicy_RuntimeCodeIsReadOnly(t *testing.T) {
 	if !slices.Contains(p.Filesystem.ReadOnly, "/work") || slices.Contains(p.Filesystem.ReadWrite, "/work") {
 		t.Fatalf("filesystem = %#v", p.Filesystem)
 	}
-	if !slices.Contains(p.Filesystem.ReadWrite, "/workspace") {
-		t.Fatalf("/workspace must be listed explicitly: %#v", p.Filesystem)
+	if !slices.Contains(p.Filesystem.ReadWrite, "/sandbox/ach") {
+		t.Fatalf("/sandbox/ach must be listed explicitly: %#v", p.Filesystem)
 	}
 }
 

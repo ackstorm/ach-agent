@@ -33,7 +33,7 @@ DEFAULT_HOOK_TIMEOUT_SECONDS = 120.0
 MAX_HOOK_OUTPUT_BYTES = 64 * 1024
 HOOK_KILL_CONFIRM_SECONDS = 5.0
 # Root path ruling: a fixed image/CLI default, not a new CR field — Task 9 composes roots.
-DEFAULT_SESSIONS_ROOT = Path("/var/lib/ach-runtime/sessions")
+DEFAULT_SESSIONS_ROOT = Path("/sandbox/ach/sessions")
 
 
 _FACADE_TOKEN = re.compile(r"/t/[^/\s\"']+")

@@ -448,7 +448,7 @@ class Control:
             writer = await self.storage.current_writer(self.lifecycle.workspace_state_ref(endpoint))
             if writer is not None and writer != endpoint.instance_id:
                 # The pod was recreated outside the Harness (e.g. node loss while control was
-                # down): its /workspace is empty. Restore exactly as for a fresh activation.
+                # down): its Workspace directory is empty. Restore exactly as for a fresh activation.
                 await self.lifecycle.restore_workspace(endpoint)
         await self.configure_workspace(endpoint)
         try:

@@ -544,7 +544,7 @@ class HookBlock(BaseModel):
 class HooksBlock(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
 
-    # Workspace hooks run in /workspace: start after the workspace is restored on a fresh or
+    # Workspace hooks run in the Workspace directory: start after the workspace is restored on a fresh or
     # reactivated pod, stop on a clean idle close before the workspace snapshot.
     workspace_start: HookBlock | None = Field(default=None, alias="workspaceStart")
     # sessionStart is also the run gate: exit 78 skips the engine (outcome `skipped`) and its

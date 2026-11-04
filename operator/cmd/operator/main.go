@@ -4,10 +4,12 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"os"
 	"strings"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -102,12 +104,6 @@ func main() {
 		}
 	}
 
-	sandboxes, err := openshell.OpenShellFromEnv()
-	if err != nil {
-		setupLog.Error(err, "OpenShell gateway")
-		os.Exit(1)
-	}
-
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                  scheme,
 		Metrics:                 metricsserver.Options{BindAddress: metricsAddr},
@@ -118,6 +114,15 @@ func main() {
 	})
 	if err != nil {
 		setupLog.Error(err, "create manager")
+		os.Exit(1)
+	}
+
+	// The manager's API reader is uncached: the TLS Secret is read once, with no Secret informer.
+	startCtx, cancelStart := context.WithTimeout(context.Background(), 30*time.Second)
+	sandboxes, err := openshell.OpenShellFromEnv(startCtx, mgr.GetAPIReader())
+	cancelStart()
+	if err != nil {
+		setupLog.Error(err, "OpenShell gateway")
 		os.Exit(1)
 	}
 
@@ -140,8 +145,9 @@ func main() {
 	}
 	if err := (&controller.AgentReconciler{
 		Client: mgr.GetClient(), APIReader: mgr.GetAPIReader(), Scheme: mgr.GetScheme(),
-		Storage:   storage,
-		Sandboxes: sandboxes,
+		Storage:     storage,
+		OpenShellCA: sandboxes.Config.CA,
+		Sandboxes:   sandboxes,
 		RouteParent: achv1alpha1.ParentRef{
 			Name:        os.Getenv("ACH_AGENT_ROUTE_PARENT_NAME"),
 			Namespace:   os.Getenv("ACH_AGENT_ROUTE_PARENT_NAMESPACE"),

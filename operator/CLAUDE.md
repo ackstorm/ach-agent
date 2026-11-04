@@ -45,5 +45,6 @@ port of the ach `v0.14.2` agent operator (read it with `git -C <ach> archive v0.
   projected token (audience `baseUrl` without trailing slash, 3600 s) at `/var/run/secrets/ach/token`.
 - CEL cost: map keys cannot be bounded, so rules over header names live in `render`, not the CRD.
 - Operator env: `ACH_AGENT_OPENSHELL_GATEWAY` (required), `ACH_AGENT_OPENSHELL_WORKSPACE`,
-  `ACH_AGENT_OPENSHELL_SERVICE_URL`, `ACH_AGENT_OPENSHELL_POD_NAMESPACE`, `ACH_AGENT_NAMESPACE`,
+  `ACH_AGENT_OPENSHELL_SERVICE_URL`, `ACH_AGENT_OPENSHELL_POD_NAMESPACE`,
+  `ACH_AGENT_OPENSHELL_TLS_SECRET` (gateway mTLS: `<namespace>/<name>` of the operator's client certificate Secret, read once at start through the uncached API reader; its `ca.crt` reaches control pods as `openshell-ca.crt` in the config ConfigMap and `ACH_AGENT_EXECUTION_CA_FILE`), `ACH_AGENT_NAMESPACE`,
   `ACH_AGENT_STORAGE_S3_*`, `ACH_AGENT_ROUTE_PARENT_{NAME,NAMESPACE,SECTION}`.

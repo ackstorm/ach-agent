@@ -3,6 +3,8 @@
 package controller
 
 import (
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -615,5 +617,26 @@ func TestBuildStatefulSet_SecretKeyAgentMountsNoToken(t *testing.T) {
 	p.Spec.Control.ServiceAccountName = "shared-control"
 	if got := buildStatefulSet(a, p, "h", nil).Spec.Template.Spec.ServiceAccountName; got != "shared-control" {
 		t.Fatalf("profile ServiceAccount = %q, want shared-control", got)
+	}
+}
+
+func TestWithExecutionCA(t *testing.T) {
+	a := &achv1alpha1.Agent{}
+	a.Name, a.Namespace = "demo", "ns"
+	env := []corev1.EnvVar{{Name: "TMPDIR", Value: "/tmp"}}
+
+	cm := buildConfigMap(a, []byte(`{}`))
+	if got := withExecutionCA(cm, env, nil); !reflect.DeepEqual(got, env) || len(cm.Data) != 1 {
+		t.Fatalf("a plaintext gateway changed the control pod: env %v, ConfigMap data %v", got, cm.Data)
+	}
+
+	cm = buildConfigMap(a, []byte(`{}`))
+	got := withExecutionCA(cm, env, []byte("CA PEM"))
+	if cm.Data[executionCAFileName] != "CA PEM" || cm.Data[configFileName] != "{}" {
+		t.Errorf("ConfigMap data = %v, want config.json and %s", cm.Data, executionCAFileName)
+	}
+	want := append(slices.Clone(env), corev1.EnvVar{Name: "ACH_AGENT_EXECUTION_CA_FILE", Value: "/etc/ach-runtime/openshell-ca.crt"})
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("env = %v, want %v", got, want)
 	}
 }

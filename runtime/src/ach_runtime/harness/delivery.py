@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import ssl
 import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -63,6 +64,7 @@ class Delivery:
         clock: Clock,
         alarm: Alarm,
         transport: httpx.AsyncBaseTransport | None = None,
+        verify: ssl.SSLContext | bool = True,
     ) -> None:
         if not key:
             raise ValueError("Harness key must not be empty")
@@ -74,7 +76,7 @@ class Delivery:
         self.prepare = prepare
         self.clock = clock
         self.alarm = alarm
-        self.client = httpx.AsyncClient(transport=transport, timeout=None)
+        self.client = httpx.AsyncClient(transport=transport, timeout=None, verify=verify)
         self._closed = False
 
     async def _endpoint(self, ticket: AdmissionTicket) -> WorkspaceEndpoint:

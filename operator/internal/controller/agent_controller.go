@@ -88,6 +88,10 @@ type AgentReconciler struct {
 	// persistence/artifacts; an all-disabled agent is unaffected.
 	Storage render.RuntimeStorageOptions
 
+	// OpenShellCA is the OpenShell gateway CA (PEM) control pods trust for the sandbox service
+	// path; nil with a plaintext gateway.
+	OpenShellCA []byte
+
 	// RouteParent is the default parentRef of an Agent's HTTPRoute.
 	RouteParent achv1alpha1.ParentRef
 
@@ -320,6 +324,8 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if requiresStorage {
 		env = overrideEnv(env, render.RuntimeStorageEnv(r.Storage))
 	}
+	configMap := buildConfigMap(&agent, configJSON)
+	env = withExecutionCA(configMap, env, r.OpenShellCA)
 	envJSON, err := json.Marshal(env)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("marshal env: %w", err)
@@ -332,7 +338,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	sts := buildStatefulSet(&agent, &profile, configHash, env)
 	// 7. Apply children.
-	if err := r.apply(ctx, &agent, buildConfigMap(&agent, configJSON)); err != nil {
+	if err := r.apply(ctx, &agent, configMap); err != nil {
 		return r.applyFail(ctx, &agent, conds, "ConfigMap", err)
 	}
 	// A profile-named control SA is pre-existing and external: never created/owned here.

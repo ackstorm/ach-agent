@@ -11,6 +11,7 @@ import tempfile
 import time
 from pathlib import Path
 import re
+import ssl
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
@@ -907,6 +908,13 @@ async def _ach_key(ach: AchServer, env: Mapping[str, str],
     return key
 
 
+def execution_verify(env: Mapping[str, str]) -> ssl.SSLContext | bool:
+    """TLS trust of the sandbox service path: only the OpenShell gateway CA named by
+    ACH_AGENT_EXECUTION_CA_FILE when it is set, else httpx's default trust."""
+    cafile = env.get("ACH_AGENT_EXECUTION_CA_FILE")
+    return ssl.create_default_context(cafile=cafile) if cafile else True
+
+
 async def assemble(
     config: RuntimeConfig,
     *,
@@ -1001,7 +1009,8 @@ async def assemble(
                 exclude_tools=frozenset(config.capability.filter.exclude.tools), auth=memory_auth,
             )
     # Facades close over Control for the owned-live check, so construct the bundle first.
-    mini_client = httpx.AsyncClient(transport=mini_transport, timeout=10)
+    execution_tls = execution_verify(env)
+    mini_client = httpx.AsyncClient(transport=mini_transport, timeout=10, verify=execution_tls)
     bootstrap = ExecutionBootstrap(bootstrapVersion="workspace-v3", agent=config.agent, facadeEndpoint=facade_endpoint)
     source = source_factory(bootstrap, verify_key) if source_factory else HostedSource(bootstrap, verify_key=verify_key)
     manager = WorkspaceManager(
@@ -1035,7 +1044,7 @@ async def assemble(
     control.lifecycle = None
     manager.bind_callbacks(reconnect=control.reconnect_workspace, wait_mini_health=control.wait_mini_health)
     delivery = Delivery(manager, key=key, public=public, prepare=control.prepare,
-                        clock=_clock, alarm=_delivery_alarm, transport=mini_transport)
+                        clock=_clock, alarm=_delivery_alarm, transport=mini_transport, verify=execution_tls)
     control.delivery = delivery
     control.admission = Admission(
         namespace=config.agent.namespace, agent_uid=config.agent.uid,

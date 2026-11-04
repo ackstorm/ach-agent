@@ -12,6 +12,7 @@ import (
 	"maps"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -65,6 +66,7 @@ type OpenShellConfig struct {
 	ServiceURL   string // template with {workspace} {sandbox} {namespace} {port}
 	PodNamespace string // where the driver creates sandbox pods
 	GatewayHost  string // host of ACH_AGENT_OPENSHELL_GATEWAY: target of the per-sandbox ExternalName Service
+	CA           []byte // ca.crt of the ACH_AGENT_OPENSHELL_TLS_SECRET Secret; nil with a plaintext gateway
 }
 
 // OpenShell is the gateway connection shared by every agent's backend and by the finalizer.
@@ -96,10 +98,13 @@ func envOr(key, def string) string {
 	return def
 }
 
-// OpenShellFromEnv dials the gateway named by ACH_AGENT_OPENSHELL_GATEWAY once. The gateway is
-// reached over the mesh, without TLS of its own. An unset address is an error: the operator
-// has no other sandbox backend.
-func OpenShellFromEnv() (*OpenShell, error) {
+// OpenShellFromEnv dials the gateway named by ACH_AGENT_OPENSHELL_GATEWAY once. With
+// ACH_AGENT_OPENSHELL_TLS_SECRET (<namespace>/<name> of a Secret with ca.crt, tls.crt, tls.key)
+// the operator verifies the gateway with that CA and authenticates with that client certificate
+// (OU=operator); reader reads the Secret once, here. Without it the gateway is plaintext and the
+// mesh is its only protection. An unset address is an error: the operator has no other sandbox
+// backend.
+func OpenShellFromEnv(ctx context.Context, reader client.Reader) (*OpenShell, error) {
 	addr := envOr("ACH_AGENT_OPENSHELL_GATEWAY", "")
 	if addr == "" {
 		return nil, errors.New("ACH_AGENT_OPENSHELL_GATEWAY is required")
@@ -108,14 +113,21 @@ func OpenShellFromEnv() (*OpenShell, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg := osv1.Config{Address: addr}
+	var ca []byte
+	if ref := envOr("ACH_AGENT_OPENSHELL_TLS_SECRET", ""); ref != "" {
+		if cfg.TLS, ca, err = tlsFromSecret(ctx, reader, ref); err != nil {
+			return nil, err
+		}
+	}
 	factory := func() (sandboxes, error) {
-		c, err := osv1.NewClient(osv1.Config{Address: addr})
+		c, err := osv1.NewClient(cfg)
 		if err != nil {
 			return nil, fmt.Errorf("OpenShell gateway %s: %w", addr, err)
 		}
 		return clientBox{SandboxInterface: c.Sandboxes(), workspaces: c.Workspaces(), client: c}, nil
 	}
-	if _, err := factory(); err != nil { // fail the start on an address the SDK refuses
+	if _, err := factory(); err != nil { // fail the start on an address or TLS material the SDK refuses
 		return nil, err
 	}
 	return &OpenShell{Sandboxes: NewRebuilding(factory, rebuildEvery), Config: OpenShellConfig{
@@ -123,7 +135,38 @@ func OpenShellFromEnv() (*OpenShell, error) {
 		ServiceURL:   envOr("ACH_AGENT_OPENSHELL_SERVICE_URL", "http://{workspace}--{sandbox}.{namespace}.svc.cluster.local:8080"),
 		PodNamespace: envOr("ACH_AGENT_OPENSHELL_POD_NAMESPACE", "openshell"),
 		GatewayHost:  gw,
+		CA:           ca,
 	}}, nil
+}
+
+// tlsFromSecret reads the operator's client certificate Secret ref (<namespace>/<name>) and writes
+// its ca.crt, tls.crt and tls.key to a private directory under os.TempDir(): the SDK takes TLS
+// material as file paths only, and re-reads them on every client build. It returns the TLS config
+// and the CA.
+func tlsFromSecret(ctx context.Context, reader client.Reader, ref string) (*osv1.TLSConfig, []byte, error) {
+	ns, name, ok := strings.Cut(ref, "/")
+	if !ok || ns == "" || name == "" {
+		return nil, nil, fmt.Errorf("ACH_AGENT_OPENSHELL_TLS_SECRET %q is not <namespace>/<name>", ref)
+	}
+	var s corev1.Secret
+	if err := reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &s); err != nil {
+		return nil, nil, fmt.Errorf("ACH_AGENT_OPENSHELL_TLS_SECRET %s: %w", ref, err)
+	}
+	dir, err := os.MkdirTemp("", "openshell-tls-")
+	if err != nil {
+		return nil, nil, fmt.Errorf("ACH_AGENT_OPENSHELL_TLS_SECRET: %w", err)
+	}
+	path := map[string]string{}
+	for _, key := range []string{"ca.crt", "tls.crt", "tls.key"} {
+		if len(s.Data[key]) == 0 {
+			return nil, nil, fmt.Errorf("ACH_AGENT_OPENSHELL_TLS_SECRET %s has no %s", ref, key)
+		}
+		path[key] = filepath.Join(dir, key)
+		if err := os.WriteFile(path[key], s.Data[key], 0o600); err != nil {
+			return nil, nil, fmt.Errorf("ACH_AGENT_OPENSHELL_TLS_SECRET: write %s: %w", key, err)
+		}
+	}
+	return &osv1.TLSConfig{CAFile: path["ca.crt"], CertFile: path["tls.crt"], KeyFile: path["tls.key"]}, s.Data["ca.crt"], nil
 }
 
 // SandboxName is stable and at most 19 characters (the OpenShell limit): up to 10 characters

@@ -173,17 +173,16 @@ func RenderLimitsV1(l *v1.LimitsSpec) (WSLimitsBlock, error) {
 	}, nil
 }
 
-// WSPersistenceBlock is workspace.persistence / workspace.session.persistence (schema
-// PersistenceBlock — enabled/retentionDays both required).
+// WSPersistenceBlock is workspace.persistence (schema PersistenceBlock).
 type WSPersistenceBlock struct {
-	Enabled       bool  `json:"enabled"`
-	RetentionDays int64 `json:"retentionDays"`
+	Type          string `json:"type"`
+	RetentionDays *int64 `json:"retentionDays,omitempty"`
 }
 
 // WSSessionPolicyBlock is workspace.session (schema SessionPolicyBlock).
 type WSSessionPolicyBlock struct {
-	IdleTimeoutSeconds int64              `json:"idleTimeoutSeconds"`
-	Persistence        WSPersistenceBlock `json:"persistence"`
+	IdleTimeoutSeconds int64  `json:"idleTimeoutSeconds"`
+	RetentionDays      *int64 `json:"retentionDays,omitempty"`
 }
 
 // WSWorkspaceBlock is workspace{...} (schema WorkspaceBlock — fully required).
@@ -196,14 +195,16 @@ type WSWorkspaceBlock struct {
 	Session                WSSessionPolicyBlock `json:"session"`
 }
 
-func renderPersistenceV1(p *v1.WorkspacePersistenceSpec, field string) (WSPersistenceBlock, error) {
-	if p == nil || p.Enabled == nil {
-		return WSPersistenceBlock{}, fmt.Errorf("%s.enabled is required on the resolved wire value", field)
+// renderPersistenceV1 maps the resolved block; an absent block is type none. A stored object
+// written before the type field existed reads back without it and must not render.
+func renderPersistenceV1(p *v1.WorkspacePersistenceSpec) (WSPersistenceBlock, error) {
+	if p == nil {
+		return WSPersistenceBlock{Type: "none"}, nil
 	}
-	if p.RetentionDays == nil {
-		return WSPersistenceBlock{}, fmt.Errorf("%s.retentionDays is required on the resolved wire value", field)
+	if p.Type == "" {
+		return WSPersistenceBlock{}, fmt.Errorf("workspace.persistence.type is required on the resolved wire value")
 	}
-	return WSPersistenceBlock{Enabled: *p.Enabled, RetentionDays: *p.RetentionDays}, nil
+	return WSPersistenceBlock{Type: p.Type, RetentionDays: p.RetentionDays}, nil
 }
 
 // RenderWorkspaceV1 maps the resolved WorkspaceSpec to the wire workspace block. The CRD
@@ -216,21 +217,26 @@ func RenderWorkspaceV1(w *v1.WorkspaceSpec) (WSWorkspaceBlock, error) {
 	if w.IdleTimeoutSeconds == nil || w.ShutdownTimeoutSeconds == nil || w.MaxConcurrentSessions == nil {
 		return WSWorkspaceBlock{}, fmt.Errorf("workspace.{idleTimeoutSeconds,shutdownTimeoutSeconds,maxConcurrentSessions} are all required on the resolved wire value")
 	}
-	persist, err := renderPersistenceV1(w.Persistence, "workspace.persistence")
+	persist, err := renderPersistenceV1(w.Persistence)
 	if err != nil {
 		return WSWorkspaceBlock{}, err
 	}
 	if w.Session == nil || w.Session.IdleTimeoutSeconds == nil {
 		return WSWorkspaceBlock{}, fmt.Errorf("workspace.session.idleTimeoutSeconds is required on the resolved wire value")
 	}
-	sessPersist, err := renderPersistenceV1(w.Session.Persistence, "workspace.session.persistence")
-	if err != nil {
-		return WSWorkspaceBlock{}, err
+	session := WSSessionPolicyBlock{IdleTimeoutSeconds: *w.Session.IdleTimeoutSeconds}
+	// The two retentions may come from the profile and the Agent, so the CRD rule never sees
+	// the merged pair. With type none no session is saved and the value is dropped.
+	if persist.Type != "none" {
+		session.RetentionDays = w.Session.RetentionDays
+		if session.RetentionDays != nil && persist.RetentionDays != nil && *session.RetentionDays > *persist.RetentionDays {
+			return WSWorkspaceBlock{}, fmt.Errorf("workspace.session.retentionDays (%d) exceeds workspace.persistence.retentionDays (%d)",
+				*session.RetentionDays, *persist.RetentionDays)
+		}
 	}
 	return WSWorkspaceBlock{
 		IdleTimeoutSeconds: *w.IdleTimeoutSeconds, ShutdownTimeoutSeconds: *w.ShutdownTimeoutSeconds,
-		MaxConcurrentSessions: *w.MaxConcurrentSessions, Persistence: persist,
-		Session: WSSessionPolicyBlock{IdleTimeoutSeconds: *w.Session.IdleTimeoutSeconds, Persistence: sessPersist},
+		MaxConcurrentSessions: *w.MaxConcurrentSessions, Persistence: persist, Session: session,
 	}, nil
 }
 

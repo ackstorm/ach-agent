@@ -59,7 +59,7 @@ MAX_RETAINED_RUNS = 1024
 # sessionStart exit code meaning "decided not to run": the invocation ends `skipped`.
 SKIP_EXIT_CODE = 78
 _HOOK_ERROR_TAIL = 500
-DEFAULT_WORKSPACE_DIR = Path("/workspace")  # root path ruling: fixed image/CLI default
+DEFAULT_WORKSPACE_DIR = Path("/sandbox/ach/workspace")  # root path ruling: fixed image/CLI default
 # OpenCode lists a remote MCP server's tools once, when it connects, and never re-lists unless
 # the server pushes `tools/list_changed`: a server still starting (0 tools) leaves the whole
 # run without its tools. Probe each configured server before the send; sleep between tries.

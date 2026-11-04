@@ -1178,23 +1178,54 @@
     },
     "PersistenceBlock": {
       "additionalProperties": false,
+      "description": "Where the Workspace files and its session HOMEs survive the sandbox (one type for both).",
       "properties": {
-        "enabled": {
-          "title": "Enabled",
-          "type": "boolean"
+        "type": {
+          "enum": [
+            "none",
+            "s3"
+          ],
+          "title": "Type",
+          "type": "string"
         },
         "retentionDays": {
-          "minimum": 0,
-          "title": "Retentiondays",
-          "type": "integer"
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retentiondays"
         }
       },
       "required": [
-        "enabled",
-        "retentionDays"
+        "type"
       ],
       "title": "PersistenceBlock",
-      "type": "object"
+      "type": "object",
+      "if": {
+        "properties": {
+          "type": {
+            "const": "none"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "retentionDays"
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "retentionDays"
+        ]
+      }
     },
     "PromptBlock": {
       "additionalProperties": false,
@@ -1391,13 +1422,22 @@
           "title": "Idletimeoutseconds",
           "type": "integer"
         },
-        "persistence": {
-          "$ref": "#/$defs/PersistenceBlock"
+        "retentionDays": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retentiondays"
         }
       },
       "required": [
-        "idleTimeoutSeconds",
-        "persistence"
+        "idleTimeoutSeconds"
       ],
       "title": "SessionPolicyBlock",
       "type": "object"

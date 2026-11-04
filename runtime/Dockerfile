@@ -58,14 +58,14 @@ RUN "$OPENCODE_BIN" --version | grep -Fx "opencode v2.2.5" \
     && python -m compileall -q -j0 --invalidation-mode unchecked-hash /work/deps \
     && addgroup -S -g 10001 ach \
     && adduser -S -D -u 10001 -G ach -h /home/ach -s /sbin/nologin ach \
-    && mkdir -p /workspace /var/lib/ach-runtime/sessions \
-    && chown 10001:10001 /workspace /var/lib/ach-runtime/sessions \
+    && mkdir -p /sandbox/ach/workspace /sandbox/ach/sessions \
+    && chown -R 10001:10001 /sandbox/ach \
     && printf '#!/bin/sh\nexec python -m ach_runtime.mcpcall "$@"\n' > /usr/local/bin/ach-mcp \
     && chmod 0755 /usr/local/bin/ach-mcp
 ENV HOME=/home/ach
 USER 10001:10001
 EXPOSE 8080
-VOLUME ["/workspace", "/var/lib/ach-runtime/sessions"]
+VOLUME ["/sandbox/ach/workspace", "/sandbox/ach/sessions"]
 ENTRYPOINT ["python", "-m", "ach_runtime"]
 CMD ["execution"]
 

@@ -34,11 +34,8 @@ func minimalFixture() (v1.AgentProfile, v1.Agent) {
 				},
 				Workspace: &v1.WorkspaceSpec{
 					IdleTimeoutSeconds: ptr(int64(600)), ShutdownTimeoutSeconds: ptr(int64(300)), MaxConcurrentSessions: ptr(int64(1)),
-					Persistence: &v1.WorkspacePersistenceSpec{Enabled: ptr(false), RetentionDays: ptr(int64(90))},
-					Session: &v1.WorkspaceSessionSpec{
-						IdleTimeoutSeconds: ptr(int64(300)),
-						Persistence:        &v1.WorkspacePersistenceSpec{Enabled: ptr(false), RetentionDays: ptr(int64(90))},
-					},
+					Persistence: &v1.WorkspacePersistenceSpec{Type: "none"},
+					Session:     &v1.WorkspaceSessionSpec{IdleTimeoutSeconds: ptr(int64(300))},
 				},
 				Artifacts: &v1.ArtifactsSpec{Enabled: ptr(false), MaxArtifactBytes: ptr(int64(1000)), RetentionDays: ptr(int64(90))},
 			},

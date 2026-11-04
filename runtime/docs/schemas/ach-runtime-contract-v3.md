@@ -82,7 +82,7 @@ The host sets these environment variables. Values are single-line strings.
 | The variable named by `capability.ach.key.env` | `agent`, `control` | when `capability.ach.key` is `{"env": …}` | The agent's static ACH `ek_` credential. With `{"exchange": {identity, environment, tokenPath}}` there is no variable: the control role reads the projected ServiceAccount token at `tokenPath` and exchanges it at `POST {baseUrl}/platform/keys/exchange` for a short-lived credential it renews at 80% of `expires_in`. |
 | Variables named by config aliases | `agent`, `control` | when configured | Channel auth (`channels[].auth.env`, A2A `auth.env`), handoff and script `secretEnv.*.env`, memory `auth.env`. Each name the config references must exist. |
 | Literal `engine.env` values | — | — | These are in the configuration document, not in the environment (v1 §5). |
-| `ACH_STORAGE_S3_BUCKET`, `ACH_STORAGE_S3_REGION`, `ACH_STORAGE_S3_ENDPOINT_URL`, `ACH_STORAGE_S3_PREFIX` | `agent`, `control` | bucket required when Workspace persistence, session persistence or artifacts is enabled | S3-compatible storage. Credentials come from the standard AWS SDK chain (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`, or ambient). A missing bucket when storage is required is a configuration error; there is no volatile fallback. |
+| `ACH_STORAGE_S3_BUCKET`, `ACH_STORAGE_S3_REGION`, `ACH_STORAGE_S3_ENDPOINT_URL`, `ACH_STORAGE_S3_PREFIX` | `agent`, `control` | bucket required when `workspace.persistence.type` is `s3` or artifacts is enabled | S3-compatible storage. Credentials come from the standard AWS SDK chain (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`, or ambient). A missing bucket when storage is required is a configuration error; there is no volatile fallback. |
 | `REDIS_URL` | `agent`, `control` | when a `queue` channel is configured | Redis for queue channels. |
 | Launch environment (5.5) | `execution` | yes | Copied verbatim from the runtime's launch spec. |
 
@@ -97,7 +97,7 @@ Rules:
 |---|---|---|
 | An ACH-compatible platform API at `capability.ach.baseUrl` (3.3.1) | `agent`, `control` | `capability.server` is `ach` |
 | The model endpoint and MCP servers in `capability.standalone` | `agent`, `control` | `capability.server` is `standalone` |
-| S3-compatible storage | `agent`, `control` | persistence or artifacts enabled |
+| S3-compatible storage | `agent`, `control` | persistence type s3 or artifacts enabled |
 | Redis | `agent`, `control` | queue channels |
 | MCP servers listed in the hydrated catalog | `agent`, `control` | when the catalog lists any |
 | The control unit's facade endpoint (`infrastructure.facadeEndpoint`) | `execution` | split topology |
@@ -134,7 +134,7 @@ Rules:
 |---|---|---|
 | `agent` | Workspace root, sessions root, temp dir (flags, with defaults) | Ephemeral. Durable state goes to storage (v1 §7). |
 | `control` | temp dir | No durable local state. |
-| `execution` | `--workspace-dir` (default `/workspace`), `--sessions-root` (default `/var/lib/ach-runtime/sessions`), temp dir | Ephemeral, and owned by one instance. A new instance must start with empty directories or directories the runtime may overwrite (see 5.6). |
+| `execution` | `--workspace-dir` (default `/sandbox/ach/workspace`), `--sessions-root` (default `/sandbox/ach/sessions`), temp dir | Ephemeral, and owned by one instance. A new instance must start with empty directories or directories the runtime may overwrite (see 5.6). |
 
 The runtime runs as an unprivileged user and needs no root, extra capabilities or privileged mounts.
 

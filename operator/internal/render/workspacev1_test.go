@@ -83,11 +83,8 @@ func gitlabPRReviewerAgent() (filter *v1.FilterSpec, engine *v1.EngineSpec, limi
 	}
 	workspace = &v1.WorkspaceSpec{
 		IdleTimeoutSeconds: ptr(int64(600)), ShutdownTimeoutSeconds: ptr(int64(300)), MaxConcurrentSessions: ptr(int64(1)),
-		Persistence: &v1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))},
-		Session: &v1.WorkspaceSessionSpec{
-			IdleTimeoutSeconds: ptr(int64(300)),
-			Persistence:        &v1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))},
-		},
+		Persistence: &v1.WorkspacePersistenceSpec{Type: "s3", RetentionDays: ptr(int64(90))},
+		Session:     &v1.WorkspaceSessionSpec{IdleTimeoutSeconds: ptr(int64(300))},
 	}
 	artifacts = &v1.ArtifactsSpec{Enabled: ptr(true), MaxArtifactBytes: ptr(int64(104857600)), RetentionDays: ptr(int64(90))}
 	bot := "ai.run"
@@ -318,7 +315,7 @@ func TestWorkspaceV1_HooksBlock_AllThreeKeysAlwaysPresent(t *testing.T) {
 // pinned by Task 3's brief (step 1).
 func TestWorkspaceV1_PartialOverrides(t *testing.T) {
 	t.Run("maxSteps override inherits the other finite limits", testPartialLimits)
-	t.Run("enabled false inherits retentionDays (workspace persistence)", testPartialPersistence)
+	t.Run("persistence block replaces the profile's whole", testPartialPersistence)
 	t.Run("enabled false inherits retentionDays (artifacts)", testPartialArtifacts)
 	t.Run("empty forwardEnv selection clears inherited exposure", testPartialForwardEnv)
 	t.Run("session override preserves workspace and session siblings", testPartialSession)
@@ -343,14 +340,11 @@ func testPartialLimits(t *testing.T) {
 }
 
 func testPartialPersistence(t *testing.T) {
-	profile := &v1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))}
-	agent := &v1.WorkspacePersistenceSpec{Enabled: ptr(false)}
-	got := ResolvePersistence(agent, profile)
-	if got.Enabled == nil || *got.Enabled {
-		t.Fatalf("Enabled = %v, want false", got.Enabled)
-	}
-	if got.RetentionDays == nil || *got.RetentionDays != 90 {
-		t.Fatalf("RetentionDays = %v, want inherited 90", got.RetentionDays)
+	profile := &v1.WorkspaceSpec{Persistence: &v1.WorkspacePersistenceSpec{Type: "s3", RetentionDays: ptr(int64(90))}}
+	agent := &v1.WorkspaceSpec{Persistence: &v1.WorkspacePersistenceSpec{Type: "none"}}
+	got := ResolveWorkspace(agent, profile)
+	if got.Persistence.Type != "none" || got.Persistence.RetentionDays != nil {
+		t.Fatalf("persistence = %+v, want the agent's block whole", got.Persistence)
 	}
 }
 
@@ -412,25 +406,26 @@ func TestWorkspaceV1_EngineBlock_DenyTools(t *testing.T) {
 func testPartialSession(t *testing.T) {
 	profile := &v1.WorkspaceSpec{
 		IdleTimeoutSeconds: ptr(int64(600)), ShutdownTimeoutSeconds: ptr(int64(300)), MaxConcurrentSessions: ptr(int64(1)),
-		Persistence: &v1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))},
-		Session: &v1.WorkspaceSessionSpec{
-			IdleTimeoutSeconds: ptr(int64(300)),
-			Persistence:        &v1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))},
-		},
+		Persistence: &v1.WorkspacePersistenceSpec{Type: "s3", RetentionDays: ptr(int64(90))},
+		Session:     &v1.WorkspaceSessionSpec{IdleTimeoutSeconds: ptr(int64(300)), RetentionDays: ptr(int64(7))},
 	}
 	agent := &v1.WorkspaceSpec{Session: &v1.WorkspaceSessionSpec{IdleTimeoutSeconds: ptr(int64(120))}}
 	got := ResolveWorkspace(agent, profile)
-	if *got.Session.IdleTimeoutSeconds != 120 {
-		t.Fatalf("session.idleTimeoutSeconds = %d, want 120", *got.Session.IdleTimeoutSeconds)
+	if *got.Session.IdleTimeoutSeconds != 120 || got.Session.RetentionDays == nil || *got.Session.RetentionDays != 7 {
+		t.Fatalf("session = %+v, want idle 120 and inherited retentionDays 7", got.Session)
 	}
 	if *got.IdleTimeoutSeconds != 600 || *got.ShutdownTimeoutSeconds != 300 || *got.MaxConcurrentSessions != 1 {
 		t.Fatalf("workspace siblings not preserved: %+v", got)
 	}
-	if got.Persistence == nil || *got.Persistence.Enabled != true || *got.Persistence.RetentionDays != 90 {
+	if got.Persistence.Type != "s3" || *got.Persistence.RetentionDays != 90 {
 		t.Fatalf("workspace.persistence not preserved: %+v", got.Persistence)
 	}
-	if got.Session.Persistence == nil || *got.Session.Persistence.Enabled != true || *got.Session.Persistence.RetentionDays != 90 {
-		t.Fatalf("workspace.session.persistence not preserved: %+v", got.Session.Persistence)
+	rendered, err := RenderWorkspaceV1(got)
+	if err != nil {
+		t.Fatalf("resolved workspace must render: %v", err)
+	}
+	if rendered.Session.RetentionDays == nil || *rendered.Session.RetentionDays != 7 {
+		t.Fatalf("rendered session retentionDays = %v, want 7", rendered.Session.RetentionDays)
 	}
 }
 
@@ -482,5 +477,24 @@ func TestRenderChannelV1RateLimit(t *testing.T) {
 	want := `{"maxPerHour":100,"perKey":[{"key":"ticket:{{ payload.ticket_id }}","maxPerHour":3},{"key":"sender:{{ payload.sender }}","maxPerHour":10}]}`
 	if string(raw) != want {
 		t.Fatalf("got %s, want %s", raw, want)
+	}
+}
+
+func TestRenderWorkspaceV1_PersistenceAndSessionRetention(t *testing.T) {
+	ws := func(p *v1.WorkspacePersistenceSpec, sessionDays *int64) *v1.WorkspaceSpec {
+		return &v1.WorkspaceSpec{
+			IdleTimeoutSeconds: ptr(int64(600)), ShutdownTimeoutSeconds: ptr(int64(300)), MaxConcurrentSessions: ptr(int64(1)),
+			Persistence: p, Session: &v1.WorkspaceSessionSpec{IdleTimeoutSeconds: ptr(int64(300)), RetentionDays: sessionDays},
+		}
+	}
+	got, err := RenderWorkspaceV1(ws(nil, ptr(int64(7))))
+	if err != nil || got.Persistence.Type != "none" || got.Session.RetentionDays != nil {
+		t.Fatalf("absent persistence = %+v, %v; want type none and no session retention", got, err)
+	}
+	if _, err := RenderWorkspaceV1(ws(&v1.WorkspacePersistenceSpec{Type: "s3", RetentionDays: ptr(int64(7))}, ptr(int64(30)))); err == nil {
+		t.Fatal("session.retentionDays above persistence.retentionDays must not render")
+	}
+	if _, err := RenderWorkspaceV1(ws(&v1.WorkspacePersistenceSpec{}, nil)); err == nil {
+		t.Fatal("a persistence block without type must not render")
 	}
 }

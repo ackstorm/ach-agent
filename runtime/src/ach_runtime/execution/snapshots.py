@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -26,6 +27,7 @@ from ach_runtime.storage.archive import (
 MAX_SNAPSHOT_BYTES = 2 * 1024**3
 MAX_HANDOFF_BYTES = 512 * 1024**2
 MAX_ARCHIVE_MEMBERS = 10_000
+log = logging.getLogger(__name__)
 
 
 async def _owned(func, /, *args, **kwargs):
@@ -68,7 +70,8 @@ async def export_session(service: ExecutionService, session_ref: str) -> Path:
 async def import_session(
     service: ExecutionService, session_ref: str, chunks: AsyncIterator[bytes],
     *, deadline_at: datetime | None = None,
-) -> None:
+) -> bool:
+    """Restore a session HOME archive; False when it was discarded and the session starts fresh."""
     state = service._sessions.get_or_create(session_ref)
     async with service._sessions.lock(session_ref):
         root = Path(tempfile.mkdtemp(prefix=".ach-session-import-", dir=state.home.parent))
@@ -88,6 +91,13 @@ async def import_session(
             )
             if manifest.session_ref != session_ref:
                 raise ValueError("snapshot sessionRef does not match the requested session")
+            if manifest.workspace_path != str(service._workspace_dir):
+                # opencode ties a session to its project directory, so a snapshot taken under
+                # another Workspace path cannot resume here. The session starts fresh and its
+                # next save replaces the snapshot.
+                log.warning("session snapshot from Workspace path %s discarded; session starts fresh",
+                            manifest.workspace_path)
+                return False
             workspace_ref = service._workspace_ref
             if not workspace_ref:
                 raise ValueError("execution service has no pinned workspaceRef")
@@ -95,6 +105,7 @@ async def import_session(
                 session_ref, workspace_ref, manifest, restored_home=staged,
                 _reservation_held=True, deadline_at=deadline_at,
             )
+            return True
         finally:
             await _owned(shutil.rmtree, root, ignore_errors=True)
 

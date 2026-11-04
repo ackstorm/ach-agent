@@ -29,10 +29,9 @@ spec:
       idleTimeoutSeconds: 600
       shutdownTimeoutSeconds: 30
       maxConcurrentSessions: 1
-      persistence: {enabled: false, retentionDays: 1}
+      persistence: {type: none}
       session:
         idleTimeoutSeconds: 300
-        persistence: {enabled: false, retentionDays: 1}
     artifacts: {enabled: false, maxArtifactBytes: 1048576, retentionDays: 1}
 ---
 apiVersion: ach-agent.ackstorm.ai/v1alpha1
@@ -51,10 +50,9 @@ spec:
   workspace:
     idleTimeoutSeconds: 30
     shutdownTimeoutSeconds: 300
-    persistence: {enabled: true, retentionDays: 1}
+    persistence: {type: s3, retentionDays: 1}
     session:
       idleTimeoutSeconds: 60
-      persistence: {enabled: true, retentionDays: 1}
   channels:
     - name: hook
       type: webhook

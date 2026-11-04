@@ -203,7 +203,7 @@ class Lifecycle:
         start hook is alarmed but never blocks the workspace (a reactivated pod that failed
         to start would stay unusable until control restarts); gate runs in sessionStart."""
         restored = False
-        if self.control.config.workspace.persistence.enabled:
+        if self.control.config.workspace.persistence.type == "s3":
             restored = await self._restore_workspace_archive(endpoint)
         try:
             await self.control.run_workspace_hook(endpoint, "start", restored=restored)
@@ -339,7 +339,7 @@ class Lifecycle:
 
             log.warning("workspaceStop hook failed: %s", exc)
             alarm("workspace_stop_failed", workspace_ref=endpoint.ref.workspace_ref)
-        if not self.control.config.workspace.persistence.enabled:
+        if self.control.config.workspace.persistence.type != "s3":
             return None
         ref = self._ref(endpoint, DOMAIN_WORKSPACE)
         try:
@@ -356,9 +356,9 @@ class Lifecycle:
 
     async def restore_session(self, ticket: Any, endpoint: Any) -> None:
         """Restore only the admitted opaque session ref; a live local session wins."""
-        if not self.control.config.workspace.session.persistence.enabled:
+        if self.control.config.workspace.persistence.type != "s3":
             return
-        retention_days = self.control.config.workspace.session.persistence.retention_days
+        retention_days = self.control.config.workspace.session_retention_days
         ref = self._ref(endpoint, DOMAIN_SESSION, ticket.session_ref)
         try:
             status, info = await self.control._mini_json(
@@ -397,7 +397,7 @@ class Lifecycle:
             yield
 
     async def _ensure_workspace_writer(self, endpoint: Any) -> None:
-        if not self.control.config.workspace.persistence.enabled:
+        if self.control.config.workspace.persistence.type != "s3":
             return
         key = (endpoint.ref.workspace_ref, None, endpoint.instance_id)
         if key in self._leases:
@@ -408,7 +408,7 @@ class Lifecycle:
         self._bases[(ref.workspace_ref, None)] = lease.base_etag
 
     async def _save_session(self, endpoint: Any, session_ref: str) -> None:
-        enabled = self.control.config.workspace.session.persistence.enabled
+        enabled = self.control.config.workspace.persistence.type == "s3"
         ref = self._ref(endpoint, DOMAIN_SESSION, session_ref)
         if not enabled:
             try:
@@ -425,7 +425,7 @@ class Lifecycle:
                 with _storage_timer("persist", DOMAIN_SESSION) as timer:
                     await self._persist_close(
                         endpoint, ref, f"/sessions/{session_ref}/archive",
-                        retention_days=self.control.config.workspace.session.persistence.retention_days,
+                        retention_days=self.control.config.workspace.session_retention_days,
                     )
                     timer["outcome"] = "ok"
             except Exception as exc:
@@ -597,14 +597,14 @@ class Lifecycle:
                         if not await self._attempt_session_save(endpoint, session_ref, failed_key):
                             active_refs.add(session_ref)
                             continue
-                        if self.control.config.workspace.session.persistence.enabled:
+                        if self.control.config.workspace.persistence.type == "s3":
                             self._confirmed_session_closes.add(session_close_key)
                         self._last_session.pop(key, None)
                 else:
                     self._last_session.pop(key, None)
                     initialized = bool(info.get("initialized"))
                     native_session_id = info.get("nativeSessionId")
-                    persistence_enabled = self.control.config.workspace.session.persistence.enabled
+                    persistence_enabled = self.control.config.workspace.persistence.type == "s3"
                     if (persistence_enabled and (initialized or native_session_id)
                             and session_close_key not in self._confirmed_session_closes):
                         if not await self._attempt_session_save(endpoint, session_ref, failed_key):

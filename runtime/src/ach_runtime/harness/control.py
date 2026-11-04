@@ -444,11 +444,11 @@ class Control:
             raise WorkspaceAssemblyUnavailable("mini-harness is not ready after configure")
 
     async def reconnect_workspace(self, endpoint: WorkspaceEndpoint) -> None:
-        if self.lifecycle is not None and self.config.workspace.persistence.enabled:
+        if self.lifecycle is not None and self.config.workspace.persistence.type == "s3":
             writer = await self.storage.current_writer(self.lifecycle.workspace_state_ref(endpoint))
             if writer is not None and writer != endpoint.instance_id:
                 # The pod was recreated outside the Harness (e.g. node loss while control was
-                # down): its /workspace is empty. Restore exactly as for a fresh activation.
+                # down): its Workspace directory is empty. Restore exactly as for a fresh activation.
                 await self.lifecycle.restore_workspace(endpoint)
         await self.configure_workspace(endpoint)
         try:
@@ -1007,14 +1007,10 @@ async def assemble(
     manager = WorkspaceManager(
         config, source,
         restore_workspace=(
-            _missing_transfer
-            if config.workspace.persistence.enabled or config.workspace.session.persistence.enabled
-            else _noop_restore
+            _missing_transfer if config.workspace.persistence.type == "s3" else _noop_restore
         ),
         commit_workspace=(
-            _missing_transfer
-            if config.workspace.persistence.enabled or config.workspace.session.persistence.enabled
-            else _noop_commit
+            _missing_transfer if config.workspace.persistence.type == "s3" else _noop_commit
         ),
         reconnect_workspace=_noop_reconnect,
     )

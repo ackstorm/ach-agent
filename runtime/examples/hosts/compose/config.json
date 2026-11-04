@@ -5,7 +5,7 @@
     "namespace": "local",
     "uid": "6b0c1c3e-5d1e-4f7a-9a52-2f0f7d3b8c11"
   },
-  "configVersion": "922fc1e7da4a60f5821785cef896120f5279727545659bc764ad06d10e081d13",
+  "configVersion": "98b810a3b3be0934628672c99856e61143dc412aacc5c5e8bd0878fc99b477c8",
   "engine": {
     "env": {},
     "startupTimeoutSeconds": 60,
@@ -31,15 +31,11 @@
     "shutdownTimeoutSeconds": 60,
     "maxConcurrentSessions": 1,
     "persistence": {
-      "enabled": true,
+      "type": "s3",
       "retentionDays": 7
     },
     "session": {
-      "idleTimeoutSeconds": 3,
-      "persistence": {
-        "enabled": true,
-        "retentionDays": 7
-      }
+      "idleTimeoutSeconds": 3
     }
   },
   "artifacts": {

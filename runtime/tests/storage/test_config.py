@@ -32,11 +32,8 @@ def pr_review_wire() -> dict[str, Any]:
         return json.load(f)
 
 
-def _config_with_flags(
-    wire: dict[str, Any], *, workspace: bool, session: bool, artifacts: bool
-) -> RuntimeConfig:
-    wire["workspace"]["persistence"]["enabled"] = workspace
-    wire["workspace"]["session"]["persistence"]["enabled"] = session
+def _config_with_flags(wire: dict[str, Any], *, persistence: bool, artifacts: bool) -> RuntimeConfig:
+    wire["workspace"]["persistence"] = {"type": "s3", "retentionDays": 90} if persistence else {"type": "none"}
     wire["artifacts"]["enabled"] = artifacts
     wire["configVersion"] = compute_config_version(wire)
     return parse_config(wire)
@@ -66,7 +63,7 @@ class _RecordingClient:
 def test_storage_from_env_disabled_skips_sdk(
     pr_review_wire: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cfg = _config_with_flags(pr_review_wire, workspace=False, session=False, artifacts=False)
+    cfg = _config_with_flags(pr_review_wire, persistence=False, artifacts=False)
     client_mock = MagicMock()
     monkeypatch.setattr("ach_runtime.storage.config.boto3.client", client_mock)
 
@@ -83,7 +80,7 @@ def test_storage_from_env_disabled_skips_sdk(
     client_mock.assert_not_called()
 
 
-@pytest.mark.parametrize("domain", ["workspace", "session", "artifacts"])
+@pytest.mark.parametrize("domain", ["persistence", "artifacts"])
 @pytest.mark.parametrize("env", [{}, {"ACH_STORAGE_S3_BUCKET": ""}])
 def test_storage_from_env_each_domain_requires_bucket(
     pr_review_wire: dict[str, Any],
@@ -91,7 +88,7 @@ def test_storage_from_env_each_domain_requires_bucket(
     domain: str,
     env: dict[str, str],
 ) -> None:
-    flags = {"workspace": False, "session": False, "artifacts": False, domain: True}
+    flags = {"persistence": False, "artifacts": False, domain: True}
     cfg = _config_with_flags(pr_review_wire, **flags)
     client_mock = MagicMock()
     monkeypatch.setattr("ach_runtime.storage.config.boto3.client", client_mock)
@@ -104,7 +101,7 @@ def test_storage_from_env_each_domain_requires_bucket(
 async def test_storage_from_env_standard_s3(
     pr_review_wire: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cfg = _config_with_flags(pr_review_wire, workspace=True, session=False, artifacts=False)
+    cfg = _config_with_flags(pr_review_wire, persistence=True, artifacts=False)
     recording_client = _RecordingClient()
     client_mock = MagicMock(return_value=recording_client)
     monkeypatch.setattr("ach_runtime.storage.config.boto3.client", client_mock)
@@ -125,7 +122,7 @@ async def test_storage_from_env_standard_s3(
 async def test_storage_from_env_compatible_settings(
     pr_review_wire: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cfg = _config_with_flags(pr_review_wire, workspace=True, session=False, artifacts=False)
+    cfg = _config_with_flags(pr_review_wire, persistence=True, artifacts=False)
     recording_client = _RecordingClient()
     client_mock = MagicMock(return_value=recording_client)
     monkeypatch.setattr("ach_runtime.storage.config.boto3.client", client_mock)
@@ -156,7 +153,7 @@ async def test_storage_from_env_compatible_settings(
 def test_storage_from_env_sdk_failure_propagates(
     pr_review_wire: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cfg = _config_with_flags(pr_review_wire, workspace=True, session=False, artifacts=False)
+    cfg = _config_with_flags(pr_review_wire, persistence=True, artifacts=False)
     sentinel = RuntimeError("sentinel-sdk-failure")
     client_mock = MagicMock(side_effect=sentinel)
     monkeypatch.setattr("ach_runtime.storage.config.boto3.client", client_mock)
@@ -168,7 +165,7 @@ def test_storage_from_env_sdk_failure_propagates(
 async def test_storage_from_env_operation_failure_propagates(
     pr_review_wire: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cfg = _config_with_flags(pr_review_wire, workspace=True, session=False, artifacts=False)
+    cfg = _config_with_flags(pr_review_wire, persistence=True, artifacts=False)
 
     class _FailingClient:
         def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
@@ -186,7 +183,7 @@ async def test_storage_from_env_operation_failure_propagates(
 def test_storage_from_env_preserves_config_projection(
     pr_review_wire: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cfg = _config_with_flags(pr_review_wire, workspace=True, session=False, artifacts=False)
+    cfg = _config_with_flags(pr_review_wire, persistence=True, artifacts=False)
     client_mock = MagicMock()
     monkeypatch.setattr("ach_runtime.storage.config.boto3.client", client_mock)
 

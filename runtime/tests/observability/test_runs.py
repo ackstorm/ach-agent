@@ -126,8 +126,7 @@ async def test_both_role_boots_emit_safe_info_and_anomaly_stream(
 
     monkeypatch.setattr(uvicorn, "Server", _FakeServer)
     wire = json.loads((Path(__file__).parents[1] / "config/fixtures/pr-review-runtime.json").read_text())
-    wire["workspace"]["persistence"]["enabled"] = False
-    wire["workspace"]["session"]["persistence"]["enabled"] = False
+    wire["workspace"]["persistence"] = {"type": "none"}
     wire["artifacts"]["enabled"] = False
     wire["channels"][0].pop("handoff", None)
     wire["configVersion"] = compute_config_version(wire)

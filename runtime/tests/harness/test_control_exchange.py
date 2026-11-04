@@ -17,8 +17,7 @@ from ach_runtime.harness.keys import ExchangeRefused
 
 def _exchange_config(token_path: Path):
     wire = json.loads((Path(__file__).parents[1] / "config/fixtures/pr-review-runtime.json").read_text())
-    wire["workspace"]["persistence"]["enabled"] = False
-    wire["workspace"]["session"]["persistence"]["enabled"] = False
+    wire["workspace"]["persistence"] = {"type": "none"}
     wire["artifacts"]["enabled"] = False
     ach = wire["capability"]["ach"]
     ach["key"] = {"exchange": {"identity": "ai.run@example.com", "environment": ach["environment"],

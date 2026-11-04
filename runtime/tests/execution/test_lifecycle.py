@@ -732,3 +732,42 @@ async def test_handoff_cancel_after_backup_rename_keeps_target(tmp_path: Path, m
     assert sorted(p.name for p in target.iterdir()) in (["sentinel"], ["new"])
     assert list(service._workspace_dir.glob(".handoff.previous-*")) == []
     assert list(service._workspace_dir.glob(".ach-handoff-*")) == []
+
+
+async def test_cold_import_from_another_workspace_path_starts_fresh(
+    tmp_path: Path, public_config_fixture, monkeypatch
+) -> None:
+    import ach_runtime.execution.snapshots as snapshots
+
+    session_ref, workspace_ref = "opaque-session", "pinned-workspace"
+    manifest = SnapshotManifest(
+        snapshot_version="session-v1", engine_package="@opencode/cli", engine_version="2.2.5",
+        agent={"name": public_config_fixture.agent.name,
+               "namespace": public_config_fixture.agent.namespace,
+               "uid": public_config_fixture.agent.uid},
+        workspace_ref=workspace_ref, session_ref=session_ref, native_session_id="old-sid",
+        workspace_path="/workspace",
+    )
+    archive_home = tmp_path / "archive-home"
+    archive_home.mkdir()
+    (archive_home / ".ach-registry.json").write_text(json.dumps(manifest.to_dict()), encoding="utf-8")
+    (archive_home / "user-data").write_text("old", encoding="utf-8")
+    archive_path = tmp_path / "session.tar.gz"
+    pack(archive_home, archive_path, max_bytes=1024 * 1024)
+
+    async def no_start(native, *, env, config_path, deadline=None):
+        raise AssertionError("a snapshot from another Workspace path must not relaunch opencode")
+
+    monkeypatch.setattr(_NativeSession, "ensure_started", no_start)
+    engine = OpenCodeEngine()
+    service = _service(tmp_path, engine=engine, workspace_ref=workspace_ref, public=public_config_fixture)
+
+    restored = await asyncio.wait_for(
+        snapshots.import_session(service, session_ref, _chunks(archive_path.read_bytes())), timeout=3
+    )
+
+    state = service._sessions.get(session_ref)
+    assert restored is False
+    assert state is not None and state.native_session_id is None
+    assert not (state.home / "user-data").exists()
+    assert session_ref not in engine._sessions

@@ -80,7 +80,7 @@ helm upgrade --install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --versi
 | Value | Default | Notes |
 |-------|---------|-------|
 | `storage.enabled` | `true` | `false` keeps control pods on S3 directly, with their own credentials. Drain the storage server first (below). |
-| `storage.namespaces` | `[]` | The Agent namespaces; required when a bucket is set. An Agent elsewhere with persistence or artifacts enabled waits for the Secret `ach-agent-storage-s3`. |
+| `storage.namespaces` | `[]` | The Agent namespaces; required when a bucket is set. An Agent elsewhere with `persistence.type: s3` or artifacts enabled waits for the Secret `ach-agent-storage-s3`. |
 | `storage.remote.type` | `s3` | `s3` replicates to `runtime.storage.s3.bucket`; `gcs` to `storage.remote.gcs.bucket`. |
 | `storage.remote.gcs.{bucket,project,prefix,credentialsSecret}` | `prefix: ach` | GCS only; `project` is required. `credentialsSecret` names an existing Secret with the key `credentials.json` (a service account key); leave it empty for Workload Identity. |
 | `storage.serviceAccount.annotations` | `{}` | Annotations on the ServiceAccount `ach-agent-storage`, for example `iam.gke.io/gcp-service-account` for GKE Workload Identity. |
@@ -262,14 +262,28 @@ is committed and the sandbox deleted. Both are per Agent, not per channel.
 conversation its own sandbox, so every new conversation pays the full cold start. For a chat
 channel, a per-user key (`"{{ event.headers.x-litellm-user-id }}"`) sends a user's new conversations
 to their running sandbox; set `workspace.maxConcurrentSessions` to the channel concurrency. A user's
-conversations then share `/workspace`, and a channel with a `handoff` needs `workspaceKey: session`.
+conversations then share `/sandbox/ach/workspace`, and a channel with a `handoff` needs `workspaceKey: session`.
 
 The trade-off is pods held against restore cost: each active Workspace keeps one sandbox (the
 profile's resources) for `session.idleTimeoutSeconds + idleTimeoutSeconds` after its last message.
 A long session timeout with a short Workspace timeout keeps opencode alive for as long as the
 sandbox exists.
 
-The runtime never writes to `/sandbox` (its data is in `/workspace` and `/var/lib/ach-runtime`;
-durable state goes to S3), so OpenShell's per-sandbox PVC is pure start-up cost. OpenShell 0.1.7
-cannot skip it per sandbox; the gateway-level `workspace_volume = "empty_dir"` setting proposed in
-NVIDIA/OpenShell#4473 removes it.
+`workspace.persistence` decides what survives the sandbox, for the Workspace files and the session
+HOMEs together. With `type: none` (the default) both are lost when the sandbox is deleted. With
+`type: s3` both are saved to the install-wide S3 store (`runtime.storage`) when they go idle and
+restored on the next sandbox; `retentionDays` is required, and `session.retentionDays` (optional, at
+most `retentionDays`) keeps saved sessions for less. An Agent's `persistence` block replaces the
+profile's as a whole.
+
+```yaml
+workspace:
+  persistence: {type: s3, retentionDays: 90}
+  session: {idleTimeoutSeconds: 300, retentionDays: 7}
+```
+
+The runtime keeps its data under `/sandbox/ach`: the Workspace in `/sandbox/ach/workspace`, the
+session HOMEs in `/sandbox/ach/sessions`. That is OpenShell's per-sandbox `/sandbox` PVC, deleted with
+the sandbox, so it is start-up cost only. OpenShell 0.1.7 cannot skip it per sandbox; the
+gateway-level `workspace_volume = "empty_dir"` setting proposed in NVIDIA/OpenShell#4473 replaces it
+with an emptyDir.

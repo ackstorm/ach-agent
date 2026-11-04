@@ -51,8 +51,8 @@ _DEFAULTS: dict[str, Any] = {
         "idleTimeoutSeconds": 86400,
         "shutdownTimeoutSeconds": 30,
         "maxConcurrentSessions": 1,
-        "persistence": {"enabled": False, "retentionDays": 0},
-        "session": {"idleTimeoutSeconds": 86400, "persistence": {"enabled": False, "retentionDays": 0}},
+        "persistence": {"type": "none"},
+        "session": {"idleTimeoutSeconds": 86400},
     },
     "artifacts": {"enabled": False, "maxArtifactBytes": 104857600, "retentionDays": 0},
 }

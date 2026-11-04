@@ -194,12 +194,12 @@ class WorkspaceManager:
     ) -> None:
         if reconnect_workspace is None:
             raise WorkspaceAssemblyUnavailable("reconnect_workspace is required in every mode")
-        if config.workspace.persistence.enabled and (
+        if config.workspace.persistence.type == "s3" and (
             restore_workspace is None or commit_workspace is None
         ):
             raise WorkspaceAssemblyUnavailable(
                 "restore_workspace and commit_workspace are required when "
-                "workspace.persistence.enabled is true"
+                "workspace.persistence.type is s3"
             )
         self._config = config
         self._source = source
@@ -517,9 +517,9 @@ class WorkspaceManager:
 
     def _validate_receipt(self, receipt: PersistReceipt | None, ref: WorkspaceRef) -> None:
         if receipt is None:
-            if self._config.workspace.persistence.enabled:
+            if self._config.workspace.persistence.type == "s3":
                 raise WorkspaceAssemblyUnavailable(
-                    "commit_workspace returned no receipt but workspace persistence is enabled"
+                    "commit_workspace returned no receipt but workspace persistence type is s3"
                 )
             return
         agent = self._config.agent

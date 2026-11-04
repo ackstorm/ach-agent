@@ -49,10 +49,11 @@ SCHEMA_PATH = (
 # lookaround. Non-capturing groups `(?:...)`, alternation, anchors and character classes are
 # all ordinary RE2 and used freely.
 #
-# Only two things remain genuinely outside JSON Schema's reach, regex dialect aside: (1)
+# Only three things remain genuinely outside JSON Schema's reach, regex dialect aside: (1)
 # the configVersion digest itself — needs computation, not a structural check; (2) real filesystem
 # containment/symlink resolution for handoff.destination — the contract already defers this
-# to the handoff implementation, not to config validation.
+# to the handoff implementation, not to config validation; (3) workspace.session.retentionDays
+# <= workspace.persistence.retentionDays — a comparison between two values.
 
 
 def _nonempty_non_whitespace_string() -> dict:
@@ -224,6 +225,16 @@ def _patch_shared_handoff_requires_single_session(schema: dict) -> None:
     )
 
 
+def _patch_persistence_block(defs: dict) -> None:
+    """Mirror `PersistenceBlock._type_rules` (schema.py): `volume` is not implemented yet, and
+    `retentionDays` is required unless the type is `none`, forbidden with it."""
+    block = defs["PersistenceBlock"]
+    block["properties"]["type"]["enum"] = ["none", "s3"]
+    block["if"] = {"properties": {"type": {"const": "none"}}}
+    block["then"] = {"not": {"required": ["retentionDays"]}}
+    block["else"] = {"required": ["retentionDays"]}
+
+
 def generate() -> str:
     schema = RuntimeConfig.model_json_schema(by_alias=True)
     defs = schema["$defs"]
@@ -231,6 +242,7 @@ def generate() -> str:
     _patch_engine_block(defs)
     _patch_handoff_block(defs)
     _patch_channel_config(defs)
+    _patch_persistence_block(defs)
     _patch_shared_handoff_requires_single_session(schema)
     schema = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",

@@ -59,13 +59,10 @@ spec:
     # proceso usando ese checkout durante su sustitución.
     maxConcurrentSessions: 1
     persistence:
-      enabled: true
+      type: s3
       retentionDays: 90
     session:
       idleTimeoutSeconds: 300
-      persistence:
-        enabled: true
-        retentionDays: 90
   artifacts:
     enabled: true
     maxArtifactBytes: 104857600

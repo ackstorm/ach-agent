@@ -39,8 +39,7 @@ def _config(enabled: bool):
     wire = json.loads(
         (Path(__file__).parents[1] / "config/fixtures/pr-review-runtime.json").read_text()
     )
-    wire["workspace"]["persistence"]["enabled"] = False
-    wire["workspace"]["session"]["persistence"]["enabled"] = False
+    wire["workspace"]["persistence"] = {"type": "none"}
     wire["artifacts"]["enabled"] = enabled
     wire["channels"][0].pop("handoff", None)
     wire["configVersion"] = compute_config_version(wire)

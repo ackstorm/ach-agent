@@ -30,8 +30,7 @@ def _in_process_url(url: str) -> str:
 
 def _config(*, peers: bool = True, excluded: list[str] | None = None):
     wire = json.loads((Path(__file__).parents[1] / "config/fixtures/pr-review-runtime.json").read_text())
-    wire["workspace"]["persistence"]["enabled"] = False
-    wire["workspace"]["session"]["persistence"]["enabled"] = False
+    wire["workspace"]["persistence"] = {"type": "none"}
     wire["artifacts"]["enabled"] = False
     wire["capability"]["filter"]["exclude"]["tools"] = excluded or []
     wire["configVersion"] = compute_config_version(wire)

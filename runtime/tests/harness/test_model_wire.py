@@ -29,8 +29,7 @@ def _config(model_type: str):
     wire = json.loads(FIXTURE.read_text(encoding="utf-8"))
     wire["capability"]["ach"]["baseUrl"] = ACH_BASE
     wire["capability"]["ach"]["model"]["type"] = model_type
-    wire["workspace"]["persistence"]["enabled"] = False
-    wire["workspace"]["session"]["persistence"]["enabled"] = False
+    wire["workspace"]["persistence"] = {"type": "none"}
     wire["artifacts"]["enabled"] = False
     wire["channels"][0].pop("handoff", None)
     wire["configVersion"] = compute_config_version(wire)

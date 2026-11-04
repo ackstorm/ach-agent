@@ -5,7 +5,7 @@
     "namespace": "ach",
     "uid": "3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77"
   },
-  "configVersion": "de6a5a3e7c2184747e95df225b19e0501d6847c5f15fb03107220a49a2375969",
+  "configVersion": "e27767f9c4b2e01fc1f56c158a83a39b4f40b875355d010259bf87f5fe27ab5f",
   "engine": {
     "env": {},
     "startupTimeoutSeconds": 60,
@@ -31,15 +31,11 @@
     "shutdownTimeoutSeconds": 300,
     "maxConcurrentSessions": 1,
     "persistence": {
-      "enabled": true,
+      "type": "s3",
       "retentionDays": 90
     },
     "session": {
-      "idleTimeoutSeconds": 300,
-      "persistence": {
-        "enabled": true,
-        "retentionDays": 90
-      }
+      "idleTimeoutSeconds": 300
     }
   },
   "artifacts": {

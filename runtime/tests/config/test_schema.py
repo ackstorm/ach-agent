@@ -640,3 +640,36 @@ def test_workspace_ready_timeout_defaults_to_30_and_must_be_positive(pr_review_w
     pr_review_wire["workspace"]["readyTimeoutSeconds"] = 0
     with pytest.raises((ValidationError, ConfigError)):
         parse_config(_resign(pr_review_wire))
+
+
+# ---------------------------------------------------------------------------
+# workspace.persistence: one type for the Workspace and its sessions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("persistence", "session_days", "match"),
+    [
+        ({"type": "volume", "retentionDays": 7}, None, "not implemented yet"),
+        ({"type": "none", "retentionDays": 7}, None, "required unless type is none"),
+        ({"type": "s3"}, None, "required unless type is none"),
+        ({"enabled": True, "retentionDays": 7}, None, "Extra inputs are not permitted"),
+        ({"type": "s3", "retentionDays": 7}, 30, "must not exceed"),
+    ],
+)
+def test_persistence_rules_reject(
+    pr_review_wire: dict[str, Any], persistence: dict[str, Any], session_days: int | None, match: str
+) -> None:
+    pr_review_wire["workspace"]["persistence"] = persistence
+    if session_days is not None:
+        pr_review_wire["workspace"]["session"]["retentionDays"] = session_days
+    with pytest.raises(ConfigError, match=match):
+        parse_config(_resign(pr_review_wire))
+
+
+def test_session_retention_defaults_to_persistence_retention(pr_review_wire: dict[str, Any]) -> None:
+    cfg = parse_config(_resign(pr_review_wire))
+    assert cfg.workspace.persistence.type == "s3"
+    assert cfg.workspace.session_retention_days == 90
+    pr_review_wire["workspace"]["session"]["retentionDays"] = 7
+    assert parse_config(_resign(pr_review_wire)).workspace.session_retention_days == 7

@@ -111,17 +111,15 @@ func TestAgent_GlobalStorageConditional(t *testing.T) {
 	}
 
 	// Each enabled domain, missing bucket -> StorageUnavailable, before control launches.
-	newProfile("p-ws", func(s *achv1alpha1.AgentProfileSpec) { s.Defaults.Workspace.Persistence.Enabled = boolPtr(true) })
-	newAgent("a-ws", "p-ws", nil)
-	newProfile("p-sess", func(s *achv1alpha1.AgentProfileSpec) {
-		s.Defaults.Workspace.Session.Persistence.Enabled = boolPtr(true)
+	newProfile("p-ws", func(s *achv1alpha1.AgentProfileSpec) {
+		s.Defaults.Workspace.Persistence = &achv1alpha1.WorkspacePersistenceSpec{Type: "s3", RetentionDays: ptrInt64(90)}
 	})
-	newAgent("a-sess", "p-sess", nil)
+	newAgent("a-ws", "p-ws", nil)
 	newProfile("p-art", func(s *achv1alpha1.AgentProfileSpec) { s.Defaults.Artifacts.Enabled = boolPtr(true) })
 	newAgent("a-art", "p-art", nil)
 
 	emptyBucket := isolatedAgentReconciler(t, render.RuntimeStorageOptions{})
-	for _, name := range []string{"a-ws", "a-sess", "a-art"} {
+	for _, name := range []string{"a-ws", "a-art"} {
 		a := reconcileOnce(t, emptyBucket, ns, name)
 		c := apimeta.FindStatusCondition(a.Status.Conditions, condWorkloadApplied)
 		if c == nil || c.Status != metav1.ConditionFalse || c.Reason != "StorageUnavailable" {
@@ -171,7 +169,7 @@ func TestAgent_GlobalStorageConditional(t *testing.T) {
 
 	// Inherited profile true, explicit agent false -> storage no longer required.
 	newAgent("a-ws-override", "p-ws", func(s *achv1alpha1.AgentSpec) {
-		s.Workspace = &achv1alpha1.WorkspaceSpec{Persistence: &achv1alpha1.WorkspacePersistenceSpec{Enabled: boolPtr(false)}}
+		s.Workspace = &achv1alpha1.WorkspaceSpec{Persistence: &achv1alpha1.WorkspacePersistenceSpec{Type: "none"}}
 	})
 	a = reconcileOnce(t, emptyBucket, ns, "a-ws-override")
 	if c := apimeta.FindStatusCondition(a.Status.Conditions, condWorkloadApplied); c == nil || c.Status != metav1.ConditionTrue {
@@ -308,5 +306,38 @@ func assertControlAWSRefs(t *testing.T, env []corev1.EnvVar) {
 	}
 	if !gotToken {
 		t.Error("control env missing optional AWS_SESSION_TOKEN selector (must always be present, Optional=true)")
+	}
+}
+
+// TestWorkspacePersistence_CEL pins the admission rules of workspace.persistence.
+func TestWorkspacePersistence_CEL(t *testing.T) {
+	const ns = "aa-persist-cel"
+	isolatedStorageNamespace(t, ns)
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name    string
+		persist *achv1alpha1.WorkspacePersistenceSpec
+		session *int64
+		want    string
+	}{
+		{"cel-volume", &achv1alpha1.WorkspacePersistenceSpec{Type: "volume", RetentionDays: ptrInt64(7)}, nil, "not implemented yet"},
+		{"cel-none-days", &achv1alpha1.WorkspacePersistenceSpec{Type: "none", RetentionDays: ptrInt64(7)}, nil, "required unless type is none"},
+		{"cel-s3-no-days", &achv1alpha1.WorkspacePersistenceSpec{Type: "s3"}, nil, "required unless type is none"},
+		{"cel-session-over", &achv1alpha1.WorkspacePersistenceSpec{Type: "s3", RetentionDays: ptrInt64(7)}, ptrInt64(30), "must not exceed"},
+		{"cel-ok", &achv1alpha1.WorkspacePersistenceSpec{Type: "s3", RetentionDays: ptrInt64(30)}, ptrInt64(7), ""},
+	} {
+		spec := minimalProfileSpec(false)
+		spec.Defaults.Workspace.Persistence = tc.persist
+		spec.Defaults.Workspace.Session.RetentionDays = tc.session
+		err := k8sClient.Create(ctx, &achv1alpha1.AgentProfile{ObjectMeta: metav1.ObjectMeta{Name: tc.name, Namespace: ns}, Spec: spec})
+		if tc.want == "" {
+			if err != nil {
+				t.Errorf("%s: %v, want admitted", tc.name, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want %q", tc.name, err, tc.want)
+		}
 	}
 }

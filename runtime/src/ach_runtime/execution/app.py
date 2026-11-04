@@ -279,8 +279,8 @@ def create_app(
             deadline_at = None
             if raw_deadline is not None:
                 deadline_at = _parse_aware_deadline(raw_deadline)
-            await import_session(service, session_ref, request.stream(), deadline_at=deadline_at)
-            return JSONResponse({"status": "restored", "sessionRef": session_ref})
+            restored = await import_session(service, session_ref, request.stream(), deadline_at=deadline_at)
+            return JSONResponse({"status": "restored" if restored else "fresh", "sessionRef": session_ref})
         except Exception as exc:  # noqa: BLE001 - mapped to the private API error contract
             return _error_response(exc)
 

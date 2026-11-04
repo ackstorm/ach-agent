@@ -85,7 +85,9 @@ func TestRuntimeStorageControlEnv(t *testing.T) {
 // coverage below needs to flip RuntimeRequiresStorage.
 func minimalProfileSpec(persist bool) achv1alpha1.AgentProfileSpec {
 	ws := testWorkspaceSpec()
-	ws.Persistence.Enabled = boolPtr(persist)
+	if persist {
+		ws.Persistence = &achv1alpha1.WorkspacePersistenceSpec{Type: "s3", RetentionDays: ptrInt64(90)}
+	}
 	return achv1alpha1.AgentProfileSpec{
 		Control: achv1alpha1.ControlSpec{Image: "img:test", TerminationGracePeriodSeconds: ptrInt64(330)},
 		Defaults: achv1alpha1.AgentDefaults{

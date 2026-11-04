@@ -131,24 +131,16 @@ type LimitsSpec struct {
 	MaxSteps *int64 `json:"maxSteps,omitempty"`
 }
 
-// WorkspacePersistenceSpec is a Workspace or session durability switch (contract §7:
-// workspace.persistence, workspace.session.persistence). This is the Harness/Storage logical
-// policy — distinct from AgentProfileSpec.Persistence, which is the operator's ephemeral
-// control/execution-pod active-volume infrastructure.
-// WorkspacePersistenceSpec is a Workspace or session durability switch (contract §7:
-// workspace.persistence, workspace.session.persistence). This is the Harness/Storage logical
-// policy — distinct from AgentProfileSpec.Persistence, which is the operator's ephemeral
-// control/execution-pod active-volume infrastructure. Both fields are required: the wire
-// schema requires retentionDays unconditionally, even when enabled=false.
-// Both Enabled and RetentionDays are pointers so an agent can override either one alone
-// (ResolvePersistence per-field merge) without restating the other just to satisfy a
-// non-pointer required field — e.g. `persistence: {enabled: false}` must inherit the
-// profile's retentionDays, not null it out. Completeness of the resolved block (both
-// fields set) is enforced at RenderWorkspaceV1/RenderArtifactsV1 time, same as every other
-// policy block.
+// WorkspacePersistenceSpec is where a Workspace's files and its session HOMEs survive the
+// sandbox (contract §7: workspace.persistence): nowhere (none) or the install-wide S3 store
+// (s3). One type covers both. Resolved as one atomic block: an Agent's block replaces the
+// profile's whole. This is the Harness/Storage logical policy — distinct from
+// AgentProfileSpec.Persistence, the control pod's PVC.
+// +kubebuilder:validation:XValidation:rule="self.type != 'volume'",message="persistence.type volume is not implemented yet"
+// +kubebuilder:validation:XValidation:rule="self.type == 'none' ? !has(self.retentionDays) : has(self.retentionDays)",message="persistence.retentionDays is required unless type is none, and forbidden with none"
 type WorkspacePersistenceSpec struct {
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
+	// +kubebuilder:validation:Enum=none;s3;volume
+	Type string `json:"type"`
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	RetentionDays *int64 `json:"retentionDays,omitempty"`
@@ -159,10 +151,11 @@ type WorkspaceSessionSpec struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	IdleTimeoutSeconds *int64 `json:"idleTimeoutSeconds,omitempty"`
-	// Persistence is resolved as one atomic sub-block (same convention as
-	// CompactionSpec.Keep): its two fields are only meaningful together.
+	// RetentionDays keeps a saved session for at most this many days; it defaults to
+	// persistence.retentionDays, must not exceed it, and has no effect with type none.
 	// +optional
-	Persistence *WorkspacePersistenceSpec `json:"persistence,omitempty"`
+	// +kubebuilder:validation:Minimum=1
+	RetentionDays *int64 `json:"retentionDays,omitempty"`
 }
 
 // WorkspaceSpec is the Harness Workspace lifecycle policy (config: workspace.*, contract
@@ -170,6 +163,7 @@ type WorkspaceSessionSpec struct {
 // restating the rest — per-field merge via ResolveWorkspace. Completeness of the wire-
 // required fields is checked on the RESOLVED result (RenderWorkspaceV1), not by forcing the
 // type non-pointer.
+// +kubebuilder:validation:XValidation:rule="!has(self.session) || !has(self.session.retentionDays) || !has(self.persistence) || !has(self.persistence.retentionDays) || self.session.retentionDays <= self.persistence.retentionDays",message="session.retentionDays must not exceed persistence.retentionDays"
 type WorkspaceSpec struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
@@ -182,6 +176,7 @@ type WorkspaceSpec struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	MaxConcurrentSessions *int64 `json:"maxConcurrentSessions,omitempty"`
+	// Persistence is atomic: an Agent's block replaces the profile's. Absent means type none.
 	// +optional
 	Persistence *WorkspacePersistenceSpec `json:"persistence,omitempty"`
 	// +optional
@@ -189,7 +184,7 @@ type WorkspaceSpec struct {
 }
 
 // ArtifactsSpec is the Harness Artifacts policy (config: artifacts.*, contract §8). Enabled
-// is a pointer, same rationale as WorkspacePersistenceSpec.Enabled: an agent overriding just
+// is a pointer so an unset value can be told from false: an agent overriding just
 // maxArtifactBytes/retentionDays must not be forced to also restate enabled. All three merge
 // per-field (ResolveArtifacts); completeness of the resolved block is enforced at
 // RenderArtifactsV1.

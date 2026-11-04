@@ -12,6 +12,7 @@ type ModelBlock struct {
 	Type     string         `json:"type"`
 	Params   map[string]any `json:"params,omitempty"`
 	Thinking *ThinkingBlock `json:"thinking,omitempty"`
+	Limits   *WSModelLimits `json:"limits,omitempty"`
 }
 
 // ThinkingBlock is the normalized model.thinking reasoning intent (schema

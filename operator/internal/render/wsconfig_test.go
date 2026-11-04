@@ -99,6 +99,14 @@ func TestRender_FullOutputConformsToSchemaAndJCSHash(t *testing.T) {
 				KeyFrom: v1.AchKeyFrom{SecretKeyRef: &v1.SecretKeyRef{Name: "test", Key: "ek"}}, Model: v1.AchModelSpec{Name: "gemini.gemini-flash-latest", API: "gemini"}}
 			return p, a
 		},
+		"full ach model limits": func() (v1.AgentProfile, v1.Agent) {
+			p, a := full()
+			a.Spec.CapabilityServer, a.Spec.Standalone = "ach", nil
+			a.Spec.Ach = &v1.AchServerSpec{BaseURL: "https://ach.example.com", Environment: "engineering-prod",
+				KeyFrom: v1.AchKeyFrom{SecretKeyRef: &v1.SecretKeyRef{Name: "test", Key: "ek"}},
+				Model:   v1.AchModelSpec{Name: "ackstorm.smart", Limits: &v1.ModelLimitsSpec{Context: 524288, Output: 65536}}}
+			return p, a
+		},
 		"full ach token exchange": func() (v1.AgentProfile, v1.Agent) {
 			p, a := full()
 			a.Spec.CapabilityServer, a.Spec.Standalone = "ach", nil

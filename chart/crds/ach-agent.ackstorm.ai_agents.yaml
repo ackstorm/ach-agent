@@ -169,6 +169,22 @@ spec:
                         - anthropic
                         - gemini
                         type: string
+                      limits:
+                        description: Limits overrides the context and output windows
+                          ACH reports for the model.
+                        properties:
+                          context:
+                            format: int64
+                            minimum: 1
+                            type: integer
+                          output:
+                            format: int64
+                            minimum: 1
+                            type: integer
+                        required:
+                        - context
+                        - output
+                        type: object
                       name:
                         minLength: 1
                         type: string

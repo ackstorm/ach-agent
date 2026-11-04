@@ -200,6 +200,12 @@ class ModelLimits(BaseModel):
     output: int = Field(gt=0)
 
 
+class AchModel(ModelBlock):
+    # The gateway's /v2/model/info does not resolve LiteLLM model-group aliases, so an
+    # alias otherwise reaches the engine with no context limit and compacts at its default.
+    limits: ModelLimits | None = None
+
+
 class StandaloneModel(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
 
@@ -250,7 +256,7 @@ class AchServer(BaseModel):
     base_url: str = Field(alias="baseUrl")
     environment: str
     key: SecretAlias | ExchangeKey
-    model: ModelBlock
+    model: AchModel
     # Added to the environment's MCP servers; never sent the ACH credential.
     mcp_servers: list[StandaloneMcpServer] = Field(default_factory=list, alias="mcpServers")
 
@@ -990,7 +996,10 @@ class RuntimeConfig(BaseModel):
     def model(self) -> ModelBlock:
         """The selected server's model as the runtime's provider-neutral block."""
         if self.capability.ach is not None:
-            return self.capability.ach.model
+            m = self.capability.ach.model
+            return ModelBlock.model_validate(
+                {"name": m.name, "type": m.type, "params": m.params, "thinking": m.thinking.model_dump()}
+            )
         m = self.capability.standalone.model
         return ModelBlock.model_validate(
             {"name": m.name, "type": m.type, "params": m.params, "thinking": m.thinking.model_dump()}

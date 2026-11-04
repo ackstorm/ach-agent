@@ -674,3 +674,31 @@ def test_stage_context_nests_root_level_skill_archives_under_their_names() -> No
 
     with tempfile.TemporaryDirectory() as d:
         asyncio.run(scenario(Path(d) / "stage"))
+
+
+async def test_hydrator_load_configured_limits_override_the_gateway_metadata() -> None:
+    # /v2/model/info does not resolve LiteLLM model-group aliases, so an alias gets no
+    # limits (or the wrong ones); the configured limits win, the rest of the metadata stays.
+    client = httpx.AsyncClient(transport=_transport(_combined_handler()))
+    source = HydrationInput(agent="classifier", base_url=BASE_URL, environment="platform",
+                            model="gemini.gemini-flash-latest", limits=(524288, 65536))
+    catalog = await Hydrator(resolve_ek=lambda: "ek-abc", client=client).load(source)
+    await client.aclose()
+    assert catalog.model.metadata is not None
+    assert (catalog.model.metadata.context_limit, catalog.model.metadata.output_limit) == (524288, 65536)
+    assert catalog.model.metadata.input_cost_per_token is not None
+
+
+async def test_hydrator_load_configured_limits_apply_when_the_gateway_has_no_entry() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/platform/hydrate":
+            return httpx.Response(200, json=MANIFEST)
+        return httpx.Response(200, json={"data": []})
+
+    client = httpx.AsyncClient(transport=_transport(handler))
+    source = HydrationInput(agent="classifier", base_url=BASE_URL, environment="platform",
+                            model="gemini.gemini-flash-latest", limits=(524288, 65536))
+    catalog = await Hydrator(resolve_ek=lambda: "ek-abc", client=client).load(source)
+    await client.aclose()
+    assert catalog.model.metadata is not None
+    assert (catalog.model.metadata.context_limit, catalog.model.metadata.output_limit) == (524288, 65536)

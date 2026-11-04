@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `model.limits` (wire `capability.ach.model.limits`) works with an ACH environment too, and wins over the
+  gateway's model info. LiteLLM does not resolve a model-group alias such as `ackstorm.smart` in
+  `/v2/model/info`, so an alias otherwise ran on opencode's default context window and compacted early.
+
 ### Fixed
 
 - `ach-agent run` with an `ach-cli login` profile no longer fails at boot with `400 missing_environment`:

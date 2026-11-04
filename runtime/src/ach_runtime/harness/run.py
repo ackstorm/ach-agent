@@ -60,6 +60,16 @@ def token_expiry(key: str) -> datetime | None:
         return None
 
 
+def _outcome_error(outcome: asyncio.Future[Any]) -> str:
+    """Why a finished warm-up run produced no session: its exception, or its RunStatus error."""
+    if outcome.cancelled():
+        return "cancelled"
+    if (exc := outcome.exception()) is not None:
+        return str(exc) or type(exc).__name__
+    status = outcome.result()
+    return getattr(status, "error", None) or f"state {getattr(status, 'state', 'unknown')}"
+
+
 def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -154,6 +164,8 @@ async def run_local(
                 engine = source.engine(unit)
                 if engine is not None and (found := engine.attach_target(sref)) is not None:
                     return found
+            if ticket.completed.done():  # the warm-up run ended with no session to attach to
+                raise RunError(f"the warm-up run failed: {_outcome_error(ticket.completed)}")
             return None
 
         url, sid, password = await _wait(target, "the TUI session to start", task, deadline)

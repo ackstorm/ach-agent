@@ -43,6 +43,7 @@ model:                         # required
   name: gemini.gemini-flash-latest
   type: gemini                 # openai | gemini | anthropic
   thinking: {enabled: true, effort: medium}   # optional
+  limits: {context: 524288, output: 65536}    # optional: overrides the gateway's limits
   params: {temperature: 0.2}                  # optional
 mcpServers:                    # optional: added to the environment's MCP servers
   - name: github
@@ -87,7 +88,7 @@ model: {name: qwen3-coder, type: openai, baseUrl: "http://host.docker.internal:1
 |---|---|---|---|
 | `ach.profile` | no | ach-cli's default profile | the Hub URL and credential, read on the host |
 | `ach.environment` | with `ach` | | `capability.ach.environment` |
-| `model` | yes | | `capability.ach.model` (`name`, `type`, `params`, `thinking`) or `capability.standalone.model` (also `baseUrl`, `headers`, `limits`) |
+| `model` | yes | | `capability.ach.model` (`name`, `type`, `params`, `thinking`, `limits`) or `capability.standalone.model` (also `baseUrl`, `headers`) |
 | `mcpServers` (`name`, `url`, `headers`) | no | none | `capability.ach.mcpServers` or `capability.standalone.mcpServers` |
 | `prompt.file` / `prompt.text` | no | none | `prompt.system` as text; a file is read and inlined |
 | `exclude` (`mcpServers`, `tools`, `skills`) | no | nothing | `capability.filter.exclude` |
@@ -96,6 +97,10 @@ A header is `{env: NAME}` (a secret read from your shell) or `{value: …}` (a l
 `NAME` is sent as is, so an `Authorization` header needs its `Bearer ` prefix inside the variable. With
 `ach:`, an extra MCP server is never sent the ACH credential, and a name the environment already has is
 an error at start.
+
+`model.limits` sets the context and output window the engine compacts against. With `ach:` it
+wins over what the gateway reports: LiteLLM's model info does not resolve a model-group alias (such as
+`ackstorm.smart`), so without it an alias runs on opencode's default window and compacts early.
 
 Unknown keys are an error. Paths resolve relative to the manifest. Limits, compaction and timeouts are
 internal defaults of `run`. There are no channels: paste what a channel would send into the TUI.

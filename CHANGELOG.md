@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `model.limits` (wire `capability.ach.model.limits`) works with an ACH environment too, and wins over the
+  gateway's model info. LiteLLM does not resolve a model-group alias such as `ackstorm.smart` in
+  `/v2/model/info`, so an alias otherwise ran on opencode's default context window and compacted early.
 - Opt-in OpenShell gateway mTLS. With `openshell.tls.secret` (the Secret of the operator's
   `OU=operator` client certificate) the operator reads that Secret at start, calls an `https://`
   gateway with it, and control pods verify the sandbox service path against its CA only
@@ -17,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is the reference PKI, all in `openshell` with namespaced Issuers (every certificate 262800h).
   Without the value nothing changes. Sandboxes created before the switch answer 412 until control
   recreates them.
+
+### Fixed
+
+- `ach-agent run` with an `ach-cli login` profile no longer fails at boot with `400 missing_environment`:
+  skill, prompt and artifact downloads send `x-ach-environment`, which ACH requires for a login (`pk_`)
+  credential.
+- `ach-agent run` reports why the warm-up run failed (for example `mcp tools unavailable: <server> (…403…)`)
+  as soon as it fails, instead of `timed out waiting for the TUI session to start` after three minutes.
 
 ## [0.4.0] - 2026-11-04
 

@@ -50,3 +50,25 @@ async def test_run_attaches_a_client_to_the_tui_session(tmp_path, monkeypatch) -
     )
     assert rc == 0
     assert workspace.is_dir()
+
+
+async def test_run_reports_why_the_warmup_run_failed(tmp_path, monkeypatch) -> None:
+    # A run that fails before opencode starts (an environment MCP server ACH refuses) must
+    # surface its error, not "timed out waiting for the TUI session to start".
+    from ach_runtime.harness.run import RunError
+
+    async def unavailable(_catalog):
+        raise RuntimeError("mcp tools unavailable: mcp-x (HTTPStatusError: 403 Forbidden)")
+
+    monkeypatch.setattr("ach_runtime.execution.service._require_mcp_tools", unavailable)
+    monkeypatch.setenv("ACH_KEY", "test-key-not-a-secret")
+    monkeypatch.setenv("ACH_URL", "https://ach.example")
+    manifest = tmp_path / "agent.yaml"
+    manifest.write_text("ach: {environment: engineering-prod}\nmodel: {name: gemini.gemini-flash-latest, type: gemini}\n")
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    with pytest.raises(RunError, match="mcp tools unavailable: mcp-x"):
+        await run_local(
+            manifest, workspace=workspace, name="smoke", data_dir=tmp_path / "data",
+            tui=[sys.executable, "-c", "raise SystemExit(0)"], ach_transport=httpx.MockTransport(_catalog),
+        )

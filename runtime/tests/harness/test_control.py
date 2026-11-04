@@ -28,8 +28,7 @@ from fake_host import FakeHost
 
 def _config(*, handoff: bool = False, hooks: dict | None = None, persistence: bool = False):
     wire = json.loads((Path(__file__).parents[1] / "config/fixtures/pr-review-runtime.json").read_text())
-    wire["workspace"]["persistence"]["enabled"] = persistence
-    wire["workspace"]["session"]["persistence"]["enabled"] = False
+    wire["workspace"]["persistence"] = {"type": "s3", "retentionDays": 90} if persistence else {"type": "none"}
     wire["artifacts"]["enabled"] = False
     channel = wire["channels"][0]
     channel["prompt"] = "Review {{ payload.title | default(\"untitled\") }} for {{ internal.agent.name }}"
@@ -43,8 +42,7 @@ def _config(*, handoff: bool = False, hooks: dict | None = None, persistence: bo
 
 def _a2a_config():
     wire = json.loads((Path(__file__).parents[1] / "config/fixtures/pr-review-runtime.json").read_text())
-    wire["workspace"]["persistence"]["enabled"] = False
-    wire["workspace"]["session"]["persistence"]["enabled"] = False
+    wire["workspace"]["persistence"] = {"type": "none"}
     wire["artifacts"]["enabled"] = False
     wire["channels"] = [{
         "name": "a2a-review", "type": "a2a", "a2a": {"auth": {"env": "A2A_TOKEN"}},

@@ -19,8 +19,7 @@ ENV = {"ACH_SANDBOX_KEY": "harness-private-key", "ACH_SECRET_IDENTITY": "ek-priv
 
 def _wire(memory_auth: dict | None = None, *, memory: bool = False) -> dict:
     wire = json.loads((Path(__file__).parents[1] / "config/fixtures/pr-review-runtime.json").read_text())
-    wire["workspace"]["persistence"]["enabled"] = False
-    wire["workspace"]["session"]["persistence"]["enabled"] = False
+    wire["workspace"]["persistence"] = {"type": "none"}
     wire["artifacts"]["enabled"] = False
     wire["capability"]["ach"]["mcpServers"] = [
         {"name": "extra", "url": "https://extra.example/mcp", "headers": {"Authorization": {"env": "EXTRA_AUTH"}}},

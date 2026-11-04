@@ -413,8 +413,7 @@ async def e2e_stack_factory(tmp_path: Path, s3_client, monkeypatch) -> AsyncIter
                 upstream = await upstream_context.__aenter__()
 
             wire = json.loads((Path(__file__).parents[1] / "config/fixtures/pr-review-runtime.json").read_text(encoding="utf-8"))
-            wire["workspace"]["persistence"]["enabled"] = persistent
-            wire["workspace"]["session"]["persistence"]["enabled"] = persistent
+            wire["workspace"]["persistence"] = {"type": "s3", "retentionDays": 90} if persistent else {"type": "none"}
             wire["workspace"]["session"]["idleTimeoutSeconds"] = session_idle_seconds
             wire["workspace"]["idleTimeoutSeconds"] = workspace_idle_seconds
             wire["workspace"]["shutdownTimeoutSeconds"] = shutdown_timeout_seconds

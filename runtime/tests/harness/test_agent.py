@@ -21,8 +21,7 @@ FIXTURE = Path(__file__).parents[1] / "config/fixtures/pr-review-runtime.json"
 
 def _config():
     wire = json.loads(FIXTURE.read_text())
-    wire["workspace"]["persistence"]["enabled"] = False
-    wire["workspace"]["session"]["persistence"]["enabled"] = False
+    wire["workspace"]["persistence"] = {"type": "none"}
     wire["artifacts"]["enabled"] = False
     wire["channels"][0].pop("handoff", None)
     wire["channels"][0]["prompt"] = "Hello {{ payload.title }}"
@@ -70,8 +69,7 @@ async def test_assembly_defaults_the_facade_and_activates_a_workspace_locally(tm
 
 async def test_a_configured_facade_endpoint_is_kept(tmp_path) -> None:
     wire = json.loads(FIXTURE.read_text())
-    wire["workspace"]["persistence"]["enabled"] = False
-    wire["workspace"]["session"]["persistence"]["enabled"] = False
+    wire["workspace"]["persistence"] = {"type": "none"}
     wire["artifacts"]["enabled"] = False
     wire["channels"][0].pop("handoff", None)
     wire["channels"][0]["prompt"] = "Hello {{ payload.title }}"

@@ -21,8 +21,7 @@ ENV = {"ACH_SANDBOX_KEY": "harness-key", "ACH_AGENT_MODEL_H0": "model-secret-1",
 
 def _config():
     wire = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    wire["workspace"]["persistence"]["enabled"] = False
-    wire["workspace"]["session"]["persistence"]["enabled"] = False
+    wire["workspace"]["persistence"] = {"type": "none"}
     wire["artifacts"]["enabled"] = False
     wire["configVersion"] = compute_config_version(wire)
     return parse_config(wire)
@@ -69,8 +68,7 @@ async def test_memory_bearer_secret_is_registered_for_redaction():
     from ach_runtime.observability.runs import redact
 
     wire = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    wire["workspace"]["persistence"]["enabled"] = False
-    wire["workspace"]["session"]["persistence"]["enabled"] = False
+    wire["workspace"]["persistence"] = {"type": "none"}
     wire["artifacts"]["enabled"] = False
     wire["memory"] = {"type": "ach-memory", "achMemory": {
         "mcpServerId": "serper", "auth": {"type": "bearer", "env": "ACH_MEM_TOKEN"}}}
@@ -84,8 +82,7 @@ async def test_memory_bearer_secret_is_registered_for_redaction():
 
 def _memory_config(auth):
     wire = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    wire["workspace"]["persistence"]["enabled"] = False
-    wire["workspace"]["session"]["persistence"]["enabled"] = False
+    wire["workspace"]["persistence"] = {"type": "none"}
     wire["artifacts"]["enabled"] = False
     params = {"mcpServerId": "serper"}
     if auth:
@@ -116,8 +113,7 @@ async def test_literal_header_is_sent_but_never_redacted():
     from ach_runtime.observability.runs import redact
 
     wire = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    wire["workspace"]["persistence"]["enabled"] = False
-    wire["workspace"]["session"]["persistence"]["enabled"] = False
+    wire["workspace"]["persistence"] = {"type": "none"}
     wire["artifacts"]["enabled"] = False
     wire["capability"]["standalone"]["model"]["headers"]["Accept-Language"] = {"value": "en-literal-value"}
     wire["configVersion"] = compute_config_version(wire)

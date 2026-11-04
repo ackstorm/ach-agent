@@ -39,11 +39,8 @@ func testLimitsSpec(maxSteps int64) *achv1alpha1.LimitsSpec {
 func testWorkspaceSpec() *achv1alpha1.WorkspaceSpec {
 	return &achv1alpha1.WorkspaceSpec{
 		IdleTimeoutSeconds: ptrInt64(600), ShutdownTimeoutSeconds: ptrInt64(300), MaxConcurrentSessions: ptrInt64(1),
-		Persistence: &achv1alpha1.WorkspacePersistenceSpec{Enabled: boolPtr(false), RetentionDays: ptrInt64(90)},
-		Session: &achv1alpha1.WorkspaceSessionSpec{
-			IdleTimeoutSeconds: ptrInt64(300),
-			Persistence:        &achv1alpha1.WorkspacePersistenceSpec{Enabled: boolPtr(false), RetentionDays: ptrInt64(90)},
-		},
+		Persistence: &achv1alpha1.WorkspacePersistenceSpec{Type: "none"},
+		Session:     &achv1alpha1.WorkspaceSessionSpec{IdleTimeoutSeconds: ptrInt64(300)},
 	}
 }
 func testArtifactsSpec() *achv1alpha1.ArtifactsSpec {

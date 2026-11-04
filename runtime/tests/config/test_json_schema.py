@@ -11,9 +11,10 @@ parity is evidence, not assumed from the generation-drift check alone.
 Covers more than the review's own six repro cases on purpose (its own pre-commit re-check
 flagged that channel type/block coherence, the nested `webhook.gitlabEvents` requirement and
 the conversational-events restriction ARE schema-representable and must be patched, not
-just documented as out of reach). Only two things stay genuinely outside JSON Schema,
-documented in `gen_schema.py` itself: the configVersion digest (needs computation), and real filesystem/symlink containment for
-`handoff.destination` (deferred to the handoff implementation by the contract itself).
+just documented as out of reach). Only three things stay genuinely outside JSON Schema,
+documented in `gen_schema.py` itself: the configVersion digest (needs computation), real filesystem/symlink containment for
+`handoff.destination` (deferred to the handoff implementation by the contract itself), and the
+`session.retentionDays <= persistence.retentionDays` comparison.
 """
 
 from __future__ import annotations
@@ -227,6 +228,18 @@ def _mutation_whitespace_only_handoff_destination(w: dict[str, Any]) -> None:
     w["channels"][0]["handoff"]["destination"] = "   "
 
 
+def _mutation_persistence_volume(w: dict[str, Any]) -> None:
+    w["workspace"]["persistence"] = {"type": "volume", "retentionDays": 7}
+
+
+def _mutation_persistence_none_with_retention(w: dict[str, Any]) -> None:
+    w["workspace"]["persistence"] = {"type": "none", "retentionDays": 7}
+
+
+def _mutation_persistence_s3_without_retention(w: dict[str, Any]) -> None:
+    w["workspace"]["persistence"] = {"type": "s3"}
+
+
 # The review's own six reproduction cases (task-2-schema-review.md I2 evidence) plus the
 # broader channel-coherence/whitespace/snake_case cases its own pre-commit re-check asked
 # for, plus I5's endpoint/image/quantity/fixed-path leaves — not just the reviewer's repro
@@ -251,6 +264,9 @@ NEGATIVE_MUTATIONS = {
     "facade_endpoint_missing_scheme": _mutation_facade_endpoint_missing_scheme,
     "webhook_script_source_not_gitlab": _mutation_webhook_script_source_not_gitlab,
     "whitespace_only_handoff_destination": _mutation_whitespace_only_handoff_destination,
+    "persistence_volume": _mutation_persistence_volume,
+    "persistence_none_with_retention": _mutation_persistence_none_with_retention,
+    "persistence_s3_without_retention": _mutation_persistence_s3_without_retention,
 }
 
 

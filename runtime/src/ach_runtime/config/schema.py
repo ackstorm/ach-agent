@@ -397,17 +397,30 @@ class LimitsBlock(BaseModel):
 
 
 class PersistenceBlock(BaseModel):
+    """Where the Workspace files and its session HOMEs survive the sandbox (one type for both)."""
+
     model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
 
-    enabled: bool
-    retention_days: int = Field(ge=0, alias="retentionDays")
+    type: Literal["none", "s3", "volume"]
+    retention_days: int | None = Field(default=None, gt=0, alias="retentionDays")
+
+    @model_validator(mode="after")
+    def _type_rules(self) -> PersistenceBlock:
+        if self.type == "volume":
+            raise ValueError("workspace.persistence.type volume is not implemented yet")
+        if (self.type == "none") != (self.retention_days is None):
+            raise ValueError(
+                "workspace.persistence.retentionDays is required unless type is none, and forbidden with none"
+            )
+        return self
 
 
 class SessionPolicyBlock(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
 
     idle_timeout_seconds: int = Field(gt=0, alias="idleTimeoutSeconds")
-    persistence: PersistenceBlock
+    # Read through WorkspaceBlock.session_retention_days, which applies the default.
+    retention_days: int | None = Field(default=None, gt=0, alias="retentionDays")
 
 
 class WorkspaceBlock(BaseModel):
@@ -419,6 +432,25 @@ class WorkspaceBlock(BaseModel):
     max_concurrent_sessions: int = Field(gt=0, alias="maxConcurrentSessions")
     persistence: PersistenceBlock
     session: SessionPolicyBlock
+
+    @model_validator(mode="after")
+    def _session_retention_bound(self) -> WorkspaceBlock:
+        session, workspace = self.session.retention_days, self.persistence.retention_days
+        if session is not None and workspace is not None and session > workspace:
+            raise ValueError(
+                "workspace.session.retentionDays must not exceed workspace.persistence.retentionDays"
+            )
+        return self
+
+    @property
+    def session_retention_days(self) -> int | None:
+        """Session snapshot retention: `session.retentionDays`, else `persistence.retentionDays`.
+
+        A property, not a filled-in field: assigning the default would mark it set and change
+        the `exclude_unset` round trip of the wire."""
+        if self.session.retention_days is not None:
+            return self.session.retention_days
+        return self.persistence.retention_days
 
 
 class ArtifactsBlock(BaseModel):

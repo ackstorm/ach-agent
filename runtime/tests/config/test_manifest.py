@@ -43,8 +43,7 @@ def test_profile_is_read_and_optional(tmp_path) -> None:
 
 def test_nothing_needs_storage(tmp_path) -> None:
     config = parse_config(_wire(tmp_path, MINIMAL))
-    assert not config.workspace.persistence.enabled
-    assert not config.workspace.session.persistence.enabled
+    assert config.workspace.persistence.type == "none"
     assert not config.artifacts.enabled
 
 

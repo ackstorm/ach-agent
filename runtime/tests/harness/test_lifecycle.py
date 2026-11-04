@@ -45,8 +45,8 @@ class _Manager:
 
 class _Control:
     def __init__(self):
-        policy = type("P", (), {"enabled": False, "retention_days": 0})
-        self.config = type("C", (), {"workspace": type("W", (), {"persistence": policy(), "session": type("S", (), {"persistence": policy(), "idle_timeout_seconds": 20})(), "idle_timeout_seconds": 30, "shutdown_timeout_seconds": 5})(), "agent": AgentIdentity(name="agent", namespace="ach", uid="3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77")})()
+        policy = type("P", (), {"type": "none", "retention_days": None})
+        self.config = type("C", (), {"workspace": type("W", (), {"persistence": policy(), "session_retention_days": None, "session": type("S", (), {"idle_timeout_seconds": 20})(), "idle_timeout_seconds": 30, "shutdown_timeout_seconds": 5})(), "agent": AgentIdentity(name="agent", namespace="ach", uid="3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77")})()
         self.admission = _Admission()
         self.manager = _Manager()
         self.storage = None
@@ -62,6 +62,10 @@ class _Control:
 
 
 async def _close(ref): pass
+
+
+async def _no_workspace_writer(_endpoint) -> None:
+    """Session-domain tests: type s3 also takes the Workspace writer lease, which they do not drive."""
 
 
 def _storage_count(metric: str, domain: str, outcome: str) -> float:
@@ -279,7 +283,7 @@ def test_storage_restore_failure_rethrows_and_counts_finite_restore_anomaly(capl
 
     async def scenario():
         control = _Control()
-        control.config.workspace.persistence.enabled = True
+        control.config.workspace.persistence.type = "s3"
         control.storage = SimpleNamespace(restore=fail_restore)
         endpoint = WorkspaceEndpoint(
             WorkspaceRef("ach", control.config.agent.uid, "a" * 64), "ws", "pod", "http://mini"
@@ -433,7 +437,7 @@ def test_writer_pod_and_expected_base() -> None:
                 return receipt
         storage = Storage()
         control = _Control()
-        control.config.workspace.persistence.enabled = True
+        control.config.workspace.persistence.type = "s3"
         control.config.workspace.persistence.retention_days = 17
         control.storage = storage
         async def mini(request):
@@ -484,11 +488,11 @@ def test_close_transient_export_and_save_retry_one_id_and_bytes(monkeypatch, dom
     async def scenario():
         control = _Control()
         if domain == "workspace":
-            control.config.workspace.persistence.enabled = True
+            control.config.workspace.persistence.type = "s3"
             control.config.workspace.persistence.retention_days = 6
         else:
-            control.config.workspace.session.persistence.enabled = True
-            control.config.workspace.session.persistence.retention_days = 9
+            control.config.workspace.persistence.type = "s3"
+            control.config.workspace.session_retention_days = 9
         endpoint = WorkspaceEndpoint(
             WorkspaceRef("ach", control.config.agent.uid, "a" * 64), "ws", "pod", "http://mini"
         )
@@ -570,7 +574,7 @@ def test_close_exhaustion_retains_owner_until_cooldown_recovery(monkeypatch) -> 
 
     async def scenario():
         control = _Control()
-        control.config.workspace.persistence.enabled = True
+        control.config.workspace.persistence.type = "s3"
         control.config.workspace.idle_timeout_seconds = 0
         endpoint = WorkspaceEndpoint(
             WorkspaceRef("ach", control.config.agent.uid, "a" * 64), "ws", "pod", "http://mini"
@@ -679,7 +683,7 @@ def test_close_permanent_errors_are_not_retried(monkeypatch, failure) -> None:
 
     async def scenario():
         control = _Control()
-        control.config.workspace.persistence.enabled = True
+        control.config.workspace.persistence.type = "s3"
         endpoint = WorkspaceEndpoint(
             WorkspaceRef("ach", control.config.agent.uid, "a" * 64), "ws", "pod", "http://mini"
         )
@@ -763,7 +767,7 @@ def test_close_cancellation_drains_export_and_cleans_attempt_staging() -> None:
 
     async def scenario():
         control = _Control()
-        control.config.workspace.persistence.enabled = True
+        control.config.workspace.persistence.type = "s3"
         endpoint = WorkspaceEndpoint(
             WorkspaceRef("ach", control.config.agent.uid, "a" * 64), "ws", "pod", "http://mini"
         )
@@ -817,7 +821,7 @@ def test_failed_stopped_session_close_retries_after_cooldown(monkeypatch) -> Non
 
     async def scenario():
         control = _Control()
-        control.config.workspace.session.persistence.enabled = True
+        control.config.workspace.persistence.type = "s3"
         control.config.workspace.idle_timeout_seconds = 1000
         endpoint = WorkspaceEndpoint(
             WorkspaceRef("ach", control.config.agent.uid, "a" * 64), "ws", "pod", "http://mini"
@@ -833,6 +837,7 @@ def test_failed_stopped_session_close_retries_after_cooldown(monkeypatch) -> Non
 
         control._mini_json = mini_json
         lifecycle = Lifecycle(control, alarm=lambda _reason: None)
+        lifecycle._ensure_workspace_writer = _no_workspace_writer
         attempts = []
         async def save(_endpoint, session_ref):
             attempts.append(session_ref)
@@ -865,7 +870,7 @@ def test_failed_save_retains_home_pod_slot() -> None:
     async def scenario():
         alarms = []
         control = _Control()
-        control.config.workspace.session.persistence.enabled = True
+        control.config.workspace.persistence.type = "s3"
         control.manager.closed = []
         control.manager.close = _close_record(control.manager)
         endpoint = WorkspaceEndpoint(WorkspaceRef("ach", control.config.agent.uid, "a"*64), "ws", "pod", "http://mini")
@@ -881,6 +886,7 @@ def test_failed_save_retains_home_pod_slot() -> None:
         control._headers = lambda endpoint: {"X-ACH-Instance-Id": endpoint.instance_id}
         control._mini_json = _mini_json(control)
         lifecycle = Lifecycle(control, alarm=alarms.append)
+        lifecycle._ensure_workspace_writer = _no_workspace_writer
         async def failed(endpoint, session_ref):
             raise RuntimeError("archive failed")
         lifecycle._save_session = failed
@@ -966,9 +972,9 @@ async def test_archive_persistence_failure_logs_redacted_root_cause(
 
     control = _Control()
     if domain == "workspace":
-        control.config.workspace.persistence.enabled = True
+        control.config.workspace.persistence.type = "s3"
     else:
-        control.config.workspace.session.persistence.enabled = True
+        control.config.workspace.persistence.type = "s3"
     endpoint = WorkspaceEndpoint(
         WorkspaceRef("ach", control.config.agent.uid, "a" * 64),
         "ws", "pod", "http://mini",
@@ -1102,8 +1108,7 @@ def test_workspace_first_lazy_session_restore() -> None:
     async def scenario():
         calls = []
         control = _Control()
-        control.config.workspace.persistence.enabled = True
-        control.config.workspace.session.persistence.enabled = True
+        control.config.workspace.persistence.type = "s3"
         class Storage:
             async def restore(self, ref, *, retention_days=0):
                 calls.append(("storage-restore", ref.domain, ref.session_ref))
@@ -1309,7 +1314,7 @@ def test_recreated_lifecycle_retries_failed_inactive_session() -> None:
     async def scenario():
         alarms = []
         control = _Control()
-        control.config.workspace.session.persistence.enabled = True
+        control.config.workspace.persistence.type = "s3"
         control.manager.closed = []
         control.manager.close = _close_record(control.manager)
         endpoint = WorkspaceEndpoint(WorkspaceRef("ach", control.config.agent.uid, "a" * 64),
@@ -1327,6 +1332,7 @@ def test_recreated_lifecycle_retries_failed_inactive_session() -> None:
         start = datetime(2026, 10, 1, tzinfo=UTC)
 
         first = Lifecycle(control, alarm=alarms.append)
+        first._ensure_workspace_writer = _no_workspace_writer
         calls = []
         async def fail(endpoint, session_ref):
             calls.append("failed")
@@ -1339,6 +1345,7 @@ def test_recreated_lifecycle_retries_failed_inactive_session() -> None:
         assert control.manager.closed == []
 
         restarted = Lifecycle(control, alarm=alarms.append)
+        restarted._ensure_workspace_writer = _no_workspace_writer
         second_calls = []
         async def fail_again(endpoint, session_ref):
             second_calls.append("failed")
@@ -1460,8 +1467,8 @@ async def test_restart_after_export_persist_failure_requires_session_receipt(tmp
 
     storage = Storage()
     control = _Control()
-    control.config.workspace.session.persistence.enabled = True
-    control.config.workspace.session.persistence.retention_days = config.workspace.session.persistence.retention_days
+    control.config.workspace.persistence.type = "s3"
+    control.config.workspace.session_retention_days = config.workspace.session_retention_days
     control.storage = storage
     control.manager.closed = []
     control.manager.close = _close_record(control.manager)
@@ -1505,7 +1512,7 @@ async def test_restart_after_export_persist_failure_requires_session_receipt(tmp
         await first.tick(start)
         await first.tick(start + timedelta(seconds=21))
         assert storage.persist_calls == 1
-        assert storage.retention_policies == [config.workspace.session.persistence.retention_days]
+        assert storage.retention_policies == [config.workspace.session_retention_days]
         assert fake_clean_stops == [5.0]
         assert native.alive is False and native.clean_exit is True
         assert control.manager._active[workspace_ref] is endpoint
@@ -1643,8 +1650,8 @@ async def test_same_pod_idle_close_reopen_uses_restore_or_new_sid(tmp_path: Path
             instance_id=instance_id,
         )
         control = _Control()
-        control.config.workspace.session.persistence.enabled = persistence_enabled
-        control.config.workspace.session.persistence.retention_days = 7
+        control.config.workspace.persistence.type = "s3" if persistence_enabled else "none"
+        control.config.workspace.session_retention_days = 7
         control.config.workspace.idle_timeout_seconds = 10_000
         control.config.workspace.session.idle_timeout_seconds = 20
         control.manager.closed = []
@@ -1867,11 +1874,11 @@ def test_live_writer_can_close_after_predecessor_expiry_and_harness_restart(doma
             session_ref=None if domain == "workspace" else session_ref,
         )
         if domain == "workspace":
-            control.config.workspace.persistence.enabled = True
+            control.config.workspace.persistence.type = "s3"
             control.config.workspace.persistence.retention_days = 1
         else:
-            control.config.workspace.session.persistence.enabled = True
-            control.config.workspace.session.persistence.retention_days = 1
+            control.config.workspace.persistence.type = "s3"
+            control.config.workspace.session_retention_days = 1
         control.storage = storage
 
         seed_lease = await storage.acquire_writer(ref, "pod-old")
@@ -1974,7 +1981,7 @@ def test_confirmed_session_close_is_per_pod_and_cleared_by_work() -> None:
 
     async def scenario():
         control = _Control()
-        control.config.workspace.session.persistence.enabled = True
+        control.config.workspace.persistence.type = "s3"
         endpoint = WorkspaceEndpoint(WorkspaceRef("ach", control.config.agent.uid, "a" * 64),
                                      "ws", "pod-1", "http://mini")
         control.manager._active = {"a" * 64: endpoint}
@@ -1988,6 +1995,7 @@ def test_confirmed_session_close_is_per_pod_and_cleared_by_work() -> None:
         control._headers = lambda endpoint: {"X-ACH-Instance-Id": endpoint.instance_id}
         control._mini_json = _mini_json(control)
         lifecycle = Lifecycle(control)
+        lifecycle._ensure_workspace_writer = _no_workspace_writer
         saves = []
         async def save(endpoint, session_ref):
             saves.append((endpoint.instance_id, session_ref))
@@ -2172,7 +2180,7 @@ def test_workspace_start_hook_reports_a_restored_workspace() -> None:
 
     async def scenario():
         control = _Control()
-        control.config.workspace.persistence.enabled = True
+        control.config.workspace.persistence.type = "s3"
 
         async def chunks():
             yield b"archive"
@@ -2273,7 +2281,7 @@ def test_storage_histograms_record_domain_and_outcome() -> None:
             return httpx.Response(200, headers={"X-ACH-Instance-Id": "instance-id"}, json={"status": "restored"})
 
         control = _Control()
-        control.config.workspace.persistence.enabled = True
+        control.config.workspace.persistence.type = "s3"
         control.storage = Storage()
         control.mini_client = httpx.AsyncClient(transport=httpx.MockTransport(mini))
         control._headers = lambda endpoint: {"X-ACH-Instance-Id": endpoint.instance_id}

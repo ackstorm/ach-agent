@@ -356,30 +356,7 @@ func ResolveLimits(agent, profile *v1.LimitsSpec) *v1.LimitsSpec {
 	return &out
 }
 
-// ResolvePersistence deep-merges per field: an agent overriding just Enabled must not lose
-// the profile's RetentionDays (and vice versa) — the wholesale sub-block swap this replaces
-// was exactly the Important review finding ("workspace.persistence: {enabled: false} loses
-// inherited retentionDays").
-func ResolvePersistence(agent, profile *v1.WorkspacePersistenceSpec) *v1.WorkspacePersistenceSpec {
-	if agent == nil {
-		return profile
-	}
-	if profile == nil {
-		return agent
-	}
-	out := *profile
-	if agent.Enabled != nil {
-		out.Enabled = agent.Enabled
-	}
-	if agent.RetentionDays != nil {
-		out.RetentionDays = agent.RetentionDays
-	}
-	return &out
-}
-
-// ResolveSession deep-merges workspace.session per field; Persistence resolves recursively
-// via ResolvePersistence (same rationale: `session: {idleTimeoutSeconds: 0}` must not lose
-// the profile's session.persistence).
+// ResolveSession deep-merges workspace.session per field.
 func ResolveSession(agent, profile *v1.WorkspaceSessionSpec) *v1.WorkspaceSessionSpec {
 	if agent == nil {
 		return profile
@@ -391,13 +368,15 @@ func ResolveSession(agent, profile *v1.WorkspaceSessionSpec) *v1.WorkspaceSessio
 	if agent.IdleTimeoutSeconds != nil {
 		out.IdleTimeoutSeconds = agent.IdleTimeoutSeconds
 	}
-	out.Persistence = ResolvePersistence(agent.Persistence, profile.Persistence)
+	if agent.RetentionDays != nil {
+		out.RetentionDays = agent.RetentionDays
+	}
 	return &out
 }
 
-// ResolveWorkspace deep-merges per field, including the nested Persistence/Session
-// sub-blocks (ResolvePersistence/ResolveSession) — NOT a wholesale sub-block swap, so a
-// partial agent override of one leaf field inherits every sibling field from the profile.
+// ResolveWorkspace deep-merges per field, Session included (ResolveSession). Persistence is
+// atomic: an Agent's block replaces the profile's whole, since type and retentionDays are only
+// valid together.
 func ResolveWorkspace(agent, profile *v1.WorkspaceSpec) *v1.WorkspaceSpec {
 	if agent == nil {
 		return profile
@@ -415,7 +394,9 @@ func ResolveWorkspace(agent, profile *v1.WorkspaceSpec) *v1.WorkspaceSpec {
 	if agent.MaxConcurrentSessions != nil {
 		out.MaxConcurrentSessions = agent.MaxConcurrentSessions
 	}
-	out.Persistence = ResolvePersistence(agent.Persistence, profile.Persistence)
+	if agent.Persistence != nil {
+		out.Persistence = agent.Persistence
+	}
 	out.Session = ResolveSession(agent.Session, profile.Session)
 	return &out
 }

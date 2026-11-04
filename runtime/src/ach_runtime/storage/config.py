@@ -24,17 +24,13 @@ _DEFAULT_PREFIX = "ach"
 def storage_from_env(config: RuntimeConfig, env: Mapping[str, str]) -> S3Storage | None:
     """Build the operator-configured S3Storage backend, or None when nothing needs it.
 
-    Any of workspace persistence, session persistence or artifacts being enabled requires a
+    Workspace persistence type `s3` or artifacts being enabled requires a
     nonempty `ACH_STORAGE_S3_BUCKET` — fails closed with the existing `StorageUnavailable`,
     never a volatile fallback. SDK/operation errors propagate as-is; no probe is performed
     during construction, and credentials are never passed explicitly — the ordinary boto3
     ambient chain applies.
     """
-    required = (
-        config.workspace.persistence.enabled
-        or config.workspace.session.persistence.enabled
-        or config.artifacts.enabled
-    )
+    required = config.workspace.persistence.type == "s3" or config.artifacts.enabled
     if not required:
         return None
 

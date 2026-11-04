@@ -31,11 +31,10 @@ type RuntimeStorageOptions struct {
 // volatile fallback.
 var ErrStorageUnavailable = errors.New("agentrender: runtime storage backend is not configured (operator env/Helm)")
 
-// RuntimeRequiresStorage reports whether cfg's resolved workspace/session/artifacts policy
-// needs the backend at all — the OR of the three enabled domains. All-disabled skips the
-// backend dependency entirely.
+// RuntimeRequiresStorage reports whether cfg's resolved policy needs the backend at all:
+// persistence type s3 or artifacts enabled. Neither skips the backend dependency entirely.
 func RuntimeRequiresStorage(cfg WSConfig) bool {
-	return cfg.Workspace.Persistence.Enabled || cfg.Workspace.Session.Persistence.Enabled || cfg.Artifacts.Enabled
+	return cfg.Workspace.Persistence.Type == "s3" || cfg.Artifacts.Enabled
 }
 
 // ValidateRuntimeStorage checks required configuration only: a nonempty bucket when any
@@ -46,7 +45,7 @@ func ValidateRuntimeStorage(cfg WSConfig, options RuntimeStorageOptions) error {
 		return nil
 	}
 	if options.Bucket == "" {
-		return fmt.Errorf("%w: configure runtime.storage.s3.bucket (operator Helm values), or disable workspace/session persistence and artifacts", ErrStorageUnavailable)
+		return fmt.Errorf("%w: configure runtime.storage.s3.bucket (operator Helm values), or set workspace.persistence.type none and disable artifacts", ErrStorageUnavailable)
 	}
 	return nil
 }

@@ -523,46 +523,6 @@ func TestHandoff_SecretAliasesDoNotCollapseEnvNameCase(t *testing.T) {
 	}
 }
 
-// TestResolvePersistence_PreservesInheritedFieldOnPartialOverride is the Important review
-// finding 3 regression: `workspace.persistence: {enabled: false}` on the agent must not lose
-// the profile's retentionDays (the wholesale sub-block swap this replaces did exactly that).
-func TestResolvePersistence_PreservesInheritedFieldOnPartialOverride(t *testing.T) {
-	profile := &v1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))}
-	agent := &v1.WorkspacePersistenceSpec{Enabled: ptr(false)}
-	got := ResolvePersistence(agent, profile)
-	if got.Enabled == nil || *got.Enabled != false {
-		t.Errorf("enabled = %v, want agent's false", got.Enabled)
-	}
-	if got.RetentionDays == nil || *got.RetentionDays != 90 {
-		t.Errorf("retentionDays = %v, want inherited 90 (not lost by the partial override)", got.RetentionDays)
-	}
-}
-
-// TestResolveWorkspace_SessionPartialOverridePreservesPersistence is the companion case one
-// level deeper: `workspace.session: {idleTimeoutSeconds: 0}` must not lose
-// session.persistence (previously an atomic sub-block swap at the WorkspaceSpec level).
-func TestResolveWorkspace_SessionPartialOverridePreservesPersistence(t *testing.T) {
-	profile := &v1.WorkspaceSpec{
-		IdleTimeoutSeconds: ptr(int64(600)), ShutdownTimeoutSeconds: ptr(int64(300)), MaxConcurrentSessions: ptr(int64(1)),
-		Persistence: &v1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))},
-		Session: &v1.WorkspaceSessionSpec{
-			IdleTimeoutSeconds: ptr(int64(300)),
-			Persistence:        &v1.WorkspacePersistenceSpec{Enabled: ptr(true), RetentionDays: ptr(int64(90))},
-		},
-	}
-	agent := &v1.WorkspaceSpec{Session: &v1.WorkspaceSessionSpec{IdleTimeoutSeconds: ptr(int64(0))}}
-	got := ResolveWorkspace(agent, profile)
-	if got.Session.IdleTimeoutSeconds == nil || *got.Session.IdleTimeoutSeconds != 0 {
-		t.Errorf("session.idleTimeoutSeconds = %v, want agent's explicit 0", got.Session.IdleTimeoutSeconds)
-	}
-	if got.Session.Persistence == nil || got.Session.Persistence.RetentionDays == nil || *got.Session.Persistence.RetentionDays != 90 {
-		t.Errorf("session.persistence = %+v, want inherited from profile", got.Session.Persistence)
-	}
-	if _, err := RenderWorkspaceV1(got); err != nil {
-		t.Errorf("resolved workspace must still satisfy RenderWorkspaceV1 after a partial override: %v", err)
-	}
-}
-
 // TestResolveArtifacts_PreservesEnabledOnPartialOverride mirrors the persistence case for
 // artifacts: an agent overriding only maxArtifactBytes must not lose the profile's enabled.
 func TestResolveArtifacts_PreservesEnabledOnPartialOverride(t *testing.T) {

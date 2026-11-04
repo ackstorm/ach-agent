@@ -1325,30 +1325,28 @@ spec:
                     minimum: 1
                     type: integer
                   persistence:
-                    description: |-
-                      WorkspacePersistenceSpec is a Workspace or session durability switch (contract §7:
-                      workspace.persistence, workspace.session.persistence). This is the Harness/Storage logical
-                      policy — distinct from AgentProfileSpec.Persistence, which is the operator's ephemeral
-                      control/execution-pod active-volume infrastructure.
-                      WorkspacePersistenceSpec is a Workspace or session durability switch (contract §7:
-                      workspace.persistence, workspace.session.persistence). This is the Harness/Storage logical
-                      policy — distinct from AgentProfileSpec.Persistence, which is the operator's ephemeral
-                      control/execution-pod active-volume infrastructure. Both fields are required: the wire
-                      schema requires retentionDays unconditionally, even when enabled=false.
-                      Both Enabled and RetentionDays are pointers so an agent can override either one alone
-                      (ResolvePersistence per-field merge) without restating the other just to satisfy a
-                      non-pointer required field — e.g. `persistence: {enabled: false}` must inherit the
-                      profile's retentionDays, not null it out. Completeness of the resolved block (both
-                      fields set) is enforced at RenderWorkspaceV1/RenderArtifactsV1 time, same as every other
-                      policy block.
+                    description: 'Persistence is atomic: an Agent''s block replaces
+                      the profile''s. Absent means type none.'
                     properties:
-                      enabled:
-                        type: boolean
                       retentionDays:
                         format: int64
                         minimum: 1
                         type: integer
+                      type:
+                        enum:
+                        - none
+                        - s3
+                        - volume
+                        type: string
+                    required:
+                    - type
                     type: object
+                    x-kubernetes-validations:
+                    - message: persistence.type volume is not implemented yet
+                      rule: self.type != 'volume'
+                    - message: persistence.retentionDays is required unless type is
+                        none, and forbidden with none
+                      rule: 'self.type == ''none'' ? !has(self.retentionDays) : has(self.retentionDays)'
                   session:
                     description: 'WorkspaceSessionSpec is workspace.session (contract
                       §7). Pointer fields: per-field merge.'
@@ -1357,24 +1355,24 @@ spec:
                         format: int64
                         minimum: 0
                         type: integer
-                      persistence:
+                      retentionDays:
                         description: |-
-                          Persistence is resolved as one atomic sub-block (same convention as
-                          CompactionSpec.Keep): its two fields are only meaningful together.
-                        properties:
-                          enabled:
-                            type: boolean
-                          retentionDays:
-                            format: int64
-                            minimum: 1
-                            type: integer
-                        type: object
+                          RetentionDays keeps a saved session for at most this many days; it defaults to
+                          persistence.retentionDays, must not exceed it, and has no effect with type none.
+                        format: int64
+                        minimum: 1
+                        type: integer
                     type: object
                   shutdownTimeoutSeconds:
                     format: int64
                     minimum: 0
                     type: integer
                 type: object
+                x-kubernetes-validations:
+                - message: session.retentionDays must not exceed persistence.retentionDays
+                  rule: '!has(self.session) || !has(self.session.retentionDays) ||
+                    !has(self.persistence) || !has(self.persistence.retentionDays)
+                    || self.session.retentionDays <= self.persistence.retentionDays'
             required:
             - channels
             - profileRef

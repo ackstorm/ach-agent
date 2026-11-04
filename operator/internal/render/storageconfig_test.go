@@ -8,28 +8,29 @@ import (
 )
 
 // cfgWithStorageFlags builds the minimal WSConfig RuntimeRequiresStorage/ValidateRuntimeStorage
-// read: only the three enabled booleans participate, everything else is zero-value.
-func cfgWithStorageFlags(workspacePersist, sessionPersist, artifacts bool) WSConfig {
+// read: only the persistence type and artifacts.enabled participate.
+func cfgWithStorageFlags(persist, artifacts bool) WSConfig {
 	var cfg WSConfig
-	cfg.Workspace.Persistence.Enabled = workspacePersist
-	cfg.Workspace.Session.Persistence.Enabled = sessionPersist
+	cfg.Workspace.Persistence.Type = "none"
+	if persist {
+		cfg.Workspace.Persistence.Type = "s3"
+	}
 	cfg.Artifacts.Enabled = artifacts
 	return cfg
 }
 
-// TestRuntimeStorageRequiresAndValidate covers all eight boolean combinations of
-// workspace persistence / session persistence / artifacts: RequiresStorage is their OR;
+// TestRuntimeStorageRequiresAndValidate covers the four combinations of
+// persistence s3 / artifacts: RequiresStorage is their OR;
 // an absent/empty bucket validates with ErrStorageUnavailable exactly when required; a
 // configured bucket always validates regardless of the flags.
 func TestRuntimeStorageRequiresAndValidate(t *testing.T) {
 	for _, tc := range []struct {
-		workspacePersist, sessionPersist, artifacts bool
+		persist, artifacts bool
 	}{
-		{false, false, false}, {true, false, false}, {false, true, false}, {false, false, true},
-		{true, true, false}, {true, false, true}, {false, true, true}, {true, true, true},
+		{false, false}, {true, false}, {false, true}, {true, true},
 	} {
-		cfg := cfgWithStorageFlags(tc.workspacePersist, tc.sessionPersist, tc.artifacts)
-		wantRequires := tc.workspacePersist || tc.sessionPersist || tc.artifacts
+		cfg := cfgWithStorageFlags(tc.persist, tc.artifacts)
+		wantRequires := tc.persist || tc.artifacts
 
 		if got := RuntimeRequiresStorage(cfg); got != wantRequires {
 			t.Errorf("flags=%+v: RuntimeRequiresStorage = %v, want %v", tc, got, wantRequires)

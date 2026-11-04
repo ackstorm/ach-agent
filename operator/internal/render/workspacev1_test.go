@@ -420,8 +420,12 @@ func testPartialSession(t *testing.T) {
 	if got.Persistence.Type != "s3" || *got.Persistence.RetentionDays != 90 {
 		t.Fatalf("workspace.persistence not preserved: %+v", got.Persistence)
 	}
-	if _, err := RenderWorkspaceV1(got); err != nil {
+	rendered, err := RenderWorkspaceV1(got)
+	if err != nil {
 		t.Fatalf("resolved workspace must render: %v", err)
+	}
+	if rendered.Session.RetentionDays == nil || *rendered.Session.RetentionDays != 7 {
+		t.Fatalf("rendered session retentionDays = %v, want 7", rendered.Session.RetentionDays)
 	}
 }
 

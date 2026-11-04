@@ -523,8 +523,7 @@ func TestHandoff_SecretAliasesDoNotCollapseEnvNameCase(t *testing.T) {
 	}
 }
 
-// TestResolveArtifacts_PreservesEnabledOnPartialOverride mirrors the persistence case for
-// artifacts: an agent overriding only maxArtifactBytes must not lose the profile's enabled.
+// TestResolveArtifacts_PreservesEnabledOnPartialOverride checks that an agent overriding only maxArtifactBytes must not lose the profile's enabled.
 func TestResolveArtifacts_PreservesEnabledOnPartialOverride(t *testing.T) {
 	profile := &v1.ArtifactsSpec{Enabled: ptr(true), MaxArtifactBytes: ptr(int64(1000)), RetentionDays: ptr(int64(90))}
 	agent := &v1.ArtifactsSpec{MaxArtifactBytes: ptr(int64(2000))}

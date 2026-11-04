@@ -184,7 +184,7 @@ type WorkspaceSpec struct {
 }
 
 // ArtifactsSpec is the Harness Artifacts policy (config: artifacts.*, contract §8). Enabled
-// is a pointer, same rationale as WorkspacePersistenceSpec.Enabled: an agent overriding just
+// is a pointer so an unset value can be told from false: an agent overriding just
 // maxArtifactBytes/retentionDays must not be forced to also restate enabled. All three merge
 // per-field (ResolveArtifacts); completeness of the resolved block is enforced at
 // RenderArtifactsV1.

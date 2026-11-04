@@ -159,6 +159,7 @@ class McpFacade:
         correlation_headers: CorrelationHeaders = None,
         client: httpx.AsyncClient | None = None,
         auth: httpx.Auth | None = None,
+        own_servers: frozenset[str] = frozenset(),  # authenticated by their own headers, never `auth`
     ) -> None:
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(timeout=_INTERNAL_CLIENT_TIMEOUT)
@@ -204,7 +205,7 @@ class McpFacade:
                 mcp=True,
                 body=body,
                 transform=_listed_tools(exclude_tools, prefix, upstream_names[server_id]) if listing else None,
-                auth=auth,
+                auth=None if server_id in own_servers else auth,
                 _responses=self._responses,
             )
 

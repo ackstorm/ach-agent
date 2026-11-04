@@ -238,6 +238,8 @@ type WSAchServer struct {
 	Environment string     `json:"environment"`
 	Key         WSAchKey   `json:"key"`
 	Model       ModelBlock `json:"model"`
+	// omitempty keeps an Agent without extra MCP servers on its existing configVersion.
+	McpServers []WSMcpServer `json:"mcpServers,omitempty"`
 }
 
 // WSAchKey is capability.ach.key: {"env": NAME} for a Secret, {"exchange": {...}} for
@@ -325,18 +327,23 @@ func renderCapability(a *v1.Agent) (WSCapabilityBlock, []EnvBinding, error) {
 		if api == "" {
 			api = DefaultModelType
 		}
+		servers, env, err := renderMcpServers("ach", ach.McpServers)
+		if err != nil {
+			return cap, nil, err
+		}
 		cap.Ach = &WSAchServer{
 			BaseURL: ach.BaseURL, Environment: ach.Environment,
-			Model: ModelBlock{Name: ach.Model.Name, Type: api, Params: params, Thinking: renderThinking(ach.Model.Thinking)},
+			Model:      ModelBlock{Name: ach.Model.Name, Type: api, Params: params, Thinking: renderThinking(ach.Model.Thinking)},
+			McpServers: servers,
 		}
 		switch kf := ach.KeyFrom; {
 		case kf.TokenExchange != nil:
 			cap.Ach.Key = WSAchKey{Exchange: &WSExchangeKey{Identity: kf.TokenExchange.Identity, Environment: ach.Environment, TokenPath: AchTokenPath}}
-			return cap, nil, nil
+			return cap, env, nil
 		case kf.SecretKeyRef != nil:
 			cap.Ach.Key = WSAchKey{Env: AchKeyEnv}
 			key := *kf.SecretKeyRef
-			return cap, []EnvBinding{{Name: AchKeyEnv, SecretKeyRef: &key}}, nil
+			return cap, append(env, EnvBinding{Name: AchKeyEnv, SecretKeyRef: &key}), nil
 		}
 		return cap, nil, fmt.Errorf("spec.ach.keyFrom needs tokenExchange or secretKeyRef")
 	case "standalone", "":
@@ -364,25 +371,36 @@ func renderCapability(a *v1.Agent) (WSCapabilityBlock, []EnvBinding, error) {
 		if m.Limits != nil {
 			model.Limits = &WSModelLimits{Context: m.Limits.Context, Output: m.Limits.Output}
 		}
-		servers := make([]WSMcpServer, 0, len(st.McpServers))
-		prefixes := map[string]string{}
-		for _, srv := range st.McpServers {
-			prefix := McpEnvPrefix(srv.Name)
-			if other, ok := prefixes[prefix]; ok {
-				return cap, nil, fmt.Errorf("mcp server %q and %q map to the same env prefix %s", other, srv.Name, prefix)
-			}
-			prefixes[prefix] = srv.Name
-			if err := checkHeaderNames("standalone.mcpServers["+srv.Name+"]", srv.Headers); err != nil {
-				return cap, nil, err
-			}
-			aliases, bindings := HeaderEnv(prefix, srv.Headers)
-			servers = append(servers, WSMcpServer{Name: srv.Name, URL: srv.URL, Headers: aliases})
-			env = append(env, bindings...)
+		servers, bindings, err := renderMcpServers("standalone", st.McpServers)
+		if err != nil {
+			return cap, nil, err
 		}
 		cap.Standalone = &WSStandalone{Model: model, McpServers: servers}
-		return cap, env, nil
+		return cap, append(env, bindings...), nil
 	}
 	return cap, nil, fmt.Errorf("unknown capabilityServer %q", a.Spec.CapabilityServer)
+}
+
+// renderMcpServers renders the MCP servers stated on the Agent under spec.<where>, with the
+// env bindings of their Secret headers. Always non-nil: standalone mcpServers is wire-required.
+func renderMcpServers(where string, specs []v1.StandaloneMcpServerSpec) ([]WSMcpServer, []EnvBinding, error) {
+	servers := make([]WSMcpServer, 0, len(specs))
+	var env []EnvBinding
+	prefixes := map[string]string{}
+	for _, srv := range specs {
+		prefix := McpEnvPrefix(srv.Name)
+		if other, ok := prefixes[prefix]; ok {
+			return nil, nil, fmt.Errorf("mcp server %q and %q map to the same env prefix %s", other, srv.Name, prefix)
+		}
+		prefixes[prefix] = srv.Name
+		if err := checkHeaderNames(where+".mcpServers["+srv.Name+"]", srv.Headers); err != nil {
+			return nil, nil, err
+		}
+		aliases, bindings := HeaderEnv(prefix, srv.Headers)
+		servers = append(servers, WSMcpServer{Name: srv.Name, URL: srv.URL, Headers: aliases})
+		env = append(env, bindings...)
+	}
+	return servers, env, nil
 }
 
 // Render collapses profile + agent into the full workspace-v3 WSConfig, including

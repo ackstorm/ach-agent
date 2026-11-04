@@ -55,6 +55,7 @@ from ach_runtime.harness.hydrate import (
     HydratedCatalog,
     HydrationInput,
     Hydrator,
+    McpServerEntry,
     stage_context,
     standalone_catalog,
 )
@@ -924,13 +925,19 @@ async def assemble(
         raise RuntimeError("ACH_SANDBOX_KEY is required and must not be empty")
     key = raw_key.encode("utf-8")
     verify_key = engine_verify_key(key)
+    own_servers: frozenset[str] = frozenset()  # MCP servers that carry their own headers, never the ACH key
     if config.capability.ach is not None:
         ach = config.capability.ach
+        extra = {item.name: resolve_headers(item.headers, env) for item in ach.mcp_servers}
         ach_key = await _ach_key(ach, env, ach_transport)
         ach_client = httpx.AsyncClient(transport=ach_transport, timeout=30)
         hydrator = Hydrator(resolve_ek=ach_key.current, client=ach_client)
         try:
             catalog = await hydrator.load(HydrationInput.from_config(config))
+            if clash := sorted(extra.keys() & {item.id for item in catalog.mcp_servers}):
+                raise WorkspaceAssemblyUnavailable(
+                    f"capability.ach.mcpServers {', '.join(clash)}: the ACH environment already has that MCP server"
+                )
         except BaseException:
             await ach_key.close()
             raise
@@ -940,8 +947,14 @@ async def assemble(
         model_endpoint = f"{ach.base_url.rstrip('/')}/{prefix}"
         # The ACH credential is set per request by ach_key.auth, never fixed in a header dict.
         model_headers: dict[str, str] = {}
-        mcp_headers = {item.id: {} for item in catalog.mcp_servers}
-        upstream_secrets = (ach_key.current(),) if isinstance(ach.key, SecretAlias) else ()
+        mcp_headers = {item.id: {} for item in catalog.mcp_servers} | {name: h for name, (h, _) in extra.items()}
+        catalog = replace(catalog, mcp_servers=(
+            *catalog.mcp_servers, *(McpServerEntry(id=item.name, endpoint=item.url) for item in ach.mcp_servers)))
+        own_servers = frozenset(extra)
+        upstream_secrets = (
+            *((ach_key.current(),) if isinstance(ach.key, SecretAlias) else ()),
+            *(value for _, secrets in extra.values() for value in secrets),
+        )
     else:
         server = config.capability.standalone
         ach_key = None
@@ -976,7 +989,8 @@ async def assemble(
         if ok:
             memory_headers = headers
             memory_auth_secrets = tuple(headers.values())
-            if config.capability.standalone is not None and params.mcp_server_id in mcp_headers:
+            # A server stated on the Agent keeps its own headers (hydrated servers have none).
+            if params.mcp_server_id in mcp_headers:
                 memory_headers = merge_headers(mcp_headers[params.mcp_server_id], headers)
         memory_excluded = excluded_mcp_server_ids(
             mcp_server_id=params.mcp_server_id, endpoint=params.endpoint, mcp_servers=mcp_servers)
@@ -1054,7 +1068,7 @@ async def assemble(
         servers=mcp_servers, server_headers=mcp_headers, key=key, owned_workspace=control._owned_live,
         exclude=excluded | frozenset(memory_excluded),
         exclude_tools=frozenset(config.capability.filter.exclude.tools), identity=identity,
-        client=mcp_client, auth=ach_key.auth if ach_key else None,
+        client=mcp_client, auth=ach_key.auth if ach_key else None, own_servers=own_servers,
     )
     model = ModelFacade(
         endpoint=model_endpoint, headers=model_headers, api=config.model.type, model=config.model.name,

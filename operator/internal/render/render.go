@@ -488,8 +488,17 @@ func ReferencedSecrets(p v1.AgentProfile, a v1.Agent) map[string][]string {
 			}
 		}
 	}
-	if ach := a.Spec.Ach; ach != nil && ach.KeyFrom.SecretKeyRef != nil {
-		add(ach.KeyFrom.SecretKeyRef.Name, ach.KeyFrom.SecretKeyRef.Key)
+	if ach := a.Spec.Ach; ach != nil {
+		if ach.KeyFrom.SecretKeyRef != nil {
+			add(ach.KeyFrom.SecretKeyRef.Name, ach.KeyFrom.SecretKeyRef.Key)
+		}
+		for _, srv := range ach.McpServers {
+			for _, h := range srv.Headers {
+				if h.SecretKeyRef != nil {
+					add(h.SecretKeyRef.Name, h.SecretKeyRef.Key)
+				}
+			}
+		}
 	}
 	out := make(map[string][]string, len(set))
 	for name, keys := range set {

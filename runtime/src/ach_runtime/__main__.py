@@ -31,8 +31,10 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--workspace", type=Path, default=Path.cwd(), help="the agent's working directory (default: cwd)")
     run.add_argument("--name", default=None, help="agent name (default: the manifest's directory name)")
     run.add_argument("--data-dir", type=Path, default=Path("/tmp/ach-run"))
-    profile = commands.add_parser("profile", help="print the manifest's ach.profile (empty line if unset)")
-    profile.add_argument("--config", type=Path, required=True, help="the agent.yaml manifest")
+    inspect = commands.add_parser(
+        "inspect", help="print, one per line: the mode (ach|standalone), ach.profile (empty if unset), "
+                        "then the env names the manifest's headers read")
+    inspect.add_argument("--config", type=Path, required=True, help="the agent.yaml manifest")
     return parser
 
 
@@ -72,14 +74,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print("ach-agent: last log lines:", file=sys.stderr)
                 print(*log_path.read_text(errors="replace").splitlines()[-20:], sep="\n", file=sys.stderr)
             return 1
-    elif args.command == "profile":
-        from ach_runtime.manifest import ManifestError, load_manifest
+    elif args.command == "inspect":
+        from ach_runtime.manifest import ManifestError, load_manifest, secret_env_names
 
         try:
-            print(load_manifest(args.config).ach.profile or "")
+            manifest = load_manifest(args.config)
         except ManifestError as exc:
             print(f"ach-agent: {exc}", file=sys.stderr)
             return 2
+        print("standalone" if manifest.ach is None else "ach")
+        print((manifest.ach and manifest.ach.profile) or "")
+        for name in secret_env_names(manifest):
+            print(name)
     return 0
 
 

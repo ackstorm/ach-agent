@@ -446,7 +446,8 @@ type StandaloneModelSpec struct {
 	Limits *ModelLimitsSpec `json:"limits,omitempty"`
 }
 
-// StandaloneMcpServerSpec is one remote MCP server of a standalone Agent.
+// StandaloneMcpServerSpec is one remote MCP server stated on the Agent (standalone, or added
+// to an ACH Environment's).
 type StandaloneMcpServerSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9_-]{0,62}$`
@@ -526,6 +527,14 @@ type AchServerSpec struct {
 	KeyFrom AchKeyFrom `json:"keyFrom"`
 	// +kubebuilder:validation:Required
 	Model AchModelSpec `json:"model"`
+	// McpServers are added to the Environment's MCP servers. They authenticate with their own
+	// headers and are never sent the ACH credential; a name the Environment already serves
+	// fails the control pod's start.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=64
+	McpServers []StandaloneMcpServerSpec `json:"mcpServers,omitempty"`
 }
 
 // AgentOpenShellSpec is the Agent's own sandbox policy.

@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from ach_runtime.config.schema import parse_config
-from ach_runtime.manifest import ManifestError, load_manifest, manifest_to_wire
+from ach_runtime.config.schema import ConfigError, parse_config
+from ach_runtime.manifest import ManifestError, load_manifest, manifest_to_wire, secret_env_names
 
 MINIMAL = """
 ach: {environment: engineering-prod}
@@ -87,3 +87,54 @@ def test_exclude_maps_to_the_capability_filter(tmp_path) -> None:
 def test_unknown_key_is_rejected(tmp_path, extra) -> None:
     with pytest.raises(ManifestError, match=extra.split(":")[0]):
         load_manifest(_write(tmp_path, MINIMAL + extra))
+
+
+STANDALONE = """
+model:
+  name: claude-sonnet-5-5
+  type: anthropic
+  baseUrl: https://api.anthropic.com/v1
+  headers: {x-api-key: {env: ANTHROPIC_API_KEY}}
+  limits: {context: 200000, output: 64000}
+mcpServers:
+  - {name: github, url: "https://gh.example/mcp", headers: {Authorization: {env: GH_AUTH}}}
+"""
+
+
+def test_without_ach_the_capability_is_standalone(tmp_path) -> None:
+    config = parse_config(manifest_to_wire(load_manifest(_write(tmp_path, STANDALONE)), base_dir=tmp_path, name="a"))
+    assert config.capability.server == "standalone"
+    server = config.capability.standalone
+    assert (server.model.base_url, server.model.headers["x-api-key"].env) == (
+        "https://api.anthropic.com/v1", "ANTHROPIC_API_KEY")
+    assert server.model.limits.context == 200000
+    assert [(s.name, s.headers["Authorization"].env) for s in server.mcp_servers] == [("github", "GH_AUTH")]
+    assert secret_env_names(load_manifest(_write(tmp_path, STANDALONE))) == ["ANTHROPIC_API_KEY", "GH_AUTH"]
+
+
+def test_standalone_needs_a_base_url(tmp_path) -> None:
+    with pytest.raises(ManifestError, match="baseUrl"):
+        load_manifest(_write(tmp_path, "model: {name: m, type: openai}\n"))
+
+
+def test_header_env_names_must_be_plain_variable_names(tmp_path) -> None:
+    with pytest.raises(ManifestError, match="env variable name"):
+        load_manifest(_write(tmp_path, STANDALONE.replace("GH_AUTH", "'GH=1 *'")))
+
+
+def test_ach_takes_extra_mcp_servers_and_model_options(tmp_path) -> None:
+    extra = (
+        "mcpServers: [{name: github, url: 'https://gh.example/mcp', headers: {Authorization: {env: GH_AUTH}}}]\n"
+    )
+    text = MINIMAL.replace("type: gemini}", "type: gemini, thinking: {enabled: true, effort: low}}") + extra
+    config = parse_config(_wire(tmp_path, text))
+    assert config.capability.ach.model.thinking.effort == "low"
+    assert [s.name for s in config.capability.ach.mcp_servers] == ["github"]
+
+
+def test_the_runtime_schema_validates_the_passed_through_fields(tmp_path) -> None:
+    with pytest.raises(ConfigError, match="limits"):  # ach models take no limits
+        _wire(tmp_path, MINIMAL.replace("type: gemini}", "type: gemini, limits: {context: 1, output: 1}}"))
+    with pytest.raises(ConfigError, match="skills"):
+        manifest_to_wire(load_manifest(_write(tmp_path, STANDALONE + "exclude: {skills: [s]}\n")),
+                         base_dir=tmp_path, name="a")

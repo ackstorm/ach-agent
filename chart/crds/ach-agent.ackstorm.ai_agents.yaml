@@ -102,6 +102,62 @@ spec:
                     x-kubernetes-validations:
                     - message: 'ach.keyFrom: set exactly one of tokenExchange or secretKeyRef'
                       rule: has(self.tokenExchange) != has(self.secretKeyRef)
+                  mcpServers:
+                    description: |-
+                      McpServers are added to the Environment's MCP servers. They authenticate with their own
+                      headers and are never sent the ACH credential; a name the Environment already serves
+                      fails the control pod's start.
+                    items:
+                      description: |-
+                        StandaloneMcpServerSpec is one remote MCP server stated on the Agent (standalone, or added
+                        to an ACH Environment's).
+                      properties:
+                        headers:
+                          additionalProperties:
+                            description: 'HeaderValue is one HTTP header value: a
+                              Secret key or a literal.'
+                            properties:
+                              secretKeyRef:
+                                description: SecretKeyRef identifies a key in a same-namespace
+                                  Secret.
+                                properties:
+                                  key:
+                                    description: Key is the data key inside the Secret.
+                                    minLength: 1
+                                    type: string
+                                  name:
+                                    description: Name is the Kubernetes Secret name.
+                                    minLength: 1
+                                    type: string
+                                required:
+                                - key
+                                - name
+                                type: object
+                              value:
+                                type: string
+                            type: object
+                            x-kubernetes-validations:
+                            - message: exactly one of secretKeyRef or value must be
+                                set
+                              rule: has(self.secretKeyRef) != has(self.value)
+                          maxProperties: 64
+                          type: object
+                        name:
+                          pattern: ^[a-z0-9][a-z0-9_-]{0,62}$
+                          type: string
+                        url:
+                          minLength: 1
+                          pattern: ^https?://[^/\s]+
+                          type: string
+                      required:
+                      - name
+                      - url
+                      type: object
+                    maxItems: 64
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
                   model:
                     description: AchModelSpec selects the ACH-served model.
                     properties:
@@ -1110,8 +1166,9 @@ spec:
                 properties:
                   mcpServers:
                     items:
-                      description: StandaloneMcpServerSpec is one remote MCP server
-                        of a standalone Agent.
+                      description: |-
+                        StandaloneMcpServerSpec is one remote MCP server stated on the Agent (standalone, or added
+                        to an ACH Environment's).
                       properties:
                         headers:
                           additionalProperties:

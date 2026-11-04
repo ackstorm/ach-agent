@@ -1189,12 +1189,13 @@
     },
     "PersistenceBlock": {
       "additionalProperties": false,
-      "description": "Where the Workspace files and its session HOMEs survive the sandbox (one type for both).",
+      "description": "Where the Workspace files and its session HOMEs survive the sandbox (one type for both):\nnowhere (none), the install-wide S3 store (s3), or the Workspace's PVC (volume, which the\noperator owns; its size and class are not on the wire).",
       "properties": {
         "type": {
           "enum": [
             "none",
-            "s3"
+            "s3",
+            "volume"
           ],
           "title": "Type",
           "type": "string"

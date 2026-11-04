@@ -276,6 +276,14 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, fmt.Errorf("marshal config: %w", err)
 	}
 
+	// 2b. Workspace PVCs reach a sandbox through driver_config, which the gateway lets any API
+	// caller set: only with the gateway's mTLS is the operator the only caller.
+	if cfg.Workspace.Persistence.Type == "volume" && len(r.OpenShellCA) == 0 {
+		setCond(&conds, condWorkloadApplied, metav1.ConditionFalse, "VolumeRequiresGatewayTLS",
+			"workspace.persistence.type volume needs the operator's OpenShell gateway mTLS (chart value openshell.tls.secret)", agent.Generation)
+		return r.finish(ctx, &agent, conds)
+	}
+
 	// 3. The control pod must outlive the runtime drain.
 	if err := checkGracePeriod(&profile, &agent); err != nil {
 		setCond(&conds, condWorkloadApplied, metav1.ConditionFalse, "InvalidGracePeriod", err.Error(), agent.Generation)

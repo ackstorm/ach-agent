@@ -5,6 +5,7 @@ package v1alpha1
 import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -132,18 +133,42 @@ type LimitsSpec struct {
 }
 
 // WorkspacePersistenceSpec is where a Workspace's files and its session HOMEs survive the
-// sandbox (contract §7: workspace.persistence): nowhere (none) or the install-wide S3 store
-// (s3). One type covers both. Resolved as one atomic block: an Agent's block replaces the
-// profile's whole. This is the Harness/Storage logical policy — distinct from
-// AgentProfileSpec.Persistence, the control pod's PVC.
-// +kubebuilder:validation:XValidation:rule="self.type != 'volume'",message="persistence.type volume is not implemented yet"
+// sandbox (contract §7: workspace.persistence): nowhere (none), the install-wide S3 store (s3),
+// or one PVC per Workspace that the next sandbox of that Workspace mounts again (volume). One
+// type covers both. Resolved as one atomic block: an Agent's block replaces the profile's whole.
+// This is the Harness/Storage logical policy — distinct from AgentProfileSpec.Persistence, the
+// control pod's PVC.
 // +kubebuilder:validation:XValidation:rule="self.type == 'none' ? !has(self.retentionDays) : has(self.retentionDays)",message="persistence.retentionDays is required unless type is none, and forbidden with none"
+// +kubebuilder:validation:XValidation:rule="self.type == 'volume' ? has(self.volume) : !has(self.volume)",message="persistence.volume is required with type volume, and forbidden otherwise"
 type WorkspacePersistenceSpec struct {
 	// +kubebuilder:validation:Enum=none;s3;volume
 	Type string `json:"type"`
+	// RetentionDays: with s3 the snapshot lifetime; with volume, how long a Workspace PVC with
+	// no sandbox is kept.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	RetentionDays *int64 `json:"retentionDays,omitempty"`
+	// Volume is the Workspace PVC of type volume. The operator's alone: it is not on the wire.
+	// +optional
+	Volume *WorkspaceVolumeSpec `json:"volume,omitempty"`
+}
+
+// WorkspaceVolumeSpec is the PVC the operator creates per Workspace for persistence type volume,
+// in the sandbox pod namespace, mounted read-write at /sandbox/ach. Its StorageClass must have
+// reclaimPolicy Delete (deleting the Agent then deletes the volumes) and give uid/gid 10001
+// write access.
+type WorkspaceVolumeSpec struct {
+	// Size is the PVC request of Workspace PVCs created after it is set; existing PVCs keep
+	// their size.
+	Size resource.Quantity `json:"size"`
+	// StorageClassName applies to Workspace PVCs created after it is set; empty is the
+	// cluster's default class.
+	// +optional
+	StorageClassName string `json:"storageClassName,omitempty"`
+	// AccessMode of new Workspace PVCs; empty is ReadWriteOnce.
+	// +optional
+	// +kubebuilder:validation:Enum=ReadWriteOnce;ReadWriteMany
+	AccessMode string `json:"accessMode,omitempty"`
 }
 
 // WorkspaceSessionSpec is workspace.session (contract §7). Pointer fields: per-field merge.

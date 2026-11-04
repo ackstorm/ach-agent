@@ -1329,6 +1329,9 @@ spec:
                       the profile''s. Absent means type none.'
                     properties:
                       retentionDays:
+                        description: |-
+                          RetentionDays: with s3 the snapshot lifetime; with volume, how long a Workspace PVC with
+                          no sandbox is kept.
                         format: int64
                         minimum: 1
                         type: integer
@@ -1338,15 +1341,44 @@ spec:
                         - s3
                         - volume
                         type: string
+                      volume:
+                        description: 'Volume is the Workspace PVC of type volume.
+                          The operator''s alone: it is not on the wire.'
+                        properties:
+                          accessMode:
+                            description: AccessMode of new Workspace PVCs; empty is
+                              ReadWriteOnce.
+                            enum:
+                            - ReadWriteOnce
+                            - ReadWriteMany
+                            type: string
+                          size:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: |-
+                              Size is the PVC request of Workspace PVCs created after it is set; existing PVCs keep
+                              their size.
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          storageClassName:
+                            description: |-
+                              StorageClassName applies to Workspace PVCs created after it is set; empty is the
+                              cluster's default class.
+                            type: string
+                        required:
+                        - size
+                        type: object
                     required:
                     - type
                     type: object
                     x-kubernetes-validations:
-                    - message: persistence.type volume is not implemented yet
-                      rule: self.type != 'volume'
                     - message: persistence.retentionDays is required unless type is
                         none, and forbidden with none
                       rule: 'self.type == ''none'' ? !has(self.retentionDays) : has(self.retentionDays)'
+                    - message: persistence.volume is required with type volume, and
+                        forbidden otherwise
+                      rule: 'self.type == ''volume'' ? has(self.volume) : !has(self.volume)'
                   session:
                     description: 'WorkspaceSessionSpec is workspace.session (contract
                       §7). Pointer fields: per-field merge.'

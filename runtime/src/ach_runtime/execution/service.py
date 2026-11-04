@@ -114,6 +114,7 @@ class Engine(Protocol):
         home: Path | None = None,
         scratch: Path | None = None,
         restored_home: Path | None = None,
+        in_place: bool = False,
         deadline_at: datetime | None = None,
     ) -> None: ...
 
@@ -1103,6 +1104,7 @@ class ExecutionService:
         manifest: SnapshotManifest,
         *,
         restored_home: Path | None = None,
+        in_place: bool = False,
         _reservation_held: bool = False,
         deadline_at: datetime | None = None,
     ) -> None:
@@ -1142,6 +1144,7 @@ class ExecutionService:
                 home=session.home,
                 scratch=session.scratch,
                 restored_home=restored_home,
+                in_place=in_place,
                 deadline_at=deadline_at,
             )
             session.native_session_id = manifest.native_session_id

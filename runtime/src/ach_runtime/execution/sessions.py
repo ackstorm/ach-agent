@@ -21,6 +21,7 @@ import json
 import os
 import re
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -129,6 +130,38 @@ class SessionRegistry:
                 except (OSError, ValueError, KeyError, TypeError):
                     continue
         return list(self._sessions.values())
+
+    async def prune(self, retention_days: int) -> int:
+        """Delete the session roots unused for `retention_days` and empty the scratch of the
+        others; returns how many were deleted. With persistence type volume the sessions root is
+        on the Workspace PVC and outlives the sandbox. A session's last use is the mtime of its
+        manifest (written at every suspend), else of its HOME. A session reserved by work in
+        this process is left alone."""
+        if not self._root.is_dir():
+            return 0
+        cutoff = time.time() - retention_days * 86400
+        refs = {_safe_dir_name(ref): ref for ref in self._sessions}
+        pruned = 0
+        for session_dir in list(self._root.iterdir()):
+            if session_dir.is_symlink() or not session_dir.is_dir():
+                continue
+            ref = refs.get(session_dir.name)
+            if ref is not None and self._lock_for(ref).locked():
+                continue
+            home = session_dir / "home"
+            manifest = home / ".ach-registry.json"
+            stamp = manifest if manifest.is_file() else home if home.is_dir() else session_dir
+            if stamp.stat().st_mtime < cutoff:
+                await asyncio.to_thread(shutil.rmtree, session_dir)
+                if ref is not None:
+                    del self._sessions[ref]
+                pruned += 1
+                continue
+            scratch = session_dir / "scratch"
+            if scratch.is_dir() and not scratch.is_symlink():
+                await asyncio.to_thread(shutil.rmtree, scratch)
+                scratch.mkdir()
+        return pruned
 
     def mark_started(self, state: SessionState) -> None:
         (state.home / SESSION_STARTED_MARKER).touch()

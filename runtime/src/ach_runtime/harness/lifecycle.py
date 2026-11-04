@@ -25,6 +25,10 @@ from ach_runtime.harness.transfer import get_archive, put_archive
 
 log = logging.getLogger(__name__)
 
+# Bound of the volume session calls, the archive transfer's: a suspend runs the sessionSuspend
+# hook and stops opencode, a resume relaunches opencode.
+_SESSION_CALL_TIMEOUT = 180.0
+
 
 
 _CLOSE_ARCHIVE_BYTES = 2 * 1024**3
@@ -203,8 +207,11 @@ class Lifecycle:
         start hook is alarmed but never blocks the workspace (a reactivated pod that failed
         to start would stay unusable until control restarts); gate runs in sessionStart."""
         restored = False
-        if self.control.config.workspace.persistence.type == "s3":
+        persistence = self.control.config.workspace.persistence.type
+        if persistence == "s3":
             restored = await self._restore_workspace_archive(endpoint)
+        elif persistence == "volume":
+            await self._prune_sessions(endpoint)
         try:
             await self.control.run_workspace_hook(endpoint, "start", restored=restored)
         except Exception as exc:
@@ -212,6 +219,23 @@ class Lifecycle:
 
             log.warning("workspaceStart hook failed: %s", exc)
             alarm("workspace_start_failed", workspace_ref=endpoint.ref.workspace_ref)
+
+    async def _prune_sessions(self, endpoint: Any) -> None:
+        """type volume: the session HOMEs stay on the Workspace PVC; the pod deletes the ones
+        unused for session.retentionDays. A failure is alarmed and never blocks the Workspace."""
+        try:
+            status, body = await self.control._mini_json(
+                endpoint, "POST", "/sessions/prune",
+                {"retentionDays": self.control.config.workspace.session_retention_days},
+                timeout=_SESSION_CALL_TIMEOUT,
+            )
+            if status != 200 or not isinstance(body, dict) or body.get("status") != "ok":
+                raise RuntimeError(f"mini-harness session prune answered {status}")
+        except Exception as exc:
+            from ach_runtime.observability import alarm
+
+            log.warning("session prune failed: %s", exc)
+            alarm("persistence_failed", workspace_ref=endpoint.ref.workspace_ref)
 
     async def _restore_workspace_archive(self, endpoint: Any) -> bool:
         retention_days = self.control.config.workspace.persistence.retention_days
@@ -356,7 +380,11 @@ class Lifecycle:
 
     async def restore_session(self, ticket: Any, endpoint: Any) -> None:
         """Restore only the admitted opaque session ref; a live local session wins."""
-        if self.control.config.workspace.persistence.type != "s3":
+        persistence = self.control.config.workspace.persistence.type
+        if persistence == "volume":
+            await self._resume_session(ticket, endpoint)
+            return
+        if persistence != "s3":
             return
         retention_days = self.control.config.workspace.session_retention_days
         ref = self._ref(endpoint, DOMAIN_SESSION, ticket.session_ref)
@@ -390,6 +418,21 @@ class Lifecycle:
             alarm("restore_failed", workspace_ref=ref.workspace_ref, session_ref=ref.session_ref)
             raise
 
+    async def _resume_session(self, ticket: Any, endpoint: Any) -> None:
+        """type volume: the HOME is on the Workspace PVC; the pod resumes the session from it."""
+        try:
+            status, body = await self.control._mini_json(
+                endpoint, "POST", f"/sessions/{ticket.session_ref}/resume",
+                {"deadlineAt": ticket.deadline_at.isoformat()}, timeout=_SESSION_CALL_TIMEOUT,
+            )
+            if status != 200 or not isinstance(body, dict) or body.get("status") not in {"live", "fresh", "resumed"}:
+                raise RuntimeError(f"mini-harness did not resume the session: {status}")
+        except Exception:
+            from ach_runtime.observability import alarm
+
+            alarm("restore_failed", workspace_ref=endpoint.ref.workspace_ref, session_ref=ticket.session_ref)
+            raise
+
     @asynccontextmanager
     async def operation(self, workspace_ref: str):
         lock = self._locks.setdefault(workspace_ref, asyncio.Lock())
@@ -408,7 +451,12 @@ class Lifecycle:
         self._bases[(ref.workspace_ref, None)] = lease.base_etag
 
     async def _save_session(self, endpoint: Any, session_ref: str) -> None:
-        enabled = self.control.config.workspace.persistence.type == "s3"
+        persistence = self.control.config.workspace.persistence.type
+        if persistence == "volume":
+            await self._suspend_session(endpoint, session_ref)
+            await self._report_suspend_hook(endpoint, session_ref)
+            return
+        enabled = persistence == "s3"
         ref = self._ref(endpoint, DOMAIN_SESSION, session_ref)
         if not enabled:
             try:
@@ -433,6 +481,19 @@ class Lifecycle:
                 raise
         await self._report_suspend_hook(endpoint, session_ref)
         await self._retire_session(endpoint, session_ref)
+
+    async def _suspend_session(self, endpoint: Any, session_ref: str) -> None:
+        """type volume: stop the session's opencode; its HOME stays on the Workspace PVC and is
+        never retired."""
+        try:
+            status, body = await self.control._mini_json(
+                endpoint, "POST", f"/sessions/{session_ref}/suspend", timeout=_SESSION_CALL_TIMEOUT,
+            )
+            if status != 200 or not isinstance(body, dict) or body.get("status") != "suspended":
+                raise RuntimeError(f"mini-harness did not suspend the session: {status}")
+        except Exception as exc:
+            self._report_failure(exc, "Harness session persistence failed")
+            raise
 
     async def _retire_session(self, endpoint: Any, session_ref: str) -> None:
         """Postcommit retire (I6): never re-Suspends or re-exports — a transient transport

@@ -270,6 +270,46 @@ def create_app(
         except Exception as exc:  # noqa: BLE001 - mapped to the private API error contract
             return _error_response(exc)
 
+    @app.post("/sessions/{session_ref}/suspend")
+    async def suspend_session(session_ref: str) -> JSONResponse:
+        try:
+            from ach_runtime.execution.snapshots import suspend_session
+
+            await suspend_session(service, session_ref)
+            return JSONResponse({"status": "suspended", "sessionRef": session_ref})
+        except KeyError:
+            return JSONResponse({"detail": "unknown session_ref"}, status_code=404)
+        except Exception as exc:  # noqa: BLE001 - mapped to the private API error contract
+            return _error_response(exc)
+
+    @app.post("/sessions/{session_ref}/resume")
+    async def resume_session(session_ref: str, request: Request) -> JSONResponse:
+        try:
+            from ach_runtime.execution.snapshots import resume_session
+
+            payload = await _request_json(request)
+            raw_deadline = payload.get("deadlineAt") if isinstance(payload, dict) else None
+            deadline_at = _parse_aware_deadline(raw_deadline) if isinstance(raw_deadline, str) else None
+            status = await resume_session(service, session_ref, deadline_at=deadline_at)
+            return JSONResponse({"status": status, "sessionRef": session_ref})
+        except Exception as exc:  # noqa: BLE001 - mapped to the private API error contract
+            return _error_response(exc)
+
+    @app.post("/sessions/prune")
+    async def prune_sessions(request: Request) -> JSONResponse:
+        try:
+            payload = await _request_json(request)
+        except (_BodyTooLarge, ValueError, UnicodeDecodeError) as exc:
+            return _invalid(str(exc) or "invalid request body")
+        days = payload.get("retentionDays") if isinstance(payload, dict) else None
+        if not isinstance(days, int) or isinstance(days, bool) or days < 1:
+            return _invalid("retentionDays must be a positive integer")
+        try:
+            pruned = await service._sessions.prune(days)
+        except Exception as exc:  # noqa: BLE001 - mapped to the private API error contract
+            return _error_response(exc)
+        return JSONResponse({"status": "ok", "pruned": pruned})
+
     @app.put("/sessions/{session_ref}/archive")
     async def restore_session_archive(session_ref: str, request: Request) -> JSONResponse:
         try:

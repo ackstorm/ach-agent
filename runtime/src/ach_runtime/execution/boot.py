@@ -62,6 +62,8 @@ def build_execution_app(
     sessions_root: Path = DEFAULT_SESSIONS_ROOT,
 ) -> FastAPI:
     verify_key, workspace_name, workspace_ref = _identity(environ)
+    # A Workspace PVC mounted at /sandbox/ach (persistence type volume) starts empty.
+    workspace_dir.mkdir(parents=True, exist_ok=True)
     instance_id = str(uuid.uuid4())
     engine = OpenCodeEngine()
     service = ExecutionService(

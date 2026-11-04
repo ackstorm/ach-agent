@@ -1871,6 +1871,7 @@ class OpenCodeEngine:
         home: Path | None = None,
         scratch: Path | None = None,
         restored_home: Path | None = None,
+        in_place: bool = False,
         deadline_at: datetime | None = None,
     ) -> None:
         """Validate, download, relaunch and verify — never adopts archive metadata as
@@ -1880,6 +1881,8 @@ class OpenCodeEngine:
         exact restored sid. No synthetic prompt is sent. The engine version is not an identity
         field: a session saved by an older opencode release restores under the running one
         (2.0.20 → 2.2.5 verified), and the sid check above still catches an unreadable store.
+        With `in_place` the session's HOME already holds its state (persistence type volume):
+        nothing is downloaded or staged, and the relaunch resumes from it.
         """
         required = {"engine_package", "workspace_ref", "session_ref", "workspace_path"}
         missing_expected = required - expected.keys()
@@ -1907,11 +1910,11 @@ class OpenCodeEngine:
             # A live process would keep its old HOME open and answer the sid probe itself;
             # the caller must stop/retire it first.
             raise RestoreMismatch(f"restore requires a stopped native process for {session_ref}")
-        if restored_home is None and manifest.archive_ref is None:
+        if restored_home is None and manifest.archive_ref is None and not in_place:
             raise RestoreMismatch("restore requires an archived payload; no bare metadata adoption")
         if restored_home is not None and not restored_home.is_dir():
             raise RestoreMismatch("staged HOME payload does not exist")
-        if restored_home is None and self._transfer is not None:
+        if restored_home is None and self._transfer is not None and not in_place:
             await self._transfer.download(manifest.archive_ref, dest=session.home)
 
         previous_home: Path | None = None

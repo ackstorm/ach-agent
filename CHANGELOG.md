@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Opt-in OpenShell gateway mTLS. With `openshell.tls.secret` (the Secret of the operator's
+  `OU=operator` client certificate) the operator reads that Secret at start, calls an `https://`
+  gateway with it, and control pods verify the sandbox service path against its CA only
+  (`ACH_AGENT_EXECUTION_CA_FILE`); the gateway refuses every other API caller. The chart grants
+  `get`/`watch` on that one Secret and renders no cert-manager objects. `docs/mesh/openshell-pki.yaml`
+  is the reference PKI, all in `openshell` with namespaced Issuers (every certificate 262800h).
+  Without the value nothing changes. Switching recreates the sandboxes created before it.
+
 ## [0.4.0] - 2026-11-04
 
 ### Added

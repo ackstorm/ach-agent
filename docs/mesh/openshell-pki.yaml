@@ -1,0 +1,73 @@
+# OpenShell gateway PKI (cert-manager), all in namespace openshell: a self-signed root CA and the
+# gateway's server, sandbox client and ach-agent operator certificates, each valid 30 years
+# (262800h). Namespaced Issuers only: just who can create Certificates in openshell can obtain an
+# OU=operator certificate. Apply before the OpenShell chart, replacing <AGENT_NAMESPACE> with the
+# namespace that holds the Agents (one dnsNames entry per Agent namespace).
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata: {name: openshell-selfsigned, namespace: openshell}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: openshell-ca, namespace: openshell}
+spec:
+  isCA: true
+  commonName: openshell-ca
+  subject: {organizations: [openshell]}
+  secretName: openshell-ca
+  duration: 262800h
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {group: cert-manager.io, kind: Issuer, name: openshell-selfsigned}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata: {name: openshell-ca, namespace: openshell}
+spec:
+  ca: {secretName: openshell-ca}
+---
+# The gateway's certificate. The OpenShell chart reads tls.crt and tls.key, and ca.crt as the CA it
+# trusts for client certificates. The wildcard covers the per-sandbox URLs
+# (<workspace>--<sandbox>.<agent namespace>.svc.cluster.local); keep the same names in the OpenShell
+# values' pkiInitJob.serverDnsNames, which sets the domains the gateway routes to sandboxes.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: openshell-server, namespace: openshell}
+spec:
+  secretName: openshell-server-tls
+  commonName: openshell-server
+  dnsNames:
+    - openshell.openshell.svc
+    - openshell.openshell.svc.cluster.local
+    - "*.<AGENT_NAMESPACE>.svc.cluster.local"
+  usages: [digital signature, server auth]
+  duration: 262800h
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {group: cert-manager.io, kind: Issuer, name: openshell-ca}
+---
+# Sandbox supervisors verify the gateway with its ca.crt. No OU: OU=operator is gateway-wide admin.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: openshell-client, namespace: openshell}
+spec:
+  secretName: openshell-client-tls
+  commonName: openshell-client
+  usages: [digital signature, client auth]
+  duration: 262800h
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {group: cert-manager.io, kind: Issuer, name: openshell-ca}
+---
+# The ach-agent operator's certificate: OU=operator is the gateway's operator principal. The
+# ach-agent chart lets the operator read this Secret (openshell.tls.secret).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: ach-agent-operator, namespace: openshell}
+spec:
+  secretName: ach-agent-operator-tls
+  commonName: ach-agent-operator
+  subject: {organizationalUnits: [operator]}
+  usages: [digital signature, client auth]
+  duration: 262800h
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {group: cert-manager.io, kind: Issuer, name: openshell-ca}

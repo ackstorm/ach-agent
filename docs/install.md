@@ -61,6 +61,58 @@ The chart refuses to render unless `openshell.gateway` is set and `openshell.mes
 It also installs a ValidatingAdmissionPolicy that limits the operator to Opaque Secrets named
 `ach-agent-key-*` (`admissionPolicy.enabled=false` disables it).
 
+### Gateway mTLS (optional)
+
+With mTLS the gateway refuses every caller of its API except the operator, which presents a client
+certificate with `OU=operator`. The mesh policy (step 4) stays: the sandbox service path on the same
+port has no gateway authentication. Every certificate comes from an OpenShell CA in cert-manager and
+is valid 30 years (`duration: 262800h`). The whole PKI, the operator's certificate included, lives in
+namespace `openshell` behind namespaced Issuers: only who can create Certificates in `openshell` can
+obtain an operator certificate, so keep that right to the gateway's administrators.
+
+1. cert-manager v1.19.1:
+
+   ```bash
+   helm repo add jetstack https://charts.jetstack.io --force-update
+   helm upgrade --install cert-manager jetstack/cert-manager --version v1.19.1 -n cert-manager \
+     --create-namespace --set crds.enabled=true --wait
+   ```
+
+2. The PKI, before the OpenShell chart. Replace `<AGENT_NAMESPACE>` in `docs/mesh/openshell-pki.yaml`
+   (one `dnsNames` entry per Agent namespace in `openshell-server`, the same names as
+   `pkiInitJob.serverDnsNames`):
+
+   ```bash
+   sed "s/<AGENT_NAMESPACE>/ach-agent/" docs/mesh/openshell-pki.yaml | kubectl apply -f -
+   kubectl -n openshell wait --for=condition=Ready certificate/openshell-server certificate/openshell-client \
+     certificate/ach-agent-operator --timeout=180s
+   ```
+
+3. OpenShell with `test/e2e/openshell-tls-values.yaml` layered after the step 3 values:
+
+   ```bash
+   helm upgrade --install openshell oci://ghcr.io/nvidia/openshell/helm-chart --version 0.1.7 \
+     -n openshell -f test/e2e/openshell-values.yaml -f test/e2e/openshell-tls-values.yaml --wait --timeout 6m
+   ```
+
+4. The operator with an `https://` gateway and its certificate Secret:
+
+   ```bash
+   helm upgrade --install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent -n ach-agent-system \
+     --set openshell.gateway=https://openshell.openshell.svc.cluster.local:8080 \
+     --set openshell.tls.secret.namespace=openshell --set openshell.tls.secret.name=ach-agent-operator-tls
+   ```
+
+   The chart lets the operator read that one Secret (a Role in `openshell`); the operator reads it at
+   start and fails to start without it. The sandbox URLs become `https://`. Control pods trust the
+   OpenShell CA for those URLs only (`ACH_AGENT_EXECUTION_CA_FILE`); every other connection keeps the
+   system trust store.
+
+Switching an existing install: change the OpenShell values and the operator values in the same
+rollout. The gateway restarts with TLS; sandboxes created before it answer 412 until they are
+recreated, which control does on the Agent's next event (or delete their pods in `openshell`). A new
+Agent namespace adds a `dnsNames` entry to `openshell-server` and to `pkiInitJob.serverDnsNames`.
+
 ### Storage server
 
 With a bucket configured and `storage.enabled` (the default), the chart runs one storage server,

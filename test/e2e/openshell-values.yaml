@@ -12,6 +12,7 @@ server:
   telemetryEnabled: false
 pkiInitJob:
   # Sandbox URLs are <ws>--<sb>.<agent ns>.svc.cluster.local (operator ExternalName Services);
-  # a wildcard SAN makes the gateway route that domain (also with disableTls). One entry per
-  # Agent namespace.
+  # the chart renders these names into the gateway's server_sans, the domains it routes to sandboxes
+  # (with or without TLS). One entry per Agent namespace; with TLS the openshell-server Certificate
+  # carries the same names.
   serverDnsNames: ["*.ach-agent-e2e.svc.cluster.local"]

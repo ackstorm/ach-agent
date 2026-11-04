@@ -402,3 +402,19 @@ func standinRegistries(t *testing.T, uid string) int {
 	}
 	return n
 }
+
+// unauthenticatedGatewayCall posts an empty gRPC request for method to the gateway over TLS without a
+// client certificate, from a throwaway pod in the Agent namespace (the mesh admits it), and returns
+// curl's verbose output: the response headers and trailers.
+func unauthenticatedGatewayCall(t *testing.T, method string) string {
+	t.Helper()
+	script := "head -c 5 /dev/zero | curl -sv -k --http2 -m 15 -X POST -H 'content-type: application/grpc' -H 'te: trailers' " +
+		"--data-binary @- -o /dev/null https://openshell.openshell.svc.cluster.local:8080/openshell.v1.OpenShell/" + method + " 2>&1"
+	out, err := kubectl("", "-n", agentNS, "run", fmt.Sprintf("e2e-grpc-probe-%d", time.Now().UnixNano()),
+		"--image=curlimages/curl:8.11.1", "--restart=Never", "--rm", "-i", "--quiet", "--pod-running-timeout=2m",
+		"--command", "--", "sh", "-c", script)
+	if err != nil {
+		t.Logf("probe pod exited with %v", err)
+	}
+	return out
+}

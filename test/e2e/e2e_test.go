@@ -69,6 +69,14 @@ func TestE2E(t *testing.T) {
 		}
 	})
 
+	t.Run("gateway-auth", func(t *testing.T) {
+		// Reachable through the mesh, but without the operator's client certificate the gateway
+		// refuses the call: gRPC status 16 (Unauthenticated). A plaintext gateway fails the TLS handshake.
+		if out := unauthenticatedGatewayCall(t, "CreateSandbox"); !strings.Contains(out, "grpc-status: 16") {
+			t.Fatalf("an unauthenticated CreateSandbox was not refused with Unauthenticated:\n%s", out)
+		}
+	})
+
 	t.Run("sandbox-egress", func(t *testing.T) {
 		if len(sandboxNames) == 0 {
 			t.Skip("needs the standalone sandbox")
@@ -304,6 +312,39 @@ func TestE2E(t *testing.T) {
 				t.Errorf("after rotation the model call carried %v", v)
 			}
 		}
+	})
+
+	t.Run("server-cert-reissue", func(t *testing.T) {
+		// cert-manager re-issues openshell-server-tls when the Secret is deleted; the gateway loads the
+		// new certificate without a restart and control pods keep reaching their sandboxes.
+		revision := func() string {
+			return jsonpath(t, "-n", "openshell", "get", "certificate", "openshell-server", "-o", "jsonpath={.status.revision}")
+		}
+		gatewayUID := func() string {
+			return jsonpath(t, "-n", "openshell", "get", "pod", "openshell-0", "-o", "jsonpath={.metadata.uid}")
+		}
+		since := time.Now().UTC().Format(time.RFC3339)
+		gatewayLog := func() string {
+			out, _ := kubectl("", "-n", "openshell", "logs", "openshell-0", "--since-time="+since)
+			return out
+		}
+		gatewayTail := func() string {
+			out, _ := kubectl("", "-n", "openshell", "logs", "openshell-0", "--tail=60")
+			return out
+		}
+		before, uid := revision(), gatewayUID()
+		mustKubectl(t, "", "-n", "openshell", "delete", "secret", "openshell-server-tls")
+		until(t, 3*time.Minute, "cert-manager did not re-issue openshell-server", nil, func() bool {
+			r := revision()
+			return r != "" && r != before
+		})
+		until(t, 4*time.Minute, "the gateway did not reload the re-issued certificate", gatewayTail, func() bool {
+			return strings.Contains(gatewayLog(), "TLS certificate config reloaded successfully")
+		})
+		if got := gatewayUID(); got != uid {
+			t.Errorf("the gateway pod was replaced (%s -> %s)", uid, got)
+		}
+		serveUntilChat(t, "standalone", 8090, 6*time.Minute)
 	})
 
 	t.Run("deletion", func(t *testing.T) {

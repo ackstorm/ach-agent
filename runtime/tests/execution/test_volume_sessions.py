@@ -73,6 +73,17 @@ async def test_resume_from_another_workspace_path_starts_fresh(tmp_path, public_
     assert engine.restores == []
 
 
+async def test_resume_with_a_corrupt_manifest_starts_fresh(tmp_path, public_config_fixture) -> None:
+    engine = _Engine()
+    service = _service(tmp_path, public_config_fixture, engine)
+    home = _write_manifest(service, public_config_fixture, str(tmp_path / "workspace"))
+    manifest = home / ".ach-registry.json"
+    for content in (manifest.read_text(encoding="utf-8")[:20], "[1]", "{}"):
+        manifest.write_text(content, encoding="utf-8")
+        assert await resume_session(service, REF) == "fresh"
+    assert engine.restores == []
+
+
 async def test_resume_of_an_unknown_native_session_starts_fresh(tmp_path, public_config_fixture) -> None:
     service = _service(tmp_path, public_config_fixture, _Engine(RestoreMismatch("restored sid did not resolve")))
     _write_manifest(service, public_config_fixture, str(tmp_path / "workspace"))

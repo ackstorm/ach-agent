@@ -134,7 +134,11 @@ async def resume_session(
         path = state.home / ".ach-registry.json"
         if not path.is_file():
             return "fresh"
-        manifest = SnapshotManifest.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        try:
+            manifest = SnapshotManifest.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            log.warning("session manifest unreadable (%s); session starts fresh", exc)
+            return "fresh"
         if manifest.session_ref != session_ref or manifest.workspace_path != str(service._workspace_dir):
             log.warning("session manifest from Workspace path %s discarded; session starts fresh",
                         manifest.workspace_path)

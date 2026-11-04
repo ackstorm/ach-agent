@@ -33,4 +33,8 @@ type Backend interface {
 	Owned(ctx context.Context) ([]string, error)
 	// Live lists the started, not terminating units for the inventory.
 	Live(ctx context.Context) ([]InventoryUnit, error)
+	// Sweep deletes what the backend keeps for the Agent's Workspaces beyond their units (the
+	// Workspace PVCs of persistence type volume) once their retention has passed. Called after
+	// a pass without errors.
+	Sweep(ctx context.Context, a *achv1alpha1.Agent, p *achv1alpha1.AgentProfile) error
 }

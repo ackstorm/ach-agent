@@ -154,6 +154,7 @@ const bootstrapWithFacade = `{"bootstrapVersion":"workspace-v3","facadeEndpoint"
 
 type osFixture struct {
 	gw    *fakeGateway
+	o     *OpenShell
 	b     host.Backend
 	a     *achv1alpha1.Agent
 	p     *achv1alpha1.AgentProfile
@@ -174,7 +175,7 @@ func newOSFixture(t *testing.T, pods ...client.Object) *osFixture {
 		ServiceURL:  "http://{workspace}--{sandbox}.{namespace}.svc.cluster.local:8080",
 		GatewayHost: "openshell.openshell.svc.cluster.local",
 	}}
-	return &osFixture{gw: gw, b: o.ForAgent(types.NamespacedName{Namespace: "ach", Name: a.Name}, a.UID, c, c), a: a, p: p, w: w, c: c,
+	return &osFixture{gw: gw, o: o, b: o.ForAgent(types.NamespacedName{Namespace: "ach", Name: a.Name}, a.UID, c, c), a: a, p: p, w: w, c: c,
 		sName: SandboxName(a.Name, string(a.UID), w.Name)}
 }
 

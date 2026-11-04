@@ -222,6 +222,7 @@ type openShellUnits struct {
 	writer client.Client
 	timed  map[string]types.UID // sandbox -> workload pod whose start is recorded
 	since  time.Time            // pods ready before this backend existed are not recorded
+	swept  time.Time            // last Sweep listing; zero: the next pass sweeps
 }
 
 // sandboxStartSeconds times a workload pod's start from its condition timestamps, which have
@@ -398,6 +399,16 @@ func (b *openShellUnits) Create(ctx context.Context, a *achv1alpha1.Agent, p *ac
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if persist := workspacePersistence(a, p); persist != nil && persist.Type == "volume" {
+		if len(b.Config.CA) == 0 {
+			return errVolumeNeedsTLS
+		}
+		claim, err := b.ensureVolume(ctx, a, persist.Volume, w.Name)
+		if err != nil {
+			return err
+		}
+		spec.Template.DriverConfig = driverConfig(claim)
+	}
 	// A unit is never registered without its Service.
 	sandbox := SandboxName(b.agent.Name, string(b.uid), w.Name)
 	if err := b.ensureService(ctx, a, sandbox, w.Name); err != nil {
@@ -450,6 +461,9 @@ func (b *openShellUnits) Remove(ctx context.Context, name string) (bool, error) 
 		return remaining, err
 	}
 	delete(b.timed, sandbox)
+	if err := b.markDetached(ctx, name); err != nil {
+		return false, err
+	}
 	// Agent deletion is covered by the Service's owner reference.
 	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: b.serviceName(sandbox), Namespace: b.agent.Namespace}}
 	return false, client.IgnoreNotFound(b.writer.Delete(ctx, svc))

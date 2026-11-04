@@ -278,7 +278,8 @@ func (h *Host) syncGateway(ctx context.Context) {
 // call that finds the gateway unavailable ends the pass: nothing is removed or confirmed
 // while the gateway cannot be seen.
 func (h *Host) Pass(ctx context.Context, l *Listing) (pending bool, err error) {
-	if _, _, err := h.load(ctx); err != nil {
+	a, p, err := h.load(ctx)
+	if err != nil {
 		return false, err
 	}
 	var errs []error
@@ -329,6 +330,9 @@ func (h *Host) Pass(ctx context.Context, l *Listing) (pending bool, err error) {
 	}
 	if len(errs) == 0 {
 		h.settleRefusal(ctx)
+		if err := h.Backend.Sweep(ctx, a, p); err != nil {
+			h.Log.Error(err, "sweep the Agent's detached Workspace PVCs")
+		}
 	}
 	return pending, errors.Join(errs...)
 }

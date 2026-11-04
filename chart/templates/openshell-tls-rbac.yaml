@@ -11,7 +11,7 @@ rules:
   - apiGroups: [""]
     resources: [secrets]
     resourceNames: [{{ .name | quote }}]
-    verbs: [get, watch]
+    verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

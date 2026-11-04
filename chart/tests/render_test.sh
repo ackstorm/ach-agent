@@ -199,7 +199,7 @@ assert not [d for d in docs if d["apiVersion"].startswith("cert-manager.io/")], 
 role, = [d for d in docs if d["kind"] == "Role" and d["metadata"]["name"] == "ach-agent-operator-openshell-tls"]
 assert role["metadata"]["namespace"] == "openshell", role["metadata"]
 assert role["rules"] == [{"apiGroups": [""], "resources": ["secrets"], "resourceNames": ["ach-agent-operator-tls"],
-                          "verbs": ["get", "watch"]}], role["rules"]
+                          "verbs": ["get"]}], role["rules"]
 rb, = [d for d in docs if d["kind"] == "RoleBinding" and d["metadata"]["name"] == "ach-agent-operator-openshell-tls"]
 assert rb["metadata"]["namespace"] == "openshell", rb["metadata"]
 assert rb["roleRef"] == {"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "ach-agent-operator-openshell-tls"}, rb

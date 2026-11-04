@@ -1,8 +1,11 @@
 # OpenShell gateway PKI (cert-manager), all in namespace openshell: a self-signed root CA and the
 # gateway's server, sandbox client and ach-agent operator certificates, each valid 30 years
-# (262800h). Namespaced Issuers only: just who can create Certificates in openshell can obtain an
-# OU=operator certificate. Apply before the OpenShell chart, replacing <AGENT_NAMESPACE> with the
-# namespace that holds the Agents (one dnsNames entry per Agent namespace).
+# (262800h). Namespaced Issuers only. Who can mint an OU=operator certificate: anyone who can read
+# Secrets in openshell (the CA key is in Secret openshell-ca; the ach-agent operator's ClusterRole
+# reads Secrets cluster-wide), and anyone who can create Pods, Certificates or CertificateRequests in
+# openshell (cert-manager approves requests unless approver-policy is installed); see docs/install.md.
+# Apply before the OpenShell chart, replacing <AGENT_NAMESPACE> with the namespace that holds the
+# Agents (one dnsNames entry per Agent namespace).
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata: {name: openshell-selfsigned, namespace: openshell}

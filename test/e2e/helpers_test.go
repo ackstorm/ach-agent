@@ -403,16 +403,28 @@ func standinRegistries(t *testing.T, uid string) int {
 	return n
 }
 
-// unauthenticatedGatewayCall posts an empty gRPC request for method to the gateway over TLS without a
-// client certificate, from a throwaway pod in the Agent namespace (the mesh admits it), and returns
-// curl's verbose output: the response headers and trailers.
-func unauthenticatedGatewayCall(t *testing.T, method string) string {
+// gatewayCall posts an empty gRPC request for method to the gateway over TLS from a throwaway pod (the
+// mesh admits it) and returns curl's verbose output: the response headers and trailers. Without
+// clientSecret the pod runs in the Agent namespace and presents no client certificate. With it the
+// pod runs in openshell as the sandbox ServiceAccount, the way a sandbox workload does, and presents
+// that Secret's certificate.
+func gatewayCall(t *testing.T, method, clientSecret string) string {
 	t.Helper()
-	script := "head -c 5 /dev/zero | curl -sv -k --http2 -m 15 -X POST -H 'content-type: application/grpc' -H 'te: trailers' " +
+	name := fmt.Sprintf("e2e-grpc-probe-%d", time.Now().UnixNano())
+	ns, cert, extra := agentNS, "", []string{}
+	if clientSecret != "" {
+		ns, cert = "openshell", "--cert /tls/tls.crt --key /tls/tls.key "
+		extra = []string{"--override-type=strategic", "--overrides", fmt.Sprintf(`{"spec": {
+			"serviceAccountName": "openshell-sandbox",
+			"volumes": [{"name": "tls", "secret": {"secretName": %q}}],
+			"containers": [{"name": %q, "volumeMounts": [{"name": "tls", "mountPath": "/tls", "readOnly": true}]}]}}`,
+			clientSecret, name)}
+	}
+	script := "head -c 5 /dev/zero | curl -sv -k --http2 -m 15 " + cert + "-X POST -H 'content-type: application/grpc' -H 'te: trailers' " +
 		"--data-binary @- -o /dev/null https://openshell.openshell.svc.cluster.local:8080/openshell.v1.OpenShell/" + method + " 2>&1"
-	out, err := kubectl("", "-n", agentNS, "run", fmt.Sprintf("e2e-grpc-probe-%d", time.Now().UnixNano()),
-		"--image=curlimages/curl:8.11.1", "--restart=Never", "--rm", "-i", "--quiet", "--pod-running-timeout=2m",
-		"--command", "--", "sh", "-c", script)
+	args := append([]string{"-n", ns, "run", name, "--image=curlimages/curl:8.11.1", "--restart=Never", "--rm", "-i",
+		"--quiet", "--pod-running-timeout=2m"}, extra...)
+	out, err := kubectl("", append(args, "--command", "--", "sh", "-c", script)...)
 	if err != nil {
 		t.Logf("probe pod exited with %v", err)
 	}

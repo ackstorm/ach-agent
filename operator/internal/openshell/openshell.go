@@ -115,10 +115,12 @@ func OpenShellFromEnv(ctx context.Context, reader client.Reader) (*OpenShell, er
 	}
 	cfg := osv1.Config{Address: addr}
 	var ca []byte
+	scheme := "http"
 	if ref := envOr("ACH_AGENT_OPENSHELL_TLS_SECRET", ""); ref != "" {
 		if cfg.TLS, ca, err = tlsFromSecret(ctx, reader, ref); err != nil {
 			return nil, err
 		}
+		scheme = "https"
 	}
 	factory := func() (sandboxes, error) {
 		c, err := osv1.NewClient(cfg)
@@ -132,7 +134,7 @@ func OpenShellFromEnv(ctx context.Context, reader client.Reader) (*OpenShell, er
 	}
 	return &OpenShell{Sandboxes: NewRebuilding(factory, rebuildEvery), Config: OpenShellConfig{
 		Workspace:    envOr("ACH_AGENT_OPENSHELL_WORKSPACE", "default"),
-		ServiceURL:   envOr("ACH_AGENT_OPENSHELL_SERVICE_URL", "http://{workspace}--{sandbox}.{namespace}.svc.cluster.local:8080"),
+		ServiceURL:   envOr("ACH_AGENT_OPENSHELL_SERVICE_URL", scheme+"://{workspace}--{sandbox}.{namespace}.svc.cluster.local:8080"),
 		PodNamespace: envOr("ACH_AGENT_OPENSHELL_POD_NAMESPACE", "openshell"),
 		GatewayHost:  gw,
 		CA:           ca,

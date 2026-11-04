@@ -72,8 +72,23 @@ func TestE2E(t *testing.T) {
 	t.Run("gateway-auth", func(t *testing.T) {
 		// Reachable through the mesh, but without the operator's client certificate the gateway
 		// refuses the call: gRPC status 16 (Unauthenticated). A plaintext gateway fails the TLS handshake.
-		if out := unauthenticatedGatewayCall(t, "CreateSandbox"); !strings.Contains(out, "grpc-status: 16") {
+		if out := gatewayCall(t, "CreateSandbox", ""); !strings.Contains(out, "grpc-status: 16") {
 			t.Fatalf("an unauthenticated CreateSandbox was not refused with Unauthenticated:\n%s", out)
+		}
+		// The sandbox client certificate (no OU=operator) is refused too: user mTLS is off.
+		if out := gatewayCall(t, "CreateSandbox", "openshell-client-tls"); !strings.Contains(out, "grpc-status: 16") {
+			t.Fatalf("CreateSandbox with the sandbox client certificate was not refused with Unauthenticated:\n%s", out)
+		}
+		// Sandbox workloads run as openshell-sandbox, next to the PKI Secrets: reading one, or creating
+		// a Pod that mounts one, would yield an OU=operator certificate.
+		for _, check := range [][]string{
+			{"get", "secret/openshell-ca"}, {"get", "secret/ach-agent-operator-tls"}, {"list", "secrets"}, {"create", "pods"},
+		} {
+			out, _ := kubectl("", "-n", "openshell", "auth", "can-i", check[0], check[1],
+				"--as", "system:serviceaccount:openshell:openshell-sandbox")
+			if strings.TrimSpace(out) != "no" {
+				t.Errorf("openshell-sandbox can-i %s %s = %q, want no", check[0], check[1], strings.TrimSpace(out))
+			}
 		}
 	})
 

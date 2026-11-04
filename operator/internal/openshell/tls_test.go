@@ -76,10 +76,13 @@ func TestOpenShellFromEnv_TLSSecretGivesTheClientItsCertificate(t *testing.T) {
 	reader := fake.NewClientBuilder().WithObjects(secret).Build()
 	t.Setenv("ACH_AGENT_OPENSHELL_GATEWAY", "https://openshell.openshell.svc.cluster.local:8080")
 	t.Setenv("ACH_AGENT_OPENSHELL_TLS_SECRET", "openshell/ach-agent-operator-tls")
-	t.Setenv("ACH_AGENT_OPENSHELL_SERVICE_URL", "https://{workspace}--{sandbox}.{namespace}.svc.cluster.local:8080")
+	t.Setenv("ACH_AGENT_OPENSHELL_SERVICE_URL", "")
 	o, err := OpenShellFromEnv(ctx, reader)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if want := "https://{workspace}--{sandbox}.{namespace}.svc.cluster.local:8080"; o.Config.ServiceURL != want {
+		t.Errorf("ServiceURL = %q, want %q by default with a TLS Secret", o.Config.ServiceURL, want)
 	}
 	if !bytes.Equal(o.Config.CA, secret.Data["ca.crt"]) {
 		t.Errorf("Config.CA = %q, want the Secret's ca.crt", o.Config.CA)

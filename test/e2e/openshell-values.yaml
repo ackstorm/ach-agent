@@ -1,5 +1,6 @@
 # OpenShell gateway values. The gateway is plaintext and unauthenticated: it is safe only behind
-# the Istio ambient policy in docs/mesh/openshell-mesh.yaml.
+# the Istio ambient policy in docs/mesh/openshell-mesh.yaml. The e2e layers openshell-tls-values.yaml
+# on top (TLS, operator-only mTLS).
 server:
   # TLS is terminated by the mesh (STRICT mTLS).
   disableTls: true

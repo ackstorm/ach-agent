@@ -34,7 +34,7 @@ from ach_runtime.facades._memory_client import (
     resolve_endpoint,
     resolve_project,
 )
-from ach_runtime.facades._proxy import ProcessIdentity
+from ach_runtime.facades._proxy import ProcessIdentity, with_identity_headers
 from ach_runtime.facades.a2a import A2AEgressFacade
 from ach_runtime.facades.mcp import McpFacade
 from ach_runtime.facades.memory import AchMemoryFacade
@@ -544,12 +544,14 @@ class Control:
 
     async def _transfer_context(self, ticket: AdmissionTicket, endpoint: WorkspaceEndpoint) -> None:
         # The credential travels only in the download requests (KeyAuth), never in the archive
-        # or the request body.
+        # or the request body. ACH requires x-ach-environment on /content/* for a pk_ (login) key.
         ach_key = getattr(self, "ach_key", None)
+        identity = ProcessIdentity(agent=self.config.agent.name, environment=self.config.identity_environment)
         with tempfile.TemporaryDirectory(prefix="ach-context-") as temporary:
             root = Path(temporary) / "context"
             root.mkdir()
-            async with httpx.AsyncClient(timeout=30, auth=ach_key.auth if ach_key else None) as client:
+            async with httpx.AsyncClient(timeout=30, auth=ach_key.auth if ach_key else None,
+                                         headers=with_identity_headers({}, identity)) as client:
                 await stage_context(
                     self.catalog, root, excluded_skills=self.config.capability.filter.exclude.skills,
                     client=client,

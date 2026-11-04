@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `ach-agent run` with an `ach-cli login` profile no longer fails at boot with `400 missing_environment`:
+  skill, prompt and artifact downloads send `x-ach-environment`, which ACH requires for a login (`pk_`)
+  credential.
+
 ## [0.4.0] - 2026-11-04
 
 ### Added

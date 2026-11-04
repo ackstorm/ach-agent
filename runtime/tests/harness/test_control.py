@@ -2075,6 +2075,27 @@ async def test_context_files_before_started(monkeypatch) -> None:
         await control.close()
 
 
+async def test_context_download_carries_identity_headers(monkeypatch) -> None:
+    # ACH rejects a pk_ (login) credential on /content/* without x-ach-environment.
+    from ach_runtime.harness.hydrate import ContextItem
+    headers: list[httpx.Headers] = []
+    async def stage(catalog, root, *, excluded_skills, client):
+        headers.append(client.headers)
+    monkeypatch.setattr("ach_runtime.harness.control.stage_context", stage)
+    control = await assemble(_config(), environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},
+                             ach_transport=httpx.MockTransport(_catalog_handler))
+    endpoint = WorkspaceEndpoint(WorkspaceRef(control.config.agent.namespace, control.config.agent.uid, "a"*64),
+                                 "workspace", "pod-1", "http://mini")
+    try:
+        with pytest.raises(Exception):  # the empty staged context fails after the download client is built
+            await control._transfer_context(None, endpoint)
+        assert headers, "stage_context was not called"
+        assert headers[0].get("x-ach-environment") == "engineering-prod"
+        assert headers[0].get("x-ach-agent") == control.config.agent.name
+    finally:
+        await control.close()
+
+
 async def test_control_close_joins_lifecycle_before_clients() -> None:
     from types import SimpleNamespace
 

@@ -24,12 +24,12 @@ kubectl apply --server-side -f https://github.com/kubernetes-sigs/agent-sandbox/
 kubectl -n agent-sandbox-system rollout status deploy/agent-sandbox-controller --timeout=300s
 ```
 
-## 3. OpenShell 0.1.5
+## 3. OpenShell 0.1.7
 
 ```bash
 kubectl create namespace openshell
 kubectl label namespace openshell istio.io/dataplane-mode=ambient
-helm upgrade --install openshell oci://ghcr.io/nvidia/openshell/helm-chart --version 0.1.5 \
+helm upgrade --install openshell oci://ghcr.io/nvidia/openshell/helm-chart --version 0.1.7 \
   -n openshell -f test/e2e/openshell-values.yaml --wait --timeout 6m
 ```
 
@@ -270,6 +270,6 @@ A long session timeout with a short Workspace timeout keeps opencode alive for a
 sandbox exists.
 
 The runtime never writes to `/sandbox` (its data is in `/workspace` and `/var/lib/ach-runtime`;
-durable state goes to S3), so OpenShell's per-sandbox PVC is pure start-up cost. OpenShell 0.1.5
+durable state goes to S3), so OpenShell's per-sandbox PVC is pure start-up cost. OpenShell 0.1.7
 cannot skip it per sandbox; the gateway-level `workspace_volume = "empty_dir"` setting proposed in
 NVIDIA/OpenShell#4473 removes it.

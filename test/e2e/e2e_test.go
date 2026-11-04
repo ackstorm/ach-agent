@@ -252,7 +252,7 @@ func TestE2E(t *testing.T) {
 			t.Errorf("sandbox name changed across the gateway restart: %v -> %v", sandboxNames, after)
 		}
 		if now := podUIDs(t, after); now != uidsBefore {
-			t.Logf("KNOWN GAP: OpenShell 0.1.5 drops its sandboxes on a gateway restart; the runtime replaced the pod on the next webhook (same deterministic name): %s -> %s", uidsBefore, now)
+			t.Logf("KNOWN GAP: OpenShell drops its sandboxes on a gateway restart; the runtime replaced the pod on the next webhook (same deterministic name): %s -> %s", uidsBefore, now)
 		}
 	})
 
@@ -281,7 +281,7 @@ func TestE2E(t *testing.T) {
 			t.Errorf("sandbox name changed after the outage: %v -> %v", sandboxNames, got)
 		}
 		if now := podUIDs(t, got); now != uidsBefore {
-			t.Logf("KNOWN GAP: OpenShell 0.1.5 drops its sandboxes while the gateway is down; the runtime replaced the pod on the next webhook (same deterministic name): %s -> %s", uidsBefore, now)
+			t.Logf("KNOWN GAP: OpenShell drops its sandboxes while the gateway is down; the runtime replaced the pod on the next webhook (same deterministic name): %s -> %s", uidsBefore, now)
 		}
 	})
 

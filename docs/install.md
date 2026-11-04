@@ -362,8 +362,8 @@ workspace:
 ```
 
 The runtime keeps its data under `/sandbox/ach`: the Workspace in `/sandbox/ach/workspace`, the
-session HOMEs in `/sandbox/ach/sessions`. That is OpenShell's per-sandbox `/sandbox` PVC, deleted with
-the sandbox, so it is start-up cost only. OpenShell 0.1.7 cannot skip it per sandbox; the
+session HOMEs in `/sandbox/ach/sessions`. With `none` and `s3` that is OpenShell's per-sandbox
+`/sandbox` PVC, deleted with the sandbox, so it is start-up cost only. OpenShell 0.1.7 cannot skip it per sandbox; the
 gateway-level `workspace_volume = "empty_dir"` setting proposed in NVIDIA/OpenShell#4473 replaces it
 with an emptyDir.
 
@@ -404,8 +404,9 @@ Requirements:
   `fsGroup`; NFS (EFS) ignores `fsGroup`, so its access points need `uid`/`gid` 10001. `local-path`
   pins the PV to one node and suits single-node clusters only.
 
-`ReadWriteOnce` (gp3: one AZ, about 10 s to attach) starts a Workspace's new sandbox once the old pod
-is gone; `ReadWriteMany` (EFS) needs no wait and survives node loss. Example classes on EKS:
+A Workspace's new sandbox starts once the old pod is gone, with either access mode. `ReadWriteOnce`
+(gp3) stays in one AZ and takes about 10 s to attach; `ReadWriteMany` (EFS) spans AZs and survives
+node loss. Example classes on EKS:
 
 ```yaml
 apiVersion: storage.k8s.io/v1

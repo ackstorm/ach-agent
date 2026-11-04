@@ -113,3 +113,17 @@ async def test_prune_deletes_unused_sessions_and_empties_the_scratch_of_the_rest
     assert not old.home.parent.exists() and registry.get("old") is None
     assert (recent.home / "opencode.db").is_file() and list(recent.scratch.iterdir()) == []
     assert (held.home / "opencode.db").is_file()  # reserved by work in this pod
+
+
+async def test_prune_ages_a_suspended_session_by_its_manifest(tmp_path) -> None:
+    registry = SessionRegistry(tmp_path)
+    stale, fresh = registry.get_or_create("stale"), registry.get_or_create("fresh")
+    now, eight_days_ago = time.time(), time.time() - 8 * 86400
+    for state, manifest_time, home_time in ((stale, eight_days_ago, now), (fresh, now, eight_days_ago)):
+        manifest = state.home / ".ach-registry.json"
+        manifest.write_text("{}", encoding="utf-8")
+        os.utime(manifest, (manifest_time, manifest_time))
+        os.utime(state.home, (home_time, home_time))
+    assert await registry.prune(7) == 1
+    assert registry.get("stale") is None
+    assert (fresh.home / ".ach-registry.json").is_file()

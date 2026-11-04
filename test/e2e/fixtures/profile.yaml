@@ -25,8 +25,7 @@ spec:
       idleTimeoutSeconds: 600
       shutdownTimeoutSeconds: 30
       maxConcurrentSessions: 1
-      persistence: {enabled: false, retentionDays: 1}
+      persistence: {type: none}
       session:
         idleTimeoutSeconds: 300
-        persistence: {enabled: false, retentionDays: 1}
     artifacts: {enabled: false, maxArtifactBytes: 1048576, retentionDays: 1}

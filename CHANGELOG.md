@@ -20,6 +20,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `workspace.persistence` is `{type: none | s3, retentionDays}` on Agent and AgentProfile
+  and on the `workspace-v3` wire; one `type` covers the Workspace files and the session HOMEs. It
+  replaces `workspace.persistence.enabled` and `workspace.session.persistence`, which are rejected.
+  `none` is the default; `retentionDays` is required with `s3` and forbidden with `none`.
+  `workspace.session.retentionDays` (optional, at most `persistence.retentionDays`, default equal to
+  it) is the session snapshot retention. An Agent's `persistence` block replaces the profile's whole.
+  `type: volume` is rejected as not implemented yet. Migrate `{enabled: true, retentionDays: N}` to
+  `{type: s3, retentionDays: N}` and `{enabled: false}` to `{type: none}`.
+- **Breaking:** sandboxes keep the Workspace in `/sandbox/ach/workspace` and the session HOMEs in
+  `/sandbox/ach/sessions` (were `/workspace` and `/var/lib/ach-runtime/sessions`), and the sandbox
+  policy grants read-write on `/sandbox/ach` in their place. S3 session snapshots saved under
+  `/workspace` are not resumed: each such conversation starts fresh once, and its next save replaces
+  the snapshot. Workspace file archives restore unchanged. Every Agent's `configVersion` changes, so
+  control pods restart once.
 - OpenShell 0.1.7: the e2e cluster, `docs/install.md` and the operator's Go SDK (`sdk/go/v0.1.7`). Since
   OpenShell 0.1.6 a sandbox opens the control connection to its supervisor; under Istio ambient that
   needs the new `allow-hbone-egress-to-supervisor` NetworkPolicy in `docs/mesh/openshell-mesh.yaml`

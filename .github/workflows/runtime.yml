@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Prepare devtools build context
         run: |
@@ -38,7 +38,7 @@ jobs:
           cp -a src plugins scripts tests examples "$context/"
           cp -a docs/schemas "$context/docs/schemas"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
         with:
           driver: docker-container
 
@@ -162,6 +162,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Run the compose example end to end
         run: make compose-e2e

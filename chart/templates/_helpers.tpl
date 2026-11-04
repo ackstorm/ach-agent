@@ -20,6 +20,14 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if ne .Values.openshell.mesh "istio-ambient" -}}
 {{- fail "openshell.mesh must be istio-ambient: ach-agent requires an Istio ambient mesh to protect the OpenShell gateway" -}}
 {{- end -}}
+{{- with .Values.openshell.tls.secret -}}
+{{- if not (and .namespace .name) -}}
+{{- fail "openshell.tls.secret needs namespace and name, e.g. {namespace: openshell, name: ach-agent-operator-tls}" -}}
+{{- end -}}
+{{- if not (hasPrefix "https://" $.Values.openshell.gateway) -}}
+{{- fail "openshell.tls.secret needs an https:// openshell.gateway" -}}
+{{- end -}}
+{{- end -}}
 {{- if and (eq .Values.storage.remote.type "gcs") (not .Values.storage.remote.gcs.bucket) -}}
 {{- fail "storage.remote.gcs.bucket is required with storage.remote.type=gcs" -}}
 {{- end -}}

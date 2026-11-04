@@ -6,13 +6,20 @@ imagePullSecrets: []
 
 openshell:
   # Required: the OpenShell gateway URL, e.g. http://openshell.openshell.svc.cluster.local:8080
+  # (https://... with tls.secret).
   gateway: ""
   # Required value: the gateway is plaintext and unauthenticated, protected only by the mesh.
   mesh: istio-ambient
   workspace: default
   podNamespace: openshell
-  # Empty: the operator default.
+  # Empty: the operator default (https:// with tls.secret).
   serviceURL: ""
+  # Gateway mTLS (docs/install.md): the Secret with the operator's client certificate (ca.crt,
+  # tls.crt, tls.key; OU=operator), e.g. {namespace: openshell, name: ach-agent-operator-tls}.
+  # Set: the operator may read that one Secret and openshell.gateway must be https://.
+  # Empty: plaintext gateway.
+  tls:
+    secret: {}
 
 runtime:
   storage:

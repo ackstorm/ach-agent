@@ -216,7 +216,10 @@ spec:
     environment: agent-k8s-doctor
     keyFrom:
       tokenExchange: {identity: ai.run@example.com}
-    model: {name: ackstorm.fast, api: openai}
+    model:
+      name: ackstorm.smart
+      api: openai
+      limits: {context: 524288, output: 65536}   # optional; the gateway reports no limits for an alias
   channels:
     - name: tick
       type: cron

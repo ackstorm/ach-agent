@@ -219,7 +219,7 @@ type WSStandaloneModel struct {
 	Limits   *WSModelLimits      `json:"limits,omitempty"`
 }
 
-// WSModelLimits is capability.standalone.model.limits (schema ModelLimits).
+// WSModelLimits is capability.{standalone,ach}.model.limits (schema ModelLimits).
 type WSModelLimits struct {
 	Context int64 `json:"context"`
 	Output  int64 `json:"output"`
@@ -335,6 +335,9 @@ func renderCapability(a *v1.Agent) (WSCapabilityBlock, []EnvBinding, error) {
 			BaseURL: ach.BaseURL, Environment: ach.Environment,
 			Model:      ModelBlock{Name: ach.Model.Name, Type: api, Params: params, Thinking: renderThinking(ach.Model.Thinking)},
 			McpServers: servers,
+		}
+		if l := ach.Model.Limits; l != nil {
+			cap.Ach.Model.Limits = &WSModelLimits{Context: l.Context, Output: l.Output}
 		}
 		switch kf := ach.KeyFrom; {
 		case kf.TokenExchange != nil:

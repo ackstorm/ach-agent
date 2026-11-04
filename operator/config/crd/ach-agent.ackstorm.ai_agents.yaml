@@ -169,6 +169,24 @@ spec:
                         - anthropic
                         - gemini
                         type: string
+                      limits:
+                        description: |-
+                          Limits overrides the context and output windows the ACH gateway reports. The gateway's
+                          model info does not resolve model-group aliases (e.g. ackstorm.smart), so an alias gets
+                          no limits without this.
+                        properties:
+                          context:
+                            format: int64
+                            minimum: 1
+                            type: integer
+                          output:
+                            format: int64
+                            minimum: 1
+                            type: integer
+                        required:
+                        - context
+                        - output
+                        type: object
                       name:
                         minLength: 1
                         type: string

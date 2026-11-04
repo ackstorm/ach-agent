@@ -487,6 +487,11 @@ type AchModelSpec struct {
 	Params *apiextensionsv1.JSON `json:"params,omitempty"`
 	// +optional
 	Thinking *ThinkingSpec `json:"thinking,omitempty"`
+	// Limits overrides the context and output windows the ACH gateway reports. The gateway's
+	// model info does not resolve model-group aliases (e.g. ackstorm.smart), so an alias gets
+	// no limits without this.
+	// +optional
+	Limits *ModelLimitsSpec `json:"limits,omitempty"`
 }
 
 // AchTokenExchange exchanges the control pod's projected ServiceAccount token for a

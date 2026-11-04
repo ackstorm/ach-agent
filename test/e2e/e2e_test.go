@@ -80,9 +80,11 @@ func TestE2E(t *testing.T) {
 			t.Fatalf("CreateSandbox with the sandbox client certificate was not refused with Unauthenticated:\n%s", out)
 		}
 		// Sandbox workloads run as openshell-sandbox, next to the PKI Secrets: reading one, or creating
-		// a Pod that mounts one, would yield an OU=operator certificate.
+		// a Pod that mounts one, would yield an OU=operator certificate. The gateway also mounts any
+		// admission-labelled PVC in openshell: only the operator may create one there.
 		for _, check := range [][]string{
 			{"get", "secret/openshell-ca"}, {"get", "secret/ach-agent-operator-tls"}, {"list", "secrets"}, {"create", "pods"},
+			{"create", "persistentvolumeclaims"},
 		} {
 			out, _ := kubectl("", "-n", "openshell", "auth", "can-i", check[0], check[1],
 				"--as", "system:serviceaccount:openshell:openshell-sandbox")
@@ -261,6 +263,62 @@ func TestE2E(t *testing.T) {
 			return storageCount(t, name, "restore", "workspace", "ok") >= 1
 		})
 	})
+	t.Run("volume-persistence", func(t *testing.T) {
+		const name = "volume"
+		clearStub(t)
+		apply(t, "fixtures/volume-agent.yaml", map[string]string{"NAME": name})
+		t.Cleanup(func() { kubectl("", "-n", agentNS, "delete", "agent", name, "--wait=false") })
+		waitCond(t, name, "Ready", "True", 5*time.Minute)
+		postAccepted(t, name, 2*time.Minute)
+		first := maxMessages(waitChat(t, 8090, 4*time.Minute))
+		uid := agentUID(t, name)
+
+		env := jsonpath(t, "-n", agentNS, "get", "pod", "-l", "ach-agent.ackstorm.ai/agent="+name+",ach-agent.ackstorm.ai/component=control",
+			"-o", "jsonpath={.items[*].spec.containers[*].env[*].name}")
+		if strings.Contains(env, "ACH_STORAGE_S3_BUCKET") {
+			t.Errorf("a volume Agent with artifacts off got the S3 store: %s", env)
+		}
+		pods, vols := sandboxes(t, uid), workspaceVolumes(t, uid)
+		if len(pods) != 1 || len(vols) != 1 {
+			t.Fatalf("sandboxes %v, Workspace PVCs %v; want one of each\n%s", pods, vols, agentYAML(name)())
+		}
+		// The sandbox mounts the Workspace PVC and no per-sandbox /sandbox PVC.
+		if claims := jsonpath(t, "-n", "openshell", "get", "pod", pods[0], "-o", "jsonpath={.spec.volumes[*].persistentVolumeClaim.claimName}"); claims != vols[0] {
+			t.Errorf("sandbox pod claims %q, want only %s", claims, vols[0])
+		}
+
+		// The session idles out, then the Workspace: the sandbox goes, the PVC stays, marked detached.
+		until(t, 5*time.Minute, "the sandbox stayed after the workspace idle timeout", agentYAML(name), func() bool {
+			return len(sandboxes(t, uid)) == 0
+		})
+		until(t, time.Minute, "the Workspace PVC was not marked detached", nil, func() bool {
+			return jsonpath(t, "-n", "openshell", "get", "pvc", vols[0], "-o", `jsonpath={.metadata.annotations.ach-agent\.ackstorm\.ai/detached-at}`) != ""
+		})
+
+		// The next event: a new sandbox on the same PVC finds the Workspace file and the conversation.
+		clearStub(t)
+		postAccepted(t, name, 2*time.Minute)
+		if got := maxMessages(waitChat(t, 8090, 4*time.Minute)); got <= first {
+			t.Errorf("the second turn sent %d messages, want more than the first turn's %d (the session resumes in place)", got, first)
+		}
+		pods = sandboxes(t, uid)
+		if len(pods) != 1 {
+			t.Fatalf("sandboxes after the second event: %v, want one", pods)
+		}
+		if out := mustKubectl(t, "", "-n", "openshell", "exec", pods[0], "-c", "agent", "--", "cat", "/sandbox/ach/workspace/.e2e-starts"); strings.Count(out, "start") != 2 {
+			t.Errorf(".e2e-starts = %q, want one line per Workspace start (2)", out)
+		}
+		if got := workspaceVolumes(t, uid); len(got) != 1 || got[0] != vols[0] {
+			t.Errorf("Workspace PVCs after the second sandbox: %v, want [%s] reused", got, vols[0])
+		}
+
+		// Deleting the Agent deletes its Workspace PVC.
+		mustKubectl(t, "", "-n", agentNS, "delete", "agent", name, "--wait=false")
+		until(t, 3*time.Minute, "the Workspace PVC outlived its Agent", agentYAML(name), func() bool {
+			return len(workspaceVolumes(t, uid)) == 0
+		})
+	})
+
 	t.Run("gateway-restart", func(t *testing.T) {
 		opPod := jsonpath(t, "-n", "ach-agent-system", "get", "pods", "-l", "app.kubernetes.io/name=ach-agent-operator", "-o", "jsonpath={.items[0].metadata.uid}")
 		uidsBefore := podUIDs(t, sandboxNames)

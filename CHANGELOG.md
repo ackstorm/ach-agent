@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `workspace.persistence.type: volume` keeps a Workspace's files and session HOMEs on one PVC per
+  Workspace (`volume: {size, storageClassName, accessMode}`), created by the operator in the sandbox
+  namespace and mounted at `/sandbox/ach` by every sandbox of that Workspace. An idle session stops
+  opencode and keeps its HOME; the next sandbox resumes the conversation from it, with no S3 transfer.
+  A PVC with no sandbox for `retentionDays` is deleted, session HOMEs unused for
+  `session.retentionDays` are deleted at Workspace start, and deleting the Agent deletes its PVCs.
+  Requires the gateway mTLS (`openshell.tls.secret`; otherwise `WorkloadApplied=False`,
+  `VolumeRequiresGatewayTLS`), `server.drivers.kubernetes.allowDriverConfig: true` on the OpenShell
+  gateway, and a StorageClass with `reclaimPolicy: Delete` writable by uid/gid 10001.
 - `model.limits` (wire `capability.ach.model.limits`) works with an ACH environment too, and wins over the
   gateway's model info. LiteLLM does not resolve a model-group alias such as `ackstorm.smart` in
   `/v2/model/info`, so an alias otherwise ran on opencode's default context window and compacted early.

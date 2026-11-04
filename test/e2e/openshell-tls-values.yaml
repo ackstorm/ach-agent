@@ -6,6 +6,11 @@ server:
   auth:
     # Only a client certificate with OU=operator (the ach-agent operator) is accepted.
     allowUnauthenticatedUsers: false
+  drivers:
+    kubernetes:
+      # Caller driver_config (Workspace PVCs of persistence type volume) is safe only because
+      # operator-only mTLS makes the ach-agent operator the gateway's only API caller.
+      allowDriverConfig: true
 gatewayConfig:
   openshell.gateway.mtls_auth:
     operator_enabled: true

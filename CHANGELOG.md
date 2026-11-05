@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manifest `model.limits`) works with an ACH environment too, and wins over the limits ACH hydrate and
   the gateway's model info report. For a model whose real window differs from what ACH reports.
 
+### Changed
+
+- A new sandbox on another runtime release than its control runs with a warning instead of failing
+  the turn. A sandbox of another release found at control start is still retired.
+
 ### Fixed
 
 - A sandbox the gateway no longer knows while its pod still runs is removed. A create that

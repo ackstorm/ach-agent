@@ -520,14 +520,23 @@ async def test_adopting_a_unit_of_another_release_retires_it_without_an_anomaly(
     assert any("release '0.1.1'" in r.getMessage() for r in caplog.records)
 
 
-async def test_activating_a_unit_of_another_release_is_an_anomaly(alarms: list[str]) -> None:
+async def test_activating_a_unit_of_another_release_runs_with_a_warning(
+    alarms: list[str], caplog: pytest.LogCaptureFixture,
+) -> None:
     h = _Harness(_config())
     ref = _ref(h.config, "wrong-image")
-    h.probe_error[_name(h.config, ref)] = ws.ReleaseMismatch("execution unit runs release '9', control runs '1'")
+    h.probe_error[_name(h.config, ref)] = ws.ReleaseMismatch(
+        "execution unit runs release '9', control runs '1'", "unit-9",
+    )
 
-    with pytest.raises(ws.ReleaseMismatch):
-        await h.manager.ensure(ref)
-    assert alarms == ["pod_unhealthy"]
+    with caplog.at_level(logging.WARNING, logger=ws.__name__):
+        endpoint = await h.manager.ensure(ref)
+
+    assert endpoint.instance_id == "unit-9"
+    assert alarms == []
+    assert h.source.retire_calls == []
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("release '9'" in message for message in warnings)
 
 
 async def test_failed_adoption_logs_its_reason(caplog: pytest.LogCaptureFixture) -> None:

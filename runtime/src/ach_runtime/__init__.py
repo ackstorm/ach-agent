@@ -3,4 +3,4 @@
 
 # A constant, not importlib.metadata.version(): that scans every installed distribution on
 # each start of a sandbox. `make release-bump` sets it and `make release-check` checks it.
-__version__ = "0.6.2"
+__version__ = "0.6.3"

@@ -32,15 +32,23 @@ spec:
     type: gemini
     params: {}
   engine:
-    # Validar este flag contra la imagen v2 elegida antes de desplegar.
-    forwardEnv:
-      - OPENCODE_ENABLE_EXA
     startupTimeoutSeconds: 60
     compaction:
       auto: true
       keep:
         tokens: 8000
       buffer: 20000
+  sandbox:
+    openshell:
+      # The default sandbox policy blocks web search: this lets it reach Exa.
+      policy:
+        network_policies:
+          exa:
+            name: exa
+            endpoints:
+              - {host: mcp.exa.ai, port: 443}
+            binaries:
+              - {path: "/**"}
   expose:
     service: true
     gateway: true
@@ -76,8 +84,6 @@ spec:
   env:
     - name: LOG_LEVEL
       value: info
-    - name: OPENCODE_ENABLE_EXA
-      value: "true"
     - name: GITLAB_TOKEN
       valueFrom:
         secretKeyRef:

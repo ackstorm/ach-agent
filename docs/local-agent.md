@@ -91,12 +91,17 @@ model: {name: qwen3-coder, type: openai, baseUrl: "http://host.docker.internal:1
 | `mcpServers` (`name`, `url`, `headers`) | no | none | `capability.ach.mcpServers` or `capability.standalone.mcpServers` |
 | `prompt.file` / `prompt.text` | no | none | `prompt.system` as text; a file is read and inlined |
 | `exclude` (`mcpServers`, `tools`, `skills`) | no | nothing | `capability.filter.exclude` |
+| `denyTools` | no | `[execute]` | `engine.denyTools` |
 | `limits` (any wire `limits` key, e.g. `maxSteps`, `maxInvocationSeconds`) | no | `maxSteps: 50`, `maxInvocationSeconds: 600` | `limits` |
 
 A header is `{env: NAME}` (a secret read from your shell) or `{value: …}` (a literal). The value of
 `NAME` is sent as is, so an `Authorization` header needs its `Bearer ` prefix inside the variable. With
 `ach:`, an extra MCP server is never sent the ACH credential, and a name the environment already has is
 an error at start.
+
+`denyTools` hides native OpenCode tools from the model, for example `[execute, websearch]`. A list
+replaces the default, so keep `execute` in it: denied, MCP tools are called directly instead of through
+Code Mode.
 
 Unknown keys are an error. Paths resolve relative to the manifest. Compaction and timeouts are
 internal defaults of `run`. `limits.maxSteps` caps the engine steps of one turn: at the cap opencode

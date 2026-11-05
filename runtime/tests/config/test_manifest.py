@@ -89,6 +89,20 @@ def test_limits_override_the_defaults(tmp_path) -> None:
     assert config.limits.max_concurrent_invocations == 1
 
 
+def test_deny_tools_defaults_to_execute(tmp_path) -> None:
+    assert parse_config(_wire(tmp_path, MINIMAL)).engine.deny_tools == ["execute"]
+
+
+def test_deny_tools_replaces_the_default(tmp_path) -> None:
+    wire = _wire(tmp_path, MINIMAL + "denyTools: [websearch]\n")
+    assert parse_config(wire).engine.deny_tools == ["websearch"]
+
+
+def test_invalid_deny_tool_is_rejected(tmp_path) -> None:
+    with pytest.raises(ConfigError, match="denyTools"):
+        _wire(tmp_path, MINIMAL + "denyTools: [mcp.tool]\n")
+
+
 def test_invalid_limit_is_rejected(tmp_path) -> None:
     with pytest.raises(ConfigError):
         _wire(tmp_path, MINIMAL + "limits: {maxSteps: 0}\n")

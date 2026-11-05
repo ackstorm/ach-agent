@@ -109,6 +109,9 @@ class Manifest(BaseModel):
     exclude: dict[str, list[str]] = Field(default_factory=dict)
     # Merged over the `limits` defaults; the RuntimeConfig schema validates the values.
     limits: dict[str, Any] = Field(default_factory=dict)
+    # Replaces the default: `execute` stays denied so MCP tools are called directly, not through
+    # Code Mode. The RuntimeConfig schema validates the names.
+    deny_tools: list[str] = Field(default=["execute"], alias="denyTools")
 
     @model_validator(mode="after")
     def _checks(self) -> Manifest:
@@ -183,6 +186,7 @@ def manifest_to_wire(
         "channels": [copy.deepcopy(_TUI_CHANNEL)],
     }
     wire["limits"].update(manifest.limits)
+    wire["engine"]["denyTools"] = manifest.deny_tools
     if manifest.prompt is not None:
         wire["prompt"] = {"system": _system_prompt(manifest.prompt, base_dir)}
     wire["configVersion"] = compute_config_version(wire)

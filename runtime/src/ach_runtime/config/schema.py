@@ -296,7 +296,6 @@ class CapabilityBlock(BaseModel):
 
 # OPENCODE_* process-loader / catalog / project-discovery names observed in the Task 1
 # spike (spikes/opencode-v2/probe.mjs, serve-fixture.mjs) plus the server password var.
-# OPENCODE_ENABLE_EXA is NOT reserved — it is the one selected literal the PR example forwards.
 _RESERVED_ENGINE_ENV_EXACT = frozenset(
     {
         "HOME",

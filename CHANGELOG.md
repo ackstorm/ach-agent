@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tools) plugins are off; the MCP resource tools stay. To keep one, set
   `OPENCODE_ENABLE_BROWSER_TOOL` or `OPENCODE_ENABLE_MANAGEMENT_TOOLS` to `1` or `true` in `spec.env`
   and list it in `engine.forwardEnv`.
+- OpenCode's built-in `opencode.tool.question` plugin is always off: nobody answers a managed turn.
+- `ach-agent run` manifests take `denyTools`, and `execute` is denied by default.
+
+### Fixed
+
+- Web search uses Exa by default, so the first `websearch` call no longer waits a minute on an
+  unanswered provider question and fails.
 
 ## [0.5.0] - 2026-11-05
 

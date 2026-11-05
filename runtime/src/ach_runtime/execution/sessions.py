@@ -62,6 +62,7 @@ class SessionState:
     native_session_id: str | None = None
     started: bool = False
     suspend_hook_failed: bool | None = None
+    suspended: bool = False  # its manifest covers every turn run so far
 
 
 class SessionRegistry:

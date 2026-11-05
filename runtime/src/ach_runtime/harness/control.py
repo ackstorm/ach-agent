@@ -400,8 +400,10 @@ class Control:
             body = _json_or_empty(response)
             release = body.get("release")
             if release != __version__:
-                # The caller decides whether this is an anomaly (see ReleaseMismatch).
-                raise ReleaseMismatch(f"execution unit runs release {release!r}, control runs {__version__!r}")
+                # The caller decides what this means (see ReleaseMismatch).
+                raise ReleaseMismatch(
+                    f"execution unit runs release {release!r}, control runs {__version__!r}", instance_id,
+                )
             boot = body.get("bootSeconds")
             if isinstance(boot, (int, float)) and not isinstance(boot, bool) and boot >= 0:
                 WORKSPACE_START_SECONDS.labels(phase="boot").observe(boot)

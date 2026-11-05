@@ -89,9 +89,13 @@ class WorkspaceAssemblyUnavailable(Exception):
 
 
 class ReleaseMismatch(WorkspaceAssemblyUnavailable):
-    """The execution unit runs another runtime release than this control process. Expected
-    when adopting units across an upgrade; an anomaly when a freshly placed unit reports it
-    (the profile points at the wrong execution image)."""
+    """The execution unit runs another runtime release than this control process. Adoption
+    retires such a unit so an upgrade rolls every workspace onto the new image; a freshly
+    placed one runs with a warning, because a custom execution image can lag the control."""
+
+    def __init__(self, message: str, instance_id: str = "") -> None:
+        super().__init__(message)
+        self.instance_id = instance_id
 
 
 class WorkspaceConflict(Exception):
@@ -413,7 +417,12 @@ class WorkspaceManager:
         # Any other error, notably WorkspaceConflict (the source already hosts this name),
         # re-raises WITHOUT releasing: the slot stays held for whatever the source holds.
         try:
-            endpoint = await self._probe(ref, placement, deadline)
+            try:
+                endpoint = await self._probe(ref, placement, deadline)
+            except ReleaseMismatch as exc:
+                _LOG.warning("Workspace placed on another release, a failure may come from it: "
+                             "workspace_ref=%s %s", key, exc)
+                endpoint = WorkspaceEndpoint(ref, placement.name, exc.instance_id, placement.base_url)
             lap("probe")
             phase = "observed"
             if not self._source.observed(placement, endpoint.instance_id):
@@ -428,8 +437,6 @@ class WorkspaceManager:
             if not self._source.serving(placement, endpoint.instance_id):
                 raise WorkspaceConflict(f"{name}: registration was replaced during activation")
         except BaseException as exc:
-            if isinstance(exc, ReleaseMismatch):
-                alarm("pod_unhealthy", workspace_ref=key)
             _LOG.error(
                 "Workspace activation failed: workspace_ref=%s workspace_name=%s phase=%s error=%s: %s",
                 key, name, phase, type(exc).__name__, redact(str(exc)),

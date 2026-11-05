@@ -753,7 +753,8 @@ async def test_wait_mini_health_refuses_a_unit_of_another_release(monkeypatch) -
         with pytest.raises(ReleaseMismatch) as raised:
             await control.wait_mini_health("http://unit", "ws", time.monotonic() + 5)
         assert "0.0.1-old" in str(raised.value) and __version__ in str(raised.value)
-        assert anomalies == []  # the caller decides: an upgrade's adoption is not an anomaly
+        assert raised.value.instance_id == "unit"
+        assert anomalies == []  # the caller decides what a mismatch means
     finally:
         await control.close()
 

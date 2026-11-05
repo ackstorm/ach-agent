@@ -117,6 +117,35 @@ func TestRender_AchModelApiDefaultsToOpenai(t *testing.T) {
 	}
 }
 
+func TestRender_AchModelLimits(t *testing.T) {
+	p, a := minimalFixture()
+	a.Spec.CapabilityServer, a.Spec.Standalone = "ach", nil
+	a.Spec.Ach = &v1.AchServerSpec{BaseURL: "https://api.example", Environment: "prod",
+		KeyFrom: v1.AchKeyFrom{SecretKeyRef: &v1.SecretKeyRef{Name: "ek", Key: "token"}}, Model: v1.AchModelSpec{Name: "ackstorm.smart"}}
+
+	unset, _, err := Render(p, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := json.Marshal(unset.Capability.Ach.Model); strings.Contains(string(raw), "limits") {
+		t.Errorf("unset limits reached the wire: %s", raw)
+	}
+	// Pinned: an Agent without limits must keep the configVersion it had before the field existed.
+	if want := "e6ce6f47b76721d43b4e3fe78581bccb4d24eba52c590d85294fe75b39138ae8"; unset.ConfigVersion != want {
+		t.Errorf("configVersion = %s, want %s", unset.ConfigVersion, want)
+	}
+
+	a.Spec.Ach.Model.Limits = &v1.ModelLimitsSpec{Context: 524288, Output: 65536}
+	set, _, err := Render(p, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(set.Capability.Ach.Model)
+	if !strings.Contains(string(raw), `"limits":{"context":524288,"output":65536}`) {
+		t.Errorf("capability.ach.model lacks the limits: %s", raw)
+	}
+}
+
 func TestRender_AchExtraMcpServersRenderWithTheirHeaderBindings(t *testing.T) {
 	p, a := minimalFixture()
 	a.Spec.CapabilityServer, a.Spec.Standalone = "ach", nil

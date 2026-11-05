@@ -487,6 +487,9 @@ type AchModelSpec struct {
 	Params *apiextensionsv1.JSON `json:"params,omitempty"`
 	// +optional
 	Thinking *ThinkingSpec `json:"thinking,omitempty"`
+	// Limits overrides the context and output windows ACH reports for the model.
+	// +optional
+	Limits *ModelLimitsSpec `json:"limits,omitempty"`
 }
 
 // AchTokenExchange exchanges the control pod's projected ServiceAccount token for a

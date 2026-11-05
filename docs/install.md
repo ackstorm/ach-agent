@@ -295,7 +295,10 @@ spec:
     environment: agent-k8s-doctor
     keyFrom:
       tokenExchange: {identity: ai.run@example.com}
-    model: {name: ackstorm.fast, api: openai}
+    model:
+      name: ackstorm.smart
+      api: openai
+      limits: {context: 524288, output: 65536}   # optional; overrides the limits ACH reports
   channels:
     - name: tick
       type: cron

@@ -157,9 +157,16 @@ def test_ach_takes_extra_mcp_servers_and_model_options(tmp_path) -> None:
     assert [s.name for s in config.capability.ach.mcp_servers] == ["github"]
 
 
+def test_ach_model_limits_reach_the_config(tmp_path) -> None:
+    text = MINIMAL.replace("type: gemini}", "type: gemini, limits: {context: 524288, output: 65536}}")
+    config = parse_config(_wire(tmp_path, text))
+    assert (config.capability.ach.model.limits.context, config.capability.ach.model.limits.output) == (524288, 65536)
+    assert parse_config(_wire(tmp_path, MINIMAL)).capability.ach.model.limits is None
+
+
 def test_the_runtime_schema_validates_the_passed_through_fields(tmp_path) -> None:
-    with pytest.raises(ConfigError, match="limits"):  # ach models take no limits
-        _wire(tmp_path, MINIMAL.replace("type: gemini}", "type: gemini, limits: {context: 1, output: 1}}"))
+    with pytest.raises(ConfigError, match="baseUrl"):  # an ach model is served by ACH
+        _wire(tmp_path, MINIMAL.replace("type: gemini}", "type: gemini, baseUrl: 'https://x.example/v1'}"))
     with pytest.raises(ConfigError, match="skills"):
         manifest_to_wire(load_manifest(_write(tmp_path, STANDALONE + "exclude: {skills: [s]}\n")),
                          base_dir=tmp_path, name="a")

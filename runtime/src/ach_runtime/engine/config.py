@@ -183,7 +183,11 @@ def managed_content(public: PublicConfig, fixture: dict[str, Any]) -> dict[str, 
     (contract §4) — v0.1.0 does not announce LSP support or a behaviourally-verified LSP
     disable, so this is retained as an internal setting, not a feature claim.
     """
-    plugins: list[Any] = [{"package": str(MANAGED_CONFIG_PLUGIN_DIR), "options": {"fixture": fixture}}]
+    # The question tool waits for an answer, and a managed turn has nobody to give one.
+    plugins: list[Any] = [
+        {"package": str(MANAGED_CONFIG_PLUGIN_DIR), "options": {"fixture": fixture}},
+        "-opencode.tool.question",
+    ]
     for flag, plugin in _OPTIONAL_PLUGINS.items():
         if public.engine.env.get(flag) not in ("1", "true"):
             plugins.append(f"-{plugin}")
@@ -195,5 +199,7 @@ def managed_content(public: PublicConfig, fixture: dict[str, Any]) -> dict[str, 
             "keep": {"tokens": public.engine.compaction.keep.tokens},
             "buffer": public.engine.compaction.buffer,
         },
+        # With no provider set, the first web search stops to ask a person to pick one.
+        "websearch": {"provider": "exa"},
         "plugins": plugins,
     }

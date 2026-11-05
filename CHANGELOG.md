@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release with this change: an older execution image rejects the catalog at `/configure`.
   Hook scripts get `ACH_MCP_HEADERS` next to `ACH_MCP_URLS`; `ach-mcp` reads both.
 
+### Fixed
+
+- AgentProfile `sandbox.openShell.resources` reach the sandbox pod. They were sent as a flat
+  `{cpu, memory}` map, which the gateway does not read as limits, so the pod ran with no
+  requests or limits. They are now sent as `limits`; the requests default to the same values.
+- An extra egress endpoint with a `ports` list and no `port` is accepted when the list leaves
+  out the facade port. The unset `port` was read as "any port" and every such rule was
+  rejected as reaching the facade.
+
 ## [0.6.1] - 2026-11-05
 
 ### Fixed

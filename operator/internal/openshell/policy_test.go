@@ -4,6 +4,7 @@ package openshell
 
 import (
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -145,6 +146,11 @@ func TestBuildPolicy_UnrelatedEgressIsKept(t *testing.T) {
 	if _, err := BuildPolicy(nil, doc, "f.ns.svc", 8081); err != nil {
 		t.Fatalf("unrelated egress rejected: %v", err)
 	}
+	// OpenShell reads `ports` when set and `port` only without it; an unset port is not "any".
+	doc = raw(`{"network_policies":{"a":{"name":"a","endpoints":[{"host":"**.*.*","ports":[443,80]}]}}}`)
+	if _, err := BuildPolicy(nil, doc, "f.ns.svc", 8081); err != nil {
+		t.Fatalf("ports list without the facade port rejected: %v", err)
+	}
 	doc = raw(`{"network_policies":{"a":{"name":"a","endpoints":[{"host":"203.0.113.9","port":443,"allowed_ips":["203.0.113.0/24","2001:db8::/32"]},{"host":"api.example.com","port":443}]}}}`)
 	if _, err := BuildPolicy(nil, doc, "f.ns.svc", 8081); err != nil {
 		t.Fatalf("external egress rejected: %v", err)
@@ -164,9 +170,12 @@ func TestBuildPolicy_RuntimeCodeIsReadOnly(t *testing.T) {
 	}
 }
 
-func TestResources_MapsCpuMemory(t *testing.T) {
+// The gateway reads the Kubernetes limits/requests shape and copies missing cpu/memory
+// requests from the limits; a flat map reaches the pod as unknown fields and is dropped.
+func TestResources_MapsToKubernetesLimits(t *testing.T) {
 	m, err := Resources(&v1.SandboxResources{CPU: "2", Memory: "4Gi", EphemeralStorage: "10Gi"})
-	if err != nil || m["cpu"] != "2" || m["memory"] != "4Gi" || m["ephemeral-storage"] != "10Gi" || len(m) != 3 {
+	want := map[string]any{"limits": map[string]any{"cpu": "2", "memory": "4Gi", "ephemeral-storage": "10Gi"}}
+	if err != nil || !reflect.DeepEqual(m, want) {
 		t.Fatalf("m=%v err=%v", m, err)
 	}
 	if m, err := Resources(nil); m != nil || err != nil {

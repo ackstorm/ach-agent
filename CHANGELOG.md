@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manifest `model.limits`) works with an ACH environment too, and wins over the limits ACH hydrate and
   the gateway's model info report. For a model whose real window differs from what ACH reports.
 
+### Fixed
+
+- A sandbox the gateway no longer knows while its pod still runs is removed. A create that
+  failed half-way left the Sandbox object and its pod behind, and the operator waited for that
+  pod to go forever, so every run failed with `WorkspaceUnhosted`. Needs `delete` on
+  `agents.x-k8s.io` `sandboxes` (in the chart's ClusterRole).
+
 ## [0.6.2] - 2026-11-05
 
 ### Security

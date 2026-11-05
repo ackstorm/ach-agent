@@ -87,7 +87,8 @@ export default {
         }
         // A headless run has nobody to answer OpenCode's default `external_directory: ask`:
         // a file tool (read/glob/grep/edit) outside the workspace would wait forever. Deny
-        // it instead, then re-allow OpenCode's own output files (last match wins). The
+        // it instead, then re-allow OpenCode's own output files and the hydrated skills,
+        // whose references and scripts the skill tool points at (last match wins). The
         // `shell` tool is not guarded by `external_directory`.
         agent.permissions.push({ action: "external_directory", resource: "*", effect: "deny" })
         const data = process.env.XDG_DATA_HOME
@@ -95,6 +96,10 @@ export default {
           for (const dir of ["tool-output/*", "shell/*/*"]) {
             agent.permissions.push({ action: "external_directory", resource: `${data}/opencode/${dir}`, effect: "allow" })
           }
+        }
+        const config = process.env.XDG_CONFIG_HOME
+        if (config) {
+          agent.permissions.push({ action: "external_directory", resource: `${config}/opencode/skills/*`, effect: "allow" })
         }
         if (fixture.systemPrompt && fixture.promptCompose === "replace") agent.system = fixture.systemPrompt
       })

@@ -82,6 +82,18 @@ def test_exclude_maps_to_the_capability_filter(tmp_path) -> None:
     assert config.capability.filter.exclude.tools == []
 
 
+def test_limits_override_the_defaults(tmp_path) -> None:
+    config = parse_config(_wire(tmp_path, MINIMAL + "limits: {maxSteps: 400, maxInvocationSeconds: 3600}\n"))
+    assert config.limits.max_steps == 400
+    assert config.limits.max_invocation_seconds == 3600
+    assert config.limits.max_concurrent_invocations == 1
+
+
+def test_invalid_limit_is_rejected(tmp_path) -> None:
+    with pytest.raises(ConfigError):
+        _wire(tmp_path, MINIMAL + "limits: {maxSteps: 0}\n")
+
+
 @pytest.mark.parametrize("extra", ["enviroment: typo\n", "channels: []\n", "persistence: s3\n", "baseUrl: x\n"])
 def test_unknown_key_is_rejected(tmp_path, extra) -> None:
     with pytest.raises(ManifestError, match=extra.split(":")[0]):

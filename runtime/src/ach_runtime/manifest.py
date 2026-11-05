@@ -107,6 +107,8 @@ class Manifest(BaseModel):
     prompt: PromptSpec | None = None
     # Passed through: the RuntimeConfig schema validates the names.
     exclude: dict[str, list[str]] = Field(default_factory=dict)
+    # Merged over the `limits` defaults; the RuntimeConfig schema validates the values.
+    limits: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _checks(self) -> Manifest:
@@ -180,6 +182,7 @@ def manifest_to_wire(
         **copy.deepcopy(_DEFAULTS),
         "channels": [copy.deepcopy(_TUI_CHANNEL)],
     }
+    wire["limits"].update(manifest.limits)
     if manifest.prompt is not None:
         wire["prompt"] = {"system": _system_prompt(manifest.prompt, base_dir)}
     wire["configVersion"] = compute_config_version(wire)

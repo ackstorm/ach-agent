@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Requires the gateway mTLS (`openshell.tls.secret`; otherwise `WorkloadApplied=False`,
   `VolumeRequiresGatewayTLS`), `server.drivers.kubernetes.allowDriverConfig: true` on the OpenShell
   gateway, and a StorageClass with `reclaimPolicy: Delete` writable by uid/gid 10001.
+- `ach-agent run` manifests take `limits`, merged over the run defaults (`maxSteps: 50`,
+  `maxInvocationSeconds: 600`). A long task hit 50 steps, where opencode disables tools and the turn
+  ends silently.
 - Opt-in OpenShell gateway mTLS. With `openshell.tls.secret` (the Secret of the operator's
   `OU=operator` client certificate) the operator reads that Secret at start, calls an `https://`
   gateway with it, and control pods verify the sandbox service path against its CA only

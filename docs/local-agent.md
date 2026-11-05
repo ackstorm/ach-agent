@@ -91,14 +91,18 @@ model: {name: qwen3-coder, type: openai, baseUrl: "http://host.docker.internal:1
 | `mcpServers` (`name`, `url`, `headers`) | no | none | `capability.ach.mcpServers` or `capability.standalone.mcpServers` |
 | `prompt.file` / `prompt.text` | no | none | `prompt.system` as text; a file is read and inlined |
 | `exclude` (`mcpServers`, `tools`, `skills`) | no | nothing | `capability.filter.exclude` |
+| `limits` (any wire `limits` key, e.g. `maxSteps`, `maxInvocationSeconds`) | no | `maxSteps: 50`, `maxInvocationSeconds: 600` | `limits` |
 
 A header is `{env: NAME}` (a secret read from your shell) or `{value: …}` (a literal). The value of
 `NAME` is sent as is, so an `Authorization` header needs its `Bearer ` prefix inside the variable. With
 `ach:`, an extra MCP server is never sent the ACH credential, and a name the environment already has is
 an error at start.
 
-Unknown keys are an error. Paths resolve relative to the manifest. Limits, compaction and timeouts are
-internal defaults of `run`. There are no channels: paste what a channel would send into the TUI.
+Unknown keys are an error. Paths resolve relative to the manifest. Compaction and timeouts are
+internal defaults of `run`. `limits.maxSteps` caps the engine steps of one turn: at the cap opencode
+disables tools and the turn ends without a reply, so a long task (a report, a multi-deck edit) needs
+a higher value, e.g. `limits: {maxSteps: 400, maxInvocationSeconds: 3600}`. There are no channels:
+paste what a channel would send into the TUI.
 
 ## Credentials
 

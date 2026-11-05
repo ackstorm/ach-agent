@@ -91,12 +91,13 @@ def test_managed_content_sets_conservative_isolation_flags(public) -> None:
     assert content["snapshots"] is False
     assert content["lsp"] is False
     assert content["compaction"]["buffer"] == public.engine.compaction.buffer
+    assert content["websearch"] == {"provider": "exa"}
     assert content["plugins"][0]["options"]["fixture"]["maxSteps"] == public.limits.max_steps
 
 
 def test_managed_content_removes_optional_plugins_by_default(public) -> None:
     removed = managed_content(public, to_fixture(public))["plugins"][1:]
-    assert sorted(removed) == ["-opencode.browser", "-opencode.tools"]
+    assert sorted(removed) == ["-opencode.browser", "-opencode.tool.question", "-opencode.tools"]
 
 
 @pytest.mark.parametrize(
@@ -109,7 +110,7 @@ def test_managed_content_removes_optional_plugins_by_default(public) -> None:
 @pytest.mark.parametrize("value", ["1", "true"])
 def test_managed_content_keeps_only_the_enabled_plugin(public, flag, plugin, other, value) -> None:
     public.engine.env[flag] = value
-    assert managed_content(public, to_fixture(public))["plugins"][1:] == [other]
+    assert managed_content(public, to_fixture(public))["plugins"][1:] == ["-opencode.tool.question", other]
 
 
 def test_managed_content_ignores_other_flag_values(public) -> None:

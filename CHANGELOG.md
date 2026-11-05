@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An ACH Agent on a LiteLLM model-group alias (such as `ackstorm.smart`) takes its context and
+  output limits from the `/platform/hydrate` response (ACH v1.1.3 or later), where the alias is
+  resolved. `/v2/model/info` does not resolve aliases, so such an Agent ran on opencode's default
+  context window and compacted early.
 - `ach-agent run` with an `ach-cli login` profile no longer fails at boot with `400 missing_environment`:
   skill, prompt and artifact downloads send `x-ach-environment`, which ACH requires for a login (`pk_`)
   credential.

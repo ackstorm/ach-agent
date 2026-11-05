@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [unreleased]
+
+### Changed
+
+- OpenCode's built-in `opencode.browser` and `opencode.tools` (session, worktree and model-search
+  tools) plugins are off; the MCP resource tools stay. To keep one, set
+  `OPENCODE_ENABLE_BROWSER_TOOL` or `OPENCODE_ENABLE_MANAGEMENT_TOOLS` to `1` or `true` in `spec.env`
+  and list it in `engine.forwardEnv`.
+
 ## [0.5.0] - 2026-11-05
 
 ### Added

@@ -31,6 +31,16 @@ MANAGED_CONFIG_PLUGIN_DIR = Path(
 )
 
 
+# OpenCode built-in plugins a managed agent runs without, unless engine.forwardEnv passes the
+# flag. opencode.browser drives the desktop app, which no managed agent attaches to.
+# opencode.tools manages sessions and worktrees, and denying `execute` would hand those to the
+# model as direct tools.
+_OPTIONAL_PLUGINS = {
+    "OPENCODE_ENABLE_BROWSER_TOOL": "opencode.browser",
+    "OPENCODE_ENABLE_MANAGEMENT_TOOLS": "opencode.tools",
+}
+
+
 def build_env(*, home: Path, scratch: Path, approved_env: dict[str, str], password: str) -> dict[str, str]:
     """Clean-slate env for one `opencode2 serve --stdio` subprocess.
 
@@ -173,6 +183,10 @@ def managed_content(public: PublicConfig, fixture: dict[str, Any]) -> dict[str, 
     (contract §4) — v0.1.0 does not announce LSP support or a behaviourally-verified LSP
     disable, so this is retained as an internal setting, not a feature claim.
     """
+    plugins: list[Any] = [{"package": str(MANAGED_CONFIG_PLUGIN_DIR), "options": {"fixture": fixture}}]
+    for flag, plugin in _OPTIONAL_PLUGINS.items():
+        if public.engine.env.get(flag) not in ("1", "true"):
+            plugins.append(f"-{plugin}")
     return {
         "snapshots": False,
         "lsp": False,
@@ -181,5 +195,5 @@ def managed_content(public: PublicConfig, fixture: dict[str, Any]) -> dict[str, 
             "keep": {"tokens": public.engine.compaction.keep.tokens},
             "buffer": public.engine.compaction.buffer,
         },
-        "plugins": [{"package": str(MANAGED_CONFIG_PLUGIN_DIR), "options": {"fixture": fixture}}],
+        "plugins": plugins,
     }

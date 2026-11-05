@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [unreleased]
+
+### Fixed
+
+- A managed agent can read its own skills. The file tools were denied everything outside the
+  workspace except OpenCode's output files, and skills are hydrated under
+  `$XDG_CONFIG_HOME/opencode/skills`, so every `read` of a skill's references or scripts failed
+  with `external_directory` and the agent searched the filesystem or copied the skill instead.
+
 ## [0.6.0] - 2026-11-05
 
 ### Added

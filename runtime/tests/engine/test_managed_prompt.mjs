@@ -188,12 +188,15 @@ print(json.dumps(to_fixture(public, managed_agent="build", catalog=catalog)))
   ])
 })
 
-test("file tools outside the workspace are denied, except OpenCode's own output files", async (t) => {
-  const previous = process.env.XDG_DATA_HOME
+test("file tools outside the workspace are denied, except OpenCode's own output files and the skills", async (t) => {
+  const previous = { data: process.env.XDG_DATA_HOME, config: process.env.XDG_CONFIG_HOME }
   process.env.XDG_DATA_HOME = "/s/home/.local/share"
+  process.env.XDG_CONFIG_HOME = "/s/home/.config"
   t.after(() => {
-    if (previous === undefined) delete process.env.XDG_DATA_HOME
-    else process.env.XDG_DATA_HOME = previous
+    for (const [name, value] of [["XDG_DATA_HOME", previous.data], ["XDG_CONFIG_HOME", previous.config]]) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
   })
   const ctx = capturingContext(baseFixture())
 
@@ -205,6 +208,7 @@ test("file tools outside the workspace are denied, except OpenCode's own output 
       { action: "external_directory", resource: "*", effect: "deny" },
       { action: "external_directory", resource: "/s/home/.local/share/opencode/tool-output/*", effect: "allow" },
       { action: "external_directory", resource: "/s/home/.local/share/opencode/shell/*/*", effect: "allow" },
+      { action: "external_directory", resource: "/s/home/.config/opencode/skills/*", effect: "allow" },
     ],
   )
 })

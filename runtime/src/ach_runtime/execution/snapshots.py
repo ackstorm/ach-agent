@@ -111,12 +111,13 @@ async def import_session(
 
 
 async def suspend_session(service: ExecutionService, session_ref: str) -> None:
-    """Stop the session's opencode cleanly and write its manifest into the HOME, which stays
-    where it is (persistence type volume: the HOME is on the Workspace PVC)."""
+    """Stop the session's opencode and write its manifest into the HOME, which stays where it
+    is (persistence type volume: the HOME is on the Workspace PVC). An opencode that died
+    gives no clean-exit proof and needs none: nothing is copied, and a resume checks the sid."""
     async with service._sessions.lock(session_ref):
         if service._sessions.get(session_ref) is None:
             raise KeyError(session_ref)
-        await service.snapshot(session_ref)
+        await service.snapshot(session_ref, require_clean=False)
 
 
 async def resume_session(
@@ -146,6 +147,9 @@ async def resume_session(
         workspace_ref = service._workspace_ref
         if not workspace_ref:
             raise ValueError("execution service has no pinned workspaceRef")
+        if manifest.workspace_ref != workspace_ref or manifest.agent != service._agent_identity():
+            log.warning("session manifest of another Agent or Workspace discarded; session starts fresh")
+            return "fresh"
         try:
             await service.restore(session_ref, workspace_ref, manifest, in_place=True,
                                   _reservation_held=True, deadline_at=deadline_at)

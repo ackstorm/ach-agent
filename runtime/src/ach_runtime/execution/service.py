@@ -496,6 +496,7 @@ class ExecutionService:
         # the receipt landing and here must still find it recorded.
         inv.receipt = receipt
         session.native_session_id = getattr(receipt, "native_session_id", None)
+        session.suspended = False
         # Marker only after a confirmed native receipt — a rejected Start must not skip
         # the hook on the next attempt for this session (finding #12 ordering).
         if not session.started:
@@ -1022,7 +1023,7 @@ class ExecutionService:
 
     # ------------------------------------------------------------------ snapshot/restore
 
-    async def snapshot(self, session_ref: str) -> SnapshotManifest:
+    async def snapshot(self, session_ref: str, *, require_clean: bool = True) -> SnapshotManifest:
         if self._public is None:
             raise RuntimeError("snapshot called before configure()")
         session = self._sessions.get(session_ref)
@@ -1048,16 +1049,11 @@ class ExecutionService:
         session.suspend_hook_failed = suspend_hook_failed
 
         clean = await self._engine.suspend(session_ref)
-        if not clean:
+        if require_clean and not clean:
             raise RuntimeError(
                 "native process did not confirm a clean exit before snapshot (forced stop)"
             )
 
-        agent = {
-            "name": self._public.agent.name,
-            "namespace": self._public.agent.namespace,
-            "uid": self._public.agent.uid,
-        }
         workspace_ref = session_invocations[-1].request.workspace_ref if session_invocations else (self._workspace_ref or "")
         registry = {
             "workspace_path": str(self._workspace_dir),
@@ -1081,9 +1077,18 @@ class ExecutionService:
                 for inv in session_invocations
             ],
         }
-        return await self._engine.snapshot(
-            session_ref, agent=agent, workspace_ref=workspace_ref, registry=registry
+        manifest = await self._engine.snapshot(
+            session_ref, agent=self._agent_identity(), workspace_ref=workspace_ref, registry=registry
         )
+        session.suspended = True
+        return manifest
+
+    def _agent_identity(self) -> dict[str, str]:
+        return {
+            "name": self._public.agent.name,
+            "namespace": self._public.agent.namespace,
+            "uid": self._public.agent.uid,
+        }
 
     @staticmethod
     def _started_record(inv: _Invocation) -> dict[str, Any] | None:
@@ -1111,12 +1116,7 @@ class ExecutionService:
             raise RuntimeError("restore called before configure()")
         if self._workspace_ref is not None and workspace_ref != self._workspace_ref:
             raise WorkspaceMismatch("workspaceRef does not match this execution pod")
-        expected_agent = {
-            "name": self._public.agent.name,
-            "namespace": self._public.agent.namespace,
-            "uid": self._public.agent.uid,
-        }
-        if manifest.agent != expected_agent:
+        if manifest.agent != self._agent_identity():
             raise ValueError("snapshot agent identity does not match this execution pod")
         if manifest.session_ref != session_ref or manifest.workspace_ref != workspace_ref:
             raise ValueError("snapshot identity does not match the requested destination")
@@ -1233,6 +1233,8 @@ class ExecutionService:
             "initialized": (state.home / ".ach-session-started").is_file(),
             "nativeSessionId": state.native_session_id,
             "active": active,
+            # Ran in this pod and stopped since its manifest: only a volume session acts on it.
+            "needsSuspend": bool(getattr(native, "sid", None)) and not active and not state.suspended,
             "uncertain": uncertain,
             "suspendHookFailed": state.suspend_hook_failed,
         }

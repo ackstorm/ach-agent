@@ -665,9 +665,14 @@ class Lifecycle:
                     self._last_session.pop(key, None)
                     initialized = bool(info.get("initialized"))
                     native_session_id = info.get("nativeSessionId")
-                    persistence_enabled = self.control.config.workspace.persistence.type == "s3"
-                    if (persistence_enabled and (initialized or native_session_id)
-                            and session_close_key not in self._confirmed_session_closes):
+                    persistence = self.control.config.workspace.persistence.type
+                    # A volume session stays listed after its suspend, so the pod says when
+                    # one is due: the in-memory close set is gone after a control restart.
+                    due = (persistence == "volume" and info.get("needsSuspend")) or (
+                        persistence == "s3" and (initialized or native_session_id)
+                        and session_close_key not in self._confirmed_session_closes
+                    )
+                    if due:
                         if not await self._attempt_session_save(endpoint, session_ref, failed_key):
                             active_refs.add(session_ref)
                             continue

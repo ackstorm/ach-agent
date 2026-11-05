@@ -2355,6 +2355,52 @@ def test_volume_session_idle_suspends_in_place_then_workspace() -> None:
     asyncio.run(scenario())
 
 
+def test_volume_dead_session_is_suspended_then_workspace_closes() -> None:
+    import httpx
+    from datetime import timedelta
+    from ach_runtime.harness.workspaces import WorkspaceEndpoint, WorkspaceRef
+
+    async def scenario():
+        state = {"needs": True}
+        suspends = []
+
+        async def handler(request):
+            headers = {"X-ACH-Instance-Id": "pod"}
+            if request.url.path == "/sessions":
+                return httpx.Response(200, headers=headers, json=[{"sessionRef": "b" * 64}])
+            if request.url.path.endswith("/info"):
+                return httpx.Response(200, headers=headers, json={
+                    "active": False, "uncertain": False, "initialized": True,
+                    "nativeSessionId": "ses_1", "needsSuspend": state["needs"],
+                })
+            if request.url.path.endswith("/suspend"):
+                suspends.append(request.url.path)
+                state["needs"] = False
+                return httpx.Response(200, headers=headers, json={"status": "suspended", "sessionRef": "b" * 64})
+            raise AssertionError(request.url)
+
+        control = _volume_control()
+        control.mini_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        control._headers = lambda endpoint: {"X-ACH-Instance-Id": endpoint.instance_id}
+        control._mini_json = _mini_json(control)
+        endpoint = WorkspaceEndpoint(WorkspaceRef("ach", control.config.agent.uid, "a" * 64), "ws", "pod", "http://mini")
+        control.manager._active = {"a" * 64: endpoint}
+        control.delivery = _Delivery()
+        control.manager.closed = []
+        control.manager.close = _close_record(control.manager)
+        lifecycle = Lifecycle(control)
+        start = datetime(2026, 10, 1, tzinfo=UTC)
+        await lifecycle.tick(start)
+        await lifecycle.tick(start + timedelta(seconds=1))
+        assert len(suspends) == 1
+        await lifecycle.tick(start + timedelta(seconds=40))
+        assert control.manager.closed == [endpoint.ref]
+        await lifecycle.close()
+        await control.mini_client.aclose()
+
+    asyncio.run(scenario())
+
+
 def test_volume_restore_session_resumes_in_place() -> None:
     from types import SimpleNamespace
 

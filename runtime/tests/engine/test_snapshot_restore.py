@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
+import signal
 from pathlib import Path
 
 import pytest
@@ -207,6 +209,61 @@ async def test_full_snapshot_restore_round_trip_same_sid(tmp_path: Path, public)
         for instance in (engine, locals().get("fresh_engine")):
             if instance is None:
                 continue
+            for session in list(instance._sessions.values()):
+                await session._kill(confirm_timeout=5.0)
+
+
+async def test_a_killed_session_resumes_in_place_on_a_fresh_engine(tmp_path: Path, public) -> None:
+    """Persistence type volume: opencode dies without a clean exit, the manifest is written
+    anyway, and a new pod resumes the same sid from the HOME left on the PVC."""
+    engine = OpenCodeEngine()
+    fresh_engine = OpenCodeEngine()
+    home = tmp_path / "home"
+    scratch = tmp_path / "scratch"
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+    session_ref = "native-session-killed"
+    try:
+        async with fake_facades("text") as fakes:
+            invocation = EngineInvocation(
+                invocation_id="native-killed-1",
+                session_ref=session_ref,
+                workspace_dir=workspace_dir,
+                prompt="reply with the single word: pong",
+                public=public,
+                engine_env=dict(public.engine.env),
+                provider_base_url_override=fakes.model_url,
+            )
+            receipt = await engine.start(invocation, home=home, scratch=scratch)
+            await asyncio.wait_for(engine.wait_settled("native-killed-1"), timeout=15.0)
+
+        process = engine._sessions[session_ref]._proc
+        os.kill(process.pid, signal.SIGKILL)
+        await process.wait()
+        assert await engine.suspend(session_ref) is False
+
+        manifest = await engine.snapshot(
+            session_ref, agent={"name": "a", "namespace": "ns", "uid": "u"}, workspace_ref="ws-ref",
+            registry={"workspace_path": str(workspace_dir)},
+        )
+
+        fresh_engine._session_for(session_ref, home, scratch)
+        await fresh_engine.restore(
+            session_ref,
+            manifest,
+            expected={
+                "engine_package": ENGINE_PACKAGE,
+                "workspace_ref": "ws-ref",
+                "session_ref": session_ref,
+                "workspace_path": str(workspace_dir),
+            },
+            public=public,
+            engine_env=dict(public.engine.env),
+            in_place=True,
+        )
+        assert fresh_engine._sessions[session_ref].sid == receipt.native_session_id
+    finally:
+        for instance in (engine, fresh_engine):
             for session in list(instance._sessions.values()):
                 await session._kill(confirm_timeout=5.0)
 

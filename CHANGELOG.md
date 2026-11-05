@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failed half-way left the Sandbox object and its pod behind, and the operator waited for that
   pod to go forever, so every run failed with `WorkspaceUnhosted`. Needs `delete` on
   `agents.x-k8s.io` `sandboxes` (in the chart's ClusterRole).
+- `workspace.persistence.type: volume`: a session whose opencode died is suspended, so its next sandbox
+  resumes the conversation instead of starting fresh, and its `sessionSuspend` hook runs.
+- `workspace.persistence.type: volume`: a session manifest of another Agent or Workspace starts the
+  session fresh instead of failing the turn.
 
 ## [0.6.2] - 2026-11-05
 

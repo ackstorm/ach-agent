@@ -8,6 +8,7 @@ import json
 import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from ach_runtime.engine.opencode import (
     ENGINE_PACKAGE,
@@ -18,7 +19,7 @@ from ach_runtime.engine.opencode import (
 )
 from ach_runtime.execution.service import ExecutionService
 from ach_runtime.execution.sessions import SessionRegistry
-from ach_runtime.execution.snapshots import resume_session
+from ach_runtime.execution.snapshots import resume_session, suspend_session
 
 REF = "se" * 16
 
@@ -71,6 +72,47 @@ async def test_resume_from_another_workspace_path_starts_fresh(tmp_path, public_
     _write_manifest(service, public_config_fixture, "/workspace")
     assert await resume_session(service, REF) == "fresh"
     assert engine.restores == []
+
+
+async def test_resume_of_another_identity_starts_fresh(tmp_path, public_config_fixture) -> None:
+    engine = _Engine()
+    service = _service(tmp_path, public_config_fixture, engine)
+    home = _write_manifest(service, public_config_fixture, str(tmp_path / "workspace"))
+    original = json.loads((home / ".ach-registry.json").read_text(encoding="utf-8"))
+    for field, value in (("workspaceRef", "other-ws"), ("agent", {"name": "x", "namespace": "y", "uid": "z"})):
+        (home / ".ach-registry.json").write_text(json.dumps({**original, field: value}), encoding="utf-8")
+        assert await resume_session(service, REF) == "fresh"
+    assert engine.restores == []
+
+
+async def test_a_dead_session_is_suspended_once_without_a_clean_exit(tmp_path, public_config_fixture) -> None:
+    class Dead(_Engine):
+        def __init__(self) -> None:
+            super().__init__()
+            self._sessions = {REF: SimpleNamespace(alive=False, sid="ses_1")}
+            self.snapshots = 0
+
+        async def suspend(self, session_ref):
+            return False  # killed: no proof of a clean exit
+
+        async def snapshot(self, session_ref, **kwargs):
+            self.snapshots += 1
+
+    engine = Dead()
+    service = _service(tmp_path, public_config_fixture, engine)
+    service._sessions.get_or_create(REF)
+    assert (await service.session_info(REF))["needsSuspend"] is True
+
+    await suspend_session(service, REF)
+
+    assert engine.snapshots == 1
+    assert (await service.session_info(REF))["needsSuspend"] is False
+
+
+async def test_a_session_this_pod_never_ran_needs_no_suspend(tmp_path, public_config_fixture) -> None:
+    service = _service(tmp_path, public_config_fixture, _Engine())
+    _write_manifest(service, public_config_fixture, str(tmp_path / "workspace"))
+    assert (await service.session_info(REF))["needsSuspend"] is False
 
 
 async def test_resume_with_a_corrupt_manifest_starts_fresh(tmp_path, public_config_fixture) -> None:

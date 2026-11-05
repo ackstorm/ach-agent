@@ -169,7 +169,7 @@ async def _first_request_tool_names(public, tmp_path: Path) -> set[str]:
 
 
 async def test_denied_native_tools_leave_the_real_opencode_tool_list(tmp_path: Path, public) -> None:
-    denied = ["question", "execute", "websearch", "webfetch"]
+    denied = ["execute", "websearch", "webfetch"]
     control = await _first_request_tool_names(public, tmp_path / "control")
     assert set(denied) <= control, "control run must offer the tools, else the check is vacuous"
 

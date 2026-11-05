@@ -121,7 +121,7 @@ def test_managed_content_ignores_other_flag_values(public) -> None:
 def test_catalog_translation_preserves_grants_and_scoped_mcp(public) -> None:
     catalog = {
         "providers": {public.model.type: {
-            "baseURL": "https://facade.example/t/model-token",
+            "baseURL": "https://facade.example/model",
             "apiKey": "local-proxy",
             "models": {public.model.name: {
                 "tool_call": False,
@@ -131,7 +131,7 @@ def test_catalog_translation_preserves_grants_and_scoped_mcp(public) -> None:
                 "temperature": 0.25,
             }},
         }},
-        "mcp": {"search": {"url": "https://facade.example/t/mcp-token", "headers": {}}},
+        "mcp": {"search": {"url": "https://facade.example/mcp", "headers": {}}},
     }
     fixture = to_fixture(public, catalog=catalog)
     model = fixture["providers"][public.model.type]["models"][public.model.name]

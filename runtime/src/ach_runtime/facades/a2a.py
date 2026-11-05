@@ -295,7 +295,7 @@ class A2AEgressFacade:
             finally:
                 await self.aclose()
 
-        return Starlette(routes=[Mount("/t/{token}/a2a", app=guarded)], lifespan=lifespan)
+        return Starlette(routes=[Mount("/a2a", app=guarded)], lifespan=lifespan)
 
     async def aclose(self) -> None:
         if self._closed:

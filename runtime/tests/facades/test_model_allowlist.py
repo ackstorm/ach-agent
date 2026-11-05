@@ -8,7 +8,7 @@ import pytest
 
 from ach_runtime.facades._proxy import ProcessIdentity
 from ach_runtime.facades.model import ModelFacade
-from ach_runtime.harness.tokens import facade_token
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER, facade_token
 
 KEY = b"k" * 32
 MODEL = "anthropic/claude-sonnet-5.5"
@@ -32,9 +32,10 @@ async def _send(api: str, model: str, method: str, path: str, **kwargs) -> tuple
         key=KEY, owned_workspace=_owned, identity=ProcessIdentity(agent="a", environment="e"),
         client=httpx.AsyncClient(transport=httpx.MockTransport(upstream)),
     )
-    token = facade_token(KEY, "ws")
+    headers = httpx.Headers(kwargs.pop("headers", None))
+    headers[FACADE_TOKEN_HEADER] = facade_token(KEY, "ws")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=facade.app()), base_url="http://f") as client:
-        response = await client.request(method, f"/t/{token}/{path}", **kwargs)
+        response = await client.request(method, f"/{path}", headers=headers, **kwargs)
     return response.status_code, hits
 
 

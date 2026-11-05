@@ -25,6 +25,10 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 _ENGINE_SEED_LABEL = b"ach-sandbox-engine"
 
+# Request header that carries the facade token. Never a URL: the OpenShell supervisor logs
+# every request path.
+FACADE_TOKEN_HEADER = "x-ach-facade-token"
+
 
 class WorkspaceAuthenticationFailed(Exception):
     """Facade token verified but the claimed Workspace is not owned/live."""

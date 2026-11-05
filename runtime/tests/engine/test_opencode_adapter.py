@@ -16,6 +16,7 @@ import pytest
 from ach_runtime.config.public import public_config
 from ach_runtime.config.schema import RuntimeConfig
 from ach_runtime.engine.opencode import EngineInvocation, OpenCodeEngine
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER
 from fake_facades import fake_facades
 
 FIXTURE_PATH = Path(__file__).parent.parent / "config" / "fixtures" / "pr-review-runtime.json"
@@ -131,6 +132,41 @@ async def test_readiness_waits_for_connected_mcp_before_first_prompt(
         assert receipt.native_session_id
         outcome = await asyncio.wait_for(engine.wait_settled("native-mcp-1"), timeout=15.0)
         assert outcome == "completed"
+
+
+async def test_every_engine_request_carries_the_facade_token_header(
+    tmp_path: Path, public, engine
+) -> None:
+    """The real binary must send the token as a header on model and MCP traffic: the
+    facades read it nowhere else."""
+    token = "workspace.mac"
+    headers = {FACADE_TOKEN_HEADER: token}
+    async with fake_facades("text") as fakes:
+        invocation = _invocation(
+            public,
+            tmp_path,
+            invocation_id="native-token-1",
+            session_ref="native-session-token",
+            model_url=fakes.model_url,
+        )
+        invocation.catalog = {
+            "providers": {
+                public.model.type: {
+                    "baseURL": fakes.model_url,
+                    "apiKey": "local-proxy",
+                    "headers": headers,
+                    "models": {public.model.name: {}},
+                }
+            },
+            "mcp": {"echo": {"url": fakes.mcp_url, "headers": headers}},
+        }
+        await engine.start(invocation, home=tmp_path / "home", scratch=tmp_path / "scratch")
+        assert await asyncio.wait_for(engine.wait_settled("native-token-1"), timeout=15.0) == "completed"
+        capture = await fakes.control({"command": "capture"})
+
+    assert capture["records"]
+    assert {r["achHeaders"].get(FACADE_TOKEN_HEADER) for r in capture["records"]} == {token}
+    assert set(capture["mcpTokens"]) == {token}
 
 
 async def test_cancel_bounded_when_model_call_hangs(tmp_path: Path, public, engine) -> None:

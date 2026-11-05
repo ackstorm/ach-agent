@@ -16,7 +16,7 @@ from ach_runtime.facades.a2a import A2AAgentClient
 from ach_runtime.facades.mcp import McpFacade
 from ach_runtime.facades.model import ModelFacade
 from ach_runtime.harness.keys import Exchange, KeySource
-from ach_runtime.harness.tokens import facade_token
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER, facade_token
 from fixtures.memory_mcp import RecordingUpstream
 
 KEY = b"k" * 32
@@ -54,8 +54,8 @@ def _model(keys: KeySource, upstream) -> ModelFacade:
 
 async def _chat(facade: ModelFacade) -> httpx.Response:
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=facade.app()), base_url="http://f") as client:
-        return await client.post(f"/t/{TOKEN}/chat/completions", json={"model": "m", "messages": []},
-                                 headers={"x-ach-key": "sandbox-guess"})
+        return await client.post("/chat/completions", json={"model": "m", "messages": []},
+                                 headers={"x-ach-key": "sandbox-guess", FACADE_TOKEN_HEADER: TOKEN})
 
 
 async def test_model_and_mcp_facades_send_the_generation_current_at_each_request(tmp_path) -> None:
@@ -71,12 +71,13 @@ async def test_model_and_mcp_facades_send_the_generation_current_at_each_request
                     owned_workspace=_owned, exclude=frozenset(), exclude_tools=frozenset(), identity=IDENTITY,
                     auth=keys.auth, client=httpx.AsyncClient(transport=httpx.MockTransport(upstream)))
     ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=mcp.app()), base_url="http://f") as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=mcp.app()), base_url="http://f",
+                                 headers={FACADE_TOKEN_HEADER: TOKEN}) as client:
         assert (await _chat(model)).status_code == 200
-        assert (await client.post(f"/t/{TOKEN}/mcp/s", json=ping)).status_code == 200
+        assert (await client.post("/mcp/s", json=ping)).status_code == 200
         assert await keys.refresh_rejected(keys.generation)  # a rotation: jwt-2
         assert (await _chat(model)).status_code == 200
-        assert (await client.post(f"/t/{TOKEN}/mcp/s", json=ping)).status_code == 200
+        assert (await client.post("/mcp/s", json=ping)).status_code == 200
     assert seen == ["jwt-1", "jwt-1", "jwt-2", "jwt-2"]
     await keys.close()
 
@@ -95,9 +96,10 @@ async def test_an_mcp_server_with_its_own_headers_is_never_sent_the_ach_credenti
                     auth=keys.auth, own_servers=frozenset({"extra"}),
                     client=httpx.AsyncClient(transport=httpx.MockTransport(upstream)))
     ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=mcp.app()), base_url="http://f") as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=mcp.app()), base_url="http://f",
+                                 headers={FACADE_TOKEN_HEADER: TOKEN}) as client:
         for server in ("ach", "extra"):
-            assert (await client.post(f"/t/{TOKEN}/mcp/{server}", json=ping)).status_code == 200
+            assert (await client.post(f"/mcp/{server}", json=ping)).status_code == 200
     assert seen["ach.example"]["x-ach-key"] == "ek-static"
     assert "x-ach-key" not in seen["extra.example"]
     assert seen["extra.example"]["authorization"] == "Bearer extra-token"

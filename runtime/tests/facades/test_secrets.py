@@ -24,7 +24,7 @@ from starlette.responses import StreamingResponse
 from ach_runtime.facades._proxy import ProcessIdentity
 from ach_runtime.facades.mcp import McpFacade
 from ach_runtime.facades.model import ModelFacade
-from ach_runtime.harness.tokens import facade_token
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER, facade_token
 
 KEY = b"fixture-key"
 IDENTITY = ProcessIdentity(agent="classifier", environment="platform")
@@ -69,10 +69,15 @@ def _flipping(claim: str = "owned-ws") -> Any:
     return owned
 
 
-async def _call(app: Any, method: str, path: str, **kwargs: Any) -> httpx.Response:
+async def _call(
+    app: Any, method: str, path: str, *, token: str | None = None, headers: Any = None, **kwargs: Any
+) -> httpx.Response:
+    merged = httpx.Headers(headers)
+    if token is not None:
+        merged[FACADE_TOKEN_HEADER] = token
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://facade") as client:
-        return await client.request(method, path, **kwargs)
+        return await client.request(method, path, headers=merged, **kwargs)
 
 
 MODEL = "test-model"
@@ -106,7 +111,7 @@ async def test_model_facade_drops_inbound_x_api_key_when_no_header_is_configured
     facade = _model_facade(handler=handler)
     token = facade_token(KEY, "owned-ws")
     resp = await _call(
-        facade.app(), "POST", f"/t/{token}/chat/completions", json={"model": MODEL}, headers={"x-api-key": "local-proxy"}
+        facade.app(), "POST", "/chat/completions", token=token, json={"model": MODEL}, headers={"x-api-key": "local-proxy"}
     )
     assert resp.status_code == 200
     assert "x-api-key" not in seen["headers"]
@@ -125,7 +130,7 @@ async def test_model_facade_injects_ek_and_identity_strips_inbound_auth_and_impe
     resp = await _call(
         facade.app(),
         "POST",
-        f"/t/{token}/chat/completions",
+        "/chat/completions", token=token,
         json={"model": MODEL, "hello": "world"},
         headers={
             "Authorization": "Bearer dummy-client-token",
@@ -155,7 +160,7 @@ async def test_model_facade_denies_malformed_token_with_zero_upstream_egress() -
         return httpx.Response(200, json={"ok": True})
 
     facade = _model_facade(handler=handler)
-    resp = await _call(facade.app(), "POST", "/t/no-dot-here/chat/completions", json={"model": MODEL})
+    resp = await _call(facade.app(), "POST", "/chat/completions", token="no-dot-here", json={"model": MODEL})
 
     assert resp.status_code == 403
     assert called is False
@@ -171,7 +176,7 @@ async def test_model_facade_denies_wrong_key_token_with_zero_upstream_egress() -
 
     facade = _model_facade(handler=handler)
     wrong_key_token = facade_token(b"a-different-key", "owned-ws")
-    resp = await _call(facade.app(), "POST", f"/t/{wrong_key_token}/chat/completions", json={"model": MODEL})
+    resp = await _call(facade.app(), "POST", "/chat/completions", token=wrong_key_token, json={"model": MODEL})
 
     assert resp.status_code == 403
     assert called is False
@@ -188,26 +193,11 @@ async def test_model_facade_denies_non_owned_claim_with_zero_upstream_egress() -
     owned = _owned_once("owned-ws")
     facade = _model_facade(handler=handler, owned_workspace=owned)
     token = facade_token(KEY, "someone-elses-ws")
-    resp = await _call(facade.app(), "POST", f"/t/{token}/chat/completions", json={"model": MODEL})
+    resp = await _call(facade.app(), "POST", "/chat/completions", token=token, json={"model": MODEL})
 
     assert resp.status_code == 403
     assert called is False
     assert owned.calls == ["someone-elses-ws"]
-
-
-async def test_model_facade_untokenized_route_is_404() -> None:
-    called = False
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal called
-        called = True
-        return httpx.Response(200, json={"ok": True})
-
-    facade = _model_facade(handler=handler)
-    resp = await _call(facade.app(), "POST", "/chat/completions", json={"model": MODEL})
-
-    assert resp.status_code == 404
-    assert called is False
 
 
 async def test_model_facade_a_valid_hmac_becomes_non_owned_between_two_calls() -> None:
@@ -223,11 +213,11 @@ async def test_model_facade_a_valid_hmac_becomes_non_owned_between_two_calls() -
     facade = _model_facade(handler=handler, owned_workspace=owned)
     token = facade_token(KEY, "owned-ws")
 
-    first = await _call(facade.app(), "POST", f"/t/{token}/chat/completions", json={"model": MODEL})
+    first = await _call(facade.app(), "POST", "/chat/completions", token=token, json={"model": MODEL})
     assert first.status_code == 200
     assert called_count == 1
 
-    second = await _call(facade.app(), "POST", f"/t/{token}/chat/completions", json={"model": MODEL})
+    second = await _call(facade.app(), "POST", "/chat/completions", token=token, json={"model": MODEL})
     assert second.status_code == 403
     assert called_count == 1, "second call must reach zero additional upstream egress"
     assert owned.state["count"] == 2
@@ -243,7 +233,7 @@ async def test_model_facade_streams_response_body() -> None:
 
     facade = _model_facade(handler=handler)
     token = facade_token(KEY, "owned-ws")
-    resp = await _call(facade.app(), "POST", f"/t/{token}/responses", json={"model": MODEL, "stream": True})
+    resp = await _call(facade.app(), "POST", "/responses", token=token, json={"model": MODEL, "stream": True})
 
     assert resp.status_code == 200
     assert resp.content == b"data: one\n\ndata: two\n\n"
@@ -261,7 +251,7 @@ async def test_model_facade_strips_caller_correlation_when_no_trusted_carrier() 
     resp = await _call(
         facade.app(),
         "POST",
-        f"/t/{token}/chat/completions",
+        "/chat/completions", token=token,
         json={"model": MODEL},
         headers={
             "Traceparent": "00-" + "f" * 32 + "-" + "f" * 16 + "-01",
@@ -294,7 +284,7 @@ async def test_model_facade_trusted_correlation_carrier_overwrites_case_variant(
     resp = await _call(
         facade.app(),
         "POST",
-        f"/t/{token}/chat/completions",
+        "/chat/completions", token=token,
         json={"model": MODEL},
         headers={
             "TraceParent": "00-" + "f" * 32 + "-" + "f" * 16 + "-01",
@@ -324,7 +314,7 @@ async def test_model_facade_mixed_case_identity_and_auth_headers_survive_a_naive
     resp = await _call(
         facade.app(),
         "POST",
-        f"/t/{token}/chat/completions",
+        "/chat/completions", token=token,
         json={"model": MODEL},
         headers={
             "AUTHORIZATION": "Bearer dummy",
@@ -364,7 +354,7 @@ async def test_model_facade_a_chunked_inbound_body_is_forwarded_with_one_framing
         yield b'{"model":"test-model",'
         yield b'"hello":"world"}'
 
-    resp = await _call(facade.app(), "POST", f"/t/{token}/chat/completions", content=chunks())
+    resp = await _call(facade.app(), "POST", "/chat/completions", token=token, content=chunks())
 
     assert resp.status_code == 200
     assert seen["framing"] == ["content-length"]
@@ -409,7 +399,7 @@ async def test_mcp_facade_injects_ek_and_identity_for_granted_server() -> None:
     resp = await _call(
         facade.app(),
         "POST",
-        f"/t/{token}/mcp/m1",
+        "/mcp/m1", token=token,
         json={"jsonrpc": "2.0", "method": "tools/list", "id": 1},
         headers={"Authorization": "Bearer dummy", "x-ach-key": "fake"},
     )
@@ -436,7 +426,7 @@ async def test_mcp_facade_excludes_listed_server_with_zero_upstream_egress() -> 
         exclude=frozenset({"raw-memory-mcp"}),
     )
     token = facade_token(KEY, "owned-ws")
-    resp = await _call(facade.app(), "POST", f"/t/{token}/mcp/raw-memory-mcp", json={})
+    resp = await _call(facade.app(), "POST", "/mcp/raw-memory-mcp", token=token, json={})
 
     assert resp.status_code == 404
     assert called is False
@@ -451,7 +441,7 @@ async def test_mcp_facade_denies_unknown_token_with_zero_upstream_egress() -> No
         return httpx.Response(200, json={})
 
     facade = _mcp_facade(handler=handler, servers={"m1": "https://ach.example.com/mcp/m1"})
-    resp = await _call(facade.app(), "POST", "/t/garbage/mcp/m1", json={})
+    resp = await _call(facade.app(), "POST", "/mcp/m1", token="garbage", json={})
 
     assert resp.status_code == 403
     assert called is False
@@ -467,7 +457,7 @@ async def test_mcp_facade_denies_wrong_key_token_with_zero_upstream_egress() -> 
 
     facade = _mcp_facade(handler=handler, servers={"m1": "https://ach.example.com/mcp/m1"})
     wrong_key_token = facade_token(b"a-different-key", "owned-ws")
-    resp = await _call(facade.app(), "POST", f"/t/{wrong_key_token}/mcp/m1", json={})
+    resp = await _call(facade.app(), "POST", "/mcp/m1", token=wrong_key_token, json={})
 
     assert resp.status_code == 403
     assert called is False
@@ -486,7 +476,7 @@ async def test_mcp_facade_denies_non_owned_claim_with_zero_upstream_egress() -> 
         handler=handler, servers={"m1": "https://ach.example.com/mcp/m1"}, owned_workspace=owned
     )
     token = facade_token(KEY, "someone-elses-ws")
-    resp = await _call(facade.app(), "POST", f"/t/{token}/mcp/m1", json={})
+    resp = await _call(facade.app(), "POST", "/mcp/m1", token=token, json={})
 
     assert resp.status_code == 403
     assert called is False
@@ -509,29 +499,14 @@ async def test_mcp_facade_a_valid_hmac_becomes_non_owned_between_two_calls() -> 
     )
     token = facade_token(KEY, "owned-ws")
 
-    first = await _call(facade.app(), "POST", f"/t/{token}/mcp/m1", json={"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+    first = await _call(facade.app(), "POST", "/mcp/m1", token=token, json={"jsonrpc": "2.0", "method": "tools/list", "id": 1})
     assert first.status_code == 200
     assert called_count == 1
 
-    second = await _call(facade.app(), "POST", f"/t/{token}/mcp/m1", json={"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+    second = await _call(facade.app(), "POST", "/mcp/m1", token=token, json={"jsonrpc": "2.0", "method": "tools/list", "id": 1})
     assert second.status_code == 403
     assert called_count == 1, "second call must reach zero additional upstream egress"
     assert owned.state["count"] == 2
-
-
-async def test_mcp_facade_untokenized_route_is_404() -> None:
-    called = False
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal called
-        called = True
-        return httpx.Response(200, json={})
-
-    facade = _mcp_facade(handler=handler, servers={"m1": "https://ach.example.com/mcp/m1"})
-    resp = await _call(facade.app(), "POST", "/mcp/m1", json={})
-
-    assert resp.status_code == 404
-    assert called is False
 
 
 async def test_mcp_facade_blocks_excluded_tool_call_with_zero_upstream_egress() -> None:
@@ -551,7 +526,7 @@ async def test_mcp_facade_blocks_excluded_tool_call_with_zero_upstream_egress() 
     resp = await _call(
         facade.app(),
         "POST",
-        f"/t/{token}/mcp/m1",
+        "/mcp/m1", token=token,
         json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "dangerous_tool"}, "id": 1},
     )
 
@@ -574,7 +549,7 @@ async def test_mcp_facade_hides_excluded_tools_from_tools_list(sse: bool) -> Non
     )
     token = facade_token(KEY, "owned-ws")
     resp = await _call(
-        facade.app(), "POST", f"/t/{token}/mcp/m1", json={"jsonrpc": "2.0", "method": "tools/list", "id": 1}
+        facade.app(), "POST", "/mcp/m1", token=token, json={"jsonrpc": "2.0", "method": "tools/list", "id": 1}
     )
 
     assert resp.status_code == 200
@@ -598,7 +573,7 @@ async def test_mcp_facade_tools_list_filter_keeps_sse_crlf_and_meta() -> None:
     )
     token = facade_token(KEY, "owned-ws")
     resp = await _call(
-        facade.app(), "POST", f"/t/{token}/mcp/m1", json={"jsonrpc": "2.0", "method": "tools/list", "id": 1}
+        facade.app(), "POST", "/mcp/m1", token=token, json={"jsonrpc": "2.0", "method": "tools/list", "id": 1}
     )
 
     event, data, end = resp.content.split(b"\r\n", 2)
@@ -621,7 +596,7 @@ async def test_mcp_facade_tools_list_unfilterable_reply_passes_through(reply: by
     )
     token = facade_token(KEY, "owned-ws")
     resp = await _call(
-        facade.app(), "POST", f"/t/{token}/mcp/m1", json={"jsonrpc": "2.0", "method": "tools/list", "id": 1}
+        facade.app(), "POST", "/mcp/m1", token=token, json={"jsonrpc": "2.0", "method": "tools/list", "id": 1}
     )
 
     assert resp.status_code == 200
@@ -645,10 +620,10 @@ async def test_mcp_facade_only_tools_list_is_buffered(method: str, streams: bool
     scope = {
         "type": "http",
         "method": "POST",
-        "path": f"/t/{token}/mcp/m1",
+        "path": "/mcp/m1",
         "query_string": b"",
-        "headers": [],
-        "path_params": {"token": token, "server_id": "m1"},
+        "headers": [(b"x-ach-facade-token", token.encode())],
+        "path_params": {"server_id": "m1"},
     }
     response = await facade._handle(Request(scope, messages.get))
     try:
@@ -676,13 +651,13 @@ async def test_mcp_facade_advertises_bare_names_and_calls_upstream_names() -> No
         servers={"m1": "https://ach.example.com/mcp/m1"},
     )
     token = facade_token(KEY, "owned-ws")
-    path = f"/t/{token}/mcp/m1"
-    listed = await _call(facade.app(), "POST", path, json={"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+    path = "/mcp/m1"
+    listed = await _call(facade.app(), "POST", path, token=token, json={"jsonrpc": "2.0", "method": "tools/list", "id": 1})
     assert [t["name"] for t in listed.json()["result"]["tools"]] == ["desk_get_ticket", "other"]
 
     for name in ("desk_get_ticket", "m1.desk_get_ticket", "other"):
         call = {"jsonrpc": "2.0", "method": "tools/call", "params": {"name": name, "arguments": {"a": 1}}, "id": 2}
-        assert (await _call(facade.app(), "POST", path, json=call)).status_code == 200
+        assert (await _call(facade.app(), "POST", path, token=token, json=call)).status_code == 200
     assert [m["params"]["name"] for m in seen[1:]] == ["m1.desk_get_ticket", "m1.desk_get_ticket", "other"]
     assert seen[1]["params"]["arguments"] == {"a": 1}
 
@@ -697,7 +672,7 @@ async def test_mcp_facade_blocks_an_excluded_tool_by_bare_or_upstream_name(name:
     )
     token = facade_token(KEY, "owned-ws")
     call = {"jsonrpc": "2.0", "method": "tools/call", "params": {"name": name}, "id": 1}
-    resp = await _call(facade.app(), "POST", f"/t/{token}/mcp/m1", json=call)
+    resp = await _call(facade.app(), "POST", "/mcp/m1", token=token, json=call)
 
     assert resp.status_code == 403
     assert seen == []
@@ -720,7 +695,7 @@ async def test_mcp_facade_allows_non_excluded_tool_call() -> None:
     resp = await _call(
         facade.app(),
         "POST",
-        f"/t/{token}/mcp/m1",
+        "/mcp/m1", token=token,
         json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "safe_tool"}, "id": 1},
     )
 
@@ -747,7 +722,7 @@ async def test_mcp_facade_injects_trusted_correlation_into_message_meta_without_
     resp = await _call(
         facade.app(),
         "POST",
-        f"/t/{token}/mcp/m1",
+        "/mcp/m1", token=token,
         json={"jsonrpc": "2.0", "method": "tools/call", "id": 1, "params": {"name": "search", "arguments": {"q": "x"}}},
     )
 
@@ -771,7 +746,7 @@ async def test_mcp_facade_meta_injection_is_a_no_op_on_a_non_object_body() -> No
         correlation_headers=lambda: carrier,
     )
     token = facade_token(KEY, "owned-ws")
-    resp = await _call(facade.app(), "POST", f"/t/{token}/mcp/m1", content=b"not-json-at-all")
+    resp = await _call(facade.app(), "POST", "/mcp/m1", token=token, content=b"not-json-at-all")
 
     assert resp.status_code == 200
     assert seen["body"] == b"not-json-at-all"
@@ -794,7 +769,7 @@ async def test_mcp_facade_meta_injection_is_a_no_op_on_a_json_array_body() -> No
     )
     token = facade_token(KEY, "owned-ws")
     batch_body = b'[{"jsonrpc": "2.0", "method": "tools/list", "id": 1}]'
-    resp = await _call(facade.app(), "POST", f"/t/{token}/mcp/m1", content=batch_body)
+    resp = await _call(facade.app(), "POST", "/mcp/m1", token=token, content=batch_body)
 
     assert resp.status_code == 200
     assert seen["body"] == batch_body
@@ -817,7 +792,7 @@ async def test_mcp_facade_meta_injection_is_a_no_op_on_a_response_shaped_body() 
     )
     token = facade_token(KEY, "owned-ws")
     response_body = b'{"jsonrpc": "2.0", "id": 1, "result": {"ok": true}}'
-    resp = await _call(facade.app(), "POST", f"/t/{token}/mcp/m1", content=response_body)
+    resp = await _call(facade.app(), "POST", "/mcp/m1", token=token, content=response_body)
 
     assert resp.status_code == 200
     assert seen["body"] == response_body
@@ -846,7 +821,7 @@ async def test_mcp_facade_relays_query_non_200_status_and_preserves_session_head
     resp = await _call(
         facade.app(),
         "POST",
-        f"/t/{token}/mcp/m1?sessionId=abc&foo=bar",
+        "/mcp/m1?sessionId=abc&foo=bar", token=token,
         json={"jsonrpc": "2.0", "method": "initialize", "id": 1},
     )
 
@@ -873,7 +848,7 @@ async def test_model_facade_refuses_a_tail_that_escapes_the_endpoint(tail: str) 
 
     facade = _model_facade(handler=handler)
     token = facade_token(KEY, "owned-ws")
-    resp = await _call(facade.app(), "POST", f"/t/{token}/{tail}")
+    resp = await _call(facade.app(), "POST", f"/{tail}", token=token)
 
     assert resp.status_code == 400
     assert called is False
@@ -893,7 +868,7 @@ async def test_mcp_facade_refuses_a_tail_that_reaches_an_excluded_server() -> No
         exclude=frozenset({"excluded"}),
     )
     token = facade_token(KEY, "owned-ws")
-    resp = await _call(facade.app(), "POST", f"/t/{token}/mcp/allowed/%2e%2e/excluded")
+    resp = await _call(facade.app(), "POST", "/mcp/allowed/%2e%2e/excluded", token=token)
 
     assert resp.status_code == 400
     assert called is False
@@ -908,7 +883,7 @@ async def test_mcp_facade_keeps_a_tail_inside_the_server_path() -> None:
 
     facade = _mcp_facade(handler=handler, servers={"m1": "https://ach.example.com/mcp/m1"})
     token = facade_token(KEY, "owned-ws")
-    resp = await _call(facade.app(), "POST", f"/t/{token}/mcp/m1/sub/./path")
+    resp = await _call(facade.app(), "POST", "/mcp/m1/sub/./path", token=token)
 
     assert resp.status_code == 200
     assert seen == ["https://ach.example.com/mcp/m1/sub/path"]
@@ -931,7 +906,7 @@ async def test_mcp_facade_blocks_excluded_tool_call_inside_a_batch() -> None:
     resp = await _call(
         facade.app(),
         "POST",
-        f"/t/{token}/mcp/m1",
+        "/mcp/m1", token=token,
         json=[
             {"jsonrpc": "2.0", "method": "tools/list", "id": 1},
             {"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "delete_all"}, "id": 2},
@@ -950,7 +925,7 @@ async def test_model_facade_decodes_a_gzip_reply_it_strips_content_encoding_from
 
     facade = _model_facade(handler=handler)
     token = facade_token(KEY, "owned-ws")
-    resp = await _call(facade.app(), "POST", f"/t/{token}/chat/completions", json={"model": MODEL})
+    resp = await _call(facade.app(), "POST", "/chat/completions", token=token, json={"model": MODEL})
 
     assert "content-encoding" not in resp.headers
     assert resp.json() == {"ok": True}
@@ -966,7 +941,7 @@ async def test_mcp_facade_refuses_a_double_encoded_escape() -> None:
 
     facade = _mcp_facade(handler=handler, servers={"allowed": "https://ach.example.com/mcp/allowed"})
     token = facade_token(KEY, "owned-ws")
-    resp = await _call(facade.app(), "POST", f"/t/{token}/mcp/allowed/%252e%252e/excluded")
+    resp = await _call(facade.app(), "POST", "/mcp/allowed/%252e%252e/excluded", token=token)
 
     assert resp.status_code == 400
     assert called is False
@@ -991,7 +966,7 @@ async def test_mcp_facade_denies_a_non_string_tool_name_when_tools_are_excluded(
     resp = await _call(
         facade.app(),
         "POST",
-        f"/t/{token}/mcp/m1",
+        "/mcp/m1", token=token,
         json={"jsonrpc": "2.0", "method": "tools/call", "params": params, "id": 1},
     )
 
@@ -1015,7 +990,7 @@ async def test_mcp_facade_refuses_an_encoded_body_when_tools_are_excluded() -> N
     token = facade_token(KEY, "owned-ws")
     body = gzip.compress(json.dumps({"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "delete_all"}}).encode())
     resp = await _call(
-        facade.app(), "POST", f"/t/{token}/mcp/m1", content=body, headers={"content-encoding": "gzip"}
+        facade.app(), "POST", "/mcp/m1", token=token, content=body, headers={"content-encoding": "gzip"}
     )
 
     assert resp.status_code == 415
@@ -1031,7 +1006,7 @@ async def test_facade_does_not_forward_the_client_accept_encoding() -> None:
 
     facade = _model_facade(handler=handler)
     token = facade_token(KEY, "owned-ws")
-    await _call(facade.app(), "POST", f"/t/{token}/chat/completions", json={"model": MODEL},
+    await _call(facade.app(), "POST", "/chat/completions", token=token, json={"model": MODEL},
                 headers={"accept-encoding": "x-unsupported"})
 
     assert "x-unsupported" not in seen["accept-encoding"]
@@ -1055,7 +1030,7 @@ async def test_mcp_facade_refuses_an_excluded_tool_call_hidden_behind_a_second_c
     body = gzip.compress(json.dumps(
         {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "m.secret"}}).encode())
     resp = await _call(
-        facade.app(), "POST", f"/t/{token}/mcp/m", content=body,
+        facade.app(), "POST", "/mcp/m", token=token, content=body,
         headers=[("content-encoding", "identity"), ("content-encoding", "gzip")],
     )
     assert resp.status_code == 415

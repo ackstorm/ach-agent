@@ -28,6 +28,7 @@ from ach_runtime.engine.config import to_fixture
 from ach_runtime.execution.service import ConflictingStart, ExecutionService, WorkspaceMismatch
 from ach_runtime.execution.sessions import SessionHookFailed
 from ach_runtime.execution.wire import CancelRequest, StartRequest
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER
 from ach_runtime.storage.archive import ArchiveTooLarge
 
 MAX_REQUEST_BODY_BYTES = 1 * 1024 * 1024
@@ -397,6 +398,11 @@ def create_app(
     return app
 
 
+def _require_facade_headers(headers: Any, owner: str) -> None:
+    if not isinstance(headers, dict) or set(headers) != {FACADE_TOKEN_HEADER} or not headers[FACADE_TOKEN_HEADER]:
+        raise ValueError(f"catalog {owner} must carry only the facade token header")
+
+
 def _validate_configuration(
     value: _ConfigureRequest, bootstrap: ExecutionBootstrap | None
 ) -> None:
@@ -419,13 +425,14 @@ def _validate_configuration(
     if set(providers) != {public.model.type}:
         raise ValueError("catalog must contain only the selected provider")
     provider = providers.get(public.model.type)
-    if not isinstance(provider, dict) or set(provider) != {"baseURL", "apiKey", "models"}:
+    if not isinstance(provider, dict) or set(provider) != {"baseURL", "apiKey", "headers", "models"}:
         raise ValueError("catalog provider does not match public_catalog shape")
     if not isinstance(provider.get("models"), dict) or set(provider["models"]) != {public.model.name}:
         raise ValueError("selected provider is absent from catalog")
     if not isinstance(provider.get("baseURL"), str) or provider.get("apiKey") != "local-proxy":
         raise ValueError("catalog provider must use a URL and local-proxy key")
     _require_http_url(provider["baseURL"], "provider baseURL")
+    _require_facade_headers(provider.get("headers"), "provider")
     model_metadata = provider["models"][public.model.name]
     allowed_metadata = {"limit", "cost", "tool_call", "reasoning", "modalities", "attachment"}
     if not isinstance(model_metadata, dict) or not set(model_metadata).issubset(allowed_metadata):
@@ -433,9 +440,10 @@ def _validate_configuration(
     for name, entry in mcp.items():
         if not isinstance(name, str) or not isinstance(entry, dict) or set(entry) != {"url", "headers"}:
             raise ValueError("catalog MCP entries must be objects")
-        if not isinstance(entry.get("url"), str) or entry.get("headers") != {}:
-            raise ValueError("catalog MCP entries require a URL and empty headers")
+        if not isinstance(entry.get("url"), str):
+            raise ValueError("catalog MCP entries require a URL")
         _require_http_url(entry["url"], f"MCP URL {name}")
+        _require_facade_headers(entry.get("headers"), f"MCP entry {name}")
 
 
 def _require_http_url(value: str, label: str) -> None:

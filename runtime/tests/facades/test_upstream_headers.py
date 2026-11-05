@@ -7,7 +7,7 @@ import httpx
 
 from ach_runtime.facades._proxy import ProcessIdentity
 from ach_runtime.facades.mcp import McpFacade
-from ach_runtime.harness.tokens import facade_token
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER, facade_token
 
 KEY = b"k" * 32
 IDENTITY = ProcessIdentity(agent="a", environment="e")
@@ -33,9 +33,12 @@ async def test_mcp_injects_exactly_one_header_per_configured_name():
     token = facade_token(KEY, "ws")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=facade.app()), base_url="http://f") as client:
         response = await client.post(
-            f"/t/{token}/mcp/serper",
+            "/mcp/serper",
             json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
-            headers={"x-custom-token": "sandbox-guess", "Connection": "keep-alive", "Upgrade": "h2c", "TE": "trailers"},
+            headers={
+                FACADE_TOKEN_HEADER: token,
+                "x-custom-token": "sandbox-guess", "Connection": "keep-alive", "Upgrade": "h2c", "TE": "trailers",
+            },
         )
     assert response.status_code == 200
     names = [name for name, _ in seen[0]]

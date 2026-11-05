@@ -20,7 +20,7 @@ from ach_runtime.facades.a2a import A2AAgentClient, ToolSpec, build_a2a_tools
 from ach_runtime.facades.a2a import A2AEgressFacade
 from ach_runtime.harness.hydrate import A2AAgentEntry
 from ach_runtime.harness.keys import KeyAuth, KeySource
-from ach_runtime.harness.tokens import facade_token
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER, facade_token
 
 IDENTITY = ProcessIdentity(agent="classifier", environment="platform")
 KEY = b"fixture-key"
@@ -88,9 +88,11 @@ async def _client_session(
     app: Any, token: str, *, session_ids: list[str] | None = None,
     base_url: str = FACADE_BASE,
 ) -> AsyncIterator[Any]:
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=base_url) as http_client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url=base_url, headers={FACADE_TOKEN_HEADER: token}
+    ) as http_client:
         async with streamable_http_client(
-            f"{base_url}/t/{token}/a2a/", http_client=http_client
+            f"{base_url}/a2a/", http_client=http_client
         ) as (read, write, get_session_id):
             async with ClientSession(read, write) as session:
                 await session.initialize()
@@ -386,7 +388,7 @@ async def test_a2a_guard_denies_invalid_tokens_before_mcp(token_kind: str) -> No
     }
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=FACADE_BASE) as client:
-            response = await client.post(f"/t/{tokens[token_kind]}/a2a/", content=b"{}")
+            response = await client.post("/a2a/", content=b"{}", headers={FACADE_TOKEN_HEADER: tokens[token_kind]})
         assert response.status_code == 403
     assert delegated == []
     assert peer.calls == []
@@ -416,19 +418,19 @@ async def test_a2a_ownership_flip_denies_post_get_delete_without_peer_calls(base
             peer_calls_before = list(peer.calls)
             delegated_before = list(delegated)
             state["owned"] = False
-            headers = {"mcp-session-id": session_ids[0]}
+            headers = {"mcp-session-id": session_ids[0], FACADE_TOKEN_HEADER: token}
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url=base_url
             ) as client:
                 post = await client.post(
-                    f"/t/{token}/a2a/", headers=headers,
+                    "/a2a/", headers=headers,
                     content=json.dumps({
                         "jsonrpc": "2.0", "method": "tools/call", "id": 8,
                         "params": {"name": "a2a_review", "arguments": {"prompt": "denied"}},
                     }),
                 )
-                get = await client.get(f"/t/{token}/a2a/", headers=headers)
-                delete = await client.delete(f"/t/{token}/a2a/", headers=headers)
+                get = await client.get("/a2a/", headers=headers)
+                delete = await client.delete("/a2a/", headers=headers)
             assert [post.status_code, get.status_code, delete.status_code] == [403, 403, 403]
             assert peer.calls == peer_calls_before
             assert delegated == delegated_before

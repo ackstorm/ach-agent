@@ -12,8 +12,7 @@ out of that prefix are refused as well (`join_tail`).
 
 Authentication is the accepted Workspace HMAC (`harness/tokens.py::authenticate_facade`):
 the capability/resolver/clock machinery this module used to carry is gone (root-reviewed
-correction) — unknown/wrong-key/non-owned tokens deny with zero upstream egress; an
-untokenized request never matches a route at all (Starlette 404).
+correction) — missing/unknown/wrong-key/non-owned tokens deny with zero upstream egress.
 """
 
 from __future__ import annotations
@@ -33,7 +32,11 @@ from starlette.routing import Route
 
 from ach_runtime.facades._proxy import ProcessIdentity, forward, has_encoded_body, join_tail
 from ach_runtime.harness.hydrate import HydratedCatalog, ModelMetadata
-from ach_runtime.harness.tokens import WorkspaceAuthenticationFailed, authenticate_facade
+from ach_runtime.harness.tokens import (
+    FACADE_TOKEN_HEADER,
+    WorkspaceAuthenticationFailed,
+    authenticate_facade,
+)
 
 _METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 _BODY_MODEL_PATHS = {
@@ -131,7 +134,7 @@ class ModelFacade:
         upstream_headers = dict(headers)
 
         async def handle(request: Request) -> Response:
-            token = request.path_params["token"]
+            token = request.headers.get(FACADE_TOKEN_HEADER, "")
             try:
                 await authenticate_facade(key, token, owned_workspace=owned_workspace)
             except WorkspaceAuthenticationFailed:
@@ -175,8 +178,7 @@ class ModelFacade:
 
         return Starlette(
             routes=[
-                Route("/t/{token}", self._handle, methods=_METHODS),
-                Route("/t/{token}/{tail:path}", self._handle, methods=_METHODS),
+                Route("/{tail:path}", self._handle, methods=_METHODS),
             ],
             lifespan=lifespan,
         )
@@ -268,6 +270,7 @@ def public_catalog(
     *,
     provider_id: str,
     model_url: str,
+    token: str,
     mcp_urls: dict[str, str],
     memory_url: str | None = None,
     artifact_url: str | None = None,
@@ -275,17 +278,19 @@ def public_catalog(
     """Pure projection of the already-hydrated catalog into the engine owner's fixture
     shape — not a new registry/type. `mcp_urls` must already exclude filtered/raw-memory
     server ids; this function performs no filtering of its own."""
-    mcp: dict[str, Any] = {gid: {"url": url, "headers": {}} for gid, url in mcp_urls.items()}
+    headers = {FACADE_TOKEN_HEADER: token}
+    mcp: dict[str, Any] = {gid: {"url": url, "headers": dict(headers)} for gid, url in mcp_urls.items()}
     if memory_url:
-        mcp["memory"] = {"url": memory_url, "headers": {}}
+        mcp["memory"] = {"url": memory_url, "headers": dict(headers)}
     if artifact_url:
-        mcp["artifacts"] = {"url": artifact_url, "headers": {}}
+        mcp["artifacts"] = {"url": artifact_url, "headers": dict(headers)}
 
     return {
         "providers": {
             provider_id: {
                 "baseURL": model_url,
                 "apiKey": "local-proxy",
+                "headers": dict(headers),
                 "models": {catalog.model.id: present_metadata(catalog.model.metadata)},
             }
         },

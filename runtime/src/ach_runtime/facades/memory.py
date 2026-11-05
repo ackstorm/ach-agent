@@ -24,6 +24,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field
 from starlette.applications import Starlette
+from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.routing import Mount
 from starlette.types import Receive, Scope, Send
@@ -44,7 +45,11 @@ from ach_runtime.facades._memory_client import (
     resolve_project,
 )
 from ach_runtime.facades._proxy import ProcessIdentity
-from ach_runtime.harness.tokens import WorkspaceAuthenticationFailed, authenticate_facade
+from ach_runtime.harness.tokens import (
+    FACADE_TOKEN_HEADER,
+    WorkspaceAuthenticationFailed,
+    authenticate_facade,
+)
 
 log = logging.getLogger(__name__)
 
@@ -121,7 +126,7 @@ class _AuthGuard:
         if scope["type"] != "http":
             await self._app(scope, receive, send)
             return
-        token = scope.get("path_params", {}).get("token", "")
+        token = Headers(scope=scope).get(FACADE_TOKEN_HEADER, "")
         try:
             await authenticate_facade(self._key, token, owned_workspace=self._owned_workspace)
         except WorkspaceAuthenticationFailed:
@@ -278,4 +283,4 @@ class AchMemoryFacade:
             async with mcp_app.router.lifespan_context(mcp_app):
                 yield
 
-        return Starlette(routes=[Mount("/t/{token}/memory", app=guarded)], lifespan=lifespan)
+        return Starlette(routes=[Mount("/memory", app=guarded)], lifespan=lifespan)

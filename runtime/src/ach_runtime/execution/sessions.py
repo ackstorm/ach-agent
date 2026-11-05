@@ -37,13 +37,13 @@ HOOK_KILL_CONFIRM_SECONDS = 5.0
 DEFAULT_SESSIONS_ROOT = Path("/sandbox/ach/sessions")
 
 
-_FACADE_TOKEN = re.compile(r"/t/[^/\s\"']+")
+_FACADE_TOKEN = re.compile(r"[^\s\"'/=]+\.[0-9a-f]{64}\b")
 
 
 def redact_facade_tokens(text: str) -> str:
-    """Facade URLs carry the workspace's facade token in their path (`/t/<token>/`), which
-    works as a bearer credential: never let it reach errors, logs or A2A replies."""
-    return _FACADE_TOKEN.sub("/t/<redacted>", text)
+    """A facade token (`<claim>.<hmac>`) works as a bearer credential and hooks hold one in
+    `ACH_MCP_HEADERS`: never let it reach errors, logs or A2A replies."""
+    return _FACADE_TOKEN.sub("<redacted>", text)
 
 
 class SessionHookFailed(RuntimeError):

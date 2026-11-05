@@ -442,15 +442,10 @@ class ExecutionService:
                 mcp = invocation.catalog.get("mcp")
                 artifacts = mcp.get("artifacts") if isinstance(mcp, dict) else None
                 artifact_url = artifacts.get("url") if isinstance(artifacts, dict) else None
-                builtin_artifacts_prefix = (
-                    f"{inv.public.infrastructure.facade_endpoint.rstrip('/')}/artifacts/t/"
-                )
-                if isinstance(artifact_url, str) and artifact_url.startswith(
-                    builtin_artifacts_prefix
-                ):
+                facade = inv.public.infrastructure.facade_endpoint.rstrip("/")
+                if artifact_url == f"{facade}/artifacts":
                     artifacts["url"] = (
-                        f"{artifact_url.rstrip('/')}/runs/"
-                        f"{quote(request.invocation_id, safe='')}/"
+                        f"{artifact_url}/runs/{quote(request.invocation_id, safe='')}/"
                     )
             elif inv.catalog is not None and hasattr(invocation, "mcp"):
                 invocation.mcp = copy.deepcopy(inv.catalog.get("mcp", {}))
@@ -549,12 +544,13 @@ class ExecutionService:
         self, public: PublicConfig, catalog: dict[str, Any] | None, extra: dict[str, str]
     ) -> dict[str, str]:
         """Environment for lifecycle hook scripts: the approved engine env plus what a
-        deterministic step needs — the workspace path and this pod's MCP facade URLs
-        (`ach-mcp`). The URLs carry the workspace facade token (the same credential the
-        engine already holds); hook errors are redacted with `redact_facade_tokens`."""
+        deterministic step needs — the workspace path and this pod's MCP facade URLs and
+        headers (`ach-mcp`). The headers carry the workspace facade token, the same
+        credential the engine already holds; hook errors are redacted with
+        `redact_facade_tokens`."""
         mcp = (catalog or {}).get("mcp") or {}
-        urls = {
-            name: entry["url"]
+        servers = {
+            name: entry
             for name, entry in mcp.items()
             if isinstance(entry, dict) and isinstance(entry.get("url"), str)
         }
@@ -562,7 +558,10 @@ class ExecutionService:
         if "PYTHONPATH" in os.environ:
             env["PYTHONPATH"] = os.environ["PYTHONPATH"]
         env["ACH_WORKSPACE"] = str(self._workspace_dir)
-        env["ACH_MCP_URLS"] = json.dumps(urls, sort_keys=True)
+        env["ACH_MCP_URLS"] = json.dumps({n: e["url"] for n, e in servers.items()}, sort_keys=True)
+        env["ACH_MCP_HEADERS"] = json.dumps(
+            {n: e.get("headers") or {} for n, e in servers.items()}, sort_keys=True
+        )
         env.update(extra)
         return env
 

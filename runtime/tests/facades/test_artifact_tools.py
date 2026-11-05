@@ -16,7 +16,7 @@ from mcp.client.streamable_http import streamable_http_client
 from ach_runtime.config.schema import AgentIdentity, ArtifactsBlock
 from ach_runtime.facades import artifacts as artifact_module
 from ach_runtime.facades.artifacts import ArtifactOperations
-from ach_runtime.harness.tokens import facade_token
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER, facade_token
 from ach_runtime.storage.api import ArtifactProducer
 from ach_runtime.storage.refs import StateRef
 from ach_runtime.storage.s3 import S3Storage
@@ -61,10 +61,10 @@ def _operations(storage: Any) -> ArtifactOperations:
 @contextlib.asynccontextmanager
 async def _session(app: Any, *, base_url: str = BASE) -> AsyncIterator[ClientSession]:
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url=base_url
+        transport=httpx.ASGITransport(app=app), base_url=base_url, headers={FACADE_TOKEN_HEADER: TOKEN}
     ) as client:
         async with streamable_http_client(
-            f"{base_url}/t/{TOKEN}/runs/{INVOCATION}/", http_client=client
+            f"{base_url}/runs/{INVOCATION}/", http_client=client
         ) as (read, write, _):
             async with ClientSession(read, write) as session:
                 await session.initialize()

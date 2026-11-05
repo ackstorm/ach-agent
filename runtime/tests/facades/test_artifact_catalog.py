@@ -16,7 +16,7 @@ from ach_runtime.config.schema import parse_config
 from ach_runtime.facades.model import public_catalog
 from ach_runtime.harness.control import assemble, create_facade_app
 from ach_runtime.harness.hydrate import HydratedCatalog, HydratedModel
-from ach_runtime.harness.tokens import facade_token
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER, facade_token
 from ach_runtime.harness.workspaces import WorkspaceEndpoint, WorkspaceRef
 from ach_runtime.storage.s3 import S3Storage
 from tests.storage.fakes import FakeS3Client
@@ -60,14 +60,15 @@ def test_public_catalog_projects_optional_artifact_facade_after_granted_entries(
         ),
         provider_id="openai",
         model_url="https://facade.invalid/model",
+        token="token",
         mcp_urls={"granted": "https://facade.invalid/mcp/granted"},
         memory_url="https://facade.invalid/memory",
-        artifact_url="https://facade.invalid/artifacts/t/token",
+        artifact_url="https://facade.invalid/artifacts",
     )
     assert catalog["mcp"] == {
-        "granted": {"url": "https://facade.invalid/mcp/granted", "headers": {}},
-        "memory": {"url": "https://facade.invalid/memory", "headers": {}},
-        "artifacts": {"url": "https://facade.invalid/artifacts/t/token", "headers": {}},
+        "granted": {"url": "https://facade.invalid/mcp/granted", "headers": {FACADE_TOKEN_HEADER: "token"}},
+        "memory": {"url": "https://facade.invalid/memory", "headers": {FACADE_TOKEN_HEADER: "token"}},
+        "artifacts": {"url": "https://facade.invalid/artifacts", "headers": {FACADE_TOKEN_HEADER: "token"}},
     }
 
 
@@ -96,11 +97,8 @@ async def test_artifact_catalog_and_mount_policy(monkeypatch: pytest.MonkeyPatch
         with_artifacts = enabled._catalog_for(endpoint)
         assert "artifacts" not in no_artifacts["mcp"]
         assert with_artifacts["mcp"]["artifacts"] == {
-            "url": (
-                f"{enabled.public.infrastructure.facade_endpoint.rstrip('/')}/artifacts/t/"
-                f"{facade_token(enabled.key, endpoint.name)}"
-            ),
-            "headers": {},
+            "url": f"{enabled.public.infrastructure.facade_endpoint.rstrip('/')}/artifacts",
+            "headers": {FACADE_TOKEN_HEADER: facade_token(enabled.key, endpoint.name)},
         }
         assert "private-bucket-sentinel" not in json.dumps(with_artifacts)
         assert disabled.artifact_facade is None
@@ -125,11 +123,11 @@ async def test_artifact_catalog_and_mount_policy(monkeypatch: pytest.MonkeyPatch
         assert "/facades/artifacts" in {route.path for route in app.router.routes}
         async with app.router.lifespan_context(app):
             async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://localhost:8094"
+                transport=httpx.ASGITransport(app=app), base_url="http://localhost:8094",
+                headers={FACADE_TOKEN_HEADER: facade_token(enabled.key, endpoint.name)},
             ) as client:
                 async with streamable_http_client(
-                    "http://localhost:8094/facades/artifacts/t/"
-                    f"{facade_token(enabled.key, endpoint.name)}/runs/{invocation_id}/",
+                    f"http://localhost:8094/facades/artifacts/runs/{invocation_id}/",
                     http_client=client,
                 ) as (read, write, _):
                     async with ClientSession(read, write) as session:

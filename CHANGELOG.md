@@ -18,9 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Requires the gateway mTLS (`openshell.tls.secret`; otherwise `WorkloadApplied=False`,
   `VolumeRequiresGatewayTLS`), `server.drivers.kubernetes.allowDriverConfig: true` on the OpenShell
   gateway, and a StorageClass with `reclaimPolicy: Delete` writable by uid/gid 10001.
-- `model.limits` (wire `capability.ach.model.limits`) works with an ACH environment too, and wins over the
-  gateway's model info. LiteLLM does not resolve a model-group alias such as `ackstorm.smart` in
-  `/v2/model/info`, so an alias otherwise ran on opencode's default context window and compacted early.
 - Opt-in OpenShell gateway mTLS. With `openshell.tls.secret` (the Secret of the operator's
   `OU=operator` client certificate) the operator reads that Secret at start, calls an `https://`
   gateway with it, and control pods verify the sandbox service path against its CA only

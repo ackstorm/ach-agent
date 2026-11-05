@@ -187,49 +187,6 @@
       "title": "AchMemoryParams",
       "type": "object"
     },
-    "AchModel": {
-      "additionalProperties": false,
-      "properties": {
-        "name": {
-          "title": "Name",
-          "type": "string"
-        },
-        "type": {
-          "enum": [
-            "openai",
-            "gemini",
-            "anthropic"
-          ],
-          "title": "Type",
-          "type": "string"
-        },
-        "params": {
-          "additionalProperties": true,
-          "title": "Params",
-          "type": "object"
-        },
-        "thinking": {
-          "$ref": "#/$defs/ThinkingBlock"
-        },
-        "limits": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModelLimits"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        }
-      },
-      "required": [
-        "name",
-        "type"
-      ],
-      "title": "AchModel",
-      "type": "object"
-    },
     "AchServer": {
       "additionalProperties": false,
       "properties": {
@@ -253,7 +210,7 @@
           "title": "Key"
         },
         "model": {
-          "$ref": "#/$defs/AchModel"
+          "$ref": "#/$defs/ModelBlock"
         },
         "mcpServers": {
           "items": {
@@ -1164,6 +1121,38 @@
         "maxSteps"
       ],
       "title": "LimitsBlock",
+      "type": "object"
+    },
+    "ModelBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "openai",
+            "gemini",
+            "anthropic"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "title": "Params",
+          "type": "object"
+        },
+        "thinking": {
+          "$ref": "#/$defs/ThinkingBlock"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "title": "ModelBlock",
       "type": "object"
     },
     "ModelLimits": {

@@ -334,17 +334,20 @@ class HydrationInput:
     base_url: str
     environment: str
     model: str
+    limits: tuple[int, int] | None = None  # (context, output); wins over hydrate and model info
 
     @classmethod
     def from_config(cls, config: RuntimeConfig) -> HydrationInput:
         ach = config.capability.ach
         if ach is None:
             raise HydrationError("capability.server is not 'ach'")
+        limits = ach.model.limits
         return cls(
             agent=config.agent.name,
             base_url=ach.base_url,
             environment=ach.environment,
             model=ach.model.name,
+            limits=None if limits is None else (limits.context, limits.output),
         )
 
 
@@ -388,6 +391,11 @@ class Hydrator:
             known = {f"{k}_limit": v for k, v in entry.limits.model_dump(exclude_none=True).items()}
             if known:
                 metadata = (metadata or ModelMetadata()).model_copy(update=known)
+        if source.limits is not None:
+            context, output = source.limits
+            metadata = (metadata or ModelMetadata()).model_copy(
+                update={"context_limit": context, "output_limit": output}
+            )
         return HydratedCatalog(
             environment=manifest.environment,
             model=HydratedModel(id=entry.id, endpoint=entry.endpoint, metadata=metadata),

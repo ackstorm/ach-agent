@@ -36,7 +36,7 @@ def test_ach_fixture_reads_environment_from_ach_server():
     cfg = _parse(_wire("pr-review-runtime.json"))
     assert cfg.capability.server == "ach"
     assert cfg.identity_environment == cfg.capability.ach.environment
-    assert cfg.model == cfg.capability.ach.model
+    assert cfg.model.model_dump() == cfg.capability.ach.model.model_dump(exclude={"limits"})
 
 
 @pytest.mark.parametrize("server,present", [("standalone", "ach"), ("ach", "standalone")])

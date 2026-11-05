@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `model.limits` (wire `capability.ach.model.limits`, Agent `spec.ach.model.limits`, `ach-agent run`
+  manifest `model.limits`) works with an ACH environment too, and wins over the limits ACH hydrate and
+  the gateway's model info report. For a model whose real window differs from what ACH reports.
+
 ## [0.6.2] - 2026-11-05
 
 ### Security

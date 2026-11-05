@@ -91,8 +91,30 @@ def test_managed_content_sets_conservative_isolation_flags(public) -> None:
     assert content["snapshots"] is False
     assert content["lsp"] is False
     assert content["compaction"]["buffer"] == public.engine.compaction.buffer
-    assert len(content["plugins"]) == 1
     assert content["plugins"][0]["options"]["fixture"]["maxSteps"] == public.limits.max_steps
+
+
+def test_managed_content_removes_optional_plugins_by_default(public) -> None:
+    removed = managed_content(public, to_fixture(public))["plugins"][1:]
+    assert sorted(removed) == ["-opencode.browser", "-opencode.tools"]
+
+
+@pytest.mark.parametrize(
+    ("flag", "plugin", "other"),
+    [
+        ("OPENCODE_ENABLE_BROWSER_TOOL", "-opencode.browser", "-opencode.tools"),
+        ("OPENCODE_ENABLE_MANAGEMENT_TOOLS", "-opencode.tools", "-opencode.browser"),
+    ],
+)
+@pytest.mark.parametrize("value", ["1", "true"])
+def test_managed_content_keeps_only_the_enabled_plugin(public, flag, plugin, other, value) -> None:
+    public.engine.env[flag] = value
+    assert managed_content(public, to_fixture(public))["plugins"][1:] == [other]
+
+
+def test_managed_content_ignores_other_flag_values(public) -> None:
+    public.engine.env["OPENCODE_ENABLE_MANAGEMENT_TOOLS"] = "0"
+    assert "-opencode.tools" in managed_content(public, to_fixture(public))["plugins"]
 
 
 def test_catalog_translation_preserves_grants_and_scoped_mcp(public) -> None:

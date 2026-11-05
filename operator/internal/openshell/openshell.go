@@ -25,9 +25,11 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	achv1alpha1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
@@ -310,10 +312,17 @@ func (b *openShellUnits) State(ctx context.Context, name string) (host.UnitState
 		if err != nil {
 			return 0, err
 		}
-		if pod != nil {
-			return host.UnitTerminating, nil
+		if pod == nil {
+			return host.UnitAbsent, nil
 		}
-		return host.UnitAbsent, nil
+		if pod.DeletionTimestamp.IsZero() {
+			// A live pod with no gateway record: a create that failed half-way left its
+			// Sandbox object behind, and nothing else deletes it.
+			if err := b.removeOrphan(ctx, pod); err != nil {
+				return 0, err
+			}
+		}
+		return host.UnitTerminating, nil
 	case err != nil:
 		return 0, err
 	case s.Status.Phase == ostypes.SandboxDeleting, s.Status.Phase == ostypes.SandboxStopping:
@@ -333,6 +342,23 @@ func (b *openShellUnits) State(ctx context.Context, name string) (host.UnitState
 		return host.UnitStarted, nil
 	}
 	return host.UnitStarting, nil
+}
+
+// removeOrphan deletes the Sandbox object that controls pod (in the background, so the pod
+// goes with it). The pod alone would be recreated by its Sandbox.
+func (b *openShellUnits) removeOrphan(ctx context.Context, pod *corev1.Pod) error {
+	ref := metav1.GetControllerOf(pod)
+	if ref == nil || ref.Kind != "Sandbox" || !strings.HasPrefix(ref.APIVersion, "agents.x-k8s.io/") {
+		return nil
+	}
+	owner := &unstructured.Unstructured{}
+	owner.SetAPIVersion(ref.APIVersion)
+	owner.SetKind(ref.Kind)
+	owner.SetName(ref.Name)
+	owner.SetNamespace(pod.Namespace)
+	log.FromContext(ctx).Info("removing a sandbox the gateway no longer knows", "sandbox", ref.Name)
+	return client.IgnoreNotFound(b.writer.Delete(ctx, owner,
+		client.Preconditions{UID: &ref.UID}, client.PropagationPolicy(metav1.DeletePropagationBackground)))
 }
 
 // workloadPod reads the sandbox's workload pod, uncached; nil when it is gone.

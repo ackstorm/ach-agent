@@ -77,6 +77,12 @@ rules:
   - patch
   - update
 - apiGroups:
+  - agents.x-k8s.io
+  resources:
+  - sandboxes
+  verbs:
+  - delete
+- apiGroups:
   - apps
   resources:
   - statefulsets

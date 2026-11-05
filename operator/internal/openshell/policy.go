@@ -186,9 +186,13 @@ func hostMatches(glob, facadeHost string) bool {
 
 // reachesFacade reports whether an endpoint of a non-reserved rule could carry traffic to the
 // facade: a matching host, or any allowed_ips (the control pod's IP is not known here), on a
-// port that includes the facade port (no port listed means any).
+// port that includes the facade port. Ports are read as OpenShell does: `ports` when set, else
+// `port`; none at all is treated as any (OpenShell rejects such an endpoint anyway).
 func reachesFacade(ep ostypes.PolicyNetworkEndpoint, facadeHost string, facadePort uint32) bool {
-	ports := append([]uint32{ep.Port}, ep.Ports...)
+	ports := ep.Ports
+	if len(ports) == 0 {
+		ports = []uint32{ep.Port}
+	}
 	portMatch := false
 	for _, p := range ports {
 		portMatch = portMatch || p == 0 || p == facadePort
@@ -269,7 +273,9 @@ func checkWritable(p string) error {
 	return nil
 }
 
-// Resources maps the profile's sandbox resources onto the template's resource map.
+// Resources maps the profile's sandbox resources onto the template's resource map, in the
+// Kubernetes shape the gateway reads ({"limits": {...}}). The gateway copies the cpu and memory
+// requests from the limits and Kubernetes does the same for ephemeral storage.
 func Resources(r *achv1alpha1.SandboxResources) (map[string]any, error) {
 	if r == nil {
 		return nil, nil
@@ -287,5 +293,5 @@ func Resources(r *achv1alpha1.SandboxResources) (map[string]any, error) {
 	if len(out) == 0 {
 		return nil, nil
 	}
-	return out, nil
+	return map[string]any{"limits": out}, nil
 }

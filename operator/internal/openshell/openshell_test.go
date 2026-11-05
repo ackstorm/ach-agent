@@ -695,7 +695,7 @@ func TestOpenShell_CreateMergesProfileAndAgentPolicyAndPassesResources(t *testin
 			t.Errorf("rule %q missing from %v", name, s.Spec.Policy.NetworkPolicies)
 		}
 	}
-	if got := s.Spec.Template.Resources; got["cpu"] != "2" || got["memory"] != "4Gi" {
+	if got, _ := s.Spec.Template.Resources["limits"].(map[string]any); got["cpu"] != "2" || got["memory"] != "4Gi" {
 		t.Errorf("resources = %v", got)
 	}
 }

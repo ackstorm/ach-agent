@@ -18,13 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Requires the gateway mTLS (`openshell.tls.secret`; otherwise `WorkloadApplied=False`,
   `VolumeRequiresGatewayTLS`), `server.drivers.kubernetes.allowDriverConfig: true` on the OpenShell
   gateway, and a StorageClass with `reclaimPolicy: Delete` writable by uid/gid 10001.
-- `model.limits` (wire `capability.ach.model.limits`) works with an ACH environment too, and wins over the
-  gateway's model info. LiteLLM does not resolve a model-group alias such as `ackstorm.smart` in
-  `/v2/model/info`, so an alias otherwise ran on opencode's default context window and compacted early.
 - Opt-in OpenShell gateway mTLS. With `openshell.tls.secret` (the Secret of the operator's
   `OU=operator` client certificate) the operator reads that Secret at start, calls an `https://`
   gateway with it, and control pods verify the sandbox service path against its CA only
-  (`ACH_AGENT_EXECUTION_CA_FILE`); the gateway refuses every other API caller. The chart grants
+  (`ACH_AGENT_EXECUTION_CA_PEM`); the gateway refuses every other API caller. The chart grants
   `get` on that one Secret and renders no cert-manager objects. `docs/mesh/openshell-pki.yaml`
   is the reference PKI, all in `openshell` with namespaced Issuers (every certificate 262800h).
   Without the value nothing changes. Sandboxes created before the switch answer 412 until control
@@ -32,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An ACH Agent on a LiteLLM model-group alias (such as `ackstorm.smart`) takes its context and
+  output limits from the `/platform/hydrate` response (ACH v1.1.3 or later), where the alias is
+  resolved. `/v2/model/info` does not resolve aliases, so such an Agent ran on opencode's default
+  context window and compacted early.
 - `ach-agent run` with an `ach-cli login` profile no longer fails at boot with `400 missing_environment`:
   skill, prompt and artifact downloads send `x-ach-environment`, which ACH requires for a login (`pk_`)
   credential.

@@ -912,9 +912,9 @@ async def _ach_key(ach: AchServer, env: Mapping[str, str],
 
 def execution_verify(env: Mapping[str, str]) -> ssl.SSLContext | bool:
     """TLS trust of the sandbox service path: only the OpenShell gateway CA named by
-    ACH_AGENT_EXECUTION_CA_FILE when it is set, else httpx's default trust."""
-    cafile = env.get("ACH_AGENT_EXECUTION_CA_FILE")
-    return ssl.create_default_context(cafile=cafile) if cafile else True
+    ACH_AGENT_EXECUTION_CA_PEM when it is set, else httpx's default trust."""
+    pem = env.get("ACH_AGENT_EXECUTION_CA_PEM")
+    return ssl.create_default_context(cadata=pem) if pem else True
 
 
 async def assemble(

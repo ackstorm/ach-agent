@@ -343,7 +343,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		env = overrideEnv(env, render.RuntimeStorageEnv(r.Storage))
 	}
 	configMap := buildConfigMap(&agent, configJSON)
-	env = withExecutionCA(configMap, env, r.OpenShellCA)
+	env = withExecutionCA(env, r.OpenShellCA)
 	envJSON, err := json.Marshal(env)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("marshal env: %w", err)

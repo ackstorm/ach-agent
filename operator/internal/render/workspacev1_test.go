@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	v1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
 )
@@ -496,5 +497,14 @@ func TestRenderWorkspaceV1_PersistenceAndSessionRetention(t *testing.T) {
 	}
 	if _, err := RenderWorkspaceV1(ws(&v1.WorkspacePersistenceSpec{}, nil)); err == nil {
 		t.Fatal("a persistence block without type must not render")
+	}
+	vol, err := RenderWorkspaceV1(ws(&v1.WorkspacePersistenceSpec{Type: "volume", RetentionDays: ptr(int64(30)),
+		Volume: &v1.WorkspaceVolumeSpec{Size: resource.MustParse("10Gi"), StorageClassName: "efs-ach"}}, ptr(int64(7))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(vol.Persistence)
+	if string(b) != `{"type":"volume","retentionDays":30}` || vol.Session.RetentionDays == nil || *vol.Session.RetentionDays != 7 {
+		t.Fatalf("volume wire = %s, session %+v; want type and retentionDays only (the PVC settings stay with the operator)", b, vol.Session)
 	}
 }

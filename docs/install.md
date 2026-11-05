@@ -362,7 +362,75 @@ workspace:
 ```
 
 The runtime keeps its data under `/sandbox/ach`: the Workspace in `/sandbox/ach/workspace`, the
-session HOMEs in `/sandbox/ach/sessions`. That is OpenShell's per-sandbox `/sandbox` PVC, deleted with
-the sandbox, so it is start-up cost only. OpenShell 0.1.7 cannot skip it per sandbox; the
+session HOMEs in `/sandbox/ach/sessions`. With `none` and `s3` that is OpenShell's per-sandbox
+`/sandbox` PVC, deleted with the sandbox, so it is start-up cost only. OpenShell 0.1.7 cannot skip it per sandbox; the
 gateway-level `workspace_volume = "empty_dir"` setting proposed in NVIDIA/OpenShell#4473 replaces it
 with an emptyDir.
+
+#### Workspace volumes (`type: volume`)
+
+With `type: volume` each Workspace gets its own PVC, created by the operator in the sandbox namespace
+(`openshell`) as `ach-ws-<hash>` and mounted at `/sandbox/ach` by every sandbox of that Workspace.
+The Workspace files and the session HOMEs stay on it: an idle session stops opencode and keeps its
+HOME, an idle Workspace deletes the sandbox and keeps the PVC, and the next event mounts the PVC in a
+new sandbox and resumes the conversation. Nothing is transferred and no S3 store is needed.
+
+```yaml
+workspace:
+  persistence:
+    type: volume
+    retentionDays: 30               # a PVC with no sandbox for this long is deleted
+    volume:
+      size: 10Gi                    # applies to new Workspaces
+      storageClassName: gp3-delete  # optional, the cluster default class; applies to new Workspaces
+      accessMode: ReadWriteOnce     # default; or ReadWriteMany
+  session: {idleTimeoutSeconds: 300, retentionDays: 7}  # HOMEs unused this long go at Workspace start
+```
+
+Requirements:
+
+- Gateway mTLS (`openshell.tls.secret`, above). Without it the operator refuses the Agent
+  (`WorkloadApplied=False`, reason `VolumeRequiresGatewayTLS`).
+- `server.drivers.kubernetes.allowDriverConfig: true` in the OpenShell values, only with gateway mTLS
+  on. The switch lets every caller allowed to create sandboxes set driver config (node selectors,
+  tolerations, resources, labelled PVC mounts); with mTLS the operator is the only such caller, and it
+  sends nothing but the Workspace PVC mount. Turning the switch off again fails every sandbox created
+  with driver config until it is recreated.
+- Only the operator may create PVCs in `openshell`: the gateway mounts any PVC there that carries
+  `openshell.ai/sandbox-attachable: "true"` and `openshell.ai/sandbox-attachable-workspace: <workspace>`.
+- A StorageClass with `reclaimPolicy: Delete`. Deleting the Agent deletes its PVCs, and then the class
+  deletes the volumes; with `Retain` the PVs stay behind.
+- Write access for uid/gid 10001, the sandbox user. Block volumes (EBS gp3) get it through the pod's
+  `fsGroup`; NFS (EFS) ignores `fsGroup`, so its access points need `uid`/`gid` 10001. `local-path`
+  pins the PV to one node and suits single-node clusters only.
+
+A Workspace's new sandbox starts once the old pod is gone, with either access mode. `ReadWriteOnce`
+(gp3) stays in one AZ and takes about 10 s to attach; `ReadWriteMany` (EFS) spans AZs and survives
+node loss. Example classes on EKS:
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata: {name: gp3-delete}
+provisioner: ebs.csi.aws.com
+parameters: {type: gp3}
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata: {name: efs-delete}
+provisioner: efs.csi.aws.com
+parameters:
+  provisioningMode: efs-ap
+  fileSystemId: <file system id>
+  directoryPerms: "700"
+  uid: "10001"
+  gid: "10001"
+reclaimPolicy: Delete
+```
+
+Changing `size`, `storageClassName` or `accessMode` applies to new Workspaces; existing PVCs keep
+theirs. Changing `type` on a live Agent starts every Workspace fresh: after a change away from
+`volume` each PVC is deleted once its sandbox is gone.

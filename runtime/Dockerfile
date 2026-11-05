@@ -65,7 +65,8 @@ RUN "$OPENCODE_BIN" --version | grep -Fx "opencode v2.2.5" \
 ENV HOME=/home/ach
 USER 10001:10001
 EXPOSE 8080
-VOLUME ["/sandbox/ach/workspace", "/sandbox/ach/sessions"]
+# No VOLUME for /sandbox/ach: containerd mounts an anonymous volume over each declared path, on
+# top of the Workspace PVC (persistence type volume), and the data goes with the container.
 ENTRYPOINT ["python", "-m", "ach_runtime"]
 CMD ["execution"]
 

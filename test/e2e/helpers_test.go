@@ -430,3 +430,24 @@ func gatewayCall(t *testing.T, method, clientSecret string) string {
 	}
 	return out
 }
+
+// workspaceVolumes lists the Workspace PVCs of one Agent in the sandbox namespace.
+func workspaceVolumes(t *testing.T, uid string) []string {
+	t.Helper()
+	return strings.Fields(jsonpath(t, "-n", "openshell", "get", "pvc", "-l", uidLabel+"="+uid, "-o", "jsonpath={.items[*].metadata.name}"))
+}
+
+// maxMessages is the longest conversation the model stub received in one chat call: a resumed
+// session sends its earlier turns again.
+func maxMessages(chats []recorded) int {
+	n := 0
+	for _, r := range chats {
+		var body struct {
+			Messages []json.RawMessage `json:"messages"`
+		}
+		if json.Unmarshal([]byte(r.Body), &body) == nil && len(body.Messages) > n {
+			n = len(body.Messages)
+		}
+	}
+	return n
+}

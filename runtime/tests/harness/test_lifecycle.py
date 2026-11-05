@@ -2044,7 +2044,7 @@ def test_restart_idle_and_started_preserve_ticket_deadline() -> None:
 
 
 def _mini_json(control):
-    async def call(endpoint, method, path, payload=None):
+    async def call(endpoint, method, path, payload=None, **_):
         if method == "GET" and path == "/healthz":
             return 200, {"status": "ok"}
         response = await control.mini_client.request(method, endpoint.base_url + path, headers=control._headers(endpoint), json=payload)
@@ -2300,3 +2300,107 @@ def test_storage_histograms_record_domain_and_outcome() -> None:
     asyncio.run(scenario())
     for key, value in before.items():
         assert _storage_count(key[0], "workspace", key[1]) == value + 1, key
+
+
+def _volume_control() -> _Control:
+    control = _Control()
+    control.config.workspace.persistence.type = "volume"
+    control.config.workspace.persistence.retention_days = 30
+    control.config.workspace.session_retention_days = 7
+    return control
+
+
+def test_volume_session_idle_suspends_in_place_then_workspace() -> None:
+    import httpx
+    from datetime import timedelta
+    from ach_runtime.harness.workspaces import WorkspaceEndpoint, WorkspaceRef
+
+    async def scenario():
+        state = {"active": True}
+        seen = []
+
+        async def handler(request):
+            seen.append((request.method, request.url.path))
+            headers = {"X-ACH-Instance-Id": "pod"}
+            if request.url.path == "/sessions":
+                return httpx.Response(200, headers=headers, json=[{"sessionRef": "b" * 64}])
+            if request.url.path.endswith("/info"):
+                return httpx.Response(200, headers=headers, json={"active": state["active"], "uncertain": False, "initialized": True})
+            if request.url.path.endswith("/suspend"):
+                state["active"] = False
+                return httpx.Response(200, headers=headers, json={"status": "suspended", "sessionRef": "b" * 64})
+            raise AssertionError(request.url)
+
+        control = _volume_control()
+        control.mini_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        control._headers = lambda endpoint: {"X-ACH-Instance-Id": endpoint.instance_id}
+        control._mini_json = _mini_json(control)
+        endpoint = WorkspaceEndpoint(WorkspaceRef("ach", control.config.agent.uid, "a" * 64), "ws", "pod", "http://mini")
+        control.manager._active = {"a" * 64: endpoint}
+        control.delivery = _Delivery()
+        control.manager.closed = []
+        control.manager.close = _close_record(control.manager)
+        lifecycle = Lifecycle(control)
+        start = datetime(2026, 10, 1, tzinfo=UTC)
+        await lifecycle.tick(start)
+        await lifecycle.tick(start + timedelta(seconds=21))
+        assert ("POST", "/sessions/" + "b" * 64 + "/suspend") in seen
+        assert not any(path.endswith(("/archive", "/retire")) for _, path in seen)
+        await lifecycle.tick(start + timedelta(seconds=22))
+        await lifecycle.tick(start + timedelta(seconds=53))
+        assert control.manager.closed == [endpoint.ref]
+        await lifecycle.close()
+        await control.mini_client.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_volume_restore_session_resumes_in_place() -> None:
+    from types import SimpleNamespace
+
+    async def scenario():
+        calls = []
+        answer = {"value": (200, {"status": "resumed", "sessionRef": "b" * 64})}
+        control = _volume_control()
+
+        async def mini_json(endpoint, method, path, payload=None, **_):
+            calls.append((method, path, payload))
+            return answer["value"]
+
+        control._mini_json = mini_json
+        lifecycle = Lifecycle(control)
+        ticket = SimpleNamespace(session_ref="b" * 64, deadline_at=datetime(2026, 10, 1, tzinfo=UTC))
+        endpoint = SimpleNamespace(ref=SimpleNamespace(workspace_ref="a" * 64))
+        await lifecycle.restore_session(ticket, endpoint)
+        assert calls == [("POST", "/sessions/" + "b" * 64 + "/resume", {"deadlineAt": "2026-10-01T00:00:00+00:00"})]
+        answer["value"] = (502, {"type": "Failed", "message": "opencode did not start"})
+        with pytest.raises(RuntimeError):
+            await lifecycle.restore_session(ticket, endpoint)
+        await lifecycle.close()
+
+    asyncio.run(scenario())
+
+
+def test_volume_workspace_start_prunes_sessions_and_never_blocks() -> None:
+    from types import SimpleNamespace
+
+    async def scenario():
+        calls = []
+        answer = {"value": (200, {"status": "ok", "pruned": 1})}
+        control = _volume_control()
+
+        async def mini_json(endpoint, method, path, payload=None, **_):
+            calls.append((method, path, payload))
+            return answer["value"]
+
+        control._mini_json = mini_json
+        lifecycle = Lifecycle(control)
+        endpoint = SimpleNamespace(ref=SimpleNamespace(workspace_ref="a" * 64))
+        await lifecycle.restore_workspace(endpoint)
+        assert calls == [("POST", "/sessions/prune", {"retentionDays": 7})]
+        answer["value"] = (502, {"type": "Failed", "message": "disk"})
+        await lifecycle.restore_workspace(endpoint)  # alarmed, not raised
+        assert control.workspace_hooks == [("start", False), ("start", False)]
+        await lifecycle.close()
+
+    asyncio.run(scenario())

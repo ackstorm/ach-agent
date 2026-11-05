@@ -228,8 +228,8 @@ def _mutation_whitespace_only_handoff_destination(w: dict[str, Any]) -> None:
     w["channels"][0]["handoff"]["destination"] = "   "
 
 
-def _mutation_persistence_volume(w: dict[str, Any]) -> None:
-    w["workspace"]["persistence"] = {"type": "volume", "retentionDays": 7}
+def _mutation_persistence_volume_without_retention(w: dict[str, Any]) -> None:
+    w["workspace"]["persistence"] = {"type": "volume"}
 
 
 def _mutation_persistence_none_with_retention(w: dict[str, Any]) -> None:
@@ -264,7 +264,7 @@ NEGATIVE_MUTATIONS = {
     "facade_endpoint_missing_scheme": _mutation_facade_endpoint_missing_scheme,
     "webhook_script_source_not_gitlab": _mutation_webhook_script_source_not_gitlab,
     "whitespace_only_handoff_destination": _mutation_whitespace_only_handoff_destination,
-    "persistence_volume": _mutation_persistence_volume,
+    "persistence_volume_without_retention": _mutation_persistence_volume_without_retention,
     "persistence_none_with_retention": _mutation_persistence_none_with_retention,
     "persistence_s3_without_retention": _mutation_persistence_s3_without_retention,
 }
@@ -303,6 +303,15 @@ def test_routing_each_one_sided_override_accepted_by_schema(
 ) -> None:
     wire = copy.deepcopy(pr_review_wire)
     wire["channels"][0]["routing"] = {"workspaceKey": "{{ event.gitlab.projectId }}"}
+    _resign(wire)
+    assert list(runtime_validator.iter_errors(wire)) == []
+
+
+def test_persistence_volume_accepted_by_schema(
+    runtime_validator: Draft202012Validator, pr_review_wire: dict[str, Any]
+) -> None:
+    wire = copy.deepcopy(pr_review_wire)
+    wire["workspace"]["persistence"] = {"type": "volume", "retentionDays": 30}
     _resign(wire)
     assert list(runtime_validator.iter_errors(wire)) == []
 

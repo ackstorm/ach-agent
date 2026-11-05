@@ -134,7 +134,7 @@ class FakeEngine:
 
     async def restore(
         self, session_ref, manifest, *, expected, public, engine_env, managed_agent="build",
-        home=None, scratch=None, restored_home=None, deadline_at: datetime | None = None,
+        home=None, scratch=None, restored_home=None, in_place=False, deadline_at: datetime | None = None,
     ):
         return None
 

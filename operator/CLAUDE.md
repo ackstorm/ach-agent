@@ -14,7 +14,7 @@ port of the ach `v0.14.2` agent operator (read it with `git -C <ach> archive v0.
 - `internal/host` leader-elected runner, one host loop per Agent against the runtime's `/host/v1`.
   Owns the `Backend` interface and the wire types.
 - `internal/openshell` the only `Backend`: policy merge, sandbox create/delete, per-sandbox
-  ExternalName Service, rebuildable gateway client.
+  ExternalName Service, Workspace PVCs (persistence type `volume`), rebuildable gateway client.
 - `third_party/openshellconv` vendored Apache-2.0 SDK converter (keeps its NVIDIA headers).
 - `cmd/operator` main.
 
@@ -28,8 +28,20 @@ port of the ach `v0.14.2` agent operator (read it with `git -C <ach> archive v0.
 - The operator is the only Kubernetes and gateway API client. The runtime is reached only
   through `/host/v1`.
 - The finalizer `ach-agent.ackstorm.ai/sandboxes` is removed only after the host loop stopped,
-  the gateway inventory by agent UID is empty and no per-sandbox Service is left. An unreachable
+  the gateway inventory by agent UID is empty and no per-sandbox Service and no Workspace PVC is left. An unreachable
   or missing gateway keeps it.
+- The operator alone writes a sandbox's `driver_config`, and only for persistence type `volume`:
+  exactly one `volumes` entry (`ach-data`, `persistent_volume_claim` of the Workspace PVC it
+  created, read-write) and one `containers.agent.volume_mounts` entry (`/sandbox/ach`,
+  read-write); nothing else (no node selector, toleration, priority class, resources, Secret
+  volume), and no Agent or AgentProfile field reaches it (`TestOpenShell_CreateWithVolumeMountsOnlyTheWorkspacePVC`).
+  `type: volume` needs the gateway mTLS: without `ACH_AGENT_OPENSHELL_TLS_SECRET` the Agent gets
+  `WorkloadApplied=False/VolumeRequiresGatewayTLS` and the backend refuses the create.
+- Workspace PVC: `ach-ws-<16 hex of sha256(uid/workspace)>` in `ACH_AGENT_OPENSHELL_POD_NAMESPACE`,
+  the two `openshell.ai/sandbox-attachable*` admission labels plus the agent name and UID labels,
+  no owner reference. `ach-agent.ackstorm.ai/detached-at` marks it while no sandbox exists; the
+  host loop's `Sweep` deletes it after `retentionDays`. `size`, `storageClassName` and
+  `accessMode` apply to new PVCs only; the operator never patches an existing one.
 - While the gateway is unavailable the host never removes a unit, confirms a stop or reports a
   unit lost; it reports `PUT /gateway available=false` and the `GatewayAvailable` condition.
 - Sandbox policy rule and middleware names starting `ach-agent-` are reserved; no other rule may

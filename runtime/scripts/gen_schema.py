@@ -226,10 +226,9 @@ def _patch_shared_handoff_requires_single_session(schema: dict) -> None:
 
 
 def _patch_persistence_block(defs: dict) -> None:
-    """Mirror `PersistenceBlock._type_rules` (schema.py): `volume` is not implemented yet, and
-    `retentionDays` is required unless the type is `none`, forbidden with it."""
+    """Mirror `PersistenceBlock._type_rules` (schema.py): `retentionDays` is required unless the
+    type is `none`, forbidden with it."""
     block = defs["PersistenceBlock"]
-    block["properties"]["type"]["enum"] = ["none", "s3"]
     block["if"] = {"properties": {"type": {"const": "none"}}}
     block["then"] = {"not": {"required": ["retentionDays"]}}
     block["else"] = {"required": ["retentionDays"]}

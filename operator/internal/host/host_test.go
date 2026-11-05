@@ -141,6 +141,12 @@ type fakeUnits struct {
 	removed   []string
 	createErr error
 	err       error // returned by every call but Create and BaseURL, like an unreachable gateway
+	sweeps    int
+}
+
+func (f *fakeUnits) Sweep(context.Context, *achv1alpha1.Agent, *achv1alpha1.AgentProfile) error {
+	f.sweeps++
+	return nil
 }
 
 func newFakeUnits() *fakeUnits {
@@ -871,5 +877,17 @@ func TestPass_RefusalIsClearedOnceNoRunningWorkspaceIsRefused(t *testing.T) {
 	}
 	if rc := condsOf(st, "Ready"); len(rc) != 2 || rc[1].Status != metav1.ConditionUnknown {
 		t.Fatalf("conditions = %+v, want the refusal cleared", st.conds)
+	}
+}
+
+func TestPass_SweepsOnlyAfterAPassWithoutErrors(t *testing.T) {
+	rt, u := &fakeRuntime{}, newFakeUnits()
+	h := newHost(t, rt, u)
+	if _, err := h.Pass(context.Background(), listing()); err != nil || u.sweeps != 1 {
+		t.Fatalf("clean Pass: err = %v sweeps = %d, want one sweep", err, u.sweeps)
+	}
+	u.err = errors.New("listing failed")
+	if _, err := h.Pass(context.Background(), listing()); err == nil || u.sweeps != 1 {
+		t.Fatalf("failing Pass: err = %v sweeps = %d, want no sweep", err, u.sweeps)
 	}
 }

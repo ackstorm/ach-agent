@@ -265,3 +265,37 @@ func TestFinalize_PerSandboxServicesAreDeletedBeforeTheFinalizerGoes(t *testing.
 		t.Error("finalizer kept after the inventory and the Services are empty")
 	}
 }
+
+func TestFinalize_WaitsForTheWorkspacePVCsOfTheAgentOnly(t *testing.T) {
+	ctx := context.Background()
+	mine := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "ach-ws-mine", Namespace: "openshell",
+		Labels: map[string]string{openshell.AgentUIDLabel: finalizerTestUID}, Finalizers: []string{"kubernetes.io/pvc-protection"}}}
+	other := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "ach-ws-other", Namespace: "openshell",
+		Labels: map[string]string{openshell.AgentUIDLabel: "another-uid"}}}
+	c, key := deletingAgent(t, mine, other)
+	r := &AgentReconciler{Client: c, APIReader: c, Scheme: c.Scheme(), Sandboxes: &fakeRemover{remaining: []bool{false}}, SandboxNamespace: "openshell"}
+
+	if res, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: key}); err != nil || res.RequeueAfter != 5*time.Second {
+		t.Fatalf("first reconcile = %+v, %v; want a requeue while the PVC terminates", res, err)
+	}
+	if !hasFinalizer(t, c, key) {
+		t.Fatal("finalizer removed while a Workspace PVC remains")
+	}
+	var pvc corev1.PersistentVolumeClaim
+	if err := c.Get(ctx, client.ObjectKeyFromObject(mine), &pvc); err != nil || pvc.DeletionTimestamp.IsZero() {
+		t.Fatalf("Agent's PVC = %+v, %v; want its deletion requested", pvc.ObjectMeta, err)
+	}
+	pvc.Finalizers = nil // the last pod using it is gone
+	if err := c.Update(ctx, &pvc); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatal(err)
+	}
+	if hasFinalizer(t, c, key) {
+		t.Error("finalizer kept after the Workspace PVC is gone")
+	}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(other), &pvc); err != nil {
+		t.Errorf("another Agent's PVC: %v, want it untouched", err)
+	}
+}

@@ -145,9 +145,10 @@ func main() {
 	}
 	if err := (&controller.AgentReconciler{
 		Client: mgr.GetClient(), APIReader: mgr.GetAPIReader(), Scheme: mgr.GetScheme(),
-		Storage:     storage,
-		OpenShellCA: sandboxes.Config.CA,
-		Sandboxes:   sandboxes,
+		Storage:          storage,
+		OpenShellCA:      sandboxes.Config.CA,
+		SandboxNamespace: sandboxes.Config.PodNamespace,
+		Sandboxes:        sandboxes,
 		RouteParent: achv1alpha1.ParentRef{
 			Name:        os.Getenv("ACH_AGENT_ROUTE_PARENT_NAME"),
 			Namespace:   os.Getenv("ACH_AGENT_ROUTE_PARENT_NAMESPACE"),

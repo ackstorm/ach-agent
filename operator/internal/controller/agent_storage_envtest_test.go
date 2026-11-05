@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -320,7 +321,12 @@ func TestWorkspacePersistence_CEL(t *testing.T) {
 		session *int64
 		want    string
 	}{
-		{"cel-volume", &achv1alpha1.WorkspacePersistenceSpec{Type: "volume", RetentionDays: ptrInt64(7)}, nil, "not implemented yet"},
+		{"cel-volume-no-block", &achv1alpha1.WorkspacePersistenceSpec{Type: "volume", RetentionDays: ptrInt64(7)}, nil, "persistence.volume is required with type volume"},
+		{"cel-s3-volume-block", &achv1alpha1.WorkspacePersistenceSpec{Type: "s3", RetentionDays: ptrInt64(7),
+			Volume: &achv1alpha1.WorkspaceVolumeSpec{Size: resource.MustParse("1Gi")}}, nil, "persistence.volume is required with type volume"},
+		{"cel-volume-mode", &achv1alpha1.WorkspacePersistenceSpec{Type: "volume", RetentionDays: ptrInt64(7),
+			Volume: &achv1alpha1.WorkspaceVolumeSpec{Size: resource.MustParse("1Gi"), AccessMode: "ReadOnlyMany"}}, nil, "Unsupported value"},
+		{"cel-volume-ok", volumePersistence(), ptrInt64(7), ""},
 		{"cel-none-days", &achv1alpha1.WorkspacePersistenceSpec{Type: "none", RetentionDays: ptrInt64(7)}, nil, "required unless type is none"},
 		{"cel-s3-no-days", &achv1alpha1.WorkspacePersistenceSpec{Type: "s3"}, nil, "required unless type is none"},
 		{"cel-session-over", &achv1alpha1.WorkspacePersistenceSpec{Type: "s3", RetentionDays: ptrInt64(7)}, ptrInt64(30), "must not exceed"},

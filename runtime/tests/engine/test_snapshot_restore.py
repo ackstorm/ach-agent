@@ -238,3 +238,47 @@ async def test_restore_rejects_a_live_native_process(tmp_path: Path, public) -> 
         )
     assert (home / "native.db").read_text(encoding="utf-8") == "live"
     assert staged.is_dir()
+
+
+async def test_in_place_resume_from_the_same_home_same_sid(tmp_path: Path, public) -> None:
+    """Persistence type volume: the HOME stays where it is; a new engine (a new sandbox) resumes
+    the native session from it with no archive."""
+    engine = OpenCodeEngine()
+    home, scratch, workspace_dir = tmp_path / "home", tmp_path / "scratch", tmp_path / "workspace"
+    workspace_dir.mkdir()
+    fresh_engine = None
+    try:
+        async with fake_facades("text") as fakes:
+            invocation = EngineInvocation(
+                invocation_id="native-volume-1",
+                session_ref="native-session-volume",
+                workspace_dir=workspace_dir,
+                prompt="reply with the single word: pong",
+                public=public,
+                engine_env=dict(public.engine.env),
+                provider_base_url_override=fakes.model_url,
+            )
+            receipt = await engine.start(invocation, home=home, scratch=scratch)
+            await asyncio.wait_for(engine.wait_settled("native-volume-1"), timeout=15.0)
+        assert await engine.suspend("native-session-volume") is True
+        saved = await engine.snapshot("native-session-volume", agent={"name": "a", "namespace": "ns", "uid": "u"},
+                                      workspace_ref="ws-ref", registry={"workspace_path": str(workspace_dir)})
+        assert saved.archive_ref is None  # no transfer: nothing left the HOME
+
+        fresh_engine = OpenCodeEngine()
+        manifest = SnapshotManifest.from_dict(json.loads((home / ".ach-registry.json").read_text(encoding="utf-8")))
+        await fresh_engine.restore(
+            "native-session-volume", manifest,
+            expected={"engine_package": ENGINE_PACKAGE, "workspace_ref": "ws-ref",
+                      "session_ref": "native-session-volume", "workspace_path": str(workspace_dir)},
+            public=public, engine_env=dict(public.engine.env), home=home, scratch=scratch, in_place=True,
+        )
+        restored = fresh_engine._sessions["native-session-volume"]
+        assert restored.sid == receipt.native_session_id
+        assert restored.alive
+    finally:
+        for instance in (engine, fresh_engine):
+            if instance is None:
+                continue
+            for session in list(instance._sessions.values()):
+                await session._kill(confirm_timeout=5.0)

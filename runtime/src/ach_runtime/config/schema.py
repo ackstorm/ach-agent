@@ -403,7 +403,9 @@ class LimitsBlock(BaseModel):
 
 
 class PersistenceBlock(BaseModel):
-    """Where the Workspace files and its session HOMEs survive the sandbox (one type for both)."""
+    """Where the Workspace files and its session HOMEs survive the sandbox (one type for both):
+    nowhere (none), the install-wide S3 store (s3), or the Workspace's PVC (volume, which the
+    operator owns; its size and class are not on the wire)."""
 
     model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
 
@@ -412,8 +414,6 @@ class PersistenceBlock(BaseModel):
 
     @model_validator(mode="after")
     def _type_rules(self) -> PersistenceBlock:
-        if self.type == "volume":
-            raise ValueError("workspace.persistence.type volume is not implemented yet")
         if (self.type == "none") != (self.retention_days is None):
             raise ValueError(
                 "workspace.persistence.retentionDays is required unless type is none, and forbidden with none"

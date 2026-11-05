@@ -228,3 +228,14 @@ def test_cli_without_bootstrap_source_fails_before_binding_the_port() -> None:
     assert "no execution bootstrap" in (result.stdout + result.stderr)
     with socket.socket() as probe:
         assert probe.connect_ex(("127.0.0.1", port)) != 0
+
+
+def test_build_creates_the_workspace_directory(tmp_path: Path) -> None:
+    """A Workspace PVC mounted at /sandbox/ach starts empty."""
+    from ach_runtime.execution.boot import build_execution_app, load_bootstrap
+    from ach_runtime.harness.tokens import engine_verify_key
+
+    environ = {"ACH_SANDBOX_VERIFY_KEY": engine_verify_key(b"k" * 32), "ACH_WORKSPACE_NAME": "ws", "ACH_WORKSPACE_REF": "ref"}
+    build_execution_app(load_bootstrap(BOOTSTRAP_FIXTURE, {}), environ=environ,
+                        workspace_dir=tmp_path / "ach" / "workspace", sessions_root=tmp_path / "ach" / "sessions")
+    assert (tmp_path / "ach" / "workspace").is_dir()

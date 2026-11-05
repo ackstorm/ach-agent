@@ -650,7 +650,8 @@ def test_workspace_ready_timeout_defaults_to_30_and_must_be_positive(pr_review_w
 @pytest.mark.parametrize(
     ("persistence", "session_days", "match"),
     [
-        ({"type": "volume", "retentionDays": 7}, None, "not implemented yet"),
+        ({"type": "volume"}, None, "required unless type is none"),
+        ({"type": "volume", "retentionDays": 7, "volume": {"size": "1Gi"}}, None, "Extra inputs are not permitted"),
         ({"type": "none", "retentionDays": 7}, None, "required unless type is none"),
         ({"type": "s3"}, None, "required unless type is none"),
         ({"enabled": True, "retentionDays": 7}, None, "Extra inputs are not permitted"),
@@ -673,3 +674,11 @@ def test_session_retention_defaults_to_persistence_retention(pr_review_wire: dic
     assert cfg.workspace.session_retention_days == 90
     pr_review_wire["workspace"]["session"]["retentionDays"] = 7
     assert parse_config(_resign(pr_review_wire)).workspace.session_retention_days == 7
+
+
+def test_persistence_volume_parses(pr_review_wire: dict[str, Any]) -> None:
+    pr_review_wire["workspace"]["persistence"] = {"type": "volume", "retentionDays": 30}
+    pr_review_wire["workspace"]["session"]["retentionDays"] = 7
+    cfg = parse_config(_resign(pr_review_wire))
+    assert cfg.workspace.persistence.type == "volume"
+    assert cfg.workspace.session_retention_days == 7

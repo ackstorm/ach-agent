@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from pathlib import Path
 
-from ach_runtime.engine.opencode import SnapshotManifest
+from ach_runtime.engine.opencode import RestoreMismatch, SnapshotManifest
 from ach_runtime.execution.service import ExecutionService
 from ach_runtime.storage.archive import (
     _MemberCheck,
@@ -108,6 +108,53 @@ async def import_session(
             return True
         finally:
             await _owned(shutil.rmtree, root, ignore_errors=True)
+
+
+async def suspend_session(service: ExecutionService, session_ref: str) -> None:
+    """Stop the session's opencode cleanly and write its manifest into the HOME, which stays
+    where it is (persistence type volume: the HOME is on the Workspace PVC)."""
+    async with service._sessions.lock(session_ref):
+        if service._sessions.get(session_ref) is None:
+            raise KeyError(session_ref)
+        await service.snapshot(session_ref)
+
+
+async def resume_session(
+    service: ExecutionService, session_ref: str, *, deadline_at: datetime | None = None,
+) -> str:
+    """Resume a session from the HOME it left on the Workspace PVC (persistence type volume).
+
+    "live" when its opencode runs or work in this pod holds the session, "fresh" when the HOME
+    has nothing this pod can resume, "resumed" once opencode answers for the saved session id."""
+    state = service._sessions.get_or_create(session_ref)
+    lock = service._sessions.lock(session_ref)
+    if (await service.session_info(session_ref))["active"] or lock.locked():
+        return "live"
+    async with lock:
+        path = state.home / ".ach-registry.json"
+        if not path.is_file():
+            return "fresh"
+        try:
+            manifest = SnapshotManifest.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            log.warning("session manifest unreadable (%s); session starts fresh", exc)
+            return "fresh"
+        if manifest.session_ref != session_ref or manifest.workspace_path != str(service._workspace_dir):
+            log.warning("session manifest from Workspace path %s discarded; session starts fresh",
+                        manifest.workspace_path)
+            return "fresh"
+        workspace_ref = service._workspace_ref
+        if not workspace_ref:
+            raise ValueError("execution service has no pinned workspaceRef")
+        try:
+            await service.restore(session_ref, workspace_ref, manifest, in_place=True,
+                                  _reservation_held=True, deadline_at=deadline_at)
+        except RestoreMismatch as exc:
+            # opencode no longer knows the saved session id: a new one starts in the same HOME,
+            # and its next suspend replaces the manifest.
+            log.warning("session resume failed (%s); session starts fresh", exc)
+            return "fresh"
+        return "resumed"
 
 
 async def export_workspace(service: ExecutionService) -> Path:

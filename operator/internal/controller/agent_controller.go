@@ -92,6 +92,10 @@ type AgentReconciler struct {
 	// path; nil with a plaintext gateway.
 	OpenShellCA []byte
 
+	// SandboxNamespace is where the OpenShell driver runs sandbox pods and the host loop keeps
+	// the Workspace PVCs. Empty skips them (no gateway configured).
+	SandboxNamespace string
+
 	// RouteParent is the default parentRef of an Agent's HTTPRoute.
 	RouteParent achv1alpha1.ParentRef
 
@@ -135,8 +139,8 @@ const (
 // finalizeExecutionUnits removes the Agent's sandboxes, which cannot carry an owner reference,
 // and then lets the deletion proceed. The order is fixed: the host loop stops first (so no
 // create races the inventory), then the gateway inventory by agent UID is emptied, then the
-// per-sandbox Services go. The finalizer is removed only once an inventory shows no sandbox
-// and no Service left; an unreachable gateway keeps it. Selection is by agent UID, so a newer
+// per-sandbox Services and the Workspace PVCs go. The finalizer is removed only once an inventory
+// shows no sandbox, no Service and no Workspace PVC left; an unreachable gateway keeps it. Selection is by agent UID, so a newer
 // Agent with the same name is never touched.
 func (r *AgentReconciler) finalizeExecutionUnits(ctx context.Context, a *achv1alpha1.Agent) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(a, executionFinalizer) {
@@ -179,7 +183,11 @@ func (r *AgentReconciler) finalizeExecutionUnits(ctx context.Context, a *achv1al
 			return ctrl.Result{}, fmt.Errorf("delete per-sandbox Service %s: %w", svcs.Items[i].Name, err)
 		}
 	}
-	if remaining || len(svcs.Items) > 0 {
+	volumes, err := r.removeWorkspaceVolumes(ctx, a)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if remaining || len(svcs.Items) > 0 || volumes {
 		return ctrl.Result{RequeueAfter: finalizeCheckWait}, nil
 	}
 	controllerutil.RemoveFinalizer(a, executionFinalizer)
@@ -274,6 +282,16 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	configJSON, err := json.Marshal(cfg)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("marshal config: %w", err)
+	}
+
+	// 2b. Workspace PVCs reach a sandbox through driver_config, which the gateway lets any API
+	// caller set: only with the gateway's mTLS is the operator the only caller.
+	if cfg.Workspace.Persistence.Type == "volume" {
+		if len(r.OpenShellCA) == 0 {
+			setCond(&conds, condWorkloadApplied, metav1.ConditionFalse, "VolumeRequiresGatewayTLS",
+				"workspace.persistence.type volume needs the operator's OpenShell gateway mTLS (chart value openshell.tls.secret)", agent.Generation)
+			return r.finish(ctx, &agent, conds)
+		}
 	}
 
 	// 3. The control pod must outlive the runtime drain.

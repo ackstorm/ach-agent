@@ -637,3 +637,12 @@ async def test_workspace_archive_policy_rejection_is_not_retryable(tmp_path: Pat
         "rejected", request=request, response=httpx.Response(422, request=request)
     )
     assert _retryable_archive_error(error) is False
+
+
+def test_volume_session_routes(tmp_path: Path, public_config_fixture) -> None:
+    client = _client(tmp_path, public_config_fixture)
+    assert client.post("/sessions/unknown/suspend").status_code == 404
+    assert client.post("/sessions/prune", json={"retentionDays": 0}).status_code == 422
+    assert client.post("/sessions/prune", json={"retentionDays": 7}).json() == {"status": "ok", "pruned": 0}
+    resumed = client.post(f"/sessions/{'se' * 16}/resume", json={"deadlineAt": "2026-10-01T00:00:00+00:00"})
+    assert resumed.json() == {"status": "fresh", "sessionRef": "se" * 16}

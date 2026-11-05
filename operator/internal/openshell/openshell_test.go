@@ -17,7 +17,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -519,6 +522,29 @@ func TestOpenShell_StateOnNotFoundChecksTheWorkloadPod(t *testing.T) {
 	}
 	if st, err := f.b.State(ctx, w.Name); err != nil || st != host.UnitAbsent {
 		t.Fatalf("state = %v err = %v, want host.UnitAbsent once the pod is gone", st, err)
+	}
+}
+
+func TestOpenShell_StateRemovesTheOwnerOfAPodTheGatewayForgot(t *testing.T) {
+	// The gateway dropped its record (a create that hit a version conflict, then a delete) but
+	// the Sandbox object and its pod live on: nothing would ever delete them, and a new sandbox
+	// of the same name cannot be created while the pod exists.
+	ctx := context.Background()
+	_, _, w := unitFixture()
+	name := SandboxName("gitlab-reviewer", string(testUID), w.Name)
+	owner := &unstructured.Unstructured{}
+	owner.SetGroupVersionKind(schema.GroupVersionKind{Group: "agents.x-k8s.io", Version: "v1beta1", Kind: "Sandbox"})
+	owner.SetName("default--" + name)
+	owner.SetNamespace("openshell")
+	pod := workloadPod(name, corev1.PodRunning, false)
+	pod.OwnerReferences = []metav1.OwnerReference{{APIVersion: "agents.x-k8s.io/v1beta1", Kind: "Sandbox", Name: owner.GetName(), UID: "sb-1", Controller: ptr.To(true)}}
+	f := newOSFixture(t, pod, owner)
+	if st, err := f.b.State(ctx, w.Name); err != nil || st != host.UnitTerminating {
+		t.Fatalf("state = %v err = %v, want host.UnitTerminating while the orphan goes", st, err)
+	}
+	got := owner.DeepCopy()
+	if err := f.c.Get(ctx, client.ObjectKeyFromObject(owner), got); !apierrors.IsNotFound(err) {
+		t.Fatalf("Sandbox owner get err = %v, want NotFound: the orphan's owner must be deleted", err)
 	}
 }
 

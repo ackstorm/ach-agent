@@ -352,7 +352,7 @@ This section is informative. Hosts must not depend on it.
   - `/sessions…`, `/workspace/archive`, `/workspace/hooks/{phase}`;
   - `/execution/v1/…` handoff and hydration transfers.
   - Authentication is an Ed25519 bearer derived from `ACH_SANDBOX_KEY` and bound to the Workspace name, plus the instance ID header.
-- **Execution to Harness.** Only the facades, under `infrastructure.facadeEndpoint`, through HMAC-signed URL tokens bound to the Workspace. A facade request is honoured only while that Workspace has a serving instance in the Harness's own state.
+- **Execution to Harness.** Only the facades, under `infrastructure.facadeEndpoint`, with an HMAC-signed token bound to the Workspace in the `x-ach-facade-token` request header, never in a URL. A facade request is honoured only while that Workspace has a serving instance in the Harness's own state.
 - **No outbound call from execution to control.** `controlEndpoint` is not used.
 
 ## 7. Configuration document changes

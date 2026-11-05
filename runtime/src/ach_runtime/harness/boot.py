@@ -105,7 +105,6 @@ async def run_control(
         ManagedServer(uvicorn.Config(
             facades, host=facade_host or host, port=facade_port, lifespan="on",
             timeout_graceful_shutdown=shutdown_timeout,
-            # Facade URLs carry the Workspace HMAC; the access log would publish it.
             access_log=False,
         )),
     ]

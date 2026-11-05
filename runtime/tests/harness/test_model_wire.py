@@ -13,7 +13,7 @@ import pytest
 from ach_runtime.config.canonical import compute_config_version
 from ach_runtime.config.schema import parse_config
 from ach_runtime.harness.control import Control, assemble
-from ach_runtime.harness.tokens import facade_token
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER, facade_token
 from ach_runtime.harness.workspaces import WorkspaceEndpoint, WorkspaceRef
 
 FIXTURE = Path(__file__).parents[1] / "config" / "fixtures" / "pr-review-runtime.json"
@@ -83,9 +83,11 @@ async def test_model_facade_uses_configured_native_ach_endpoint(model_type, path
         assert control.catalog.model.endpoint == "https://unrelated.example/v1"
         execution_catalog = control._catalog_for(endpoint)
         model_urls = [provider["baseURL"] for provider in execution_catalog["providers"].values()]
-        assert model_urls == [f"{control.public.infrastructure.facade_endpoint.rstrip('/')}/model/t/{token}"]
+        assert model_urls == [f"{control.public.infrastructure.facade_endpoint.rstrip('/')}/model"]
+        model_headers = [provider["headers"] for provider in execution_catalog["providers"].values()]
+        assert model_headers == [{FACADE_TOKEN_HEADER: token}]
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://control") as client:
-            response = await client.post(f"/t/{token}{path}", json={"model": MODEL_ID, "probe": True})
+            response = await client.post(path, json={"model": MODEL_ID, "probe": True}, headers={FACADE_TOKEN_HEADER: token})
         assert response.status_code == 200
         assert len(upstream) == 1
         assert upstream[0][0] == ACH_BASE.rstrip("/") + prefix + path

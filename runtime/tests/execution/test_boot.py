@@ -45,7 +45,7 @@ def test_cli_help_and_identity() -> None:
 
 @pytest.mark.asyncio
 async def test_tcp_cold_configure_start_status(public_config_fixture: object, tmp_path: Path) -> None:
-    from ach_runtime.harness.tokens import engine_bearer, engine_verify_key
+    from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER, engine_bearer, engine_verify_key
 
     key = b"mini-boot-test-key-material".ljust(32, b"!")
     public = public_config_fixture
@@ -96,20 +96,20 @@ async def test_tcp_cold_configure_start_status(public_config_fixture: object, tm
         assert client.post(base + "/configure", json={}, headers=headers).status_code == 422
         wire_public = public.model_dump(mode="json", by_alias=True)
         credential_catalog = {"providers": {public.model.type: {"baseURL": public.infrastructure.facade_endpoint,
-            "apiKey": "local-proxy", "models": {public.model.name: {"apiKey": "ambient-ek-sentinel"}}}}, "mcp": {}}
+            "apiKey": "local-proxy", "headers": {FACADE_TOKEN_HEADER: "tok"}, "models": {public.model.name: {"apiKey": "ambient-ek-sentinel"}}}}, "mcp": {}}
         assert client.post(base + "/configure", json={"public": wire_public, "catalog": credential_catalog},
                            headers=headers).status_code == 422
         assert client.get(base + "/readyz").status_code == 503
         assert client.post(base + "/configure", json={"public": wire_public, "catalog": {
             "providers": {public.model.type: {"baseURL": public.infrastructure.facade_endpoint,
-                "apiKey": "local-proxy", "models": {public.model.name: {}}}}, "mcp": {}
+                "apiKey": "local-proxy", "headers": {FACADE_TOKEN_HEADER: "tok"}, "models": {public.model.name: {}}}}, "mcp": {}
         }}, headers=headers).status_code == 200
         assert client.get(base + "/readyz").status_code == 200
         wrong_binding = dict(wire_public)
         wrong_binding["agent"] = {**wire_public["agent"], "name": "other-agent"}
         invalid_update = client.post(base + "/configure", json={"public": wrong_binding, "catalog": {
             "providers": {public.model.type: {"baseURL": public.infrastructure.facade_endpoint,
-                "apiKey": "local-proxy", "models": {public.model.name: {}}}}, "mcp": {}
+                "apiKey": "local-proxy", "headers": {FACADE_TOKEN_HEADER: "tok"}, "models": {public.model.name: {}}}}, "mcp": {}
         }}, headers=headers)
         assert invalid_update.status_code == 422
         assert client.get(base + "/readyz").status_code == 200

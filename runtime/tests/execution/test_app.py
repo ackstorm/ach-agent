@@ -24,7 +24,7 @@ from ach_runtime.execution.app import create_app
 from ach_runtime.execution.auth import create_authenticated_app
 from ach_runtime.execution.service import ExecutionService
 from ach_runtime.execution.sessions import SessionRegistry
-from ach_runtime.harness.tokens import engine_bearer, engine_verify_key
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER, engine_bearer, engine_verify_key
 
 
 @dataclass
@@ -92,6 +92,7 @@ async def test_configure_accepts_file_and_ach_system_prompts_before_hydration(
             public_config_fixture.model.type: {
                 "baseURL": public_config_fixture.infrastructure.facade_endpoint,
                 "apiKey": "local-proxy",
+                "headers": {FACADE_TOKEN_HEADER: "tok"},
                 "models": {public_config_fixture.model.name: {}},
             }
         },

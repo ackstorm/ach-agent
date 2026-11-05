@@ -17,7 +17,7 @@ from ach_runtime.config.canonical import compute_config_version
 from ach_runtime.config.schema import parse_config
 from ach_runtime.facades._proxy import ProcessIdentity
 from ach_runtime.harness.control import assemble, create_facade_app
-from ach_runtime.harness.tokens import facade_token
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER, facade_token
 from ach_runtime.harness.workspaces import WorkspaceEndpoint, WorkspaceRef
 
 KEY_ENV = {"ACH_SANDBOX_KEY": "harness-private-key", "ACH_SECRET_IDENTITY": "ek-private-value"}
@@ -60,9 +60,11 @@ def _catalog_handler(peers: bool = True, raw_a2a: bool = False):
 
 
 async def _client_session(app: Any, token: str):
-    http_client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=FACADE_BASE)
+    http_client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url=FACADE_BASE, headers={FACADE_TOKEN_HEADER: token}
+    )
     client_cm = streamable_http_client(
-        f"{FACADE_BASE}/facades/a2a/t/{token}/a2a/", http_client=http_client
+        f"{FACADE_BASE}/facades/a2a/a2a/", http_client=http_client
     )
     read, write, _ = await client_cm.__aenter__()
     session = ClientSession(read, write)
@@ -104,17 +106,15 @@ async def test_nonempty_peers_publish_guarded_a2a_catalog(monkeypatch):
 
     control.a2a_facade._owned_workspace = owns_workspace
     catalog = control._catalog_for(endpoint)
-    # M2: the full expected route, derived independently from the configured
-    # facadeEndpoint and the current `facade_token(key, endpoint.name)` -- not a
-    # tautology extracted from the URL under test -- asserted BEFORE `_in_process_url`'s
+    # M2: the full expected route and token header, derived independently from the
+    # configured facadeEndpoint and the current `facade_token(key, endpoint.name)` -- not a
+    # tautology extracted from the catalog under test -- asserted BEFORE `_in_process_url`'s
     # origin rewrite below.
     url = catalog["mcp"]["a2a"]["url"]
     expected_token = facade_token(control.key, endpoint.name)
-    expected_url = (
-        f"{control.public.infrastructure.facade_endpoint.rstrip('/')}/a2a/t/{expected_token}/a2a/"
-    )
+    expected_url = f"{control.public.infrastructure.facade_endpoint.rstrip('/')}/a2a/a2a/"
     assert url == expected_url
-    assert catalog["mcp"]["a2a"]["headers"] == {}
+    assert catalog["mcp"]["a2a"]["headers"] == {FACADE_TOKEN_HEADER: expected_token}
     assert "raw-a2a.example" not in url
     assert "harness-private-key" not in json.dumps(catalog)
     assert "ek-private-value" not in json.dumps(catalog)
@@ -127,7 +127,9 @@ async def test_nonempty_peers_publish_guarded_a2a_catalog(monkeypatch):
 
     app = create_facade_app(control)
     async with app.router.lifespan_context(app):
-        http_client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=FACADE_BASE)
+        http_client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=FACADE_BASE, headers=catalog["mcp"]["a2a"]["headers"]
+        )
         async with http_client:
             async with streamable_http_client(_in_process_url(url), http_client=http_client) as (read, write, _):
                 async with ClientSession(read, write) as session:
@@ -177,7 +179,9 @@ async def test_a2a_excluded_tool_is_not_advertised_or_callable(monkeypatch) -> N
     app = create_facade_app(control)
     catalog = control._catalog_for(endpoint)
     async with app.router.lifespan_context(app):
-        http_client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=FACADE_BASE)
+        http_client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=FACADE_BASE, headers=catalog["mcp"]["a2a"]["headers"]
+        )
         async with http_client:
             async with streamable_http_client(_in_process_url(catalog["mcp"]["a2a"]["url"]), http_client=http_client) as (read, write, _):
                 async with ClientSession(read, write) as session:

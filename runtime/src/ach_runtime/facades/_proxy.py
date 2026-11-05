@@ -31,6 +31,8 @@ import httpx
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER
+
 # ---------------------------------------------------------------------------
 # Identity — copied old-ach-agent identity.py, no global current/configure state.
 # ---------------------------------------------------------------------------
@@ -121,6 +123,7 @@ DROP_REQUEST_HEADERS = frozenset(
         "x-api-key",
         "x-ach-agent",
         "x-ach-environment",
+        FACADE_TOKEN_HEADER,
     }
 )
 # RFC 9110 hop-by-hop fields are per-connection: never forwarded upstream.

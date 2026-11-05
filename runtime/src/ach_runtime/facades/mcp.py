@@ -39,7 +39,11 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from ach_runtime.facades._proxy import ProcessIdentity, forward, has_encoded_body, join_tail
-from ach_runtime.harness.tokens import WorkspaceAuthenticationFailed, authenticate_facade
+from ach_runtime.harness.tokens import (
+    FACADE_TOKEN_HEADER,
+    WorkspaceAuthenticationFailed,
+    authenticate_facade,
+)
 
 _METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 _INTERNAL_CLIENT_TIMEOUT = httpx.Timeout(None, connect=30.0)
@@ -170,7 +174,7 @@ class McpFacade:
         upstream_names: dict[str, dict[str, str]] = {sid: {} for sid in endpoints}
 
         async def handle(request: Request) -> Response:
-            token = request.path_params["token"]
+            token = request.headers.get(FACADE_TOKEN_HEADER, "")
             try:
                 await authenticate_facade(key, token, owned_workspace=owned_workspace)
             except WorkspaceAuthenticationFailed:
@@ -221,8 +225,8 @@ class McpFacade:
 
         return Starlette(
             routes=[
-                Route("/t/{token}/mcp/{server_id}", self._handle, methods=_METHODS),
-                Route("/t/{token}/mcp/{server_id}/{tail:path}", self._handle, methods=_METHODS),
+                Route("/mcp/{server_id}", self._handle, methods=_METHODS),
+                Route("/mcp/{server_id}/{tail:path}", self._handle, methods=_METHODS),
             ],
             lifespan=lifespan,
         )

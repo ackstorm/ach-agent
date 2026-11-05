@@ -16,7 +16,7 @@ import pytest
 from ach_runtime.facades._proxy import ProcessIdentity
 from ach_runtime.facades.model import ModelFacade, present_metadata, public_catalog
 from ach_runtime.harness.hydrate import HydratedCatalog, HydratedModel, McpServerEntry, ModelMetadata
-from ach_runtime.harness.tokens import facade_token
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER, facade_token
 
 FULL_METADATA = ModelMetadata(
     context_limit=200000,
@@ -138,25 +138,27 @@ def test_public_catalog_projects_exactly_selected_model_and_facade_urls() -> Non
     result = public_catalog(
         catalog,
         provider_id="gemini",
-        model_url="https://facade.internal/t/tok123/v1",
-        mcp_urls={"mcp-google-calendar-ro": "https://facade.internal/t/tok123/mcp/mcp-google-calendar-ro"},
-        memory_url="https://facade.internal/t/tok123/memory",
+        model_url="https://facade.internal/v1",
+        token="tok123",
+        mcp_urls={"mcp-google-calendar-ro": "https://facade.internal/mcp/mcp-google-calendar-ro"},
+        memory_url="https://facade.internal/memory",
     )
 
-    assert result["providers"]["gemini"]["baseURL"] == "https://facade.internal/t/tok123/v1"
+    assert result["providers"]["gemini"]["baseURL"] == "https://facade.internal/v1"
     assert result["providers"]["gemini"]["apiKey"] == "local-proxy"
+    assert result["providers"]["gemini"]["headers"] == {FACADE_TOKEN_HEADER: "tok123"}
     assert set(result["providers"]["gemini"]["models"]) == {"gemini.gemini-flash-latest"}
     assert result["mcp"]["mcp-google-calendar-ro"] == {
-        "url": "https://facade.internal/t/tok123/mcp/mcp-google-calendar-ro",
-        "headers": {},
+        "url": "https://facade.internal/mcp/mcp-google-calendar-ro",
+        "headers": {FACADE_TOKEN_HEADER: "tok123"},
     }
-    assert result["mcp"]["memory"] == {"url": "https://facade.internal/t/tok123/memory", "headers": {}}
+    assert result["mcp"]["memory"] == {"url": "https://facade.internal/memory", "headers": {FACADE_TOKEN_HEADER: "tok123"}}
 
 
 def test_public_catalog_omits_memory_entry_when_unavailable() -> None:
     catalog = _catalog(metadata=None)
     result = public_catalog(
-        catalog, provider_id="gemini", model_url="https://facade.internal/t/tok/v1", mcp_urls={}
+        catalog, provider_id="gemini", model_url="https://facade.internal/v1", token="tok", mcp_urls={}
     )
 
     assert "memory" not in result["mcp"]
@@ -168,8 +170,9 @@ def test_public_catalog_no_credential_sentinel_or_raw_backend_endpoint_in_result
     result = public_catalog(
         catalog,
         provider_id="gemini",
-        model_url="https://facade.internal/t/tok123/v1",
-        mcp_urls={"m1": "https://facade.internal/t/tok123/mcp/m1"},
+        model_url="https://facade.internal/v1",
+        token="tok123",
+        mcp_urls={"m1": "https://facade.internal/mcp/m1"},
     )
 
     serialized = str(result)
@@ -190,14 +193,15 @@ def test_public_catalog_with_prefiltered_granted_mcp_servers_only_emits_provided
     )
     catalog = _catalog(metadata=FULL_METADATA, mcp_servers=hydrated_servers)
     granted_only = {
-        server.id: f"https://facade.internal/t/tok123/mcp/{server.id}"
+        server.id: f"https://facade.internal/mcp/{server.id}"
         for server in hydrated_servers
         if server.id != "raw-memory-mcp"
     }
     result = public_catalog(
         catalog,
         provider_id="gemini",
-        model_url="https://facade.internal/t/tok123/v1",
+        model_url="https://facade.internal/v1",
+        token="tok123",
         mcp_urls=granted_only,
     )
 
@@ -238,14 +242,15 @@ async def test_public_catalog_call_emits_no_credential_or_raw_backend_sentinel_i
         transport = httpx.ASGITransport(app=facade.app())
         with caplog.at_level("DEBUG"):
             async with httpx.AsyncClient(transport=transport, base_url="http://facade") as client:
-                resp = await client.post(f"/t/{token}/chat/completions", json={"model": "m"})
+                resp = await client.post("/chat/completions", json={"model": "m"}, headers={FACADE_TOKEN_HEADER: token})
 
             catalog = _catalog(metadata=FULL_METADATA)
             public_catalog(
                 catalog,
                 provider_id="gemini",
-                model_url="https://facade.internal/t/tok123/v1",
-                mcp_urls={"mcp-google-calendar-ro": "https://facade.internal/t/tok123/mcp/mcp-google-calendar-ro"},
+                model_url="https://facade.internal/v1",
+                token="tok123",
+                mcp_urls={"mcp-google-calendar-ro": "https://facade.internal/mcp/mcp-google-calendar-ro"},
             )
 
         assert resp.status_code == 200

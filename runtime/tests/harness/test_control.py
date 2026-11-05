@@ -19,7 +19,7 @@ from ach_runtime.harness.admission import AdmissionTicket, ScriptAdmissionTicket
 from ach_runtime import __version__
 from ach_runtime.harness.control import Control, _render_prompt, assemble
 from ach_runtime.harness.delivery import Delivery
-from ach_runtime.harness.tokens import facade_token, host_token
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER, facade_token, host_token
 from ach_runtime.harness.workspaces import (
     ReleaseMismatch, WorkspaceAssemblyUnavailable, WorkspaceEndpoint, WorkspaceRef,
 )
@@ -182,8 +182,12 @@ async def test_prepare_requires_real_configure_receipt_before_returning_start_re
         assert [path for path, _ in seen] == ["/configure", "/readyz"]
         expected_token = facade_token(control.key, endpoint.name)
         assert seen[0][1]["catalog"]["providers"]["gemini"]["baseURL"] == (
-            f"{control.public.infrastructure.facade_endpoint}/model/t/{expected_token}"
+            f"{control.public.infrastructure.facade_endpoint}/model"
         )
+        catalog = seen[0][1]["catalog"]
+        assert catalog["providers"]["gemini"]["headers"] == {FACADE_TOKEN_HEADER: expected_token}
+        urls = [catalog["providers"]["gemini"]["baseURL"], *(e["url"] for e in catalog["mcp"].values())]
+        assert not any(expected_token in url for url in urls)
     finally:
         await control.close()
 

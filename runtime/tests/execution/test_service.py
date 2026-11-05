@@ -422,7 +422,7 @@ async def test_session_start_env_and_cwd(tmp_path, public_config_fixture):
     script = 'env > "$ACH_WORKSPACE/env.txt"; pwd > "$ACH_WORKSPACE/cwd.txt"'
     service.configure(
         _with_session_start(public_config_fixture, script),
-        catalog={"mcp": {"mcp-k8sgpt-ro": {"url": "http://facade/mcp/x", "headers": {}}}},
+        catalog={"mcp": {"mcp-k8sgpt-ro": {"url": "http://facade/mcp/x", "headers": {"x-ach-facade-token": "tok"}}}},
     )
     await service.start(_request(public_config_fixture.config_version))
     env = dict(
@@ -435,6 +435,7 @@ async def test_session_start_env_and_cwd(tmp_path, public_config_fixture):
     assert env["ACH_WORKSPACE_KEY"] == "wk"
     assert env["ACH_SESSION_KEY"] == "sk"
     assert json.loads(env["ACH_MCP_URLS"]) == {"mcp-k8sgpt-ro": "http://facade/mcp/x"}
+    assert json.loads(env["ACH_MCP_HEADERS"]) == {"mcp-k8sgpt-ro": {"x-ach-facade-token": "tok"}}
     session_home = service._sessions.get_or_create("se" * 16).home
     assert (workspace / "cwd.txt").read_text().strip() == str(session_home)
 
@@ -2313,12 +2314,10 @@ async def test_owner_finishing_within_frozen_confirmation_window_is_not_unknown(
     assert lock.release_count == 1
 
 
-
 async def test_session_start_error_redacts_facade_tokens(tmp_path, public_config_fixture):
+    token = "workspace-1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     service, _ = _service(tmp_path, public_config_fixture)
-    service.configure(_with_session_start(
-        public_config_fixture, "echo 'GET http://c/facades/mcp/t/tok-123/mcp/x 401' >&2; exit 1"
-    ))
+    service.configure(_with_session_start(public_config_fixture, f"echo '{token}' >&2; exit 1"))
     await service.start(_request(public_config_fixture.config_version))
     error = (await service.status("inv-1")).error
-    assert "tok-123" not in error and "/t/<redacted>/" in error
+    assert token not in error and "<redacted>" in error

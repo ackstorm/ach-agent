@@ -25,7 +25,7 @@ from ach_runtime.facades.memory import (
     resolve_ach_memory_auth,
     resolve_endpoint,
 )
-from ach_runtime.harness.tokens import facade_token
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER, facade_token
 from fixtures.memory_mcp import RecordingUpstream
 
 KEY = b"fixture-key"
@@ -129,9 +129,11 @@ async def _client_session(
     """A real, independently-constructed MCP client session against the facade under
     test -- deliberately NOT routed through the (possibly monkeypatched) production
     `_mcp_session.mcp_session`, so it never collides with `_routed_to` above."""
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=base_url) as http_client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url=base_url, headers={FACADE_TOKEN_HEADER: token}
+    ) as http_client:
         async with streamable_http_client(
-            f"{base_url}/t/{token}/memory/", http_client=http_client
+            f"{base_url}/memory/", http_client=http_client
         ) as (read, write, get_session_id):
             async with ClientSession(read, write) as session:
                 await session.initialize()
@@ -442,7 +444,7 @@ async def test_denies_malformed_token_with_zero_upstream_egress(monkeypatch: pyt
             # the SDK layer, which cannot distinguish 403 from an unrelated 500).
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url=FACADE_BASE) as client:
-                resp = await client.post("/t/garbage/memory/", content=b"{}")
+                resp = await client.post("/memory/", content=b"{}", headers={FACADE_TOKEN_HEADER: "garbage"})
             assert resp.status_code == 403
             with pytest.raises(Exception):  # noqa: B017 - SDK-raised transport/session error
                 async with _client_session(app, "garbage"):
@@ -463,7 +465,7 @@ async def test_denies_wrong_key_token_with_zero_upstream_egress(monkeypatch: pyt
         async with app.router.lifespan_context(app):
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url=FACADE_BASE) as client:
-                resp = await client.post(f"/t/{wrong_key_token}/memory/", content=b"{}")
+                resp = await client.post("/memory/", content=b"{}", headers={FACADE_TOKEN_HEADER: wrong_key_token})
             assert resp.status_code == 403
             with pytest.raises(Exception):  # noqa: B017
                 async with _client_session(app, wrong_key_token):
@@ -484,7 +486,7 @@ async def test_denies_non_owned_claim_with_zero_upstream_egress(monkeypatch: pyt
         async with app.router.lifespan_context(app):
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url=FACADE_BASE) as client:
-                resp = await client.post(f"/t/{non_owned_token}/memory/", content=b"{}")
+                resp = await client.post("/memory/", content=b"{}", headers={FACADE_TOKEN_HEADER: non_owned_token})
             assert resp.status_code == 403
             with pytest.raises(Exception):  # noqa: B017
                 async with _client_session(app, non_owned_token):
@@ -521,12 +523,12 @@ async def test_ownership_flip_denies_subsequent_post_get_delete_with_zero_upstre
                 delegated_before = len(delegated)
 
                 owned.state["owned"] = False  # explicit revoke, same initialized session remains open
-                session_headers = {"mcp-session-id": session_ids[0]}
+                session_headers = {"mcp-session-id": session_ids[0], FACADE_TOKEN_HEADER: token}
                 async with httpx.AsyncClient(
                     transport=httpx.ASGITransport(app=app), base_url=FACADE_BASE
                 ) as client:
                     post_resp = await client.post(
-                        f"/t/{token}/memory/",
+                        "/memory/",
                         headers=session_headers,
                         content=json.dumps(
                             {
@@ -540,9 +542,9 @@ async def test_ownership_flip_denies_subsequent_post_get_delete_with_zero_upstre
                             }
                         ),
                     )
-                    get_resp = await client.get(f"/t/{token}/memory/", headers=session_headers)
+                    get_resp = await client.get("/memory/", headers=session_headers)
                     delete_resp = await client.delete(
-                        f"/t/{token}/memory/", headers=session_headers
+                        "/memory/", headers=session_headers
                     )
                 assert len(upstream.calls) == calls_before
                 assert len(outgoing) == requests_before
@@ -580,7 +582,7 @@ async def test_a_valid_hmac_becomes_non_owned_between_two_calls() -> None:
     assert owned.state["owned"] is False
 
 
-async def test_untokenized_route_is_404() -> None:
+async def test_route_outside_the_mount_is_404() -> None:
     facade = _facade()
     app = facade.app()
     async with app.router.lifespan_context(app):

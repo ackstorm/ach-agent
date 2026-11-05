@@ -318,21 +318,22 @@ class Control:
             ))
         memory_url: str | None = None
         if self.memory_facade is not None:
-            memory_url = f"{facade}/memory/t/{token}/memory/"
+            memory_url = f"{facade}/memory/memory/"
         artifact_url: str | None = None
         if self.artifact_facade is not None:
-            artifact_url = f"{facade}/artifacts/t/{token}"
+            artifact_url = f"{facade}/artifacts"
         mcp_urls = {
-            server.id: f"{facade}/mcp/t/{token}/mcp/{server.id}"
+            server.id: f"{facade}/mcp/mcp/{server.id}"
             for server in self.catalog.mcp_servers
             if server.id not in excluded
         }
         if self.a2a_facade is not None:
-            mcp_urls["a2a"] = f"{facade}/a2a/t/{token}/a2a/"
+            mcp_urls["a2a"] = f"{facade}/a2a/a2a/"
         result = public_catalog(
             self.catalog,
             provider_id=self.config.model.type,
-            model_url=f"{facade}/model/t/{token}",
+            model_url=f"{facade}/model",
+            token=token,
             mcp_urls=mcp_urls,
             memory_url=memory_url,
             artifact_url=artifact_url,

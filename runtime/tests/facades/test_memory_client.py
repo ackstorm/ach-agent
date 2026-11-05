@@ -31,7 +31,7 @@ from ach_runtime.facades._proxy import ProcessIdentity
 from ach_runtime.facades.mcp import McpFacade
 from ach_runtime.facades.model import public_catalog
 from ach_runtime.harness.hydrate import HydratedCatalog, HydratedModel
-from ach_runtime.harness.tokens import facade_token
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER, facade_token
 from fixtures.memory_mcp import RecordingUpstream
 
 IDENTITY = ProcessIdentity(agent="classifier", environment="platform")
@@ -481,9 +481,11 @@ async def test_excluded_server_id_aliases_stay_404_and_absent_from_catalog_when_
     token = facade_token(KEY, "owned-ws")
     async with mcp_app.router.lifespan_context(mcp_app):
         transport = httpx.ASGITransport(app=mcp_app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://facade") as client:
-            mem_resp = await client.post(f"/t/{token}/mcp/mem", content=b"{}")
-            alias_resp = await client.post(f"/t/{token}/mcp/mem-alias", content=b"{}")
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://facade", headers={FACADE_TOKEN_HEADER: token}
+        ) as client:
+            mem_resp = await client.post("/mcp/mem", content=b"{}")
+            alias_resp = await client.post("/mcp/mem-alias", content=b"{}")
     assert mem_resp.status_code == 404
     assert alias_resp.status_code == 404
 
@@ -491,9 +493,10 @@ async def test_excluded_server_id_aliases_stay_404_and_absent_from_catalog_when_
     catalog = public_catalog(
         _minimal_catalog(),
         provider_id="acme",
-        model_url="http://facade/t/model-token",
-        mcp_urls={sid: f"http://facade/t/{token}/mcp/{sid}" for sid in granted},
-        memory_url=f"http://facade/t/{token}/memory/" if available else None,
+        model_url="http://facade/model",
+        token=token,
+        mcp_urls={sid: f"http://facade/mcp/{sid}" for sid in granted},
+        memory_url="http://facade/memory/" if available else None,
     )
     assert set(catalog["mcp"]) == {"other", "memory"}
     assert proxy_requests == []
@@ -543,9 +546,11 @@ async def test_excluded_endpoint_aliases_stay_404_and_absent_from_catalog_when_d
     token = facade_token(KEY, "owned-ws")
     async with mcp_app.router.lifespan_context(mcp_app):
         transport = httpx.ASGITransport(app=mcp_app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://facade") as client:
-            raw_resp = await client.post(f"/t/{token}/mcp/raw-mem", content=b"{}")
-            alias_resp = await client.post(f"/t/{token}/mcp/raw-mem-alias", content=b"{}")
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://facade", headers={FACADE_TOKEN_HEADER: token}
+        ) as client:
+            raw_resp = await client.post("/mcp/raw-mem", content=b"{}")
+            alias_resp = await client.post("/mcp/raw-mem-alias", content=b"{}")
     assert raw_resp.status_code == 404
     assert alias_resp.status_code == 404
 
@@ -553,8 +558,9 @@ async def test_excluded_endpoint_aliases_stay_404_and_absent_from_catalog_when_d
     catalog = public_catalog(
         _minimal_catalog(),
         provider_id="acme",
-        model_url="http://facade/t/model-token",
-        mcp_urls={sid: f"http://facade/t/{token}/mcp/{sid}" for sid in granted},
+        model_url="http://facade/model",
+        token=token,
+        mcp_urls={sid: f"http://facade/mcp/{sid}" for sid in granted},
         memory_url=None,  # degraded: auth never resolved, nothing to publish
     )
     assert set(catalog["mcp"]) == {"other"}
@@ -611,9 +617,11 @@ async def test_failed_context_composition_keeps_aliases_excluded_without_generic
         token = facade_token(KEY, "owned-ws")
         async with mcp_app.router.lifespan_context(mcp_app):
             transport = httpx.ASGITransport(app=mcp_app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://facade") as client:
-                raw_resp = await client.post(f"/t/{token}/mcp/raw-memory", content=b"{}")
-                alias_resp = await client.post(f"/t/{token}/mcp/raw-memory-alias", content=b"{}")
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://facade", headers={FACADE_TOKEN_HEADER: token}
+            ) as client:
+                raw_resp = await client.post("/mcp/raw-memory", content=b"{}")
+                alias_resp = await client.post("/mcp/raw-memory-alias", content=b"{}")
         assert raw_resp.status_code == 404
         assert alias_resp.status_code == 404
 
@@ -621,8 +629,9 @@ async def test_failed_context_composition_keeps_aliases_excluded_without_generic
         catalog = public_catalog(
             _minimal_catalog(),
             provider_id="acme",
-            model_url="http://facade/t/model-token",
-            mcp_urls={sid: f"http://facade/t/{token}/mcp/{sid}" for sid in granted},
+            model_url="http://facade/model",
+            token=token,
+            mcp_urls={sid: f"http://facade/mcp/{sid}" for sid in granted},
             memory_url=None,
         )
         assert set(catalog["mcp"]) == {"other"}

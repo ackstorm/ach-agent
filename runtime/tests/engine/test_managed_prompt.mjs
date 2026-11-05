@@ -56,7 +56,7 @@ test("provider registrations preserve catalog values and select native transport
   ]) {
     await t.test(providerID, async () => {
       const provider = {
-        baseURL: "https://facade.example/t/model-token",
+        baseURL: "https://facade.example/model",
         apiKey: "local-proxy",
         models: { "vendor/model": { name: "Model name", tool_call: true, limit: { output: 2048 } } },
       }

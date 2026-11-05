@@ -16,6 +16,7 @@ from starlette.routing import Mount
 
 from ach_runtime.config.schema import ArtifactsBlock
 from ach_runtime.harness.tokens import (
+    FACADE_TOKEN_HEADER,
     WorkspaceAuthenticationFailed,
     authenticate_facade,
 )
@@ -124,8 +125,8 @@ class ArtifactFacade:
             self._register_read()
 
     def _context(self, ctx: Context) -> tuple[str, str]:
-        params = ctx.request_context.request.path_params
-        return str(params["token"]), str(params["invocation_id"])
+        request = ctx.request_context.request
+        return request.headers.get(FACADE_TOKEN_HEADER, ""), str(request.path_params["invocation_id"])
 
     def _register_create(self) -> None:
         @self._mcp.tool(
@@ -185,6 +186,6 @@ class ArtifactFacade:
                 yield
 
         return Starlette(
-            routes=[Mount("/t/{token}/runs/{invocation_id}", app=guarded)],
+            routes=[Mount("/runs/{invocation_id}", app=guarded)],
             lifespan=lifespan,
         )

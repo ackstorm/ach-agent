@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
 """`ach-mcp`: call one MCP tool from a lifecycle hook script, as the agent.
 
-Hook scripts get `ACH_MCP_URLS` (JSON `{serverId: url}`): this pod's MCP facade URLs, the
-same ones the engine uses, so a call carries the agent identity and its tool exclusions.
+Hook scripts get `ACH_MCP_URLS` (JSON `{serverId: url}`) and `ACH_MCP_HEADERS` (JSON
+`{serverId: headers}`): this pod's MCP facades, the same ones the engine uses, so a call
+carries the agent identity and its tool exclusions.
 
     ach-mcp call <server> <tool> ['<json arguments>']
 
@@ -19,8 +20,8 @@ import os
 import sys
 from typing import Any
 
-from ach_runtime.facades._mcp_session import mcp_session
 from ach_runtime.execution.sessions import redact_facade_tokens
+from ach_runtime.facades._mcp_session import mcp_session
 from ach_runtime.facades._memory_client import _describe
 
 
@@ -34,9 +35,11 @@ def resolve_tool(advertised: set[str], tool: str) -> str:
     return hits[0] if len(hits) == 1 else tool
 
 
-async def call_tool(url: str, tool: str, arguments: dict[str, Any]) -> tuple[bool, str]:
+async def call_tool(
+    url: str, headers: dict[str, str], tool: str, arguments: dict[str, Any]
+) -> tuple[bool, str]:
     """Return (is_error, text) for one tool call; `tool` may be bare (see `resolve_tool`)."""
-    async with mcp_session(url, None) as session:
+    async with mcp_session(url, headers) as session:
         name = resolve_tool({t.name for t in (await session.list_tools()).tools}, tool)
         result = await session.call_tool(name, arguments)
     text = "\n".join(
@@ -56,8 +59,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         urls = json.loads(os.environ.get("ACH_MCP_URLS") or "{}")
+        headers = json.loads(os.environ.get("ACH_MCP_HEADERS") or "{}")
     except ValueError:
-        urls = {}
+        urls, headers = {}, {}
     url = urls.get(args.server) if isinstance(urls, dict) else None
     if not isinstance(url, str):
         known = ", ".join(sorted(urls)) if isinstance(urls, dict) and urls else "none"
@@ -73,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        is_error, text = asyncio.run(call_tool(url, args.tool, arguments))
+        is_error, text = asyncio.run(call_tool(url, headers.get(args.server) or {}, args.tool, arguments))
     except Exception as exc:  # noqa: BLE001 - reported to the hook script as exit 1
         reason = redact_facade_tokens(_describe(exc))
         print(f"ach-mcp: {args.server} {args.tool} failed: {reason}", file=sys.stderr)

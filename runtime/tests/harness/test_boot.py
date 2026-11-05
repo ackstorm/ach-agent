@@ -20,7 +20,7 @@ from ach_runtime.harness.delivery import Delivery
 from ach_runtime.harness.hydrate import HydratedCatalog
 from ach_runtime.harness.hosted import HostedSource
 from ach_runtime.config.public import ExecutionBootstrap
-from ach_runtime.harness.tokens import engine_bearer, facade_token, host_token
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER, engine_bearer, facade_token, host_token
 from ach_runtime.harness.workspaces import WorkspaceEndpoint, WorkspaceManager, WorkspaceRef
 from ach_runtime.__main__ import main
 
@@ -111,7 +111,7 @@ async def test_assembly_uses_real_components_and_disabled_storage_path() -> None
         catalog = control._catalog_for(workspace)
         assert "ach-memory" not in catalog["mcp"]
         assert catalog["mcp"]["memory"]["url"].startswith(
-            f"{config.infrastructure.facade_endpoint}/memory/t/"
+            f"{config.infrastructure.facade_endpoint}/memory/memory/"
         )
         facade_app = create_facade_app(control)
         assert {route.path for route in facade_app.router.routes} == {
@@ -242,7 +242,7 @@ async def test_run_control_keeps_root_signal_owner_and_facades_through_ingress_d
 
     assert [event[0] for event in events].count("root-handler") == 2
     assert not any(event[0] == "uvicorn-handler" for event in events)
-    # The facade listener's URLs carry the Workspace HMAC: no access log there.
+    # Only the ingress listener keeps an access log.
     assert [(s.config.app, s.config.access_log) for s in instances] == [(ingress, True), (facades, False)]
     assert max(i for i, event in enumerate(events) if event[0] == "root-handler") < events.index(("discovery", None))
     assert events.index(("discovery", None)) < events.index(("lifecycle-start", None))
@@ -1015,7 +1015,8 @@ async def test_host_api_answers_before_readiness_and_readiness_waits_for_adoptio
             assert (await facades.get("/host/v1/workspaces")).status_code == 401
             # the other half: a host token is not a facade credential
             host_as_facade = await facades.post(
-                f"/facades/model/t/{host_auth['authorization'].split()[1]}/v1/models", json={}
+                "/facades/model/v1/models", json={},
+                headers={FACADE_TOKEN_HEADER: host_auth["authorization"].split()[1]},
             )
             assert host_as_facade.status_code == 403
             assert (await ingress.get("/readyz")).status_code == 503

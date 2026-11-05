@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [unreleased]
+
+### Security
+
+- The facade token moves from the URL path to the `x-ach-facade-token` request header. The
+  OpenShell supervisor logs every request path, so the token reached pod logs and anything
+  that collects them, where it worked as a bearer credential with no expiry. Rotate
+  `ACH_SANDBOX_KEY` after upgrading to invalidate tokens already logged.
+
+### Changed
+
+- Facade URLs have no `/t/<token>` segment, and control and execution images must be of a
+  release with this change: an older execution image rejects the catalog at `/configure`.
+  Hook scripts get `ACH_MCP_HEADERS` next to `ACH_MCP_URLS`; `ach-mcp` reads both.
+
 ## [0.6.1] - 2026-11-05
 
 ### Fixed

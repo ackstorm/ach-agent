@@ -140,6 +140,11 @@ export default {
       })
     }
 
+    const modelHeaders = Object.assign({}, ...Object.values(fixture.providers).map((p) => p.headers ?? {}))
+    await ctx.session.hook("model.request", (e) => {
+      Object.assign(e.headers, modelHeaders)
+    })
+
     // Review finding (Minor): the handoff names these as Task 1's test instrumentation, not
     // product policy — disabling native transport retries unconditionally would be an
     // unrequested runtime behavior change. Gated behind an explicit opt-in the production

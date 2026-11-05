@@ -10,9 +10,12 @@ import time
 import urllib.request
 
 
+TOKEN_HEADERS = {}
+
+
 def _post(url, body, headers=None, timeout=30):
     req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST", headers={
-        "Content-Type": "application/json", "Accept": "application/json, text/event-stream", **(headers or {})})
+        "Content-Type": "application/json", "Accept": "application/json, text/event-stream", **TOKEN_HEADERS, **(headers or {})})
     return urllib.request.urlopen(req, timeout=timeout)
 
 
@@ -91,12 +94,13 @@ def main():
     p.add_argument("--mcp", default="e2e-mcp")
     p.add_argument("--seconds", type=int, default=200)
     a = p.parse_args()
-    base = f"{a.facade}/model/t/{a.token}"
+    TOKEN_HEADERS["x-ach-facade-token"] = a.token
+    base = f"{a.facade}/model"
     deadline = time.monotonic() + a.seconds
     tally, streamed = Tally(), {"ok": False}
     threads = [
         threading.Thread(target=model_loop, args=(base, a.model, deadline, tally)),
-        threading.Thread(target=mcp_loop, args=(f"{a.facade}/mcp/t/{a.token}/mcp/{a.mcp}", deadline, tally)),
+        threading.Thread(target=mcp_loop, args=(f"{a.facade}/mcp/mcp/{a.mcp}", deadline, tally)),
         threading.Thread(target=stream, args=(base, a.model, a.seconds, streamed)),
     ]
     for t in threads:

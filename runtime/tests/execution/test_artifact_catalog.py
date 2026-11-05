@@ -15,6 +15,7 @@ from ach_runtime.engine.opencode import EngineReceipt
 from ach_runtime.execution.service import ExecutionService
 from ach_runtime.execution.sessions import SessionRegistry
 from ach_runtime.execution.wire import StartRequest
+from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER
 
 
 class _InvocationEngine:
@@ -68,7 +69,7 @@ async def test_artifact_catalog_specialization_is_invocation_local(
 ) -> None:
     engine = _InvocationEngine()
     service = ExecutionService(engine=engine, sessions=SessionRegistry(tmp_path))
-    base = f"{public_config_fixture.infrastructure.facade_endpoint.rstrip('/')}/artifacts/t/token"
+    base = f"{public_config_fixture.infrastructure.facade_endpoint.rstrip('/')}/artifacts"
     original = {
         "providers": {
             public_config_fixture.model.type: {
@@ -78,7 +79,7 @@ async def test_artifact_catalog_specialization_is_invocation_local(
             }
         },
         "mcp": {
-            "artifacts": {"url": base, "headers": {}},
+            "artifacts": {"url": base, "headers": {FACADE_TOKEN_HEADER: "token"}},
             "calendar": {"url": "http://calendar.invalid/mcp", "headers": {"x-read": "yes"}},
         },
     }
@@ -128,7 +129,7 @@ async def test_tools_preflight_probes_the_per_run_artifacts_url(
     monkeypatch.setattr(service_module, "_count_mcp_tools", count)
     engine = _InvocationEngine()
     service = ExecutionService(engine=engine, sessions=SessionRegistry(tmp_path))
-    base = f"{public_config_fixture.infrastructure.facade_endpoint.rstrip('/')}/artifacts/t/token"
+    base = f"{public_config_fixture.infrastructure.facade_endpoint.rstrip('/')}/artifacts"
     catalog = {
         "providers": {
             public_config_fixture.model.type: {
@@ -137,12 +138,12 @@ async def test_tools_preflight_probes_the_per_run_artifacts_url(
                 "models": {public_config_fixture.model.name: {}},
             }
         },
-        "mcp": {"artifacts": {"url": base, "headers": {}}},
+        "mcp": {"artifacts": {"url": base, "headers": {FACADE_TOKEN_HEADER: "token"}}},
     }
     service.configure(public_config_fixture, catalog=catalog)
     try:
         await service.start(_request(public_config_fixture.config_version, "run-a", "session-a"))
-        assert probed == [f"{base}/runs/run-a/"]  # the facade 404s on the bare token URL
+        assert probed == [f"{base}/runs/run-a/"]  # the facade 404s on the bare artifacts URL
         assert [inv.invocation_id for inv in engine.invocations] == ["run-a"]
     finally:
         await service.close()
@@ -201,7 +202,7 @@ def test_managed_plugin_registers_artifacts_remote_without_rewriting_values() ->
           return registrations
         }
 
-        const supplied = { url: 'http://facade.invalid/artifacts/t/token/runs/run-a/', headers: { 'x-test': 'kept' } }
+        const supplied = { url: 'http://facade.invalid/artifacts/runs/run-a/', headers: { 'x-test': 'kept' } }
         const result = [await capture({ artifacts: supplied }), await capture(undefined)]
         process.stdout.write(JSON.stringify(result))
         """
@@ -217,7 +218,7 @@ def test_managed_plugin_registers_artifacts_remote_without_rewriting_values() ->
         "artifacts",
         {
             "type": "remote",
-            "url": "http://facade.invalid/artifacts/t/token/runs/run-a/",
+            "url": "http://facade.invalid/artifacts/runs/run-a/",
             "headers": {"x-test": "kept"},
             "oauth": False,
             "codemode": False,

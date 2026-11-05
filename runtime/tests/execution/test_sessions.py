@@ -12,8 +12,8 @@ from ach_runtime.config.schema import HookBlock
 from ach_runtime.execution.sessions import (
     MAX_HOOK_OUTPUT_BYTES,
     SessionHookFailed,
-    SessionRegistry,
     redact_facade_tokens,
+    SessionRegistry,
     run_gate_hook,
     run_hook,
 )
@@ -91,17 +91,28 @@ async def test_plain_hook_tolerates_large_stdout(tmp_path) -> None:
 
 
 def test_facade_tokens_are_redacted() -> None:
-    text = "GET http://ctl/facades/mcp/t/abc.DEF-123/mcp/srv failed; /t/xyz/"
-    assert redact_facade_tokens(text) == (
-        "GET http://ctl/facades/mcp/t/<redacted>/mcp/srv failed; /t/<redacted>/"
-    )
+    token = "workspace-1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    text = f'env: {{"srv": {{"x-ach-facade-token": "{token}"}}}}; x-ach-facade-token={token} failed'
+    assert token not in redact_facade_tokens(text)
+    assert "<redacted>" in redact_facade_tokens(text)
+
+
+def test_redaction_keeps_other_hex_digests() -> None:
+    text = "sha256 " + "a" * 64
+    assert redact_facade_tokens(text) == text
 
 
 async def test_hook_failure_message_redacts_facade_tokens(tmp_path) -> None:
+    token = "workspace-1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     with pytest.raises(SessionHookFailed) as excinfo:
-        await run_hook(HookBlock(script="echo 'http://f/mcp/t/secret-token/mcp/x' >&2; exit 2"),
-                       cwd=tmp_path, env={})
-    assert "secret-token" not in str(excinfo.value)
+        await run_hook(HookBlock(script=f"echo '{token}' >&2; exit 2"), cwd=tmp_path, env={})
+    assert token not in str(excinfo.value)
+    assert "hook exited 2" in str(excinfo.value)
+
+
+async def test_hook_failure_message_names_the_exit_code(tmp_path) -> None:
+    with pytest.raises(SessionHookFailed) as excinfo:
+        await run_hook(HookBlock(script="exit 2"), cwd=tmp_path, env={})
     assert "hook exited 2" in str(excinfo.value)
 
 

@@ -29,15 +29,19 @@ class _Session:
 def session(monkeypatch) -> _Session:
     fake = _Session(["mcp-k8sgpt-ro.analyze", "mcp-k8sgpt-ro.get-logs"], text='{"problems": 0}')
     urls: list[str] = []
+    headers_seen: list[dict] = []
 
     @asynccontextmanager
     async def fake_mcp_session(url, headers):
         urls.append(url)
+        headers_seen.append(headers)
         yield fake
 
     monkeypatch.setattr(mcpcall, "mcp_session", fake_mcp_session)
     monkeypatch.setenv("ACH_MCP_URLS", json.dumps({"mcp-k8sgpt-ro": "http://facade/mcp/k8sgpt"}))
+    monkeypatch.setenv("ACH_MCP_HEADERS", json.dumps({"mcp-k8sgpt-ro": {"x-ach-facade-token": "tok"}}))
     fake.urls = urls
+    fake.headers_seen = headers_seen
     return fake
 
 
@@ -46,6 +50,7 @@ def test_call_resolves_a_prefixed_tool_and_prints_text(session, capsys) -> None:
     assert capsys.readouterr().out == '{"problems": 0}\n'
     assert session.calls == [("mcp-k8sgpt-ro.analyze", {"explain": False})]
     assert session.urls == ["http://facade/mcp/k8sgpt"]
+    assert session.headers_seen == [{"x-ach-facade-token": "tok"}]
 
 
 def test_hyphenated_bare_tool_resolves_and_arguments_default_to_empty(session) -> None:
@@ -73,6 +78,22 @@ def test_tool_error_exits_1(session, capsys) -> None:
     assert "boom" in capsys.readouterr().err
 
 
+def test_transport_failure_never_prints_the_facade_token(monkeypatch, capsys) -> None:
+    token = "workspace-1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+    @asynccontextmanager
+    async def broken(url, headers):
+        raise ConnectionError(f"401 with {headers}")
+        yield
+
+    monkeypatch.setattr(mcpcall, "mcp_session", broken)
+    monkeypatch.setenv("ACH_MCP_URLS", json.dumps({"srv": "http://c/facades/mcp/mcp/srv"}))
+    monkeypatch.setenv("ACH_MCP_HEADERS", json.dumps({"srv": {"x-ach-facade-token": token}}))
+    assert mcpcall.main(["call", "srv", "analyze"]) == 1
+    err = capsys.readouterr().err
+    assert token not in err and "<redacted>" in err
+
+
 def test_transport_failure_exits_1(monkeypatch, capsys) -> None:
     @asynccontextmanager
     async def broken(url, headers):
@@ -83,19 +104,6 @@ def test_transport_failure_exits_1(monkeypatch, capsys) -> None:
     monkeypatch.setenv("ACH_MCP_URLS", json.dumps({"srv": "http://facade/mcp/srv"}))
     assert mcpcall.main(["call", "srv", "analyze"]) == 1
     assert "facade down" in capsys.readouterr().err
-
-
-def test_transport_failure_never_prints_the_facade_token(monkeypatch, capsys) -> None:
-    @asynccontextmanager
-    async def broken(url, headers):
-        raise ConnectionError(f"401 for url {url}")
-        yield
-
-    monkeypatch.setattr(mcpcall, "mcp_session", broken)
-    monkeypatch.setenv("ACH_MCP_URLS", json.dumps({"srv": "http://c/facades/mcp/t/tok-9/mcp/srv"}))
-    assert mcpcall.main(["call", "srv", "analyze"]) == 1
-    err = capsys.readouterr().err
-    assert "tok-9" not in err and "/t/<redacted>/" in err
 
 
 def test_unknown_server_exits_2(session, capsys) -> None:

@@ -621,21 +621,14 @@ func TestBuildStatefulSet_SecretKeyAgentMountsNoToken(t *testing.T) {
 }
 
 func TestWithExecutionCA(t *testing.T) {
-	a := &achv1alpha1.Agent{}
-	a.Name, a.Namespace = "demo", "ns"
 	env := []corev1.EnvVar{{Name: "TMPDIR", Value: "/tmp"}}
 
-	cm := buildConfigMap(a, []byte(`{}`))
-	if got := withExecutionCA(cm, env, nil); !reflect.DeepEqual(got, env) || len(cm.Data) != 1 {
-		t.Fatalf("a plaintext gateway changed the control pod: env %v, ConfigMap data %v", got, cm.Data)
+	if got := withExecutionCA(env, nil); !reflect.DeepEqual(got, env) {
+		t.Fatalf("a plaintext gateway changed the control pod env: %v", got)
 	}
 
-	cm = buildConfigMap(a, []byte(`{}`))
-	got := withExecutionCA(cm, env, []byte("CA PEM"))
-	if cm.Data[executionCAFileName] != "CA PEM" || cm.Data[configFileName] != "{}" {
-		t.Errorf("ConfigMap data = %v, want config.json and %s", cm.Data, executionCAFileName)
-	}
-	want := append(slices.Clone(env), corev1.EnvVar{Name: "ACH_AGENT_EXECUTION_CA_FILE", Value: "/etc/ach-runtime/openshell-ca.crt"})
+	got := withExecutionCA(env, []byte("CA PEM"))
+	want := append(slices.Clone(env), corev1.EnvVar{Name: "ACH_AGENT_EXECUTION_CA_PEM", Value: "CA PEM"})
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("env = %v, want %v", got, want)
 	}

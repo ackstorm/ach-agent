@@ -1,4 +1,4 @@
-"""The sandbox service path trusts ACH_AGENT_EXECUTION_CA_FILE, and only it."""
+"""The sandbox service path trusts ACH_AGENT_EXECUTION_CA_PEM, and only it."""
 
 from __future__ import annotations
 
@@ -78,9 +78,9 @@ async def test_execution_client_trusts_the_configured_ca_only(tmp_path: Path) ->
     server = await asyncio.start_server(_handle, "127.0.0.1", 0, ssl=_server_context(tmp_path, ca_key, ca_cert))
     url = f"https://127.0.0.1:{server.sockets[0].getsockname()[1]}/healthz"
     try:
-        async with httpx.AsyncClient(verify=execution_verify({"ACH_AGENT_EXECUTION_CA_FILE": str(ca_file)})) as client:
+        async with httpx.AsyncClient(verify=execution_verify({"ACH_AGENT_EXECUTION_CA_PEM": ca_file.read_text()})) as client:
             assert (await client.get(url)).text == "ok"
-        async with httpx.AsyncClient(verify=execution_verify({"ACH_AGENT_EXECUTION_CA_FILE": str(other_file)})) as client:
+        async with httpx.AsyncClient(verify=execution_verify({"ACH_AGENT_EXECUTION_CA_PEM": other_file.read_text()})) as client:
             with pytest.raises(httpx.ConnectError, match="CERTIFICATE_VERIFY_FAILED"):
                 await client.get(url)
     finally:
@@ -88,5 +88,5 @@ async def test_execution_client_trusts_the_configured_ca_only(tmp_path: Path) ->
         await server.wait_closed()
 
 
-def test_execution_client_keeps_the_default_trust_without_a_ca_file() -> None:
+def test_execution_client_keeps_the_default_trust_without_a_ca() -> None:
     assert execution_verify({}) is True

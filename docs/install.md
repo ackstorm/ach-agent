@@ -117,7 +117,7 @@ for any sandbox volume configuration: it must never be able to mount a Secret vo
 
    The chart lets the operator read that one Secret (a Role in `openshell`); the operator reads it at
    start and fails to start without it. The sandbox URLs become `https://`. Control pods trust the
-   OpenShell CA for those URLs only (`ACH_AGENT_EXECUTION_CA_FILE`); every other connection keeps the
+   OpenShell CA for those URLs only (`ACH_AGENT_EXECUTION_CA_PEM`); every other connection keeps the
    system trust store.
 
 Switching an existing install (cert-manager installed, as in item 1):

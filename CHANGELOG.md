@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Opt-in OpenShell gateway mTLS. With `openshell.tls.secret` (the Secret of the operator's
   `OU=operator` client certificate) the operator reads that Secret at start, calls an `https://`
   gateway with it, and control pods verify the sandbox service path against its CA only
-  (`ACH_AGENT_EXECUTION_CA_FILE`); the gateway refuses every other API caller. The chart grants
+  (`ACH_AGENT_EXECUTION_CA_PEM`); the gateway refuses every other API caller. The chart grants
   `get` on that one Secret and renders no cert-manager objects. `docs/mesh/openshell-pki.yaml`
   is the reference PKI, all in `openshell` with namespaced Issuers (every certificate 262800h).
   Without the value nothing changes. Sandboxes created before the switch answer 412 until control

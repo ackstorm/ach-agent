@@ -12,7 +12,7 @@ import traceback
 import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager, contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -652,7 +652,9 @@ class Lifecycle:
                 if native_live:
                     self._confirmed_session_closes.discard(session_close_key)
                     active_refs.add(session_ref)
-                    last = self._last_session.setdefault(key, now)
+                    last = self._last_session.setdefault(
+                        key, now - timedelta(seconds=float(info.get("idleSeconds") or 0))
+                    )
                     idle = (now - last).total_seconds()
                     if idle >= self.control.config.workspace.session.idle_timeout_seconds:
                         if not await self._attempt_session_save(endpoint, session_ref, failed_key):

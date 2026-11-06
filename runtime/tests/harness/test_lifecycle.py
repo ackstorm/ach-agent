@@ -380,6 +380,44 @@ def test_idle_session_then_workspace() -> None:
     asyncio.run(scenario())
 
 
+def test_restarted_control_counts_idle_time_reported_by_the_sandbox() -> None:
+    import httpx
+    from ach_runtime.harness.workspaces import WorkspaceEndpoint, WorkspaceRef
+
+    async def scenario():
+        seen = []
+        async def handler(request):
+            seen.append(request.url.path)
+            if request.url.path == "/sessions":
+                return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod"}, json=[{"sessionRef": "b"*64}])
+            if request.url.path.endswith("/info"):
+                return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod"},
+                                      json={"active": True, "uncertain": False, "initialized": True, "idleSeconds": 25})
+            if request.url.path.endswith("/archive"):
+                return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod"}, content=b"snapshot")
+            if request.url.path.endswith("/retire"):
+                session_ref = request.url.path.split("/")[2]
+                return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod"},
+                                      json={"status": "retired", "sessionRef": session_ref})
+            raise AssertionError(request.url)
+        control = _Control()
+        control.mini_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        control._headers = lambda endpoint: {"X-ACH-Instance-Id": endpoint.instance_id}
+        control._mini_json = _mini_json(control)
+        control.manager._bootstrap_complete = True
+        endpoint = WorkspaceEndpoint(WorkspaceRef("ach", "3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77", "a"*64), "ws", "pod", "http://mini")
+        control.manager._active = {"a"*64: endpoint}
+        control.delivery = _Delivery()
+        control.manager.closed = []
+        control.manager.close = _close_record(control.manager)
+        lifecycle = Lifecycle(control)
+        await lifecycle.tick(datetime(2026, 10, 1, tzinfo=UTC))
+        assert "/sessions/" + "b"*64 + "/archive" in seen
+        await lifecycle.close()
+        await control.mini_client.aclose()
+    asyncio.run(scenario())
+
+
 def test_start_owns_one_tick_task_and_close_joins_it() -> None:
     async def scenario():
         control = _Control()

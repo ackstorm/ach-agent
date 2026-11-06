@@ -1237,6 +1237,12 @@ class ExecutionService:
             )
             for inv in self._invocations.values()
         )
+        ended = [
+            inv.terminal_at
+            for inv in self._invocations.values()
+            if inv.request.session_ref == session_ref and inv.terminal_at is not None
+        ]
+        idle = {"idleSeconds": time.monotonic() - max(ended)} if ended else {}
         return {
             "sessionRef": session_ref,
             "initialized": (state.home / ".ach-session-started").is_file(),
@@ -1246,6 +1252,9 @@ class ExecutionService:
             "needsSuspend": bool(getattr(native, "sid", None)) and not active and not state.suspended,
             "uncertain": uncertain,
             "suspendHookFailed": state.suspend_hook_failed,
+            # Seconds since the last invocation ended, so a restarted control pod
+            # resumes the idle timer instead of starting it over.
+            **idle,
         }
 
     async def retire_session(self, session_ref: str) -> None:

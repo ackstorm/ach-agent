@@ -23,13 +23,8 @@ import pytest
 from ach_runtime.config.public import public_config
 from ach_runtime.config.schema import RuntimeConfig
 from ach_runtime.engine import opencode as opencode_module
-from ach_runtime.engine.opencode import (
-    EngineInvocation,
-    NativeLaunchFailed,
-    OpenCodeEngine,
-    _InvocationState,
-    _managed_fingerprint,
-)
+from ach_runtime.engine.base import EngineInvocation, NativeLaunchFailed, _HaltBudget
+from ach_runtime.engine.opencode import OpenCodeEngine, _InvocationState, _managed_fingerprint
 from ach_runtime.engine.config import build_env, managed_content, to_fixture
 
 FIXTURE_PATH = Path(__file__).parent.parent / "config" / "fixtures" / "pr-review-runtime.json"
@@ -808,7 +803,7 @@ async def test_kill_stamps_confirmation_deadline_only_when_forcing_a_live_target
     about to be signaled — never preemptively (before the guarded syscall), and never
     invented against an absent target."""
     session = loopback.session
-    live_budget = opencode_module._HaltBudget(
+    live_budget = _HaltBudget(
         cleanup_started_at=time.monotonic(), force_deadline=time.monotonic() + 5.0
     )
     before = time.monotonic()
@@ -821,7 +816,7 @@ async def test_kill_stamps_confirmation_deadline_only_when_forcing_a_live_target
     # A never-launched session has no live target: `_kill` must not invent a force
     # timestamp when there is nothing to signal.
     session2 = opencode_module._NativeSession("i5-absent", session.home, session.scratch)
-    absent_budget = opencode_module._HaltBudget(
+    absent_budget = _HaltBudget(
         cleanup_started_at=time.monotonic(), force_deadline=time.monotonic() + 5.0
     )
     confirmed2 = await session2._kill(confirm_timeout=5.0, _halt_budget=absent_budget)

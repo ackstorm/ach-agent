@@ -38,7 +38,7 @@ from pydantic import JsonValue
 
 from ach_runtime.config.public import PublicConfig
 from ach_runtime.config.schema import PromptBlock
-from ach_runtime.engine.opencode import (
+from ach_runtime.engine.base import (
     CANCEL_KILL_BOUND_SECONDS,
     EngineOutcome,
     EngineReceipt,
@@ -157,7 +157,7 @@ class _Invocation:
 def _build_fixture_invocation(
     request: StartRequest, public: PublicConfig, workspace_dir: Path
 ) -> object:
-    from ach_runtime.engine.opencode import EngineInvocation
+    from ach_runtime.engine.base import EngineInvocation
 
     system_prompt = public.prompt.system if public.prompt is not None else None
     resolved_system_prompt = None

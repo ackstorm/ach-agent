@@ -20,7 +20,8 @@ import pytest
 from ach_runtime.config.public import PublicConfig, public_config
 from ach_runtime.config.schema import RuntimeConfig
 from ach_runtime.engine import opencode as opencode_module
-from ach_runtime.engine.opencode import EngineInvocation, NativeLaunchFailed, OpenCodeEngine
+from ach_runtime.engine.base import EngineInvocation, NativeLaunchFailed
+from ach_runtime.engine.opencode import OpenCodeEngine
 
 FIXTURE_PATH = Path(__file__).parent.parent / "config" / "fixtures" / "pr-review-runtime.json"
 _LOOPBACK_SERVER = Path(__file__).parent / "fixtures" / "fake_native_server.py"

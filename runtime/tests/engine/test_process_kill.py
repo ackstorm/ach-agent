@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 from ach_runtime.engine import opencode as opencode_module
-from ach_runtime.engine.opencode import _OwnedProcessGroup, _kill_process_group
+from ach_runtime.engine.base import _OwnedProcessGroup, _kill_process_group
 
 
 async def test_kill_process_group_terminates_a_sigterm_ignoring_child() -> None:
@@ -87,7 +87,7 @@ async def test_owned_process_group_kills_a_descendant_that_left_the_process_grou
         # `kill(pid, 0)` alone can't tell a zombie from a live process — a zombie still
         # has a /proc entry until its parent reaps it. `_linux_process_info`'s state char
         # is the same "live" test `kill_and_confirm` itself uses.
-        from ach_runtime.engine.opencode import _linux_process_info
+        from ach_runtime.engine.base import _linux_process_info
 
         info = _linux_process_info(child_pid)
         assert info is None or info[2] == "Z", f"detached descendant still live: {info}"
@@ -140,7 +140,7 @@ async def test_kill_confirms_descendants_after_leader_already_exited(tmp_path: P
         confirmed = await session._kill(confirm_timeout=2.0)
         assert confirmed is True
 
-        from ach_runtime.engine.opencode import _linux_process_info
+        from ach_runtime.engine.base import _linux_process_info
 
         info = _linux_process_info(child_pid)
         assert info is None or info[2] == "Z", f"detached descendant still live: {info}"
@@ -279,7 +279,7 @@ async def test_direct_kill_caps_confirm_timeout_at_five_seconds(tmp_path: Path, 
         env={"OPENCODE_SERVER_PASSWORD": "x"}, config_path=tmp_path / "cfg.json"
     )
     captured: list[float] = []
-    original = opencode_module._OwnedProcessGroup.kill_and_confirm
+    original = _OwnedProcessGroup.kill_and_confirm
 
     async def _spy(self, *, confirm_timeout: float, force_immediately: bool = False) -> bool:
         captured.append(confirm_timeout)
@@ -287,7 +287,7 @@ async def test_direct_kill_caps_confirm_timeout_at_five_seconds(tmp_path: Path, 
             self, confirm_timeout=confirm_timeout, force_immediately=force_immediately
         )
 
-    monkeypatch.setattr(opencode_module._OwnedProcessGroup, "kill_and_confirm", _spy)
+    monkeypatch.setattr(_OwnedProcessGroup, "kill_and_confirm", _spy)
     confirmed = await asyncio.wait_for(session._kill(confirm_timeout=1000.0), timeout=10.0)
 
     assert confirmed is True

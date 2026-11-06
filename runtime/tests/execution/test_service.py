@@ -17,7 +17,7 @@ import pytest
 
 import ach_runtime.execution.service as service_module
 from ach_runtime.config.schema import HookBlock
-from ach_runtime.engine.opencode import EngineReceipt, SnapshotManifest
+from ach_runtime.engine.base import EngineReceipt, SnapshotManifest
 from ach_runtime.config.schema import PromptBlock, SystemAch, SystemFile, SystemText
 from ach_runtime.execution.service import (
     CapacityExceeded,

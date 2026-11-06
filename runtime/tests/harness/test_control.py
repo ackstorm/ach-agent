@@ -1920,7 +1920,7 @@ async def test_harness_hydrates_prompt_tar_before_real_mini_engine_start(monkeyp
     import tarfile
 
     from ach_runtime.config.schema import SystemAch
-    from ach_runtime.engine.opencode import EngineReceipt
+    from ach_runtime.engine.base import EngineReceipt
     from ach_runtime.execution.auth import create_authenticated_app
     from ach_runtime.execution.service import ExecutionService
     from ach_runtime.execution.sessions import SessionRegistry
@@ -2240,7 +2240,7 @@ async def test_assembled_memory_context_reaches_start_and_managed_system_once(
     managed fixture composes persona + `## Memory Tools` + exact TOOLS_SPEC exactly once;
     no credential/header/backend URL ever reaches Start/public/catalog/system."""
     from ach_runtime.engine.config import to_fixture
-    from ach_runtime.engine.opencode import EngineReceipt
+    from ach_runtime.engine.base import EngineReceipt
     from ach_runtime.execution.auth import create_authenticated_app
     from ach_runtime.execution.service import ExecutionService
     from ach_runtime.execution.sessions import SessionRegistry
@@ -2443,7 +2443,7 @@ async def test_concurrent_memory_availability_is_captured_per_start(monkeypatch,
     """I7: one false and one true Start across two sessions; only the false one lacks
     `catalog.mcp.memory`, both retain their own appropriate user section/spec, and every
     other MCP entry is unchanged either way."""
-    from ach_runtime.engine.opencode import EngineReceipt
+    from ach_runtime.engine.base import EngineReceipt
     from ach_runtime.execution.auth import create_authenticated_app
     from ach_runtime.execution.service import ExecutionService
     from ach_runtime.execution.sessions import SessionRegistry

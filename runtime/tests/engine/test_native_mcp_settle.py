@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 
 from ach_runtime.engine import opencode
+from ach_runtime.engine.base import NativeLaunchFailed
 
 _SKEW = 0.01  # timestamp capture skew between stub and predicate, not a behaviour tolerance
 
@@ -67,7 +68,7 @@ async def test_mcp_settle_restarts_when_connection_drops() -> None:
 
 async def test_mcp_settle_never_outlives_absolute_deadline() -> None:
     stub = _ReadinessStub(["connected"])
-    with pytest.raises(opencode.NativeLaunchFailed, match="/api/mcp"):
+    with pytest.raises(NativeLaunchFailed, match="/api/mcp"):
         await _ready(stub, budget=0.15)
     assert stub.killed
 
@@ -88,7 +89,7 @@ async def test_agent_without_system_prompt_is_ready_when_none_is_expected() -> N
 
 async def test_missing_system_prompt_still_fails_when_one_is_expected() -> None:
     stub = _ReadinessStub(["connected"], system=None)
-    with pytest.raises(opencode.NativeLaunchFailed, match="/api/agent/"):
+    with pytest.raises(NativeLaunchFailed, match="/api/agent/"):
         await _ready(stub, budget=0.15, required_mcp=[])
 
 

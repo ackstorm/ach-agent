@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from pathlib import Path
 
-from ach_runtime.engine.opencode import RestoreMismatch, SnapshotManifest
+from ach_runtime.engine.base import RestoreMismatch, SnapshotManifest
 from ach_runtime.execution.service import ExecutionService
 from ach_runtime.storage.archive import (
     _MemberCheck,

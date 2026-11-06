@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ach_runtime.config.schema import HookBlock
-from ach_runtime.engine.opencode import _kill_process_group
+from ach_runtime.engine.base import _kill_process_group
 from ach_runtime.storage.archive import _run_owned
 
 SESSION_STARTED_MARKER = ".ach-session-started"

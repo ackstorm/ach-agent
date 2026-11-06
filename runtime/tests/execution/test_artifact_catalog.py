@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from ach_runtime.engine.config import to_fixture
-from ach_runtime.engine.opencode import EngineReceipt
+from ach_runtime.engine.base import EngineReceipt
 from ach_runtime.execution.service import ExecutionService
 from ach_runtime.execution.sessions import SessionRegistry
 from ach_runtime.execution.wire import StartRequest

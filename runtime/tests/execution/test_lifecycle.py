@@ -12,7 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from ach_runtime.engine.opencode import OpenCodeEngine, SnapshotManifest, _NativeSession
+from ach_runtime.engine.base import SnapshotManifest
+from ach_runtime.engine.opencode import OpenCodeEngine, _NativeSession
 from ach_runtime.execution.service import ExecutionService
 from ach_runtime.execution.sessions import SESSION_STARTED_MARKER, SessionRegistry
 from ach_runtime.execution.wire import StartRequest
@@ -73,7 +74,7 @@ class _SettlingEngine:
         self.retire_calls: list[str] = []
 
     async def start(self, invocation, *, home, scratch, password=None):
-        from ach_runtime.engine.opencode import EngineReceipt
+        from ach_runtime.engine.base import EngineReceipt
 
         self.start_calls.append(invocation.invocation_id)
         return EngineReceipt(native_session_id="native-sid", input_id="input-1")

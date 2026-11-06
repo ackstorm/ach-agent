@@ -23,7 +23,7 @@ from typing import Any
 from ach_runtime.config.public import PublicConfig
 from ach_runtime.engine.base import (
     CANCEL_KILL_BOUND_SECONDS, SNAPSHOT_VERSION, EngineInvocation, EngineOutcome, EngineReceipt, NativeLaunchFailed,
-    RestoreMismatch, SnapshotManifest, _HaltBudget, _kill_process_group, check_manifest, install_restored_home,
+    RestoreMismatch, SnapshotManifest, _HaltBudget, _OwnedProcessGroup, check_manifest, install_restored_home,
 )
 from ach_runtime.engine.pi_config import PiConfig, build_pi_env, to_pi_config, write_pi_config
 from ach_runtime.observability.runs import RunUsage
@@ -35,6 +35,7 @@ PI_PACKAGE = os.environ.get("PI_PACKAGE", "@pi-in-go/pig")
 PI_VERSION = os.environ.get("PI_VERSION", "0.7.0")
 COMMAND_TIMEOUT_SECONDS = 30.0
 STOP_TIMEOUT_SECONDS = 5.0
+OWNERSHIP_POLL_SECONDS = 0.05
 # asyncio's readline splits on LF only, as the protocol requires. A record holds a whole message.
 STDOUT_LIMIT_BYTES = 64 * 1024 * 1024
 
@@ -73,6 +74,7 @@ class _PiSession:
         self.fingerprint: str | None = None
         self.invocations: dict[str, _PiInvocation] = {}
         self._proc: asyncio.subprocess.Process | None = None
+        self._owned: _OwnedProcessGroup | None = None
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._ids = itertools.count(1)
         self._current: _PiInvocation | None = None
@@ -81,8 +83,18 @@ class _PiSession:
         self.tui_env: dict[str, str] = {}
 
     @property
-    def alive(self) -> bool:
+    def running(self) -> bool:
+        """The process `pi` was launched as has not exited."""
         return self._proc is not None and self._proc.returncode is None
+
+    @property
+    def alive(self) -> bool:
+        """Pi, or anything it started, still runs. PiG's launcher can die while its native binary lives on, and
+        tools run in groups of their own, so the launched process alone does not answer this."""
+        if self._owned is None:
+            return False
+        # Nothing tracked means no /proc: the launched process is all there is to ask.
+        return bool(self._owned._live()) if self._owned._owned else self.running
 
     def _background(self, coro: Any) -> None:
         task = asyncio.ensure_future(coro)
@@ -91,16 +103,17 @@ class _PiSession:
 
     async def launch(self, args: list[str], env: dict[str, str], cwd: Path) -> None:
         try:
-            self._proc = await asyncio.create_subprocess_exec(
+            proc = await asyncio.create_subprocess_exec(
                 PI_BIN, "--mode", "rpc", *args, cwd=cwd, env=env, start_new_session=True,
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, limit=STDOUT_LIMIT_BYTES,
             )
         except FileNotFoundError as exc:
             raise NativeLaunchFailed(f"pi engine: {PI_BIN} is not in this image") from exc
-        self._background(self._read())
+        self._proc, self._owned = proc, _OwnedProcessGroup(proc.pid)
+        self._background(self._read(proc, self._owned))
 
     async def call(self, command: dict[str, Any], *, timeout: float = COMMAND_TIMEOUT_SECONDS) -> dict[str, Any]:
-        if not self.alive:
+        if not self.running:
             raise NativeLaunchFailed("pi process is not running")
         request_id = str(next(self._ids))
         future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
@@ -120,10 +133,20 @@ class _PiSession:
         finally:
             self._pending.pop(request_id, None)
 
-    async def _read(self) -> None:
-        assert self._proc is not None and self._proc.stdout is not None
+    async def _observe(self, owned: _OwnedProcessGroup) -> None:
+        """Records descendants by PID and start time while pi runs: a tool is found while its parent is
+        alive, before it reparents, so `kill` can still reach it after pi is gone."""
+        while True:
+            owned._refresh()
+            await asyncio.sleep(OWNERSHIP_POLL_SECONDS)
+
+    async def _read(self, proc: asyncio.subprocess.Process, owned: _OwnedProcessGroup) -> None:
+        assert proc.stdout is not None
+        observer = asyncio.ensure_future(self._observe(owned))
         try:
-            while line := await self._proc.stdout.readline():
+            while line := await proc.stdout.readline():
+                if proc is not self._proc:  # a replacement owns the session: this stream is stale
+                    continue
                 record = json.loads(line)
                 future = self._pending.get(record.get("id")) if record.get("type") == "response" else None
                 if future is not None:
@@ -135,13 +158,15 @@ class _PiSession:
             # A line that is not JSON, or longer than the stdout limit, ends the stream: kill the
             # process so the wait below returns and the invocation settles.
             log.exception("pi session %s: unreadable stdout", self.session_ref)
-            await self.kill()
+            await owned.kill_and_confirm(confirm_timeout=STOP_TIMEOUT_SECONDS, force_immediately=True)
         finally:
-            await self._proc.wait()
-            # Tools run in pi's process group: when pi is gone, they go with it.
-            if not await _kill_process_group(self._proc.pid, confirm_timeout=STOP_TIMEOUT_SECONDS):
-                log.warning("pi session %s: tool processes outlived pi", self.session_ref)
-            self._on_exit()
+            await proc.wait()
+            # Tools run in groups of their own: they die with pi only through the owned-process kill.
+            if not await owned.kill_and_confirm(confirm_timeout=STOP_TIMEOUT_SECONDS, force_immediately=True):
+                log.warning("pi session %s: processes started by pi outlived it", self.session_ref)
+            observer.cancel()
+            if proc is self._proc:
+                self._on_exit()
 
     def _on_event(self, record: dict[str, Any]) -> None:
         state = self._current
@@ -164,9 +189,9 @@ class _PiSession:
         elif kind == "agent_settled":
             self._background(self._settle(state, aborted=bool(record.get("aborted"))))
 
-    async def _abort(self) -> None:
+    async def _abort(self, timeout: float = COMMAND_TIMEOUT_SECONDS) -> None:
         with contextlib.suppress(NativeLaunchFailed, TimeoutError):
-            await self.call({"type": "abort"})
+            await self.call({"type": "abort"}, timeout=timeout)
 
     async def _settle(self, state: _PiInvocation, *, aborted: bool) -> None:
         if aborted:
@@ -211,21 +236,28 @@ class _PiSession:
             self._current = state
 
     async def stop(self) -> bool:
-        """Closes stdin, which pi treats as an orderly shutdown, then kills the group if it stays."""
-        if self._proc is None or self._proc.returncode is not None:
-            return True
-        assert self._proc.stdin is not None
-        self._proc.stdin.close()
-        try:
-            await asyncio.wait_for(self._proc.wait(), STOP_TIMEOUT_SECONDS)
-            return self._proc.returncode == 0
-        except TimeoutError:
+        """Closes stdin, which pi treats as an orderly shutdown, then kills what stays. True only for a
+        clean exit that leaves nothing of pi's running."""
+        clean = True
+        if self.running:
+            assert self._proc is not None and self._proc.stdin is not None
+            self._proc.stdin.close()
+            try:
+                await asyncio.wait_for(self._proc.wait(), STOP_TIMEOUT_SECONDS)
+                clean = self._proc.returncode == 0
+            except TimeoutError:
+                clean = False
+        if self.alive:
             await self.kill()
             return False
+        return clean
 
-    async def kill(self) -> None:
-        if self._proc is not None and self._proc.returncode is None:
-            await _kill_process_group(self._proc.pid, confirm_timeout=STOP_TIMEOUT_SECONDS)
+    async def kill(self) -> bool:
+        """SIGKILLs everything pi started and returns whether it is confirmed gone. Acts on the owned
+        processes, not on the launched one: a dead launcher can leave its native binary running."""
+        if self._owned is None:
+            return True
+        return await self._owned.kill_and_confirm(confirm_timeout=STOP_TIMEOUT_SECONDS, force_immediately=True)
 
 
 class PiEngine:
@@ -245,10 +277,13 @@ class PiEngine:
 
     async def _ensure_running(self, session: _PiSession, config: PiConfig, env: dict[str, str], cwd: Path, public: PublicConfig) -> None:
         fingerprint = hashlib.sha256(json.dumps([config.models, config.mcp, config.settings, config.args, config.system_prompt, env], sort_keys=True).encode()).hexdigest()
-        if session.alive and session.fingerprint == fingerprint:
+        if session.running and session.fingerprint == fingerprint:
             return
-        if session.alive and not await session.stop():
-            raise NativeLaunchFailed("managed refresh requires a confirmed clean pi stop")
+        if session.alive:
+            was_running = session.running
+            clean = await session.stop()
+            if session.alive or (was_running and not clean):
+                raise NativeLaunchFailed("managed refresh requires a confirmed clean pi stop")
         write_pi_config(config, session.home)
         await session.launch([*config.args, *(["--session", session.sid] if session.sid else [])], env, cwd)
         try:
@@ -337,14 +372,17 @@ class PiEngine:
                 session._finish(state, "cancelled")
                 return
             deadline = _halt_budget.force_deadline if _halt_budget else time.monotonic() + CANCEL_KILL_BOUND_SECONDS
-            await session._abort()
-            try:
-                await asyncio.wait_for(state.settled.wait(), max(0.0, deadline - time.monotonic()))
-            except TimeoutError:
+            if session.running:
+                await session._abort(max(0.0, deadline - time.monotonic()))
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(state.settled.wait(), max(0.0, deadline - time.monotonic()))
+            if not state.settled.is_set():
                 if _halt_budget is not None:
                     _halt_budget.mark_forced()
-                await session.kill()
-                await state.settled.wait()  # the process exit settles it
+                confirmed = await session.kill()
+                session._finish(state, "cancelled")
+                if not confirmed:
+                    raise NativeLaunchFailed(f"pi processes for {invocation_id} did not confirm exit")
             return
 
     async def suspend(self, session_ref: str) -> bool:

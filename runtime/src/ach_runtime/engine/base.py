@@ -358,6 +358,17 @@ def install_restored_home(home: Path, restored_home: Path) -> Path:
     return previous_home
 
 
+@dataclass(frozen=True)
+class TuiCommand:
+    """How the `run` role opens a TUI on a started session. `program` is replaceable in tests.
+    With `clean_env`, `env` is the whole environment: the TUI is the engine and gets the engine's."""
+
+    program: list[str]
+    args: list[str]
+    env: dict[str, str]
+    clean_env: bool
+
+
 @runtime_checkable
 class Engine(Protocol):
     """What `ExecutionService` needs from an agent engine."""
@@ -375,4 +386,5 @@ class Engine(Protocol):
     async def suspend(self, session_ref: str) -> bool: ...
     async def retire_session(self, session_ref: str) -> None: ...
     async def restore(self, session_ref: str, manifest: SnapshotManifest, *, expected: dict[str, str], public: PublicConfig, engine_env: dict[str, str], managed_agent: str = "build", home: Path | None = None, scratch: Path | None = None, restored_home: Path | None = None, in_place: bool = False, deadline_at: datetime | None = None) -> None: ...
+    async def tui_command(self, session_ref: str) -> TuiCommand | None: ...
     async def close(self) -> None: ...

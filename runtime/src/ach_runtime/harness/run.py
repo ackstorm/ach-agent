@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
-"""The `run` role: a manifest-defined agent in one process, with the opencode TUI attached.
+"""The `run` role: a manifest-defined agent in one process, with the engine's TUI attached.
 
 Single-unit topology (see harness/agent.py): not for production. The workspace is the
-caller's directory; the TUI talks straight to the session's `opencode serve`.
+caller's directory; the TUI is the engine's own (opencode attaches to the session's server, pi takes the
+session over once its RPC process has stopped).
 """
 
 from __future__ import annotations
@@ -25,7 +26,6 @@ from typing import Any
 import httpx
 
 from ach_runtime.channels.event import Event, RoutedEvent
-from ach_runtime.engine.opencode import OPENCODE_BIN
 from ach_runtime.harness.agent import AGENT_FACADE_PORT, SINGLE_UNIT_WARNING, make_agent_assembly
 from ach_runtime.harness.app import _retrieve_outcome
 from ach_runtime.harness.boot import run_control
@@ -38,7 +38,7 @@ from ach_runtime.manifest import (
 
 log = logging.getLogger(__name__)
 
-STARTUP_TIMEOUT_SECONDS = 180  # hydration + first opencode start
+STARTUP_TIMEOUT_SECONDS = 180  # hydration + first engine start
 SHUTDOWN_TIMEOUT_SECONDS = 60
 WARMUP_PROMPT = "A developer attached a local terminal to this session. Reply with one word: ready."
 
@@ -162,26 +162,28 @@ async def run_local(
         async def target():
             for source in created:
                 engine = source.engine(unit)
-                if engine is not None and (found := engine.attach_target(sref)) is not None:
+                if engine is not None and (found := await engine.tui_command(sref)) is not None:
                     return found
             if ticket.completed.done():  # the warm-up run ended with no session to attach to
                 raise RunError(f"the warm-up run failed: {_outcome_error(ticket.completed)}")
             return None
 
-        url, sid, password = await _wait(target, "the TUI session to start", task, deadline)
+        command = await _wait(target, "the TUI session to start", task, deadline)
         if (expires := token_expiry(os.environ.get(KEY_ENV, ""))) is not None:
             minutes = int((expires - datetime.now(UTC)).total_seconds() // 60)
             say(f"warning: the ACH session token expires at {expires:%H:%M} UTC (in {minutes} min); "
                 "restart ach-agent run after that")
         say(f"workspace {workspace}; quit the TUI to stop the agent")
-        hidden = set(secret_env_names(manifest))  # the TUI talks only to the session's server
-        env = {k: v for k, v in os.environ.items() if not k.startswith("ACH_") and k not in hidden}
-        env["OPENCODE_SERVER_PASSWORD"] = password
-        env["HOME"] = str(data_dir / "tui-home")
-        Path(env["HOME"]).mkdir(exist_ok=True)
+        if command.clean_env:
+            env = dict(command.env)
+        else:
+            hidden = set(secret_env_names(manifest))  # the TUI talks only to the session's server
+            env = {k: v for k, v in os.environ.items() if not k.startswith("ACH_") and k not in hidden}
+            env.update(command.env)
+            env["HOME"] = str(data_dir / "tui-home")
+            Path(env["HOME"]).mkdir(exist_ok=True)
         proc = await asyncio.create_subprocess_exec(
-            *(tui or [OPENCODE_BIN, "mini"]), "--server", url, "--session", sid,
-            env=env, cwd=workspace, stderr=terminal,
+            *(tui or command.program), *command.args, env=env, cwd=workspace, stderr=terminal,
         )
         # The TUI ends the run, and so does the harness stopping under it (docker stop, a crash).
         tui_exit = asyncio.ensure_future(proc.wait())

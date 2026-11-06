@@ -30,6 +30,7 @@ from ach_runtime.engine.base import (
     CANCEL_KILL_BOUND_SECONDS,
     SNAPSHOT_VERSION,
     ArchiveTransfer,
+    TuiCommand,
     EngineInvocation,
     EngineOutcome,
     EngineReceipt,
@@ -974,12 +975,15 @@ class OpenCodeEngine:
             self._sessions[session_ref] = session
         return session
 
-    def attach_target(self, session_ref: str) -> tuple[str, str, str] | None:
-        """URL, native session id and server password of a started session, for a local TUI client."""
+    async def tui_command(self, session_ref: str) -> TuiCommand | None:
+        """A client of the started session's server, or None until it has one."""
         session = self._sessions.get(session_ref)
         if session is None or None in (session.url, session.sid, session.password):
             return None
-        return session.url, session.sid, session.password
+        return TuiCommand(
+            program=[OPENCODE_BIN, "mini"], args=["--server", session.url, "--session", session.sid],
+            env={"OPENCODE_SERVER_PASSWORD": session.password}, clean_env=False,
+        )
 
     async def close(self) -> None:
         """Close only native handles this engine actually created."""

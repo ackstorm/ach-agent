@@ -23,7 +23,7 @@ from typing import Any
 from ach_runtime.config.public import PublicConfig
 from ach_runtime.engine.base import (
     CANCEL_KILL_BOUND_SECONDS, SNAPSHOT_VERSION, EngineInvocation, EngineOutcome, EngineReceipt, NativeLaunchFailed,
-    RestoreMismatch, SnapshotManifest, _HaltBudget, _OwnedProcessGroup, check_manifest, install_restored_home,
+    RestoreMismatch, SnapshotManifest, TuiCommand, _HaltBudget, _OwnedProcessGroup, check_manifest, install_restored_home,
 )
 from ach_runtime.engine.pi_config import PiConfig, build_pi_env, to_pi_config, write_pi_config
 from ach_runtime.observability.runs import RunUsage
@@ -303,6 +303,23 @@ class PiEngine:
             await session.kill()
             raise NativeLaunchFailed(f"pi engine: session {session.sid} did not resume")
         session.fingerprint = fingerprint
+
+    async def tui_command(self, session_ref: str) -> TuiCommand | None:
+        """pi has no attach: the TUI and the agent loop are one process, so the TUI takes the
+        session over once the RPC process has stopped. None until a turn has completed and while
+        one runs, so a failed warm-up reaches `run`'s own failure path."""
+        session = self._sessions.get(session_ref)
+        if session is None or session.sid is None:
+            return None
+        states = session.invocations.values()
+        if not all(state.settled.is_set() for state in states) or not any(state.outcome == "completed" for state in states):
+            return None
+        if not await session.stop():
+            raise NativeLaunchFailed("cannot open the TUI: the pi process did not stop cleanly")
+        return TuiCommand(
+            program=[PI_BIN], args=[*session.tui_args, "--session", session.sid],
+            env=session.tui_env, clean_env=True,
+        )
 
     async def start(self, invocation: EngineInvocation, *, home: Path, scratch: Path) -> EngineReceipt:
         session = self._session_for(invocation.session_ref, home, scratch)

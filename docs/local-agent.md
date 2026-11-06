@@ -3,7 +3,7 @@
 `ach-agent run` runs an agent from a short YAML manifest on your machine: the same harness, engine and
 capability (an ACH environment, or a standalone model and MCP servers) as the cluster, in one container,
 with no Kubernetes and no S3. The directory you launch
-it from is the agent's workspace, and the opencode TUI attaches to its session.
+it from is the agent's workspace, and the engine's TUI opens on its session.
 
 ## Install
 
@@ -23,10 +23,14 @@ It runs `ghcr.io/ackstorm/ach-agent-local:latest`; set `ACH_AGENT_IMAGE` to use 
 4. `cd` into the directory the agent works on, then run `ach-agent run --config <path>/agent.yaml`.
 5. Iterate: edit the manifest or prompt, quit the TUI, run again.
 
+With `engine: pi` the TUI is the agent loop itself, so it opens once the warm-up turn has finished and the
+harness has stopped its RPC process; it resumes the same session.
+
 The harness hydrates the environment at boot and warms the session with one turn before the TUI opens,
 so a bad environment, model or credential fails before you type anything.
 
-Quit the TUI with `ctrl+c` twice, or `/exit`; that stops the agent and removes the container
+Quit the opencode TUI with `ctrl+c` twice, or `/exit`; quit the pi TUI with `ctrl+d` on an empty editor, or
+`/quit`. That stops the agent and removes the container
 (`ach-agent: stopped`). The `Continue opencode mini -s ses_…` line opencode prints on exit is its own hint
 and does not apply here: the session lived in the removed container, so the next `ach-agent run` starts a
 new one.
@@ -92,6 +96,7 @@ model: {name: qwen3-coder, type: openai, baseUrl: "http://host.docker.internal:1
 | `mcpServers` (`name`, `url`, `headers`) | no | none | `capability.ach.mcpServers` or `capability.standalone.mcpServers` |
 | `prompt.file` / `prompt.text` | no | none | `prompt.system` as text; a file is read and inlined |
 | `exclude` (`mcpServers`, `tools`, `skills`) | no | nothing | `capability.filter.exclude` |
+| `engine` (`opencode` or `pi`) | no | `opencode` | `engine.type` |
 | `denyTools` | no | none | `engine.denyTools` |
 | `limits` (any wire `limits` key, e.g. `maxSteps`, `maxInvocationSeconds`) | no | `maxSteps: 50`, `maxInvocationSeconds: 600` | `limits` |
 

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Run an agent manifest locally: harness and engine in the runtime image, the current
-# directory as the agent's workspace (same path inside the container), opencode TUI attached.
+# directory as the agent's workspace (same path inside the container), the engine's TUI attached.
 set -eu
 
 usage() { echo "usage: ach-agent run --config <agent.yaml>" >&2; exit 2; }

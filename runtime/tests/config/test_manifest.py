@@ -35,6 +35,20 @@ def test_minimal_manifest_is_a_valid_config(tmp_path) -> None:
     assert (config.agent.name, config.agent.namespace) == ("support-triage", "local")
 
 
+def test_engine_pi_sets_the_wire_engine_type(tmp_path) -> None:
+    assert parse_config(_wire(tmp_path, MINIMAL + "engine: pi\n")).engine.type == "pi"
+
+
+@pytest.mark.parametrize("extra", ["", "engine: opencode\n"])
+def test_the_default_engine_leaves_the_wire_type_unset(tmp_path, extra) -> None:
+    assert "type" not in _wire(tmp_path, MINIMAL + extra)["engine"]
+
+
+def test_unknown_engine_is_rejected(tmp_path) -> None:
+    with pytest.raises(ManifestError):
+        load_manifest(_write(tmp_path, MINIMAL + "engine: codex\n"))
+
+
 def test_profile_is_read_and_optional(tmp_path) -> None:
     assert load_manifest(_write(tmp_path, MINIMAL)).ach.profile is None
     with_profile = MINIMAL.replace("{environment:", "{profile: support, environment:")

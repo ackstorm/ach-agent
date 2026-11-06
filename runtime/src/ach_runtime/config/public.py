@@ -127,7 +127,8 @@ def public_config(config: RuntimeConfig, engine_env: dict[str, str]) -> PublicCo
 class ExecutionBootstrap(BaseModel):
     """`bootstrap.json` — strict, independent of RuntimeConfig/PublicConfig (contract §11).
 
-    No model/prompts/engine.env/configVersion. Public connection metadata only — not a
+    No model/prompts/engine.env/configVersion; the engine type is the one engine field it
+    carries, so the execution process starts the engine the config selected. Public connection metadata only — not a
     credential or proof of successful enrollment; D1/D2 own authenticating the execution
     pod's outbound connection to the Harness separately.
     """
@@ -139,6 +140,7 @@ class ExecutionBootstrap(BaseModel):
     facade_endpoint: str = Field(
         alias="facadeEndpoint", json_schema_extra={"pattern": ENDPOINT_PATTERN}
     )
+    engine: Literal["opencode", "pi"] = "opencode"
 
     @field_validator("facade_endpoint")
     @classmethod

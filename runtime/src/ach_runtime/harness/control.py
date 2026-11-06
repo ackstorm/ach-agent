@@ -1045,7 +1045,7 @@ async def assemble(
     # Facades close over Control for the owned-live check, so construct the bundle first.
     execution_tls = execution_verify(env)
     mini_client = httpx.AsyncClient(transport=mini_transport, timeout=10, verify=execution_tls)
-    bootstrap = ExecutionBootstrap(bootstrapVersion="workspace-v3", agent=config.agent, facadeEndpoint=facade_endpoint)
+    bootstrap = ExecutionBootstrap(bootstrapVersion="workspace-v3", agent=config.agent, facadeEndpoint=facade_endpoint, engine=config.engine.type)
     source = source_factory(bootstrap, verify_key) if source_factory else HostedSource(bootstrap, verify_key=verify_key)
     manager = WorkspaceManager(
         config, source,

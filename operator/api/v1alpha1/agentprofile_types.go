@@ -43,18 +43,21 @@ type ThinkingSpec struct {
 	Effort string `json:"effort,omitempty"`
 }
 
-// EngineSpec is the harness-local engine block (config: engine.*). Unset fields are omitted
-// (the harness defaults them). home/workDir/idleTtlSeconds/maxToolCalls/type/pi were retired
-// for workspace-v1 (contract §10): one engine (OpenCode v2), no placements/binaries/paths to
-// select, and tool-call counting is replaced by limits.maxSteps.
+// EngineSpec is the harness-local engine block (config: engine.*): the engine type and its
+// env, timeout, compaction and tool deny list. Unset fields are omitted (the harness
+// defaults them).
 type EngineSpec struct {
+	// Type selects the engine. The sandbox image must contain it. Unset means opencode.
+	// +optional
+	// +kubebuilder:validation:Enum=opencode;pi
+	Type *string `json:"type,omitempty"`
 	// ForwardEnv selects literal-valued names from the merged env to the engine subprocess
 	// (contract §5). Only literal values are permitted — a name resolving to a secretKeyRef,
 	// a reserved name or a name absent from the merged env is a configuration error
 	// (agentrender.Render), not a silent drop.
 	// +optional
 	ForwardEnv []string `json:"forwardEnv,omitempty"`
-	// DenyTools names native OpenCode tools (e.g. question, execute, websearch, webfetch)
+	// DenyTools names native engine tools (e.g. question, execute, websearch, webfetch)
 	// hidden from the managed agent's model. MCP tools are governed by
 	// ach.capability.filter.exclude.tools; a dotted name is MCP syntax and is rejected.
 	// +optional

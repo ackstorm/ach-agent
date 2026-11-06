@@ -195,7 +195,7 @@ var reservedForwardEnvNames = map[string]struct{}{
 	"OPENCODE_MODELS_URL": {}, "OPENCODE_SERVER_PASSWORD": {},
 }
 
-var reservedForwardEnvPrefixes = []string{"ACH_", "XDG_", "OPENCODE_CONFIG"}
+var reservedForwardEnvPrefixes = []string{"ACH_", "XDG_", "OPENCODE_CONFIG", "PI_", "PIG_"}
 
 // validateEngineForwardEnv enforces contract §5: engine.forwardEnv selects ONLY literal
 // values already present in the merged env — never a secretKeyRef source, never a reserved
@@ -282,6 +282,9 @@ func ResolveEngine(agent, profile *v1.EngineSpec) *v1.EngineSpec {
 		return agent
 	}
 	out := *profile
+	if agent.Type != nil {
+		out.Type = agent.Type
+	}
 	if agent.ForwardEnv != nil {
 		out.ForwardEnv = agent.ForwardEnv
 	}

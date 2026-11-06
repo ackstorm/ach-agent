@@ -815,6 +815,15 @@
       "additionalProperties": false,
       "description": "Resolved `engine` \u2014 CR `forwardEnv` names have already become literal values.\n\n`env` carries only approved literal (non-secret) values selected by the operator from\n`spec.env`; SecretRefs never reach this map (contract \u00a75: \"en v1 solo valores literales\npueden llegar por engine.forwardEnv\").",
       "properties": {
+        "type": {
+          "default": "opencode",
+          "enum": [
+            "opencode",
+            "pi"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
         "env": {
           "additionalProperties": {
             "type": "string"
@@ -840,7 +849,7 @@
               },
               {
                 "not": {
-                  "pattern": "^(?:ACH_|XDG_|OPENCODE_CONFIG)"
+                  "pattern": "^(?:ACH_|XDG_|OPENCODE_CONFIG|PI_|PIG_)"
                 }
               }
             ]

@@ -94,9 +94,10 @@ type WSCompactionBlock struct {
 	Buffer int64                 `json:"buffer"`
 }
 
-// WSEngineBlock is engine{env,startupTimeoutSeconds,compaction,denyTools} (schema EngineBlock —
-// compaction required; env/startupTimeoutSeconds/denyTools optional).
+// WSEngineBlock is engine{type,env,startupTimeoutSeconds,compaction,denyTools} (schema
+// EngineBlock — compaction required; the rest optional).
 type WSEngineBlock struct {
+	Type                  string            `json:"type,omitempty"`
 	Env                   map[string]string `json:"env,omitempty"`
 	StartupTimeoutSeconds *int64            `json:"startupTimeoutSeconds,omitempty"`
 	Compaction            WSCompactionBlock `json:"compaction"`
@@ -122,6 +123,9 @@ func RenderEngineV1(e *v1.EngineSpec, resolvedEnv []corev1.EnvVar) (WSEngineBloc
 		StartupTimeoutSeconds: e.StartupTimeoutSeconds,
 		Compaction:            WSCompactionBlock{Auto: *e.Compaction.Auto, Keep: WSCompactionKeepBlock{Tokens: *e.Compaction.Keep.Tokens}, Buffer: *e.Compaction.Buffer},
 		DenyTools:             e.DenyTools,
+	}
+	if e.Type != nil {
+		b.Type = *e.Type
 	}
 	if len(e.ForwardEnv) > 0 {
 		env := indexEnv(resolvedEnv)

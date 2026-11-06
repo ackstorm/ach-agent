@@ -223,7 +223,7 @@ All routes are on `control` `8081`, under `/host/v1`, and are served from proces
           "ACH_SANDBOX_VERIFY_KEY": "…",
           "ACH_WORKSPACE_NAME": "…",
           "ACH_WORKSPACE_REF": "…",
-          "ACH_BOOTSTRAP_JSON": "{\"bootstrapVersion\":\"workspace-v3\",\"agent\":{…},\"facadeEndpoint\":\"…\"}"
+          "ACH_BOOTSTRAP_JSON": "{\"bootstrapVersion\":\"workspace-v3\",\"agent\":{…},\"facadeEndpoint\":\"…\",\"engine\":\"opencode\"}"
         }
       },
       "instance": {"instanceId": "…", "baseUrl": "http://…:8080", "state": "serving"}
@@ -306,7 +306,7 @@ An execution unit must be started with:
 
 - A runtime image or install of release `launch.runtimeRelease`, the same release as the control unit (3.6). The host picks the image itself; the runtime names only the release and checks it on every probe.
 - `launch.command`, listening on `launch.port`.
-- Exactly the `launch.env` variables. They are single-line, each at most 8 KiB. The execution bootstrap travels inside them as `ACH_BOOTSTRAP_JSON`, so the host has no file to render.
+- Exactly the `launch.env` variables. They are single-line, each at most 8 KiB. The execution bootstrap travels inside them as `ACH_BOOTSTRAP_JSON`, so the host has no file to render. The bootstrap also carries `engine`, the `engine.type` of the config (`opencode` or `pi`, default `opencode`), so the execution unit starts the engine the config selected.
 - Writable paths per 3.4.
 - Egress to `infrastructure.facadeEndpoint`.
 - Reachability from the control unit before the unit is ready. Its `/readyz` turns 200 only after the control unit has configured it, so the registered `baseUrl` must route to a not-ready unit.

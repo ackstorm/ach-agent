@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- The facade listener keeps idle connections open for 360 s (uvicorn's default is 5 s), longer than
+  opencode's Bun connection pool keeps an idle socket (more than 240 s, less than 330 s). The OpenShell
+  supervisor reuses a sandbox's pooled connection onto the facade connection and, when the facade had
+  already closed it, drops the sandbox side without a response: parallel MCP tool calls after a few
+  seconds idle failed with `ECONNRESET: The socket connection was closed unexpectedly`.
+
 ## [0.6.4] - 2026-11-06
 
 ### Fixed

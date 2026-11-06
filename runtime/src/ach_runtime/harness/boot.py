@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ach_runtime.config.schema import RuntimeConfig, parse_config
+from ach_runtime.hardening import set_non_dumpable
 from ach_runtime.harness.app import create_app
 from ach_runtime.harness.control import assemble, create_facade_app
 from ach_runtime.harness.hosted import create_host_app
@@ -74,6 +75,7 @@ async def run_control(
     assembly: Any = assemble,
 ) -> None:
     configure_logging()
+    set_non_dumpable()  # control holds channel/ACH/key secrets in env; hook children share the uid
     try:
         try:
             raw = json.loads(config_path.read_text(encoding="utf-8"))

@@ -36,6 +36,8 @@ PI_VERSION = os.environ.get("PI_VERSION", "0.7.0")
 COMMAND_TIMEOUT_SECONDS = 30.0
 STOP_TIMEOUT_SECONDS = 5.0
 OWNERSHIP_POLL_SECONDS = 0.05
+# The service stops observing at the force deadline: forcing slightly before it lets the kill land inside the window.
+FORCE_MARGIN_SECONDS = 0.05
 # asyncio's readline splits on LF only, as the protocol requires. A record holds a whole message.
 STDOUT_LIMIT_BYTES = 64 * 1024 * 1024
 
@@ -371,7 +373,7 @@ class PiEngine:
             if session._current is not state:  # settled, or not yet at its prompt
                 session._finish(state, "cancelled")
                 return
-            deadline = _halt_budget.force_deadline if _halt_budget else time.monotonic() + CANCEL_KILL_BOUND_SECONDS
+            deadline = (_halt_budget.force_deadline - FORCE_MARGIN_SECONDS) if _halt_budget else time.monotonic() + CANCEL_KILL_BOUND_SECONDS
             if session.running:
                 await session._abort(max(0.0, deadline - time.monotonic()))
                 with contextlib.suppress(TimeoutError):

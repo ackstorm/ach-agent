@@ -216,7 +216,7 @@ async def test_cancel_of_a_hung_pi_kills_it_and_its_tools_within_the_bound(tmp_p
         now = time.monotonic()
         budget = _HaltBudget(cleanup_started_at=now, force_deadline=now + 2.0)
         await asyncio.wait_for(engine.cancel("inv-1", "operator request", _halt_budget=budget), 10)
-        assert time.monotonic() - now < 4.0
+        assert time.monotonic() - now < 2.5
         assert await engine.status("inv-1") == "cancelled"
         assert not _tools()
         assert not engine._sessions["session-1"].alive

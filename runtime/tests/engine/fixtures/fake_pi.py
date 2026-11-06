@@ -33,6 +33,8 @@ for line in sys.stdin:
              "data": {"tokens": {"input": None if null_tokens else 0}}})
     elif kind == "prompt":
         out({"type": "response", "id": request_id, "success": True})
+        if mode == "hang":  # accepts the prompt, then never reads stdin again
+            time.sleep(600)
         if mode == "non-json":
             sys.stdout.write("warning: not json\n")
             sys.stdout.flush()

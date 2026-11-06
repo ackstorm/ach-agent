@@ -8,7 +8,7 @@ import hmac
 import json
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 import structlog
@@ -41,6 +41,15 @@ A2A_OUTPUT_INSTRUCTIONS = (
     '"text" is what the caller reads — keep it non-empty. Single line, keys in this order, '
     "no code fences.\n"
     "</output_format>"
+)
+
+A2A_PROGRESS_INSTRUCTIONS = (
+    "<progress_updates>\n"
+    "The caller waits while you work. Before slow work (a long analysis, a heavy tool run, a "
+    "multi-step change), call the `inform_user` tool with one short sentence on what you are "
+    "doing. Use it for milestones only, not for every step. It never replaces the final "
+    "a2a_reply.\n"
+    "</progress_updates>"
 )
 
 
@@ -272,8 +281,16 @@ class A2AAgentExecutorBridge:
         CHANNEL_INBOUND.labels(channel=self._channel_cfg.name, type="a2a").inc()
         cancel_event = self._cancel_events.setdefault(task_id, asyncio.Event())
         self._waiter_counts[task_id] = self._waiter_counts.get(task_id, 0) + 1
+        emit: Callable[[str], Awaitable[None]] | None = None
+        invocation_id = ""
         try:
             ticket = self._control.admission.admit(routed)
+
+            async def emit(message: str) -> None:
+                await event_queue.enqueue_event(_status_event("working", message, task_id, context_id))
+
+            invocation_id = ticket.invocation_id
+            self._control.progress.setdefault(invocation_id, []).append(emit)
             started = await _wait_or_cancel(ticket.started, cancel_event)
             if started is _CANCELLED:
                 return
@@ -328,6 +345,11 @@ class A2AAgentExecutorBridge:
                 _status_event("failed", "Invocation failed", task_id, context_id)
             )
         finally:
+            if emit is not None:
+                emitters = self._control.progress.get(invocation_id, [])
+                emitters.remove(emit)
+                if not emitters:
+                    self._control.progress.pop(invocation_id, None)
             self._waiter_counts[task_id] -= 1
             if self._waiter_counts[task_id] == 0:
                 self._waiter_counts.pop(task_id, None)
@@ -351,7 +373,7 @@ def make_a2a_agent_card(agent_name: str, channel_name: str) -> Any:
         name=agent_name,
         description=f"Agent {agent_name}, A2A channel {channel_name}: send a text message, get a text answer.",
         version="1.0.0",
-        capabilities=AgentCapabilities(),
+        capabilities=AgentCapabilities(streaming=True),
         default_input_modes=["text"],
         default_output_modes=["text"],
         supported_interfaces=[

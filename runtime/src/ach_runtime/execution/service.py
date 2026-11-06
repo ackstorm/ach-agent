@@ -330,6 +330,10 @@ class ExecutionService:
             mcp = catalog.get("mcp")
             if isinstance(mcp, dict):
                 mcp.pop("memory", None)
+        if not request.inform_user and catalog is not None:
+            mcp = catalog.get("mcp")
+            if isinstance(mcp, dict):
+                mcp.pop("progress", None)
         run_id = str(uuid.uuid4())
         started_future: asyncio.Future[Started] = asyncio.get_running_loop().create_future()
         inv = _Invocation(request=request, public=public, catalog=catalog, run_id=run_id, started=started_future)
@@ -446,6 +450,11 @@ class ExecutionService:
                 if artifact_url == f"{facade}/artifacts":
                     artifacts["url"] = (
                         f"{artifact_url}/runs/{quote(request.invocation_id, safe='')}/"
+                    )
+                progress = mcp.get("progress") if isinstance(mcp, dict) else None
+                if isinstance(progress, dict) and progress.get("url") == f"{facade}/progress":
+                    progress["url"] = (
+                        f"{facade}/progress/runs/{quote(request.invocation_id, safe='')}/"
                     )
             elif inv.catalog is not None and hasattr(invocation, "mcp"):
                 invocation.mcp = copy.deepcopy(inv.catalog.get("mcp", {}))

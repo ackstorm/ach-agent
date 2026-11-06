@@ -7,12 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A2A channels advertise `capabilities.streaming: true` and serve `SendStreamingMessage` (SSE).
+- A2A runs get an `inform_user(message)` MCP tool (`progress` facade, mounted per run at
+  `/facades/progress/runs/{invocationId}/`): each call reaches the A2A caller as a `WORKING` status
+  update with the message, before the final reply. Other channel types never see the tool; exclude it
+  with `capability.filter.exclude.tools: [inform_user]`.
+
 ### Changed
 
 - OpenCode's `execute` tool (Code Mode) is denied whatever `engine.denyTools` lists, so MCP tools
   are called directly. To keep it, set `OPENCODE_ENABLE_CODE_MODE` to `1` or `true` in `spec.env`
   and list it in `engine.forwardEnv`. `ach-agent run` manifests no longer default `denyTools` to
   `[execute]`.
+- `StartRequest` carries `informUser`; control and execution images must be the same release.
+- A2A prompts append a `<progress_updates>` paragraph telling the agent to use `inform_user` for
+  milestones before slow work.
 
 ## [0.6.5] - 2026-11-06
 

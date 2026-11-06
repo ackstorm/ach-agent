@@ -163,3 +163,11 @@ def test_run_status_accepts_skipped_state() -> None:
         state="skipped",
     )
     assert status.state == "skipped"
+
+
+def test_start_inform_user_defaults_false_and_round_trips() -> None:
+    request = _start_request()
+    assert request.inform_user is False
+    wire = request.model_copy(update={"inform_user": True}).model_dump(by_alias=True, mode="json")
+    assert wire["informUser"] is True
+    assert StartRequest.model_validate(wire).inform_user is True

@@ -122,8 +122,9 @@ build_images() {
   docker build -q --target control -t ach-agent-control:e2e "$ROOT/runtime"
   docker build -q -t ach-agent-control:e2e -f "$HERE/control-ca.Dockerfile" "$TLS_DIR"
   docker build -q --target execution -t ach-agent-execution:e2e "$ROOT/runtime"
+  docker build -q --target execution-pi -t ach-agent-execution-pi:e2e "$ROOT/runtime"
   docker build -q -t ach-agent-e2e-stub:e2e "$HERE/stubs"
-  for img in ach-agent-operator ach-agent-control ach-agent-execution ach-agent-e2e-stub; do
+  for img in ach-agent-operator ach-agent-control ach-agent-execution ach-agent-execution-pi ach-agent-e2e-stub; do
     kind load docker-image "$img:e2e" --name "$CLUSTER"
   done
 }

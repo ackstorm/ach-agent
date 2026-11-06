@@ -25,7 +25,7 @@ func TestBuildPolicy_ReservedFacadeRuleAndDefaults(t *testing.T) {
 	if !ok || rule.Endpoints[0].Host != "agent-r.ns.svc.cluster.local" || rule.Endpoints[0].Port != 8081 {
 		t.Fatalf("facade rule = %#v", p.NetworkPolicies)
 	}
-	if len(rule.Binaries) != 2 {
+	if len(rule.Binaries) != 3 {
 		t.Fatalf("binaries = %#v", rule.Binaries)
 	}
 	if p.Landlock.Compatibility != "hard_requirement" {
@@ -94,6 +94,7 @@ func TestBuildPolicy_Rejections(t *testing.T) {
 		"unknown field":          {`{"network_policy":{}}`, "unknown field"},
 		"reserved rule name":     {`{"network_policies":{"ach-agent-x":{"name":"ach-agent-x"}}}`, "reserved prefix"},
 		"writable runtime bin":   {`{"filesystem":{"read_write":["/usr/local/bin"]}}`, "writable"},
+		"writable pi dir":        {`{"filesystem":{"read_write":["/opt/pi"]}}`, "writable"},
 		"writable opencode dir":  {`{"filesystem":{"read_write":["/opt/opencode/node_modules"]}}`, "writable"},
 		"writable parent":        {`{"filesystem":{"read_write":["/opt"]}}`, "writable"},
 		"writable root":          {`{"filesystem":{"read_write":["/"]}}`, "writable"},
@@ -186,8 +187,8 @@ func TestResources_MapsToKubernetesLimits(t *testing.T) {
 	}
 }
 
-// The engine that calls the model facade is the native opencode.exe; leaving it out denies
-// every model call.
+// The engines that call the model facade are opencode.exe and pi; leaving one out denies
+// every model call of that engine.
 func TestBuildPolicy_FacadeRuleBindsExactlyTheRuntimeBinaries(t *testing.T) {
 	p, err := BuildPolicy(nil, nil, "f", 8081)
 	if err != nil {
@@ -200,6 +201,7 @@ func TestBuildPolicy_FacadeRuleBindsExactlyTheRuntimeBinaries(t *testing.T) {
 	want := []string{
 		"/usr/local/bin/python3.13",
 		"/opt/opencode/node_modules/@opencode/cli/bin/opencode.exe",
+		"/opt/pi/pig",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("binaries = %v, want %v", got, want)

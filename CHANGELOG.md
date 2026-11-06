@@ -5,6 +5,40 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.7] - 2026-11-06
+
+### Added
+
+- `engine.type: pi` runs an agent on PiG, the Go port of pi, driven over pi's JSONL RPC, as a lighter
+  alternative to opencode: 44-46 MB RSS against 302-305 MB for `opencode serve` on the same agent and
+  prompts. `opencode` stays the default. See `docs/local-agent.md#engines` for how the two differ.
+- `ghcr.io/ackstorm/ach-agent-execution-pi`, the sandbox image for `engine.type: pi` (PiG at
+  `/opt/pi/pig`), 181 MB against 368 MB for `execution`. The sandbox policy allows that binary.
+- `ach-agent run` supports `engine: pi`, and the `agent` image carries both engines.
+
+pi takes OpenAI-type models only: Gemini and Anthropic types are rejected at config load. Its
+`maxSteps` is soft and a run can overshoot by a turn or two.
+
+### Changed
+
+- **Breaking:** the chart refuses to render without `openshell.tls.secret` unless
+  `openshell.insecurePlaintext=true` acknowledges the plaintext gateway. Existing plaintext installs
+  must add that flag on upgrade.
+- The release workflow claims the version tag before publishing anything, so a second run for the
+  same version from a different commit fails instead of overwriting the registry. `rc/**` branches
+  can only publish pre-release versions.
+
+### Fixed
+
+- The session idle timer resumes after a control-pod restart: `/sessions/{ref}/info` reports
+  `idleSeconds`, so a restart no longer gives every open session a fresh timeout and keeps its memory
+  alive. Control and execution images must be the same release for this to apply.
+- The operator derives the reserved facade egress host from the Agent identity, not from the endpoint
+  the control pod reports, and rejects extra egress hosts ending in `.local` or with a wildcard or
+  non-letter top-level label.
+- Engine config a tool planted in the session HOME no longer reaches later turns: opencode's global
+  `opencode.json(c)` and pi's `SYSTEM.md` and `APPEND_SYSTEM.md` are removed before each launch.
+
 ## [0.6.6] - 2026-11-06
 
 ### Added

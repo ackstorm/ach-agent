@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2026-11-06
+
+### Fixed
+
+- opencode in an OpenShell sandbox no longer caches DNS answers (`BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS=0`).
+  Bun kept a policy-DNS synthetic IP for 30 s after its mapping expired (the record TTL, 5 s for cluster
+  names), and the supervisor refused the connect: MCP tool calls failed with
+  `EACCES: Was there a typo in the url or port?`.
+
 ## [0.6.3] - 2026-11-05
 
 ### Added

@@ -96,6 +96,29 @@ async def test_reporting_is_retained_in_status_snapshot_and_restore(tmp_path, pu
     assert (await restored.session_info(request.session_ref))["suspendHookFailed"] is False
 
 
+async def test_session_info_reports_time_since_the_last_invocation_ended(
+    tmp_path, public_config_fixture, monkeypatch
+):
+    import ach_runtime.execution.service as service_module
+
+    engine = ReportingEngine()
+    service = ExecutionService(engine=engine, sessions=SessionRegistry(tmp_path / "sessions"),
+                               workspace_dir=tmp_path / "workspace",
+                               build_invocation=lambda req, _public, _workspace: BuiltInvocation(req.invocation_id))
+    service.configure(public_config_fixture)
+    request = _request(public_config_fixture.config_version)
+    service._sessions.get_or_create(request.session_ref)
+    assert "idleSeconds" not in await service.session_info(request.session_ref)
+    await service.start(request)
+    invocation = service._invocations[request.invocation_id]
+    engine.release.set()
+    assert invocation.settle_task is not None
+    await invocation.settle_task
+    assert invocation.terminal_at is not None
+    monkeypatch.setattr(service_module.time, "monotonic", lambda: invocation.terminal_at + 25.0)
+    assert (await service.session_info(request.session_ref))["idleSeconds"] == 25.0
+
+
 async def test_failed_suspend_hook_is_reported_without_blocking_snapshot(
     tmp_path, public_config_fixture, monkeypatch
 ):

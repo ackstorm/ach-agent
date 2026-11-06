@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- OpenCode's `execute` tool (Code Mode) is denied whatever `engine.denyTools` lists, so MCP tools
+  are called directly. To keep it, set `OPENCODE_ENABLE_CODE_MODE` to `1` or `true` in `spec.env`
+  and list it in `engine.forwardEnv`. `ach-agent run` manifests no longer default `denyTools` to
+  `[execute]`.
+
 ## [0.6.5] - 2026-11-06
 
 ### Fixed

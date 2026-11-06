@@ -229,9 +229,19 @@ def test_memory_tools_without_prompt_block_default_to_append(public):
     assert not _expects_native_system(fixture)
 
 
-def test_to_fixture_carries_engine_deny_tools(public) -> None:
-    assert to_fixture(public)["denyTools"] == []
+def test_to_fixture_carries_engine_deny_tools_and_denies_execute(public) -> None:
+    assert to_fixture(public)["denyTools"] == ["execute"]
     denied = public.model_copy(
         update={"engine": public.engine.model_copy(update={"deny_tools": ["question", "webfetch"]})}
     )
-    assert to_fixture(denied)["denyTools"] == ["question", "webfetch"]
+    assert to_fixture(denied)["denyTools"] == ["question", "webfetch", "execute"]
+    listed = public.model_copy(
+        update={"engine": public.engine.model_copy(update={"deny_tools": ["execute"]})}
+    )
+    assert to_fixture(listed)["denyTools"] == ["execute"]
+
+
+@pytest.mark.parametrize(("value", "deny"), [("1", []), ("true", []), ("0", ["execute"])])
+def test_to_fixture_code_mode_flag_keeps_execute(public, value, deny) -> None:
+    public.engine.env["OPENCODE_ENABLE_CODE_MODE"] = value
+    assert to_fixture(public)["denyTools"] == deny

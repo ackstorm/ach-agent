@@ -109,9 +109,8 @@ class Manifest(BaseModel):
     exclude: dict[str, list[str]] = Field(default_factory=dict)
     # Merged over the `limits` defaults; the RuntimeConfig schema validates the values.
     limits: dict[str, Any] = Field(default_factory=dict)
-    # Replaces the default: `execute` stays denied so MCP tools are called directly, not through
-    # Code Mode. The RuntimeConfig schema validates the names.
-    deny_tools: list[str] = Field(default=["execute"], alias="denyTools")
+    # The RuntimeConfig schema validates the names.
+    deny_tools: list[str] = Field(default_factory=list, alias="denyTools")
 
     @model_validator(mode="after")
     def _checks(self) -> Manifest:

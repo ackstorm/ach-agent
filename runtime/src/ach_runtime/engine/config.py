@@ -64,6 +64,10 @@ def build_env(*, home: Path, scratch: Path, approved_env: dict[str, str], passwo
     env["OPENCODE_DISABLE_MODELS_FETCH"] = "1"
     # The sandbox allows egress only to the facades: an update check is a denied connect.
     env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
+    # OpenShell's policy DNS answers with a synthetic IP that expires with the record's TTL
+    # (5 s for cluster names); Bun caches answers for 30 s, and a connect to an expired
+    # synthetic IP is refused (EACCES, `transparent_tcp_mapping_denied`).
+    env["BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS"] = "0"
     return env
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -61,7 +62,7 @@ def _admission(runner) -> Admission:
 
 
 def _control(config, runner) -> SimpleNamespace:
-    return SimpleNamespace(config=SimpleNamespace(channels=[config], agent=SimpleNamespace(name="test-agent"), identity_environment="test-env"), admission=_admission(runner), _stopping=False)
+    return SimpleNamespace(config=SimpleNamespace(channels=[config], agent=SimpleNamespace(name="test-agent"), identity_environment="test-env"), admission=_admission(runner), _stopping=False, progress={})
 
 
 def _completed(ticket, text: str = "answer") -> RunStatus:
@@ -236,6 +237,56 @@ def test_mounted_sdk_send_message_uses_real_admission_future(monkeypatch) -> Non
         assert len(deliveries) == 1
         assert deliveries[0][0].event_id == f"a2a:{task['id']}"
         assert deliveries[0][0].event.payload["text"] == "hello from SDK"
+
+    asyncio.run(scenario())
+    asyncio.run(control.admission.close())
+
+
+def test_mounted_sdk_stream_delivers_progress_then_the_reply(monkeypatch) -> None:
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+    config = _channel()
+
+    async def runner(routed, ticket):
+        ticket.mark_started()
+        await asyncio.sleep(0)
+        for emit in tuple(control.progress[ticket.invocation_id]):
+            await emit("Reading the repository")
+        return _completed(ticket, "streamed-answer")
+
+    control = _control(config, runner)
+    app = create_app(control)
+    app.state.ready = True
+    request = {
+        "jsonrpc": "2.0", "id": 1, "method": "SendStreamingMessage", "params": {
+            "message": {
+                "messageId": "message-1", "contextId": "sdk-context",
+                "role": "ROLE_USER", "parts": [{"text": "hello"}],
+            },
+        },
+    }
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            card = (await client.get("/a2a/review/.well-known/agent-card.json")).json()
+            assert card["capabilities"]["streaming"] is True
+            response = await client.post(
+                "/a2a/review/", json=request,
+                headers={"x-a2a-custom-api-key": SECRET, "a2a-version": "1.0"},
+            )
+        assert response.status_code == 200, response.text
+        assert response.headers["content-type"].startswith("text/event-stream")
+        updates = [
+            json.loads(line[len("data:"):])["result"]["statusUpdate"]["status"]
+            for line in response.text.splitlines()
+            if line.startswith("data:") and "statusUpdate" in line
+        ]
+        seen = [(u["state"], u.get("message", {}).get("parts", [{}])[0].get("text")) for u in updates]
+        assert sorted(seen[:-1], key=str) == [
+            ("TASK_STATE_WORKING", "Reading the repository"),
+            ("TASK_STATE_WORKING", None),
+        ]
+        assert seen[-1] == ("TASK_STATE_COMPLETED", "streamed-answer")
+        assert control.progress == {}
 
     asyncio.run(scenario())
     asyncio.run(control.admission.close())

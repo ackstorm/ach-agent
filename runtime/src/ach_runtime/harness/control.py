@@ -15,7 +15,7 @@ import ssl
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 import httpx
@@ -41,6 +41,7 @@ from ach_runtime.facades.mcp import McpFacade
 from ach_runtime.facades.memory import AchMemoryFacade
 from ach_runtime.facades.artifacts import ArtifactFacade, ArtifactOperations
 from ach_runtime.facades.model import ModelFacade, public_catalog
+from ach_runtime.facades.progress import TOOL_NAME as INFORM_USER_TOOL, ProgressFacade
 from ach_runtime.harness.admission import (
     Admission,
     AdmissionTicket,
@@ -215,6 +216,7 @@ class Control:
     memory_facade: AchMemoryFacade | None
     a2a_facade: A2AEgressFacade | None
     artifact_facade: ArtifactFacade | None
+    progress_facade: ProgressFacade | None
     mini_client: httpx.AsyncClient
     facade_transport: httpx.AsyncBaseTransport | None = None
     facade_clients: list[httpx.AsyncClient] = field(default_factory=list)
@@ -243,6 +245,8 @@ class Control:
     # Workspaces running a workspace hook: not yet (start) or no longer (stop) published in
     # manager._active, but their hook may call the facades (`ach-mcp`).
     _hook_endpoints: dict[str, WorkspaceEndpoint] = field(default_factory=dict, repr=False)
+    # A2A event emitters per running invocation, registered by the A2A bridge while it waits.
+    progress: dict[str, list[Callable[[str], Awaitable[None]]]] = field(default_factory=dict, repr=False)
 
     async def _owned_live(self, claim: str) -> bool:
         # No I/O (spec 6.3). The only wait is for adoption of the units that already run: a
@@ -306,6 +310,20 @@ class Control:
             owned_workspace=self._owned_live,
         )
 
+    async def inform_user(self, token: str, invocation_id: str, message: str) -> bool:
+        """Send `message` to the A2A callers waiting on `invocation_id`, if the run belongs
+        to the token's Workspace. False when nobody is listening."""
+        claim = await authenticate_facade(self.key, token, owned_workspace=self._owned_live)
+        prepared = self._prepared.get(invocation_id)
+        if prepared is None:
+            return False
+        if prepared[0].name != claim:
+            raise WorkspaceAuthenticationFailed(claim)
+        emitters = tuple(self.progress.get(invocation_id, ()))
+        for emit in emitters:
+            await emit(message)
+        return bool(emitters)
+
     def _catalog_for(self, endpoint: WorkspaceEndpoint) -> dict[str, Any]:
         facade = self.public.infrastructure.facade_endpoint.rstrip("/")
         token = facade_token(self.key, endpoint.name)
@@ -329,6 +347,8 @@ class Control:
         }
         if self.a2a_facade is not None:
             mcp_urls["a2a"] = f"{facade}/a2a/a2a/"
+        if self.progress_facade is not None:
+            mcp_urls["progress"] = f"{facade}/progress"
         result = public_catalog(
             self.catalog,
             provider_id=self.config.model.type,
@@ -533,8 +553,10 @@ class Control:
             )
             prompt = f"{prompt}\n\n{memory_section}"
         if channel.type == "a2a":
-            from ach_runtime.channels.a2a import A2A_OUTPUT_INSTRUCTIONS
+            from ach_runtime.channels.a2a import A2A_OUTPUT_INSTRUCTIONS, A2A_PROGRESS_INSTRUCTIONS
 
+            if self.progress_facade is not None:
+                prompt = f"{prompt}\n\n{A2A_PROGRESS_INSTRUCTIONS}"
             prompt = f"{prompt}\n\n{A2A_OUTPUT_INSTRUCTIONS}"
         request = StartRequest(
             invocationId=ticket.invocation_id, channel=event.channel,
@@ -542,6 +564,7 @@ class Control:
             workspaceKey=routed.workspace_key, sessionKey=routed.session_key,
             configVersion=self.public.config_version, prompt=prompt,
             deadlineAt=ticket.deadline_at, memoryAvailable=memory_available,
+            informUser=channel.type == "a2a" and self.progress_facade is not None,
         )
         self._prepared[ticket.invocation_id] = (endpoint, request)
         return request
@@ -836,6 +859,7 @@ def create_facade_app(control: Control) -> FastAPI:
     memory_app = None
     artifact_app = None
     a2a_app = None
+    progress_app = None
     if control.memory_facade is not None:
         memory_app = control.memory_facade.app()
         apps.append(memory_app)
@@ -845,6 +869,9 @@ def create_facade_app(control: Control) -> FastAPI:
     if control.a2a_facade is not None:
         a2a_app = control.a2a_facade.app()
         apps.append(a2a_app)
+    if control.progress_facade is not None:
+        progress_app = control.progress_facade.app()
+        apps.append(progress_app)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -865,6 +892,8 @@ def create_facade_app(control: Control) -> FastAPI:
         app.router.routes.append(Mount("/facades/artifacts", app=artifact_app))
     if a2a_app is not None:
         app.router.routes.append(Mount("/facades/a2a", app=a2a_app))
+    if progress_app is not None:
+        app.router.routes.append(Mount("/facades/progress", app=progress_app))
     return app
 
 
@@ -1042,6 +1071,8 @@ async def assemble(
     control.memory_facade, control.mini_client = memory, mini_client
     control.a2a_facade = None
     control.artifact_facade = None
+    control.progress_facade = None
+    control.progress = {}
     control.facade_transport = facade_transport
     control.facade_clients = []
     control._prepared, control._started_run, control._stopping = {}, {}, False
@@ -1108,6 +1139,11 @@ async def assemble(
             owned_workspace=control._owned_live,
             operations=control.artifact_operations,
             exclude_tools=frozenset(config.capability.filter.exclude.tools),
+        )
+    if (any(channel.type == "a2a" for channel in config.channels)
+            and INFORM_USER_TOOL not in config.capability.filter.exclude.tools):
+        control.progress_facade = ProgressFacade(
+            key=key, owned_workspace=control._owned_live, inform=control.inform_user,
         )
     metadata = catalog.model.metadata
     control._priced = metadata is not None and metadata.input_cost_per_token is not None

@@ -503,7 +503,7 @@ async def test_one_restore_per_activation_and_none_from_reconnect(monkeypatch) -
 
 
 async def test_a2a_prepare_adds_legacy_directive_only_to_a2a_prompt() -> None:
-    from ach_runtime.channels.a2a import A2A_OUTPUT_INSTRUCTIONS
+    from ach_runtime.channels.a2a import A2A_OUTPUT_INSTRUCTIONS, A2A_PROGRESS_INSTRUCTIONS
 
     config = _a2a_config()
 
@@ -537,8 +537,50 @@ async def test_a2a_prepare_adds_legacy_directive_only_to_a2a_prompt() -> None:
     try:
         request = await control.prepare(ticket, endpoint)
         assert request.prompt == (
-            "hello\n\n## Memory\n\nUnavailable (no endpoint).\n\n" + A2A_OUTPUT_INSTRUCTIONS
+            "hello\n\n## Memory\n\nUnavailable (no endpoint).\n\n"
+            + A2A_PROGRESS_INSTRUCTIONS + "\n\n" + A2A_OUTPUT_INSTRUCTIONS
         )
+        assert request.inform_user is True
+    finally:
+        await control.close()
+
+
+async def test_inform_user_reaches_only_the_owning_workspace_runs_listeners() -> None:
+    from ach_runtime.harness.tokens import WorkspaceAuthenticationFailed
+
+    config = _a2a_config()
+    control = await assemble(
+        config, environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},
+        ach_transport=httpx.MockTransport(_catalog_handler),
+        mini_transport=httpx.MockTransport(lambda request: httpx.Response(500)),
+    )
+    try:
+        assert control.progress_facade is not None
+        endpoint = WorkspaceEndpoint(
+            WorkspaceRef(config.agent.namespace, config.agent.uid, "a" * 64),
+            "workspace", "pod-1", "http://mini",
+        )
+        control._hook_endpoints["workspace"] = endpoint  # owned-live without a running unit
+        control._prepared["inv-1"] = (endpoint, None)
+        received: list[str] = []
+
+        async def emit(message: str) -> None:
+            received.append(message)
+
+        token = facade_token(control.key, "workspace")
+        assert await control.inform_user(token, "inv-1", "no listener yet") is False
+        control.progress["inv-1"] = [emit]
+        assert await control.inform_user(token, "inv-1", "working on it") is True
+        assert received == ["working on it"]
+        assert await control.inform_user(token, "inv-unknown", "x") is False
+
+        control._hook_endpoints["other"] = WorkspaceEndpoint(
+            WorkspaceRef(config.agent.namespace, config.agent.uid, "c" * 64), "other", "pod-2", "http://mini",
+        )
+        with pytest.raises(WorkspaceAuthenticationFailed):
+            await control.inform_user(facade_token(control.key, "other"), "inv-1", "foreign")
+        assert received == ["working on it"]
+        assert "progress" in control._catalog_for(endpoint)["mcp"]
     finally:
         await control.close()
 
@@ -1728,7 +1770,7 @@ async def test_real_admission_delivery_acks_admission_and_holds_workspace_permit
 async def test_mounted_a2a_uses_real_admission_delivery_and_retained_get_task(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, terminal_state: str, terminal_text: str,
 ) -> None:
-    from ach_runtime.channels.a2a import A2A_OUTPUT_INSTRUCTIONS
+    from ach_runtime.channels.a2a import A2A_OUTPUT_INSTRUCTIONS, A2A_PROGRESS_INSTRUCTIONS
     from ach_runtime.harness.app import create_app
 
     config = _a2a_config()
@@ -1822,7 +1864,7 @@ async def test_mounted_a2a_uses_real_admission_delivery_and_retained_get_task(
         assert len(start_requests) == 1
         assert start_requests[0]["prompt"] == (
             "hello to native\n\n## Memory\n\nUnavailable (no endpoint).\n\n"
-            + A2A_OUTPUT_INSTRUCTIONS
+            + A2A_PROGRESS_INSTRUCTIONS + "\n\n" + A2A_OUTPUT_INSTRUCTIONS
         )
         expected_state = "TASK_STATE_COMPLETED" if terminal_state == "completed" else "TASK_STATE_FAILED"
         saved_task = None

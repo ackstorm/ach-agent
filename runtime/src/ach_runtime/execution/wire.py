@@ -92,6 +92,9 @@ class StartRequest(_WireModel):
     # memory facade from this invocation's captured catalog; true/None leave it unchanged.
     # No generic capability state, no global lock.
     memory_available: bool | None = Field(default=None, alias="memoryAvailable")
+    # True only for A2A runs: keeps the `progress` facade (`inform_user`) in this run's
+    # catalog, at its per-run URL. False removes it.
+    inform_user: bool = Field(default=False, alias="informUser")
 
     _deadline_parse = field_validator("deadline_at", mode="before")(_parse_iso_datetime)
     _deadline_aware = field_validator("deadline_at")(_tz_aware_utc)

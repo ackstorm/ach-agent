@@ -226,3 +226,35 @@ def test_managed_plugin_registers_artifacts_remote_without_rewriting_values() ->
         },
     ]]
     assert registrations[1] == []
+
+
+@pytest.mark.asyncio
+async def test_progress_server_only_in_inform_user_runs_at_its_per_run_url(
+    tmp_path: Path, public_config_fixture
+) -> None:
+    engine = _InvocationEngine()
+    service = ExecutionService(engine=engine, sessions=SessionRegistry(tmp_path))
+    base = f"{public_config_fixture.infrastructure.facade_endpoint.rstrip('/')}/progress"
+    original = {
+        "providers": {
+            public_config_fixture.model.type: {
+                "baseURL": "http://model.invalid",
+                "apiKey": "local-proxy",
+                "models": {public_config_fixture.model.name: {}},
+            }
+        },
+        "mcp": {"progress": {"url": base, "headers": {FACADE_TOKEN_HEADER: "token"}}},
+    }
+    service.configure(public_config_fixture, catalog=original)
+    try:
+        cron = _request(public_config_fixture.config_version, "run-cron", "session-a")
+        a2a = _request(public_config_fixture.config_version, "run-a2a", "session-b").model_copy(
+            update={"inform_user": True}
+        )
+        await asyncio.gather(service.start(cron), service.start(a2a))
+        by_id = {invocation.invocation_id: invocation for invocation in engine.invocations}
+        assert "progress" not in by_id["run-cron"].catalog["mcp"]
+        assert by_id["run-a2a"].catalog["mcp"]["progress"]["url"] == f"{base}/runs/run-a2a/"
+        assert original["mcp"]["progress"]["url"] == base
+    finally:
+        await service.close()

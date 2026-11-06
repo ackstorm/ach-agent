@@ -33,6 +33,15 @@ async def test_pi_tui_command_is_none_while_a_turn_runs(tmp_path, engine) -> Non
         await engine.cancel("inv-1", "test")
 
 
+async def test_pi_tui_command_is_none_after_a_failed_turn_and_leaves_the_process_running(tmp_path, engine) -> None:
+    async with fake_facades("model-error") as fakes:
+        await engine.start(_invocation(tmp_path, fakes.model_url), home=tmp_path / "home", scratch=tmp_path / "scratch")
+        assert await engine.wait_settled("inv-1") == "failed"
+        session = engine._sessions["session-1"]
+        assert await engine.tui_command("session-1") is None
+        assert session.alive
+
+
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="needs tmux")
 async def test_pi_tui_opens_on_the_warmed_up_session_and_quits_cleanly(tmp_path, engine, binary) -> None:
     sock, exit_file = str(tmp_path / "tmux.sock"), tmp_path / "tui.exit"

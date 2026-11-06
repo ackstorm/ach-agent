@@ -173,27 +173,6 @@ func isReserved(name string) bool {
 	return strings.HasPrefix(strings.ToLower(name), reservedPrefix)
 }
 
-// externalTLD reports whether a host's top-level label looks like a real external domain label:
-// it begins with an ASCII letter and holds only letters, digits and hyphens. "com", "uk" and
-// punycode "xn--p1ai" qualify; a wildcard ("*", "**"), an all-digit label ("1" in "127.1") and an
-// inet_aton hex/octal form ("0x1" in "0x7f.0x1") do not, since no real TLD starts with a digit.
-func externalTLD(label string) bool {
-	if label == "" {
-		return false
-	}
-	if r := label[0]; !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')) {
-		return false
-	}
-	for _, r := range label {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
-		default:
-			return false
-		}
-	}
-	return true
-}
-
 // hostMatches reports whether a host glob (or exact host) selects the facade host.
 // Case-insensitive, trailing dot ignored; an unparsable glob counts as a match.
 func hostMatches(glob, facadeHost string) bool {
@@ -249,18 +228,8 @@ func internalEndpoint(ep ostypes.PolicyNetworkEndpoint) string {
 			strings.HasSuffix(host, ".local"):
 			return "cluster DNS name"
 		}
-		// The sandbox proxy matches the host as a glob (path.Match), so a pattern whose
-		// top-level label is a wildcard or not a real domain label (**.*.*,
-		// kubernetes.default.svc.*, *.*, 127.1, inet_aton forms like 0x7f.0x1) can still select
-		// cluster-internal names that the literal suffix checks above miss. Extra egress is
-		// external only, so the top-level label must be a concrete external domain label.
-		// This is best-effort text filtering: a two-label cluster-relative name (<svc>.<ns>,
-		// which the pod search path may expand) and a public name that resolves to a private IP
-		// (10.0.0.1.nip.io) still pass here; the proxy's resolved-IP check is the real boundary.
-		labels := strings.Split(host, ".")
-		if !externalTLD(labels[len(labels)-1]) {
-			return "host top-level label is not an external domain"
-		}
+		// Judged by text only: a glob or a public name can still select an internal address, and
+		// that is left to the sandbox proxy.
 	}
 	for _, ip := range ep.AllowedIPs {
 		p, err := netip.ParsePrefix(ip)

@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: MIT
 """Contract of the pi engine: every case runs on PiG and on upstream pi."""
 
+import asyncio
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -88,12 +90,64 @@ async def test_mcp_tools_reach_the_model(tmp_path, engine) -> None:
 async def test_progress_advances_during_a_turn(tmp_path, engine) -> None:
     async with fake_facades("text") as fakes:
         await engine.start(_invocation(tmp_path, fakes.model_url), home=tmp_path / "home", scratch=tmp_path / "scratch")
-        started = engine.last_progress("inv-1")
+        engine._state("inv-1").last_progress_at = 0.0
         await engine.wait_settled("inv-1")
-        assert engine.last_progress("inv-1") >= started
+        assert engine.last_progress("inv-1") > 0.0
 
 
 async def test_missing_binary_names_the_engine(tmp_path, engine, monkeypatch) -> None:
     monkeypatch.setattr(pi_module, "PI_BIN", "/nonexistent/pi")
     with pytest.raises(NativeLaunchFailed, match="pi engine"):
         await engine.start(_invocation(tmp_path, "http://127.0.0.1:9/v1"), home=tmp_path / "home", scratch=tmp_path / "scratch")
+
+
+FAKE_PI = Path(__file__).parent / "fixtures" / "fake_pi.py"
+
+
+@pytest.fixture
+async def scripted(tmp_path, monkeypatch):
+    """A PiEngine on the scripted fake pi, and `launch(mode)`, which starts a run that misbehaves as `mode`."""
+    binary = tmp_path / "fake-pi"
+    shutil.copy(FAKE_PI, binary)
+    binary.chmod(0o755)
+    monkeypatch.setattr(pi_module, "PI_BIN", str(binary))
+    instance = PiEngine()
+
+    async def launch(mode: str):
+        invocation = _invocation(tmp_path, "http://127.0.0.1:9/v1")
+        real_env = pi_module.build_pi_env
+        monkeypatch.setattr(
+            pi_module, "build_pi_env",
+            lambda **kwargs: {**real_env(**kwargs), "FAKE_MODE": mode, "FAKE_MODEL": invocation.public.model.name},
+        )
+        return await instance.start(invocation, home=tmp_path / "home", scratch=tmp_path / "scratch")
+
+    yield instance, launch
+    await instance.close()
+
+
+async def test_unreadable_stdout_settles_failed(scripted) -> None:
+    engine, launch = scripted
+    await launch("non-json")
+    assert await asyncio.wait_for(engine.wait_settled("inv-1"), 10) == "failed"
+
+
+async def test_crash_after_settled_is_not_reported_completed(scripted) -> None:
+    engine, launch = scripted
+    await launch("die-after-settled")
+    assert await asyncio.wait_for(engine.wait_settled("inv-1"), 10) == "failed"
+    assert engine.result("inv-1") is None
+
+
+async def test_unusable_stats_still_settle(scripted) -> None:
+    engine, launch = scripted
+    await launch("null-tokens")
+    assert await asyncio.wait_for(engine.wait_settled("inv-1"), 10) == "completed"
+    assert engine.usage("inv-1") is None
+
+
+async def test_lost_stdin_is_a_native_launch_failure(scripted) -> None:
+    engine, launch = scripted
+    with pytest.raises(NativeLaunchFailed):
+        await launch("stdin-closed-before-prompt")
+    assert not engine._sessions["session-1"]._pending

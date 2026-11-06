@@ -103,10 +103,17 @@ class _PiSession:
         future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
         assert self._proc is not None and self._proc.stdin is not None
-        self._proc.stdin.write(json.dumps({"id": request_id, **command}).encode() + b"\n")
-        await self._proc.stdin.drain()
+        stdin = self._proc.stdin
+
+        async def exchange() -> dict[str, Any]:
+            stdin.write(json.dumps({"id": request_id, **command}).encode() + b"\n")
+            await stdin.drain()
+            return await future
+
         try:
-            return await asyncio.wait_for(future, timeout)
+            return await asyncio.wait_for(exchange(), timeout)
+        except ConnectionError as exc:
+            raise NativeLaunchFailed(f"pi stdin is closed: {exc}") from exc
         finally:
             self._pending.pop(request_id, None)
 
@@ -121,6 +128,11 @@ class _PiSession:
                         future.set_result(record)
                 else:
                     self._on_event(record)
+        except Exception:
+            # A line that is not JSON, or longer than the stdout limit, ends the stream: kill the
+            # process so the wait below returns and the invocation settles.
+            log.exception("pi session %s: unreadable stdout", self.session_ref)
+            await self.kill()
         finally:
             await self._proc.wait()
             self._on_exit()
@@ -158,14 +170,22 @@ class _PiSession:
             log.warning("pi session %s failed: %s", self.session_ref, state.error)
         else:
             outcome = "completed"
-        with contextlib.suppress(NativeLaunchFailed, TimeoutError):
+        try:
             if outcome == "completed":
-                state.result = ((await self.call({"type": "get_last_assistant_text"})).get("data") or {}).get("text")
-            stats = (await self.call({"type": "get_session_stats"})).get("data") or {}
-            state.usage = _usage(state.stats_before, stats, state.turns)
-        self._finish(state, outcome)
+                try:
+                    state.result = ((await self.call({"type": "get_last_assistant_text"})).get("data") or {}).get("text")
+                except (NativeLaunchFailed, TimeoutError):
+                    outcome = "failed"
+            with contextlib.suppress(NativeLaunchFailed, TimeoutError):
+                stats = (await self.call({"type": "get_session_stats"})).get("data") or {}
+                state.usage = _usage(state.stats_before, stats, state.turns)
+        finally:
+            self._finish(state, outcome)
 
     def _finish(self, state: _PiInvocation, outcome: EngineOutcome) -> None:
+        """The first outcome wins: a process exit must not be overwritten by a late settle."""
+        if state.settled.is_set():
+            return
         state.outcome = outcome
         if self._current is state:
             self._current = None
@@ -225,7 +245,7 @@ class PiEngine:
         write_pi_config(config, session.home)
         await session.launch([*config.args, *(["--session", session.sid] if session.sid else [])], env, cwd)
         try:
-            reply = await asyncio.wait_for(session.call({"type": "get_state"}), public.engine.startup_timeout_seconds)
+            reply = await session.call({"type": "get_state"}, timeout=public.engine.startup_timeout_seconds)
         except TimeoutError as exc:
             await session.kill()
             raise NativeLaunchFailed("pi engine: no answer within engine.startupTimeoutSeconds") from exc
@@ -263,6 +283,7 @@ class PiEngine:
         except BaseException:
             session._finish(state, "failed")  # never left unsettled: cancel() waits on it
             raise
+        state.outcome = "running"
         try:
             reply = await session.call({"type": "prompt", "message": invocation.prompt})
         except (NativeLaunchFailed, TimeoutError) as exc:
@@ -270,7 +291,6 @@ class PiEngine:
         if not reply.get("success"):
             session._finish(state, "failed")
             raise NativeLaunchFailed(f"prompt rejected: {reply.get('error')}")
-        state.outcome = "running"
         assert session.sid is not None
         return EngineReceipt(native_session_id=session.sid, input_id=invocation.invocation_id)
 

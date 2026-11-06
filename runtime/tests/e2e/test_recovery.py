@@ -387,10 +387,14 @@ async def test_failed_snapshot_retains_local_writer(e2e_stack_factory, monkeypat
 
     monkeypatch.setattr(storage_client, "put_object", fail_snapshot)
     observed = datetime.now(timezone.utc)
-    await stack.control.lifecycle.tick(observed)
-    await stack.control.lifecycle.tick(observed + timedelta(seconds=1))
-    await stack.control.lifecycle.tick(observed + timedelta(seconds=5))
-    await stack.control.lifecycle.tick(observed + timedelta(seconds=9))
+    # The session must report itself inactive before the Workspace counts as idle, and the fake
+    # engine takes a variable real time to get there under a loaded runner: tick one simulated
+    # second at a time, yielding real time between ticks, until the snapshot write is attempted.
+    for second in range(60):
+        await stack.control.lifecycle.tick(observed + timedelta(seconds=second))
+        if failed_keys:
+            break
+        await asyncio.sleep(0.05)
     assert failed_keys, "the real S3 SDK snapshot write fault must be reached"
     assert workspace_receipt is not None
     current_receipt = await stack.control.storage.restore(workspace_ref)

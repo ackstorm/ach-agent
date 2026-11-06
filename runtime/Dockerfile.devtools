@@ -30,9 +30,14 @@ WORKDIR /work
 
 RUN apk add --no-cache python3 py3-pip git tzdata
 
-RUN npm install --no-save @opencode/cli@2.2.5 \
-    && ./node_modules/.bin/opencode2 --version
+RUN apk add --no-cache tmux
+# One install: a second `npm install --no-save` prunes what the first one added.
+RUN npm install --no-save @opencode/cli@2.2.5 @pi-in-go/pig@0.7.0 @earendil-works/pi-coding-agent@1.5.0 \
+    && ./node_modules/.bin/opencode2 --version \
+    && ./node_modules/.bin/pig --version | grep -Fx "0.7.0+1.5.0" \
+    && ./node_modules/.bin/pi --version | grep -Fx "1.5.0"
 ENV OPENCODE_BIN=/work/node_modules/.bin/opencode2
+ENV PIG_BIN=/work/node_modules/.bin/pig UPSTREAM_PI_BIN=/work/node_modules/.bin/pi
 
 COPY pyproject.toml ./
 COPY src/ ./src/

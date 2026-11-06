@@ -793,10 +793,10 @@ class Control:
             duration = None
         usage = None
         raw_usage = reporting.get("usage") if isinstance(reporting, dict) else None
-        if isinstance(raw_usage, dict) and raw_usage.get("source") == "opencode" and raw_usage.get("basis") == "engine_estimate":
+        if isinstance(raw_usage, dict) and raw_usage.get("source") in ("opencode", "pi") and raw_usage.get("basis") == "engine_estimate":
             try:
                 usage = RunUsage(
-                    source="opencode", basis="engine_estimate", input=raw_usage.get("input"),
+                    source=raw_usage["source"], basis="engine_estimate", input=raw_usage.get("input"),
                     output=raw_usage.get("output"), reasoning=raw_usage.get("reasoning"),
                     cache_read=raw_usage.get("cache_read"), cache_write=raw_usage.get("cache_write"),
                     cost_usd=raw_usage.get("cost_usd"), steps=raw_usage.get("steps"),

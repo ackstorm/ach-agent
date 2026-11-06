@@ -148,7 +148,7 @@ def configure_logging() -> None:
     setattr(handler, _OWNED_HANDLER_ATTR, True)
     logger.addHandler(handler)
 
-UsageSource = Literal["opencode"]
+UsageSource = Literal["opencode", "pi"]
 UsageBasis = Literal["engine_estimate"]
 RunOutcome = Literal["completed", "failed", "cancelled", "skipped", "unknown"]
 AnomalyKind = Literal[

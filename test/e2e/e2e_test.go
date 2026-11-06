@@ -74,6 +74,7 @@ func TestE2E(t *testing.T) {
 		apply(t, "fixtures/pi-profile.yaml", nil)
 		clearStub(t)
 		apply(t, "fixtures/pi-agent.yaml", map[string]string{"NAME": "pi"})
+		t.Cleanup(func() { kubectl("", "-n", agentNS, "delete", "agent", "pi", "--wait=false") })
 		waitCond(t, "pi", "Ready", "True", 5*time.Minute)
 		postAccepted(t, "pi", 2*time.Minute)
 		// The stub answers the prompt with a call to its echo tool, then with its reply.

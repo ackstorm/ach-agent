@@ -8,7 +8,7 @@ spec:
   sandbox:
     openshell:
       image: ach-agent-execution:e2e
-      resources: {cpu: "1", memory: 1Gi}
+      resources: {cpu: 500m, memory: 1Gi}
       readyTimeoutSeconds: 180
   defaults:
     limits:

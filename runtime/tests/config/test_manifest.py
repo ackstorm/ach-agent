@@ -89,8 +89,8 @@ def test_limits_override_the_defaults(tmp_path) -> None:
     assert config.limits.max_concurrent_invocations == 1
 
 
-def test_deny_tools_defaults_to_execute(tmp_path) -> None:
-    assert parse_config(_wire(tmp_path, MINIMAL)).engine.deny_tools == ["execute"]
+def test_deny_tools_defaults_to_empty(tmp_path) -> None:
+    assert parse_config(_wire(tmp_path, MINIMAL)).engine.deny_tools == []
 
 
 def test_deny_tools_replaces_the_default(tmp_path) -> None:

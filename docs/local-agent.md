@@ -92,7 +92,7 @@ model: {name: qwen3-coder, type: openai, baseUrl: "http://host.docker.internal:1
 | `mcpServers` (`name`, `url`, `headers`) | no | none | `capability.ach.mcpServers` or `capability.standalone.mcpServers` |
 | `prompt.file` / `prompt.text` | no | none | `prompt.system` as text; a file is read and inlined |
 | `exclude` (`mcpServers`, `tools`, `skills`) | no | nothing | `capability.filter.exclude` |
-| `denyTools` | no | `[execute]` | `engine.denyTools` |
+| `denyTools` | no | none | `engine.denyTools` |
 | `limits` (any wire `limits` key, e.g. `maxSteps`, `maxInvocationSeconds`) | no | `maxSteps: 50`, `maxInvocationSeconds: 600` | `limits` |
 
 A header is `{env: NAME}` (a secret read from your shell) or `{value: …}` (a literal). The value of
@@ -103,9 +103,8 @@ an error at start.
 `model.limits` sets the context and output window the engine compacts against. With `ach:` it
 wins over the limits ACH reports for the model; set it only when the model's real window differs.
 
-`denyTools` hides native OpenCode tools from the model, for example `[execute, websearch]`. A list
-replaces the default, so keep `execute` in it: denied, MCP tools are called directly instead of through
-Code Mode.
+`denyTools` hides native OpenCode tools from the model, for example `[websearch, webfetch]`.
+`execute` (Code Mode) is always denied, so MCP tools are called directly.
 
 Unknown keys are an error. Paths resolve relative to the manifest. Compaction and timeouts are
 internal defaults of `run`. `limits.maxSteps` caps the engine steps of one turn: at the cap opencode

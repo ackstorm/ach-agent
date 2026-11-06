@@ -40,6 +40,11 @@ _OPTIONAL_PLUGINS = {
     "OPENCODE_ENABLE_MANAGEMENT_TOOLS": "opencode.tools",
 }
 
+# `execute` (Code Mode) is denied unless engine.forwardEnv passes this flag. Its catalog holds
+# only OpenCode's own tools, never the MCPs: weak models searched it, found no MCP tool and
+# reported having no access.
+_CODE_MODE_FLAG = "OPENCODE_ENABLE_CODE_MODE"
+
 
 def build_env(*, home: Path, scratch: Path, approved_env: dict[str, str], password: str) -> dict[str, str]:
     """Clean-slate env for one `opencode2 serve --stdio` subprocess.
@@ -111,10 +116,13 @@ def to_fixture(
             model_metadata["tool_call"] = True
         models[public.model.name] = model_metadata
         mcp = copy.deepcopy(catalog["mcp"])
+    deny_tools = list(public.engine.deny_tools)
+    if public.engine.env.get(_CODE_MODE_FLAG) not in ("1", "true") and "execute" not in deny_tools:
+        deny_tools.append("execute")
     fixture: dict[str, Any] = {
         "managedAgent": managed_agent,
         "maxSteps": public.limits.max_steps,
-        "denyTools": list(public.engine.deny_tools),
+        "denyTools": deny_tools,
         "providers": providers,
         "mcp": mcp,
         "thinking": {

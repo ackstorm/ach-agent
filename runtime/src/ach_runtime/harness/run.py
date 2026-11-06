@@ -26,7 +26,6 @@ import httpx
 
 from ach_runtime.channels.event import Event, RoutedEvent
 from ach_runtime.engine.opencode import OPENCODE_BIN
-from ach_runtime.hardening import set_non_dumpable
 from ach_runtime.harness.agent import AGENT_FACADE_PORT, SINGLE_UNIT_WARNING, make_agent_assembly
 from ach_runtime.harness.app import _retrieve_outcome
 from ach_runtime.harness.boot import run_control
@@ -95,7 +94,6 @@ async def run_local(
     tui: Sequence[str] | None = None, log_path: Path | None = None, **assembly_kwargs: Any,
 ) -> int:
     manifest = load_manifest(manifest_path)
-    set_non_dumpable()  # harness and engine share this container/uid; keep ACH_KEY and header secrets out of /proc
     base_url = os.environ.get(URL_ENV)
     if manifest.ach is not None and (not os.environ.get(KEY_ENV) or not base_url):
         raise RunError(f"no ACH credential: set {URL_ENV} and {KEY_ENV} or run `ach-cli login`")

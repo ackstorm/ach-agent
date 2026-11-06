@@ -16,7 +16,6 @@ from ach_runtime.engine.opencode import OpenCodeEngine
 from ach_runtime.execution.auth import create_authenticated_app
 from ach_runtime.execution.service import DEFAULT_WORKSPACE_DIR, ExecutionService
 from ach_runtime.execution.sessions import DEFAULT_SESSIONS_ROOT, SessionRegistry
-from ach_runtime.hardening import set_non_dumpable
 from ach_runtime.observability.runs import configure_logging
 
 REQUIRED_ENV = (
@@ -95,7 +94,6 @@ async def run_execution(
     sessions_root: Path = DEFAULT_SESSIONS_ROOT,
 ) -> None:
     configure_logging()
-    set_non_dumpable()  # sandbox env holds the facade token/bootstrap; the engine's shell tool shares the uid
     bootstrap = load_bootstrap(config, os.environ)
     # Fail identity and key validation before uvicorn opens a listening socket.
     app = build_execution_app(

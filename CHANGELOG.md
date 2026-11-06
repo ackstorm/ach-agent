@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.8] - 2026-11-06
+
+### Fixed
+
+- The operator accepts open-egress hosts such as `**.*.*` again. v0.6.7 refused any host whose
+  top-level label was a wildcard or not a domain label, so Agents with such a rule got no sandbox and
+  their runs failed with `WorkspaceUnhosted`. Hosts like `127.1`, `0x7f.0x1` and
+  `kubernetes.default.svc.*` pass the operator again too, as they did before v0.6.7: internal
+  destinations of these hosts are left to the sandbox proxy. Literal internal IPs, dotless hosts and
+  `.svc`, `.cluster.local` and `.local` hosts are still rejected.
+
 ## [0.6.7] - 2026-11-06
 
 ### Added

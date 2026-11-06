@@ -3,10 +3,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 fail() { echo "FAIL: $*" >&2; exit 1; }
-base=(--namespace ach-agent-system --set openshell.gateway=http://openshell.openshell.svc.cluster.local:8080)
+base=(--namespace ach-agent-system --set openshell.gateway=http://openshell.openshell.svc.cluster.local:8080 --set openshell.insecurePlaintext=true)
 
 helm template t . --namespace ach-agent-system >/dev/null 2>&1 && fail "renders without openshell.gateway"
 helm template t . "${base[@]}" --set openshell.mesh=none >/dev/null 2>&1 && fail "renders with mesh=none"
+helm template t . --namespace ach-agent-system --set openshell.gateway=http://openshell.openshell.svc.cluster.local:8080 >/dev/null 2>&1 && fail "renders plaintext without insecurePlaintext or tls.secret"
 
 out=$(helm template t . "${base[@]}")
 python3 - "$out" <<'PY'

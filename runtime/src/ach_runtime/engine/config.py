@@ -46,6 +46,21 @@ _OPTIONAL_PLUGINS = {
 _CODE_MODE_FLAG = "OPENCODE_ENABLE_CODE_MODE"
 
 
+def scrub_engine_global_config(home: Path) -> None:
+    """Remove engine global config a tool may have planted in the session HOME.
+
+    opencode reads ``$XDG_CONFIG_HOME/opencode/opencode.json(c)`` on every start, and the HOME is
+    writable by the engine's own tools, so a steered turn could plant plugins or re-enable denied
+    tools there and have them persist across engine restarts and snapshot restore. The managed
+    config is supplied explicitly through ``OPENCODE_CONFIG``; only the skills symlink legitimately
+    lives in that directory, so it is left in place. This does not stop a within-turn reload by the
+    same turn that planted the file; it stops the planted config from reaching any later turn.
+    """
+    cfg_dir = home / ".config" / "opencode"
+    for name in ("opencode.json", "opencode.jsonc"):
+        (cfg_dir / name).unlink(missing_ok=True)
+
+
 def build_env(*, home: Path, scratch: Path, approved_env: dict[str, str], password: str) -> dict[str, str]:
     """Clean-slate env for one `opencode2 serve --stdio` subprocess.
 

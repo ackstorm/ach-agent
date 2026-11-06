@@ -9,7 +9,7 @@ chart-sync: ## copy CRDs and render the ClusterRole from operator/config
 
 chart-test: chart-sync ## lint and render-test the chart; fails on drift in chart/
 	@/usr/bin/git diff --exit-code -- chart || { echo "FAIL: chart/ drifted; commit the output of make chart-sync" >&2; exit 1; }
-	helm lint chart --set openshell.gateway=http://x:8080
+	helm lint chart --set openshell.gateway=http://x:8080 --set openshell.insecurePlaintext=true
 	PATH="$(CURDIR)/runtime/.venv/bin:$$PATH" bash chart/tests/render_test.sh
 	docker run --rm --entrypoint promtool -v "$(CURDIR)/chart:/chart:ro" -w /chart/tests $(PROMTOOL_IMAGE) test rules alerts.test.yaml
 

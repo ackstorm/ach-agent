@@ -20,6 +20,7 @@ import (
 
 	osv1 "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1"
 	ostypes "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
+	"github.com/ackstorm/ach-agent/operator/internal/render"
 	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -383,15 +384,18 @@ func (b *openShellUnits) Create(ctx context.Context, a *achv1alpha1.Agent, p *ac
 	if len(w.Launch.Command) == 0 || w.Launch.Port < 1 {
 		return fmt.Errorf("launch of %s needs a command and a port", w.Name)
 	}
-	var boot struct {
-		FacadeEndpoint string `json:"facadeEndpoint"`
+	// ACH_BOOTSTRAP_JSON reaches the sandbox verbatim; reject a malformed one at Create rather
+	// than let it crash-loop the sandbox later. Its facadeEndpoint is deliberately not read here.
+	if !json.Valid([]byte(w.Launch.Env["ACH_BOOTSTRAP_JSON"])) {
+		return fmt.Errorf("launch of %s: ACH_BOOTSTRAP_JSON is not valid JSON", w.Name)
 	}
-	if err := json.Unmarshal([]byte(w.Launch.Env["ACH_BOOTSTRAP_JSON"]), &boot); err != nil {
-		return fmt.Errorf("launch of %s: ACH_BOOTSTRAP_JSON: %w", w.Name, err)
-	}
-	facade, err := url.Parse(boot.FacadeEndpoint)
+	// The reserved facade egress rule must point only at this Agent's own control unit. Derive
+	// that endpoint from the Agent identity, never from control-supplied input (the
+	// facadeEndpoint in ACH_BOOTSTRAP_JSON), so a hostile control cannot open reserved egress to
+	// any other in-cluster host — the one rule that skips the external-only check (policy.go).
+	facade, err := url.Parse(render.RenderInfrastructureV2(b.agent.Name, b.agent.Namespace).FacadeEndpoint)
 	if err != nil || facade.Hostname() == "" {
-		return fmt.Errorf("launch of %s: facadeEndpoint %q is not a URL", w.Name, boot.FacadeEndpoint)
+		return fmt.Errorf("launch of %s: derived facade endpoint is unusable: %w", w.Name, err)
 	}
 	port := uint32(80)
 	if facade.Scheme == "https" {

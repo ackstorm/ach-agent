@@ -256,8 +256,8 @@ func TestOpenShell_CreateMapsLaunchExactly(t *testing.T) {
 		t.Errorf("exposures = %+v, want one {8080, BearerPassthrough} (finding 11)", f.gw.exposures)
 	}
 	rule, ok := s.Spec.Policy.NetworkPolicies["ach-agent-facades"]
-	if !ok || len(rule.Endpoints) != 1 || rule.Endpoints[0].Host != "ach-facade.ach.svc.cluster.local" || rule.Endpoints[0].Port != 9090 {
-		t.Errorf("facades rule = %+v, want the facadeEndpoint host:port (finding 10)", rule)
+	if !ok || len(rule.Endpoints) != 1 || rule.Endpoints[0].Host != "agent-gitlab-reviewer.ach.svc.cluster.local" || rule.Endpoints[0].Port != 8081 {
+		t.Errorf("facades rule = %+v, want the operator-derived control facade host:port", rule)
 	}
 	if len(rule.Binaries) != len(runtimeBinaries) {
 		t.Errorf("binaries = %+v, want %v (finding 10)", rule.Binaries, runtimeBinaries)
@@ -556,17 +556,32 @@ func TestOpenShell_CreateRefusesWithoutTheSandboxFinalizer(t *testing.T) {
 	}
 }
 
-func TestOpenShell_FacadePortDefaultsByScheme(t *testing.T) {
-	for url, want := range map[string]uint32{"http://ach-facade.ach:9090": 9090, "http://ach-facade.ach": 80, "https://ach-facade.ach": 443} {
+// The reserved facade egress rule is derived from the Agent identity, so a control-supplied
+// facadeEndpoint (whatever host or port it names, hostile or absent) never changes it.
+func TestOpenShell_FacadeEndpointIgnoresControlInput(t *testing.T) {
+	for _, bootstrap := range []string{
+		`{"facadeEndpoint":"http://kubernetes.default.svc.cluster.local:443/x"}`,
+		`{"facadeEndpoint":"http://attacker.example.com:9090"}`,
+		`{"bootstrapVersion":"workspace-v3"}`, // no facadeEndpoint at all
+	} {
 		f := newOSFixture(t)
-		f.w.Launch.Env["ACH_BOOTSTRAP_JSON"] = `{"facadeEndpoint":"` + url + `"}`
+		f.w.Launch.Env["ACH_BOOTSTRAP_JSON"] = bootstrap
 		if err := f.b.Create(context.Background(), f.a, f.p, f.w); err != nil {
-			t.Fatal(err)
+			t.Fatalf("bootstrap %q: %v", bootstrap, err)
 		}
-		got := f.gw.byName[f.sName].Spec.Policy.NetworkPolicies["ach-agent-facades"].Endpoints[0].Port
-		if got != want {
-			t.Errorf("%s: port = %d, want %d", url, got, want)
+		ep := f.gw.byName[f.sName].Spec.Policy.NetworkPolicies["ach-agent-facades"].Endpoints[0]
+		if ep.Host != "agent-gitlab-reviewer.ach.svc.cluster.local" || ep.Port != 8081 {
+			t.Errorf("bootstrap %q: facade endpoint = %s:%d, want the operator-derived control facade", bootstrap, ep.Host, ep.Port)
 		}
+	}
+	// Malformed bootstrap JSON is refused at Create, not passed through to crash the sandbox.
+	f := newOSFixture(t)
+	f.w.Launch.Env["ACH_BOOTSTRAP_JSON"] = `not json`
+	if err := f.b.Create(context.Background(), f.a, f.p, f.w); err == nil || !strings.Contains(err.Error(), "not valid JSON") {
+		t.Fatalf("malformed bootstrap: err = %v, want a Create refusal", err)
+	}
+	if len(f.gw.created) != 0 {
+		t.Fatalf("created = %v, want none for malformed bootstrap", f.gw.created)
 	}
 }
 

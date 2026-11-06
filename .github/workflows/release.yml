@@ -25,9 +25,52 @@ jobs:
           first_line="${MSG%%$'\n'*}"
           version="$(printf '%s' "$first_line" | sed -nE 's/^chore\(release\): v([0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?).*$/\1/p')"
           test -n "$version" || { echo "release version could not be parsed" >&2; exit 1; }
+          # rc/** publishes pre-releases only: a suffix-free (stable) version there would move
+          # `latest` and cut a stable tag from unmerged code, so require the -suffix.
+          case "$GITHUB_REF" in
+            refs/heads/rc/*)
+              case "$version" in
+                *-*) : ;;
+                *) echo "rc/** may publish only pre-release versions (vX.Y.Z-rc.N); got v$version" >&2; exit 1 ;;
+              esac ;;
+          esac
           make release-check VERSION="$version"
           echo "value=$version" >> "$GITHUB_OUTPUT"
           echo "Verified release version: v$version"
+
+  claim-tag:
+    needs: parse-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # Claim the version tag BEFORE any image or chart is published, so a second run for the
+      # same version with different content (a concurrent run, or a rerun of an old release)
+      # fails here instead of overwriting the registry: pushing a tag that already exists at a
+      # different commit is rejected by the remote. A same-commit rerun is a no-op and allowed.
+      - name: Claim the release tag before publishing
+        env:
+          VERSION: ${{ needs.parse-release.outputs.version }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --tags origin
+          tag="v$VERSION"
+          if git show-ref --verify --quiet "refs/tags/$tag"; then
+            tag_sha="$(git rev-parse "refs/tags/$tag^{commit}")"
+            test "$tag_sha" = "$RELEASE_SHA" || {
+              echo "existing $tag points at $tag_sha, expected $RELEASE_SHA; refusing to republish a released version from a different commit" >&2
+              exit 1
+            }
+          else
+            git tag -a "$tag" -m "$tag" "$RELEASE_SHA"
+            git push origin "refs/tags/$tag"
+          fi
 
   runtime-ci:
     needs: parse-release
@@ -42,7 +85,7 @@ jobs:
     uses: ./.github/workflows/operator.yml
 
   publish-images:
-    needs: [parse-release, runtime-ci, operator-ci]
+    needs: [parse-release, runtime-ci, operator-ci, claim-tag]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -148,7 +191,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   publish-chart:
-    needs: [parse-release, runtime-ci, operator-ci]
+    needs: [parse-release, runtime-ci, operator-ci, claim-tag]
     runs-on: ubuntu-latest
     permissions:
       contents: read

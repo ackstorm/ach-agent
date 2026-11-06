@@ -31,7 +31,7 @@ from typing import Any, Literal, Protocol
 import httpx
 
 from ach_runtime.config.public import PublicConfig
-from ach_runtime.engine.config import build_env, managed_content, to_fixture
+from ach_runtime.engine.config import build_env, managed_content, scrub_engine_global_config, to_fixture
 from ach_runtime.observability.runs import RunUsage
 
 OPENCODE_BIN = os.environ.get("OPENCODE_BIN", "opencode2")
@@ -471,6 +471,9 @@ class _NativeSession:
         self._auth_header = "Basic " + base64.b64encode(f"opencode:{password}".encode()).decode()
         self.home.mkdir(parents=True, exist_ok=True)
         self.scratch.mkdir(parents=True, exist_ok=True)
+        # Drop any engine global config a tool planted in the HOME before this process reads it,
+        # so a steered turn cannot carry plugins or re-enabled tools into later turns.
+        scrub_engine_global_config(self.home)
         proc = await asyncio.create_subprocess_exec(
             OPENCODE_BIN,
             "serve",

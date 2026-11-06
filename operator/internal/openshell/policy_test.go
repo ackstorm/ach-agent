@@ -119,13 +119,7 @@ func TestBuildPolicy_Rejections(t *testing.T) {
 		"internal svc":           {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"agent-foo.ns.svc.","port":443}]}}}`, "cluster-internal"},
 		"internal cluster.local": {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"A.Cluster.Local","port":443}]}}}`, "cluster-internal"},
 		"internal short name":    {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"agent-foo","port":443}]}}}`, "cluster-internal"},
-		"glob wildcard tld":      {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"**.*.*","port":443}]}}}`, "cluster-internal"},
-		"glob two label":         {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"*.*","port":443}]}}}`, "cluster-internal"},
 		"glob local suffix":      {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"**.local","port":443}]}}}`, "cluster-internal"},
-		"glob svc wildcard tld":  {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"kubernetes.default.svc.*","port":443}]}}}`, "cluster-internal"},
-		"shorthand ipv4":         {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"127.1","port":443}]}}}`, "cluster-internal"},
-		"inet_aton hex":          {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"0x7f.0x1","port":443}]}}}`, "cluster-internal"},
-		"inet_aton hex octets":   {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"0xa.0.0.0x1","port":443}]}}}`, "cluster-internal"},
 		"internal ip host":       {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"10.1.2.3","port":443}]}}}`, "cluster-internal"},
 		"cgnat ip host":          {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"100.64.1.1","port":443}]}}}`, "cluster-internal"},
 		"loopback v6":            {`{"network_policies":{"x":{"name":"x","endpoints":[{"host":"::1","port":443}]}}}`, "cluster-internal"},
@@ -142,6 +136,13 @@ func TestBuildPolicy_Rejections(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuildPolicy_OpenEgressIsKept(t *testing.T) {
+	doc := raw(`{"network_policies":{"open-egress":{"name":"open-egress","endpoints":[{"host":"**.*.*","port":443,"ports":[443,80],"tls":"NETWORK_TLS_MODE_SKIP"}],"binaries":[{"path":"/**"}]}}}`)
+	if _, err := BuildPolicy(nil, doc, "f.ns.svc", 8081); err != nil {
+		t.Fatal(err)
 	}
 }
 

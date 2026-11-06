@@ -46,14 +46,15 @@ _OPTIONAL_PLUGINS = {
 _CODE_MODE_FLAG = "OPENCODE_ENABLE_CODE_MODE"
 
 
-def build_env(*, home: Path, scratch: Path, approved_env: dict[str, str], password: str) -> dict[str, str]:
-    """Clean-slate env for one `opencode2 serve --stdio` subprocess.
+# Catalog metadata fields are grants and are deliberately not request parameters.
+GRANT_KEYS = frozenset({"tool_call", "cost", "limit", "modalities", "attachment", "reasoning"})
+
+
+def base_env(*, home: Path, scratch: Path, approved_env: dict[str, str]) -> dict[str, str]:
+    """Engine-neutral clean-slate env: the CLI-basics allowlist plus the approved names.
 
     Pins HOME and all four XDG paths under the session's private directory (never the
-    shared Workspace), scratch/TMPDIR off the persistent volume, the private server
-    password, and the two project-config-discovery kill switches — `wid` (the shared
-    Workspace directory) is untrusted content, and OPENCODE_DISABLE_PROJECT_CONFIG=1 stops
-    opencode from reading a config file out of it.
+    shared Workspace) and scratch/TMPDIR off the persistent volume.
     """
     env = {name: os.environ[name] for name in _ENGINE_ENV_ALLOWLIST if name in os.environ}
     env.update(approved_env)
@@ -64,6 +65,17 @@ def build_env(*, home: Path, scratch: Path, approved_env: dict[str, str], passwo
     env["XDG_CACHE_HOME"] = str(home / ".cache")
     env["TMPDIR"] = str(scratch)
     env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
+
+def build_env(*, home: Path, scratch: Path, approved_env: dict[str, str], password: str) -> dict[str, str]:
+    """`base_env` plus the OpenCode lines for one `opencode2 serve --stdio` subprocess.
+
+    Adds the private server password and the two project-config-discovery kill switches:
+    `wid` (the shared Workspace directory) is untrusted content, and
+    OPENCODE_DISABLE_PROJECT_CONFIG=1 stops opencode from reading a config file out of it.
+    """
+    env = base_env(home=home, scratch=scratch, approved_env=approved_env)
     env["OPENCODE_SERVER_PASSWORD"] = password
     env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "1"
     env["OPENCODE_DISABLE_MODELS_FETCH"] = "1"
@@ -110,8 +122,7 @@ def to_fixture(
         provider = providers[public.model.type]
         models = provider["models"]
         model_metadata = dict(models[public.model.name])
-        grant_keys = {"tool_call", "cost", "limit", "modalities", "attachment", "reasoning"}
-        model_metadata.update({key: value for key, value in model_params.items() if key not in grant_keys})
+        model_metadata.update({key: value for key, value in model_params.items() if key not in GRANT_KEYS})
         if "tool_call" not in model_metadata:
             model_metadata["tool_call"] = True
         models[public.model.name] = model_metadata
@@ -133,9 +144,7 @@ def to_fixture(
     request_options = _thinking_options(
         public.model.type, public.model.thinking.enabled, public.model.thinking.effort
     )
-    # Catalog metadata fields are grants and are deliberately not request parameters.
-    grant_keys = {"tool_call", "cost", "limit", "modalities", "attachment", "reasoning"}
-    request_options.update({key: value for key, value in model_params.items() if key not in grant_keys})
+    request_options.update({key: value for key, value in model_params.items() if key not in GRANT_KEYS})
     fixture["requestOptions"] = request_options
     persona: str | None = None
     if public.prompt is not None and public.prompt.system is not None:

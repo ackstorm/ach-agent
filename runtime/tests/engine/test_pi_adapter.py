@@ -2,6 +2,7 @@
 """Contract of the pi engine: every case runs on PiG and on upstream pi."""
 
 import asyncio
+import json
 import os
 import shutil
 import signal
@@ -14,6 +15,7 @@ import pytest
 from ach_runtime.engine import pi as pi_module
 from ach_runtime.engine.base import NativeLaunchFailed, _HaltBudget
 from ach_runtime.engine.pi import PiEngine
+from ach_runtime.engine.pi_config import agent_dir
 from ach_runtime.execution.service import ExecutionService
 from fake_facades import fake_facades
 from pi_helpers import _invocation, binary, engine  # noqa: F401
@@ -52,6 +54,20 @@ async def test_mcp_tools_reach_the_model(tmp_path, engine) -> None:
         records = (await fakes.control({"command": "capture"}))["records"]
         names = [tool["function"]["name"] for tool in records[0]["body"]["tools"]]
         assert any(name.startswith("mcp__demo__") for name in names), names
+
+
+async def test_planted_system_prompt_files_never_reach_the_model(tmp_path, engine) -> None:
+    async with fake_facades("text") as fakes:
+        invocation = _invocation(tmp_path, fakes.model_url)
+        invocation.public = invocation.public.model_copy(update={"prompt": None})
+        directory = agent_dir(tmp_path / "home")
+        directory.mkdir(parents=True)
+        (directory / "SYSTEM.md").write_text("PLANTED", encoding="utf-8")
+        (directory / "APPEND_SYSTEM.md").write_text("PLANTED", encoding="utf-8")
+        await engine.start(invocation, home=tmp_path / "home", scratch=tmp_path / "scratch")
+        await engine.wait_settled("inv-1")
+        records = (await fakes.control({"command": "capture"}))["records"]
+        assert "PLANTED" not in json.dumps(records[0]["body"])
 
 
 async def test_progress_advances_during_a_turn(tmp_path, engine) -> None:

@@ -100,9 +100,16 @@ def to_pi_config(
 
 def write_pi_config(config: PiConfig, home: Path) -> None:
     """Rewrites every file on each start: agent-modified copies never survive. `settings.json`
-    must exist before an interactive start, or PiG blocks on its first-run dialog."""
+    must exist before an interactive start, or PiG blocks on its first-run dialog.
+
+    pi adds `SYSTEM.md` and `APPEND_SYSTEM.md` from this directory to the system prompt, whatever
+    `--no-context-files` says, and the engine's tools can write here, so both go before each start.
+    Like the opencode scrub, this stops a planted file reaching later turns, not a reload within
+    the planting turn."""
     directory = agent_dir(home)
     directory.mkdir(parents=True, exist_ok=True)
+    for name in ("SYSTEM.md", "APPEND_SYSTEM.md"):
+        (directory / name).unlink(missing_ok=True)
     for name, content in (("models.json", config.models), ("mcp.json", config.mcp), ("settings.json", config.settings)):
         (directory / name).write_text(json.dumps(content), encoding="utf-8")
     if config.system_prompt is not None:

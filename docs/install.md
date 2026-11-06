@@ -152,9 +152,14 @@ Google Cloud Storage (`gcs`). A save is done once the storage server has it.
 helm upgrade --install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --version <version> \
   -n ach-agent-system \
   --set openshell.gateway=http://openshell.openshell.svc.cluster.local:8080 \
+  --set openshell.insecurePlaintext=true \
   --set runtime.storage.s3.bucket=<bucket> --set runtime.storage.s3.region=<region> \
   --set 'storage.namespaces={ach-agent}'
 ```
+
+`openshell.insecurePlaintext=true` is required to run the gateway plaintext behind the mesh: it
+acknowledges that the gateway is unauthenticated. Prefer [Gateway mTLS](#gateway-mtls-optional),
+which sets `openshell.tls.secret` instead and needs no such flag.
 
 | Value | Default | Notes |
 |-------|---------|-------|

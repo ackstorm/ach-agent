@@ -18,7 +18,6 @@ import os
 import secrets
 import shutil
 import time
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +28,7 @@ import httpx
 from ach_runtime.config.public import PublicConfig
 from ach_runtime.engine.base import (
     CANCEL_KILL_BOUND_SECONDS,
+    SNAPSHOT_VERSION,
     ArchiveTransfer,
     EngineInvocation,
     EngineOutcome,
@@ -39,6 +39,8 @@ from ach_runtime.engine.base import (
     _HaltBudget,
     _kill_process_group,
     _OwnedProcessGroup,
+    check_manifest,
+    install_restored_home,
 )
 from ach_runtime.engine.config import build_env, managed_content, to_fixture
 from ach_runtime.observability.runs import RunUsage
@@ -63,7 +65,6 @@ NATIVE_MCP_TOOL_SETTLE_SECONDS = 0.3
 # recorded by PID/start-time before it reparents, not only when a kill is requested.
 _OWNERSHIP_POLL_SECONDS = 0.05
 _STDERR_TAIL_MAX_BYTES = 8192
-SNAPSHOT_VERSION = "session-v1"
 ENGINE_PACKAGE = "@opencode/cli"
 ENGINE_VERSION = "2.2.5"
 
@@ -958,6 +959,8 @@ def _parse_inbox_items(body: Any, *, session_sid: str) -> list[str] | None:
 
 
 class OpenCodeEngine:
+    family = "opencode"
+
     """The `start/status/cancel/snapshot/restore` protocol fixed by contract §4."""
 
     def __init__(self, *, transfer: ArchiveTransfer | None = None) -> None:
@@ -1508,6 +1511,7 @@ class OpenCodeEngine:
             )
         manifest = SnapshotManifest(
             snapshot_version=SNAPSHOT_VERSION,
+            engine_family=self.family,
             engine_package=ENGINE_PACKAGE,
             engine_version=ENGINE_VERSION,
             agent=agent,
@@ -1600,21 +1604,7 @@ class OpenCodeEngine:
         With `in_place` the session's HOME already holds its state (persistence type volume):
         nothing is downloaded or staged, and the relaunch resumes from it.
         """
-        required = {"engine_package", "workspace_ref", "session_ref", "workspace_path"}
-        missing_expected = required - expected.keys()
-        if missing_expected:
-            raise RestoreMismatch(
-                f"restore requires an explicit expected destination for {sorted(missing_expected)}"
-            )
-        if manifest.snapshot_version != SNAPSHOT_VERSION:
-            raise RestoreMismatch(f"unsupported snapshotVersion {manifest.snapshot_version!r}")
-        if not manifest.native_session_id:
-            raise RestoreMismatch("manifest.nativeSessionId must be a nonempty string")
-        if not manifest.workspace_path or not Path(manifest.workspace_path).is_absolute():
-            raise RestoreMismatch("manifest.workspacePath must be a nonempty absolute path")
-        for key, value in expected.items():
-            if getattr(manifest, key, None) != value:
-                raise RestoreMismatch(f"manifest.{key} does not match expected destination")
+        check_manifest(manifest, expected)
         session = self._sessions.get(session_ref)
         if session is None:
             if home is None or scratch is None:
@@ -1633,17 +1623,7 @@ class OpenCodeEngine:
         if restored_home is None and self._transfer is not None and not in_place:
             await self._transfer.download(manifest.archive_ref, dest=session.home)
 
-        previous_home: Path | None = None
-        if restored_home is not None:
-            previous_home = session.home.with_name(f".{session.home.name}.previous-{uuid.uuid4().hex}")
-            if session.home.exists():
-                session.home.rename(previous_home)
-            try:
-                restored_home.rename(session.home)
-            except BaseException:
-                if previous_home.exists():
-                    previous_home.rename(session.home)
-                raise
+        previous_home = install_restored_home(session.home, restored_home) if restored_home is not None else None
 
         fixture = to_fixture(public, managed_agent=managed_agent, lookup_only_prompt=True)
         content = managed_content(public, fixture)

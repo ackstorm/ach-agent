@@ -14,6 +14,8 @@ from ach_runtime.observability import RunUsage
 
 
 class ReportingEngine:
+    family = "opencode"
+
     def __init__(self) -> None:
         self.release = asyncio.Event()
 

@@ -1136,7 +1136,7 @@ class ExecutionService:
             if staged_manifest.get("sessionRef") != session_ref:
                 raise ValueError("staged HOME session identity does not match")
         expected = {
-            "engine_package": "@opencode/cli",
+            "engine_family": self._engine.family,
             "workspace_ref": workspace_ref,
             "session_ref": session_ref,
             "workspace_path": str(self._workspace_dir),

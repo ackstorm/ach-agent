@@ -14,6 +14,7 @@ import contextlib
 import os
 import signal
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,7 @@ from ach_runtime.config.public import PublicConfig
 from ach_runtime.observability.runs import RunUsage
 
 CANCEL_KILL_BOUND_SECONDS = 10.0
+SNAPSHOT_VERSION = "session-v1"
 
 
 class NativeLaunchFailed(RuntimeError):
@@ -48,7 +50,7 @@ EngineOutcome = Literal["running", "completed", "failed", "cancelled", "unknown"
 
 
 class ArchiveTransfer(Protocol):
-    """Task 6 seam — injected, never awaited on by Task 4's own logic/tests."""
+    """Uploads and downloads a session HOME archive. Injected into an engine; the engine's own logic never depends on it."""
 
     async def upload(self, path: Path, *, session_ref: str) -> str: ...
 
@@ -107,13 +109,14 @@ class SnapshotManifest:
     session_ref: str
     native_session_id: str
     workspace_path: str
+    engine_family: str = "opencode"
     registry: dict[str, Any] = field(default_factory=dict)
     archive_ref: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "snapshotVersion": self.snapshot_version,
-            "engine": {"package": self.engine_package, "version": self.engine_version},
+            "engine": {"family": self.engine_family, "package": self.engine_package, "version": self.engine_version},
             "agent": self.agent,
             "workspaceRef": self.workspace_ref,
             "sessionRef": self.session_ref,
@@ -128,6 +131,7 @@ class SnapshotManifest:
         engine = data.get("engine") or {}
         return cls(
             snapshot_version=data["snapshotVersion"],
+            engine_family=engine.get("family", "opencode"),
             engine_package=engine.get("package", ""),
             engine_version=engine.get("version", ""),
             agent=data.get("agent") or {},
@@ -141,8 +145,7 @@ class SnapshotManifest:
 
 
 # ---------------------------------------------------------------------------
-# Process ownership — ported from old-ach-agent engine/lifecycle.py verbatim
-# (PID/start-time guarded procfs descendant tracking, H-03).
+# Process ownership: PID/start-time guarded procfs descendant tracking.
 # ---------------------------------------------------------------------------
 
 
@@ -317,9 +320,49 @@ class _OwnedProcessGroup:
         return not self._live()
 
 
+def check_manifest(manifest: SnapshotManifest, expected: dict[str, str]) -> None:
+    """Fails closed unless `expected` names the destination and the manifest matches it.
+
+    Identity is the engine family, the workspace and session refs and the workspace path. The
+    engine version is not identity: a session saved by an older release restores under the running one."""
+    required = {"engine_family", "workspace_ref", "session_ref", "workspace_path"}
+    missing_expected = required - expected.keys()
+    if missing_expected:
+        raise RestoreMismatch(
+            f"restore requires an explicit expected destination for {sorted(missing_expected)}"
+        )
+    if manifest.snapshot_version != SNAPSHOT_VERSION:
+        raise RestoreMismatch(f"unsupported snapshotVersion {manifest.snapshot_version!r}")
+    if not manifest.native_session_id:
+        raise RestoreMismatch("manifest.nativeSessionId must be a nonempty string")
+    if not manifest.workspace_path or not Path(manifest.workspace_path).is_absolute():
+        raise RestoreMismatch("manifest.workspacePath must be a nonempty absolute path")
+    for key, value in expected.items():
+        if getattr(manifest, key, None) != value:
+            raise RestoreMismatch(f"manifest.{key} does not match expected destination")
+
+
+def install_restored_home(home: Path, restored_home: Path) -> Path:
+    """Moves `restored_home` into place as `home`, and returns where the old HOME went.
+
+    The caller deletes it once the restore holds, or renames it back on failure."""
+    previous_home = home.with_name(f".{home.name}.previous-{uuid.uuid4().hex}")
+    if home.exists():
+        home.rename(previous_home)
+    try:
+        restored_home.rename(home)
+    except BaseException:
+        if previous_home.exists():
+            previous_home.rename(home)
+        raise
+    return previous_home
+
+
 @runtime_checkable
 class Engine(Protocol):
     """What `ExecutionService` needs from an agent engine."""
+
+    family: str
 
     async def start(self, invocation: EngineInvocation, *, home: Path, scratch: Path) -> EngineReceipt: ...
     async def status(self, invocation_id: str) -> EngineOutcome: ...

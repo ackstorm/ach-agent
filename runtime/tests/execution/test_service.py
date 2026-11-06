@@ -37,6 +37,8 @@ class _Ambiguous(RuntimeError):
 
 @dataclass
 class FakeEngine:
+    family = "opencode"
+
     """Auto-settles to "completed" right after `start()` unless the invocation id is
     listed in `hang` (stays "running" until `cancel()` fires its settlement event) —
     matching the common case so most tests don't need to manage background settle tasks."""

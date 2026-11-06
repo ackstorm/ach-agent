@@ -14,6 +14,8 @@ from ach_runtime.execution.wire import StartRequest
 
 
 class ResultEngine:
+    family = "opencode"
+
     def __init__(self, raw_text: str) -> None:
         self.raw_text = raw_text
         self.settlement_release = asyncio.Event()

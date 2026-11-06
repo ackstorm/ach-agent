@@ -49,13 +49,16 @@ def _model_entry(public: PublicConfig, metadata: dict[str, Any], params: dict[st
 def to_pi_config(
     public: PublicConfig, *, home: Path, catalog: dict[str, Any] | None, mcp: dict[str, Any] | None,
     resolved_system_prompt: str | None, provider_base_url_override: str | None = None,
+    lookup_only_prompt: bool = False,
 ) -> PiConfig:
     """Raises ValueError for a config pi cannot honour."""
     if public.model.type != "openai":
         # pi's SDKs add /v1beta and /v1 to baseUrl, and check_model_request rejects those paths.
         raise ValueError(f"model.type {public.model.type!r} is not supported by the pi engine: use openai")
     params = {key: value for key, value in public.model.params.items() if key not in GRANT_KEYS}
-    fixture = to_fixture(public, catalog=catalog, resolved_system_prompt=resolved_system_prompt)
+    fixture = to_fixture(
+        public, catalog=catalog, resolved_system_prompt=resolved_system_prompt, lookup_only_prompt=lookup_only_prompt,
+    )
     provider = fixture["providers"][public.model.type]
     entry = _model_entry(public, provider["models"][public.model.name], params)
     models = {"providers": {PROVIDER_ID: {

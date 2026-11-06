@@ -13,14 +13,17 @@ import itertools
 import json
 import logging
 import os
+import shutil
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from ach_runtime.config.public import PublicConfig
 from ach_runtime.engine.base import (
-    EngineInvocation, EngineOutcome, EngineReceipt, NativeLaunchFailed, _kill_process_group,
+    CANCEL_KILL_BOUND_SECONDS, SNAPSHOT_VERSION, EngineInvocation, EngineOutcome, EngineReceipt, NativeLaunchFailed,
+    RestoreMismatch, SnapshotManifest, _HaltBudget, _kill_process_group, check_manifest, install_restored_home,
 )
 from ach_runtime.engine.pi_config import PiConfig, build_pi_env, to_pi_config, write_pi_config
 from ach_runtime.observability.runs import RunUsage
@@ -135,6 +138,9 @@ class _PiSession:
             await self.kill()
         finally:
             await self._proc.wait()
+            # Tools run in pi's process group: when pi is gone, they go with it.
+            if not await _kill_process_group(self._proc.pid, confirm_timeout=STOP_TIMEOUT_SECONDS):
+                log.warning("pi session %s: tool processes outlived pi", self.session_ref)
             self._on_exit()
 
     def _on_event(self, record: dict[str, Any]) -> None:
@@ -201,7 +207,8 @@ class _PiSession:
 
     async def begin(self, state: _PiInvocation) -> None:
         state.stats_before = (await self.call({"type": "get_session_stats"})).get("data") or {}
-        self._current = state
+        if not state.settled.is_set():  # a cancel can land while the stats call is in flight
+            self._current = state
 
     async def stop(self) -> bool:
         """Closes stdin, which pi treats as an orderly shutdown, then kills the group if it stays."""
@@ -283,6 +290,8 @@ class PiEngine:
         except BaseException:
             session._finish(state, "failed")  # never left unsettled: cancel() waits on it
             raise
+        if state.settled.is_set():
+            raise NativeLaunchFailed("invocation was cancelled before its prompt was sent")
         state.outcome = "running"
         try:
             reply = await session.call({"type": "prompt", "message": invocation.prompt})
@@ -316,6 +325,94 @@ class PiEngine:
             return "unknown"
         await state.settled.wait()
         return state.outcome
+
+    async def cancel(self, invocation_id: str, reason: str, *, _halt_budget: _HaltBudget | None = None) -> None:
+        for session in self._sessions.values():
+            state = session.invocations.get(invocation_id)
+            if state is None:
+                continue
+            state.cancel_requested = True
+            log.info("pi session %s cancelling: %s", session.session_ref, reason)
+            if session._current is not state:  # settled, or not yet at its prompt
+                session._finish(state, "cancelled")
+                return
+            deadline = _halt_budget.force_deadline if _halt_budget else time.monotonic() + CANCEL_KILL_BOUND_SECONDS
+            await session._abort()
+            try:
+                await asyncio.wait_for(state.settled.wait(), max(0.0, deadline - time.monotonic()))
+            except TimeoutError:
+                if _halt_budget is not None:
+                    _halt_budget.mark_forced()
+                await session.kill()
+                await state.settled.wait()  # the process exit settles it
+            return
+
+    async def suspend(self, session_ref: str) -> bool:
+        session = self._sessions.get(session_ref)
+        return True if session is None else await session.stop()
+
+    async def snapshot(
+        self, session_ref: str, *, agent: dict[str, str], workspace_ref: str, registry: dict[str, Any],
+    ) -> SnapshotManifest:
+        session = self._sessions.get(session_ref)
+        if session is None or session.sid is None:
+            raise NativeLaunchFailed(f"no native session to snapshot for {session_ref}")
+        if session.alive:
+            raise NativeLaunchFailed("snapshot requires a stopped pi process; call suspend() first")
+        manifest = SnapshotManifest(
+            snapshot_version=SNAPSHOT_VERSION, engine_family=self.family, engine_package=PI_PACKAGE,
+            engine_version=PI_VERSION, agent=agent, workspace_ref=workspace_ref, session_ref=session_ref,
+            native_session_id=session.sid, workspace_path=str(registry.get("workspace_path", "")), registry=registry,
+        )
+        (session.home / ".ach-registry.json").write_text(json.dumps(manifest.to_dict()), encoding="utf-8")
+        return manifest
+
+    async def retire_session(self, session_ref: str) -> None:
+        session = self._sessions.get(session_ref)
+        if session is None:
+            return
+        if session.alive:
+            raise NativeLaunchFailed(f"retire requires a stopped pi process for {session_ref}")
+        session.sid = None
+        session.fingerprint = None
+
+    async def restore(
+        self, session_ref: str, manifest: SnapshotManifest, *, expected: dict[str, str], public: PublicConfig,
+        engine_env: dict[str, str], managed_agent: str = "build", home: Path | None = None, scratch: Path | None = None,
+        restored_home: Path | None = None, in_place: bool = False, deadline_at: datetime | None = None,
+    ) -> None:
+        """Relaunches pi on the saved session id and requires it to answer for that id.
+
+        The config written here carries no catalog: the next `start` rewrites it, because the
+        fingerprint differs, and relaunches pi on the same session."""
+        check_manifest(manifest, expected)
+        session = self._sessions.get(session_ref)
+        if session is None:
+            if home is None or scratch is None:
+                raise RestoreMismatch(f"no reserved session state to restore into for {session_ref}")
+            session = self._session_for(session_ref, home, scratch)
+        if session.alive:
+            raise RestoreMismatch(f"restore requires a stopped pi process for {session_ref}")
+        if restored_home is None and not in_place:
+            raise RestoreMismatch("restore requires a staged HOME or an in-place one")
+        if restored_home is not None and not restored_home.is_dir():
+            raise RestoreMismatch("staged HOME payload does not exist")
+        previous = install_restored_home(session.home, restored_home) if restored_home is not None else None
+        config = to_pi_config(public, home=session.home, catalog=None, mcp=None, resolved_system_prompt=None, lookup_only_prompt=True)
+        env = build_pi_env(home=session.home, scratch=session.scratch, approved_env=engine_env)
+        session.tui_args, session.tui_env = config.args, env
+        session.sid, session.fingerprint = manifest.native_session_id, None
+        try:
+            await self._ensure_running(session, config, env, Path(manifest.workspace_path), public)
+        except (NativeLaunchFailed, TimeoutError) as exc:
+            await session.kill()
+            session.sid = None
+            if previous is not None:
+                shutil.rmtree(session.home, ignore_errors=True)
+                previous.rename(session.home)
+            raise RestoreMismatch(f"pi session {manifest.native_session_id} did not resume: {exc}") from exc
+        if previous is not None:
+            shutil.rmtree(previous, ignore_errors=True)
 
     async def close(self) -> None:
         await asyncio.gather(*(session.stop() for session in self._sessions.values()))

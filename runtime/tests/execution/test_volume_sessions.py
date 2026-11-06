@@ -20,6 +20,8 @@ REF = "se" * 16
 
 
 class _Engine:
+    family = "opencode"
+
     """Records in-place restores; the resume path calls nothing else on it."""
 
     def __init__(self, error: Exception | None = None) -> None:

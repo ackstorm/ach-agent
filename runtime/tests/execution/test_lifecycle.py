@@ -39,6 +39,8 @@ def test_inventory_includes_sessions_recovered_from_disk(tmp_path: Path) -> None
 
 
 class _IdleEngine:
+    family = "opencode"
+
     def __init__(self) -> None:
         self.start_calls: list[str] = []
         self.suspend_calls: list[str] = []

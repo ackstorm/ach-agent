@@ -1993,6 +1993,8 @@ async def test_harness_hydrates_prompt_tar_before_real_mini_engine_start(monkeyp
     )
 
     class RecordingEngine:
+        family = "opencode"
+
         def __init__(self):
             self.invocations = []
 
@@ -2292,6 +2294,8 @@ async def test_assembled_memory_context_reaches_start_and_managed_system_once(
     )
 
     class RecordingEngine:
+        family = "opencode"
+
         def __init__(self) -> None:
             self.invocations: list[object] = []
 
@@ -2493,6 +2497,8 @@ async def test_concurrent_memory_availability_is_captured_per_start(monkeypatch,
     )
 
     class RecordingEngine:
+        family = "opencode"
+
         def __init__(self) -> None:
             self.invocations: list[object] = []
 

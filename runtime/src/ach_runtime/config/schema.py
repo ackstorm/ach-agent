@@ -1023,6 +1023,14 @@ class RuntimeConfig(BaseModel):
         return self.agent.namespace
 
     @model_validator(mode="after")
+    def _pi_takes_openai_models_only(self) -> RuntimeConfig:
+        if self.engine.type == "pi" and self.model.type != "openai":
+            raise ValueError(
+                f"engine.type 'pi' does not support model.type {self.model.type!r}: pi takes openai models only"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _memory_fits_the_capability_server(self) -> RuntimeConfig:
         if self.memory is None:
             return self

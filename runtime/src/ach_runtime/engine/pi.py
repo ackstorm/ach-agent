@@ -184,7 +184,7 @@ class _PiSession:
         elif kind == "turn_end":
             state.turns += 1
             if state.turns >= state.max_steps and not state.step_limited:
-                # ponytail: a soft limit that can overshoot by one turn. An exact one needs an extension.
+                # ponytail: a soft limit that can overshoot by a turn or two; the abort races the turn loop. An exact one needs an extension.
                 state.step_limited = True
                 log.warning("pi session %s reached maxSteps (%d): aborting", self.session_ref, state.max_steps)
                 self._background(self._abort())

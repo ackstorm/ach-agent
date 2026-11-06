@@ -129,7 +129,7 @@ warm-up turn, resumes the same session, and takes over from the harness.
 
 | Topic | opencode | pi |
 |---|---|---|
-| `limits.maxSteps` | Native, exact | Soft, can overshoot by one turn, ends `failed` with no final answer |
+| `limits.maxSteps` | Native, exact | Soft, can overshoot by a turn or two, ends `failed` with no final answer |
 | File tools outside the workspace | Denied by `external_directory` | Allowed, bounded only by the boundary below |
 | `model.type` | openai, gemini, anthropic | openai only; others fail at start with a config error |
 | `ach-agent run` TUI | Client of the running engine | Is the engine; limits and the MCP check do not apply after the warm-up turn |

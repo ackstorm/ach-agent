@@ -273,7 +273,7 @@ standalone Agent and an ACH Agent.
 
 ### Engine
 
-`defaults.engine.type` (AgentProfile or Agent) selects `opencode` (default) or `pi`. The sandbox image
+`defaults.engine.type` (AgentProfile) or `spec.engine.type` (Agent) selects `opencode` (default) or `pi`. The sandbox image
 must contain the engine: for `pi`, set `sandbox.openshell.image` to
 `ghcr.io/ackstorm/ach-agent-execution-pi:<version>`, which ships PiG as `/opt/pi/pig` (181 MB against
 368 MB for `ghcr.io/ackstorm/ach-agent-execution`). `engine.type: pi` on an image without the binary

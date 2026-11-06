@@ -36,7 +36,13 @@ def test_minimal_manifest_is_a_valid_config(tmp_path) -> None:
 
 
 def test_engine_pi_sets_the_wire_engine_type(tmp_path) -> None:
-    assert parse_config(_wire(tmp_path, MINIMAL + "engine: pi\n")).engine.type == "pi"
+    wire = _wire(tmp_path, MINIMAL.replace("type: gemini", "type: openai") + "engine: pi\n")
+    assert parse_config(wire).engine.type == "pi"
+
+
+def test_engine_pi_with_a_non_openai_model_fails_at_manifest_load(tmp_path) -> None:
+    with pytest.raises(ConfigError, match="pi takes openai models only"):
+        parse_config(_wire(tmp_path, MINIMAL + "engine: pi\n"))
 
 
 @pytest.mark.parametrize("extra", ["", "engine: opencode\n"])

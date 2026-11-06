@@ -31,9 +31,10 @@ so a bad environment, model or credential fails before you type anything.
 
 Quit the opencode TUI with `ctrl+c` twice, or `/exit`; quit the pi TUI with `ctrl+d` on an empty editor, or
 `/quit`. That stops the agent and removes the container
-(`ach-agent: stopped`). The `Continue opencode mini -s ses_…` line opencode prints on exit is its own hint
-and does not apply here: the session lived in the removed container, so the next `ach-agent run` starts a
-new one.
+(`ach-agent: stopped`). `/exit` is not a pi command: it goes to the model as a prompt, and `ctrl+c` in pi
+only clears the editor. The `Continue opencode mini -s ses_…` line opencode prints on exit and the
+"To resume this session" hint pi prints are their own hints and do not apply here: the session lived in the
+removed container, so the next `ach-agent run` starts a new one.
 
 ## Manifest
 
@@ -108,14 +109,48 @@ an error at start.
 `model.limits` sets the context and output window the engine compacts against. With `ach:` it
 wins over the limits ACH reports for the model; set it only when the model's real window differs.
 
-`denyTools` hides native OpenCode tools from the model, for example `[websearch, webfetch]`.
-`execute` (Code Mode) is always denied, so MCP tools are called directly.
+`denyTools` hides native engine tools from the model: opencode names such as `[websearch, webfetch]`, or pi
+names such as `[bash, write]`; a name that is not a pi tool is an error at start with pi. It is not a
+boundary: `bash` reaches what a denied tool would. With opencode, `execute` (Code Mode) is always denied, so
+MCP tools are called directly.
 
 Unknown keys are an error. Paths resolve relative to the manifest. Compaction and timeouts are
 internal defaults of `run`. `limits.maxSteps` caps the engine steps of one turn: at the cap opencode
-disables tools and the turn ends without a reply, so a long task (a report, a multi-deck edit) needs
+disables tools and the turn ends without a reply (pi: see Engines), so a long task (a report, a multi-deck edit) needs
 a higher value, e.g. `limits: {maxSteps: 400, maxInvocationSeconds: 3600}`. There are no channels:
 paste what a channel would send into the TUI.
+
+## Engines
+
+`engine: opencode` (default) and `engine: pi` run the same manifest. pi is PiG, a Go build of the pi coding
+agent, shipped as `/opt/pi/pig` in the `ghcr.io/ackstorm/ach-agent-execution-pi:<version>` image (181 MB
+against 368 MB for `execution`). With `engine: pi` the TUI is the engine itself, so it opens only after the
+warm-up turn, resumes the same session, and takes over from the harness.
+
+| Topic | opencode | pi |
+|---|---|---|
+| `limits.maxSteps` | Native, exact | Soft, can overshoot by one turn, ends `failed` with no final answer |
+| File tools outside the workspace | Denied by `external_directory` | Allowed, bounded only by the boundary below |
+| `model.type` | openai, gemini, anthropic | openai only; others fail at start with a config error |
+| `ach-agent run` TUI | Client of the running engine | Is the engine; limits and the MCP check do not apply after the warm-up turn |
+| Reasoning tokens in usage | Reported | Null |
+
+`limits.maxSteps` and `maxInvocationSeconds` apply to the warm-up turn only; in the TUI a person is at the
+keyboard. A dead MCP server fails the warm-up turn, but pi continues without it in later TUI turns.
+
+A crash during a tool leaves the tool's effect done once, and the next prompt carries a "No result
+provided" tool result for it. The harness does not retry, so a model that reads that result may redo the
+action.
+
+## Security
+
+| Mode | Boundary |
+|---|---|
+| Agent in OpenShell | The OpenShell policy |
+| `ach-agent run` | The Docker container: `--user` of the caller, only `$PWD` and `/agent` (read-only) mounted, unrestricted network |
+| `denyTools` | Not a boundary: `bash` reaches what a denied tool would |
+
+pi loads no extensions beyond its built-in MCP client, and MCP traffic goes through the harness facades.
 
 ## Credentials
 

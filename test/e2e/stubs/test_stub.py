@@ -54,6 +54,19 @@ def test_credential_required_and_accepted(servers):
     assert status == 200 and json.loads(text)["runtime"]["models"][0]["id"] == "e2e-model"
 
 
+def test_a_prompt_asking_for_echo_gets_one_tool_call(servers):
+    urls, _ = servers
+    tools = [{"type": "function", "function": {"name": "serper_echo"}}]
+    msgs = [{"role": "user", "content": "e2e_call_echo"}]
+    head = {"x-litellm-api-key": "e2e-model-key"}
+    body = {"model": "m", "stream": True, "tools": tools, "messages": msgs}
+    status, text = call(urls["model"] + "/v1/chat/completions", "POST", head, body)
+    assert status == 200 and '"name": "serper_echo"' in text and '"finish_reason": "tool_calls"' in text
+    body["messages"] = msgs + [{"role": "tool", "tool_call_id": "call_e2e", "content": "e2e-echo"}]
+    status, text = call(urls["model"] + "/v1/chat/completions", "POST", head, body)
+    assert status == 200 and stub.REPLY in text and "tool_calls" not in text
+
+
 def test_requests_are_recorded_and_cleared(servers):
     urls, _ = servers
     port = int(urls["mcp"].rsplit(":", 1)[1])

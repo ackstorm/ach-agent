@@ -168,9 +168,10 @@ async def test_run_control_keeps_root_signal_owner_and_facades_through_ingress_d
     instances = []
 
     class FakeConfig:
-        def __init__(self, app, *, host, port, lifespan, timeout_graceful_shutdown, access_log=True):
+        def __init__(self, app, *, host, port, lifespan, timeout_graceful_shutdown, access_log=True, timeout_keep_alive=5):
             self.app, self.port, self.access_log = app, port, access_log
             self.timeout_graceful_shutdown = timeout_graceful_shutdown
+            self.timeout_keep_alive = timeout_keep_alive
 
     class FakeServer:
         def __init__(self, config):
@@ -255,6 +256,8 @@ async def test_run_control_keeps_root_signal_owner_and_facades_through_ingress_d
     assert [s.config.timeout_graceful_shutdown for s in instances] == [
         shutdown_timeout, boot.FACADE_DRAINED_GRACE_SECONDS,
     ]
+    # Idle facade connections outlive the gaps between an engine's tool calls.
+    assert [s.config.timeout_keep_alive for s in instances] == [5, boot.FACADE_KEEP_ALIVE_SECONDS]
     # The host API is mounted once on the facade listener, before either listener starts.
     assert [path for path, _app in facades.mounts] == ["/host/v1"]
     assert events.index("source-close") < events.index(("listener-exit", 8080)), "the ready path closes the source with `_stopping`"
@@ -294,7 +297,7 @@ async def test_recovered_boot_accounting_precedes_ingress(tmp_path: Path, monkey
     monkeypatch.setattr(boot, "create_facade_app", lambda _control: facades)
 
     class FakeConfig:
-        def __init__(self, app, *, host, port, lifespan, timeout_graceful_shutdown, access_log=True):
+        def __init__(self, app, *, host, port, lifespan, timeout_graceful_shutdown, access_log=True, timeout_keep_alive=5):
             self.app, self.port = app, port
 
     class FakeServer:
@@ -459,7 +462,7 @@ async def test_recovered_boot_failure_keeps_ingress_closed(tmp_path: Path, monke
     monkeypatch.setattr(boot, "create_facade_app", lambda _control: facades)
 
     class FakeConfig:
-        def __init__(self, app, *, host, port, lifespan, timeout_graceful_shutdown, access_log=True):
+        def __init__(self, app, *, host, port, lifespan, timeout_graceful_shutdown, access_log=True, timeout_keep_alive=5):
             self.app, self.port = app, port
 
     class FakeServer:
@@ -594,7 +597,7 @@ async def test_all_channel_sources_start_after_discovery_and_stop_before_drain(
     monkeypatch.setattr(boot, "create_facade_app", lambda _control: _Mountable())
 
     class FakeConfig:
-        def __init__(self, app, *, host, port, lifespan, timeout_graceful_shutdown, access_log=True):
+        def __init__(self, app, *, host, port, lifespan, timeout_graceful_shutdown, access_log=True, timeout_keep_alive=5):
             self.port = port
 
     class FakeServer:
@@ -708,7 +711,7 @@ async def test_source_start_failure_rolls_back_started_sources(tmp_path: Path, m
     monkeypatch.setattr(boot, "create_facade_app", lambda _control: _Mountable())
 
     class FakeConfig:
-        def __init__(self, app, *, host, port, lifespan, timeout_graceful_shutdown, access_log=True):
+        def __init__(self, app, *, host, port, lifespan, timeout_graceful_shutdown, access_log=True, timeout_keep_alive=5):
             self.port = port
 
     class FakeServer:
@@ -811,7 +814,7 @@ async def test_abnormal_listener_stops_sources_before_facade_shutdown(tmp_path: 
     monkeypatch.setattr(boot, "create_facade_app", lambda _control: _Mountable())
 
     class FakeConfig:
-        def __init__(self, app, *, host, port, lifespan, timeout_graceful_shutdown, access_log=True):
+        def __init__(self, app, *, host, port, lifespan, timeout_graceful_shutdown, access_log=True, timeout_keep_alive=5):
             self.port = port
 
     class FakeServer:
@@ -925,7 +928,7 @@ class _Listeners:
         owner = self
 
         class FakeConfig:
-            def __init__(self, app, *, host, port, lifespan, timeout_graceful_shutdown, access_log=True):
+            def __init__(self, app, *, host, port, lifespan, timeout_graceful_shutdown, access_log=True, timeout_keep_alive=5):
                 self.app, self.port = app, port
 
         class FakeServer:

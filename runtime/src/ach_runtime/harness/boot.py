@@ -22,6 +22,11 @@ log = logging.getLogger(__name__)
 
 # Seconds the facade listener waits for open connections once every admitted run settled.
 FACADE_DRAINED_GRACE_SECONDS = 5
+# Seconds an idle facade connection stays open. The OpenShell supervisor relays a sandbox's
+# pooled keep-alive connection onto one upstream connection and closes the sandbox side,
+# without a response, when the facade already closed its end; the engine sees ECONNRESET.
+# Uvicorn's default of 5 s is shorter than the gaps between an engine's tool calls.
+FACADE_KEEP_ALIVE_SECONDS = 75
 
 
 async def _stop_channel_sources(sources: list[Any]) -> None:
@@ -105,6 +110,7 @@ async def run_control(
         ManagedServer(uvicorn.Config(
             facades, host=facade_host or host, port=facade_port, lifespan="on",
             timeout_graceful_shutdown=shutdown_timeout,
+            timeout_keep_alive=FACADE_KEEP_ALIVE_SECONDS,
             access_log=False,
         )),
     ]

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: MIT
+import json
 import shutil
 import sys
 
@@ -72,3 +73,37 @@ async def test_run_reports_why_the_warmup_run_failed(tmp_path, monkeypatch) -> N
             manifest, workspace=workspace, name="smoke", data_dir=tmp_path / "data",
             tui=[sys.executable, "-c", "raise SystemExit(0)"], ach_transport=httpx.MockTransport(_catalog),
         )
+
+
+async def test_run_gives_a_clean_env_tui_only_the_engines_env(tmp_path, monkeypatch) -> None:
+    from dataclasses import replace
+
+    from ach_runtime.engine.opencode import OpenCodeEngine
+
+    real = OpenCodeEngine.tui_command
+
+    async def clean(self, session_ref):
+        command = await real(self, session_ref)
+        return None if command is None else replace(command, env={"ENGINE_ONLY": "1"}, clean_env=True)
+
+    monkeypatch.setattr(OpenCodeEngine, "tui_command", clean)
+    monkeypatch.setenv("ACH_KEY", "test-key-not-a-secret")
+    monkeypatch.setenv("ACH_URL", "https://ach.example")
+    monkeypatch.setenv("MANIFEST_SECRET", "s3cret-value")
+    manifest = tmp_path / "agent.yaml"
+    manifest.write_text(
+        "ach: {environment: engineering-prod}\nmodel: {name: gemini.gemini-flash-latest, type: gemini}\n"
+        "mcpServers: [{name: extra, url: 'http://127.0.0.1:9/mcp', headers: {X-Key: {env: MANIFEST_SECRET}}}]\n"
+    )
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    dump = tmp_path / "env.json"
+    script = f"import json, os; json.dump(dict(os.environ), open({str(dump)!r}, 'w'))"
+    rc = await run_local(
+        manifest, workspace=workspace, name="smoke", data_dir=tmp_path / "data",
+        tui=[sys.executable, "-c", script], ach_transport=httpx.MockTransport(_catalog),
+    )
+    assert rc == 0
+    seen = json.loads(dump.read_text())
+    # The interpreter may add its own locale variables; nothing of the harness's environment passes.
+    assert {k: v for k, v in seen.items() if not k.startswith("LC_")} == {"ENGINE_ONLY": "1"}

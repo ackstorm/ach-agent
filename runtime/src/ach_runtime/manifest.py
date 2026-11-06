@@ -14,7 +14,7 @@ import copy
 import re
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -99,6 +99,7 @@ class Manifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     ach: AchSpec | None = None
+    engine: Literal["opencode", "pi"] = "opencode"
     # Passed through to capability.ach.model or capability.standalone.model; the RuntimeConfig
     # schema validates it.
     model: dict[str, Any]
@@ -186,6 +187,8 @@ def manifest_to_wire(
     }
     wire["limits"].update(manifest.limits)
     wire["engine"]["denyTools"] = manifest.deny_tools
+    if manifest.engine != "opencode":
+        wire["engine"]["type"] = manifest.engine
     if manifest.prompt is not None:
         wire["prompt"] = {"system": _system_prompt(manifest.prompt, base_dir)}
     wire["configVersion"] = compute_config_version(wire)

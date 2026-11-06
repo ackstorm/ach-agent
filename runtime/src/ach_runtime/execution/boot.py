@@ -13,6 +13,7 @@ from fastapi import FastAPI
 
 from ach_runtime.config.public import ExecutionBootstrap
 from ach_runtime.engine.opencode import OpenCodeEngine
+from ach_runtime.engine.pi import PiEngine
 from ach_runtime.execution.auth import create_authenticated_app
 from ach_runtime.execution.service import DEFAULT_WORKSPACE_DIR, ExecutionService
 from ach_runtime.execution.sessions import DEFAULT_SESSIONS_ROOT, SessionRegistry
@@ -65,7 +66,7 @@ def build_execution_app(
     # A Workspace PVC mounted at /sandbox/ach (persistence type volume) starts empty.
     workspace_dir.mkdir(parents=True, exist_ok=True)
     instance_id = str(uuid.uuid4())
-    engine = OpenCodeEngine()
+    engine = PiEngine() if bootstrap.engine == "pi" else OpenCodeEngine()
     service = ExecutionService(
         engine=engine,
         sessions=SessionRegistry(sessions_root),

@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from pathlib import Path
 
-from ach_runtime.engine.opencode import RestoreMismatch, SnapshotManifest
+from ach_runtime.engine.base import RestoreMismatch, SnapshotManifest
 from ach_runtime.execution.service import ExecutionService
 from ach_runtime.storage.archive import (
     _MemberCheck,
@@ -380,8 +380,9 @@ async def import_hydration(
             home_context = state.home / ".ach-state"
             await _owned(_remove_managed_link, home_context, public)
             await _owned(_install_managed_batch, staged, home_context)
-            skills_link = state.home / ".config" / "opencode" / "skills"
-            await _owned(_remove_managed_link, skills_link, public / "skills")
-            await _owned(_link_managed, skills_link, home_context / "skills")
+            if service._engine.family == "opencode":
+                skills_link = state.home / ".config" / "opencode" / "skills"
+                await _owned(_remove_managed_link, skills_link, public / "skills")
+                await _owned(_link_managed, skills_link, home_context / "skills")
         finally:
             await _owned(shutil.rmtree, batch, ignore_errors=True)

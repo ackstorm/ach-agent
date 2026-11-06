@@ -276,6 +276,22 @@ change the images to `ghcr.io/ackstorm/ach-agent-control:0.2.1` and
 `ghcr.io/ackstorm/ach-agent-execution:0.2.1`. `test/e2e/fixtures/` holds tested examples of a
 standalone Agent and an ACH Agent.
 
+### Engine
+
+`defaults.engine.type` (AgentProfile) or `spec.engine.type` (Agent) selects `opencode` (default) or `pi`. The sandbox image
+must contain the engine: for `pi`, set `sandbox.openshell.image` to
+`ghcr.io/ackstorm/ach-agent-execution-pi:<version>`, which ships PiG as `/opt/pi/pig` (181 MB against
+368 MB for `ghcr.io/ackstorm/ach-agent-execution`). `engine.type: pi` on an image without the binary
+fails at start with a message naming the engine and the image. pi takes `model.type: openai` only.
+`test/e2e/fixtures/pi-profile.yaml` and `pi-agent.yaml` are a tested example.
+
+The known differences between the engines and the security boundaries are in
+[local-agent.md](local-agent.md#engines); they apply to Agents in the cluster as well. In the cluster the
+boundary is the OpenShell policy, and `denyTools` is not one.
+
+To run upstream pi instead of PiG, use an image with node and the pi package and add `node` to
+`runtimeBinaries` (in `operator/internal/openshell/policy.go`); this adds about 215 MB on Alpine. Agents, config and sessions stay as they are.
+
 ## 7. An ACH Agent
 
 With `capabilityServer: ach` the Agent takes its model, MCP servers and context from an ACH Environment,

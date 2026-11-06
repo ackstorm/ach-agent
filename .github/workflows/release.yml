@@ -146,6 +146,20 @@ jobs:
           cache-from: type=gha,scope=execution-release
           cache-to: type=gha,mode=max,scope=execution-release
 
+      - name: Publish execution-pi image
+        id: execution-pi
+        uses: docker/build-push-action@v7
+        with:
+          context: runtime
+          target: execution-pi
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/ackstorm/ach-agent-execution-pi:${{ needs.parse-release.outputs.version }}
+            ${{ !contains(needs.parse-release.outputs.version, '-') && 'ghcr.io/ackstorm/ach-agent-execution-pi:latest' || '' }}
+          cache-from: type=gha,scope=execution-pi-release
+          cache-to: type=gha,mode=max,scope=execution-pi-release
+
       - name: Publish local agent image
         id: local
         uses: docker/build-push-action@v7
@@ -169,6 +183,7 @@ jobs:
             "ghcr.io/ackstorm/ach-agent-operator:$VERSION" \
             "ghcr.io/ackstorm/ach-agent-control:$VERSION" \
             "ghcr.io/ackstorm/ach-agent-execution:$VERSION" \
+            "ghcr.io/ackstorm/ach-agent-execution-pi:$VERSION" \
             "ghcr.io/ackstorm/ach-agent-local:$VERSION"; do
             manifest="$(docker buildx imagetools inspect "$image")"
             printf '%s\n' "$manifest" | grep -Fq 'linux/amd64'

@@ -312,7 +312,11 @@ _RESERVED_ENGINE_ENV_EXACT = frozenset(
         "OPENCODE_BIN",
     }
 )
-_RESERVED_ENGINE_ENV_PREFIXES = ("ACH_", "XDG_", "OPENCODE_CONFIG")
+_RESERVED_ENGINE_ENV_PREFIXES = ("ACH_", "XDG_", "OPENCODE_CONFIG", "PI_", "PIG_")
+
+PI_NATIVE_TOOLS = frozenset(
+    {"read", "bash", "edit", "write", "grep", "find", "ls", "codemode", "tool_search"}
+)
 
 
 def _check_engine_env_name(name: str) -> None:
@@ -348,10 +352,11 @@ class EngineBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
 
+    type: Literal["opencode", "pi"] = "opencode"
     env: dict[str, str] = Field(default_factory=dict)
     startup_timeout_seconds: int = Field(default=30, gt=0, alias="startupTimeoutSeconds")
     compaction: CompactionBlock
-    # Native OpenCode tools hidden from the model: each name becomes a permission deny rule
+    # Native engine tools hidden from the model: each name becomes a permission deny rule
     # on the managed agent. MCP tools are governed by `capability.filter.exclude.tools`.
     deny_tools: list[str] = Field(default_factory=list, alias="denyTools")
 
@@ -361,12 +366,18 @@ class EngineBlock(BaseModel):
         for name in v:
             if not name or "." in name:
                 raise ValueError(
-                    f"engine.denyTools entry {name!r} must be a native OpenCode tool name; "
+                    f"engine.denyTools entry {name!r} must be a native engine tool name; "
                     "MCP tools go in capability.filter.exclude.tools"
                 )
         if len(set(v)) != len(v):
             raise ValueError("engine.denyTools has duplicate names")
         return v
+
+    @model_validator(mode="after")
+    def _deny_tools_match_the_engine(self) -> EngineBlock:
+        if self.type == "pi" and (unknown := sorted(set(self.deny_tools) - PI_NATIVE_TOOLS)):
+            raise ValueError(f"engine.denyTools: {unknown} are not pi tools")
+        return self
 
     @field_validator("env")
     @classmethod
@@ -1010,6 +1021,14 @@ class RuntimeConfig(BaseModel):
         if self.capability.ach is not None:
             return self.capability.ach.environment
         return self.agent.namespace
+
+    @model_validator(mode="after")
+    def _pi_takes_openai_models_only(self) -> RuntimeConfig:
+        if self.engine.type == "pi" and self.model.type != "openai":
+            raise ValueError(
+                f"engine.type 'pi' does not support model.type {self.model.type!r}: pi takes openai models only"
+            )
+        return self
 
     @model_validator(mode="after")
     def _memory_fits_the_capability_server(self) -> RuntimeConfig:

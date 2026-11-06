@@ -38,7 +38,7 @@ from pydantic import JsonValue
 
 from ach_runtime.config.public import PublicConfig
 from ach_runtime.config.schema import PromptBlock
-from ach_runtime.engine.opencode import (
+from ach_runtime.engine.base import (
     CANCEL_KILL_BOUND_SECONDS,
     EngineOutcome,
     EngineReceipt,
@@ -157,7 +157,7 @@ class _Invocation:
 def _build_fixture_invocation(
     request: StartRequest, public: PublicConfig, workspace_dir: Path
 ) -> object:
-    from ach_runtime.engine.opencode import EngineInvocation
+    from ach_runtime.engine.base import EngineInvocation
 
     system_prompt = public.prompt.system if public.prompt is not None else None
     resolved_system_prompt = None
@@ -1136,7 +1136,7 @@ class ExecutionService:
             if staged_manifest.get("sessionRef") != session_ref:
                 raise ValueError("staged HOME session identity does not match")
         expected = {
-            "engine_package": "@opencode/cli",
+            "engine_family": self._engine.family,
             "workspace_ref": workspace_ref,
             "session_ref": session_ref,
             "workspace_path": str(self._workspace_dir),

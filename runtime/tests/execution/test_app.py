@@ -29,6 +29,8 @@ from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER, engine_bearer, engin
 
 @dataclass
 class FakeEngine:
+    family = "opencode"
+
     start_calls: list[str] = field(default_factory=list)
 
     async def start(self, invocation, *, home, scratch, password=None):

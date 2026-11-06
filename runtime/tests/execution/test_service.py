@@ -17,7 +17,7 @@ import pytest
 
 import ach_runtime.execution.service as service_module
 from ach_runtime.config.schema import HookBlock
-from ach_runtime.engine.opencode import EngineReceipt, SnapshotManifest
+from ach_runtime.engine.base import EngineReceipt, SnapshotManifest
 from ach_runtime.config.schema import PromptBlock, SystemAch, SystemFile, SystemText
 from ach_runtime.execution.service import (
     CapacityExceeded,
@@ -37,6 +37,8 @@ class _Ambiguous(RuntimeError):
 
 @dataclass
 class FakeEngine:
+    family = "opencode"
+
     """Auto-settles to "completed" right after `start()` unless the invocation id is
     listed in `hang` (stays "running" until `cancel()` fires its settlement event) —
     matching the common case so most tests don't need to manage background settle tasks."""

@@ -553,10 +553,9 @@ spec:
                 x-kubernetes-list-type: map
               engine:
                 description: |-
-                  EngineSpec is the harness-local engine block (config: engine.*). Unset fields are omitted
-                  (the harness defaults them). home/workDir/idleTtlSeconds/maxToolCalls/type/pi were retired
-                  for workspace-v1 (contract §10): one engine (OpenCode v2), no placements/binaries/paths to
-                  select, and tool-call counting is replaced by limits.maxSteps.
+                  EngineSpec is the harness-local engine block (config: engine.*): the engine type and its
+                  env, timeout, compaction and tool deny list. Unset fields are omitted (the harness
+                  defaults them).
                 properties:
                   compaction:
                     description: |-
@@ -582,7 +581,7 @@ spec:
                     type: object
                   denyTools:
                     description: |-
-                      DenyTools names native OpenCode tools (e.g. question, execute, websearch, webfetch)
+                      DenyTools names native engine tools (e.g. question, execute, websearch, webfetch)
                       hidden from the managed agent's model. MCP tools are governed by
                       ach.capability.filter.exclude.tools; a dotted name is MCP syntax and is rejected.
                     items:
@@ -603,6 +602,13 @@ spec:
                     format: int64
                     minimum: 1
                     type: integer
+                  type:
+                    description: Type selects the engine. The sandbox image must contain
+                      it. Unset means opencode.
+                    enum:
+                    - opencode
+                    - pi
+                    type: string
                 type: object
               env:
                 description: |-

@@ -18,14 +18,12 @@ import pytest
 
 from ach_runtime.config.public import public_config
 from ach_runtime.config.schema import RuntimeConfig
+from ach_runtime.engine.base import EngineInvocation, RestoreMismatch, SnapshotManifest
 from ach_runtime.engine.opencode import (
     ENGINE_PACKAGE,
     ENGINE_VERSION,
     SNAPSHOT_VERSION,
-    EngineInvocation,
     OpenCodeEngine,
-    RestoreMismatch,
-    SnapshotManifest,
 )
 from tests.engine.fake_facades import fake_facades
 
@@ -58,6 +56,13 @@ def _restore_kwargs(public):
     return dict(public=public, engine_env=dict(public.engine.env))
 
 
+def test_a_manifest_with_no_family_is_opencode() -> None:
+    manifest = SnapshotManifest.from_dict(
+        {"snapshotVersion": "session-v1", "engine": {"package": "@opencode/cli", "version": "2.2.5"}}
+    )
+    assert manifest.engine_family == "opencode"
+
+
 async def test_restore_rejects_unsupported_snapshot_version(public) -> None:
     engine = OpenCodeEngine()
     with pytest.raises(RestoreMismatch):
@@ -68,7 +73,7 @@ async def test_restore_rejects_unsupported_snapshot_version(public) -> None:
 
 async def test_restore_accepts_a_snapshot_from_another_engine_version(public) -> None:
     engine = OpenCodeEngine()
-    expected = {"engine_package": ENGINE_PACKAGE, "workspace_ref": "ws", "session_ref": "se",
+    expected = {"engine_family": "opencode", "workspace_ref": "ws", "session_ref": "se",
                 "workspace_path": "/workspace"}
     # The identity checks pass; the restore then stops for lack of session state, not the version.
     with pytest.raises(RestoreMismatch, match="no reserved session state"):
@@ -77,12 +82,11 @@ async def test_restore_accepts_a_snapshot_from_another_engine_version(public) ->
         )
 
 
-async def test_restore_rejects_engine_package_mismatch(public) -> None:
+async def test_restore_rejects_engine_family_mismatch(public) -> None:
     engine = OpenCodeEngine()
-    with pytest.raises(RestoreMismatch):
-        await engine.restore(
-            "se", _manifest(engine_package="@opencode/other"), expected={}, **_restore_kwargs(public)
-        )
+    expected = {"engine_family": "pi", "workspace_ref": "ws", "session_ref": "se", "workspace_path": "/workspace"}
+    with pytest.raises(RestoreMismatch, match="engine_family"):
+        await engine.restore("se", _manifest(), expected=expected, **_restore_kwargs(public))
 
 
 async def test_restore_rejects_identity_mismatch_against_expected_destination(public) -> None:
@@ -121,7 +125,7 @@ async def test_restore_rejects_missing_archive_payload(public) -> None:
             "se",
             _manifest(archive_ref=None),
             expected={
-                "engine_package": ENGINE_PACKAGE,
+                "engine_family": "opencode",
                 "engine_version": ENGINE_VERSION,
                 "workspace_ref": "ws",
                 "session_ref": "se",
@@ -189,7 +193,7 @@ async def test_full_snapshot_restore_round_trip_same_sid(tmp_path: Path, public)
         fresh_scratch = tmp_path / "restored-scratch"
         fresh_engine._session_for("native-session-snap", fresh_home, fresh_scratch)
         expected = {
-            "engine_package": ENGINE_PACKAGE,
+            "engine_family": "opencode",
             "engine_version": ENGINE_VERSION,
             "workspace_ref": "ws-ref",
             "session_ref": "native-session-snap",
@@ -252,7 +256,7 @@ async def test_a_killed_session_resumes_in_place_on_a_fresh_engine(tmp_path: Pat
             session_ref,
             manifest,
             expected={
-                "engine_package": ENGINE_PACKAGE,
+                "engine_family": "opencode",
                 "workspace_ref": "ws-ref",
                 "session_ref": session_ref,
                 "workspace_path": str(workspace_dir),
@@ -284,7 +288,7 @@ async def test_restore_rejects_a_live_native_process(tmp_path: Path, public) -> 
             "se",
             _manifest(),
             expected={
-                "engine_package": ENGINE_PACKAGE,
+                "engine_family": "opencode",
                 "engine_version": ENGINE_VERSION,
                 "workspace_ref": "ws",
                 "session_ref": "se",
@@ -326,7 +330,7 @@ async def test_in_place_resume_from_the_same_home_same_sid(tmp_path: Path, publi
         manifest = SnapshotManifest.from_dict(json.loads((home / ".ach-registry.json").read_text(encoding="utf-8")))
         await fresh_engine.restore(
             "native-session-volume", manifest,
-            expected={"engine_package": ENGINE_PACKAGE, "workspace_ref": "ws-ref",
+            expected={"engine_family": "opencode", "workspace_ref": "ws-ref",
                       "session_ref": "native-session-volume", "workspace_path": str(workspace_dir)},
             public=public, engine_env=dict(public.engine.env), home=home, scratch=scratch, in_place=True,
         )

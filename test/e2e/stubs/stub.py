@@ -105,6 +105,34 @@ def _chat(model, stream):
     return "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
 
 
+def _echo_tool(doc):
+    """Name of the offered tool ending in `echo` when the prompt carries `e2e_call_echo` and no tool
+    has answered yet, else None."""
+    msgs = doc.get("messages") or []
+    if any(m.get("role") == "tool" for m in msgs) or "e2e_call_echo" not in json.dumps(msgs):
+        return None
+    for t in doc.get("tools") or []:
+        name = (t.get("function") or {}).get("name", "")
+        if name.endswith("echo"):
+            return name
+    return None
+
+
+def _tool_call(model, name, stream):
+    base = {"id": "chatcmpl-e2e", "object": "chat.completion.chunk", "created": int(time.time()), "model": model}
+    call = {"id": "call_e2e", "type": "function", "function": {"name": name, "arguments": json.dumps({"text": "e2e-echo"})}}
+    usage = {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}
+    if not stream:
+        return {**base, "object": "chat.completion", "usage": usage, "choices": [
+            {"index": 0, "finish_reason": "tool_calls", "message": {"role": "assistant", "content": None, "tool_calls": [call]}}]}
+    chunks = [
+        {**base, "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}]},
+        {**base, "choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, **call}]}, "finish_reason": None}]},
+        {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}], "usage": usage},
+    ]
+    return "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
+
+
 def _mcp(msg):
     method, mid = msg.get("method"), msg.get("id")
     if mid is None:
@@ -244,6 +272,11 @@ def handler_for(state, kind):
                 seconds = int(doc.get("e2e_stream_seconds") or 0)
                 if doc.get("stream") and seconds:
                     return self._stream(doc.get("model", ""), seconds)
+                tool = _echo_tool(doc)
+                if tool and doc.get("stream"):
+                    return self._send(200, _tool_call(doc.get("model", ""), tool, True), "text/event-stream")
+                if tool:
+                    return self._send(200, _tool_call(doc.get("model", ""), tool, False))
                 if doc.get("stream"):
                     return self._send(200, _chat(doc.get("model", ""), True), "text/event-stream")
                 return self._send(200, _chat(doc.get("model", ""), False))

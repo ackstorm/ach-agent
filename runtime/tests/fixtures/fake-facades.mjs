@@ -89,6 +89,10 @@ export async function startFakeFacades() {
       res.on("close", () => (record.responseClosed = true))
       requests.push(record)
       const result = modelHandler(record, body) ?? { chunks: textChunks("ok") }
+      if (result.status) {
+        res.writeHead(result.status)
+        return res.end("{}")
+      }
       if (result.hold) {
         // Leave the stream open (no [DONE], no res.end()) so a cancellation
         // test can interrupt mid-turn and observe `responseClosed` flip.

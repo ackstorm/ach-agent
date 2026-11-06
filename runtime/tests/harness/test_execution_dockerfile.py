@@ -20,7 +20,7 @@ def _stage(text: str, name: str) -> list[str]:
 
 
 @pytest.mark.skipif(not _DOCKERFILE.exists(), reason="Dockerfile not mounted")
-@pytest.mark.parametrize("stage", ["execution", "control", "agent"])
+@pytest.mark.parametrize("stage", ["execution-base", "control", "agent"])
 def test_stage_sets_numeric_non_root_user(stage: str) -> None:
     users = [l.split()[1] for l in _stage(_DOCKERFILE.read_text(), stage) if l.startswith("USER ")]
     assert users, f"{stage} stage must set USER"
@@ -30,10 +30,15 @@ def test_stage_sets_numeric_non_root_user(stage: str) -> None:
 
 
 @pytest.mark.skipif(not _DOCKERFILE.exists(), reason="Dockerfile not mounted")
-def test_execution_stage_installs_the_ach_mcp_cli() -> None:
-    stage = "\n".join(_stage(_DOCKERFILE.read_text(), "execution"))
+def test_execution_base_stage_installs_the_ach_mcp_cli() -> None:
+    stage = "\n".join(_stage(_DOCKERFILE.read_text(), "execution-base"))
     assert "/usr/local/bin/ach-mcp" in stage
     assert "python -m ach_runtime.mcpcall" in stage
+
+
+@pytest.mark.skipif(not _DOCKERFILE.exists(), reason="Dockerfile not mounted")
+def test_execution_pi_stage_inherits_execution_base() -> None:
+    assert "FROM execution-base AS execution-pi" in _DOCKERFILE.read_text().splitlines()
 
 
 @pytest.mark.skipif(not _DOCKERFILE.exists(), reason="Dockerfile not mounted")

@@ -10,13 +10,8 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-from ach_runtime.engine.opencode import (
-    ENGINE_PACKAGE,
-    ENGINE_VERSION,
-    SNAPSHOT_VERSION,
-    RestoreMismatch,
-    SnapshotManifest,
-)
+from ach_runtime.engine.base import RestoreMismatch, SnapshotManifest
+from ach_runtime.engine.opencode import ENGINE_PACKAGE, ENGINE_VERSION, SNAPSHOT_VERSION
 from ach_runtime.execution.service import ExecutionService
 from ach_runtime.execution.sessions import SessionRegistry
 from ach_runtime.execution.snapshots import resume_session, suspend_session
@@ -25,6 +20,8 @@ REF = "se" * 16
 
 
 class _Engine:
+    family = "opencode"
+
     """Records in-place restores; the resume path calls nothing else on it."""
 
     def __init__(self, error: Exception | None = None) -> None:

@@ -110,6 +110,32 @@ async def test_prompt_renderer_preserves_legacy_filters_and_rejects_template_hel
         _render_prompt("{{ payload.value | upper }}", context)
 
 
+@pytest.mark.parametrize("source", ["opencode", "pi"])
+def test_harness_completion_record_keeps_the_engine_usage_source(monkeypatch, source) -> None:
+    import ach_runtime.observability as observability
+    from ach_runtime.config.public import public_config
+    from ach_runtime.execution.wire import RunStatus
+
+    config = _config()
+    control = Control.__new__(Control)
+    control.config = config
+    control.public = public_config(config, config.engine.env)
+    records = []
+    monkeypatch.setattr(observability, "record_run", records.append)
+    status = RunStatus(
+        invocationId="inv-opaque", channel="gitlab-mr-review", workspaceRef="a" * 64,
+        sessionRef="b" * 64, runId="run-opaque", configVersion=config.config_version,
+        deadlineAt=datetime.now(timezone.utc), state="completed", result={"reporting": {
+            "duration_ms": 12.0,
+            "usage": {"source": source, "basis": "engine_estimate", "input": 1,
+                      "output": 2, "reasoning": None, "cache_read": 0, "cache_write": 0,
+                      "cost_usd": 0.25, "steps": 1},
+        }},
+    )
+    control._record_run(status, status, status.run_id, None)
+    assert records[0].usage.source == source
+
+
 def test_harness_completion_record_carries_normal_and_recovered_correlation(monkeypatch) -> None:
     import ach_runtime.observability as observability
     from ach_runtime.config.public import public_config
@@ -1920,7 +1946,7 @@ async def test_harness_hydrates_prompt_tar_before_real_mini_engine_start(monkeyp
     import tarfile
 
     from ach_runtime.config.schema import SystemAch
-    from ach_runtime.engine.opencode import EngineReceipt
+    from ach_runtime.engine.base import EngineReceipt
     from ach_runtime.execution.auth import create_authenticated_app
     from ach_runtime.execution.service import ExecutionService
     from ach_runtime.execution.sessions import SessionRegistry
@@ -1967,6 +1993,8 @@ async def test_harness_hydrates_prompt_tar_before_real_mini_engine_start(monkeyp
     )
 
     class RecordingEngine:
+        family = "opencode"
+
         def __init__(self):
             self.invocations = []
 
@@ -2240,7 +2268,7 @@ async def test_assembled_memory_context_reaches_start_and_managed_system_once(
     managed fixture composes persona + `## Memory Tools` + exact TOOLS_SPEC exactly once;
     no credential/header/backend URL ever reaches Start/public/catalog/system."""
     from ach_runtime.engine.config import to_fixture
-    from ach_runtime.engine.opencode import EngineReceipt
+    from ach_runtime.engine.base import EngineReceipt
     from ach_runtime.execution.auth import create_authenticated_app
     from ach_runtime.execution.service import ExecutionService
     from ach_runtime.execution.sessions import SessionRegistry
@@ -2266,6 +2294,8 @@ async def test_assembled_memory_context_reaches_start_and_managed_system_once(
     )
 
     class RecordingEngine:
+        family = "opencode"
+
         def __init__(self) -> None:
             self.invocations: list[object] = []
 
@@ -2443,7 +2473,7 @@ async def test_concurrent_memory_availability_is_captured_per_start(monkeypatch,
     """I7: one false and one true Start across two sessions; only the false one lacks
     `catalog.mcp.memory`, both retain their own appropriate user section/spec, and every
     other MCP entry is unchanged either way."""
-    from ach_runtime.engine.opencode import EngineReceipt
+    from ach_runtime.engine.base import EngineReceipt
     from ach_runtime.execution.auth import create_authenticated_app
     from ach_runtime.execution.service import ExecutionService
     from ach_runtime.execution.sessions import SessionRegistry
@@ -2467,6 +2497,8 @@ async def test_concurrent_memory_availability_is_captured_per_start(monkeypatch,
     )
 
     class RecordingEngine:
+        family = "opencode"
+
         def __init__(self) -> None:
             self.invocations: list[object] = []
 

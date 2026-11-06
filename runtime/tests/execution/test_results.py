@@ -7,13 +7,15 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from ach_runtime.engine.opencode import EngineReceipt, SnapshotManifest
+from ach_runtime.engine.base import EngineReceipt, SnapshotManifest
 from ach_runtime.execution.service import ExecutionService
 from ach_runtime.execution.sessions import SessionRegistry
 from ach_runtime.execution.wire import StartRequest
 
 
 class ResultEngine:
+    family = "opencode"
+
     def __init__(self, raw_text: str) -> None:
         self.raw_text = raw_text
         self.settlement_release = asyncio.Event()

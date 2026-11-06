@@ -32,15 +32,16 @@ const reservedPrefix = "ach-agent-"
 // directories stay read-only so a sandboxed process cannot replace a trusted binary.
 var runtimeBinaries = []string{
 	"/usr/local/bin/python3.13",
-	// The engine that calls the model facade: opencode's native binary (OPENCODE_BIN).
+	// The engines that call the model facade: opencode's native binary (OPENCODE_BIN) and pi's (PI_BIN).
 	"/opt/opencode/node_modules/@opencode/cli/bin/opencode.exe",
+	"/opt/pi/pig",
 }
 
 var (
 	runtimeReadOnly  = []string{"/usr", "/lib", "/etc", "/bin", "/sbin", "/opt", "/work"}
 	runtimeReadWrite = []string{"/tmp", "/sandbox/ach", "/home/ach"}
 	// /work holds the runtime's code (PYTHONPATH), /usr/local/lib the Python stdlib and site-packages.
-	protectedDirs = []string{"/usr/local/bin", "/usr/local/lib", "/opt/opencode", "/work"}
+	protectedDirs = []string{"/usr/local/bin", "/usr/local/lib", "/opt/opencode", "/opt/pi", "/work"}
 )
 
 // decode reads a policy document strictly: protojson rejects unknown fields.

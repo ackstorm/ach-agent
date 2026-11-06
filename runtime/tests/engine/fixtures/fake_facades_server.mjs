@@ -7,7 +7,7 @@
 // both fakes are listening, then stays alive (reading stdin) until killed.
 import { createServer } from "node:http"
 import { Readable } from "node:stream"
-import { startFakeFacades, textChunks } from "../../fixtures/fake-facades.mjs"
+import { startFakeFacades, textChunks, toolCallChunks } from "../../fixtures/fake-facades.mjs"
 
 const scenario = process.argv[2] ?? "text"
 const fixture = await startFakeFacades()
@@ -83,6 +83,28 @@ if (scenario === "hold") {
   fixture.setModelHandler(() => ({ chunks: textChunks("") }))
 } else {
   fixture.setModelHandler(() => ({ chunks: textChunks("pong") }))
+}
+
+const usage = { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 }
+if (scenario === "text") {
+  fixture.setModelHandler(() => ({ chunks: textChunks("pong", { usage }) }))
+}
+if (scenario === "tool-loop") {
+  let call = 0
+  fixture.setModelHandler(() => ({
+    chunks: toolCallChunks([{ id: `call_${++call}`, name: "bash", args: { command: "true" } }], { usage }),
+  }))
+}
+if (scenario === "tool-hang") {
+  let answered = false
+  fixture.setModelHandler((record) => {
+    if (answered || record.messageCount > 2) return { chunks: textChunks("done", { usage }) }
+    answered = true
+    return { chunks: toolCallChunks([{ id: "call_1", name: "bash", args: { command: "echo ran >> marker.txt; sleep 60" } }], { usage }) }
+  })
+}
+if (scenario === "model-error") {
+  fixture.setModelHandler(() => ({ status: 400 }))
 }
 
 const records = []

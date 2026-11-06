@@ -11,7 +11,8 @@ import pytest
 
 from ach_runtime.config.public import public_config
 from ach_runtime.config.schema import RuntimeConfig, ThinkingBlock
-from ach_runtime.engine.opencode import EngineInvocation, NativeLaunchFailed, OpenCodeEngine, _managed_fingerprint
+from ach_runtime.engine.base import EngineInvocation, NativeLaunchFailed
+from ach_runtime.engine.opencode import OpenCodeEngine, _managed_fingerprint
 from fake_facades import fake_facades
 
 FIXTURE_PATH = Path(__file__).parent.parent / "config" / "fixtures" / "pr-review-runtime.json"

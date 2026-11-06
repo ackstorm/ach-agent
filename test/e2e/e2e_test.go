@@ -69,6 +69,38 @@ func TestE2E(t *testing.T) {
 		}
 	})
 
+	t.Run("pi-engine", func(t *testing.T) {
+		setup(t)
+		apply(t, "fixtures/pi-profile.yaml", nil)
+		clearStub(t)
+		apply(t, "fixtures/pi-agent.yaml", map[string]string{"NAME": "pi"})
+		t.Cleanup(func() { kubectl("", "-n", agentNS, "delete", "agent", "pi", "--wait=false") })
+		waitCond(t, "pi", "Ready", "True", 5*time.Minute)
+		postAccepted(t, "pi", 2*time.Minute)
+		// The stub answers the prompt with a call to its echo tool, then with its reply.
+		until(t, 4*time.Minute, "the model never saw the echo tool result", agentYAML("pi"), func() bool {
+			for _, r := range chatRequests(t, 8090) {
+				if strings.Contains(r.Body, `"role":"tool"`) || strings.Contains(r.Body, `"role": "tool"`) {
+					return true
+				}
+			}
+			return false
+		})
+		until(t, 2*time.Minute, "the MCP stub never saw a tools/call", nil, func() bool {
+			for _, r := range stubRequests(t, 8091) {
+				if strings.Contains(r.Body, "tools/call") && strings.Contains(r.Body, "e2e-echo") {
+					return true
+				}
+			}
+			return false
+		})
+		for _, r := range chatRequests(t, 8090) {
+			if got := r.headerValues("x-litellm-api-key"); len(got) != 1 || got[0] != "e2e-model-key" {
+				t.Errorf("model call carried x-litellm-api-key %v, want exactly [e2e-model-key]", got)
+			}
+		}
+	})
+
 	t.Run("gateway-auth", func(t *testing.T) {
 		// Reachable through the mesh, but without the operator's client certificate the gateway
 		// refuses the call: gRPC status 16 (Unauthenticated). A plaintext gateway fails the TLS handshake.

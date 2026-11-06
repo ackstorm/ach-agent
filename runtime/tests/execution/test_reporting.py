@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from ach_runtime.engine.opencode import EngineReceipt, SnapshotManifest
+from ach_runtime.engine.base import EngineReceipt, SnapshotManifest
 from ach_runtime.config.schema import HookBlock, HooksBlock
 from ach_runtime.execution.service import ExecutionService
 from ach_runtime.execution.sessions import SessionRegistry
@@ -14,6 +14,8 @@ from ach_runtime.observability import RunUsage
 
 
 class ReportingEngine:
+    family = "opencode"
+
     def __init__(self) -> None:
         self.release = asyncio.Event()
 

@@ -327,6 +327,11 @@ def _probe_tools(monkeypatch, counts: list[int]) -> list[str]:
 _MCP_CATALOG = {"mcp": {"srv": {"url": "http://facade/mcp/srv", "headers": {}}}}
 
 
+def test_mcp_probe_retries_outlast_a_platform_restart():
+    """Live 2026-11-07: after a gateway restart the probe timed out for longer than 8 s."""
+    assert sum(service_module.MCP_TOOLS_BACKOFF_SECONDS) >= 60
+
+
 async def test_mcp_server_listing_no_tools_is_retried_before_the_send(
     tmp_path, public_config_fixture, monkeypatch
 ):

@@ -5,8 +5,7 @@ behind a mesh policy, then the operator chart. All versions below are the tested
 
 The cluster's CNI must enforce NetworkPolicy (on EKS, the VPC CNI addon with `enableNetworkPolicy`).
 A sandbox's egress lockdown is the OpenShell driver's deny-all NetworkPolicy; without enforcement it
-reaches any IP. Each sandbox checks this at start: if it completes a TLS handshake with the Kubernetes
-API, it refuses to run. `openshell.insecureWithoutNetworkPolicy=true` turns the check off.
+reaches any IP.
 
 ## 1. Istio ambient 1.28.3
 

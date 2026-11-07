@@ -197,16 +197,6 @@ func withExecutionCA(env []corev1.EnvVar, ca []byte) []corev1.EnvVar {
 	return overrideEnv(env, []corev1.EnvVar{{Name: "ACH_AGENT_EXECUTION_CA_PEM", Value: string(ca)}})
 }
 
-// withNetworkPolicyOptOut hands the control pod the chart's openshell.insecureWithoutNetworkPolicy
-// as ACH_INSECURE_WITHOUT_NETWORK_POLICY; the control forwards it in every sandbox's launch env,
-// where it skips the execution role's NetworkPolicy enforcement check.
-func withNetworkPolicyOptOut(env []corev1.EnvVar, insecure bool) []corev1.EnvVar {
-	if !insecure {
-		return env
-	}
-	return overrideEnv(env, []corev1.EnvVar{{Name: "ACH_INSECURE_WITHOUT_NETWORK_POLICY", Value: "true"}})
-}
-
 // buildControlServiceAccount is the control pod's identity (ach-agent-control-<uid>). It has
 // no Kubernetes access (no token, no Role): the operator owns the sandboxes. Not applied when
 // the profile sets control.serviceAccountName (that SA is external).

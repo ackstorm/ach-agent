@@ -63,6 +63,7 @@ _CAS_RETRY_LIMIT = 20
 _MAX_REGISTRY_BYTES = 64 * 1024
 _DEFAULT_MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024
 _DOWNLOAD_CHUNK_BYTES = 1024 * 1024
+_MAX_RECORD_BYTES = 4 * 1024 * 1024
 _SHA256_HEX = re.compile(r"^[0-9a-f]{64}\Z")
 _TRANSIENT_CODES = {
     "408", "429", "500", "502", "503", "504", "RequestTimeout",
@@ -91,6 +92,12 @@ class S3Client(Protocol):
     def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]: ...
 
     def head_object(self, *, Bucket: str, Key: str) -> dict[str, Any]: ...
+
+    def list_objects_v2(
+        self, *, Bucket: str, Prefix: str, ContinuationToken: str | None = None
+    ) -> dict[str, Any]: ...
+
+    def delete_object(self, *, Bucket: str, Key: str) -> dict[str, Any]: ...
 
 
 class PreconditionFailed(Exception):
@@ -931,6 +938,46 @@ class S3Storage(Storage):
         from ach_runtime.storage.artifacts import read_artifact_s3
 
         return await read_artifact_s3(client, bucket, self._prefix, owner, artifact_id)
+
+    def _record_key(self, name: str) -> str:
+        return f"{self._prefix}/records/{name}"
+
+    async def put_record(self, name: str, data: bytes) -> None:
+        client, bucket = self._require_client()
+        await asyncio.to_thread(client.put_object, Bucket=bucket, Key=self._record_key(name), Body=data)
+
+    async def get_record(self, name: str) -> bytes | None:
+        client, bucket = self._require_client()
+        try:
+            raw, _ = await asyncio.to_thread(
+                _fetch_with_etag, client, bucket, self._record_key(name), _MAX_RECORD_BYTES
+            )
+        except Exception as exc:
+            if _is_not_found(exc):
+                return None
+            raise
+        return raw
+
+    async def list_records(self, prefix: str) -> list[tuple[str, datetime]]:
+        """(name, LastModified) of every record whose name starts with `prefix`."""
+        client, bucket = self._require_client()
+        base = self._record_key("")
+        return await asyncio.to_thread(_list_keys, client, bucket, base, prefix)
+
+    async def delete_record(self, name: str) -> None:
+        client, bucket = self._require_client()
+        await asyncio.to_thread(client.delete_object, Bucket=bucket, Key=self._record_key(name))
+
+
+def _list_keys(client: S3Client, bucket: str, base: str, prefix: str) -> list[tuple[str, datetime]]:
+    found: list[tuple[str, datetime]] = []
+    token: str | None = None
+    while True:
+        page = client.list_objects_v2(Bucket=bucket, Prefix=base + prefix, ContinuationToken=token)
+        found.extend((item["Key"][len(base):], item["LastModified"]) for item in page.get("Contents", ()))
+        token = page.get("NextContinuationToken")
+        if not page.get("IsTruncated"):
+            return found
 
 
 def _check_snapshot_expiry(latest: LatestEntry, now: datetime) -> None:

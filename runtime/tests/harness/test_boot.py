@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import signal
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -152,20 +153,30 @@ async def test_app_health_readiness_stays_closed_until_discovery():
     await control.close()
 
 
-async def test_run_control_keeps_root_signal_owner_and_facades_through_ingress_drain(
-    tmp_path: Path, monkeypatch,
-) -> None:
+async def _run_shutdown(
+    tmp_path: Path, monkeypatch, *, host_api: bool = True, queued_total: int = 0,
+    shutdown_timeout: int | None = None,
+) -> SimpleNamespace:
+    """Boot `run_control` on fakes, SIGTERM it once both listeners run, and return what happened."""
     import asyncio
     import sys
     from ach_runtime.harness import boot
 
     config_path = tmp_path / "control.json"
     wire_config = _supported_config().model_dump(by_alias=True, mode="json")
+    if shutdown_timeout is not None:
+        wire_config["workspace"]["shutdownTimeoutSeconds"] = shutdown_timeout
     wire_config["configVersion"] = compute_config_version(wire_config)
     config_path.write_text(json.dumps(wire_config))
     events: list[tuple[str, int | signal.Signals | None]] = []
     handlers: dict[signal.Signals, object] = {}
     instances = []
+
+    sigterm_at: list[float] = []
+
+    def sigterm() -> None:
+        sigterm_at.append(time.monotonic())
+        handlers[signal.SIGTERM]()
 
     class FakeConfig:
         def __init__(self, app, *, host, port, lifespan, timeout_graceful_shutdown, access_log=True, timeout_keep_alive=5):
@@ -189,7 +200,7 @@ async def test_run_control_keeps_root_signal_owner_and_facades_through_ingress_d
             with self.capture_signals():
                 self.started = True
                 if len([item for item in instances if item.started]) == 2:
-                    asyncio.get_running_loop().call_later(0.2, handlers[signal.SIGTERM])
+                    asyncio.get_running_loop().call_later(0.2, sigterm)
                 while not self.should_exit:
                     await asyncio.sleep(0.005)
                 events.append(("listener-exit", self.config.port))
@@ -202,7 +213,7 @@ async def test_run_control_keeps_root_signal_owner_and_facades_through_ingress_d
 
     class Control:
         _stopping = False
-        admission = SimpleNamespace(queued_total=0)
+        admission = SimpleNamespace(queued_total=queued_total)
         key = b"harness-key"
         source = _Closing(events)
 
@@ -239,8 +250,20 @@ async def test_run_control_keeps_root_signal_owner_and_facades_through_ingress_d
 
     monkeypatch.setattr(loop, "add_signal_handler", add_handler)
     monkeypatch.setattr(loop, "remove_signal_handler", remove_handler)
-    await boot.run_control(config_path, assembly=assemble)
+    await boot.run_control(config_path, host_api=host_api, assembly=assemble)
+    return SimpleNamespace(
+        elapsed=time.monotonic() - sigterm_at[0], events=events, instances=instances,
+        ingress=ingress, facades=facades,
+    )
 
+
+async def test_run_control_keeps_root_signal_owner_and_facades_through_ingress_drain(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from ach_runtime.harness import boot
+
+    run = await _run_shutdown(tmp_path, monkeypatch)
+    events, instances, ingress, facades = run.events, run.instances, run.ingress, run.facades
     assert [event[0] for event in events].count("root-handler") == 2
     assert not any(event[0] == "uvicorn-handler" for event in events)
     # Only the ingress listener keeps an access log.
@@ -261,6 +284,16 @@ async def test_run_control_keeps_root_signal_owner_and_facades_through_ingress_d
     # The host API is mounted once on the facade listener, before either listener starts.
     assert [path for path, _app in facades.mounts] == ["/host/v1"]
     assert events.index("source-close") < events.index(("listener-exit", 8080)), "the ready path closes the source with `_stopping`"
+
+
+async def test_hosted_shutdown_does_not_wait_for_runs_the_next_control_adopts(tmp_path, monkeypatch) -> None:
+    run = await _run_shutdown(tmp_path, monkeypatch, host_api=True, queued_total=1, shutdown_timeout=3)
+    assert run.elapsed < 1
+
+
+async def test_in_process_shutdown_still_drains_runs(tmp_path, monkeypatch) -> None:
+    run = await _run_shutdown(tmp_path, monkeypatch, host_api=False, queued_total=1, shutdown_timeout=1)
+    assert run.elapsed >= 1
 
 
 async def test_recovered_boot_accounting_precedes_ingress(tmp_path: Path, monkeypatch) -> None:
@@ -679,7 +712,7 @@ async def test_all_channel_sources_start_after_discovery_and_stop_before_drain(
     async def assemble(_config):
         return control
 
-    await boot.run_control(config_path, assembly=assemble)
+    await boot.run_control(config_path, host_api=False, assembly=assemble)
     assert events.count("cron-instance") == 1
     assert events.count("queue-instance-jobs") == 1
     assert events.count("queue-instance-jobs-secondary") == 1

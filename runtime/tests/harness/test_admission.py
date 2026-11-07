@@ -1980,3 +1980,33 @@ def test_rate_sweep_forgets_idle_keys() -> None:
         await admission.close()
 
     asyncio.run(scenario())
+
+
+def test_session_busy_sees_an_earlier_ticket_or_recovered_run_in_the_same_session() -> None:
+    async def scenario() -> None:
+        runner = GatedRunner()
+        clock = FakeClock(datetime(2026, 10, 1, tzinfo=UTC))
+        admission = _admission(runner, clock=clock)
+        first = admission.admit(_routed("e1", session_key="s1"))
+        second = admission.admit(_routed("e2", session_key="s1"))
+        other = admission.admit(_routed("e3", session_key="s2"))
+        assert admission.has_ticket(first.invocation_id) and not admission.has_ticket("recovered")
+        assert admission.session_busy(second) is True
+        assert admission.session_busy(first) is True
+        assert admission.session_busy(other) is False
+
+        workspace = other.workspace_ref
+        gate = asyncio.Event()
+        admission.recover(
+            invocation_id="recovered", channel="ch", workspace_ref=workspace,
+            session_ref=other.session_ref, config_version="v1",
+            deadline_at=clock.now + timedelta(minutes=5), instance_id="pod-1", run_id="r",
+            observer=gate.wait,
+        )
+        assert admission.session_busy(other) is True
+        gate.set()
+        for name in ("e1", "e2", "e3"):
+            runner.release(name)
+        await admission.close()
+
+    asyncio.run(scenario())

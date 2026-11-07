@@ -1068,8 +1068,7 @@ async def test_archive_persistence_failure_logs_redacted_root_cause(
             else:
                 await lifecycle._save_session(endpoint, "b" * 64)
     finally:
-        for handler in saved_handlers:
-            root.addHandler(handler)
+        root.handlers[:] = saved_handlers
         await control.mini_client.aclose()
 
     error = raised.value

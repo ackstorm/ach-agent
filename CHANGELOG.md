@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A2A callers get queued, starting and still-working statuses from the runtime.
 - A2A results survive a control restart: tasks are stored in the Agent's storage, recovered runs write their outcome into their task for `tasks/get`, and a run the restart broke is resumed once in the same session.
 
 ## [0.6.8] - 2026-11-06

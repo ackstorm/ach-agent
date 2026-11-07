@@ -888,3 +888,95 @@ def test_execute_stamps_the_run_identity_on_the_first_working_event(monkeypatch)
     assert set(stamped.metadata) == {"invocationId", "workspaceKey", "sessionKey"}
     assert stamped.metadata["invocationId"]
     asyncio.run(control.admission.close())
+
+
+# -- runtime status: queued, starting, heartbeat ------------------------------
+
+
+def _kinds(queue, kind: str) -> list[str]:
+    return [
+        e.status.message.parts[0].text for e in queue.events
+        if e.metadata and dict(e.metadata).get("ach") == kind
+    ]
+
+
+async def _status_run(monkeypatch, *, start: bool, busy: bool, between):
+    """Run one task on a runner the test finishes itself; `between(queue, control)` acts mid-run."""
+    from ach_runtime.channels import a2a
+
+    monkeypatch.setattr(a2a, "STARTING_AFTER_SECONDS", 0.05)
+    monkeypatch.setattr(a2a, "HEARTBEAT_SECONDS", 0.1)
+    release = asyncio.Event()
+
+    async def runner(_routed, ticket):
+        if start:
+            ticket.mark_started()
+        await release.wait()
+        return _completed(ticket)
+
+    config = _channel()
+    control = _control(config, runner)
+    control.admission.session_busy = lambda _ticket: busy
+    queue = _Queue()
+    task = asyncio.create_task(A2AAgentExecutorBridge(control, config).execute(_Context("t1", "c1"), queue))
+    await between(queue, control)
+    release.set()
+    await task
+    await control.admission.close()
+    return queue
+
+
+async def _until(predicate, limit: float = 2.0) -> None:
+    for _ in range(int(limit / 0.01)):
+        if predicate():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("condition not reached")
+
+
+def test_a_run_that_starts_at_once_gets_no_starting_message(monkeypatch) -> None:
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+
+    async def between(queue, control):
+        await asyncio.sleep(0.08)
+
+    queue = asyncio.run(_status_run(monkeypatch, start=True, busy=False, between=between))
+    assert not _kinds(queue, "starting") and not _kinds(queue, "queued")
+
+
+def test_waiting_behind_the_same_session_says_queued(monkeypatch) -> None:
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+    from ach_runtime.channels import a2a
+
+    async def between(queue, control):
+        await _until(lambda: _kinds(queue, "queued"))
+
+    queue = asyncio.run(_status_run(monkeypatch, start=False, busy=True, between=between))
+    assert _kinds(queue, "queued") == [a2a.QUEUED_TEXT]
+
+
+def test_a_slow_start_without_a_busy_session_says_starting(monkeypatch) -> None:
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+    from ach_runtime.channels import a2a
+
+    async def between(queue, control):
+        await _until(lambda: _kinds(queue, "starting"))
+
+    queue = asyncio.run(_status_run(monkeypatch, start=False, busy=False, between=between))
+    assert _kinds(queue, "starting") == [a2a.STARTING_TEXT]
+
+
+def test_heartbeat_after_silence_and_progress_resets_it(monkeypatch) -> None:
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+
+    async def between(queue, control):
+        await _until(lambda: _kinds(queue, "heartbeat"))
+        beats = len(_kinds(queue, "heartbeat"))
+        (emit,) = next(iter(control.progress.values()))
+        for _ in range(4):  # inform_user every 0.04 s, under the 0.1 s heartbeat
+            await emit("Reading the bill")
+            await asyncio.sleep(0.04)
+        assert len(_kinds(queue, "heartbeat")) == beats
+
+    queue = asyncio.run(_status_run(monkeypatch, start=True, busy=False, between=between))
+    assert queue.events[-1].status.state == 3  # completed is the last event

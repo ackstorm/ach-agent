@@ -8,6 +8,7 @@ import hmac
 import json
 import os
 import re
+import time
 from datetime import UTC, datetime, timedelta
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal
@@ -220,6 +221,12 @@ RESTARTING_RUNNING = (
     "on this task, or ask again in this conversation."
 )
 RESTARTING_QUEUED = "The agent restarted before your request started. Send it again."
+# Runtime voice, separate from the agent's inform_user: short, English, tagged in metadata.
+STARTING_AFTER_SECONDS = 5.0
+HEARTBEAT_SECONDS = 60.0
+QUEUED_TEXT = "Queued behind an earlier request in this conversation."
+STARTING_TEXT = "Starting the agent."
+HEARTBEAT_TEXT = "Still working..."
 RUN_LOST = "The agent restarted and this request's run was lost. Send it again."
 RESUME_PROMPT = (
     "The ACH control restarted while you were working. Model and tool calls made during "
@@ -242,6 +249,30 @@ def _outcome_status(result: Any) -> tuple[str, str]:
     if reply is None:
         return "failed", "invalid terminal output"
     return "completed", reply["text"]
+
+
+class _Pulse:
+    """Every event one A2A waiter sends, so the watcher knows how long it has been silent."""
+
+    def __init__(self, event_queue: Any, task_id: str, context_id: str) -> None:
+        self._queue, self._task_id, self._context_id = event_queue, task_id, context_id
+        self.last_sent = time.monotonic()
+
+    async def send(
+        self, state: str, text: str | None, kind: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
+        if kind:
+            metadata = {**(metadata or {}), "ach": kind}
+        await self._queue.enqueue_event(
+            _status_event(state, text, self._task_id, self._context_id, metadata=metadata))
+        self.last_sent = time.monotonic()
+
+
+async def _stop(task: asyncio.Task[None] | None) -> None:
+    if task is not None:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 class A2AAgentExecutorBridge:
@@ -318,29 +349,32 @@ class A2AAgentExecutorBridge:
         self._waiter_counts[task_id] = self._waiter_counts.get(task_id, 0) + 1
         emit: Callable[[str], Awaitable[None]] | None = None
         invocation_id = ""
+        watcher: asyncio.Task[None] | None = None
         try:
             ticket = self._control.admission.admit(routed)
+            pulse = _Pulse(event_queue, task_id, context_id)
+            if isinstance(ticket, AdmissionTicket):
+                watcher = asyncio.create_task(self._watch(ticket, pulse))
 
             async def emit(message: str) -> None:
-                await event_queue.enqueue_event(_status_event("working", message, task_id, context_id))
+                await pulse.send("working", message)
 
             invocation_id = ticket.invocation_id
             self._control.progress.setdefault(invocation_id, []).append(emit)
             started = await _wait_or_cancel(ticket.started, cancel_event)
             if started is _CANCELLED:
+                await _stop(watcher)
                 if self._shutting_down and self.runs_outlive_control:
                     await event_queue.enqueue_event(
                         _status_event("failed", RESTARTING_QUEUED, task_id, context_id))
                 return
-            await event_queue.enqueue_event(_status_event(
-                "working", None, task_id, context_id,
-                metadata={
-                    "invocationId": invocation_id,
-                    "workspaceKey": routed.workspace_key,
-                    "sessionKey": routed.session_key,
-                },
-            ))
+            await pulse.send("working", None, metadata={
+                "invocationId": invocation_id,
+                "workspaceKey": routed.workspace_key,
+                "sessionKey": routed.session_key,
+            })
             result = await _wait_or_cancel(ticket.completed, cancel_event)
+            await _stop(watcher)
             if result is _CANCELLED:
                 if self._shutting_down and self.runs_outlive_control:
                     await event_queue.enqueue_event(
@@ -350,6 +384,7 @@ class A2AAgentExecutorBridge:
             await event_queue.enqueue_event(_status_event(state, text, task_id, context_id))
         except (AdmissionClosedError, AdmissionQueueFullError, AdmissionRateLimitedError,
                 WorkspaceAssemblyUnavailable, TimeoutError) as exc:
+            await _stop(watcher)
             failure = (
                 "Queue full" if isinstance(exc, AdmissionQueueFullError)
                 else "Rate limited" if isinstance(exc, AdmissionRateLimitedError)
@@ -362,10 +397,12 @@ class A2AAgentExecutorBridge:
             raise
         except Exception:
             log.warning("a2a admission or result failed", channel=self._channel_cfg.name)
+            await _stop(watcher)
             await event_queue.enqueue_event(
                 _status_event("failed", "Invocation failed", task_id, context_id)
             )
         finally:
+            await _stop(watcher)
             if emit is not None:
                 emitters = self._control.progress.get(invocation_id, [])
                 emitters.remove(emit)
@@ -375,6 +412,22 @@ class A2AAgentExecutorBridge:
             if self._waiter_counts[task_id] == 0:
                 self._waiter_counts.pop(task_id, None)
                 self._cancel_events.pop(task_id, None)
+
+    async def _watch(self, ticket: Any, pulse: _Pulse) -> None:
+        """Say so when the run is queued or slow to start, then whenever the waiter is silent."""
+        try:
+            await asyncio.wait_for(asyncio.shield(ticket.started), STARTING_AFTER_SECONDS)
+        except TimeoutError:
+            if self._control.admission.session_busy(ticket):
+                await pulse.send("working", QUEUED_TEXT, "queued")
+            else:
+                await pulse.send("working", STARTING_TEXT, "starting")
+        except Exception:  # a failed start is execute's to report
+            return
+        while True:
+            await asyncio.sleep(max(0.0, pulse.last_sent + HEARTBEAT_SECONDS - time.monotonic()))
+            if time.monotonic() - pulse.last_sent >= HEARTBEAT_SECONDS:
+                await pulse.send("working", HEARTBEAT_TEXT, "heartbeat")
 
     async def recover(self, store: Any) -> None:
         """Write the outcome of runs that outlived the previous control into their tasks."""

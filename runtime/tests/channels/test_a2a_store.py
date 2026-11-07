@@ -28,7 +28,7 @@ async def test_owner_gets_the_task_and_others_do_not() -> None:
     assert await store.get("t1", _ctx("alice")) == _task("t1")
     assert await store.get("t1", _ctx("bob")) is None
     assert [t.id for t in (await store.list(SimpleNamespace(context_id="c"), _ctx("alice"))).tasks] == ["t1"]
-    assert (await store.list(SimpleNamespace(context_id=""), _ctx("bob"))).tasks == []
+    assert len((await store.list(SimpleNamespace(context_id=""), _ctx("bob"))).tasks) == 0
 
 
 async def test_pending_lists_only_non_terminal_tasks() -> None:

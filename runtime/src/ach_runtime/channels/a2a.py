@@ -438,6 +438,8 @@ class A2AAgentExecutorBridge:
     async def _recover_task(self, store: Any, task: Any) -> None:
         try:
             meta = dict(task.metadata)
+            if self._control.admission.has_ticket(meta.get("invocationId", "")):
+                return  # a request this control admitted after startup, not one to recover
             result = await self._recovered_result(meta.get("invocationId", ""))
             if result is None:
                 await store.finish(task, "failed", RUN_LOST)

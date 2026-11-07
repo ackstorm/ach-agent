@@ -1990,6 +1990,7 @@ def test_session_busy_sees_an_earlier_ticket_or_recovered_run_in_the_same_sessio
         first = admission.admit(_routed("e1", session_key="s1"))
         second = admission.admit(_routed("e2", session_key="s1"))
         other = admission.admit(_routed("e3", session_key="s2"))
+        assert admission.has_ticket(first.invocation_id) and not admission.has_ticket("recovered")
         assert admission.session_busy(second) is True
         assert admission.session_busy(first) is True
         assert admission.session_busy(other) is False

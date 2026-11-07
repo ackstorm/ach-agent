@@ -776,7 +776,7 @@ def _status(state: str, text: str | None = "ok", error: str | None = None) -> Ru
     )
 
 
-def _recovering(admit_result=None, recovered=None, finished=None):
+def _recovering(admit_result=None, recovered=None, finished=None, live=()):
     """A bridge on a fake control; `admit` returns tickets whose outcome is `admit_result`."""
     admitted = []
 
@@ -789,7 +789,9 @@ def _recovering(admit_result=None, recovered=None, finished=None):
 
     control = SimpleNamespace(
         config=SimpleNamespace(workspace=SimpleNamespace(persistence=SimpleNamespace(retention_days=1))),
-        admission=SimpleNamespace(recovered_run=lambda i: recovered, admit=admit),
+        admission=SimpleNamespace(
+            recovered_run=lambda i: recovered, admit=admit, has_ticket=lambda i: i in live,
+        ),
         finished_runs=finished if finished is not None else {},
     )
     return A2AAgentExecutorBridge(control, _channel()), admitted
@@ -982,3 +984,14 @@ def test_heartbeat_after_silence_and_progress_resets_it(monkeypatch) -> None:
 
     queue = asyncio.run(_status_run(monkeypatch, start=True, busy=False, between=between))
     assert queue.events[-1].status.state == 3  # completed is the last event
+
+
+def test_recovery_leaves_a_request_this_control_admitted_alone() -> None:
+    async def scenario() -> _Store:
+        bridge, admitted = _recovering(live={"inv-1"})
+        store = _Store(_stored_task())
+        await bridge.recover(store)
+        assert admitted == []
+        return store
+
+    assert asyncio.run(scenario()).log == []

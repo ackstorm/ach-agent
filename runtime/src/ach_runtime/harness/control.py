@@ -247,6 +247,8 @@ class Control:
     _hook_endpoints: dict[str, WorkspaceEndpoint] = field(default_factory=dict, repr=False)
     # A2A event emitters per running invocation, registered by the A2A bridge while it waits.
     progress: dict[str, list[Callable[[str], Awaitable[None]]]] = field(default_factory=dict, repr=False)
+    # Runs already terminal when this control adopted their Workspace, by invocation id.
+    finished_runs: dict[str, Any] = field(default_factory=dict, repr=False)
 
     async def _owned_live(self, claim: str) -> bool:
         # No I/O (spec 6.3). The only wait is for adoption of the units that already run: a
@@ -488,6 +490,7 @@ class Control:
             identities.add(record.invocation_id)
         for record in records:
             if record.state in {"completed", "failed", "cancelled", "skipped"}:
+                self.finished_runs[record.invocation_id] = record
                 continue
             try:
                 self.admission.recover(
@@ -1073,6 +1076,7 @@ async def assemble(
     control.artifact_facade = None
     control.progress_facade = None
     control.progress = {}
+    control.finished_runs = {}
     control.facade_transport = facade_transport
     control.facade_clients = []
     control._prepared, control._started_run, control._stopping = {}, {}, False

@@ -8,13 +8,14 @@ import hmac
 import json
 import os
 import re
+from datetime import UTC, datetime, timedelta
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from ach_runtime.channels.event import Event
+from ach_runtime.channels.event import Event, RoutedEvent
 from ach_runtime.channels.metrics import CHANNEL_INBOUND
 from ach_runtime.channels.routing import RoutingError, route
 from ach_runtime.config.schema import ChannelConfig
@@ -160,7 +161,9 @@ class _AuthGuardMiddleware:
         await self._app(scope, receive, send)
 
 
-def _status_event(state: str, text: str | None, task_id: str, context_id: str) -> Any:
+def _status_event(
+    state: str, text: str | None, task_id: str, context_id: str, metadata: dict[str, str] | None = None
+) -> Any:
     from a2a.types.a2a_pb2 import (
         TASK_STATE_CANCELED,
         TASK_STATE_COMPLETED,
@@ -185,7 +188,7 @@ def _status_event(state: str, text: str | None, task_id: str, context_id: str) -
         message = Message()
         message.parts.add().text = text
         status = TaskStatus(state=states[state], message=message)
-    return TaskStatusUpdateEvent(task_id=task_id, context_id=context_id, status=status)
+    return TaskStatusUpdateEvent(task_id=task_id, context_id=context_id, status=status, metadata=metadata)
 
 
 async def _shielded(future: asyncio.Future[Any]) -> Any:
@@ -217,6 +220,28 @@ RESTARTING_RUNNING = (
     "on this task, or ask again in this conversation."
 )
 RESTARTING_QUEUED = "The agent restarted before your request started. Send it again."
+RUN_LOST = "The agent restarted and this request's run was lost. Send it again."
+RESUME_PROMPT = (
+    "The ACH control restarted while you were working. Model and tool calls made during "
+    "the restart may have failed with connection errors. Continue the task where you "
+    "left off, and repeat any tool call whose result you did not get."
+)
+
+
+def _outcome_status(result: Any) -> tuple[str, str]:
+    """The A2A task state and text of a finished run."""
+    if not isinstance(result, RunStatus):
+        return "failed", "Invocation failed"
+    if result.state == "skipped":
+        return "rejected", "skipped by sessionStart"
+    if result.state != "completed":
+        return "failed", result.error or "Invocation failed"
+    raw_text = result.result.get("text") if isinstance(result.result, dict) else None
+    terminal = extract_terminal(raw_text) if isinstance(raw_text, str) else None
+    reply = validate_a2a_reply(terminal)
+    if reply is None:
+        return "failed", "invalid terminal output"
+    return "completed", reply["text"]
 
 
 class A2AAgentExecutorBridge:
@@ -307,42 +332,22 @@ class A2AAgentExecutorBridge:
                     await event_queue.enqueue_event(
                         _status_event("failed", RESTARTING_QUEUED, task_id, context_id))
                 return
-            await event_queue.enqueue_event(_status_event("working", None, task_id, context_id))
+            await event_queue.enqueue_event(_status_event(
+                "working", None, task_id, context_id,
+                metadata={
+                    "invocationId": invocation_id,
+                    "workspaceKey": routed.workspace_key,
+                    "sessionKey": routed.session_key,
+                },
+            ))
             result = await _wait_or_cancel(ticket.completed, cancel_event)
             if result is _CANCELLED:
                 if self._shutting_down and self.runs_outlive_control:
                     await event_queue.enqueue_event(
                         _status_event("working", RESTARTING_RUNNING, task_id, context_id))
                 return
-            if not isinstance(result, RunStatus):
-                await event_queue.enqueue_event(
-                    _status_event("failed", "Invocation failed", task_id, context_id)
-                )
-                return
-            if result.state == "skipped":
-                await event_queue.enqueue_event(
-                    _status_event("rejected", "skipped by sessionStart", task_id, context_id)
-                )
-                return
-            if result.state != "completed":
-                await event_queue.enqueue_event(
-                    _status_event(
-                        "failed", result.error or "Invocation failed", task_id, context_id
-                    )
-                )
-                return
-            raw_result = result.result
-            raw_text = raw_result.get("text") if isinstance(raw_result, dict) else None
-            terminal = extract_terminal(raw_text) if isinstance(raw_text, str) else None
-            reply = validate_a2a_reply(terminal)
-            if reply is None:
-                await event_queue.enqueue_event(
-                    _status_event("failed", "invalid terminal output", task_id, context_id)
-                )
-                return
-            await event_queue.enqueue_event(
-                _status_event("completed", reply["text"], task_id, context_id)
-            )
+            state, text = _outcome_status(result)
+            await event_queue.enqueue_event(_status_event(state, text, task_id, context_id))
         except (AdmissionClosedError, AdmissionQueueFullError, AdmissionRateLimitedError,
                 WorkspaceAssemblyUnavailable, TimeoutError) as exc:
             failure = (
@@ -370,6 +375,57 @@ class A2AAgentExecutorBridge:
             if self._waiter_counts[task_id] == 0:
                 self._waiter_counts.pop(task_id, None)
                 self._cancel_events.pop(task_id, None)
+
+    async def recover(self, store: Any) -> None:
+        """Write the outcome of runs that outlived the previous control into their tasks."""
+        retention = self._control.config.workspace.persistence.retention_days
+        await store.prune(older_than=datetime.now(UTC) - timedelta(days=retention))
+        await asyncio.gather(*(self._recover_task(store, task) for task in await store.pending()))
+
+    async def _recover_task(self, store: Any, task: Any) -> None:
+        try:
+            meta = dict(task.metadata)
+            result = await self._recovered_result(meta.get("invocationId", ""))
+            if result is None:
+                await store.finish(task, "failed", RUN_LOST)
+                return
+            if result.state == "failed" and meta.get("resumed") != "1" and "sessionKey" in meta:
+                result = await self._resume(store, task, meta)
+            if result is None:
+                await store.finish(task, "failed", RUN_LOST)
+                return
+            state, text = _outcome_status(result)
+            await store.finish(task, state, text)
+        except Exception:
+            # The task stays non-terminal: the next control's recovery tries again.
+            log.warning("a2a task recovery failed", channel=self._channel_cfg.name, task_id=task.id)
+
+    async def _recovered_result(self, invocation_id: str) -> RunStatus | None:
+        run = self._control.admission.recovered_run(invocation_id)
+        if run is None:
+            return self._control.finished_runs.pop(invocation_id, None)
+        try:
+            return await asyncio.shield(run.completed)
+        except Exception:
+            return None
+
+    async def _resume(self, store: Any, task: Any, meta: dict[str, Any]) -> RunStatus | None:
+        """One message into the same session; its outcome becomes the task's."""
+        event = Event(
+            event_id=f"a2a:{task.id}:resume", channel=self._channel_cfg.name, type="a2a",
+            source="a2a",
+            payload={"text": RESUME_PROMPT, "task_id": task.id, "context_id": task.context_id},
+            context={"a2a": {"taskId": task.id, "contextId": task.context_id}, "headers": {}},
+        )
+        ticket = self._control.admission.admit(
+            RoutedEvent(event=event, workspace_key=meta["workspaceKey"], session_key=meta["sessionKey"]))
+        # Stamped before waiting: if the control restarts again, the next recovery follows
+        # the resume run and never resumes a second time.
+        await store.annotate(task, {"invocationId": ticket.invocation_id, "resumed": "1"})
+        try:
+            return await asyncio.shield(ticket.completed)
+        except Exception:
+            return None
 
     async def cancel(self, context: Any, event_queue: Any) -> None:
         task_id = getattr(context, "task_id", None) or ""

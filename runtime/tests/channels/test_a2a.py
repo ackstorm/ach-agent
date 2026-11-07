@@ -735,3 +735,156 @@ def test_client_cancel_and_in_process_shutdown_stay_silent(outlive, stop, monkey
     monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
     queue = asyncio.run(_stop_run(outlive=outlive, started=True, stop=stop))
     assert len(queue.events) == 1  # only the plain "working" event
+
+
+# -- recovery ---------------------------------------------------------------
+
+from a2a.types.a2a_pb2 import Task, TaskStatus  # noqa: E402
+from ach_runtime.channels.a2a import RESUME_PROMPT, RUN_LOST  # noqa: E402
+
+
+class _Store:
+    """The StorageTaskStore surface recovery uses, in memory."""
+
+    def __init__(self, *tasks) -> None:
+        self.tasks = {t.id: t for t in tasks}
+        self.log: list[tuple] = []
+
+    async def prune(self, older_than) -> None: ...
+
+    async def pending(self):
+        return list(self.tasks.values())
+
+    async def finish(self, task, state, text) -> None:
+        self.log.append(("finish", state, text))
+
+    async def annotate(self, task, metadata) -> None:
+        self.log.append(("annotate", dict(metadata)))
+
+
+def _stored_task(**meta) -> Task:
+    task = Task(id="t1", context_id="c1", status=TaskStatus(state=2))
+    task.metadata.update({"invocationId": "inv-1", "workspaceKey": "w", "sessionKey": "s", **meta})
+    return task
+
+
+def _status(state: str, text: str | None = "ok", error: str | None = None) -> RunStatus:
+    return RunStatus(
+        invocationId="inv-1", channel="review", workspaceRef="a" * 64, sessionRef="b" * 64,
+        runId="r", configVersion="a" * 64, deadlineAt=datetime.now(UTC), state=state, error=error,
+        result={"text": '{"action":"a2a_reply","text":"' + text + '"}'} if state == "completed" else None,
+    )
+
+
+def _recovering(admit_result=None, recovered=None, finished=None):
+    """A bridge on a fake control; `admit` returns tickets whose outcome is `admit_result`."""
+    admitted = []
+
+    def admit(routed):
+        loop = asyncio.get_running_loop()
+        ticket = SimpleNamespace(invocation_id="inv-2", completed=loop.create_future())
+        ticket.completed.set_result(admit_result)
+        admitted.append(routed)
+        return ticket
+
+    control = SimpleNamespace(
+        config=SimpleNamespace(workspace=SimpleNamespace(persistence=SimpleNamespace(retention_days=1))),
+        admission=SimpleNamespace(recovered_run=lambda i: recovered, admit=admit),
+        finished_runs=finished if finished is not None else {},
+    )
+    return A2AAgentExecutorBridge(control, _channel()), admitted
+
+
+
+def test_recovery_writes_a_recovered_runs_reply_into_its_task() -> None:
+    async def scenario() -> _Store:
+        done = asyncio.get_running_loop().create_future()
+        done.set_result(_status("completed", "the report"))
+        bridge, _ = _recovering(recovered=SimpleNamespace(completed=done))
+        store = _Store(_stored_task())
+        await bridge.recover(store)
+        return store
+
+    assert asyncio.run(scenario()).log == [("finish", "completed", "the report")]
+
+
+def test_recovery_uses_a_run_that_finished_before_adoption() -> None:
+    async def scenario() -> _Store:
+        bridge, _ = _recovering(finished={"inv-1": _status("completed", "early")})
+        store = _Store(_stored_task())
+        await bridge.recover(store)
+        return store
+
+    assert asyncio.run(scenario()).log == [("finish", "completed", "early")]
+
+
+def test_recovery_fails_a_task_whose_run_is_unknown() -> None:
+    async def scenario() -> _Store:
+        bridge, admitted = _recovering()
+        store = _Store(_stored_task())
+        await bridge.recover(store)
+        assert admitted == []
+        return store
+
+    assert asyncio.run(scenario()).log == [("finish", "failed", RUN_LOST)]
+
+
+def test_recovery_resumes_a_failed_run_once_in_the_same_session() -> None:
+    async def scenario() -> tuple[_Store, list]:
+        bridge, admitted = _recovering(
+            admit_result=_status("completed", "resumed reply"), finished={"inv-1": _status("failed", error="boom")},
+        )
+        store = _Store(_stored_task())
+        await bridge.recover(store)
+        return store, admitted
+
+    store, admitted = asyncio.run(scenario())
+    assert len(admitted) == 1
+    assert (admitted[0].workspace_key, admitted[0].session_key) == ("w", "s")
+    assert admitted[0].event.payload["text"] == RESUME_PROMPT
+    assert store.log == [
+        ("annotate", {"invocationId": "inv-2", "resumed": "1"}),
+        ("finish", "completed", "resumed reply"),
+    ]
+
+
+def test_recovery_does_not_resume_twice() -> None:
+    async def scenario() -> tuple[_Store, list]:
+        bridge, admitted = _recovering(finished={"inv-1": _status("failed", error="boom")})
+        store = _Store(_stored_task(resumed="1"))
+        await bridge.recover(store)
+        return store, admitted
+
+    store, admitted = asyncio.run(scenario())
+    assert admitted == []
+    assert store.log == [("finish", "failed", "boom")]
+
+
+def test_recovery_reports_a_failed_resume_without_a_second_one() -> None:
+    async def scenario() -> tuple[_Store, list]:
+        bridge, admitted = _recovering(
+            admit_result=_status("failed", error="again"), finished={"inv-1": _status("failed", error="boom")},
+        )
+        store = _Store(_stored_task())
+        await bridge.recover(store)
+        return store, admitted
+
+    store, admitted = asyncio.run(scenario())
+    assert len(admitted) == 1
+    assert store.log[-1] == ("finish", "failed", "again")
+
+
+def test_execute_stamps_the_run_identity_on_the_first_working_event(monkeypatch) -> None:
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+    config = _channel()
+
+    async def runner(routed, ticket):
+        return _completed(ticket)
+
+    control = _control(config, runner)
+    queue = _Queue()
+    asyncio.run(A2AAgentExecutorBridge(control, config).execute(_Context("t1", "c1"), queue))
+    stamped = next(e for e in queue.events if e.metadata)
+    assert set(stamped.metadata) == {"invocationId", "workspaceKey", "sessionKey"}
+    assert stamped.metadata["invocationId"]
+    asyncio.run(control.admission.close())

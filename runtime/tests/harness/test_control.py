@@ -1637,6 +1637,10 @@ async def test_reconnect_accepts_terminal_history_from_an_older_config_version()
     try:
         await control.reconnect_workspace(endpoint)
         assert control.admission.queued_total == 0
+        assert set(control.finished_runs) == {
+            "historical-completed", "historical-failed", "historical-cancelled", "historical-skipped",
+        }
+        assert control.admission.recovered_run("historical-completed") is None
     finally:
         await control.close()
 

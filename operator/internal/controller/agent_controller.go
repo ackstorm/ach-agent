@@ -93,6 +93,10 @@ type AgentReconciler struct {
 	// path; nil with a plaintext gateway.
 	OpenShellCA []byte
 
+	// InsecureWithoutNetworkPolicy lets sandboxes run on a cluster that does not enforce
+	// NetworkPolicy (chart openshell.insecureWithoutNetworkPolicy).
+	InsecureWithoutNetworkPolicy bool
+
 	// SandboxNamespace is where the OpenShell driver runs sandbox pods and the host loop keeps
 	// the Workspace PVCs. Empty skips them (no gateway configured).
 	SandboxNamespace string
@@ -345,6 +349,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 	configMap := buildConfigMap(&agent, configJSON)
 	env = withExecutionCA(env, r.OpenShellCA)
+	env = withNetworkPolicyOptOut(env, r.InsecureWithoutNetworkPolicy)
 	envJSON, err := json.Marshal(env)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("marshal env: %w", err)

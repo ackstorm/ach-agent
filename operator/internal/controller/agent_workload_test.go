@@ -633,3 +633,17 @@ func TestWithExecutionCA(t *testing.T) {
 		t.Errorf("env = %v, want %v", got, want)
 	}
 }
+
+func TestWithNetworkPolicyOptOut(t *testing.T) {
+	env := []corev1.EnvVar{{Name: "TMPDIR", Value: "/tmp"}}
+
+	if got := withNetworkPolicyOptOut(env, false); !reflect.DeepEqual(got, env) {
+		t.Fatalf("the default (check on) changed the control pod env: %v", got)
+	}
+
+	got := withNetworkPolicyOptOut(env, true)
+	want := append(slices.Clone(env), corev1.EnvVar{Name: "ACH_INSECURE_WITHOUT_NETWORK_POLICY", Value: "true"})
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("env = %v, want %v", got, want)
+	}
+}

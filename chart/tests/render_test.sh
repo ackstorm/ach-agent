@@ -25,6 +25,7 @@ env = {e["name"]: e for e in c.get("env", [])}
 assert env["ACH_AGENT_OPENSHELL_GATEWAY"]["value"] == "http://openshell.openshell.svc.cluster.local:8080"
 assert env["ACH_AGENT_NAMESPACE"]["valueFrom"]["fieldRef"]["fieldPath"] == "metadata.namespace"
 assert "ACH_AGENT_OPENSHELL_TLS_SECRET" not in env and "ACH_AGENT_OPENSHELL_SERVICE_URL" not in env, env
+assert "ACH_AGENT_INSECURE_WITHOUT_NETWORK_POLICY" not in env, env
 assert "volumes" not in pod["spec"] and "volumeMounts" not in c, pod["spec"]
 assert not [d for d in docs if d["kind"] == "RoleBinding" and d["metadata"]["name"].endswith("-openshell-tls")]
 app_version = yaml.safe_load(open("Chart.yaml"))["appVersion"]
@@ -44,6 +45,9 @@ for r in cr["rules"]:
 assert not [d for d in docs if d["kind"] in ("StatefulSet", "AuthorizationPolicy")], "storage renders without a bucket"
 print("render ok")
 PY
+helm template t . "${base[@]}" --set openshell.insecureWithoutNetworkPolicy=true \
+  | grep -q 'name: ACH_AGENT_INSECURE_WITHOUT_NETWORK_POLICY' || fail "insecureWithoutNetworkPolicy does not reach the operator"
+
 for f in dashboards/*.json; do python3 -m json.tool "$f" >/dev/null || fail "$f is not valid JSON"; done
 
 s3=(--set runtime.storage.s3.bucket=ach-bucket --set runtime.storage.s3.region=eu-west-1)

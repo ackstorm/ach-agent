@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.10] - 2026-11-07
+
+### Removed
+
+- The sandbox NetworkPolicy enforcement check from 0.6.9 and its chart value
+  `openshell.insecureWithoutNetworkPolicy` (now ignored if set). The boot probe of the Kubernetes API
+  could not tell a cluster without enforcement from a sandbox policy that lets internal addresses
+  through the OpenShell supervisor, and refused intermittently on a cluster that enforces
+  NetworkPolicy. NetworkPolicy enforcement stays an install prerequisite.
+
 ## [0.6.9] - 2026-11-07
 
 ### Changed

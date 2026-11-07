@@ -68,6 +68,8 @@ class _SafeRecordFormatter(logging.Formatter):
             if field in record.__dict__:
                 value = record.__dict__[field]
                 payload[field] = redact(value) if isinstance(value, str) else value
+        if record.exc_text:
+            payload["traceback"] = record.exc_text
         return json.dumps(payload, default=str)
 
 
@@ -128,25 +130,33 @@ def install_redaction() -> None:
     logging.setLogRecordFactory(factory)
 
 
+def _not_session_close_race(record: logging.LogRecord) -> bool:
+    """False for the traceback the MCP SDK logs on every normal session close: `terminate()`
+    closes the stream its standalone SSE writer is still reading. Unfixed in mcp 1.30."""
+    return not (
+        record.getMessage() == "Error in standalone SSE writer"
+        and "ClosedResourceError" in (record.exc_text or "")
+    )
+
+
 def configure_logging() -> None:
-    """Install one owned INFO stderr handler on this module's logger, rendering only the
-    safe allowlisted record_run/alarm fields through a current stdlib formatter (no
-    structlog, no logging package/platform). Idempotent -- a repeated call never installs
-    a second owned handler. Never touches uvicorn's own loggers, and leaves propagation on
-    so caplog (which attaches at the root) keeps working in tests. Installs the process-wide
-    redaction first."""
+    """Send every logger of the process through one owned JSON stderr handler on root, with
+    `ach_runtime` at INFO and everything else at WARNING. The handler must be in place before
+    the first `FastMCP()`: its `logging.basicConfig` otherwise claims root at INFO in plain text.
+    Idempotent -- a repeated call never installs a second owned handler. uvicorn's own loggers
+    do not propagate and keep their format. Installs the process-wide redaction first, which
+    is what makes each record's message and `exc_text` safe to render."""
     install_redaction()
-    # httpx logs every request at INFO; the control loop polls each sandbox every few
-    # seconds, which buries every useful line.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-    if any(getattr(handler, _OWNED_HANDLER_ATTR, False) for handler in logger.handlers):
+    logging.getLogger("ach_runtime").setLevel(logging.INFO)
+    logging.getLogger("mcp.server.streamable_http").addFilter(_not_session_close_race)
+    root = logging.getLogger()
+    root.setLevel(logging.WARNING)
+    if any(getattr(handler, _OWNED_HANDLER_ATTR, False) for handler in root.handlers):
         return
     handler = _StderrHandler(stream=sys.stderr)
     handler.setFormatter(_SafeRecordFormatter())
     setattr(handler, _OWNED_HANDLER_ATTR, True)
-    logger.addHandler(handler)
+    root.addHandler(handler)
 
 UsageSource = Literal["opencode", "pi"]
 UsageBasis = Literal["engine_estimate"]

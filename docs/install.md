@@ -3,6 +3,11 @@
 ach-agent needs, in order: an Istio ambient mesh, the agent-sandbox controller, an OpenShell gateway
 behind a mesh policy, then the operator chart. All versions below are the tested ones.
 
+The cluster's CNI must enforce NetworkPolicy (on EKS, the VPC CNI addon with `enableNetworkPolicy`).
+A sandbox's egress lockdown is the OpenShell driver's deny-all NetworkPolicy; without enforcement it
+reaches any IP. Each sandbox checks this at start: if it completes a TLS handshake with the Kubernetes
+API, it refuses to run. `openshell.insecureWithoutNetworkPolicy=true` turns the check off.
+
 ## 1. Istio ambient 1.28.3
 
 ```bash
@@ -47,7 +52,8 @@ The values (`test/e2e/openshell-values.yaml`):
 
 Replace `<AGENT_NAMESPACE>` in `docs/mesh/openshell-mesh.yaml` with each Agent namespace and apply it.
 It enforces STRICT mTLS, admits only the operator ServiceAccount, the sandbox ServiceAccount and the
-Agent namespaces to the gateway, and allows ambient HBONE (TCP 15008) through the NetworkPolicy.
+Agent namespaces to the gateway, and allows ambient HBONE (TCP 15008) and kubelet probes (Istio's fixed
+link-local SNAT address) through the NetworkPolicy.
 Label every Agent namespace `istio.io/dataplane-mode=ambient`.
 
 ## 5. Operator

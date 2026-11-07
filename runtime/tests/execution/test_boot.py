@@ -6,10 +6,12 @@ from __future__ import annotations
 import os
 import shlex
 import socket
+import ssl
 import subprocess
 import sys
+import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -239,3 +241,107 @@ def test_build_creates_the_workspace_directory(tmp_path: Path) -> None:
     build_execution_app(load_bootstrap(BOOTSTRAP_FIXTURE, {}), environ=environ,
                         workspace_dir=tmp_path / "ach" / "workspace", sessions_root=tmp_path / "ach" / "sessions")
     assert (tmp_path / "ach" / "workspace").is_dir()
+
+
+def _self_signed(tmp_path: Path) -> ssl.SSLContext:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "kubernetes")])
+    now = datetime.now(timezone.utc)
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(x509.random_serial_number()).not_valid_before(now - timedelta(minutes=1))
+            .not_valid_after(now + timedelta(hours=1)).sign(key, hashes.SHA256()))
+    (tmp_path / "tls.crt").write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    (tmp_path / "tls.key").write_bytes(key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(tmp_path / "tls.crt", tmp_path / "tls.key")
+    return context
+
+
+def _listener(tls: ssl.SSLContext | None) -> int:
+    """A loopback listener that completes a TLS handshake (`tls`), or accepts and closes at once,
+    the way ambient ztunnel answers a connect whose upstream is blocked."""
+    server = socket.create_server(("127.0.0.1", 0))
+
+    def serve() -> None:
+        while True:
+            conn, _ = server.accept()
+            try:
+                if tls is not None:
+                    tls.wrap_socket(conn, server_side=True).close()
+            except OSError:
+                pass
+            finally:
+                conn.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return server.getsockname()[1]
+
+
+def _kube_env(port: int, **extra: str) -> dict[str, str]:
+    return {"KUBERNETES_SERVICE_HOST": "127.0.0.1", "KUBERNETES_SERVICE_PORT": str(port), **extra}
+
+
+def test_network_policy_check_refuses_when_the_kube_api_completes_a_handshake(tmp_path: Path) -> None:
+    from ach_runtime.execution.boot import require_network_policy
+
+    port = _listener(_self_signed(tmp_path))
+    with pytest.raises(RuntimeError, match="openshell.insecureWithoutNetworkPolicy"):
+        require_network_policy(_kube_env(port), attempts=2, pause=0)
+
+
+def test_network_policy_check_passes_when_the_kube_api_is_blocked(tmp_path: Path) -> None:
+    from ach_runtime.execution.boot import require_network_policy
+
+    accepts_then_closes = _listener(None)
+    closed = socket.create_server(("127.0.0.1", 0))
+    closed_port = closed.getsockname()[1]
+    closed.close()
+    require_network_policy(_kube_env(accepts_then_closes), attempts=2, pause=0)
+    require_network_policy(_kube_env(closed_port), attempts=2, pause=0)
+
+
+def test_network_policy_check_is_skipped_by_opt_out_or_off_kubernetes(tmp_path: Path) -> None:
+    from ach_runtime.execution.boot import require_network_policy
+
+    port = _listener(_self_signed(tmp_path))
+    require_network_policy(_kube_env(port, ACH_INSECURE_WITHOUT_NETWORK_POLICY="true"), attempts=2, pause=0)
+    require_network_policy({}, attempts=2, pause=0)
+
+
+def test_network_policy_check_passes_once_a_late_policy_blocks_the_kube_api(tmp_path: Path) -> None:
+    """A CNI may leave a new pod open until its policy lands: a handshake first, then blocked."""
+    from ach_runtime.execution.boot import require_network_policy
+
+    tls = _self_signed(tmp_path)
+    server = socket.create_server(("127.0.0.1", 0))
+
+    def serve() -> None:
+        conn, _ = server.accept()
+        try:
+            tls.wrap_socket(conn, server_side=True).close()
+        except OSError:
+            pass
+        server.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    require_network_policy(_kube_env(server.getsockname()[1]), attempts=3, pause=0)
+
+
+async def test_run_execution_checks_network_policy_before_anything_else(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ach_runtime.execution import boot
+
+    class Refused(Exception):
+        pass
+
+    def refuse(environ: object) -> None:
+        raise Refused
+
+    monkeypatch.setattr(boot, "require_network_policy", refuse)
+    with pytest.raises(Refused):
+        await boot.run_execution(None)

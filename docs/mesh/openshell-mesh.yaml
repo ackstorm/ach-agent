@@ -46,6 +46,7 @@ spec:
 ---
 # Ambient HBONE: mesh traffic reaches a pod on TCP 15008, which the chart's and the driver's
 # NetworkPolicies (additive) do not allow. Access control stays mTLS + the policies above.
+# Kubelet probes to ambient pods arrive from Istio's fixed link-local SNAT address (IPv4 and IPv6).
 # Keep this as soon as the cluster enforces NetworkPolicy.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -56,6 +57,9 @@ spec:
   ingress:
     - ports:
         - {protocol: TCP, port: 15008}
+    - from:
+        - ipBlock: {cidr: 169.254.7.127/32}
+        - ipBlock: {cidr: fd16:9254:7127:1337:ffff:ffff:ffff:ffff/128}
 ---
 # Since OpenShell 0.1.6 the sandbox workload opens the control connection to its supervisor. The
 # driver's policies allow that egress on 5500 only, but under ambient it leaves the workload as HBONE

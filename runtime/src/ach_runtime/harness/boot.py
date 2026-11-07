@@ -176,11 +176,15 @@ async def run_control(
             sources.clear()
             servers[0].should_exit = True
             await tasks[0]
-            drain_deadline = loop.time() + shutdown_timeout
-            while control.admission.queued_total and loop.time() < drain_deadline:
-                await asyncio.sleep(0.05)
-            if control.admission.queued_total:
-                log.warning("control drain reached configured shutdown timeout")
+            # A hosted run lives in its own sandbox and the next control adopts it
+            # (Control.reconnect_workspace → Admission.recover): waiting here only delays
+            # the restart. In-process Workspaces (host_api=False) die with this process.
+            if not host_api:
+                drain_deadline = loop.time() + shutdown_timeout
+                while control.admission.queued_total and loop.time() < drain_deadline:
+                    await asyncio.sleep(0.05)
+                if control.admission.queued_total:
+                    log.warning("control drain reached configured shutdown timeout")
             # No run is left to serve: what still holds the facade listener open is the
             # engines' long-lived MCP streams, which end only with their Workspace.
             servers[1].config.timeout_graceful_shutdown = FACADE_DRAINED_GRACE_SECONDS

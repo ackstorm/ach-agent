@@ -455,12 +455,12 @@ class A2AAgentExecutorBridge:
 
     async def _recovered_result(self, invocation_id: str) -> RunStatus | None:
         run = self._control.admission.recovered_run(invocation_id)
-        if run is None:
-            return self._control.finished_runs.pop(invocation_id, None)
-        try:
-            return await asyncio.shield(run.completed)
-        except Exception:
-            return None
+        if run is not None:
+            try:
+                await asyncio.shield(run.completed)  # resolves to None; the outcome is in finished_runs
+            except Exception:
+                return None
+        return self._control.finished_runs.pop(invocation_id, None)
 
     async def _resume(self, store: Any, task: Any, meta: dict[str, Any]) -> RunStatus | None:
         """One message into the same session; its outcome becomes the task's."""

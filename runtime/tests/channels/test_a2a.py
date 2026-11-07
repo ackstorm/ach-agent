@@ -799,8 +799,10 @@ def _recovering(admit_result=None, recovered=None, finished=None):
 def test_recovery_writes_a_recovered_runs_reply_into_its_task() -> None:
     async def scenario() -> _Store:
         done = asyncio.get_running_loop().create_future()
-        done.set_result(_status("completed", "the report"))
-        bridge, _ = _recovering(recovered=SimpleNamespace(completed=done))
+        done.set_result(None)  # Admission resolves a recovered run's future with None
+        bridge, _ = _recovering(
+            recovered=SimpleNamespace(completed=done), finished={"inv-1": _status("completed", "the report")},
+        )
         store = _Store(_stored_task())
         await bridge.recover(store)
         return store

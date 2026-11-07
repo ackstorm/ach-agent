@@ -502,10 +502,16 @@ class Control:
                     deadline_at=record.deadline_at,
                     instance_id=endpoint.instance_id,
                     run_id=record.run_id,
-                    observer=lambda record=record: self._observe_run(endpoint, record),
+                    observer=lambda record=record: self._observe_and_keep(endpoint, record),
                 )
             except (ValueError, RuntimeError) as exc:
                 raise WorkspaceAssemblyUnavailable("mini-harness run inventory ownership conflicted") from exc
+
+    async def _observe_and_keep(self, endpoint: WorkspaceEndpoint, record: RunStatus) -> RunStatus:
+        """Admission drops a recovered run's outcome; keep it for the channel that waits on it."""
+        status = await self._observe_run(endpoint, record)
+        self.finished_runs[record.invocation_id] = status
+        return status
 
     async def prepare(self, ticket: AdmissionTicket, endpoint: WorkspaceEndpoint):
         if self.lifecycle is None:

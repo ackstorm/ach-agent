@@ -12,7 +12,8 @@ from __future__ import annotations
 import hashlib
 import io
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 
 class _ClientError(Exception):
@@ -26,6 +27,7 @@ class _Object:
     body: bytes
     etag: str
     metadata: dict[str, str]
+    last_modified: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 def _etag(body: bytes) -> str:
@@ -45,6 +47,7 @@ class FakeS3Client:
         # rather than letting a Python-level race double-accept a conditional write that a
         # real backend would correctly split into one winner and one PreconditionFailed.
         self._lock = threading.Lock()
+        self.page_size = 1000
 
     def put_object(
         self,
@@ -78,6 +81,25 @@ class FakeS3Client:
         if obj is None:
             raise _ClientError("404")
         return {"ETag": obj.etag, "ContentLength": len(obj.body), "Metadata": dict(obj.metadata)}
+
+    def list_objects_v2(
+        self, *, Bucket: str, Prefix: str, ContinuationToken: str | None = None
+    ) -> dict[str, object]:
+        keys = sorted(k for k in self.objects if k.startswith(Prefix))
+        start = int(ContinuationToken or 0)
+        page = keys[start:start + self.page_size]
+        more = start + self.page_size < len(keys)
+        out: dict[str, object] = {
+            "Contents": [{"Key": k, "LastModified": self.objects[k].last_modified} for k in page],
+            "IsTruncated": more,
+        }
+        if more:
+            out["NextContinuationToken"] = str(start + self.page_size)
+        return out
+
+    def delete_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+        self.objects.pop(Key, None)
+        return {}
 
     def delete_object_for_test(self, key: str) -> None:
         """Test-only helper to simulate a registry pointing at missing bytes."""

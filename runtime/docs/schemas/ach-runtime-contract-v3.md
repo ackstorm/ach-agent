@@ -162,6 +162,7 @@ The host owns names, routing and TLS for these listeners. `infrastructure.facade
 | Surface | Where | Contract |
 |---|---|---|
 | Channel ingress | `agent`/`control` `8080`: `POST /channels/{channel}/events`, `/a2a/{channel}/…` | v1 §2–3: authentication per channel config, HTTP 202 on admission, 503 when the queue is full or closed. |
+| A2A across a restart | `/a2a/{channel}/…` | A restart keeps hosted runs alive: the next control adopts them. The caller's stream ends with `working` and a restart text, and `tasks/get` returns the result once the run ends. A run that never started ends `failed` and is sent again. A run that failed during the restart is resumed once in its session. With `workspace.persistence.type: s3`, tasks are stored in the Agent's storage. |
 | Liveness | `GET /healthz`, every role | 200 while the process serves. A failure means restart the unit. |
 | Readiness | `GET /readyz`, every role | `agent`/`control`: configuration and hydration valid and adapters listening; does not need any Workspace. `control` also waits for the host's inventory (5.4). `execution`: configured by its control unit and restore finished. |
 | Metrics | `GET /metrics` on `agent`/`control` `8080` | Prometheus, prefix `ach_agent_`. No user keys as labels. |

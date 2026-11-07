@@ -12,6 +12,8 @@ from fastapi import FastAPI
 from ach_runtime.channels.a2a import (
     A2AAgentExecutorBridge,
     A2A_OUTPUT_INSTRUCTIONS,
+    RESTARTING_QUEUED,
+    RESTARTING_RUNNING,
     build_a2a_app,
     extract_terminal,
     make_a2a_agent_card,
@@ -681,3 +683,55 @@ def test_routing_error_fails_the_task_instead_of_raising(monkeypatch) -> None:
     assert "x-litellm-user-id" in queue.events[-1].status.message.parts[0].text
     assert control.admission.queued_total == 0
     asyncio.run(control.admission.close())
+
+
+async def _stop_run(*, outlive: bool, started: bool, stop: str):
+    """Run one task against a runner that never finishes, then stop it with `stop`."""
+    release = asyncio.Event()
+    running = asyncio.Event()
+
+    async def runner(_routed, ticket):
+        if started:
+            ticket.mark_started()
+        running.set()
+        await release.wait()
+        return None
+
+    config = _channel()
+    control = _control(config, runner)
+    bridge = A2AAgentExecutorBridge(control, config)
+    bridge.runs_outlive_control = outlive
+    queue = _Queue()
+    task = asyncio.create_task(bridge.execute(_Context("t1", "c1"), queue))
+    await running.wait()
+    await asyncio.sleep(0.01)
+    if stop == "cancel":
+        bridge._cancel_events["t1"].set()
+    else:
+        await bridge.shutdown()
+    await task
+    release.set()
+    await control.admission.close()
+    return queue
+
+
+def test_shutdown_tells_the_caller_a_started_run_keeps_running(monkeypatch) -> None:
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+    queue = asyncio.run(_stop_run(outlive=True, started=True, stop="shutdown"))
+    last = queue.events[-1]
+    assert last.status.state == 2  # TASK_STATE_WORKING
+    assert last.status.message.parts[0].text == RESTARTING_RUNNING
+
+
+def test_shutdown_fails_a_queued_run_so_the_caller_resends(monkeypatch) -> None:
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+    queue = asyncio.run(_stop_run(outlive=True, started=False, stop="shutdown"))
+    assert queue.events[-1].status.state == 4
+    assert queue.events[-1].status.message.parts[0].text == RESTARTING_QUEUED
+
+
+@pytest.mark.parametrize("outlive,stop", [(True, "cancel"), (False, "shutdown")])
+def test_client_cancel_and_in_process_shutdown_stay_silent(outlive, stop, monkeypatch) -> None:
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+    queue = asyncio.run(_stop_run(outlive=outlive, started=True, stop=stop))
+    assert len(queue.events) == 1  # only the plain "working" event

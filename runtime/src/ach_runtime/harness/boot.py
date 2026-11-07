@@ -121,6 +121,8 @@ async def run_control(
     installed: list[signal.Signals] = []
     shutdown_requested = asyncio.Event()
     sources: list[Any] = list(getattr(ingress.state, "a2a_bridges", {}).values())
+    for bridge in getattr(ingress.state, "a2a_bridges", {}).values():
+        bridge.runs_outlive_control = host_api
 
     def request_shutdown() -> None:
         if ingress.state.ready:

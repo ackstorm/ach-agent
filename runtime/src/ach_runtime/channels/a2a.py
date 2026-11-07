@@ -212,6 +212,12 @@ async def _wait_or_cancel(future: asyncio.Future[Any], cancelled: asyncio.Event)
 
 _CANCELLED = object()
 
+RESTARTING_RUNNING = (
+    "The agent is restarting. Your request keeps running: get its result with tasks/get "
+    "on this task, or ask again in this conversation."
+)
+RESTARTING_QUEUED = "The agent restarted before your request started. Send it again."
+
 
 class A2AAgentExecutorBridge:
     """Maps SDK task waiters to real admission tickets and their opaque results."""
@@ -228,12 +234,16 @@ class A2AAgentExecutorBridge:
         self._ready = ready or (lambda: not control._stopping)
         self._cancel_events: dict[str, asyncio.Event] = {}
         self._waiter_counts: dict[str, int] = {}
+        # True when a run outlives this control: the next control adopts it.
+        self.runs_outlive_control = False
+        self._shutting_down = False
 
     @property
     def channel_cfg(self) -> ChannelConfig:
         return self._channel_cfg
 
     async def shutdown(self) -> None:
+        self._shutting_down = True
         for event in tuple(self._cancel_events.values()):
             event.set()
 
@@ -293,10 +303,16 @@ class A2AAgentExecutorBridge:
             self._control.progress.setdefault(invocation_id, []).append(emit)
             started = await _wait_or_cancel(ticket.started, cancel_event)
             if started is _CANCELLED:
+                if self._shutting_down and self.runs_outlive_control:
+                    await event_queue.enqueue_event(
+                        _status_event("failed", RESTARTING_QUEUED, task_id, context_id))
                 return
             await event_queue.enqueue_event(_status_event("working", None, task_id, context_id))
             result = await _wait_or_cancel(ticket.completed, cancel_event)
             if result is _CANCELLED:
+                if self._shutting_down and self.runs_outlive_control:
+                    await event_queue.enqueue_event(
+                        _status_event("working", RESTARTING_RUNNING, task_id, context_id))
                 return
             if not isinstance(result, RunStatus):
                 await event_queue.enqueue_event(

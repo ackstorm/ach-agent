@@ -959,6 +959,19 @@ def test_waiting_behind_the_same_session_says_queued(monkeypatch) -> None:
     assert _kinds(queue, "queued") == [a2a.QUEUED_TEXT]
 
 
+def test_the_first_event_of_a_queued_request_carries_its_invocation(monkeypatch) -> None:
+    """The SDK stores the task on its first event: recovery must find whose request it is."""
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+
+    async def between(queue, control):
+        await _until(lambda: _kinds(queue, "queued"))
+
+    queue = asyncio.run(_status_run(monkeypatch, start=False, busy=True, between=between))
+    first = dict(queue.events[0].metadata)
+    assert first["ach"] == "queued" and first["invocationId"]
+    assert {"workspaceKey", "sessionKey"} <= first.keys()
+
+
 def test_a_slow_start_without_a_busy_session_says_starting(monkeypatch) -> None:
     monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
     from ach_runtime.channels import a2a

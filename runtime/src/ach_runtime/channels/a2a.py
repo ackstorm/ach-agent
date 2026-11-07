@@ -252,18 +252,19 @@ def _outcome_status(result: Any) -> tuple[str, str]:
 
 
 class _Pulse:
-    """Every event one A2A waiter sends, so the watcher knows how long it has been silent."""
+    """Every event one A2A waiter sends, so the watcher knows how long it has been silent.
 
-    def __init__(self, event_queue: Any, task_id: str, context_id: str) -> None:
+    Each event carries the invocation and routing keys: the SDK stores the task on its
+    first event, which can be `queued` or `starting`, and startup recovery reads them there.
+    """
+
+    def __init__(self, event_queue: Any, task_id: str, context_id: str, metadata: dict[str, str]) -> None:
         self._queue, self._task_id, self._context_id = event_queue, task_id, context_id
+        self._metadata = metadata
         self.last_sent = time.monotonic()
 
-    async def send(
-        self, state: str, text: str | None, kind: str | None = None,
-        metadata: dict[str, str] | None = None,
-    ) -> None:
-        if kind:
-            metadata = {**(metadata or {}), "ach": kind}
+    async def send(self, state: str, text: str | None, kind: str | None = None) -> None:
+        metadata = {**self._metadata, "ach": kind} if kind else self._metadata
         await self._queue.enqueue_event(
             _status_event(state, text, self._task_id, self._context_id, metadata=metadata))
         self.last_sent = time.monotonic()
@@ -352,7 +353,11 @@ class A2AAgentExecutorBridge:
         watcher: asyncio.Task[None] | None = None
         try:
             ticket = self._control.admission.admit(routed)
-            pulse = _Pulse(event_queue, task_id, context_id)
+            pulse = _Pulse(event_queue, task_id, context_id, {
+                "invocationId": ticket.invocation_id,
+                "workspaceKey": routed.workspace_key,
+                "sessionKey": routed.session_key,
+            })
             if isinstance(ticket, AdmissionTicket):
                 watcher = asyncio.create_task(self._watch(ticket, pulse))
 
@@ -368,11 +373,7 @@ class A2AAgentExecutorBridge:
                     await event_queue.enqueue_event(
                         _status_event("failed", RESTARTING_QUEUED, task_id, context_id))
                 return
-            await pulse.send("working", None, metadata={
-                "invocationId": invocation_id,
-                "workspaceKey": routed.workspace_key,
-                "sessionKey": routed.session_key,
-            })
+            await pulse.send("working", None)
             result = await _wait_or_cancel(ticket.completed, cancel_event)
             await _stop(watcher)
             if result is _CANCELLED:

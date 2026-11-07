@@ -59,6 +59,4 @@ port of the ach `v0.14.2` agent operator (read it with `git -C <ach> archive v0.
 - Operator env: `ACH_AGENT_OPENSHELL_GATEWAY` (required), `ACH_AGENT_OPENSHELL_WORKSPACE`,
   `ACH_AGENT_OPENSHELL_SERVICE_URL`, `ACH_AGENT_OPENSHELL_POD_NAMESPACE`,
   `ACH_AGENT_OPENSHELL_TLS_SECRET` (gateway mTLS: `<namespace>/<name>` of the operator's client certificate Secret, read once at start through the uncached API reader; its `ca.crt` reaches control pods as the PEM in `ACH_AGENT_EXECUTION_CA_PEM`), `ACH_AGENT_NAMESPACE`,
-  `ACH_AGENT_STORAGE_S3_*`, `ACH_AGENT_ROUTE_PARENT_{NAME,NAMESPACE,SECTION}`,
-  `ACH_AGENT_INSECURE_WITHOUT_NETWORK_POLICY` (`true` puts `ACH_INSECURE_WITHOUT_NETWORK_POLICY=true` on control pods; the
-  control forwards it to sandboxes, which then skip their NetworkPolicy enforcement check).
+  `ACH_AGENT_STORAGE_S3_*`, `ACH_AGENT_ROUTE_PARENT_{NAME,NAMESPACE,SECTION}`.

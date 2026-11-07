@@ -18,9 +18,6 @@ openshell:
   # Plaintext opt-in. Without tls.secret the gateway is unauthenticated and protected only by the
   # mesh; the chart then refuses to render unless this is set true to acknowledge that posture.
   insecurePlaintext: false
-  # NetworkPolicy opt-out. A sandbox that can reach the Kubernetes API refuses to start: the cluster
-  # does not enforce NetworkPolicy, so the sandbox has open egress by IP. Set true to run anyway.
-  insecureWithoutNetworkPolicy: false
   # Gateway mTLS (docs/install.md): the Secret with the operator's client certificate (ca.crt,
   # tls.crt, tls.key; OU=operator), e.g. {namespace: openshell, name: ach-agent-operator-tls}.
   # Set: the operator may read that one Secret and openshell.gateway must be https://.

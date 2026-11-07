@@ -4,10 +4,8 @@
 from __future__ import annotations
 
 import json
-import os
 
 from ach_runtime.config.public import ExecutionBootstrap
-from ach_runtime.execution.boot import NETWORK_POLICY_OPT_OUT
 from ach_runtime.harness.workspaces import WorkspaceAssemblyUnavailable, WorkspaceRef
 
 ENV_VALUE_MAX = 8 * 1024  # contract 5.5: single-line, at most 8 KiB each
@@ -24,9 +22,6 @@ def launch_env(bootstrap_json: str, verify_key: str, ref: WorkspaceRef, name: st
         "ACH_WORKSPACE_REF": ref.workspace_ref,
         "ACH_BOOTSTRAP_JSON": bootstrap_json,
     }
-    # The operator sets the opt-out on the control pod from the chart value; the sandbox reads it.
-    if os.environ.get(NETWORK_POLICY_OPT_OUT) == "true":
-        env[NETWORK_POLICY_OPT_OUT] = "true"
     for key, value in env.items():
         if "\n" in value or len(value.encode()) > ENV_VALUE_MAX:
             raise WorkspaceAssemblyUnavailable(f"launch env {key} must be single-line and under 8 KiB")

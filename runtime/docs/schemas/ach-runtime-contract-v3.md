@@ -309,7 +309,6 @@ An execution unit must be started with:
 - Exactly the `launch.env` variables. They are single-line, each at most 8 KiB. The execution bootstrap travels inside them as `ACH_BOOTSTRAP_JSON`, so the host has no file to render. The bootstrap also carries `engine`, the `engine.type` of the config (`opencode` or `pi`, default `opencode`), so the execution unit starts the engine the config selected.
 - Writable paths per 3.4.
 - Egress to `infrastructure.facadeEndpoint`.
-- On Kubernetes, no egress to the Kubernetes API Service. The unit refuses to start when it completes a TLS handshake with `KUBERNETES_SERVICE_HOST`, unless `launch.env` carries `ACH_INSECURE_WITHOUT_NETWORK_POLICY=true`. The control unit adds that variable only when its own environment has it.
 - Reachability from the control unit before the unit is ready. Its `/readyz` turns 200 only after the control unit has configured it, so the registered `baseUrl` must route to a not-ready unit.
 
 The host adds nothing in the `ACH_` space beyond `launch.env`. It may add its own scheduling, resources and policy freely; those are not runtime concerns.

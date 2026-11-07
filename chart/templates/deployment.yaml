@@ -68,10 +68,6 @@ spec:
             - name: ACH_AGENT_OPENSHELL_SERVICE_URL
               value: {{ . | quote }}
             {{- end }}
-            {{- if .Values.openshell.insecureWithoutNetworkPolicy }}
-            - name: ACH_AGENT_INSECURE_WITHOUT_NETWORK_POLICY
-              value: "true"
-            {{- end }}
             {{- with $tls }}
             - name: ACH_AGENT_OPENSHELL_TLS_SECRET
               value: {{ printf "%s/%s" .namespace .name | quote }}

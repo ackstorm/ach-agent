@@ -25,15 +25,3 @@ def test_launch_env_keys_and_round_trip() -> None:
 def test_launch_env_rejects_oversized_or_multiline(verify_key: str) -> None:
     with pytest.raises(WorkspaceAssemblyUnavailable):
         launch_env(bootstrap_json(BOOT), verify_key, REF, "agent-a-xyz")
-
-
-@pytest.mark.parametrize(("control_value", "forwarded"), [("true", True), ("false", False), (None, False)])
-def test_launch_env_forwards_the_network_policy_opt_out_of_the_control_pod(
-    monkeypatch: pytest.MonkeyPatch, control_value: str | None, forwarded: bool
-) -> None:
-    if control_value is None:
-        monkeypatch.delenv("ACH_INSECURE_WITHOUT_NETWORK_POLICY", raising=False)
-    else:
-        monkeypatch.setenv("ACH_INSECURE_WITHOUT_NETWORK_POLICY", control_value)
-    env = launch_env(bootstrap_json(BOOT), "verify", REF, "agent-a-xyz")
-    assert (env.get("ACH_INSECURE_WITHOUT_NETWORK_POLICY") == "true") is forwarded

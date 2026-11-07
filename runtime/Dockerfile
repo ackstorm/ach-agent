@@ -33,7 +33,9 @@ WORKDIR /work
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/work/src:/work/deps
-RUN apk add --no-cache ca-certificates git openssh-client libstdc++ libgcc tzdata \
+# apk upgrade picks up Alpine fixes published after the pinned base image was built.
+RUN apk upgrade --no-cache \
+    && apk add --no-cache ca-certificates git openssh-client libstdc++ libgcc tzdata \
     && rm -rf /root/.cache /tmp/* /var/cache/apk/*
 COPY src/ /work/src/
 COPY plugins/ /work/plugins/

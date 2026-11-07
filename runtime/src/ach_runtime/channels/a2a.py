@@ -408,7 +408,7 @@ def make_a2a_agent_card(agent_name: str, channel_name: str) -> Any:
     )
 
 
-def build_a2a_app(agent_card: Any, executor: A2AAgentExecutorBridge) -> Any:
+def build_a2a_app(agent_card: Any, executor: A2AAgentExecutorBridge, task_store: Any = None) -> Any:
     from a2a.server.agent_execution.agent_executor import AgentExecutor
     from a2a.server.request_handlers.default_request_handler import LegacyRequestHandler
     from a2a.server.request_handlers.response_helpers import agent_card_to_dict
@@ -428,7 +428,7 @@ def build_a2a_app(agent_card: Any, executor: A2AAgentExecutorBridge) -> Any:
             await executor.cancel(context, event_queue)
 
     handler = LegacyRequestHandler(
-        agent_executor=_ExecutorAdapter(), task_store=InMemoryTaskStore(), agent_card=agent_card
+        agent_executor=_ExecutorAdapter(), task_store=task_store or InMemoryTaskStore(), agent_card=agent_card
     )
     sub_app = FastAPI(title="a2a-sub")
     sub_app.add_middleware(_AuthGuardMiddleware, channel_cfg=executor.channel_cfg)

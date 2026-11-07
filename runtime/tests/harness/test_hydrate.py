@@ -756,3 +756,83 @@ async def test_hydrator_load_configured_limits_override_hydrate_limits() -> None
     await client.aclose()
     assert catalog.model.metadata is not None
     assert (catalog.model.metadata.context_limit, catalog.model.metadata.output_limit) == (524288, 65536)
+
+
+# --- retries on a restarting platform ------------------------------------------
+
+
+def _skill_archive() -> bytes:
+    import io
+    import tarfile
+
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w:gz") as tf:
+        payload = b"name: sample\n"
+        info = tarfile.TarInfo("sample/SKILL.md")
+        info.size = len(payload)
+        tf.addfile(info, io.BytesIO(payload))
+    return archive.getvalue()
+
+
+def test_stage_context_retries_a_skill_download_the_platform_cannot_serve_yet(monkeypatch) -> None:
+    """Live 2026-11-07: a platform restart answered 502 for 17 s and failed every run start."""
+    import asyncio
+    import tempfile
+    from pathlib import Path
+
+    from ach_runtime.harness import hydrate
+    from ach_runtime.harness.hydrate import ContextItem, HydratedCatalog, HydratedModel, stage_context
+
+    monkeypatch.setattr(hydrate, "_RETRY_DELAYS_SECONDS", (0.0, 0.0, 0.0))
+    answers = [httpx.ConnectError("refused"), httpx.Response(502), httpx.Response(200, content=_skill_archive())]
+
+    async def handler(request):
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    async def scenario(root: Path) -> None:
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        catalog = HydratedCatalog("prod", HydratedModel("m", "https://model", None), (),
+                                  (ContextItem(name="sample", id="1", downloadUrl="https://ach/skill"),), (), ())
+        await stage_context(catalog, root, excluded_skills=[], client=client)
+        await client.aclose()
+        assert (root / "skills" / "sample" / "SKILL.md").read_bytes() == b"name: sample\n"
+
+    with tempfile.TemporaryDirectory() as d:
+        asyncio.run(scenario(Path(d) / "stage"))
+    assert answers == []
+
+
+async def test_hydration_retries_a_bad_gateway_but_not_a_client_error(monkeypatch) -> None:
+    from ach_runtime.harness import hydrate
+
+    monkeypatch.setattr(hydrate, "_RETRY_DELAYS_SECONDS", (0.0, 0.0))
+    statuses = [503, 200]
+
+    def flaky(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(statuses.pop(0), json=MANIFEST)
+
+    client = httpx.AsyncClient(transport=_transport(flaky))
+    manifest = await fetch_hydration_manifest(BASE_URL, "ek-abc", "platform", identity=IDENTITY, client=client)
+    await client.aclose()
+    assert manifest.environment == "platform" and statuses == []
+
+    calls = []
+
+    def forbidden(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(403, json={})
+
+    client = httpx.AsyncClient(transport=_transport(forbidden))
+    with pytest.raises(HydrationError):
+        await fetch_hydration_manifest(BASE_URL, "ek-abc", "platform", identity=IDENTITY, client=client)
+    await client.aclose()
+    assert len(calls) == 1
+
+
+def test_retries_outlast_a_platform_restart() -> None:
+    from ach_runtime.harness import hydrate
+
+    assert sum(hydrate._RETRY_DELAYS_SECONDS) >= 60

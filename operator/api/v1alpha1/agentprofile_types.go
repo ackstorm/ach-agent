@@ -176,6 +176,8 @@ type WorkspaceVolumeSpec struct {
 
 // WorkspaceSessionSpec is workspace.session (contract §7). Pointer fields: per-field merge.
 type WorkspaceSessionSpec struct {
+	// IdleTimeoutSeconds saves and closes a session this long after its last run; 0 does it
+	// as soon as the run ends.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	IdleTimeoutSeconds *int64 `json:"idleTimeoutSeconds,omitempty"`
@@ -193,8 +195,10 @@ type WorkspaceSessionSpec struct {
 // type non-pointer.
 // +kubebuilder:validation:XValidation:rule="!has(self.session) || !has(self.session.retentionDays) || !has(self.persistence) || !has(self.persistence.retentionDays) || self.session.retentionDays <= self.persistence.retentionDays",message="session.retentionDays must not exceed persistence.retentionDays"
 type WorkspaceSpec struct {
+	// IdleTimeoutSeconds closes the Workspace after this long with no work and no open
+	// session: 0 closes it at once, -1 never closes it for idleness.
 	// +optional
-	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Minimum=-1
 	IdleTimeoutSeconds *int64 `json:"idleTimeoutSeconds,omitempty"`
 	// +optional
 	// +kubebuilder:validation:Minimum=0

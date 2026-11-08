@@ -168,6 +168,21 @@ func TestWorkspaceV1_WorkspaceBlockMatchesFixture(t *testing.T) {
 	assertJSONEqual(t, got, "workspace")
 }
 
+func TestWorkspaceV1_WorkspaceBlockPassesZeroAndNeverTimeouts(t *testing.T) {
+	for _, idle := range []int64{0, -1} {
+		_, _, _, workspace, _, _, _ := gitlabPRReviewerAgent()
+		workspace.IdleTimeoutSeconds = ptr(idle)
+		workspace.Session.IdleTimeoutSeconds = ptr(int64(0))
+		got, err := RenderWorkspaceV1(workspace)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.IdleTimeoutSeconds != idle || got.Session.IdleTimeoutSeconds != 0 {
+			t.Fatalf("idle %d: rendered workspace %d, session %d", idle, got.IdleTimeoutSeconds, got.Session.IdleTimeoutSeconds)
+		}
+	}
+}
+
 func TestWorkspaceV1_ArtifactsBlockMatchesFixture(t *testing.T) {
 	_, _, _, _, artifacts, _, _ := gitlabPRReviewerAgent()
 	got, err := RenderArtifactsV1(artifacts)

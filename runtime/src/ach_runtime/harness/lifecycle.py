@@ -149,7 +149,8 @@ class Lifecycle:
 
     def _tick_delay(self, idle_ticks: int) -> float:
         workspace = self.control.config.workspace
-        cap = max(1.0, 0.1 * min(workspace.idle_timeout_seconds, workspace.session.idle_timeout_seconds))
+        timeouts = [t for t in (workspace.idle_timeout_seconds, workspace.session.idle_timeout_seconds) if t >= 0]
+        cap = max(1.0, 0.1 * min(timeouts))
         return min(_TICK_DELAYS[min(idle_ticks, len(_TICK_DELAYS) - 1)], cap)
 
     async def _tick_loop(self) -> None:
@@ -684,8 +685,11 @@ class Lifecycle:
                 self._saw_activity = self._saw_activity or uncertain or queued
                 self._last_workspace.pop(workspace_ref, None)
                 return
+            timeout = self.control.config.workspace.idle_timeout_seconds
+            if timeout < 0:
+                return
             last_idle = self._last_workspace.setdefault(workspace_ref, now)
-            if (now - last_idle).total_seconds() >= self.control.config.workspace.idle_timeout_seconds:
+            if (now - last_idle).total_seconds() >= timeout:
                 try:
                     await self.control.manager.close(endpoint.ref)
                 except Exception as exc:

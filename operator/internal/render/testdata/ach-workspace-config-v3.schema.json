@@ -1439,7 +1439,7 @@
       "additionalProperties": false,
       "properties": {
         "idleTimeoutSeconds": {
-          "exclusiveMinimum": 0,
+          "minimum": 0,
           "title": "Idletimeoutseconds",
           "type": "integer"
         },
@@ -1784,7 +1784,7 @@
       "additionalProperties": false,
       "properties": {
         "idleTimeoutSeconds": {
-          "exclusiveMinimum": 0,
+          "minimum": -1,
           "title": "Idletimeoutseconds",
           "type": "integer"
         },

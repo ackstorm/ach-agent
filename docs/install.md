@@ -364,7 +364,10 @@ A message pays one of three costs, depending on what is still running for its Wo
 Two timers decide the state, in order. `workspace.session.idleTimeoutSeconds` after its last turn a
 session's opencode is stopped, its HOME saved and the session retired. Only once every session of
 the Workspace is retired does `workspace.idleTimeoutSeconds` start; when it runs out the Workspace
-is committed and the sandbox deleted. Both are per Agent, not per channel.
+is committed and the sandbox deleted. Both are per Agent, not per channel. `0` acts on the next
+lifecycle tick (about a second): both at `0` delete the sandbox as soon as no work is left, whether
+the run reached the engine or a `sessionStart` gate skipped it. `workspace.idleTimeoutSeconds: -1`
+never deletes the sandbox for idleness.
 
 `routing.workspaceKey` decides how often a message lands on a new sandbox. `session` gives every
 conversation its own sandbox, so every new conversation pays the full cold start. For a chat

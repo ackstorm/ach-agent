@@ -434,7 +434,8 @@ class PersistenceBlock(BaseModel):
 class SessionPolicyBlock(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
 
-    idle_timeout_seconds: int = Field(gt=0, alias="idleTimeoutSeconds")
+    # 0 saves and closes a session as soon as its run ends.
+    idle_timeout_seconds: int = Field(ge=0, alias="idleTimeoutSeconds")
     # Read through WorkspaceBlock.session_retention_days, which applies the default.
     retention_days: int | None = Field(default=None, gt=0, alias="retentionDays")
 
@@ -442,7 +443,8 @@ class SessionPolicyBlock(BaseModel):
 class WorkspaceBlock(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
 
-    idle_timeout_seconds: int = Field(gt=0, alias="idleTimeoutSeconds")
+    # 0 closes the Workspace as soon as it holds no work; -1 never closes it for idleness.
+    idle_timeout_seconds: int = Field(ge=-1, alias="idleTimeoutSeconds")
     shutdown_timeout_seconds: int = Field(gt=0, alias="shutdownTimeoutSeconds")
     ready_timeout_seconds: int = Field(default=30, gt=0, alias="readyTimeoutSeconds")
     max_concurrent_sessions: int = Field(gt=0, alias="maxConcurrentSessions")

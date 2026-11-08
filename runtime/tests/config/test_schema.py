@@ -141,6 +141,22 @@ def test_idleTimeoutSeconds_numeric_string_rejected_not_coerced(
         parse_config(pr_review_wire)
 
 
+
+@pytest.mark.parametrize(("workspace", "session", "ok"), [
+    (0, 0, True), (-1, 300, True), (-2, 300, False), (600, -1, False),
+])
+def test_idle_timeouts_accept_zero_and_workspace_minus_one(
+    pr_review_wire: dict[str, Any], workspace: int, session: int, ok: bool,
+) -> None:
+    pr_review_wire["workspace"]["idleTimeoutSeconds"] = workspace
+    pr_review_wire["workspace"]["session"]["idleTimeoutSeconds"] = session
+    _resign(pr_review_wire)
+    if ok:
+        parse_config(pr_review_wire)
+    else:
+        with pytest.raises(ConfigError):
+            parse_config(pr_review_wire)
+
 def test_runtime_config_model_validate_without_strict_kwarg_would_coerce(
     pr_review_wire: dict[str, Any],
 ) -> None:

@@ -1439,9 +1439,17 @@
       "additionalProperties": false,
       "properties": {
         "idleTimeoutSeconds": {
-          "exclusiveMinimum": 0,
-          "title": "Idletimeoutseconds",
-          "type": "integer"
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Idletimeoutseconds"
         },
         "retentionDays": {
           "anyOf": [
@@ -1457,9 +1465,6 @@
           "title": "Retentiondays"
         }
       },
-      "required": [
-        "idleTimeoutSeconds"
-      ],
       "title": "SessionPolicyBlock",
       "type": "object"
     },
@@ -1784,7 +1789,7 @@
       "additionalProperties": false,
       "properties": {
         "idleTimeoutSeconds": {
-          "exclusiveMinimum": 0,
+          "minimum": -1,
           "title": "Idletimeoutseconds",
           "type": "integer"
         },

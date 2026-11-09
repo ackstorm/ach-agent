@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- The 1 s grace-period re-delete of a terminating sandbox pod. The kubelet keeps the 30 s stop it
+  already started, so a closed sandbox's pod still takes 30 s to go until the OpenShell gateway
+  runs a release with NVIDIA/OpenShell#5279.
+
 ## [0.6.12] - 2026-11-09
 
 ### Fixed
@@ -12,11 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The operator no longer deletes a sandbox that is still starting. The gateway reports a sandbox
   Ready about a second before its pod shows Running, and a host pass in that window took the
   sandbox for lost, deleted it and created another, adding about 15 s to that start.
-- A closed sandbox's pod goes in about a second instead of 30 s. OpenShell v0.1.7's supervisor
-  hangs after SIGTERM until the kubelet kills it at the 30 s default grace period
-  (NVIDIA/OpenShell#5025, fixed upstream but not released), so the operator deletes a
-  terminating workload pod again with a 1 s grace period. The Workspace is saved before the
-  delete.
+- The operator deletes a terminating workload pod again with a 1 s grace period, to work around
+  OpenShell v0.1.7's supervisor hanging after SIGTERM (NVIDIA/OpenShell#5025). This has no
+  effect and is removed in 0.6.13.
 
 ## [0.6.11] - 2026-11-09
 

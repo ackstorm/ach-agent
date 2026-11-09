@@ -185,7 +185,7 @@ type WSPersistenceBlock struct {
 
 // WSSessionPolicyBlock is workspace.session (schema SessionPolicyBlock).
 type WSSessionPolicyBlock struct {
-	IdleTimeoutSeconds int64  `json:"idleTimeoutSeconds"`
+	IdleTimeoutSeconds *int64 `json:"idleTimeoutSeconds,omitempty"`
 	RetentionDays      *int64 `json:"retentionDays,omitempty"`
 }
 
@@ -225,14 +225,16 @@ func RenderWorkspaceV1(w *v1.WorkspaceSpec) (WSWorkspaceBlock, error) {
 	if err != nil {
 		return WSWorkspaceBlock{}, err
 	}
-	if w.Session == nil || w.Session.IdleTimeoutSeconds == nil {
-		return WSWorkspaceBlock{}, fmt.Errorf("workspace.session.idleTimeoutSeconds is required on the resolved wire value")
+	// An unset session.idleTimeoutSeconds leaves the runtime its per-channel default.
+	sessionSpec := w.Session
+	if sessionSpec == nil {
+		sessionSpec = &v1.WorkspaceSessionSpec{}
 	}
-	session := WSSessionPolicyBlock{IdleTimeoutSeconds: *w.Session.IdleTimeoutSeconds}
+	session := WSSessionPolicyBlock{IdleTimeoutSeconds: sessionSpec.IdleTimeoutSeconds}
 	// The two retentions may come from the profile and the Agent, so the CRD rule never sees
 	// the merged pair. With type none no session is saved and the value is dropped.
 	if persist.Type != "none" {
-		session.RetentionDays = w.Session.RetentionDays
+		session.RetentionDays = sessionSpec.RetentionDays
 		if session.RetentionDays != nil && persist.RetentionDays != nil && *session.RetentionDays > *persist.RetentionDays {
 			return WSWorkspaceBlock{}, fmt.Errorf("workspace.session.retentionDays (%d) exceeds workspace.persistence.retentionDays (%d)",
 				*session.RetentionDays, *persist.RetentionDays)

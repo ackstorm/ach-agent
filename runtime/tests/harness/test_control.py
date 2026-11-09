@@ -2636,8 +2636,7 @@ async def test_start_failure_reason_reaches_real_control_log_output(monkeypatch,
         with pytest.raises(ConnectionError):
             await control.run(event, ticket)
     finally:
-        for handler in saved:
-            root.addHandler(handler)
+        root.handlers[:] = saved
     err = capsys.readouterr().err
     assert "run start failed: ConnectionError: pod unreachable" in err
     assert secret not in err

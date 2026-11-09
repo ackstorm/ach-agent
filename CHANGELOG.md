@@ -17,6 +17,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A2A callers get queued, starting and still-working statuses from the runtime.
 - A2A results survive a control restart: tasks are stored in the Agent's storage, recovered runs write their outcome into their task for `tasks/get`, and a run the restart broke is resumed once in the same session.
 
+## [0.6.10] - 2026-11-07
+
+### Removed
+
+- The sandbox NetworkPolicy enforcement check from 0.6.9 and its chart value
+  `openshell.insecureWithoutNetworkPolicy` (now ignored if set). The boot probe of the Kubernetes API
+  could not tell a cluster without enforcement from a sandbox policy that lets internal addresses
+  through the OpenShell supervisor, and refused intermittently on a cluster that enforces
+  NetworkPolicy. NetworkPolicy enforcement stays an install prerequisite.
+
+## [0.6.9] - 2026-11-07
+
+### Changed
+
+- **Breaking:** a sandbox refuses to start on a cluster that does not enforce NetworkPolicy. Its egress
+  lockdown is the OpenShell driver's deny-all NetworkPolicy, so without enforcement it reaches any IP.
+  At boot the execution role tries a TCP connect and TLS handshake with the Kubernetes API Service for
+  up to about 30 s and exits if every attempt completes. Installs on such clusters must set
+  `openshell.insecureWithoutNetworkPolicy=true`.
+- Runtime logs are JSON throughout. Library INFO lines (MCP and A2A per-request messages) are no longer
+  printed, and the MCP SDK's `ClosedResourceError` traceback logged on every normal session close is
+  dropped. Error records carry a redacted `traceback` field.
+- The reference mesh policy (`docs/mesh/openshell-mesh.yaml`) lets kubelet probes through `allow-hbone`:
+  under Istio ambient they come from a fixed link-local address, and an enforcing cluster otherwise
+  fails the gateway and supervisor probes.
+
 ## [0.6.8] - 2026-11-06
 
 ### Fixed

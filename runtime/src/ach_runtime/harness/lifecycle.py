@@ -18,6 +18,7 @@ from typing import Any
 
 import httpx
 
+from ach_runtime.config.schema import session_idle_timeout
 from ach_runtime.storage.api import PersistReceipt, SnapshotTransientFailure
 from ach_runtime.storage.archive import _run_owned, write_capped
 from ach_runtime.storage.refs import DOMAIN_SESSION, DOMAIN_WORKSPACE, StateRef
@@ -148,8 +149,11 @@ class Lifecycle:
         return any(self.control.admission.has_work(ref) for ref in list(self.control.manager.active_endpoints()))
 
     def _tick_delay(self, idle_ticks: int) -> float:
-        workspace = self.control.config.workspace
-        timeouts = [t for t in (workspace.idle_timeout_seconds, workspace.session.idle_timeout_seconds) if t >= 0]
+        config = self.control.config
+        timeouts = [session_idle_timeout(config.workspace, c.type) for c in config.channels]
+        timeouts.append(session_idle_timeout(config.workspace, None))
+        if config.workspace.idle_timeout_seconds >= 0:
+            timeouts.append(config.workspace.idle_timeout_seconds)
         cap = max(1.0, 0.1 * min(timeouts))
         return min(_TICK_DELAYS[min(idle_ticks, len(_TICK_DELAYS) - 1)], cap)
 
@@ -616,6 +620,9 @@ class Lifecycle:
             if status != 200 or not isinstance(sessions, list):
                 raise RuntimeError("mini-harness returned invalid session inventory")
             runs = await self.control.delivery.list_runs(endpoint)
+            channel_types = {c.name: c.type for c in self.control.config.channels}
+            # The latest run of a session decides its idle timeout; runs are listed oldest first.
+            session_channel = {r.session_ref: channel_types.get(r.channel) for r in runs}
             active_refs: set[str] = set()
             uncertain = False
             for item in sessions:
@@ -657,7 +664,10 @@ class Lifecycle:
                         key, now - timedelta(seconds=float(info.get("idleSeconds") or 0))
                     )
                     idle = (now - last).total_seconds()
-                    if idle >= self.control.config.workspace.session.idle_timeout_seconds:
+                    session_timeout = session_idle_timeout(
+                        self.control.config.workspace, session_channel.get(session_ref)
+                    )
+                    if idle >= session_timeout:
                         if not await self._attempt_session_save(endpoint, session_ref, failed_key):
                             active_refs.add(session_ref)
                             continue

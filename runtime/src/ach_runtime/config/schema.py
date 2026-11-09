@@ -434,10 +434,25 @@ class PersistenceBlock(BaseModel):
 class SessionPolicyBlock(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
 
+    # Unset: the default of the channel the session last ran on (session_idle_timeout).
     # 0 saves and closes a session as soon as its run ends.
-    idle_timeout_seconds: int = Field(ge=0, alias="idleTimeoutSeconds")
+    idle_timeout_seconds: int | None = Field(default=None, ge=0, alias="idleTimeoutSeconds")
     # Read through WorkspaceBlock.session_retention_days, which applies the default.
     retention_days: int | None = Field(default=None, gt=0, alias="retentionDays")
+
+
+# A cron tick or a webhook script never gets a follow-up in its session, so keeping the
+# session alive only holds the sandbox; conversational channels keep it for the next message.
+_SESSION_IDLE_BY_CHANNEL_TYPE = {"cron": 0, "webhook-script": 0}
+DEFAULT_SESSION_IDLE_SECONDS = 120
+
+
+def session_idle_timeout(workspace: Any, channel_type: str | None) -> int:
+    """Seconds a settled session stays alive: the configured value, else its channel's default."""
+    configured = workspace.session.idle_timeout_seconds
+    if configured is not None:
+        return configured
+    return _SESSION_IDLE_BY_CHANNEL_TYPE.get(channel_type or "", DEFAULT_SESSION_IDLE_SECONDS)
 
 
 class WorkspaceBlock(BaseModel):

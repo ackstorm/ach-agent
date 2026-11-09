@@ -157,6 +157,23 @@ def test_idle_timeouts_accept_zero_and_workspace_minus_one(
         with pytest.raises(ConfigError):
             parse_config(pr_review_wire)
 
+
+def test_session_idle_timeout_defaults_by_channel_type_unless_configured(
+    pr_review_wire: dict[str, Any],
+) -> None:
+    from ach_runtime.config.schema import session_idle_timeout
+
+    del pr_review_wire["workspace"]["session"]["idleTimeoutSeconds"]
+    _resign(pr_review_wire)
+    workspace = parse_config(pr_review_wire).workspace
+    assert [session_idle_timeout(workspace, t) for t in ("cron", "webhook-script", "a2a", "webhook", None)] == [
+        0, 0, 120, 120, 120,
+    ]
+    pr_review_wire["workspace"]["session"]["idleTimeoutSeconds"] = 900
+    _resign(pr_review_wire)
+    workspace = parse_config(pr_review_wire).workspace
+    assert session_idle_timeout(workspace, "cron") == 900
+
 def test_runtime_config_model_validate_without_strict_kwarg_would_coerce(
     pr_review_wire: dict[str, Any],
 ) -> None:

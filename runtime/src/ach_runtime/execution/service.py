@@ -63,7 +63,8 @@ DEFAULT_WORKSPACE_DIR = Path("/sandbox/ach/workspace")  # root path ruling: fixe
 # OpenCode lists a remote MCP server's tools once, when it connects, and never re-lists unless
 # the server pushes `tools/list_changed`: a server still starting (0 tools) leaves the whole
 # run without its tools. Probe each configured server before the send; sleep between tries.
-MCP_TOOLS_BACKOFF_SECONDS = (2.0, 6.0)
+# The sleeps add up to 60 s, so a gateway restart in progress does not fail the run.
+MCP_TOOLS_BACKOFF_SECONDS = (2.0, 4.0, 8.0, 16.0, 30.0)
 MCP_TOOLS_PROBE_TIMEOUT_SECONDS = 4.0
 
 

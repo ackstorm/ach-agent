@@ -25,8 +25,9 @@ values).
 
 from __future__ import annotations
 
+import asyncio
 import math
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from pathlib import Path
@@ -40,6 +41,25 @@ if TYPE_CHECKING:
     from ach_runtime.config.schema import RuntimeConfig
 
 _REQUEST_TIMEOUT_SECONDS = 30.0
+# A platform restart answers 502/503/504 or refuses connections for a while (17 s live,
+# 2026-11-07): run start retries those for 60 s instead of failing the run.
+_RETRY_DELAYS_SECONDS = (1.0, 2.0, 4.0, 8.0, 15.0, 30.0)
+_TRANSIENT_STATUS = frozenset({502, 503, 504})
+
+
+async def _send_retrying(send: Callable[[], Awaitable[httpx.Response]]) -> httpx.Response:
+    """`send()`, again after each delay while it fails to connect or answers a transient status."""
+    for delay in (*_RETRY_DELAYS_SECONDS, None):
+        try:
+            response = await send()
+        except httpx.TransportError:
+            if delay is None:
+                raise
+        else:
+            if response.status_code not in _TRANSIENT_STATUS or delay is None:
+                return response
+        await asyncio.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 class HydrationError(RuntimeError):
@@ -105,7 +125,9 @@ class HydrationManifest(BaseModel):
 async def _post_hydrate(
     client: httpx.AsyncClient, url: str, headers: dict[str, str], body: dict[str, Any]
 ) -> dict[str, Any]:
-    r = await client.post(url, headers=headers, json=body, timeout=_REQUEST_TIMEOUT_SECONDS)
+    r = await _send_retrying(
+        lambda: client.post(url, headers=headers, json=body, timeout=_REQUEST_TIMEOUT_SECONDS)
+    )
     r.raise_for_status()
     data: dict[str, Any] = r.json()
     return data
@@ -432,7 +454,8 @@ async def stage_context(
             path = PurePosixPath(item.name)
             if path.is_absolute() or not path.parts or ".." in path.parts:
                 raise HydrationError("hydrated context item has an unsafe name")
-            response = await client.get(item.download_url, timeout=_REQUEST_TIMEOUT_SECONDS)
+            url = item.download_url
+            response = await _send_retrying(lambda: client.get(url, timeout=_REQUEST_TIMEOUT_SECONDS))
             response.raise_for_status()
             if len(response.content) > 512 * 1024**2:
                 raise HydrationError("hydrated context archive exceeds transfer byte limit")

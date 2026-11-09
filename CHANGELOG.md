@@ -5,10 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.11] - 2026-11-09
+
+### Changed
+
+- `workspace.session.idleTimeoutSeconds` is optional. Unset, a session takes the default of the
+  channel its last run came from: `0` for `cron` and `webhook-script`, whose sessions never get a
+  follow-up, and `60` for `a2a`, `webhook` and `queue`. A set value applies to every channel, so a
+  profile that sets it keeps today's behaviour; remove it to get the channel defaults.
+- With `persistence: s3`, a session whose idle timeout is above `0` keeps its HOME in the sandbox
+  after its close upload: the next message of that conversation resumes it in place instead of
+  restoring it from S3. A `0` timeout still deletes the HOME.
+- The runtime images upgrade their Alpine packages, which clears the HIGH CVEs of the pinned
+  Python base (expat, musl, openssh, zlib).
+- The Grafana dashboards no longer refresh on their own.
 
 ### Fixed
 
+- `workspace.idleTimeoutSeconds: 0` works: the CRD accepted it but the control role refused it at
+  boot.
 - A control restart takes seconds instead of `shutdownTimeoutSeconds` when the host owns the Workspaces: the run drain is skipped because the next control adopts the runs.
 - An A2A caller whose stream is cut by a restart gets a `working` status that says the run continues (or `failed` when the run had not started), instead of a silent end.
 - A run no longer fails while the ACH platform restarts. Hydration and the skill, prompt and
@@ -17,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `workspace.idleTimeoutSeconds: 0` closes a Workspace on the next lifecycle tick once it holds no
+  work and no open session, including right after a `sessionStart` gate skips the run; `-1` never
+  closes it for idleness.
 - A2A callers get queued, starting and still-working statuses from the runtime.
 - A2A results survive a control restart: tasks are stored in the Agent's storage, recovered runs write their outcome into their task for `tasks/get`, and a run the restart broke is resumed once in the same session.
 

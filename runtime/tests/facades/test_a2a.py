@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Legacy peer A2A client and tool behavior, hosted behind the Harness facade."""
 
 from __future__ import annotations

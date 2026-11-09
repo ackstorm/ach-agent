@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Environment-to-S3Storage factory assembling the operator-global backend (contract §7,
 2026-10-01 global-storage-assembly-spec D1). Backend, bucket, region, endpoint and prefix are
 operator settings delivered through the Harness's private pod env — never through

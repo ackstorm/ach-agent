@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """configVersion canonicalization — RFC 8785/JCS pinned by
 .superpowers/sdd/2026-09-30-workspace-runtime/config-canonicalization-proposal.md and
 contract §5/§11.

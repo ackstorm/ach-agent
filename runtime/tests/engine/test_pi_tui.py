@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """The TUI takeover of a warmed-up pi session, on PiG and on upstream pi."""
 
 import asyncio

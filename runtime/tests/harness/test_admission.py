@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Admission — dedup -> capacity -> FIFO-per-(Workspace,session) (contract §3).
 
 Round-1 regression tests added per `task-3-admission-review.md` findings 1-9 (sections

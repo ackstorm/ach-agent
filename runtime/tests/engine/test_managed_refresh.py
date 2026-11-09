@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Focused native managed-config refresh tests for a warm OpenCode session."""
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Owned native final-text capture through durable session events."""
 
 from __future__ import annotations

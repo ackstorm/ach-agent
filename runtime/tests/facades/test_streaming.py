@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """facades/_proxy.py::forward — real incremental streaming and upstream/client cleanup.
 
 A real `asyncio.start_server` loopback TCP upstream speaking just enough raw HTTP/1.1

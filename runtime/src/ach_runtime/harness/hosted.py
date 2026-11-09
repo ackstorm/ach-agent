@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Hosted Workspace source and the `/host/v1` API (contract v2 section 5).
 
 The runtime publishes desired state; the host reconciles it and registers what it started.

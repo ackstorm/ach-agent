@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Bounded, safe-extraction archives (dispatch §required-behavior 5).
 
 Ported from `old-ach-agent/src/ach_agent/sandbox/archive.py` verbatim where the contract

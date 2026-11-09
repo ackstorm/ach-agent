@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Real S3-compatible conditional-write tests (dispatch §required-behavior 6).
 
 Unit fakes (`fakes.FakeS3Client`) prove the CAS *logic*; this module proves the real

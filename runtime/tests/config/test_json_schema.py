@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Draft 2020-12 JSON Schema parity for the artifact ACH vendors (review I2).
 
 `parse_config`/Pydantic rejecting a bad wire is not evidence that the EXPORTED

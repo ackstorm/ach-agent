@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Harness-owned persistence callbacks and idle observations."""
 from __future__ import annotations
 

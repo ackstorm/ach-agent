@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Engine seam shared by every agent engine adapter: the `Engine` protocol
 `ExecutionService` drives, the invocation/receipt/snapshot types it exchanges, and the
 Linux /proc PID/start-time descendant tracking used to confirm a native process tree is gone.

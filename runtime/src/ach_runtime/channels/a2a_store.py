@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """A2A task store on the Agent's storage: tasks outlive a control restart."""
 
 from __future__ import annotations

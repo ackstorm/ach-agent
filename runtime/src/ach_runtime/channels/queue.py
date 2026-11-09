@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Redis Streams channel adapter with stable c1 pending-entry recovery."""
 
 from __future__ import annotations

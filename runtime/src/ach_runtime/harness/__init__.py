@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Harness: admission (dedup/capacity/FIFO) and opaque workspace/session refs (contract §2/§3)."""
 
 from ach_runtime.harness.admission import (

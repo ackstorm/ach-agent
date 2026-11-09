@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Pure dict/list path traversal for `channels[].routing` override templates (contract §2).
 
 Reused from old-ach-agent's `templating/render.py` `resolve_path` primitive — pure

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """PublicConfig / public_config() and ExecutionBootstrap — contract §5/§11.
 
 PublicConfig must never carry control broker/tokens/private keys, ach.identity, channel auth

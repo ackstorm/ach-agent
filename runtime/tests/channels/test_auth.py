@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """channels.auth — webhook auth verification, ported from old-ach-agent `channels/webhook.py`."""
 
 from __future__ import annotations

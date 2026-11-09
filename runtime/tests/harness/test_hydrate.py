@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """harness/hydrate.py — POST /platform/hydrate + GET /v2/model/info (contract §5).
 
 Real httpx request/response plumbing exercised via httpx.MockTransport (header

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """A fresh agent is visible from its first scrape: identity series and zeroed known children."""
 
 from __future__ import annotations

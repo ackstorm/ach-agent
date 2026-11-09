@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Existing low-cardinality Prometheus completion metrics and scrape identity."""
 
 from __future__ import annotations

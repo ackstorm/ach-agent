@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Deterministic commit / CAS / writer-fencing tests (dispatch §required-behavior 2/3)."""
 
 from __future__ import annotations

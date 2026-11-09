@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Command line entry point for the mini execution process."""
 
 from __future__ import annotations

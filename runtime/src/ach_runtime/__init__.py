@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """ach-runtime: Channels + Harness for ACHAgent (contract docs/schemas/ach-runtime-contract-v3.md)."""
 
 # A constant, not importlib.metadata.version(): that scans every installed distribution on

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Run deterministic GitLab webhook scripts without acquiring a Workspace or Session."""
 
 from __future__ import annotations

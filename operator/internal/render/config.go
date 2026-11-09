@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 
 // Package agentrender collapses an AgentProfile + Agent into the workspace-v1 WSConfig
 // (render2.go's Render2) the ach-agent harness self-boots from. Pure: no API calls, no side

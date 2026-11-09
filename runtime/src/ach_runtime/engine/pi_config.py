@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Translates `PublicConfig` into pi's agent-directory files, flags and env."""
 
 from __future__ import annotations

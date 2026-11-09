@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """StateRef identity/domain/key confinement (dispatch §required-behavior 1)."""
 
 from __future__ import annotations

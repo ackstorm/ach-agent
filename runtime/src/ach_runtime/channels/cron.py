@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Cron channel adapter — one croniter/asyncio scheduler for configured cron channels."""
 
 from __future__ import annotations

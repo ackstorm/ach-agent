@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """harness/workspaces.py — WorkspaceManager coordination over an in-memory `FakeSource`."""
 
 from __future__ import annotations

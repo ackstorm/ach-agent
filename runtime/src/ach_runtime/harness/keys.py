@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """The control process's ACH credential.
 
 `KeySource` holds a static ek_ (`keyFrom.secretKeyRef`) or a JWT exchanged for the pod's

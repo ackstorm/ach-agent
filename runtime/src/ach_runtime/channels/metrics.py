@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Metrics copied for the existing webhook and deterministic script channel paths."""
 
 from prometheus_client import Counter

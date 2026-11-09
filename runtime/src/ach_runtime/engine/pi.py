@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Drives pi's RPC mode: one `pi --mode rpc` process per session, JSONL over stdin and stdout.
 
 Serves PiG and upstream pi alike. The image picks the distribution through PI_BIN.

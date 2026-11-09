@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Contract of the pi engine: every case runs on PiG and on upstream pi."""
 
 import asyncio

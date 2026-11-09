@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """`ach-mcp`: call one MCP tool from a lifecycle hook script, as the agent.
 
 Hook scripts get `ACH_MCP_URLS` (JSON `{serverId: url}`) and `ACH_MCP_HEADERS` (JSON

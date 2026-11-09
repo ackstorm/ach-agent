@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 
 // Package-level envtest bootstrap for the Agent reconciler suite. KUBEBUILDER_ASSETS comes
 // from the Makefile (make test-envtest); CRDs are the generated ones under config/crd.

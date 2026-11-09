@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 
 // Package controller — AgentReconciler renders an Agent (+ its AgentProfile) into the
 // workspace-v3 ConfigMap and a single-replica control StatefulSet (runtime contract v2), plus

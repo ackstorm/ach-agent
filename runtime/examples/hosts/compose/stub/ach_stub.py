@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """ACH-compatible stand-in for the compose example (contract v2 3.3.1). Accepts any x-ach-key.
 Not for production."""
 

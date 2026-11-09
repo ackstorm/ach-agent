@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Native adapter unit control: a scripted httpx transport stands in for the opencode2
 HTTP/SSE wire (receipt-validation, cross-invocation correlation and the bounded-cancel
 sequence) so these specific failure shapes — a malformed/mismatched receipt, a non-200 SSE

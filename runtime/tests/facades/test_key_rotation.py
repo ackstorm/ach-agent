@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Model, MCP, memory and A2A clients pick up every new ACH credential generation without a
 restart, and retry once only when ACH itself rejected the credential."""
 

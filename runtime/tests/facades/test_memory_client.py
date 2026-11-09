@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """_memory_client.py -- project/endpoint/auth resolution and the real SDK round-trip to a
 fixture ach-memory upstream (contract §5/§10; old-ach-agent memory/ach_memory.py)."""
 

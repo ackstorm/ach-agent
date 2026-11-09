@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Pure CAS-registry document shape and epoch/generation bump rules (dispatch §behavior 2/3).
 
 No I/O here — `s3.py` owns reading/writing the registry object; this module owns the

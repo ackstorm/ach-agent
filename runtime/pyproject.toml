@@ -7,7 +7,7 @@ name = "ach-agent-runtime"
 version = "0.6.12"
 description = "ach-agent runtime: control and execution roles (workspace-v3)"
 requires-python = ">=3.13"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 dependencies = [
     # 2.11 is the actual lower bound: accepted config models (config/public.py) use
     # validate_by_alias/validate_by_name, introduced in pydantic 2.11. >=2.9 advertised a

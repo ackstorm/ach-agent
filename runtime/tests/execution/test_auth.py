@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """RED-first: fixed-workspace/instance-ID bearer auth wrapping the mini-harness execution app
 (owned slice of Task 2 -- workspace-auth-dispatch). Uses a local counted fake service so
 no Task 1 (manager/template) import is required."""

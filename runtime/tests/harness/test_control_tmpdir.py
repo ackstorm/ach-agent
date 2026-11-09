@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Control-process writers all resolve under TMPDIR (read-only root filesystem + one emptyDir)."""
 from __future__ import annotations
 

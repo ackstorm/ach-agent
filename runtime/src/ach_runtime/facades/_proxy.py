@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Shared reverse-proxy core for `facades/{model,mcp,memory}.py` — the ONE place every
 outbound header/auth/identity/correlation decision is made (reused from old-ach-agent
 `engine/mcp_proxy.py::_forward`, `identity.py` and `engine/trace.py`; task-7-reuse-handoff.md).

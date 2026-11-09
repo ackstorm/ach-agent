@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Bounded, checksummed local read cache for restored snapshot bytes (contract §7, dispatch §4).
 
 Optimization only, never a second active-writer copy: `S3Storage` is the sole writer; this

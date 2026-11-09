@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """facades/memory.py -- the exact five typed ach-memory tools over the real `mcp` SDK,
 fixed project/scope injection, and raw-MCP-server exclusion even when degraded
 (contract §5/§10; old-ach-agent memory/{ach_memory,ach_memory_facade}.py).

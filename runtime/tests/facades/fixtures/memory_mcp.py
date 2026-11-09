@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Stateless fixture ach-memory MCP upstreams for Task 2's real SDK round-trip tests: one
 FastMCP app with bare tool names (a direct ach-memory) and one with gateway-prefixed names
 (``ach-memory.<tool>``, an aggregating gateway), each recording every call's

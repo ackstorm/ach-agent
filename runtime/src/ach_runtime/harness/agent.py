@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """The `agent` role: control composition with an in-process LocalSource (spec 4.3).
 
 Single-unit topology for a laptop, test, pre-production or CI machine. Not for production (D5).

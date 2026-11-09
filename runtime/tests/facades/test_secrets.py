@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """facades/{model,mcp}.py — ek_/identity injection only on the Harness->ACH hop, the
 accepted Workspace HMAC authority (unknown/wrong-key/non-owned token = zero upstream
 egress), and MCP server/tool exclusion (contract §5/§11; old-ach-agent

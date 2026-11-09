@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """In-memory S3-compatible fake: conditional PUT semantics only, no network.
 
 Mirrors `old-ach-agent/tests/sandbox/test_store.py`'s `FakeS3` shape; extended with

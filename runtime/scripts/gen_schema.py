@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Regenerate docs/schemas/ach-workspace-config-v3.schema.json from RuntimeConfig.
 
 ACH vendors this file with a drift gate (internal/agentrender/schema_test.go, Task 2B) — this

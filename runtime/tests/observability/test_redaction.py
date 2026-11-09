@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Every log record of the control process is scrubbed: ek_/ek-, compact JWS (an ACH JWT, a
 ServiceAccount token) and provider keys, in the message, its arguments and tracebacks."""
 

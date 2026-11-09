@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Stub upstreams for the ach-agent e2e: an OpenAI-compatible model (8090), a streamable-HTTP MCP
 server (8091), an ACH server keyed by a static ek_ (8092) and an HTTPS ACH server keyed by JWTs it
 issues in exchange for a ServiceAccount token it checks with a real TokenReview (8093). Each

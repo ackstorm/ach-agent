@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """harness/hosted.py -- HostedSource state machine and the /host/v1 routes (contract v2 5.3)."""
 
 from __future__ import annotations

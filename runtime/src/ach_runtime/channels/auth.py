@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Webhook auth verification — ported from old-ach-agent `channels/webhook.py` (contract §2).
 
 Adapted to the resolved wire: `WebhookAuthBlock.env` is already a private env-alias NAME

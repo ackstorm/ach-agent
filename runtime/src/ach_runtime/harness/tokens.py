@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Legacy HMAC/Ed25519 primitives, reused verbatim for the Workspace facade and engine
 auth paths (owned slice of Task 2 -- workspace-auth-dispatch).
 

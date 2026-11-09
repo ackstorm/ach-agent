@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """PublicConfig (mini-harness projection) and ExecutionBootstrap (contract §11).
 
 PublicConfig never carries control broker/tokens/private keys, ach.identity, channel auth or

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Opaque refs/digests over workspace and session identity (contract §2/§11).
 
 `workspace_key`/`session_key` are channel-authored opaque strings that may contain ':',

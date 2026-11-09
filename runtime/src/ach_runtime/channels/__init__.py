@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Channel normalization and routing (contract §2)."""
 
 from ach_runtime.channels.auth import verify_webhook_auth

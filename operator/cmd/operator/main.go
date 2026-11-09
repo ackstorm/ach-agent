@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 
 // Command operator runs the ach-agent controller and the per-Agent sandbox host loops.
 package main

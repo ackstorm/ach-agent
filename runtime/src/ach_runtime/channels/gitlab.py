@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """normalize_gitlab — GitLab webhook payload -> Event | None (contract §2).
 
 Reuses old-ach-agent `channels/webhook.py` `_parse_gitlab`/`_gitlab_actor`/

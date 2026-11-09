@@ -37,7 +37,7 @@ url=$(git remote get-url origin 2>/dev/null || echo "")
 # 5. SPDX headers on non-empty src/**/*.py
 while IFS= read -r f; do
   [ -s "$f" ] || continue
-  head -1 "$f" | grep -qx "# SPDX-License-Identifier: MIT" || fail "missing SPDX header: $f"
+  head -1 "$f" | grep -qx "# SPDX-License-Identifier: Apache-2.0" || fail "missing SPDX header: $f"
 done < <(git ls-files 'src/**/*.py')
 
 # 6. fast containerized checks: schema drift + config tests

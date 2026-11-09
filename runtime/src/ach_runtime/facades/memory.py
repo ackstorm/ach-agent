@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Ach-memory facade -- exposes exactly five agent-facing tools over the real `mcp` SDK,
 injects fixed `scope="project"`/`project_slug` on every call overriding any client-supplied
 value, and excludes the raw backend from the generic MCP facade even when degraded

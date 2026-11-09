@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Executable mini boot contract: CLI help and required boot identity."""
 
 from __future__ import annotations

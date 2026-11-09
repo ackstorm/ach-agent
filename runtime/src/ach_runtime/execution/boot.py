@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Cold composition and ordinary uvicorn lifecycle for the mini execution role."""
 
 from __future__ import annotations

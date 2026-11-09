@@ -223,9 +223,9 @@ RESTARTING_RUNNING = (
 RESTARTING_QUEUED = "The agent restarted before your request started. Send it again."
 # Runtime voice, separate from the agent's inform_user: short, English, tagged in metadata.
 STARTING_AFTER_SECONDS = 5.0
-HEARTBEAT_SECONDS = 60.0
+HEARTBEAT_SECONDS = 120.0  # under Envoy's default 300 s stream idle timeout
 QUEUED_TEXT = "Queued behind an earlier request in this conversation."
-STARTING_TEXT = "Starting the agent."
+STARTING_TEXT = "Starting the agent, this can take a few seconds..."
 HEARTBEAT_TEXT = "Still working..."
 RUN_LOST = "The agent restarted and this request's run was lost. Send it again."
 RESUME_PROMPT = (

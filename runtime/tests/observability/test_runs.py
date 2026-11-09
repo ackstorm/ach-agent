@@ -196,7 +196,7 @@ async def test_both_role_boots_emit_safe_info_and_anomaly_stream(
     assert "Bearer " not in full_output
 
     # Repeated configure never installs a second owned handler.
-    logger = logging.getLogger("ach_runtime.observability.runs")
+    logger = logging.getLogger()
     owned_before = sum(1 for h in logger.handlers if getattr(h, "_ach_owned_handler", False))
     configure_logging()
     configure_logging()

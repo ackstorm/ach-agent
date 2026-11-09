@@ -46,7 +46,7 @@ class _Manager:
 class _Control:
     def __init__(self):
         policy = type("P", (), {"type": "none", "retention_days": None})
-        self.config = type("C", (), {"workspace": type("W", (), {"persistence": policy(), "session_retention_days": None, "session": type("S", (), {"idle_timeout_seconds": 20})(), "idle_timeout_seconds": 30, "shutdown_timeout_seconds": 5})(), "agent": AgentIdentity(name="agent", namespace="ach", uid="3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77")})()
+        self.config = type("C", (), {"workspace": type("W", (), {"persistence": policy(), "session_retention_days": None, "session": type("S", (), {"idle_timeout_seconds": 20})(), "idle_timeout_seconds": 30, "shutdown_timeout_seconds": 5})(), "channels": [], "agent": AgentIdentity(name="agent", namespace="ach", uid="3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77")})()
         self.admission = _Admission()
         self.manager = _Manager()
         self.storage = None
@@ -967,6 +967,132 @@ def test_uncertain_cleanup_blocks_workspace_idle_close() -> None:
     asyncio.run(scenario())
 
 
+
+
+@pytest.mark.parametrize(("timeout", "closed"), [(0, [True, True]), (30, [False, True]), (-1, [False, False])])
+def test_workspace_idle_timeout_zero_closes_at_once_and_minus_one_never(timeout, closed) -> None:
+    import httpx
+    from datetime import timedelta
+    from ach_runtime.harness.workspaces import WorkspaceEndpoint, WorkspaceRef
+
+    async def scenario():
+        control = _Control()
+        control.config.workspace.idle_timeout_seconds = timeout
+        control.manager.closed = []
+        control.manager.close = _close_record(control.manager)
+        endpoint = WorkspaceEndpoint(WorkspaceRef("ach", control.config.agent.uid, "a"*64), "ws", "pod", "http://mini")
+        control.manager._active = {"a"*64: endpoint}
+        control.delivery = _Delivery()
+        control.mini_client = httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, headers={"X-ACH-Instance-Id": "pod"}, json=[])))
+        control._headers = lambda endpoint: {"X-ACH-Instance-Id": endpoint.instance_id}
+        control._mini_json = _mini_json(control)
+        lifecycle = Lifecycle(control)
+        start = datetime(2026, 10, 1, tzinfo=UTC)
+        observed = []
+        for offset in (0, 10_000):
+            await lifecycle.tick(start + timedelta(seconds=offset))
+            observed.append(endpoint.ref in control.manager.closed)
+        assert observed == closed
+        await control.mini_client.aclose()
+    asyncio.run(scenario())
+
+
+def test_zero_session_and_workspace_timeouts_close_right_after_the_run() -> None:
+    import httpx
+    from ach_runtime.harness.workspaces import WorkspaceEndpoint, WorkspaceRef
+
+    async def scenario():
+        state = {"active": True}
+        async def handler(request):
+            if request.url.path == "/sessions":
+                return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod"}, json=[{"sessionRef": "b"*64}])
+            if request.url.path.endswith("/info"):
+                return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod"}, json={"active": state["active"], "uncertain": False, "initialized": True})
+            if request.url.path.endswith("/archive"):
+                state["active"] = False
+                return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod"}, content=b"snapshot")
+            if request.url.path.endswith("/retire"):
+                return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod"},
+                                      json={"status": "retired", "sessionRef": request.url.path.split("/")[2]})
+            raise AssertionError(request.url)
+        control = _Control()
+        control.config.workspace.idle_timeout_seconds = 0
+        control.config.workspace.session.idle_timeout_seconds = 0
+        control.mini_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        control._headers = lambda endpoint: {"X-ACH-Instance-Id": endpoint.instance_id}
+        control._mini_json = _mini_json(control)
+        control.manager._bootstrap_complete = True
+        endpoint = WorkspaceEndpoint(WorkspaceRef("ach", control.config.agent.uid, "a"*64), "ws", "pod", "http://mini")
+        control.manager._active = {"a"*64: endpoint}
+        control.delivery = _Delivery()
+        control.manager.closed = []
+        control.manager.close = _close_record(control.manager)
+        lifecycle = Lifecycle(control)
+        now = datetime(2026, 10, 1, tzinfo=UTC)
+        await lifecycle.tick(now)  # the settled session is saved at once
+        assert state["active"] is False and control.manager.closed == []
+        await lifecycle.tick(now)  # nothing left: the Workspace closes on the next tick
+        assert control.manager.closed == [endpoint.ref]
+        await lifecycle.close()
+        await control.mini_client.aclose()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(("channel", "archived"), [("tick", [True, True]), ("chat", [False, True]), ("gone", [False, True])])
+def test_unset_session_timeout_follows_the_channel_of_the_last_run(channel, archived) -> None:
+    """A cron session closes when its run ends; an a2a one (or an unknown channel) waits 60 s."""
+    import httpx
+    from datetime import timedelta
+    from types import SimpleNamespace
+    from ach_runtime.execution.wire import RunStatus
+    from ach_runtime.harness.workspaces import WorkspaceEndpoint, WorkspaceRef
+
+    async def scenario():
+        state = {"active": True}
+        async def handler(request):
+            if request.url.path == "/sessions":
+                return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod"}, json=[{"sessionRef": "b"*64}])
+            if request.url.path.endswith("/info"):
+                return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod"}, json={"active": state["active"], "uncertain": False, "initialized": True})
+            if request.url.path.endswith("/archive"):
+                state["active"] = False
+                return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod"}, content=b"snapshot")
+            if request.url.path.endswith("/retire"):
+                return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod"},
+                                      json={"status": "retired", "sessionRef": request.url.path.split("/")[2]})
+            raise AssertionError(request.url)
+        control = _Control()
+        control.config.workspace.session = type("S", (), {"idle_timeout_seconds": None})()
+        control.config.channels = [SimpleNamespace(name="tick", type="cron"), SimpleNamespace(name="chat", type="a2a")]
+        control.mini_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        control._headers = lambda endpoint: {"X-ACH-Instance-Id": endpoint.instance_id}
+        control._mini_json = _mini_json(control)
+        control.manager._bootstrap_complete = True
+        endpoint = WorkspaceEndpoint(WorkspaceRef("ach", control.config.agent.uid, "a"*64), "ws", "pod", "http://mini")
+        control.manager._active = {"a"*64: endpoint}
+        run = RunStatus.model_validate({
+            "invocationId": "i", "channel": channel, "workspaceRef": "a"*64, "sessionRef": "b"*64,
+            "runId": None, "configVersion": "c", "deadlineAt": "2026-10-01T00:10:00Z", "state": "completed",
+        })
+
+        class Delivery:
+            async def list_runs(self, endpoint):
+                return [run]
+        control.delivery = Delivery()
+        control.manager.closed = []
+        control.manager.close = _close_record(control.manager)
+        lifecycle = Lifecycle(control)
+        start = datetime(2026, 10, 1, tzinfo=UTC)
+        observed = []
+        for offset in (0, 60):
+            await lifecycle.tick(start + timedelta(seconds=offset))
+            observed.append(not state["active"])
+        assert observed == archived
+        await lifecycle.close()
+        await control.mini_client.aclose()
+    asyncio.run(scenario())
+
 @pytest.mark.parametrize(
     "reason",
     [
@@ -1068,8 +1194,7 @@ async def test_archive_persistence_failure_logs_redacted_root_cause(
             else:
                 await lifecycle._save_session(endpoint, "b" * 64)
     finally:
-        for handler in saved_handlers:
-            root.addHandler(handler)
+        root.handlers[:] = saved_handlers
         await control.mini_client.aclose()
 
     error = raised.value

@@ -3,6 +3,10 @@
 ach-agent needs, in order: an Istio ambient mesh, the agent-sandbox controller, an OpenShell gateway
 behind a mesh policy, then the operator chart. All versions below are the tested ones.
 
+The cluster's CNI must enforce NetworkPolicy (on EKS, the VPC CNI addon with `enableNetworkPolicy`).
+A sandbox's egress lockdown is the OpenShell driver's deny-all NetworkPolicy; without enforcement it
+reaches any IP.
+
 ## 1. Istio ambient 1.28.3
 
 ```bash
@@ -47,7 +51,8 @@ The values (`test/e2e/openshell-values.yaml`):
 
 Replace `<AGENT_NAMESPACE>` in `docs/mesh/openshell-mesh.yaml` with each Agent namespace and apply it.
 It enforces STRICT mTLS, admits only the operator ServiceAccount, the sandbox ServiceAccount and the
-Agent namespaces to the gateway, and allows ambient HBONE (TCP 15008) through the NetworkPolicy.
+Agent namespaces to the gateway, and allows ambient HBONE (TCP 15008) and kubelet probes (Istio's fixed
+link-local SNAT address) through the NetworkPolicy.
 Label every Agent namespace `istio.io/dataplane-mode=ambient`.
 
 ## 5. Operator
@@ -359,7 +364,15 @@ A message pays one of three costs, depending on what is still running for its Wo
 Two timers decide the state, in order. `workspace.session.idleTimeoutSeconds` after its last turn a
 session's opencode is stopped, its HOME saved and the session retired. Only once every session of
 the Workspace is retired does `workspace.idleTimeoutSeconds` start; when it runs out the Workspace
-is committed and the sandbox deleted. Both are per Agent, not per channel.
+is committed and the sandbox deleted. `0` acts on the next lifecycle tick (about a second); a
+`sessionStart` gate that skips the run (exit 78) counts as the end of its work.
+`workspace.idleTimeoutSeconds: -1` never deletes the sandbox for idleness.
+
+`workspace.idleTimeoutSeconds` is per Agent. `workspace.session.idleTimeoutSeconds`, when set, also
+applies to every channel; unset, a session takes the default of the channel it last ran on: `0` for
+`cron` and `webhook-script`, whose sessions never get a follow-up, and `60` for `a2a`, `webhook` and
+`queue`. An Agent with a cron and a chat channel and `workspace.idleTimeoutSeconds: 0` then deletes
+the sandbox right after a tick, and a minute after the last chat message.
 
 `routing.workspaceKey` decides how often a message lands on a new sandbox. `session` gives every
 conversation its own sandbox, so every new conversation pays the full cold start. For a chat
@@ -368,7 +381,7 @@ to their running sandbox; set `workspace.maxConcurrentSessions` to the channel c
 conversations then share `/sandbox/ach/workspace`, and a channel with a `handoff` needs `workspaceKey: session`.
 
 The trade-off is pods held against restore cost: each active Workspace keeps one sandbox (the
-profile's resources) for `session.idleTimeoutSeconds + idleTimeoutSeconds` after its last message.
+profile's resources) for the session timeout plus `idleTimeoutSeconds` after its last message.
 A long session timeout with a short Workspace timeout keeps opencode alive for as long as the
 sandbox exists.
 

@@ -178,7 +178,7 @@ type WorkspaceVolumeSpec struct {
 type WorkspaceSessionSpec struct {
 	// IdleTimeoutSeconds saves and closes a session this long after its last run; 0 does it
 	// as soon as the run ends. Unset, it depends on the channel of that run: 0 for cron and
-	// webhook-script, 120 for the others.
+	// webhook-script, 60 for the others.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	IdleTimeoutSeconds *int64 `json:"idleTimeoutSeconds,omitempty"`

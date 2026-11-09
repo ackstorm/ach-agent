@@ -370,9 +370,9 @@ is committed and the sandbox deleted. `0` acts on the next lifecycle tick (about
 
 `workspace.idleTimeoutSeconds` is per Agent. `workspace.session.idleTimeoutSeconds`, when set, also
 applies to every channel; unset, a session takes the default of the channel it last ran on: `0` for
-`cron` and `webhook-script`, whose sessions never get a follow-up, and `120` for `a2a`, `webhook` and
+`cron` and `webhook-script`, whose sessions never get a follow-up, and `60` for `a2a`, `webhook` and
 `queue`. An Agent with a cron and a chat channel and `workspace.idleTimeoutSeconds: 0` then deletes
-the sandbox right after a tick, and two minutes after the last chat message.
+the sandbox right after a tick, and a minute after the last chat message.
 
 `routing.workspaceKey` decides how often a message lands on a new sandbox. `session` gives every
 conversation its own sandbox, so every new conversation pays the full cold start. For a chat

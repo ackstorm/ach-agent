@@ -167,7 +167,7 @@ def test_session_idle_timeout_defaults_by_channel_type_unless_configured(
     _resign(pr_review_wire)
     workspace = parse_config(pr_review_wire).workspace
     assert [session_idle_timeout(workspace, t) for t in ("cron", "webhook-script", "a2a", "webhook", None)] == [
-        0, 0, 120, 120, 120,
+        0, 0, 60, 60, 60,
     ]
     pr_review_wire["workspace"]["session"]["idleTimeoutSeconds"] = 900
     _resign(pr_review_wire)

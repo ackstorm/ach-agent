@@ -1041,7 +1041,7 @@ def test_zero_session_and_workspace_timeouts_close_right_after_the_run() -> None
 
 @pytest.mark.parametrize(("channel", "archived"), [("tick", [True, True]), ("chat", [False, True]), ("gone", [False, True])])
 def test_unset_session_timeout_follows_the_channel_of_the_last_run(channel, archived) -> None:
-    """A cron session closes when its run ends; an a2a one (or an unknown channel) waits 120 s."""
+    """A cron session closes when its run ends; an a2a one (or an unknown channel) waits 60 s."""
     import httpx
     from datetime import timedelta
     from types import SimpleNamespace
@@ -1085,7 +1085,7 @@ def test_unset_session_timeout_follows_the_channel_of_the_last_run(channel, arch
         lifecycle = Lifecycle(control)
         start = datetime(2026, 10, 1, tzinfo=UTC)
         observed = []
-        for offset in (0, 120):
+        for offset in (0, 60):
             await lifecycle.tick(start + timedelta(seconds=offset))
             observed.append(not state["active"])
         assert observed == archived

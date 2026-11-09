@@ -444,7 +444,7 @@ class SessionPolicyBlock(BaseModel):
 # A cron tick or a webhook script never gets a follow-up in its session, so keeping the
 # session alive only holds the sandbox; conversational channels keep it for the next message.
 _SESSION_IDLE_BY_CHANNEL_TYPE = {"cron": 0, "webhook-script": 0}
-DEFAULT_SESSION_IDLE_SECONDS = 120
+DEFAULT_SESSION_IDLE_SECONDS = 60
 
 
 def session_idle_timeout(workspace: Any, channel_type: str | None) -> int:

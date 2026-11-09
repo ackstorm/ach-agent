@@ -63,6 +63,12 @@ async def _start_channel_sources(config: RuntimeConfig, control: Any) -> list[An
     return sources
 
 
+async def _cancel_all(tasks: list[asyncio.Task[None]]) -> None:
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def run_control(
     config_path: Path,
     *,
@@ -117,10 +123,13 @@ async def run_control(
     ]
     tasks: list[asyncio.Task[None]] = []
     discovery: asyncio.Task[list[Any]] | None = None
+    recoveries: list[asyncio.Task[None]] = []
     loop = asyncio.get_running_loop()
     installed: list[signal.Signals] = []
     shutdown_requested = asyncio.Event()
     sources: list[Any] = list(getattr(ingress.state, "a2a_bridges", {}).values())
+    for bridge in getattr(ingress.state, "a2a_bridges", {}).values():
+        bridge.runs_outlive_control = host_api
 
     def request_shutdown() -> None:
         if ingress.state.ready:
@@ -162,6 +171,9 @@ async def run_control(
                 raise RuntimeError("a control listener stopped during Workspace discovery")
         await discovery
         await control.lifecycle.start()
+        for name, store in getattr(ingress.state, "a2a_stores", {}).items():
+            if store is not None:
+                recoveries.append(asyncio.create_task(ingress.state.a2a_bridges[name].recover(store)))
         sources.extend(await _start_channel_sources(config, control))
         ingress.state.ready = True
         shutdown_task = asyncio.create_task(shutdown_requested.wait())
@@ -172,15 +184,20 @@ async def run_control(
             ingress.state.ready = False
             control._stopping = True
             control.source.close()
+            await _cancel_all(recoveries)
             await _stop_channel_sources(sources)
             sources.clear()
             servers[0].should_exit = True
             await tasks[0]
-            drain_deadline = loop.time() + shutdown_timeout
-            while control.admission.queued_total and loop.time() < drain_deadline:
-                await asyncio.sleep(0.05)
-            if control.admission.queued_total:
-                log.warning("control drain reached configured shutdown timeout")
+            # A hosted run lives in its own sandbox and the next control adopts it
+            # (Control.reconnect_workspace → Admission.recover): waiting here only delays
+            # the restart. In-process Workspaces (host_api=False) die with this process.
+            if not host_api:
+                drain_deadline = loop.time() + shutdown_timeout
+                while control.admission.queued_total and loop.time() < drain_deadline:
+                    await asyncio.sleep(0.05)
+                if control.admission.queued_total:
+                    log.warning("control drain reached configured shutdown timeout")
             # No run is left to serve: what still holds the facade listener open is the
             # engines' long-lived MCP streams, which end only with their Workspace.
             servers[1].config.timeout_graceful_shutdown = FACADE_DRAINED_GRACE_SECONDS
@@ -198,6 +215,7 @@ async def run_control(
     finally:
         ingress.state.ready = False
         control._stopping = True
+        await _cancel_all(recoveries)
         await _stop_channel_sources(sources)
         sources.clear()
         if discovery is not None and not discovery.done():

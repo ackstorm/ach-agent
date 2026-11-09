@@ -610,6 +610,20 @@ class Admission:
             for key, run in self._recovered.items()
         )
 
+    def has_ticket(self, invocation_id: str) -> bool:
+        """Whether this control admitted `invocation_id` itself (not a recovered run)."""
+        return invocation_id in self._tickets
+
+    def session_busy(self, ticket: AdmissionTicket) -> bool:
+        """Whether another admitted or recovered run holds `ticket`'s Workspace session."""
+        return any(
+            key != ticket.invocation_id
+            and key not in self._released
+            and isinstance(other, AdmissionTicket)
+            and (other.workspace_ref, other.session_ref) == (ticket.workspace_ref, ticket.session_ref)
+            for key, other in self._tickets.items()
+        ) or self._recovered_owns_session(ticket.workspace_ref, ticket.session_ref)
+
     def _recovered_owns_session(self, workspace_ref: str, session_ref: str) -> bool:
         return any(
             key not in self._released

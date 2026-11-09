@@ -13,6 +13,7 @@ from starlette.responses import JSONResponse, Response
 
 from ach_runtime.channels.auth import verify_webhook_auth
 from ach_runtime.channels.a2a import A2AAgentExecutorBridge, build_a2a_app, make_a2a_agent_card
+from ach_runtime.channels.a2a_store import StorageTaskStore
 from ach_runtime.channels.gitlab import MalformedGitlabEventError
 from ach_runtime.channels.routing import RoutingError, route
 from ach_runtime.channels.webhook import normalize_webhook
@@ -37,6 +38,7 @@ def create_app(control: Control) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.ready = False
     app.state.a2a_bridges = {}
+    app.state.a2a_stores = {}
 
     def serving() -> bool:
         ach_key = getattr(control, "ach_key", None)
@@ -51,9 +53,13 @@ def create_app(control: Control) -> FastAPI:
             ready=serving,
         )
         app.state.a2a_bridges[configured.name] = bridge
+        store = None
+        if control.storage is not None and control.config.workspace.persistence.type == "s3":
+            store = StorageTaskStore(control.storage, channel=configured.name)
+        app.state.a2a_stores[configured.name] = store
         app.mount(
             f"/a2a/{configured.name}",
-            build_a2a_app(make_a2a_agent_card(control.config.agent.name, configured.name), bridge),
+            build_a2a_app(make_a2a_agent_card(control.config.agent.name, configured.name), bridge, store),
         )
 
     @app.get("/healthz")

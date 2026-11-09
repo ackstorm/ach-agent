@@ -9,9 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A control restart takes seconds instead of `shutdownTimeoutSeconds` when the host owns the Workspaces: the run drain is skipped because the next control adopts the runs.
+- An A2A caller whose stream is cut by a restart gets a `working` status that says the run continues (or `failed` when the run had not started), instead of a silent end.
 - A run no longer fails while the ACH platform restarts. Hydration and the skill, prompt and
   artifact downloads retry connection errors and 502/503/504 answers for 60 s, and the check
   that every MCP server lists its tools now retries for 60 s instead of 8 s.
+
+### Added
+
+- A2A callers get queued, starting and still-working statuses from the runtime.
+- A2A results survive a control restart: tasks are stored in the Agent's storage, recovered runs write their outcome into their task for `tasks/get`, and a run the restart broke is resumed once in the same session.
 
 ## [0.6.10] - 2026-11-07
 

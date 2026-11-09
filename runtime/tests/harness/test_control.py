@@ -1637,6 +1637,10 @@ async def test_reconnect_accepts_terminal_history_from_an_older_config_version()
     try:
         await control.reconnect_workspace(endpoint)
         assert control.admission.queued_total == 0
+        assert set(control.finished_runs) == {
+            "historical-completed", "historical-failed", "historical-cancelled", "historical-skipped",
+        }
+        assert control.admission.recovered_run("historical-completed") is None
     finally:
         await control.close()
 
@@ -2964,3 +2968,40 @@ async def test_reconnect_keeps_the_pod_it_restored() -> None:
 async def test_reconnect_without_registry_does_not_restore() -> None:
     assert await _reconnect_with_registry(None) == []
     assert await _reconnect_with_registry("old-pod", persistence=False) == []
+
+
+async def test_recovered_run_outcome_is_kept_for_the_channel_waiting_on_it() -> None:
+    config = _config()
+    running = RunStatus(
+        invocationId="kept-run", channel="gitlab-mr-review", workspaceRef="a" * 64,
+        sessionRef="b" * 64, runId="run-1", configVersion="f" * 64,
+        deadlineAt=datetime.now(timezone.utc) + timedelta(minutes=5), state="running",
+    )
+    done = running.model_copy(update={"state": "completed"})
+
+    async def mini(request: httpx.Request) -> httpx.Response:
+        headers = {"X-ACH-Instance-Id": "pod-1"}
+        if request.url.path == "/configure":
+            body = json.loads(request.content)
+            return httpx.Response(200, headers=headers, json={"configVersion": body["public"]["configVersion"]})
+        if request.url.path == "/runs":
+            return httpx.Response(200, headers=headers, json=[running.model_dump(by_alias=True, mode="json")])
+        if request.url.path == "/status/kept-run":
+            return httpx.Response(200, headers=headers, json=done.model_dump(by_alias=True, mode="json"))
+        return httpx.Response(200, headers=headers, json={})
+
+    control = await assemble(
+        config, environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},
+        ach_transport=httpx.MockTransport(_catalog_handler), mini_transport=httpx.MockTransport(mini),
+    )
+    endpoint = WorkspaceEndpoint(WorkspaceRef(config.agent.namespace, config.agent.uid, "a" * 64),
+                                 "workspace", "pod-1", "http://mini")
+    try:
+        _publish(control, endpoint)
+        await control.reconnect_workspace(endpoint)
+        recovered = control.admission.recovered_run("kept-run")
+        assert recovered is not None
+        await asyncio.wait_for(recovered.completed, 5)
+        assert control.finished_runs["kept-run"].state == "completed"
+    finally:
+        await control.close()

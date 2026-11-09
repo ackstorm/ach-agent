@@ -247,6 +247,8 @@ class Control:
     _hook_endpoints: dict[str, WorkspaceEndpoint] = field(default_factory=dict, repr=False)
     # A2A event emitters per running invocation, registered by the A2A bridge while it waits.
     progress: dict[str, list[Callable[[str], Awaitable[None]]]] = field(default_factory=dict, repr=False)
+    # Runs already terminal when this control adopted their Workspace, by invocation id.
+    finished_runs: dict[str, Any] = field(default_factory=dict, repr=False)
 
     async def _owned_live(self, claim: str) -> bool:
         # No I/O (spec 6.3). The only wait is for adoption of the units that already run: a
@@ -488,6 +490,7 @@ class Control:
             identities.add(record.invocation_id)
         for record in records:
             if record.state in {"completed", "failed", "cancelled", "skipped"}:
+                self.finished_runs[record.invocation_id] = record
                 continue
             try:
                 self.admission.recover(
@@ -499,10 +502,16 @@ class Control:
                     deadline_at=record.deadline_at,
                     instance_id=endpoint.instance_id,
                     run_id=record.run_id,
-                    observer=lambda record=record: self._observe_run(endpoint, record),
+                    observer=lambda record=record: self._observe_and_keep(endpoint, record),
                 )
             except (ValueError, RuntimeError) as exc:
                 raise WorkspaceAssemblyUnavailable("mini-harness run inventory ownership conflicted") from exc
+
+    async def _observe_and_keep(self, endpoint: WorkspaceEndpoint, record: RunStatus) -> RunStatus:
+        """Admission drops a recovered run's outcome; keep it for the channel that waits on it."""
+        status = await self._observe_run(endpoint, record)
+        self.finished_runs[record.invocation_id] = status
+        return status
 
     async def prepare(self, ticket: AdmissionTicket, endpoint: WorkspaceEndpoint):
         if self.lifecycle is None:
@@ -1073,6 +1082,7 @@ async def assemble(
     control.artifact_facade = None
     control.progress_facade = None
     control.progress = {}
+    control.finished_runs = {}
     control.facade_transport = facade_transport
     control.facade_clients = []
     control._prepared, control._started_run, control._stopping = {}, {}, False

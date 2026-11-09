@@ -1250,6 +1250,8 @@ class ExecutionService:
             "active": active,
             # Ran in this pod and stopped since its manifest: only a volume session acts on it.
             "needsSuspend": bool(getattr(native, "sid", None)) and not active and not state.suspended,
+            # Its manifest covers every turn: a kept HOME the next message resumes in place.
+            "suspended": state.suspended,
             "uncertain": uncertain,
             "suspendHookFailed": state.suspend_hook_failed,
             # Seconds since the last invocation ended, so a restarted control pod

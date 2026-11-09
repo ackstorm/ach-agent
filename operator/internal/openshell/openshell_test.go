@@ -23,6 +23,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	osv1 "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1"
 	ostypes "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
@@ -445,6 +446,45 @@ func TestOpenShell_RemoveNeverConfirmsWhileTheWorkloadPodRemains(t *testing.T) {
 	}
 }
 
+func TestOpenShell_RemoveCutsTheGraceOfATerminatingWorkloadPod(t *testing.T) {
+	ctx := context.Background()
+	_, _, w := unitFixture()
+	name := SandboxName("gitlab-reviewer", string(testUID), w.Name)
+	for _, tc := range []struct {
+		name string
+		pod  *corev1.Pod
+		want []int64
+	}{
+		{"terminating with the default grace", workloadPod(name, corev1.PodRunning, true), []int64{1}},
+		{"running, not deleted yet", workloadPod(name, corev1.PodRunning, false), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.pod.DeletionTimestamp != nil {
+				tc.pod.DeletionGracePeriodSeconds = ptr.To[int64](30)
+			}
+			f := newOSFixture(t, tc.pod) // the gateway already forgot the sandbox
+			var graces []int64
+			writer := interceptor.NewClient(f.c.(client.WithWatch), interceptor.Funcs{
+				Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					if _, ok := obj.(*corev1.Pod); ok {
+						o := &client.DeleteOptions{}
+						o.ApplyOptions(opts)
+						graces = append(graces, ptr.Deref(o.GracePeriodSeconds, -1))
+					}
+					return c.Delete(ctx, obj, opts...)
+				},
+			})
+			b := f.o.ForAgent(types.NamespacedName{Namespace: "ach", Name: f.a.Name}, f.a.UID, f.c, writer)
+			if remaining, err := b.Remove(ctx, w.Name); err != nil || !remaining {
+				t.Fatalf("remaining = %v err = %v, want true while the workload pod exists", remaining, err)
+			}
+			if !slices.Equal(graces, tc.want) {
+				t.Fatalf("pod deletes with grace %v, want %v", graces, tc.want)
+			}
+		})
+	}
+}
+
 func TestOpenShell_RemoveDoesNotBlockOnASlowDelete(t *testing.T) {
 	ctx := context.Background()
 	f := newOSFixture(t)
@@ -713,6 +753,9 @@ func TestOpenShell_OwnedListsAServiceUntilItsWorkloadPodIsGone(t *testing.T) {
 	}
 	if remaining, err := f.b.Remove(ctx, f.w.Name); err != nil || !remaining {
 		t.Fatalf("remaining=%v err=%v, want true", remaining, err)
+	}
+	if err := f.c.Get(ctx, client.ObjectKeyFromObject(pod), pod); err != nil { // Remove cut its grace
+		t.Fatal(err)
 	}
 	pod.Finalizers = nil
 	if err := f.c.Update(ctx, pod); err != nil { // the fake deletes it once its finalizers are gone

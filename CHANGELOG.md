@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- A2A task recovery after a control restart completes the task again. Listing stored tasks sent
+  S3 `ContinuationToken=None`, which boto3 rejects, so recovery failed before reading any task
+  and a request whose run outlived the restart stayed `working` for good. A recovery that cannot
+  read its tasks now logs a warning.
+- A2A task records live under `a2a/<agent>/<channel>/`. The storage prefix is shared by every
+  Agent in the namespace, so with `a2a/<channel>/` one Agent's recovery read the other Agents'
+  tasks and would fail their running requests. Records written under the old path are no longer
+  read or pruned.
+
 ## [0.6.13] - 2026-11-09
 
 ### Removed

@@ -14,8 +14,9 @@ def _ctx(user: str) -> SimpleNamespace:
     return SimpleNamespace(user=SimpleNamespace(user_name=user))
 
 
-def _store() -> StorageTaskStore:
-    return StorageTaskStore(S3Storage(bucket="b", prefix="p", client=FakeS3Client()), channel="review")
+def _store(client: FakeS3Client | None = None, agent: str = "a") -> StorageTaskStore:
+    storage = S3Storage(bucket="b", prefix="p", client=client or FakeS3Client())
+    return StorageTaskStore(storage, agent=agent, channel="review")
 
 
 def _task(task_id: str, state: int = TASK_STATE_WORKING) -> Task:
@@ -58,3 +59,10 @@ async def test_prune_drops_old_records() -> None:
     assert await store.get("t1", _ctx("alice")) is not None
     await store.prune(datetime.now(UTC) + timedelta(days=1))
     assert await store.get("t1", _ctx("alice")) is None
+
+
+async def test_pending_sees_only_its_own_agents_tasks() -> None:
+    shared = FakeS3Client()  # one storage prefix serves every Agent in the namespace
+    await _store(shared, agent="finops").save(_task("t1"), _ctx("alice"))
+    await _store(shared, agent="doctor").save(_task("t2"), _ctx("alice"))
+    assert [t.id for t in await _store(shared, agent="finops").pending()] == ["t1"]

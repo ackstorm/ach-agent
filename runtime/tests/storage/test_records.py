@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import boto3
 import pytest
+from botocore.stub import Stubber
 from fakes import FakeS3Client
 
 from ach_runtime.storage.api import StorageUnavailable
@@ -30,3 +32,20 @@ async def test_records_fail_closed_without_a_backend() -> None:
     ):
         with pytest.raises(StorageUnavailable):
             await call
+
+
+async def test_list_records_sends_requests_s3_accepts() -> None:
+    client = boto3.client("s3", region_name="eu-west-1")
+    with Stubber(client) as stub:  # validates every parameter as botocore does before sending
+        stub.add_response(
+            "list_objects_v2",
+            {"Contents": [], "IsTruncated": True, "NextContinuationToken": "t2"},
+            {"Bucket": "b", "Prefix": "p/records/a2a/"},
+        )
+        stub.add_response(
+            "list_objects_v2",
+            {"Contents": [], "IsTruncated": False},
+            {"Bucket": "b", "Prefix": "p/records/a2a/", "ContinuationToken": "t2"},
+        )
+        assert await S3Storage(bucket="b", prefix="p", client=client).list_records("a2a/") == []
+        stub.assert_no_pending_responses()

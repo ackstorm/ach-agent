@@ -55,7 +55,7 @@ def create_app(control: Control) -> FastAPI:
         app.state.a2a_bridges[configured.name] = bridge
         store = None
         if control.storage is not None and control.config.workspace.persistence.type == "s3":
-            store = StorageTaskStore(control.storage, channel=configured.name)
+            store = StorageTaskStore(control.storage, agent=control.config.agent.name, channel=configured.name)
         app.state.a2a_stores[configured.name] = store
         app.mount(
             f"/a2a/{configured.name}",

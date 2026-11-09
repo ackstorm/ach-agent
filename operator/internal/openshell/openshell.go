@@ -493,6 +493,9 @@ func (b *openShellUnits) Remove(ctx context.Context, name string) (bool, error) 
 		return false, err
 	}
 	remaining, err := b.removeSandbox(ctx, b.reader, sandbox)
+	if remaining && err == nil {
+		b.cutTerminationGrace(ctx, sandbox)
+	}
 	if remaining || err != nil {
 		return remaining, err
 	}
@@ -503,6 +506,26 @@ func (b *openShellUnits) Remove(ctx context.Context, name string) (bool, error) 
 	// Agent deletion is covered by the Service's owner reference.
 	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: b.serviceName(sandbox), Namespace: b.agent.Namespace}}
 	return false, client.IgnoreNotFound(b.writer.Delete(ctx, svc))
+}
+
+// cutTerminationGrace deletes a workload pod that is already terminating again with a 1 s
+// grace period. OpenShell v0.1.7's supervisor (PID 1) hangs after SIGTERM until the kubelet
+// SIGKILLs it at the 30 s default, while the Workspace is already saved: NVIDIA/OpenShell#5025,
+// fixed by #5279 and not in a release yet. Remove this once the gateway runs a release with it.
+// Only a pod that already has a deletion timestamp is touched, so the sandbox controller cannot
+// recreate it.
+func (b *openShellUnits) cutTerminationGrace(ctx context.Context, sandbox string) {
+	pod, err := b.workloadPod(ctx, b.reader, sandbox)
+	if err != nil || pod == nil || pod.DeletionTimestamp.IsZero() {
+		return
+	}
+	if g := pod.DeletionGracePeriodSeconds; g != nil && *g <= 1 {
+		return
+	}
+	err = b.writer.Delete(ctx, pod, client.GracePeriodSeconds(1), client.Preconditions{UID: &pod.UID})
+	if err != nil && !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
+		log.FromContext(ctx).Error(err, "shorten the grace period of a terminating workload pod", "pod", pod.Name)
+	}
 }
 
 func (o *OpenShell) removeSandbox(ctx context.Context, reader client.Reader, sandbox string) (bool, error) {

@@ -358,12 +358,14 @@ A message pays one of three costs, depending on what is still running for its Wo
 | State | Cost (EKS, measured) |
 |---|---|
 | opencode running | ~1.3s, the model call |
-| sandbox up, opencode retired | ~8s: S3 restore of the session HOME, opencode boot, MCP connect |
+| sandbox up, opencode stopped | ~8s at most: S3 restore of the session HOME (skipped when the sandbox kept it), opencode boot, MCP connect |
 | no sandbox | ~22s: Sandbox CR, scheduling, OpenShell's `/sandbox` PVC (~12s on EBS), containers, opencode boot |
 
 Two timers decide the state, in order. `workspace.session.idleTimeoutSeconds` after its last turn a
-session's opencode is stopped, its HOME saved and the session retired. Only once every session of
-the Workspace is retired does `workspace.idleTimeoutSeconds` start; when it runs out the Workspace
+session's opencode is stopped and its HOME saved. With `persistence: s3` and a session timeout
+above `0` the HOME stays in the sandbox, so the next message of that conversation resumes it in place
+instead of restoring it from S3; with a `0` timeout it is deleted. Only once no session of the
+Workspace is running does `workspace.idleTimeoutSeconds` start; when it runs out the Workspace
 is committed and the sandbox deleted. `0` acts on the next lifecycle tick (about a second); a
 `sessionStart` gate that skips the run (exit 78) counts as the end of its work.
 `workspace.idleTimeoutSeconds: -1` never deletes the sandbox for idleness.

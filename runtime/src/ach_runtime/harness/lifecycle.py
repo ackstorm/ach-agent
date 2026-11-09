@@ -398,30 +398,35 @@ class Lifecycle:
                 endpoint, "GET", f"/sessions/{ticket.session_ref}/info"
             )
             if status == 200 and isinstance(info, dict):
-                if info.get("active") or info.get("initialized"):
-                    return
-            elif status != 404:
+                local = bool(info.get("active") or info.get("initialized"))
+                kept = bool(info.get("suspended")) and not info.get("active")
+            elif status == 404:
+                local = kept = False
+            else:
                 raise RuntimeError("mini-harness returned invalid session information")
-            with _storage_timer("restore", DOMAIN_SESSION) as timer:
-                receipt = await self.control.storage.restore(ref, retention_days=retention_days)
+            if not local:
+                with _storage_timer("restore", DOMAIN_SESSION) as timer:
+                    receipt = await self.control.storage.restore(ref, retention_days=retention_days)
+                    if receipt is not None:
+                        await put_archive(
+                            self.control.mini_client, endpoint, self.control._headers(endpoint),
+                            f"/sessions/{ticket.session_ref}/archive", receipt.open(),
+                            params={"deadline_at": ticket.deadline_at.isoformat()},
+                            on_mismatch=self.control.manager.report_lost,
+                        )
+                    timer["outcome"] = "ok" if receipt is not None else "empty"
                 if receipt is not None:
-                    await put_archive(
-                        self.control.mini_client, endpoint, self.control._headers(endpoint),
-                        f"/sessions/{ticket.session_ref}/archive", receipt.open(),
-                        params={"deadline_at": ticket.deadline_at.isoformat()},
-                        on_mismatch=self.control.manager.report_lost,
-                    )
-                timer["outcome"] = "ok" if receipt is not None else "empty"
-            if receipt is None:
-                return
-            lease = await self.control.storage.acquire_writer(ref, endpoint.instance_id)
-            self._leases[(ref.workspace_ref, ref.session_ref, endpoint.instance_id)] = lease
-            self._bases[(ref.workspace_ref, ref.session_ref)] = lease.base_etag
+                    lease = await self.control.storage.acquire_writer(ref, endpoint.instance_id)
+                    self._leases[(ref.workspace_ref, ref.session_ref, endpoint.instance_id)] = lease
+                    self._bases[(ref.workspace_ref, ref.session_ref)] = lease.base_etag
         except Exception:
             from ach_runtime.observability import alarm
 
             alarm("restore_failed", workspace_ref=ref.workspace_ref, session_ref=ref.session_ref)
             raise
+        if kept:
+            # Its HOME was kept after the close archive: resume it in place, nothing to download.
+            await self._resume_session(ticket, endpoint)
 
     async def _resume_session(self, ticket: Any, endpoint: Any) -> None:
         """type volume: the HOME is on the Workspace PVC; the pod resumes the session from it."""
@@ -455,7 +460,7 @@ class Lifecycle:
         self._leases[key] = lease
         self._bases[(ref.workspace_ref, None)] = lease.base_etag
 
-    async def _save_session(self, endpoint: Any, session_ref: str) -> None:
+    async def _save_session(self, endpoint: Any, session_ref: str, *, keep_home: bool = False) -> None:
         persistence = self.control.config.workspace.persistence.type
         if persistence == "volume":
             await self._suspend_session(endpoint, session_ref)
@@ -485,7 +490,8 @@ class Lifecycle:
                 self._report_failure(exc, "Harness session persistence failed")
                 raise
         await self._report_suspend_hook(endpoint, session_ref)
-        await self._retire_session(endpoint, session_ref)
+        if not keep_home:
+            await self._retire_session(endpoint, session_ref)
 
     async def _suspend_session(self, endpoint: Any, session_ref: str) -> None:
         """type volume: stop the session's opencode; its HOME stays on the Workspace PVC and is
@@ -528,7 +534,7 @@ class Lifecycle:
             pass
 
     async def _attempt_session_save(
-        self, endpoint: Any, session_ref: str, failed_key: tuple[str, str, str]
+        self, endpoint: Any, session_ref: str, failed_key: tuple[str, str, str], keep_home: bool = False
     ) -> bool:
         """Shared retry entry for both the idle-session and stopped-session close paths.
         A session already committed but stuck on a failed postcommit retire only retries
@@ -537,7 +543,7 @@ class Lifecycle:
             if failed_key in self._pending_session_retire:
                 await self._retire_session(endpoint, session_ref)
             else:
-                await self._save_session(endpoint, session_ref)
+                await self._save_session(endpoint, session_ref, keep_home=keep_home)
         except Exception as exc:
             self._failed_session_saves.add(failed_key)
             retire_pending = getattr(exc, "_ach_retire_pending", False)
@@ -657,6 +663,12 @@ class Lifecycle:
                         continue
                     self._failed_session_saves.discard(failed_key)
                     self._failed_session_retry_at.pop(failed_key, None)
+                session_timeout = session_idle_timeout(
+                    self.control.config.workspace, session_channel.get(session_ref)
+                )
+                # An s3 session that may get another message keeps its HOME after its close
+                # archive, so a return to this sandbox resumes it without a download.
+                keep_home = session_timeout > 0 and self.control.config.workspace.persistence.type == "s3"
                 if native_live:
                     self._confirmed_session_closes.discard(session_close_key)
                     active_refs.add(session_ref)
@@ -664,11 +676,8 @@ class Lifecycle:
                         key, now - timedelta(seconds=float(info.get("idleSeconds") or 0))
                     )
                     idle = (now - last).total_seconds()
-                    session_timeout = session_idle_timeout(
-                        self.control.config.workspace, session_channel.get(session_ref)
-                    )
                     if idle >= session_timeout:
-                        if not await self._attempt_session_save(endpoint, session_ref, failed_key):
+                        if not await self._attempt_session_save(endpoint, session_ref, failed_key, keep_home):
                             active_refs.add(session_ref)
                             continue
                         if self.control.config.workspace.persistence.type == "s3":
@@ -686,7 +695,7 @@ class Lifecycle:
                         and session_close_key not in self._confirmed_session_closes
                     )
                     if due:
-                        if not await self._attempt_session_save(endpoint, session_ref, failed_key):
+                        if not await self._attempt_session_save(endpoint, session_ref, failed_key, keep_home):
                             active_refs.add(session_ref)
                             continue
                         self._confirmed_session_closes.add(session_close_key)

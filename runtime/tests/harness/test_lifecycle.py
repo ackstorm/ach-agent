@@ -877,7 +877,7 @@ def test_failed_stopped_session_close_retries_after_cooldown(monkeypatch) -> Non
         lifecycle = Lifecycle(control, alarm=lambda _reason: None)
         lifecycle._ensure_workspace_writer = _no_workspace_writer
         attempts = []
-        async def save(_endpoint, session_ref):
+        async def save(_endpoint, session_ref, **_):
             attempts.append(session_ref)
             if len(attempts) == 1:
                 raise SnapshotTransientFailure("temporary close failure")
@@ -925,7 +925,7 @@ def test_failed_save_retains_home_pod_slot() -> None:
         control._mini_json = _mini_json(control)
         lifecycle = Lifecycle(control, alarm=alarms.append)
         lifecycle._ensure_workspace_writer = _no_workspace_writer
-        async def failed(endpoint, session_ref):
+        async def failed(endpoint, session_ref, **_):
             raise RuntimeError("archive failed")
         lifecycle._save_session = failed
         start = datetime(2026, 10, 1, tzinfo=UTC)
@@ -1339,7 +1339,7 @@ def test_tick_workspaces_progress_independently() -> None:
         control._headers = lambda endpoint: {"X-ACH-Instance-Id": endpoint.instance_id}
         control._mini_json = _mini_json(control)
         lifecycle = Lifecycle(control)
-        async def save(endpoint, session_ref):
+        async def save(endpoint, session_ref, **_):
             save_a.set()
             await release_save.wait()
         lifecycle._save_session = save
@@ -1497,7 +1497,7 @@ def test_recreated_lifecycle_retries_failed_inactive_session() -> None:
         first = Lifecycle(control, alarm=alarms.append)
         first._ensure_workspace_writer = _no_workspace_writer
         calls = []
-        async def fail(endpoint, session_ref):
+        async def fail(endpoint, session_ref, **_):
             calls.append("failed")
             raise RuntimeError("Storage persist failed after mini suspension")
         first._save_session = fail
@@ -1510,7 +1510,7 @@ def test_recreated_lifecycle_retries_failed_inactive_session() -> None:
         restarted = Lifecycle(control, alarm=alarms.append)
         restarted._ensure_workspace_writer = _no_workspace_writer
         second_calls = []
-        async def fail_again(endpoint, session_ref):
+        async def fail_again(endpoint, session_ref, **_):
             second_calls.append("failed")
             raise RuntimeError("Storage persist still failed")
         restarted._save_session = fail_again
@@ -1799,7 +1799,7 @@ async def test_same_pod_idle_close_reopen_uses_restore_or_new_sid(tmp_path: Path
     monkeypatch.setattr(_NativeSession, "stop_cleanly", fake_stop_cleanly)
     monkeypatch.setattr(_NativeSession, "request", fake_request)
 
-    def setup(tag: str, *, persistence_enabled: bool):
+    def setup(tag: str, *, persistence_enabled: bool, session_idle: int = 20):
         engine = OpenCodeEngine()
         service = ExecutionService(
             engine=engine,
@@ -1816,7 +1816,7 @@ async def test_same_pod_idle_close_reopen_uses_restore_or_new_sid(tmp_path: Path
         control.config.workspace.persistence.type = "s3" if persistence_enabled else "none"
         control.config.workspace.session_retention_days = 7
         control.config.workspace.idle_timeout_seconds = 10_000
-        control.config.workspace.session.idle_timeout_seconds = 20
+        control.config.workspace.session = type("S", (), {"idle_timeout_seconds": session_idle})()
         control.manager.closed = []
         control.manager.close = _close_record(control.manager)
         endpoint = WorkspaceEndpoint(
@@ -1896,7 +1896,7 @@ async def test_same_pod_idle_close_reopen_uses_restore_or_new_sid(tmp_path: Path
 
     # --- Enabled mode: close imports/commits, reopen restores the committed SID ---
     storage = Storage()
-    service_en, control_en, endpoint_en = setup("enabled", persistence_enabled=True)
+    service_en, control_en, endpoint_en = setup("enabled", persistence_enabled=True, session_idle=0)
     control_en.storage = storage
     bystander = add_bystander(service_en, control_en, _sref("bystander-enabled"))
     add_target(service_en, _sref("target-enabled"), "committed-sid")
@@ -1929,6 +1929,35 @@ async def test_same_pod_idle_close_reopen_uses_restore_or_new_sid(tmp_path: Path
     assert (bystander_state.home / "bystander-marker").read_text(encoding="utf-8") == "untouched"
     await control_en.mini_client.aclose()
     await service_en.close()
+
+    # --- Kept HOME: a session that may get another message (timeout > 0) keeps its HOME
+    # after the close archive, and the reopen resumes it in place without a storage restore ---
+    kept_storage = Storage()
+    service_kept, control_kept, endpoint_kept = setup("kept", persistence_enabled=True)
+    control_kept.storage = kept_storage
+    add_target(service_kept, _sref("target-kept"), "kept-sid")
+
+    await close_target(control_kept, endpoint_kept, _sref("target-kept"))
+
+    kept_state = service_kept._sessions.get(_sref("target-kept"))
+    assert kept_state is not None and kept_state.suspended and kept_state.native_session_id is None
+    assert not service_kept._engine._sessions[_sref("target-kept")].alive
+    assert kept_storage.by_ref[("a" * 64, _sref("target-kept"))]["bytes"]
+
+    async def no_restore(ref, **_):
+        raise AssertionError("a kept HOME resumes without a storage restore")
+
+    kept_storage.restore = no_restore
+    reopen_kept = Lifecycle(control_kept, alarm=lambda _reason: None)
+    await reopen_kept.restore_session(SimpleNamespace(
+        session_ref=_sref("target-kept"),
+        deadline_at=datetime.now(timezone.utc) + timedelta(seconds=60),
+    ), endpoint_kept)
+    await reopen_kept.close()
+    # The in-place resume read the session id from the manifest in the kept HOME.
+    assert service_kept._sessions.get(_sref("target-kept")).native_session_id == "kept-sid"
+    await control_kept.mini_client.aclose()
+    await service_kept.close()
 
     # --- Disabled mode: close only drains/exports, reopen starts a fresh native SID ---
     service_dis, control_dis, endpoint_dis = setup("disabled", persistence_enabled=False)
@@ -1978,7 +2007,7 @@ async def test_same_pod_idle_close_reopen_uses_restore_or_new_sid(tmp_path: Path
 
     # --- A failed close never retires: HOME/registry survive, zero retire calls ---
     storage.fail_next.add(("a" * 64, _sref("target-failed")))
-    service_fail, control_fail, endpoint_fail = setup("failed", persistence_enabled=True)
+    service_fail, control_fail, endpoint_fail = setup("failed", persistence_enabled=True, session_idle=0)
     control_fail.storage = storage
     add_target(service_fail, _sref("target-failed"), "will-not-retire-sid")
     retire_attempts: list[str] = []
@@ -2125,7 +2154,7 @@ def test_disabled_persistence_preserves_existing_idle_close() -> None:
         control._mini_json = _mini_json(control)
         lifecycle = Lifecycle(control)
         saves = []
-        async def save(endpoint, session_ref):
+        async def save(endpoint, session_ref, **_):
             saves.append(session_ref)
         lifecycle._save_session = save
         start = datetime(2026, 10, 1, tzinfo=UTC)
@@ -2160,7 +2189,7 @@ def test_confirmed_session_close_is_per_pod_and_cleared_by_work() -> None:
         lifecycle = Lifecycle(control)
         lifecycle._ensure_workspace_writer = _no_workspace_writer
         saves = []
-        async def save(endpoint, session_ref):
+        async def save(endpoint, session_ref, **_):
             saves.append((endpoint.instance_id, session_ref))
         lifecycle._save_session = save
         start = datetime(2026, 10, 1, tzinfo=UTC)

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Hydration + model-metadata facade input (contract §5; Task 7).
 
 `Hydrator.load(source) -> HydratedCatalog` combines the two authorized ACH surfaces:

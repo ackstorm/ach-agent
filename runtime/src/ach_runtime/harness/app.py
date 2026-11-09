@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """HTTP ingress and facade listener applications for the Harness control role."""
 
 from __future__ import annotations

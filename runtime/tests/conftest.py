@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Unit tests use placeholder MCP URLs nothing listens on: stub the pre-send `tools/list`
 probe to report one tool. E2E runs keep the real probe; a test can re-patch it."""
 

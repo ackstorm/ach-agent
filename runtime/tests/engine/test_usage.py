@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Native usage is accumulated only from owned, correlated durable operations."""
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """`Storage` protocol, receipts and its error taxonomy (contract §7/§11, dispatch
 §interfaces). The Harness calls this surface in-process — there is no separate Storage
 service or wire authentication of its own; whichever backend is configured (e.g. `s3.py`'s

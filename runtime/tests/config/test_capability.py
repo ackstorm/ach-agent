@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """workspace-v3 capability block: server selection, headers, memory rules."""
 
 from __future__ import annotations

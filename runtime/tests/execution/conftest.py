@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Shared fixtures for tests/execution — reuses tests/config's accepted PR-review wire."""
 
 from __future__ import annotations

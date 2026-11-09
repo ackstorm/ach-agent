@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Session-keyed private HOME/XDG registry + agent session hooks (contract §§4,6).
 
 Each `session_ref` gets one private HOME/scratch directory, reserved exclusively via a

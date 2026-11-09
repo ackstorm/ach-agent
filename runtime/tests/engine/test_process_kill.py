@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """`_kill_process_group` escalation (contract §4's 10s cancellation bound), proven against
 a real process group independent of opencode's own network/timing behavior. Plus
 `_OwnedProcessGroup` (review finding #7): a detached descendant that leaves the process

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """assemble() with capability.ach.key.exchange: exchange before hydrate, ACH's code on refusal."""
 
 from __future__ import annotations

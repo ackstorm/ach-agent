@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Bounded archive tests (dispatch §required-behavior 5).
 
 Ported from `old-ach-agent/tests/sandbox/test_archive.py`; adds member-count-limit,

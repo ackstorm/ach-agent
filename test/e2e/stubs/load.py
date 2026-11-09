@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Acceptance load across credential rotations: model calls, MCP calls on one session kept open
 throughout, and one long model stream, all through an Agent's facades. Prints one JSON summary
 line. stdlib only."""

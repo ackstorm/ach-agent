@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """The compose example must stay valid: config parses, catalog satisfies contract 3.3.1, stub behaves."""
 import importlib.util
 import json

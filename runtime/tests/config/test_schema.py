@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """RuntimeConfig / parse_config — contract docs/schemas/ach-workspace-contract-v1.md.
 
 Covers the surface required by

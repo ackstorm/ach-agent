@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """`inform_user`: progress messages from a running invocation to its A2A caller.
 
 Mounted per run (`/runs/{invocation_id}/`) like the artifacts facade, so a tool call names

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Scripted stand-in for `pi --mode rpc`. FAKE_MODE selects the misbehaviour."""
 import json
 import os

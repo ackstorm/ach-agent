@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Lifecycle and archive-facing session state regressions."""
 
 import asyncio

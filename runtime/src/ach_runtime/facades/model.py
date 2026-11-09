@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Model facade — fronts the ONE granted model endpoint on a server-held route for the
 execution pod (contract §5/§11). Adapted from old-ach-agent `engine/mcp_proxy.py::ModelProxy`;
 not ported: `CostAccountant`/`CostObserver` (unused accounting, contract §9/Task 8) and the

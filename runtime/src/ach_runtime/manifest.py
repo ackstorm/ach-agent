@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """The `run` manifest: the few fields an author writes, expanded into a workspace-v3 wire config.
 
 With `ach:` the agent's capability is an ACH environment, plus any `mcpServers`; without it,

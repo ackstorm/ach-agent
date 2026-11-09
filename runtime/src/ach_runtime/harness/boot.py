@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Production control-role entry point with two ordinary uvicorn listeners."""
 
 from __future__ import annotations

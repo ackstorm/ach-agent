@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Normalized Event / RoutedEvent — the canonical types crossing channels -> harness (contract §2).
 
 Event carries only what normalization produces: stable eventId, channel, normalized type,

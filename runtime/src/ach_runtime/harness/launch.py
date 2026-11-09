@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Launch environment of one execution unit (contract v2 5.5), shared by both Workspace sources."""
 
 from __future__ import annotations

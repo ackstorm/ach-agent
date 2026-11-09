@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Snapshot/restore version-gating (contract §4) — a mismatch fails closed with zero
 native spawn, never a replacement session. Plus a full native round trip (review
 finding #10/#11) using the Task 1 fake model fixture: start -> settle -> suspend ->

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Task 4 wire contract: StartRequest/Started/RunStatus (contract §§3-4).
 
 Replaces old-ach-agent's Acquire/Turn controller protocol — this is a mini-harness that

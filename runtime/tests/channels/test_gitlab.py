@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """normalize_gitlab — GitLab payload -> Event | None (contract §2, task-3 dispatch)."""
 
 from __future__ import annotations

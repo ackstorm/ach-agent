@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Policy gap I5: native startup (URL discovery, SSE subscription, config/model/agent
 readiness) must share ONE deadline derived from configured `engine.startupTimeoutSeconds`
 clipped by the original invocation/restore deadline -- never each phase's own fixed or

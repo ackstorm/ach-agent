@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Pinned OpenCode v2 native adapter (contract §4) — the exact recipe proved in Task 1's
 spike (spikes/opencode-v2/serve-fixture.mjs, remainder.mjs) and written down in
 task-4-reuse-handoff.md "Exact native adapter recipe", steps 1-7.

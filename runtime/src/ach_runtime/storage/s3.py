@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """S3-compatible `Storage`: conditional CAS registry + immutable snapshot blobs
 (contract §7/§11, dispatch §behavior 2/3/4).
 

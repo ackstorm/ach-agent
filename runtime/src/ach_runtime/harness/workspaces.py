@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Workspace coordination over a `WorkspaceSource` (contract v2): the source answers "give me
 a running instance of this Workspace, take it away, tell me what already runs"; the manager
 keeps everything else.

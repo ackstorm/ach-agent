@@ -9,3 +9,7 @@ The repository holds two languages under one version: `operator/` (Go) and `runt
 (Python, package `ach_runtime`), plus the Helm chart, end-to-end tests and docs.
 
 Status: under construction; see docs/superpowers/specs.
+
+## License
+
+Apache-2.0, see [LICENSE](LICENSE). Vendored code under `operator/third_party/` keeps its own licence.

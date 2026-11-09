@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """`storage_from_env` factory (dispatch global-storage-task-1-brief.md §Step 1).
 
 Loads its own fresh copy of tests/config/fixtures/pr-review-runtime.json — the sibling

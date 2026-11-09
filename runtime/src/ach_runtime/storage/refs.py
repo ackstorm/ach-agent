@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """`StateRef`: the strict, immutable domain descriptor Storage operates on (dispatch §interfaces).
 
 `workspace_ref`/`session_ref` are opaque, already-validated full SHA-256 hex digests minted

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """MCP facade — fronts the granted (non-excluded) ACH MCP servers on a server-held route
 (contract §5/§11). Adapted from old-ach-agent `engine/mcp_proxy.py::McpProxy`.
 

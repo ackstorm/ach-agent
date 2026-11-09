@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Standalone assembly: no ACH round-trip, catalog from config, headers from env."""
 
 from __future__ import annotations

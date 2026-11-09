@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """facades/model.py::present_metadata/public_catalog — pure projection of the hydrated
 catalog into the engine owner's fixture shape (contract §5; `plugins/managed-config/
 index.js::toModelInfo`). No registry/type is introduced; every key is independently

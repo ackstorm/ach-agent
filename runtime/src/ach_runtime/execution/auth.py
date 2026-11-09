@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Fixed-identity auth wrapper around the mini-harness execution app (owned slice of
 Task 2 -- workspace-auth-dispatch). Adapts old-ach-agent's `_SandboxAuth` ASGI middleware
 (execution/app.py:_SandboxAuth) to one pinned Workspace name plus an X-ACH-Instance-Id

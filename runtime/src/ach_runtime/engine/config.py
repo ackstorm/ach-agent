@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """OpenCode v2 subprocess env + managed-config translation (contract §§4-5).
 
 Reuses the clean-slate-env discipline from old-ach-agent/src/ach_agent/engine/lifecycle.py

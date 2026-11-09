@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """KeySource: exchange, rotation at 80% on the monotonic clock, clamped backoff, single-flight
 re-exchange, and KeyAuth's one retry on ACH's own rejection."""
 

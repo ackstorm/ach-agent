@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 
 // Package host is the operator side of ach-runtime contract v2 section 5: it
 // long-polls a control unit's /host/v1 for desired state and reconciles one execution

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Restore / missing-copy / corruption / cache tests (dispatch §required-behavior 4)."""
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Deterministic OpenAI-compatible model for the compose CI job. Always answers "pong" and logs
 `echo turns=<n>`, the number of user messages in the request."""
 

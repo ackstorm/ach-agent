@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Authenticated in-process operations for Workspace-owned artifacts."""
 
 from __future__ import annotations

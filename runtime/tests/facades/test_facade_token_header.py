@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """The facade token travels only in its header: never in a URL, never upstream."""
 
 from __future__ import annotations

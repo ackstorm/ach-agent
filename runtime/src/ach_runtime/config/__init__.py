@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """workspace-v3 RuntimeConfig/PublicConfig/ExecutionBootstrap schema and canonicalization."""
 
 from ach_runtime.config.canonical import (

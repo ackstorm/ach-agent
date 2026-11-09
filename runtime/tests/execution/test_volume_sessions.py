@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Persistence type volume in the execution pod: the session HOMEs stay on the Workspace PVC,
 a session resumes from the HOME it left, and unused HOMEs are pruned at Workspace start."""
 

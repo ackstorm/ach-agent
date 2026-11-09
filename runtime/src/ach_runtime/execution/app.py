@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Mini-harness HTTP app: `/healthz` + the Started/status/list/cancel surface
 (contract §3). Reuses old-ach-agent's finite-JSON/body-cap/error-response discipline
 (`execution/app.py:_request_json`, `_json_line`, `_error_response`) — there is no

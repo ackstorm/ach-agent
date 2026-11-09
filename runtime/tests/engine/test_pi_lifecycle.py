@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Cancel, crash, suspend, snapshot and restore of the pi engine: every case but the takeover runs on
 PiG and on upstream pi."""
 

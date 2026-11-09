@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """ExecutionService: start/status/list_runs/cancel over a retained invocation registry
 (contract §§3-4), plus session snapshot/restore orchestration (contract §§4,6).
 

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """The `run` role: a manifest-defined agent in one process, with the engine's TUI attached.
 
 Single-unit topology (see harness/agent.py): not for production. The workspace is the

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """ExecutionService over a fake engine transport — proves registry/dedup/deadline/cancel/
 session-exclusivity semantics (task-4-reuse-handoff.md "New focused coverage", plus
 task-4-execution-review.md round 1 findings #1/#2/#3/#8/#14) without a native process."""

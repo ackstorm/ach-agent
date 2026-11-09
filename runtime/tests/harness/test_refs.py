@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """harness.refs — opaque digest refs (contract §2/§11)."""
 
 from __future__ import annotations

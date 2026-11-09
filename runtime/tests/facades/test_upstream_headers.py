@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Injected upstream headers replace inbound ones case-insensitively; hop-by-hop never forwarded."""
 
 from __future__ import annotations

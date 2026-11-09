@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """route(event, channel) -> RoutedEvent — adapter defaults + independent overrides (contract §2)."""
 
 from __future__ import annotations

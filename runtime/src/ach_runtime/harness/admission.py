@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Admission — dedup -> capacity -> FIFO-per-(Workspace,session) (contract §3).
 
 Scoped to a single ACHAgent (`namespace`/`agent_uid`). Owns no host/engine

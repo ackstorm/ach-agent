@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """RED-first: exact legacy HMAC/Ed25519 vectors and rejection paths for the Workspace
 harness-key primitives (owned slice of Task 2 -- workspace-auth-dispatch)."""
 

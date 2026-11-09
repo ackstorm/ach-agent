@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Model facade: only the configured model on the allow-listed paths reaches upstream."""
 
 from __future__ import annotations

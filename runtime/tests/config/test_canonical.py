@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """configVersion canonicalization — golden corpus from
 .superpowers/sdd/2026-09-30-workspace-runtime/config-canonicalization-proposal.md,
 vendored at tests/config/fixtures/config-canonicalization.json. ACH vendors the same bytes

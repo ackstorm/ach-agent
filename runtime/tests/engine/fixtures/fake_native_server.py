@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """A real loopback process standing in for `opencode2 serve --stdio`'s HTTP/SSE wire,
 scripted over stdin and introspected over `/_control/state` — not the real binary, because
 these tests need to deterministically withhold responses, inject out-of-order/stale

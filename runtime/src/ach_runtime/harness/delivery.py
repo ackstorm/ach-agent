@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Bounded ordinary-HTTP delivery to an authenticated Workspace mini-harness."""
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """One initialized MCP client session, opened fresh per ach-memory call (contract §5/§10).
 
 Copied verbatim from old-ach-agent `engine/mcp_session.py`: the installed

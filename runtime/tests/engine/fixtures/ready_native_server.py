@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Positive-readiness variant of `fake_native_server.Server` for the mini TCP boot test.
 
 The base fake deliberately answers `{}` at `/api/model` and `/api/agent/*` so startup-policy

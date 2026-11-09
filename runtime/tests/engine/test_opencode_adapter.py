@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Focused native adapter integration (contract §4, task-4-reuse-handoff.md steps 1-7) —
 runs the pinned real @opencode/cli@2.0.20 binary against the Task 1 spike's proven fake
 model+MCP fixture (tests/engine/fake_facades.py), not an unreachable HTTPS facade — review

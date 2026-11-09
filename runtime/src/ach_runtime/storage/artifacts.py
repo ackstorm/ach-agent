@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Immutable artifact publication over the existing S3 storage boundary."""
 
 from __future__ import annotations

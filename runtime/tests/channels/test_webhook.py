@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Legacy generic webhook behavior translated to the current Event contract."""
 
 from __future__ import annotations

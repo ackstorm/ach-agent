@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Real Harness component assembly for the configured mini-harness path."""
 
 from __future__ import annotations

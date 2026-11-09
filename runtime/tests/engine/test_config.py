@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """engine/config.py — env allowlist/XDG pinning and PublicConfig -> plugin fixture
 translation (contract §§4-5)."""
 

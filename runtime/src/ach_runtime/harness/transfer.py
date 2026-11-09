@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Authenticated, bounded archive transport to an observed mini-harness pod."""
 from __future__ import annotations
 

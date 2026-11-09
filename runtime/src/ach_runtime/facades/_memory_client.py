@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Ach-memory backend: project/endpoint/auth resolution and the one harness -> ach-memory
 MCP seam, built on the real `mcp` SDK session (`facades/_mcp_session.py`). Adapted from
 old-ach-agent `memory/ach_memory.py`.

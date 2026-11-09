@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Raw native result retention through mini run records and snapshots."""
 
 from __future__ import annotations

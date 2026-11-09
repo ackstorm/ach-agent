@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """capability.ach.mcpServers: added to the hydrated MCP servers with their own headers."""
 
 from __future__ import annotations

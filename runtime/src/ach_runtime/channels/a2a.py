@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Legacy A2A channel bridge into Harness Admission and its opaque result future."""
 
 from __future__ import annotations

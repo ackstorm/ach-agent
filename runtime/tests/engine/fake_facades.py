@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Spawns the Task 1 spike's proven fake model+MCP fixture (tests/fixtures/
 fake-facades.mjs, via tests/engine/fixtures/fake_facades_server.mjs) so the REAL opencode2
 binary can run against a scripted, loopback backend instead of an unreachable HTTPS

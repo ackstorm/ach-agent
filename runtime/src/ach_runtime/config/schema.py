@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """workspace-v3 RuntimeConfig — the resolved wire contract (docs/schemas/ach-runtime-contract-v3.md).
 
 Models the complete resolved camelCase wire object the operator emits at

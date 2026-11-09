@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """In-process Workspace source for the `agent` role (spec 8).
 
 Each Workspace runs the real execution app in this process, behind a routing transport keyed

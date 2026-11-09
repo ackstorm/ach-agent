@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Thin HTTP layer over ExecutionService — validation/error-mapping only; the actual
 registry/dedup/deadline semantics are proved in test_service.py."""
 

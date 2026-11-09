@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Port of old-ach-agent tests/execution/test_wire.py — strict/frozen/finite-JSON contracts,
 adapted to the new StartRequest/Started/RunStatus shapes (contract §§3-4)."""
 

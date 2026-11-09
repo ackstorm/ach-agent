@@ -971,11 +971,11 @@ class S3Storage(Storage):
 
 def _list_keys(client: S3Client, bucket: str, base: str, prefix: str) -> list[tuple[str, datetime]]:
     found: list[tuple[str, datetime]] = []
-    token: str | None = None
+    paging: dict[str, str] = {}  # S3 rejects ContinuationToken=None: send it only from page 2
     while True:
-        page = client.list_objects_v2(Bucket=bucket, Prefix=base + prefix, ContinuationToken=token)
+        page = client.list_objects_v2(Bucket=bucket, Prefix=base + prefix, **paging)
         found.extend((item["Key"][len(base):], item["LastModified"]) for item in page.get("Contents", ()))
-        token = page.get("NextContinuationToken")
+        paging = {"ContinuationToken": page.get("NextContinuationToken", "")}
         if not page.get("IsTruncated"):
             return found
 

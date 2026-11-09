@@ -34,11 +34,15 @@ _TERMINAL = {TASK_STATE_CANCELED, TASK_STATE_COMPLETED, TASK_STATE_FAILED, TASK_
 
 
 class StorageTaskStore(TaskStore):
-    """One record per task at `a2a/<channel>/<task_id>.json`: `{"owner", "task"}`."""
+    """One record per task at `a2a/<agent>/<channel>/<task_id>.json`: `{"owner", "task"}`.
+    The storage prefix is shared by every Agent in the namespace, so the agent name keeps
+    one Agent's recovery off another's tasks."""
 
-    def __init__(self, storage: Any, *, channel: str, owner_resolver: OwnerResolver = resolve_user_scope) -> None:
+    def __init__(
+        self, storage: Any, *, agent: str, channel: str, owner_resolver: OwnerResolver = resolve_user_scope
+    ) -> None:
         self._storage = storage
-        self._dir = f"a2a/{quote(channel, safe='')}/"
+        self._dir = f"a2a/{quote(agent, safe='')}/{quote(channel, safe='')}/"
         self._owner_resolver = owner_resolver
 
     def _name(self, task_id: str) -> str:

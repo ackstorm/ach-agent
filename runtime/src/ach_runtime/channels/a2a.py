@@ -433,8 +433,13 @@ class A2AAgentExecutorBridge:
     async def recover(self, store: Any) -> None:
         """Write the outcome of runs that outlived the previous control into their tasks."""
         retention = self._control.config.workspace.persistence.retention_days
-        await store.prune(older_than=datetime.now(UTC) - timedelta(days=retention))
-        await asyncio.gather(*(self._recover_task(store, task) for task in await store.pending()))
+        try:
+            await store.prune(older_than=datetime.now(UTC) - timedelta(days=retention))
+            pending = await store.pending()
+        except Exception as exc:
+            log.warning("a2a task recovery could not read its tasks", channel=self._channel_cfg.name, error=str(exc))
+            return
+        await asyncio.gather(*(self._recover_task(store, task) for task in pending))
 
     async def _recover_task(self, store: Any, task: Any) -> None:
         try:

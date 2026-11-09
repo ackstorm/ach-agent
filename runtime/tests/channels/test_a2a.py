@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+import structlog.testing
 from fastapi import FastAPI
 
 from ach_runtime.channels.a2a import (
@@ -810,6 +811,20 @@ def test_recovery_writes_a_recovered_runs_reply_into_its_task() -> None:
         return store
 
     assert asyncio.run(scenario()).log == [("finish", "completed", "the report")]
+
+
+def test_recovery_that_cannot_read_its_tasks_logs_and_returns() -> None:
+    class _Unreadable(_Store):
+        async def prune(self, older_than) -> None:
+            raise RuntimeError("storage down")
+
+    async def scenario() -> list[dict]:
+        bridge, _ = _recovering()
+        with structlog.testing.capture_logs() as logs:
+            await bridge.recover(_Unreadable(_stored_task()))
+        return logs
+
+    assert [e["event"] for e in asyncio.run(scenario())] == ["a2a task recovery could not read its tasks"]
 
 
 def test_recovery_uses_a_run_that_finished_before_adoption() -> None:

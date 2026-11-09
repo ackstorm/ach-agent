@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- A run no longer fails while the ACH platform restarts. Hydration and the skill, prompt and
+  artifact downloads retry connection errors and 502/503/504 answers for 60 s, and the check
+  that every MCP server lists its tools now retries for 60 s instead of 8 s.
+
 ## [0.6.10] - 2026-11-07
 
 ### Removed

@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- The operator no longer deletes a sandbox that is still starting. The gateway reports a sandbox
+  Ready about a second before its pod shows Running, and a host pass in that window took the
+  sandbox for lost, deleted it and created another, adding about 15 s to that start.
+
 ## [0.6.11] - 2026-11-09
 
 ### Changed

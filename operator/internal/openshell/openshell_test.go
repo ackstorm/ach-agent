@@ -387,7 +387,8 @@ func TestOpenShell_StateIsLostWhenAReadySandboxHasNoRunningPod(t *testing.T) {
 		{"running pod", workloadPod(name, corev1.PodRunning, false), ostypes.SandboxReady, host.UnitStarted},
 		{"terminating pod", workloadPod(name, corev1.PodRunning, true), ostypes.SandboxReady, host.UnitLost},
 		{"failed pod", workloadPod(name, corev1.PodFailed, false), ostypes.SandboxReady, host.UnitLost},
-		{"pending pod", workloadPod(name, corev1.PodPending, false), ostypes.SandboxReady, host.UnitLost},
+		// The gateway is Ready about a second before the first pod shows Running.
+		{"pending first pod", workloadPod(name, corev1.PodPending, false), ostypes.SandboxReady, host.UnitStarting},
 		{"provisioning without pod", nil, ostypes.SandboxProvisioning, host.UnitStarting},
 		{"starting", nil, ostypes.SandboxStarting, host.UnitStarting},
 		{"unknown", nil, ostypes.SandboxUnknown, host.UnitStarting},
@@ -407,9 +408,23 @@ func TestOpenShell_StateIsLostWhenAReadySandboxHasNoRunningPod(t *testing.T) {
 			}
 			f.gw.setPhase(f.sName, tc.phase)
 			if st, err := f.b.State(ctx, f.w.Name); err != nil || st != tc.want {
-				t.Fatalf("state = %v err = %v, want %v (finding 12: Ready without a running workload pod is lost)", st, err, tc.want)
+				t.Fatalf("state = %v err = %v, want %v (Ready without a running workload pod is lost, unless its first pod is still starting)", st, err, tc.want)
 			}
 		})
+	}
+}
+
+func TestOpenShell_StateIsLostWhenAReadySandboxReplacesAStartedPod(t *testing.T) {
+	ctx := context.Background()
+	name := SandboxName("gitlab-reviewer", string(testUID), "agent-gitlab-reviewer-1a2b3c4d5e6f7a8b9c0d")
+	f := newOSFixture(t, workloadPod(name, corev1.PodPending, false))
+	if err := f.b.Create(ctx, f.a, f.p, f.w); err != nil {
+		t.Fatal(err)
+	}
+	f.gw.setPhase(f.sName, ostypes.SandboxReady)
+	f.b.(*openShellUnits).timed[f.sName] = "earlier-pod" // a pod of this sandbox already started
+	if st, err := f.b.State(ctx, f.w.Name); err != nil || st != host.UnitLost {
+		t.Fatalf("state = %v err = %v, want host.UnitLost: the Pending pod replaces a lost workload", st, err)
 	}
 }
 

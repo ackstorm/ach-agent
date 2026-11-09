@@ -336,6 +336,12 @@ func (b *openShellUnits) State(ctx context.Context, name string) (host.UnitState
 		if err != nil {
 			return 0, err
 		}
+		// The gateway reports Ready once the supervisor connects, about a second before the
+		// pod shows Running. A Pending pod is still starting unless a pod of this sandbox
+		// already started, which makes it a replacement for a lost workload.
+		if pod != nil && pod.DeletionTimestamp.IsZero() && pod.Status.Phase == corev1.PodPending && b.timed[s.Name] == "" {
+			return host.UnitStarting, nil
+		}
 		if pod == nil || !pod.DeletionTimestamp.IsZero() || pod.Status.Phase != corev1.PodRunning {
 			return host.UnitLost, nil
 		}

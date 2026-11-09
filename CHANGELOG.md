@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- A2A progress: "Still working..." is sent after 120 s of silence instead of 60 s, and the
+  start notice reads "Starting the agent, this can take a few seconds...".
+
 ## [0.6.14] - 2026-11-09
 
 ### Fixed

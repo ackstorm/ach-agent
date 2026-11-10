@@ -42,7 +42,7 @@ async def test_run_attaches_a_client_to_the_tui_session(tmp_path, monkeypatch) -
     monkeypatch.setenv("ACH_KEY", "test-key-not-a-secret")
     monkeypatch.setenv("ACH_URL", "https://ach.example")
     manifest = tmp_path / "agent.yaml"
-    manifest.write_text("ach: {environment: engineering-prod}\nmodel: {name: gemini.gemini-flash-latest, type: gemini}\n")
+    manifest.write_text("ach: {environment: engineering-prod}\nmodel: {name: gemini.gemini-flash-latest, api: gemini}\n")
     workspace = tmp_path / "project"
     workspace.mkdir()
     rc = await run_local(
@@ -65,7 +65,7 @@ async def test_run_reports_why_the_warmup_run_failed(tmp_path, monkeypatch) -> N
     monkeypatch.setenv("ACH_KEY", "test-key-not-a-secret")
     monkeypatch.setenv("ACH_URL", "https://ach.example")
     manifest = tmp_path / "agent.yaml"
-    manifest.write_text("ach: {environment: engineering-prod}\nmodel: {name: gemini.gemini-flash-latest, type: gemini}\n")
+    manifest.write_text("ach: {environment: engineering-prod}\nmodel: {name: gemini.gemini-flash-latest, api: gemini}\n")
     workspace = tmp_path / "project"
     workspace.mkdir()
     with pytest.raises(RunError, match="mcp tools unavailable: mcp-x"):
@@ -92,7 +92,7 @@ async def test_run_gives_a_clean_env_tui_only_the_engines_env(tmp_path, monkeypa
     monkeypatch.setenv("MANIFEST_SECRET", "s3cret-value")
     manifest = tmp_path / "agent.yaml"
     manifest.write_text(
-        "ach: {environment: engineering-prod}\nmodel: {name: gemini.gemini-flash-latest, type: gemini}\n"
+        "ach: {environment: engineering-prod}\nmodel: {name: gemini.gemini-flash-latest, api: gemini}\n"
         "mcpServers: [{name: extra, url: 'http://127.0.0.1:9/mcp', headers: {X-Key: {env: MANIFEST_SECRET}}}]\n"
     )
     workspace = tmp_path / "project"

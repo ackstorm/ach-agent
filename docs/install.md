@@ -287,7 +287,7 @@ standalone Agent and an ACH Agent.
 must contain the engine: for `pi`, set `sandbox.openshell.image` to
 `ghcr.io/ackstorm/ach-agent-execution-pi:<version>`, which ships PiG as `/opt/pi/pig` (181 MB against
 368 MB for `ghcr.io/ackstorm/ach-agent-execution`). `engine.type: pi` on an image without the binary
-fails at start with a message naming the engine and the image. pi takes `model.type: openai` only.
+fails at start with a message naming the engine and the image. pi takes `model.api: openai` only.
 `test/e2e/fixtures/pi-profile.yaml` and `pi-agent.yaml` are a tested example.
 
 The known differences between the engines and the security boundaries are in

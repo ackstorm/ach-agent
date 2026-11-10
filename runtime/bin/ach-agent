@@ -3,17 +3,16 @@
 # directory as the agent's workspace (same path inside the container), the engine's TUI attached.
 set -eu
 
-usage() { echo "usage: ach-agent run --config <agent.yaml>" >&2; exit 2; }
+usage() { echo "usage: ach-agent run [--config <agent.yaml>]  (default: ./agent.yaml)" >&2; exit 2; }
 [ "${1:-}" = "run" ] || usage
 shift
-config=""
+config=agent.yaml
 while [ $# -gt 0 ]; do
   case "$1" in
     --config) [ $# -ge 2 ] || usage; config=$2; shift 2 ;;
     *) echo "ach-agent: unknown argument: $1" >&2; usage ;;
   esac
 done
-[ -n "$config" ] || usage
 [ -f "$config" ] || { echo "ach-agent: no such file: $config" >&2; exit 2; }
 # / and /tmp would cover the container's own /tmp/ach-run state when mounted at the same path.
 case "$PWD" in /|/tmp) echo "ach-agent: refusing to use $PWD as the workspace" >&2; exit 2 ;; esac

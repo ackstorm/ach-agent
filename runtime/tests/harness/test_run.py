@@ -42,7 +42,7 @@ async def test_run_attaches_a_client_to_the_tui_session(tmp_path, monkeypatch) -
     monkeypatch.setenv("ACH_KEY", "test-key-not-a-secret")
     monkeypatch.setenv("ACH_URL", "https://ach.example")
     manifest = tmp_path / "agent.yaml"
-    manifest.write_text("ach: {environment: engineering-prod}\nmodel: {name: gemini.gemini-flash-latest, type: gemini}\n")
+    manifest.write_text("ach: {environment: engineering-prod}\nmodel: {name: gemini.gemini-flash-latest, api: gemini}\n")
     workspace = tmp_path / "project"
     workspace.mkdir()
     rc = await run_local(
@@ -65,7 +65,7 @@ async def test_run_reports_why_the_warmup_run_failed(tmp_path, monkeypatch) -> N
     monkeypatch.setenv("ACH_KEY", "test-key-not-a-secret")
     monkeypatch.setenv("ACH_URL", "https://ach.example")
     manifest = tmp_path / "agent.yaml"
-    manifest.write_text("ach: {environment: engineering-prod}\nmodel: {name: gemini.gemini-flash-latest, type: gemini}\n")
+    manifest.write_text("ach: {environment: engineering-prod}\nmodel: {name: gemini.gemini-flash-latest, api: gemini}\n")
     workspace = tmp_path / "project"
     workspace.mkdir()
     with pytest.raises(RunError, match="mcp tools unavailable: mcp-x"):
@@ -92,7 +92,7 @@ async def test_run_gives_a_clean_env_tui_only_the_engines_env(tmp_path, monkeypa
     monkeypatch.setenv("MANIFEST_SECRET", "s3cret-value")
     manifest = tmp_path / "agent.yaml"
     manifest.write_text(
-        "ach: {environment: engineering-prod}\nmodel: {name: gemini.gemini-flash-latest, type: gemini}\n"
+        "ach: {environment: engineering-prod}\nmodel: {name: gemini.gemini-flash-latest, api: gemini}\n"
         "mcpServers: [{name: extra, url: 'http://127.0.0.1:9/mcp', headers: {X-Key: {env: MANIFEST_SECRET}}}]\n"
     )
     workspace = tmp_path / "project"
@@ -107,3 +107,66 @@ async def test_run_gives_a_clean_env_tui_only_the_engines_env(tmp_path, monkeypa
     seen = json.loads(dump.read_text())
     # The interpreter may add its own locale variables; nothing of the harness's environment passes.
     assert {k: v for k, v in seen.items() if not k.startswith("LC_")} == {"ENGINE_ONLY": "1"}
+
+
+def _fake_admit(monkeypatch, state: str, *, text: str | None = None, error: str | None = None) -> list[str]:
+    """Replace admission with a ticket that is already finished, and record the request text."""
+    import asyncio
+
+    from ach_runtime.execution.wire import RunStatus
+    from ach_runtime.harness.admission import Admission
+
+    seen: list[str] = []
+
+    class Ticket:
+        def __init__(self) -> None:
+            loop = asyncio.get_running_loop()
+            self.started, self.completed = loop.create_future(), loop.create_future()
+            self.started.set_result(None)
+            self.completed.set_result(RunStatus.model_validate({
+                "invocationId": "inv-1", "channel": "tui", "workspaceRef": "w", "sessionRef": "s",
+                "runId": "r", "configVersion": "c", "deadlineAt": "2030-01-01T00:00:00Z",
+                "state": state, "error": error, "result": None if text is None else {"text": text},
+            }))
+
+    def admit(self, routed):
+        seen.append(routed.event.payload["text"])
+        return Ticket()
+
+    monkeypatch.setattr(Admission, "admit", admit)
+    return seen
+
+
+async def test_run_event_prints_only_the_reply(tmp_path, monkeypatch, capfd) -> None:
+    seen = _fake_admit(monkeypatch, "completed", text="pong")
+    monkeypatch.setenv("ACH_KEY", "test-key-not-a-secret")
+    monkeypatch.setenv("ACH_URL", "https://ach.example")
+    manifest = tmp_path / "agent.yaml"
+    manifest.write_text("ach: {environment: engineering-prod}\nmodel: {name: gemini.gemini-flash-latest, api: gemini}\n")
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    rc = await run_local(
+        manifest, workspace=workspace, name="smoke", data_dir=tmp_path / "data", log_path=tmp_path / "run.log",
+        event_text="ping", ach_transport=httpx.MockTransport(_catalog),
+    )
+    assert rc == 0
+    assert seen == ["ping"]
+    assert capfd.readouterr().out == "pong\n"  # no access log, no harness line
+
+
+async def test_run_event_raises_the_run_error(tmp_path, monkeypatch, capfd) -> None:
+    from ach_runtime.harness.run import RunError
+
+    _fake_admit(monkeypatch, "failed", error="model refused")
+    monkeypatch.setenv("ACH_KEY", "test-key-not-a-secret")
+    monkeypatch.setenv("ACH_URL", "https://ach.example")
+    manifest = tmp_path / "agent.yaml"
+    manifest.write_text("ach: {environment: engineering-prod}\nmodel: {name: gemini.gemini-flash-latest, api: gemini}\n")
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    with pytest.raises(RunError, match="the run failed: model refused"):
+        await run_local(
+            manifest, workspace=workspace, name="smoke", data_dir=tmp_path / "data", log_path=tmp_path / "run.log",
+            event_text="ping", ach_transport=httpx.MockTransport(_catalog),
+        )
+    assert capfd.readouterr().out == ""

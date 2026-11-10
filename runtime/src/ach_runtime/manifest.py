@@ -24,6 +24,9 @@ from ach_runtime.config.schema import parse_config
 
 KEY_ENV = "ACH_KEY"
 URL_ENV = "ACH_URL"
+DEFAULT_MODEL_API = "openai"  # the Agent CR's default (operator DefaultModelType)
+# Top-level keys whose Agent CR field sits elsewhere, named in the error for a manifest that uses them.
+_CR_NAMES = {"exclude": "filter.exclude", "denyTools": "engine.denyTools"}
 LOCAL_NAMESPACE = "local"
 TUI_CHANNEL = "tui"
 TUI_WORKSPACE = "tui"
@@ -82,36 +85,80 @@ class AchSpec(BaseModel):
     environment: str = Field(min_length=1)
 
 
-class PromptSpec(BaseModel):
+class SystemPromptSpec(BaseModel):
+    """The Agent CR's `prompt.system`. A `file` is relative to agent.yaml and sent as text."""
+
     model_config = ConfigDict(extra="forbid")
 
-    file: str | None = None
+    type: Literal["text", "file", "ach"]
     text: str | None = None
+    file: str | None = None
+    ach: str | None = None
+    ach_file: str | None = Field(default=None, alias="achFile")
 
     @model_validator(mode="after")
-    def _exactly_one(self) -> PromptSpec:
-        if (self.file is None) == (self.text is None):
-            raise ValueError("prompt: give exactly one of 'file' or 'text'")
+    def _block_matches_type(self) -> SystemPromptSpec:
+        if getattr(self, self.type) is None:
+            raise ValueError(f"prompt.system: type {self.type} needs '{self.type}'")
         return self
 
 
+class PromptSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    system: SystemPromptSpec
+    compose: Literal["append", "replace"] | None = None
+
+
+class EngineSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["opencode", "pi"] = "opencode"
+    # The RuntimeConfig schema validates the names.
+    deny_tools: list[str] = Field(default_factory=list, alias="denyTools")
+
+
+class FilterSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Passed through: the RuntimeConfig schema validates the names.
+    exclude: dict[str, list[str]] = Field(default_factory=dict)
+
+
 class Manifest(BaseModel):
+    """agent.yaml: every field has the Agent CR's name and shape, so `promote` copies it."""
+
     model_config = ConfigDict(extra="forbid")
 
     ach: AchSpec | None = None
-    engine: Literal["opencode", "pi"] = "opencode"
-    # Passed through to capability.ach.model or capability.standalone.model; the RuntimeConfig
-    # schema validates it.
+    engine: EngineSpec = Field(default_factory=EngineSpec)
+    # Passed through to capability.ach.model or capability.standalone.model, with `api` renamed
+    # `type`; the RuntimeConfig schema validates it.
     model: dict[str, Any]
     # Passed through to capability.<server>.mcpServers; with `ach:`, added to the environment's.
     mcp_servers: list[dict[str, Any]] = Field(default_factory=list, alias="mcpServers")
     prompt: PromptSpec | None = None
-    # Passed through: the RuntimeConfig schema validates the names.
-    exclude: dict[str, list[str]] = Field(default_factory=dict)
+    filter: FilterSpec = Field(default_factory=FilterSpec)
     # Merged over the `limits` defaults; the RuntimeConfig schema validates the values.
     limits: dict[str, Any] = Field(default_factory=dict)
-    # The RuntimeConfig schema validates the names.
-    deny_tools: list[str] = Field(default_factory=list, alias="denyTools")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _cr_names(cls, data: Any) -> Any:
+        """Name the Agent CR field for a key that has another name or place there."""
+        if not isinstance(data, dict):
+            return data
+        hints = [f"'{old}' is '{new}', as in the Agent CR" for old, new in _CR_NAMES.items() if old in data]
+        if isinstance(data.get("model"), dict) and "type" in data["model"]:
+            hints.append("'model.type' is 'model.api' (openai, gemini, anthropic), as in the Agent CR")
+        if isinstance(data.get("engine"), str):
+            hints.append("'engine: <name>' is 'engine: {type: <name>}', as in the Agent CR")
+        prompt = data.get("prompt")
+        if isinstance(prompt, dict) and {"file", "text"} & set(prompt):
+            hints.append("'prompt.file' / 'prompt.text' are 'prompt.system: {type: file|text, ...}', as in the Agent CR")
+        if hints:
+            raise ValueError("; ".join(hints))
+        return data
 
     @model_validator(mode="after")
     def _checks(self) -> Manifest:
@@ -141,26 +188,37 @@ def load_manifest(path: Path) -> Manifest:
         raise ManifestError(f"{path.name}: {exc}") from exc
 
 
-def _system_prompt(prompt: PromptSpec, base_dir: Path) -> dict[str, Any]:
-    if prompt.text is not None:
-        return {"type": "text", "text": prompt.text}
-    path = base_dir / prompt.file
+def _system_prompt(system: SystemPromptSpec, base_dir: Path) -> dict[str, Any]:
+    """The runtime's `prompt.system`: a file is read and sent as text, `achFile` becomes `file`."""
+    if system.type == "text":
+        return {"type": "text", "text": system.text}
+    if system.type == "ach":
+        return {"type": "ach", "ach": system.ach, **({"file": system.ach_file} if system.ach_file else {})}
+    path = base_dir / str(system.file)  # set: the validator requires the block its type names
     try:
         return {"type": "text", "text": path.read_text(encoding="utf-8")}
     except OSError as exc:
         raise ManifestError(f"prompt file not found: {path}") from exc
 
 
+def _wire_model(model: dict[str, Any]) -> dict[str, Any]:
+    """agent.yaml and the Agent CR name the model protocol `api`; the wire config names it `type`."""
+    wire = copy.deepcopy(model)
+    wire["type"] = wire.pop("api", DEFAULT_MODEL_API)
+    return wire
+
+
 def _capability(manifest: Manifest, base_url: str | None) -> dict[str, Any]:
+    model = _wire_model(manifest.model)
     if manifest.ach is None:
-        return {"server": "standalone", "standalone": {"model": manifest.model, "mcpServers": manifest.mcp_servers}}
+        return {"server": "standalone", "standalone": {"model": model, "mcpServers": manifest.mcp_servers}}
     return {
         "server": "ach",
         "ach": {
             "baseUrl": base_url,
             "environment": manifest.ach.environment,
             "key": {"env": KEY_ENV},
-            "model": manifest.model,
+            "model": model,
             "mcpServers": manifest.mcp_servers,
         },
     }
@@ -180,17 +238,20 @@ def manifest_to_wire(
         },
         "capability": {
             **_capability(manifest, base_url),
-            "filter": {"exclude": {"tools": [], "mcpServers": [], "skills": [], **manifest.exclude}},
+            "filter": {"exclude": {"tools": [], "mcpServers": [], "skills": [], **manifest.filter.exclude}},
         },
         **copy.deepcopy(_DEFAULTS),
         "channels": [copy.deepcopy(_TUI_CHANNEL)],
     }
     wire["limits"].update(manifest.limits)
-    wire["engine"]["denyTools"] = manifest.deny_tools
-    if manifest.engine != "opencode":
-        wire["engine"]["type"] = manifest.engine
+    wire["engine"]["denyTools"] = manifest.engine.deny_tools
+    if manifest.engine.type != "opencode":
+        wire["engine"]["type"] = manifest.engine.type
     if manifest.prompt is not None:
-        wire["prompt"] = {"system": _system_prompt(manifest.prompt, base_dir)}
+        prompt: dict[str, Any] = {"system": _system_prompt(manifest.prompt.system, base_dir)}
+        if manifest.prompt.compose is not None:
+            prompt["compose"] = manifest.prompt.compose
+        wire["prompt"] = prompt
     wire["configVersion"] = compute_config_version(wire)
     parse_config(wire)
     return wire

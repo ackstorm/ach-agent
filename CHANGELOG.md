@@ -7,8 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ach-agent run --event <text|@file>` runs one request without the TUI and prints the reply on stdout.
+- `ach-agent promote` prints the Agent CR for an `agent.yaml` and its `deploy.yaml`.
+- `agent.yaml` accepts `prompt.compose`.
+
 ### Changed
 
+- **Breaking:** `agent.yaml` names its fields as the Agent CR does: `model.type` is `model.api` (default
+  `openai`), `engine: <name>` is `engine.type`, `denyTools` is `engine.denyTools`, `exclude` is
+  `filter.exclude`, and `prompt.file` / `prompt.text` are `prompt.system` (`type: file|text|ach`). The old
+  forms are rejected.
 - `ach-agent run` reads `./agent.yaml` when `--config` is not given.
 - A2A progress: "Still working..." is sent after 120 s of silence instead of 60 s, and the
   start notice reads "Starting the agent, this can take a few seconds...".

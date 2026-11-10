@@ -1,24 +1,46 @@
 #!/bin/sh
 # Run an agent manifest locally: harness and engine in the runtime image, the current
-# directory as the agent's workspace (same path inside the container), the engine's TUI attached.
+# directory as the agent's workspace (same path inside the container), the engine's TUI attached
+# or, with --event, one request answered on stdout. `promote` prints the agent's Agent CR.
 set -eu
 
-usage() { echo "usage: ach-agent run [--config <agent.yaml>]  (default: ./agent.yaml)" >&2; exit 2; }
-[ "${1:-}" = "run" ] || usage
-shift
+usage() {
+  cat >&2 <<'USAGE'
+usage: ach-agent run [--config <agent.yaml>] [--event <text|@file>]
+       ach-agent promote [--config <agent.yaml>] [--deploy <deploy.yaml>]
+--config defaults to ./agent.yaml, --deploy to deploy.yaml beside it.
+USAGE
+  exit 2
+}
+cmd=${1:-}
+case "$cmd" in run|promote) shift ;; *) usage ;; esac
 config=agent.yaml
+event=""
+deploy=""
 while [ $# -gt 0 ]; do
-  case "$1" in
-    --config) [ $# -ge 2 ] || usage; config=$2; shift 2 ;;
+  case "$cmd:$1" in
+    *:--config) [ $# -ge 2 ] || usage; config=$2; shift 2 ;;
+    run:--event) [ $# -ge 2 ] && [ -n "$2" ] || usage; event=$2; shift 2 ;;
+    promote:--deploy) [ $# -ge 2 ] || usage; deploy=$2; shift 2 ;;
     *) echo "ach-agent: unknown argument: $1" >&2; usage ;;
   esac
 done
 [ -f "$config" ] || { echo "ach-agent: no such file: $config" >&2; exit 2; }
-# / and /tmp would cover the container's own /tmp/ach-run state when mounted at the same path.
-case "$PWD" in /|/tmp) echo "ach-agent: refusing to use $PWD as the workspace" >&2; exit 2 ;; esac
 dir=$(cd "$(dirname "$config")" && pwd)
 file=$(basename "$config")
 image=${ACH_AGENT_IMAGE:-ghcr.io/ackstorm/ach-agent-local:latest}
+
+if [ "$cmd" = promote ]; then
+  deploy=${deploy:-$dir/deploy.yaml}
+  [ -f "$deploy" ] || { echo "ach-agent: no such file: $deploy" >&2; exit 2; }
+  ddir=$(cd "$(dirname "$deploy")" && pwd)
+  exec docker run --rm -v "$dir:/agent:ro" -v "$ddir:/deploy:ro" "$image" \
+    promote --config "/agent/$file" --deploy "/deploy/$(basename "$deploy")" --name "$(basename "$dir")"
+fi
+
+case "$event" in @*) event=$(cat -- "${event#@}") || exit 2; [ -n "$event" ] || usage ;; esac
+# / and /tmp would cover the container's own /tmp/ach-run state when mounted at the same path.
+case "$PWD" in /|/tmp) echo "ach-agent: refusing to use $PWD as the workspace" >&2; exit 2 ;; esac
 
 # Line 1: ach|standalone, line 2: ach.profile (may be empty), then the env names headers read.
 info=$(docker run --rm -v "$dir:/agent:ro" "$image" inspect --config "/agent/$file") || exit 2
@@ -42,6 +64,9 @@ if [ "$mode" = ach ]; then
 fi
 
 # host.docker.internal reaches a model served on this machine (Docker Desktop has it built in).
-exec docker run --rm -it --user "$(id -u):$(id -g)" "$@" --add-host=host.docker.internal:host-gateway \
+# --event runs with no TTY (CI); the TUI needs one.
+if [ -n "$event" ]; then tty=""; else tty="-it"; fi
+exec docker run --rm $tty --user "$(id -u):$(id -g)" "$@" --add-host=host.docker.internal:host-gateway \
   -v "$PWD:$PWD" -w "$PWD" -v "$dir:/agent:ro" "$image" \
-  run --config "/agent/$file" --workspace "$PWD" --name "$(basename "$dir")" --data-dir /tmp/ach-run
+  run --config "/agent/$file" --workspace "$PWD" --name "$(basename "$dir")" --data-dir /tmp/ach-run \
+  ${event:+"--event=$event"}

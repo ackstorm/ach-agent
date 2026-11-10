@@ -25,13 +25,13 @@ def test_token_expiry_is_none_for_keys_and_garbage() -> None:
 def test_inspect_prints_mode_profile_and_header_env_names(tmp_path, capsys) -> None:
     manifest = tmp_path / "agent.yaml"
     manifest.write_text(
-        "ach: {profile: support, environment: e}\nmodel: {name: m, type: openai}\n"
+        "ach: {profile: support, environment: e}\nmodel: {name: m, api: openai}\n"
         "mcpServers: [{name: gh, url: 'https://gh.example/mcp', headers: {Authorization: {env: GH_AUTH}}}]\n"
     )
     assert main(["inspect", "--config", str(manifest)]) == 0
     assert capsys.readouterr().out == "ach\nsupport\nGH_AUTH\n"
     manifest.write_text(
-        "model: {name: m, type: anthropic, baseUrl: 'https://api.example/v1',"
+        "model: {name: m, api: anthropic, baseUrl: 'https://api.example/v1',"
         " headers: {x-api-key: {env: API_KEY}, x-tag: {value: lit}}}\n"
     )
     assert main(["inspect", "--config", str(manifest)]) == 0

@@ -24,7 +24,7 @@ It runs `ghcr.io/ackstorm/ach-agent-local:latest`; set `ACH_AGENT_IMAGE` to use 
    `--config` it reads `./agent.yaml`, which makes the agent's own directory its workspace.
 5. Iterate: edit the manifest or prompt, quit the TUI, run again.
 
-With `engine: pi` the TUI is the agent loop itself, so it opens once the warm-up turn has finished and the
+With `engine: {type: pi}` the TUI is the agent loop itself, so it opens once the warm-up turn has finished and the
 harness has stopped its RPC process; it resumes the same session.
 
 The harness hydrates the environment at boot and warms the session with one turn before the TUI opens,
@@ -37,17 +37,46 @@ only clears the editor. The `Continue opencode mini -s ses_…` line opencode pr
 "To resume this session" hint pi prints are their own hints and do not apply here: the session lived in the
 removed container, so the next `ach-agent run` starts a new one.
 
+## One request
+
+`ach-agent run --event "<request>"` (or `--event @request.txt`) sends one request in place of the warm-up turn,
+prints the agent's final reply on stdout and exits: 0 when the run completes, 1 when it fails or the agent
+cannot start (the error and the log tail go to stderr), 2 on a usage error. No TUI opens and no TTY is
+needed. The request reaches the agent as a webhook message, not through an A2A channel. `limits` apply.
+
+## Promote
+
+`ach-agent promote` prints the Agent CR for `agent.yaml` and `deploy.yaml` (beside it, or `--deploy <file>`).
+`deploy.yaml` holds what only production has:
+
+```yaml
+metadata: {namespace: achagents}       # metadata.name defaults to the agent's directory name
+secretName: agent-finops               # Secret with every {env: NAME} header value, under key NAME
+spec:                                  # any Agent CR spec field
+  profileRef: {name: default}
+  ach:
+    baseUrl: https://hub.example
+    keyFrom: {tokenExchange: {identity: <service identity>}}
+  channels: [...]
+```
+
+`promote` copies `agent.yaml` as written, under `spec`, with `ach.environment`, `model` and `mcpServers`
+under `spec.ach` and `capabilityServer: ach` set. It drops `ach.profile`, turns each `{env: NAME}` header
+into a `secretKeyRef`, and inlines a `prompt.system` file as text. A field set in both files is an error.
+Standalone manifests are not promoted. No environment variable is read, so no secret value is printed.
+Validate the result with `kubectl apply --dry-run=server -f -`.
+
 ## Manifest
 
 With an `ach:` block the model and tools come from an ACH environment:
 
 ```yaml
 ach:
-  profile: default             # optional: ach-cli profile
+  profile: default             # optional: ach-cli profile (local only)
   environment: support-prod    # required
 model:                         # required
   name: gemini.gemini-flash-latest
-  type: gemini                 # openai | gemini | anthropic
+  api: gemini                  # openai | gemini | anthropic; default openai
   thinking: {enabled: true, effort: medium}   # optional
   limits: {context: 524288, output: 65536}    # optional: overrides the limits ACH reports
   params: {temperature: 0.2}                  # optional
@@ -56,11 +85,14 @@ mcpServers:                    # optional: added to the environment's MCP server
     url: https://api.githubcopilot.com/mcp/
     headers:
       Authorization: {env: GITHUB_MCP_AUTH}   # export GITHUB_MCP_AUTH="Bearer …"
-prompt:                        # optional: exactly one of file | text
-  file: ./AGENTS.md
-exclude:                       # optional
-  mcpServers: [mcp-slack]
-  tools: [zoho_desk_delete_ticket]
+prompt:                        # optional
+  system: {type: file, file: ./AGENTS.md}     # text | file | ach (+ achFile)
+  compose: append                             # append (default) | replace
+filter:                        # optional
+  exclude:
+    mcpServers: [mcp-slack]
+    tools: [zoho_desk_delete_ticket]
+engine: {type: opencode, denyTools: [question]}   # optional
 ```
 
 Without `ach:` the agent is standalone: it calls the model endpoint directly and has only the
@@ -69,7 +101,7 @@ Without `ach:` the agent is standalone: it calls the model endpoint directly and
 ```yaml
 model:
   name: claude-sonnet-5-5
-  type: anthropic
+  api: anthropic
   baseUrl: https://api.anthropic.com/v1        # required without ach
   headers:
     x-api-key: {env: ANTHROPIC_API_KEY}
@@ -78,15 +110,15 @@ mcpServers:
   - name: github
     url: https://api.githubcopilot.com/mcp/
     headers: {Authorization: {env: GITHUB_MCP_AUTH}}
-prompt: {text: You review pull requests.}
-exclude: {tools: [delete_repository]}         # skills are not allowed without ach
+prompt: {system: {type: text, text: You review pull requests.}}
+filter: {exclude: {tools: [delete_repository]}}   # skills are not allowed without ach
 ```
 
 A model served on your machine (Ollama, vLLM, LM Studio) is reachable from the container as
 `host.docker.internal`:
 
 ```yaml
-model: {name: qwen3-coder, type: openai, baseUrl: "http://host.docker.internal:11434/v1",
+model: {name: qwen3-coder, api: openai, baseUrl: "http://host.docker.internal:11434/v1",
         limits: {context: 32000, output: 8000}}
 ```
 
@@ -94,13 +126,19 @@ model: {name: qwen3-coder, type: openai, baseUrl: "http://host.docker.internal:1
 |---|---|---|---|
 | `ach.profile` | no | ach-cli's default profile | the Hub URL and credential, read on the host |
 | `ach.environment` | with `ach` | | `capability.ach.environment` |
-| `model` | yes | | `capability.ach.model` (`name`, `type`, `params`, `thinking`, `limits`) or `capability.standalone.model` (also `baseUrl`, `headers`) |
+| `model` | yes | | `capability.ach.model` (`name`, `api`, `params`, `thinking`, `limits`) or `capability.standalone.model` (also `baseUrl`, `headers`) |
 | `mcpServers` (`name`, `url`, `headers`) | no | none | `capability.ach.mcpServers` or `capability.standalone.mcpServers` |
-| `prompt.file` / `prompt.text` | no | none | `prompt.system` as text; a file is read and inlined |
-| `exclude` (`mcpServers`, `tools`, `skills`) | no | nothing | `capability.filter.exclude` |
-| `engine` (`opencode` or `pi`) | no | `opencode` | `engine.type` |
-| `denyTools` | no | none | `engine.denyTools` |
+| `prompt.system` (`type`: `text`, `file`, `ach`) | no | none | `prompt.system`; a file is read and sent as text |
+| `prompt.compose` | no | `append` | `prompt.compose` |
+| `filter.exclude` (`mcpServers`, `tools`, `skills`) | no | nothing | `capability.filter.exclude` |
+| `engine.type` (`opencode` or `pi`) | no | `opencode` | `engine.type` |
+| `engine.denyTools` | no | none | `engine.denyTools` |
 | `limits` (any wire `limits` key, e.g. `maxSteps`, `maxInvocationSeconds`) | no | `maxSteps: 50`, `maxInvocationSeconds: 600` | `limits` |
+
+Every field has the Agent CR's name and shape, so `promote` copies it. `model.api` is the runtime's
+`model.type`. A `prompt.system` file is relative to the manifest; in the Agent CR a `file` is a path the
+runtime reads, so `run` and `promote` send it as text. `limits.maxStallSeconds` is a runtime limit with
+no Agent CR field: `run` takes it, the cluster rejects it in a promoted CR.
 
 A header is `{env: NAME}` (a secret read from your shell) or `{value: …}` (a literal). The value of
 `NAME` is sent as is, so an `Authorization` header needs its `Bearer ` prefix inside the variable. With
@@ -110,7 +148,7 @@ an error at start.
 `model.limits` sets the context and output window the engine compacts against. With `ach:` it
 wins over the limits ACH reports for the model; set it only when the model's real window differs.
 
-`denyTools` hides native engine tools from the model: opencode names such as `[websearch, webfetch]`, or pi
+`engine.denyTools` hides native engine tools from the model: opencode names such as `[websearch, webfetch]`, or pi
 names such as `[bash, write]`; a name that is not a pi tool is an error at start with pi. It is not a
 boundary: `bash` reaches what a denied tool would. With opencode, `execute` (Code Mode) is always denied, so
 MCP tools are called directly.
@@ -123,16 +161,16 @@ paste what a channel would send into the TUI.
 
 ## Engines
 
-`engine: opencode` (default) and `engine: pi` run the same manifest. pi is PiG, a Go build of the pi coding
+`engine.type: opencode` (default) and `engine.type: pi` run the same manifest. pi is PiG, a Go build of the pi coding
 agent, shipped as `/opt/pi/pig` in the `ghcr.io/ackstorm/ach-agent-execution-pi:<version>` image (181 MB
-against 368 MB for `execution`). With `engine: pi` the TUI is the engine itself, so it opens only after the
+against 368 MB for `execution`). With `engine.type: pi` the TUI is the engine itself, so it opens only after the
 warm-up turn, resumes the same session, and takes over from the harness.
 
 | Topic | opencode | pi |
 |---|---|---|
 | `limits.maxSteps` | Native, exact | Soft, can overshoot by a turn or two, ends `failed` with no final answer |
 | File tools outside the workspace | Denied by `external_directory` | Allowed, bounded only by the boundary below |
-| `model.type` | openai, gemini, anthropic | openai only; others fail at start with a config error |
+| `model.api` | openai, gemini, anthropic | openai only; others fail at start with a config error |
 | `ach-agent run` TUI | Client of the running engine | Is the engine; limits and the MCP check do not apply after the warm-up turn |
 | Reasoning tokens in usage | Reported | Null |
 
@@ -149,7 +187,7 @@ action.
 |---|---|
 | Agent in OpenShell | The OpenShell policy |
 | `ach-agent run` | The Docker container: `--user` of the caller, only `$PWD` and `/agent` (read-only) mounted, unrestricted network |
-| `denyTools` | Not a boundary: `bash` reaches what a denied tool would |
+| `engine.denyTools` | Not a boundary: `bash` reaches what a denied tool would |
 
 pi loads no extensions beyond its built-in MCP client, and MCP traffic goes through the harness facades.
 

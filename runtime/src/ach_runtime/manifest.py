@@ -149,6 +149,8 @@ class Manifest(BaseModel):
         if not isinstance(data, dict):
             return data
         hints = [f"'{old}' is '{new}', as in the Agent CR" for old, new in _CR_NAMES.items() if old in data]
+        if isinstance(data.get("model"), dict) and "type" in data["model"]:
+            hints.append("'model.type' is 'model.api' (openai, gemini, anthropic), as in the Agent CR")
         if isinstance(data.get("engine"), str):
             hints.append("'engine: <name>' is 'engine: {type: <name>}', as in the Agent CR")
         prompt = data.get("prompt")
@@ -160,8 +162,6 @@ class Manifest(BaseModel):
 
     @model_validator(mode="after")
     def _checks(self) -> Manifest:
-        if "type" in self.model:
-            raise ValueError("model: name the protocol with 'api' (openai, gemini, anthropic), as the Agent CR does")
         if self.ach is None and "baseUrl" not in self.model:
             raise ValueError("model.baseUrl is required without 'ach'")
         # The ach-agent script forwards each name as `docker run -e NAME`.

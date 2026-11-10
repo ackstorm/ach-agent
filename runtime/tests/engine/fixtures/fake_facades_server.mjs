@@ -93,6 +93,8 @@ if (scenario === "tool-loop") {
   let call = 0
   fixture.setModelHandler(() => ({
     chunks: toolCallChunks([{ id: `call_${++call}`, name: "bash", args: { command: "true" } }], { usage }),
+    // pi's maxSteps abort races the next turn; with an instant reply a loaded machine overshoots the bound.
+    delayMs: 200,
   }))
 }
 if (scenario === "tool-hang") {

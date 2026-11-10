@@ -100,6 +100,8 @@ export async function startFakeFacades() {
         for (const c of result.chunks ?? []) res.write(`data: ${JSON.stringify(c)}\n\n`)
         return
       }
+      // delayMs stands in for a real model's response time.
+      if (result.delayMs) return setTimeout(() => sse(res, result.chunks), result.delayMs)
       sse(res, result.chunks)
     })
   })

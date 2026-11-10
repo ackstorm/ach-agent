@@ -5,6 +5,8 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from ach_runtime.engine.base import EngineReceipt, SnapshotManifest
 from ach_runtime.config.schema import HookBlock, HooksBlock
 from ach_runtime.execution.service import ExecutionService
@@ -118,7 +120,7 @@ async def test_session_info_reports_time_since_the_last_invocation_ended(
     await invocation.settle_task
     assert invocation.terminal_at is not None
     monkeypatch.setattr(service_module.time, "monotonic", lambda: invocation.terminal_at + 25.0)
-    assert (await service.session_info(request.session_ref))["idleSeconds"] == 25.0
+    assert (await service.session_info(request.session_ref))["idleSeconds"] == pytest.approx(25.0)
 
 
 async def test_failed_suspend_hook_is_reported_without_blocking_snapshot(

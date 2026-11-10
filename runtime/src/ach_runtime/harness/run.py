@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The `run` role: a manifest-defined agent in one process, with the engine's TUI attached.
+"""The `run` role: a manifest-defined agent in one process, with the engine's TUI attached, or
+answering one `--event` request on stdout.
 
 Single-unit topology (see harness/agent.py): not for production. The workspace is the
 caller's directory; the TUI is the engine's own (opencode attaches to the session's server, pi takes the
@@ -44,7 +45,7 @@ WARMUP_PROMPT = "A developer attached a local terminal to this session. Reply wi
 
 
 class RunError(RuntimeError):
-    """`run` could not bring the agent up for the TUI."""
+    """`run` could not bring the agent up, or its `--event` run failed."""
 
 
 def token_expiry(key: str) -> datetime | None:
@@ -89,10 +90,27 @@ async def _wait(predicate, what: str, control: asyncio.Task[None], deadline: flo
     raise RunError(f"timed out waiting for {what}")
 
 
+async def _reply(ticket: Any, control: asyncio.Task[None], stdout: int) -> int:
+    """Wait for the one `--event` run and write its final reply to `stdout`."""
+    await asyncio.wait({ticket.completed, control}, return_when=asyncio.FIRST_COMPLETED)
+    outcome = ticket.completed
+    if not outcome.done():
+        raise RunError("the agent stopped before the run finished")
+    status = None if outcome.cancelled() or outcome.exception() is not None else outcome.result()
+    if getattr(status, "state", None) != "completed":
+        raise RunError(f"the run failed: {_outcome_error(outcome)}")
+    text = status.result.get("text") if isinstance(status.result, dict) else None
+    os.write(stdout, f"{text or ''}\n".encode())
+    return 0
+
+
 async def run_local(
     manifest_path: Path, *, workspace: Path, name: str | None = None, data_dir: Path,
-    tui: Sequence[str] | None = None, log_path: Path | None = None, **assembly_kwargs: Any,
+    tui: Sequence[str] | None = None, log_path: Path | None = None, event_text: str | None = None,
+    **assembly_kwargs: Any,
 ) -> int:
+    """Run the agent with its TUI attached. With `event_text`, the request replaces the warm-up turn,
+    no TUI starts, and the final reply is written to stdout."""
     manifest = load_manifest(manifest_path)
     base_url = os.environ.get(URL_ENV)
     if manifest.ach is not None and (not os.environ.get(KEY_ENV) or not base_url):
@@ -116,10 +134,13 @@ async def run_local(
     task: asyncio.Task[None] | None = None
     proc: asyncio.subprocess.Process | None = None
     terminal = os.dup(2)
+    stdout = os.dup(1)
     try:
         if log_path is not None:  # the TUI owns the terminal: harness and engine logs go to the file
             log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             os.dup2(log_fd, 2)
+            if event_text is not None:  # stdout carries the reply alone; uvicorn's access log goes to fd 1
+                os.dup2(log_fd, 1)
             os.close(log_fd)
         log.warning(SINGLE_UNIT_WARNING)
         port = _free_port()
@@ -148,13 +169,15 @@ async def run_local(
 
         say(f"{name} ready; starting the session")
         event = Event(event_id=f"tui:{uuid.uuid4().hex}", channel=TUI_CHANNEL, type="webhook",
-                      source="generic", payload={"text": WARMUP_PROMPT})
+                      source="generic", payload={"text": WARMUP_PROMPT if event_text is None else event_text})
         ticket = controls[0].admission.admit(
             RoutedEvent(event=event, workspace_key=TUI_WORKSPACE, session_key=TUI_SESSION)
         )
         # Admission owns both outcomes; retrieve a failure so it is never "unretrieved".
         ticket.started.add_done_callback(_retrieve_outcome)
         ticket.completed.add_done_callback(_retrieve_outcome)
+        if event_text is not None:
+            return await _reply(ticket, task, stdout)
 
         wref = workspace_ref(LOCAL_NAMESPACE, wire["agent"]["uid"], TUI_WORKSPACE)
         unit, sref = workspace_name(name, wref), session_ref(wref, TUI_SESSION)
@@ -211,4 +234,7 @@ async def run_local(
         say("stopped")
         if log_path is not None:
             os.dup2(terminal, 2)
+            if event_text is not None:
+                os.dup2(stdout, 1)
         os.close(terminal)
+        os.close(stdout)

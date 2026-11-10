@@ -20,7 +20,8 @@ It runs `ghcr.io/ackstorm/ach-agent-local:latest`; set `ACH_AGENT_IMAGE` to use 
 1. Create an ACH environment in the Hub with the MCPs, skills, prompts and artifacts the agent needs.
 2. Get a credential for it: `ach-cli login`, or an `ek-` key in `ACH_KEY` (see Credentials).
 3. Write `agent.yaml` and, optionally, its prompt (`AGENTS.md`).
-4. `cd` into the directory the agent works on, then run `ach-agent run --config <path>/agent.yaml`.
+4. `cd` into the directory the agent works on, then run `ach-agent run --config <path>/agent.yaml`. Without
+   `--config` it reads `./agent.yaml`, which makes the agent's own directory its workspace.
 5. Iterate: edit the manifest or prompt, quit the TUI, run again.
 
 With `engine: pi` the TUI is the agent loop itself, so it opens once the warm-up turn has finished and the

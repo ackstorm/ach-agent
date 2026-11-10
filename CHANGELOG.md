@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `ach-agent run` reads `./agent.yaml` when `--config` is not given.
 - A2A progress: "Still working..." is sent after 120 s of silence instead of 60 s, and the
   start notice reads "Starting the agent, this can take a few seconds...".
 

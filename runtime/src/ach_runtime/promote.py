@@ -14,11 +14,14 @@ from typing import Any
 
 import yaml
 
-from ach_runtime.manifest import ManifestError, _system_prompt, load_manifest
+from ach_runtime.config.schema import ConfigError
+from ach_runtime.manifest import ManifestError, _system_prompt, load_manifest, manifest_to_wire
 
 API_VERSION = "ach-agent.ackstorm.ai/v1alpha1"
 _DEPLOY_KEYS = {"metadata", "secretName", "spec"}
 _COPIED = ("engine", "filter", "prompt", "limits")
+# Validation needs a Hub URL; deploy.yaml usually has the real one.
+_PLACEHOLDER_BASE_URL = "https://ach.invalid"
 
 
 class PromoteError(ValueError):
@@ -79,6 +82,12 @@ def promote(config: Path, deploy: Path, *, name: str) -> str:
     if manifest.ach is None:
         raise PromoteError("promote needs an `ach:` manifest; standalone agents are not promoted")
     raw = _read_deploy(deploy)
+    deploy_ach = (raw.get("spec") or {}).get("ach") or {}
+    try:  # what `run` accepts: the runtime schema, as the agent's config at boot
+        manifest_to_wire(manifest, base_dir=config.parent, name=name,
+                         base_url=deploy_ach.get("baseUrl") or _PLACEHOLDER_BASE_URL)
+    except ConfigError as exc:
+        raise PromoteError(f"{config.name}: {exc}") from exc
     secret_name = raw.get("secretName")
     written = manifest.model_dump(by_alias=True, exclude_unset=True)
 

@@ -137,7 +137,8 @@ model: {name: qwen3-coder, api: openai, baseUrl: "http://host.docker.internal:11
 
 Every field has the Agent CR's name and shape, so `promote` copies it. `model.api` is the runtime's
 `model.type`. A `prompt.system` file is relative to the manifest; in the Agent CR a `file` is a path the
-runtime reads, so `run` and `promote` send it as text.
+runtime reads, so `run` and `promote` send it as text. `limits.maxStallSeconds` is a runtime limit with
+no Agent CR field: `run` takes it, the cluster rejects it in a promoted CR.
 
 A header is `{env: NAME}` (a secret read from your shell) or `{value: …}` (a literal). The value of
 `NAME` is sent as is, so an `Authorization` header needs its `Bearer ` prefix inside the variable. With

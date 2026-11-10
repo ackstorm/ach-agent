@@ -69,4 +69,4 @@ if [ -n "$event" ]; then tty=""; else tty="-it"; fi
 exec docker run --rm $tty --user "$(id -u):$(id -g)" "$@" --add-host=host.docker.internal:host-gateway \
   -v "$PWD:$PWD" -w "$PWD" -v "$dir:/agent:ro" "$image" \
   run --config "/agent/$file" --workspace "$PWD" --name "$(basename "$dir")" --data-dir /tmp/ach-run \
-  ${event:+--event} ${event:+"$event"}
+  ${event:+"--event=$event"}

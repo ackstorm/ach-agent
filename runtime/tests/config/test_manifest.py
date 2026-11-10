@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+import re
 from pathlib import Path
 
 import pytest
@@ -132,7 +133,6 @@ def test_invalid_limit_is_rejected(tmp_path) -> None:
 
 @pytest.mark.parametrize("extra", [
     "enviroment: typo\n", "channels: []\n", "persistence: s3\n", "baseUrl: x\n",
-    "exclude: {tools: [a]}\n", "denyTools: [websearch]\n",
 ])
 def test_unknown_key_is_rejected(tmp_path, extra) -> None:
     with pytest.raises(ManifestError, match=extra.split(":")[0]):
@@ -207,9 +207,16 @@ def test_model_api_defaults_to_openai(tmp_path) -> None:
     assert config.model.type == "openai"
 
 
-def test_engine_name_alone_is_rejected(tmp_path) -> None:
-    with pytest.raises(ManifestError, match="engine"):
-        load_manifest(_write(tmp_path, MINIMAL + "engine: pi\n"))
+@pytest.mark.parametrize(("old", "new"), [
+    ("exclude: {tools: [a]}\n", "filter.exclude"),
+    ("denyTools: [websearch]\n", "engine.denyTools"),
+    ("engine: pi\n", "engine: {type: <name>}"),
+    ("prompt: {file: a.md}\n", "prompt.system"),
+    ("prompt: {text: x}\n", "prompt.system"),
+])
+def test_an_old_form_names_its_agent_cr_field(tmp_path, old, new) -> None:
+    with pytest.raises(ManifestError, match=re.escape(new)):
+        load_manifest(_write(tmp_path, MINIMAL + old))
 
 
 def test_prompt_compose_reaches_the_config(tmp_path) -> None:

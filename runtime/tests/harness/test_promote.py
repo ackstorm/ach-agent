@@ -110,6 +110,13 @@ def test_promote_merges_disjoint_fields_of_one_block(tmp_path) -> None:
     assert cr["spec"]["limits"] == {"maxSteps": 400, "maxInvocationSeconds": 1800}
 
 
+def test_promote_validates_like_run(tmp_path) -> None:
+    agent = AGENT.replace("thinking: {enabled: true, effort: high}", "thinking: {effort: high}")
+    config, deploy = _files(tmp_path, agent=agent)
+    with pytest.raises(PromoteError, match="thinking"):
+        promote(config, deploy, name="finops")
+
+
 def test_promote_rejects_a_standalone_manifest(tmp_path) -> None:
     config, deploy = _files(tmp_path, agent="model: {name: m, api: openai, baseUrl: 'https://m.example/v1'}\n")
     with pytest.raises(PromoteError, match="standalone"):

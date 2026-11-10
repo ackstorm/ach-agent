@@ -95,6 +95,7 @@ async def _reply(ticket: Any, control: asyncio.Task[None], stdout: int) -> int:
     await asyncio.wait({ticket.completed, control}, return_when=asyncio.FIRST_COMPLETED)
     outcome = ticket.completed
     if not outcome.done():
+        control.result()  # re-raises the control failure
         raise RunError("the agent stopped before the run finished")
     status = None if outcome.cancelled() or outcome.exception() is not None else outcome.result()
     if getattr(status, "state", None) != "completed":

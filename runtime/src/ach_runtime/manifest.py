@@ -25,6 +25,8 @@ from ach_runtime.config.schema import parse_config
 KEY_ENV = "ACH_KEY"
 URL_ENV = "ACH_URL"
 DEFAULT_MODEL_API = "openai"  # the Agent CR's default (operator DefaultModelType)
+# Top-level keys whose Agent CR field sits elsewhere, named in the error for a manifest that uses them.
+_CR_NAMES = {"exclude": "filter.exclude", "denyTools": "engine.denyTools"}
 LOCAL_NAMESPACE = "local"
 TUI_CHANNEL = "tui"
 TUI_WORKSPACE = "tui"
@@ -139,6 +141,22 @@ class Manifest(BaseModel):
     filter: FilterSpec = Field(default_factory=FilterSpec)
     # Merged over the `limits` defaults; the RuntimeConfig schema validates the values.
     limits: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _cr_names(cls, data: Any) -> Any:
+        """Name the Agent CR field for a key that has another name or place there."""
+        if not isinstance(data, dict):
+            return data
+        hints = [f"'{old}' is '{new}', as in the Agent CR" for old, new in _CR_NAMES.items() if old in data]
+        if isinstance(data.get("engine"), str):
+            hints.append("'engine: <name>' is 'engine: {type: <name>}', as in the Agent CR")
+        prompt = data.get("prompt")
+        if isinstance(prompt, dict) and {"file", "text"} & set(prompt):
+            hints.append("'prompt.file' / 'prompt.text' are 'prompt.system: {type: file|text, ...}', as in the Agent CR")
+        if hints:
+            raise ValueError("; ".join(hints))
+        return data
 
     @model_validator(mode="after")
     def _checks(self) -> Manifest:

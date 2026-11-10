@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- A failed run reports the engine's error (e.g. the gateway's "Budget has been exceeded!")
+  in its run status and its A2A and OpenAI replies, which gave no reason before.
+
 ## [0.8.1] - 2026-11-16
 
 ### Added

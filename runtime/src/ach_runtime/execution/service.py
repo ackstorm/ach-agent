@@ -94,6 +94,8 @@ class Engine(Protocol):
 
     def result(self, invocation_id: str) -> str | None: ...
 
+    def error(self, invocation_id: str) -> str | None: ...
+
     async def cancel(
         self, invocation_id: str, reason: str, *, _halt_budget: _HaltBudget | None = None
     ) -> None: ...
@@ -806,6 +808,10 @@ class ExecutionService:
                 text = result_getter(inv.request.invocation_id)
                 if isinstance(text, str):
                     inv.result = {"text": text}
+        else:
+            error_getter = getattr(self._engine, "error", None)
+            if callable(error_getter):
+                inv.error = error_getter(inv.request.invocation_id)
         inv.terminal = True
         inv.terminal_at = time.monotonic()
         self._retain_reporting(inv)

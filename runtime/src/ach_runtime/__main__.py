@@ -35,6 +35,10 @@ def _parser() -> argparse.ArgumentParser:
         "inspect", help="print, one per line: the mode (ach|standalone), ach.profile (empty if unset), "
                         "then the env names the manifest's headers read")
     inspect.add_argument("--config", type=Path, required=True, help="the agent.yaml manifest")
+    promote = commands.add_parser("promote", help="print the Agent CR for an agent.yaml and its deploy.yaml")
+    promote.add_argument("--config", type=Path, required=True, help="the agent.yaml manifest")
+    promote.add_argument("--deploy", type=Path, required=True, help="the deploy.yaml file")
+    promote.add_argument("--name", default=None, help="agent name (default: the manifest's directory name)")
     return parser
 
 
@@ -86,6 +90,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print((manifest.ach and manifest.ach.profile) or "")
         for name in secret_env_names(manifest):
             print(name)
+    elif args.command == "promote":
+        from ach_runtime.manifest import ManifestError
+        from ach_runtime.promote import PromoteError, promote
+
+        try:
+            sys.stdout.write(promote(args.config, args.deploy, name=args.name or args.config.resolve().parent.name))
+        except (ManifestError, PromoteError) as exc:
+            print(f"ach-agent: {exc}", file=sys.stderr)
+            return 1
     return 0
 
 

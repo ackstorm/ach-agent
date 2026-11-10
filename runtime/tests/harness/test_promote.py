@@ -2,6 +2,7 @@
 import pytest
 import yaml
 
+from ach_runtime.__main__ import main
 from ach_runtime.promote import PromoteError, promote
 
 AGENT = """\
@@ -130,3 +131,25 @@ def test_promote_rejects_unknown_deploy_keys(tmp_path) -> None:
 def test_deploy_metadata_name_wins_over_the_default(tmp_path) -> None:
     config, deploy = _files(tmp_path, deploy=DEPLOY.replace("{namespace: achagents}", "{name: other, namespace: n}"))
     assert yaml.safe_load(promote(config, deploy, name="finops"))["metadata"] == {"name": "other", "namespace": "n"}
+
+
+def test_cli_promote_prints_the_cr(tmp_path, capsys) -> None:
+    config, deploy = _files(tmp_path)
+    assert main(["promote", "--config", str(config), "--deploy", str(deploy), "--name", "finops"]) == 0
+    assert yaml.safe_load(capsys.readouterr().out)["metadata"]["name"] == "finops"
+
+
+def test_cli_promote_names_the_agent_after_its_directory(tmp_path, capsys) -> None:
+    agent_dir = tmp_path / "billing"
+    agent_dir.mkdir()
+    config, deploy = _files(agent_dir)
+    assert main(["promote", "--config", str(config), "--deploy", str(deploy)]) == 0
+    assert yaml.safe_load(capsys.readouterr().out)["metadata"]["name"] == "billing"
+
+
+def test_cli_promote_reports_errors_on_stderr(tmp_path, capsys) -> None:
+    config, deploy = _files(tmp_path, agent="enviroment: typo\n")
+    assert main(["promote", "--config", str(config), "--deploy", str(deploy)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "enviroment" in captured.err

@@ -235,7 +235,7 @@ async def test_other_mr_and_other_project_route_to_correct_owners(e2e_stack_fact
         sessions.append((endpoint, state))
     first, second, third = stack.started[:3]
     first_mini = stack.minis[sessions[0][0].instance_id].state.service
-    assert first.session_ref not in first_mini._sessions, "the second MR's session closed the idle first one"
+    assert first_mini._sessions.get(first.session_ref) is None, "the second MR's session closed the idle first one"
     endpoints = [endpoint for endpoint, _ in sessions]
     assert endpoints[0].ref.workspace_ref == endpoints[1].ref.workspace_ref
     assert endpoints[0].instance_id == endpoints[1].instance_id

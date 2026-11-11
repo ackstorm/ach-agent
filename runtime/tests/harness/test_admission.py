@@ -15,6 +15,7 @@ previous fixed 50ms sleeps.
 from __future__ import annotations
 
 import asyncio
+import logging
 import dataclasses
 from datetime import UTC, datetime, timedelta
 
@@ -2007,6 +2008,30 @@ def test_session_busy_sees_an_earlier_ticket_or_recovered_run_in_the_same_sessio
         gate.set()
         for name in ("e1", "e2", "e3"):
             runner.release(name)
+        await admission.close()
+
+    asyncio.run(scenario())
+
+
+def test_adopting_a_run_after_restart_raises_no_alarm(caplog: pytest.LogCaptureFixture) -> None:
+    """Adoption is the normal path after a control restart: logged at INFO, not an anomaly."""
+    async def scenario() -> None:
+        clock = FakeClock(datetime(2026, 10, 1, tzinfo=UTC))
+        alarms: list[tuple[str, object]] = []
+        admission = _admission(GatedRunner(), clock=clock,
+                               alarm=lambda reason, ticket: alarms.append((reason, ticket)))
+        workspace = compute_workspace_ref(NAMESPACE, AGENT_UID, "ws1")
+        gate = asyncio.Event()
+        with caplog.at_level(logging.INFO, logger="ach_runtime.harness.admission"):
+            admission.recover(
+                invocation_id="adopted-1", channel="ch", workspace_ref=workspace,
+                session_ref=compute_session_ref(workspace, "s1"), config_version="v1",
+                deadline_at=clock.now + timedelta(minutes=5), instance_id="pod-1", run_id="run-1",
+                observer=gate.wait,
+            )
+        assert alarms == []
+        assert [r.getMessage() for r in caplog.records] == ["run adopted after restart (invocation adopted-1)"]
+        gate.set()
         await admission.close()
 
     asyncio.run(scenario())

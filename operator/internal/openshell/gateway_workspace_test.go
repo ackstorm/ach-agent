@@ -6,8 +6,8 @@ import (
 	"context"
 	"testing"
 
-	osv1 "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1"
-	ostypes "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
+	osv1 "github.com/ai-openshell/sdk-go/openshell/v1"
+	ostypes "github.com/ai-openshell/sdk-go/openshell/v1/types"
 )
 
 // workspaceGateway knows only the workspaces in `known`; the rest answer NotFound, as the gateway does.

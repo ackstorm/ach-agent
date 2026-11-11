@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The sandbox logs one `run step` line per model call (duration, time to first token, tokens, finish
   reason) and one `run tool` line per tool call (tool, outcome, duration), keyed by `invocation_id`.
 
+### Changed
+
+- OpenShell 0.1.8: the e2e cluster, `docs/install.md`, and the operator's Go SDK, which moved to
+  `github.com/ai-openshell/sdk-go` (v0.1.8). With 0.1.8 a sandbox delete on Kubernetes no longer
+  waits out the pod's 30 s termination grace period (NVIDIA/OpenShell#5279).
+
 ### Fixed
 
 - A run adopted by the control after a restart is logged at INFO and no longer counts as a

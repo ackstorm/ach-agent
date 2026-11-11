@@ -9,8 +9,8 @@ import (
 	"path"
 	"strings"
 
-	ostypes "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
-	sbv1 "github.com/NVIDIA/OpenShell/sdk/go/proto/sandboxv1"
+	ostypes "github.com/ai-openshell/sdk-go/openshell/v1/types"
+	sbv1 "github.com/ai-openshell/sdk-go/proto/sandboxv1"
 	"google.golang.org/protobuf/encoding/protojson"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 

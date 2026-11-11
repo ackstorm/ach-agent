@@ -171,6 +171,8 @@ async def test_prepare_requires_real_configure_receipt_before_returning_start_re
     seen: list[tuple[str, dict | None]] = []
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         payload = json.loads(request.content) if request.content else None
         seen.append((request.url.path, payload))
         assert request.headers["authorization"].startswith("Bearer ")
@@ -223,6 +225,8 @@ async def test_observe_run_returns_the_validated_terminal_status(state: str) -> 
     config = _config()
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         if request.url.path == "/configure":
             body = json.loads(request.content)
             return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod-1"},
@@ -487,6 +491,8 @@ async def test_one_restore_per_activation_and_none_from_reconnect(monkeypatch) -
     monkeypatch.setattr("ach_runtime.harness.control.storage_from_env", lambda *_args: None)
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         if request.url.path == "/healthz":
             return _healthy()
         if request.url.path == "/configure":
@@ -534,6 +540,8 @@ async def test_a2a_prepare_adds_legacy_directive_only_to_a2a_prompt() -> None:
     config = _a2a_config()
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         if request.url.path == "/configure":
             body = json.loads(request.content)
             return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod-1"},
@@ -615,6 +623,8 @@ async def test_real_admission_and_control_run_forward_terminal_status() -> None:
     config = _a2a_config()
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         if request.url.path in {"/configure", "/readyz", "/runs"}:
             return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod-1"}, json=[])
         raise AssertionError(f"unexpected mini request {request.url}")
@@ -728,6 +738,8 @@ async def test_unit_waits_for_its_health_then_activation_proceeds_to_configure()
     health_attempts = {"n": 0}
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         seen.append(request.url.path)
         if request.url.path == "/healthz":
             health_attempts["n"] += 1
@@ -775,6 +787,8 @@ async def test_wait_mini_health_returns_the_instance_id_the_unit_reports() -> No
     seen: list[httpx.Request] = []
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         seen.append(request)
         return _healthy("unit-instance-7")
 
@@ -795,6 +809,8 @@ async def test_wait_mini_health_records_the_boot_time_the_unit_reports() -> None
                 REGISTRY.get_sample_value("ach_agent_workspace_start_seconds_sum", labels) or 0.0)
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         return httpx.Response(200, headers={"X-ACH-Instance-Id": "unit"},
                               json={"status": "ok", "release": __version__, "bootSeconds": 1.25})
 
@@ -814,6 +830,8 @@ async def test_wait_mini_health_refuses_a_unit_of_another_release(monkeypatch) -
     monkeypatch.setattr(observability, "alarm", lambda kind, **_refs: anomalies.append(kind))
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         return httpx.Response(200, headers={"X-ACH-Instance-Id": "unit"}, json={"status": "ok", "release": "0.0.1-old"})
 
     control = await _control_answering(mini)
@@ -833,6 +851,8 @@ async def test_wait_mini_health_retries_until_the_original_deadline() -> None:
     calls = {"n": 0}
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         calls["n"] += 1
         if calls["n"] % 2:
             raise httpx.ConnectError("refused")
@@ -861,6 +881,8 @@ async def test_wait_mini_health_fails_at_once_on_anything_else(failure) -> None:
     calls = {"n": 0}
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         calls["n"] += 1
         return responses[failure]
 
@@ -887,6 +909,8 @@ async def test_prepare_workspace_exclusion_is_scoped(monkeypatch) -> None:
                 await release_a.wait()
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         if request.url.path == "/configure":
             payload = json.loads(request.content)
             return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers["x-ach-instance-id"]},
@@ -941,6 +965,8 @@ async def test_handoff_static_destination_and_failure(monkeypatch) -> None:
         (workspace / "payload.txt").write_text("checkout")
     monkeypatch.setattr("ach_runtime.harness.control.run_handoff", fake_handoff)
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         seen.append(request)
         if request.url.path == "/configure":
             data = json.loads(request.content)
@@ -981,6 +1007,8 @@ async def test_handoff_failure_prevents_started(monkeypatch) -> None:
         raise TimeoutError("hook timed out")
     monkeypatch.setattr("ach_runtime.harness.control.run_handoff", fail)
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         seen.append(request.url.path)
         if request.url.path == "/configure":
             data = json.loads(request.content)
@@ -1019,6 +1047,8 @@ async def test_recovered_control_inventory_and_no_replay(state: str) -> None:
     )
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         seen.append(request.url.path)
         if request.url.path == "/configure":
             body = json.loads(request.content)
@@ -1093,6 +1123,8 @@ async def test_recovered_control_deadline_and_terminal_release(already_expired, 
     )
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         if request.url.path == "/cancel":
             cancel_payloads.append(json.loads(request.content))
             return httpx.Response(503 if cancel_fails else 200,
@@ -1168,6 +1200,8 @@ async def test_a_caller_cancel_stops_the_run_in_its_workspace(monkeypatch):
     )
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         if request.url.path == "/cancel":
             cancel_payloads.append(json.loads(request.content))
             return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod-1"}, json={})
@@ -1304,6 +1338,8 @@ async def test_recovered_control_invalid_observation_holds_ownership(fault, monk
     monkeypatch.setattr(control_module, "_alarm", lambda reason, _owner=None: alarms.append(reason))
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         nonlocal valid
         if request.url.path == "/status/invalid-run":
             if valid:
@@ -1382,6 +1418,8 @@ async def test_recovered_control_redelivery_unknown_and_idempotent_discovery(mon
     paths: list[str] = []
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         paths.append(request.url.path)
         if request.url.path == "/configure":
             body = json.loads(request.content)
@@ -1637,6 +1675,8 @@ async def test_recovered_control_invalid_inventory_fails_before_registration(inv
         inventory = [valid.model_dump(by_alias=True, mode="json"), valid.model_dump(by_alias=True, mode="json")]
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         if request.url.path == "/configure":
             body = json.loads(request.content)
             return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod-1"},
@@ -1666,6 +1706,8 @@ async def test_reconnect_accepts_terminal_history_from_an_older_config_version()
     config = _config()
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         if request.url.path == "/configure":
             body = json.loads(request.content)
             return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod-1"},
@@ -1723,6 +1765,8 @@ async def test_real_admission_delivery_acks_admission_and_holds_workspace_permit
     starts: list[dict] = []
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         path = request.url.path
         if path == "/healthz":
             return _healthy()
@@ -1862,6 +1906,8 @@ async def test_mounted_a2a_uses_real_admission_delivery_and_retained_get_task(
     start_requests: list[dict] = []
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         path = request.url.path
         instance_id = request.headers.get("x-ach-instance-id", "pod-1")
         headers = {"X-ACH-Instance-Id": instance_id}
@@ -1977,6 +2023,8 @@ async def test_harness_prepares_file_prompt_before_workspace_hydration() -> None
     config = _config()
     config.prompt.system = SystemFile(type="file", file="system.md")
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         if request.url.path == "/configure":
             data = json.loads(request.content)
             return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod-1"}, json={"configVersion": data["public"]["configVersion"]})
@@ -2173,6 +2221,8 @@ async def test_context_files_before_started(monkeypatch) -> None:
         (root / "skills" / "demo").write_text("skill")
     monkeypatch.setattr("ach_runtime.harness.control.stage_context", stage)
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         seen.append(request.url.path)
         if request.url.path == "/configure":
             data = json.loads(request.content)
@@ -2305,6 +2355,8 @@ def _memory_endpoint(config) -> WorkspaceEndpoint:
 
 
 async def _memory_mini(request: httpx.Request) -> httpx.Response:
+    if request.url.path == "/sessions":  # the inventory read before a session starts
+        return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod-1"}, json=[])
     if request.url.path == "/configure":
         body = json.loads(request.content)
         return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod-1"},
@@ -2803,6 +2855,8 @@ async def test_observe_run_sleep_never_overshoots_the_deadline(monkeypatch) -> N
 
 def _workspace_hook_mini(calls: list[tuple[str, object]], *, hook_status: int = 200):
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         headers = {"X-ACH-Instance-Id": "pod-1"}
         body = json.loads(request.content) if request.content else None
         calls.append((request.url.path, body))
@@ -2896,6 +2950,8 @@ async def test_workspace_hook_gets_the_hook_timeout_and_facade_ownership(monkeyp
     control_ref: list = []
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         headers = {"X-ACH-Instance-Id": "pod-1"}
         if request.url.path == "/configure":
             body = json.loads(request.content)
@@ -2971,6 +3027,8 @@ async def _reconnect_with_registry(writer: str | None, *, persistence: bool = Tr
     from types import SimpleNamespace
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         headers = {"X-ACH-Instance-Id": "pod-1"}
         if request.url.path == "/configure":
             body = json.loads(request.content)
@@ -3033,6 +3091,8 @@ async def test_recovered_run_outcome_is_kept_for_the_channel_waiting_on_it() -> 
     done = running.model_copy(update={"state": "completed"})
 
     async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":  # the inventory read before a session starts
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
         headers = {"X-ACH-Instance-Id": "pod-1"}
         if request.url.path == "/configure":
             body = json.loads(request.content)

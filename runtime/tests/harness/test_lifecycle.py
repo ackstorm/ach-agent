@@ -1288,6 +1288,8 @@ def test_workspace_first_lazy_session_restore() -> None:
         control.storage = Storage()
         async def mini(request):
             calls.append((request.method, request.url.path))
+            if request.url.path == "/sessions":
+                return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod"}, json=[])
             if request.url.path == "/workspace/archive":
                 if request.method == "GET":
                     return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod"}, content=b"workspace")
@@ -2603,14 +2605,17 @@ def test_volume_restore_session_resumes_in_place() -> None:
 
         async def mini_json(endpoint, method, path, payload=None, **_):
             calls.append((method, path, payload))
-            return answer["value"]
+            return (200, []) if path == "/sessions" else answer["value"]
 
         control._mini_json = mini_json
         lifecycle = Lifecycle(control)
         ticket = SimpleNamespace(session_ref="b" * 64, deadline_at=datetime(2026, 10, 1, tzinfo=UTC))
         endpoint = SimpleNamespace(ref=SimpleNamespace(workspace_ref="a" * 64))
         await lifecycle.restore_session(ticket, endpoint)
-        assert calls == [("POST", "/sessions/" + "b" * 64 + "/resume", {"deadlineAt": "2026-10-01T00:00:00+00:00"})]
+        assert calls == [
+            ("GET", "/sessions", None),
+            ("POST", "/sessions/" + "b" * 64 + "/resume", {"deadlineAt": "2026-10-01T00:00:00+00:00"}),
+        ]
         answer["value"] = (502, {"type": "Failed", "message": "opencode did not start"})
         with pytest.raises(RuntimeError):
             await lifecycle.restore_session(ticket, endpoint)
@@ -2644,23 +2649,28 @@ def test_volume_workspace_start_prunes_sessions_and_never_blocks() -> None:
     asyncio.run(scenario())
 
 
+B, C, D, E = "b" * 64, "c" * 64, "d" * 64, "e" * 64
+
+
 @pytest.mark.parametrize(
-    ("ticket_session", "busy", "closed"),
+    ("tickets", "pod_runs", "failed", "closed"),
     [
-        ("d" * 64, set(), ["b" * 64]),  # full: the longest-idle session makes room
-        ("c" * 64, set(), []),  # the session is already live: no new engine
-        ("d" * 64, {"b" * 64}, ["c" * 64]),  # a running session is never closed, however old
+        ([D], set(), set(), [B]),  # full: the longest-idle session makes room
+        ([C], set(), set(), []),  # the session is already live: no new engine
+        ([D], set(), {B}, [C]),  # a failed save waits for its retry, like the idle timeout
+        ([D], {B}, set(), [C]),  # a run still active on the pod is never closed, however old
+        ([D, E], set(), set(), [B, C]),  # D's engine is not up yet when E starts: it still counts
     ],
 )
-def test_a_new_session_closes_the_longest_idle_one_when_the_workspace_is_full(ticket_session, busy, closed) -> None:
+def test_a_new_session_closes_the_longest_idle_one_when_the_workspace_is_full(tickets, pod_runs, failed, closed) -> None:
     import httpx
+    import time
     from types import SimpleNamespace
     from ach_runtime.harness.workspaces import WorkspaceEndpoint, WorkspaceRef
 
     async def scenario():
-        live = {"b" * 64: 15, "c" * 64: 5}  # session -> idle seconds the pod reports
+        live = {B: 15, C: 5}  # session -> idle seconds the pod reports
         archived: list[str] = []
-
         pod = {"X-ACH-Instance-Id": "pod"}
 
         async def handler(request):
@@ -2669,8 +2679,8 @@ def test_a_new_session_closes_the_longest_idle_one_when_the_workspace_is_full(ti
                 return httpx.Response(200, headers=pod, json=[{"sessionRef": ref} for ref in live])
             ref = path.split("/")[2]
             if path.endswith("/info"):
-                return httpx.Response(200, headers=pod, json={"active": True, "uncertain": False, "initialized": True,
-                                                 "idleSeconds": live[ref]})
+                return httpx.Response(200, headers=pod, json={"active": True, "uncertain": False,
+                                                             "initialized": True, "idleSeconds": live[ref]})
             if path.endswith("/archive"):
                 archived.append(ref)
                 return httpx.Response(200, headers=pod, content=b"snapshot")
@@ -2679,22 +2689,26 @@ def test_a_new_session_closes_the_longest_idle_one_when_the_workspace_is_full(ti
                 return httpx.Response(200, headers=pod, json={"status": "retired", "sessionRef": ref})
             raise AssertionError(request.url)
 
+        class Delivery:
+            async def list_runs(self, endpoint):
+                return [SimpleNamespace(session_ref=ref, state="running", channel="chat") for ref in pod_runs]
+
         control = _Control()  # maxConcurrentSessions 2, session idle timeout 20 s
         control.mini_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         control._headers = lambda endpoint: {"X-ACH-Instance-Id": endpoint.instance_id}
         control._mini_json = _mini_json(control)
-        control.manager._bootstrap_complete = True
+        control.delivery = Delivery()
         endpoint = WorkspaceEndpoint(WorkspaceRef("ach", "3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77", "a" * 64), "ws", "pod", "http://mini")
-        control.manager._active = {"a" * 64: endpoint}
-        control.delivery = _Delivery()
-        control.admission.tickets = [SimpleNamespace(workspace_ref="a" * 64, session_ref=ref) for ref in busy]
         lifecycle = Lifecycle(control)
-        await lifecycle.tick(datetime(2026, 10, 1, tzinfo=UTC))  # sees both sessions live, under their timeout
-        assert archived == []
-        ticket = SimpleNamespace(session_ref=ticket_session, workspace_ref="a" * 64)
-        await lifecycle.restore_session(ticket, endpoint)
+        for ref in failed:
+            lifecycle._failed_session_saves.add(("a" * 64, ref, "pod"))
+            lifecycle._failed_session_retry_at[("a" * 64, ref, "pod")] = time.monotonic() + 30
+        for ref in tickets:
+            ticket = SimpleNamespace(session_ref=ref, workspace_ref="a" * 64)
+            await lifecycle.restore_session(ticket, endpoint)
+            control.admission.tickets.append(ticket)  # admitted and running: its engine is starting
         assert archived == closed
-        assert set(live) == {"b" * 64, "c" * 64} - set(closed)
+        assert set(live) == {B, C} - set(closed)
         await lifecycle.close()
         await control.mini_client.aclose()
     asyncio.run(scenario())

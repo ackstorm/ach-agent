@@ -82,6 +82,10 @@ class _PiSession:
         self._current: _PiInvocation | None = None
         # Open model call and tools for the `run step` / `run tool` lines: monotonic start times.
         self._step: list[float | None] | None = None
+        # When pi last finished something (turn started, message or tool ended): the next
+        # model request goes out then. An assistant `message_start` only arrives with the
+        # first streamed chunk, so timing a step from it hides the time to first token.
+        self._ready_at: float | None = None
         self._tools: dict[Any, tuple[Any, float]] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         self.tui_args: list[str] = []
@@ -199,8 +203,10 @@ class _PiSession:
         """`run step` (one assistant message: a model call) and `run tool` lines."""
         now = time.monotonic()
         message = record.get("message") if isinstance(record.get("message"), dict) else {}
+        if kind in ("turn_start", "message_end", "tool_execution_end"):
+            self._ready_at = now
         if kind == "message_start" and message.get("role") == "assistant":
-            self._step = [now, None]
+            self._step = [self._ready_at or now, None]
         elif kind == "message_update" and self._step is not None and self._step[1] is None:
             self._step[1] = now
         elif kind == "tool_execution_start":

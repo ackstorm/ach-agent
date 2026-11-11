@@ -69,6 +69,10 @@ NATIVE_MCP_TOOL_SETTLE_SECONDS = 0.3
 # recorded by PID/start-time before it reparents, not only when a kill is requested.
 _OWNERSHIP_POLL_SECONDS = 0.05
 _STDERR_TAIL_MAX_BYTES = 8192
+_READY_EVENTS = frozenset({
+    "session.execution.started", "session.inbox.delivered", "session.step.ended",
+    "session.step.failed", "session.tool.success", "session.tool.failed",
+})
 ENGINE_PACKAGE = "@opencode/cli"
 ENGINE_VERSION = "2.2.5"
 
@@ -133,6 +137,10 @@ class _NativeSession:
         self._invocations: dict[str, _InvocationState] = {}
         # Open steps and tools for the `run step` / `run tool` lines: monotonic start times.
         self._steps: dict[Any, list[float | None]] = {}
+        # When the session last finished something (input delivered, step or tool ended): the
+        # next step's model request goes out then. `session.step.started` only arrives with
+        # the first streamed chunk, so timing a step from it hides the time to first token.
+        self._ready_at: float | None = None
         self._tools: dict[Any, list[Any]] = {}
         self._stderr_tail = bytearray()
         self._stderr_task: asyncio.Task[None] | None = None
@@ -402,8 +410,10 @@ class _NativeSession:
         its inputs in order."""
         now = time.monotonic()
         step = data.get("assistantMessageID")
+        if kind in _READY_EVENTS:
+            self._ready_at = now
         if kind == "session.step.started":
-            self._steps[step] = [now, None]
+            self._steps[step] = [self._ready_at or now, None]
         elif kind in ("session.text.started", "session.reasoning.started", "session.tool.input.started"):
             if (clock := self._steps.get(step)) is not None and clock[1] is None:
                 clock[1] = now

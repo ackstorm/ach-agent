@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `run step` times a model call from when the request goes out (input delivered, previous step or
+  tool ended), not from the engine's step start event, which both engines emit only with the first
+  streamed chunk. `ttft_ms` was 0 and `duration_ms` left out the time to first token.
+
 ## [0.7.1] - 2026-11-11
 
 ### Added

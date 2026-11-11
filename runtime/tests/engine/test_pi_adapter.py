@@ -52,7 +52,8 @@ async def test_each_step_and_tool_call_is_logged_with_its_invocation(tmp_path, e
     step = steps[0]
     assert step.invocation_id == "inv-1" and step.outcome == "toolUse"
     assert (step.usage_input, step.usage_output) == (100, 10)
-    assert step.duration_ms >= 0 and (step.ttft_ms is None or step.ttft_ms <= step.duration_ms)
+    # The fake model waits 200 ms before its first byte: that wait is time to first token.
+    assert step.duration_ms >= step.ttft_ms >= 150
     tool = tools[0]
     assert (tool.invocation_id, tool.tool, tool.outcome) == ("inv-1", "bash", "success")
     assert tool.duration_ms >= 0

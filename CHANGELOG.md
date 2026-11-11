@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenShell 0.1.8: the e2e cluster, `docs/install.md`, and the operator's Go SDK, which moved to
   `github.com/ai-openshell/sdk-go` (v0.1.8). With 0.1.8 a sandbox delete on Kubernetes no longer
   waits out the pod's 30 s termination grace period (NVIDIA/OpenShell#5279).
+- `inform_user`'s description carries the update rules for every agent: describe the work, never the
+  tool, skill, script, API or command behind it; write in the language of the request; send one only
+  when something changed, at most about one every 30 seconds.
 
 ### Fixed
 

@@ -65,6 +65,17 @@ def test_mcp_servers_are_direct(tmp_path) -> None:
     assert config.mcp == {"mcpServers": {"docs": {"url": "http://facade/mcp/docs", "headers": {"x-token": "t"}, "exposure": "direct"}}}
 
 
+def test_every_model_and_mcp_request_carries_the_session_baggage(tmp_path) -> None:
+    public = _public()
+    mcp = {"progress": {"url": "http://facade/runs/inv/", "headers": {"x-token": "t"}}}
+    config = to_pi_config(public, home=tmp_path, catalog=_catalog("openai", public.model.name), mcp=mcp,
+                          resolved_system_prompt=None, session_ref="s" * 64)
+    baggage = {"baggage": "session.id=" + "s" * 64}
+    assert config.models["providers"]["ach"]["headers"] == {"x-token": "t", **baggage}
+    assert config.mcp["mcpServers"]["progress"]["headers"] == {"x-token": "t", **baggage}
+    assert mcp["progress"]["headers"] == {"x-token": "t"}  # the caller's catalog is not mutated
+
+
 def test_compaction_maps_to_settings(tmp_path) -> None:
     public = _public()
     config = to_pi_config(public, home=tmp_path, catalog=None, mcp=None, resolved_system_prompt=None)

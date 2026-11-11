@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import copy
 import hashlib
 import json
 import math
@@ -43,7 +44,9 @@ from ach_runtime.engine.base import (
     check_manifest,
     install_restored_home,
 )
-from ach_runtime.engine.config import build_env, managed_content, scrub_engine_global_config, to_fixture
+from ach_runtime.engine.config import (
+    build_env, managed_content, scrub_engine_global_config, to_fixture, with_session_baggage,
+)
 from ach_runtime.observability.runs import RunUsage, log_step, log_tool
 
 OPENCODE_BIN = os.environ.get("OPENCODE_BIN", "opencode2")
@@ -1082,11 +1085,12 @@ class OpenCodeEngine:
             resolved_system_prompt=invocation.resolved_system_prompt,
         )
         if invocation.mcp:
-            fixture["mcp"] = invocation.mcp
+            fixture["mcp"] = copy.deepcopy(invocation.mcp)
         if invocation.provider_base_url_override:
             fixture["providers"][invocation.public.model.type]["baseURL"] = (
                 invocation.provider_base_url_override
             )
+        with_session_baggage(fixture, invocation.session_ref)
         content = managed_content(invocation.public, fixture)
         config_path = home / "opencode.config.json"
         env = build_env(

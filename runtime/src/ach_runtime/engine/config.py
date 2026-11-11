@@ -103,6 +103,15 @@ def build_env(*, home: Path, scratch: Path, approved_env: dict[str, str], passwo
     return env
 
 
+def with_session_baggage(fixture: dict[str, Any], session_ref: str) -> None:
+    """Add `baggage: session.id=<session_ref>` (W3C Baggage) to the model provider's and every
+    MCP server's headers, so the gateway groups a session's model and tool calls under one
+    session. The engines send no session id of their own on MCP calls, and pi none at all."""
+    baggage = {"baggage": f"session.id={session_ref}"}
+    for entry in (*fixture["providers"].values(), *fixture["mcp"].values()):
+        entry["headers"] = {**(entry.get("headers") or {}), **baggage}
+
+
 def to_fixture(
     public: PublicConfig,
     *,

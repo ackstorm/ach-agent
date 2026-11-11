@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A run's model and MCP calls reach the gateway under one session: both engines send
+  `baggage: session.id=<session_ref>` on every model and MCP request, and the facades drop the
+  engine's own `x-<vendor>-session-id`, which would outrank it. MCP tool calls were each their own
+  session, and pi's model calls had none. opencode model calls move from its `ses_` id to the
+  `session_ref`.
 - An A2A `tasks/cancel` stops the run in its sandbox, like a run past its deadline, and frees its
   session for the next request; a cancelled request that has not started yet never starts.
 - A run adopted by the control after a restart is logged at INFO and no longer counts as a

@@ -79,6 +79,7 @@ Round-4 fix (N5 of the fix-3 review):
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import weakref
 from collections import deque
@@ -91,6 +92,8 @@ from ach_runtime.channels.event import Event, RoutedEvent
 from ach_runtime.harness.refs import invocation_digest
 from ach_runtime.harness.refs import session_ref as compute_session_ref
 from ach_runtime.harness.refs import workspace_ref as compute_workspace_ref
+
+log = logging.getLogger(__name__)
 
 Clock = Callable[[], datetime]
 
@@ -592,7 +595,8 @@ class Admission:
         )
         self._recovered[invocation_id] = recovered
         self._queued_total += 1
-        self._alarm_recovered("recovered Started outcome is unknown", recovered)
+        # The normal path after a control restart, not an anomaly.
+        log.info("run adopted after restart (invocation %s)", invocation_id)
         self._recovery_tasks[invocation_id] = loop.create_task(
             self._observe_recovered(invocation_id, recovered, observer)
         )

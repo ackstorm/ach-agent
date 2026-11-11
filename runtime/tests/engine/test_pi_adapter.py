@@ -3,6 +3,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import signal
@@ -38,6 +39,23 @@ async def test_max_steps_aborts_as_failed_with_no_result(tmp_path, engine) -> No
         assert engine.result("inv-1") is None
         # soft limit: the abort races the turn loop; a real model's latency narrows the overshoot
         assert 3 <= engine.usage("inv-1").steps <= 3 + 2
+
+
+async def test_each_step_and_tool_call_is_logged_with_its_invocation(tmp_path, engine, caplog) -> None:
+    caplog.set_level(logging.INFO, logger="ach_runtime.observability.runs")
+    async with fake_facades("tool-loop") as fakes:
+        await engine.start(_invocation(tmp_path, fakes.model_url, max_steps=2), home=tmp_path / "home", scratch=tmp_path / "scratch")
+        await engine.wait_settled("inv-1")
+    steps = [r for r in caplog.records if r.getMessage() == "run step"]
+    tools = [r for r in caplog.records if r.getMessage() == "run tool"]
+    assert steps and tools
+    step = steps[0]
+    assert step.invocation_id == "inv-1" and step.outcome == "toolUse"
+    assert (step.usage_input, step.usage_output) == (100, 10)
+    assert step.duration_ms >= 0 and (step.ttft_ms is None or step.ttft_ms <= step.duration_ms)
+    tool = tools[0]
+    assert (tool.invocation_id, tool.tool, tool.outcome) == ("inv-1", "bash", "success")
+    assert tool.duration_ms >= 0
 
 
 async def test_provider_error_fails(tmp_path, engine) -> None:

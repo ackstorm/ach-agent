@@ -236,6 +236,11 @@ The sidecar must watch the release namespace. The `agent` selector lists the age
 - Pod CPU, memory and restarts: cAdvisor and kube-state-metrics.
 - The Logs row of "ACH — Agent Detail": a Loki datasource with the `namespace`, `pod` and `container` labels.
 
+Each run also logs one `run step` line per model call (duration, time to first token, tokens, the
+engine's finish reason) and one `run tool` line per tool call (tool, outcome, duration), keyed by
+`invocation_id`. They come from the sandbox, not the Agent pod: in Loki, container `agent` in the
+OpenShell namespace, for example `{container="agent"} |= "<invocation_id>"`.
+
 ## 6. A standalone Agent
 
 An Agent namespace needs the ambient label, the Secrets the Agent references, one AgentProfile and one

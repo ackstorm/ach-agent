@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ACHAgentRunsFailing`: 3 or more failed runs of an agent in an hour and none completed. Runs that
+  start and then fail (a model or MCP call refused for budget or auth, an upstream down) record no
+  anomaly, so nothing alerted on them.
+
 ### Fixed
+
+- `ACHAgentStartFailing` is no longer silenced by failed runs: only a completed run in the hour
+  clears it.
 
 - `run step` times a model call from when the request goes out (input delivered, previous step or
   tool ended), not from the engine's step start event, which both engines emit only with the first

@@ -243,7 +243,7 @@ assert pm["spec"]["selector"]["matchLabels"]["ach-agent.ackstorm.ai/component"] 
 assert pm["spec"]["podMetricsEndpoints"][0]["port"] == "http"
 rule, = of("PrometheusRule")
 alerts = [r["alert"] for g in rule["spec"]["groups"] for r in g["rules"]]
-assert len(alerts) == 9 and "ACHAgentStartFailing" in alerts and "ACHAgentKeyRefreshFailing" in alerts, alerts
+assert len(alerts) == 10 and "ACHAgentRunsFailing" in alerts and "ACHAgentStartFailing" in alerts and "ACHAgentKeyRefreshFailing" in alerts, alerts
 assert {"ACHAgentStorageDown", "ACHAgentStorageDiskHigh", "ACHAgentStorageSyncLagging"} <= set(alerts), alerts
 assert "$labels.agent" in str(rule["spec"]), "alert templates must reach Prometheus verbatim"
 cms = [d for d in of("ConfigMap") if d["metadata"]["labels"].get("grafana_dashboard") == "1"]

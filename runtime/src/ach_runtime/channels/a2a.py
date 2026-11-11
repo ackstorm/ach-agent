@@ -291,6 +291,8 @@ class A2AAgentExecutorBridge:
         self._ready = ready or (lambda: not control._stopping)
         self._cancel_events: dict[str, asyncio.Event] = {}
         self._waiter_counts: dict[str, int] = {}
+        # The invocation of each task with a waiter: what `tasks/cancel` asks the control to stop.
+        self._task_invocations: dict[str, str] = {}
         # True when a run outlives this control: the next control adopts it.
         self.runs_outlive_control = False
         self._shutting_down = False
@@ -353,6 +355,7 @@ class A2AAgentExecutorBridge:
         watcher: asyncio.Task[None] | None = None
         try:
             ticket = self._control.admission.admit(routed)
+            self._task_invocations[task_id] = ticket.invocation_id
             pulse = _Pulse(event_queue, task_id, context_id, {
                 "invocationId": ticket.invocation_id,
                 "workspaceKey": routed.workspace_key,
@@ -413,6 +416,7 @@ class A2AAgentExecutorBridge:
             if self._waiter_counts[task_id] == 0:
                 self._waiter_counts.pop(task_id, None)
                 self._cancel_events.pop(task_id, None)
+                self._task_invocations.pop(task_id, None)
 
     async def _watch(self, ticket: Any, pulse: _Pulse) -> None:
         """Say so when the run is queued or slow to start, then whenever the waiter is silent."""
@@ -491,6 +495,8 @@ class A2AAgentExecutorBridge:
     async def cancel(self, context: Any, event_queue: Any) -> None:
         task_id = getattr(context, "task_id", None) or ""
         context_id = getattr(context, "context_id", None) or ""
+        if (invocation_id := self._task_invocations.get(task_id)) is not None:
+            self._control.cancel_requested.add(invocation_id)
         waiter = self._cancel_events.get(task_id)
         if waiter is not None:
             waiter.set()

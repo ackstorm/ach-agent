@@ -247,6 +247,9 @@ class Control:
     _hook_endpoints: dict[str, WorkspaceEndpoint] = field(default_factory=dict, repr=False)
     # A2A event emitters per running invocation, registered by the A2A bridge while it waits.
     progress: dict[str, list[Callable[[str], Awaitable[None]]]] = field(default_factory=dict, repr=False)
+    # Invocations an A2A caller cancelled: a queued one never starts, a running one is cancelled
+    # in its Workspace like a run past its deadline.
+    cancel_requested: set[str] = field(default_factory=set, repr=False)
     # Runs already terminal when this control adopted their Workspace, by invocation id.
     finished_runs: dict[str, Any] = field(default_factory=dict, repr=False)
 
@@ -661,6 +664,9 @@ class Control:
             return None
         if not isinstance(event, RoutedEvent):
             raise WorkspaceAssemblyUnavailable("agent admission did not retain a routed Event")
+        if ticket.invocation_id in self.cancel_requested:
+            self.cancel_requested.discard(ticket.invocation_id)
+            raise RuntimeError("cancelled by the caller before it started")
         from ach_runtime.execution.wire import StartRequest
 
         started = None
@@ -727,6 +733,7 @@ class Control:
             ):
                 self._prepared.pop(expected.invocation_id, None)
                 self._started_run.pop(expected.invocation_id, None)
+                self.cancel_requested.discard(expected.invocation_id)
                 _alarm("Workspace owner was lost; run outcome is unknown", expected)
                 self._record_run(expected, None, started_run_id, event, outcome="unknown")
                 raise WorkspaceOwnerLost("Workspace owner lost; run outcome is unknown")
@@ -738,12 +745,19 @@ class Control:
             return True
 
         while True:
-            if _clock() >= expected.deadline_at and not cancel_sent:
+            if _clock() >= expected.deadline_at:
+                reason = "invocation deadline exceeded"
+            elif expected.invocation_id in self.cancel_requested:
+                reason = "cancelled by the caller"
+            else:
+                reason = None
+            if reason is not None and not cancel_sent:
                 cancel_sent = True
-                _alarm("invocation deadline exceeded", expected)
+                if reason == "invocation deadline exceeded":
+                    _alarm(reason, expected)
                 try:
                     await self.delivery.cancel(endpoint, CancelRequest(
-                        invocationId=expected.invocation_id, reason="invocation deadline exceeded"))
+                        invocationId=expected.invocation_id, reason=reason))
                 except Exception:
                     pass
             if not check_published_owner():
@@ -761,6 +775,7 @@ class Control:
                     # is trustworthy even if the instance was lost in the meantime (T09).
                     self._prepared.pop(expected.invocation_id, None)
                     self._started_run.pop(expected.invocation_id, None)
+                    self.cancel_requested.discard(expected.invocation_id)
                     self._record_run(expected, status, started_run_id, event)
                     return status
                 if not check_published_owner():
@@ -1083,6 +1098,7 @@ async def assemble(
     control.progress_facade = None
     control.progress = {}
     control.finished_runs = {}
+    control.cancel_requested = set()
     control.facade_transport = facade_transport
     control.facade_clients = []
     control._prepared, control._started_run, control._stopping = {}, {}, False

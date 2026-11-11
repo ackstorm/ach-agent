@@ -65,7 +65,7 @@ def _admission(runner) -> Admission:
 
 
 def _control(config, runner) -> SimpleNamespace:
-    return SimpleNamespace(config=SimpleNamespace(channels=[config], agent=SimpleNamespace(name="test-agent"), identity_environment="test-env"), admission=_admission(runner), _stopping=False, progress={}, storage=None)
+    return SimpleNamespace(config=SimpleNamespace(channels=[config], agent=SimpleNamespace(name="test-agent"), identity_environment="test-env"), admission=_admission(runner), _stopping=False, progress={}, storage=None, cancel_requested=set())
 
 
 def _completed(ticket, text: str = "answer") -> RunStatus:
@@ -651,6 +651,36 @@ def test_cancel_while_started_is_pending_wakes_task_waiters(monkeypatch) -> None
         for future in (ticket.started, ticket.completed):
             if future.done() and not future.cancelled():
                 future.exception()
+
+    asyncio.run(scenario())
+
+
+def test_cancel_asks_the_control_to_stop_the_run_and_ignores_finished_tasks(monkeypatch) -> None:
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    config = _channel()
+
+    async def runner(_routed, ticket):
+        entered.set()
+        await release.wait()
+        return _completed(ticket)
+
+    control = _control(config, runner)
+    bridge = A2AAgentExecutorBridge(control, config)
+
+    async def scenario() -> None:
+        context = _Context("running-task", "ctx")
+        execution = asyncio.create_task(bridge.execute(context, _Queue()))
+        await entered.wait()
+        ticket = next(iter(control.admission._tickets.values()))
+        await bridge.cancel(context, _Queue())
+        await execution
+        assert control.cancel_requested == {ticket.invocation_id}
+        await bridge.cancel(_Context("finished-task", "ctx"), _Queue())
+        assert control.cancel_requested == {ticket.invocation_id}
+        release.set()
+        await control.admission.close()
 
     asyncio.run(scenario())
 

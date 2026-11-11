@@ -1150,6 +1150,55 @@ async def test_recovered_control_deadline_and_terminal_release(already_expired, 
         await control.close()
 
 
+async def test_a_caller_cancel_stops_the_run_in_its_workspace(monkeypatch):
+    config = _config()
+    deadline = datetime(2030, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=10)
+    cancel_payloads: list[dict] = []
+    status_seen = asyncio.Event()
+    control_module = __import__("ach_runtime.harness.control", fromlist=["_clock"])
+    import ach_runtime.observability as observability
+
+    anomaly_kinds: list[str] = []
+    monkeypatch.setattr(observability, "alarm", lambda kind, **_refs: anomaly_kinds.append(kind))
+    monkeypatch.setattr(control_module, "_clock", lambda: datetime(2030, 1, 1, tzinfo=timezone.utc))
+    inventory = RunStatus(
+        invocationId="cancelled-run", channel="gitlab-mr-review", workspaceRef="a" * 64,
+        sessionRef="b" * 64, runId="run-1", configVersion="f" * 64,
+        deadlineAt=deadline, state="running",
+    )
+
+    async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/cancel":
+            cancel_payloads.append(json.loads(request.content))
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod-1"}, json={})
+        if request.url.path == "/status/cancelled-run":
+            status_seen.set()
+            state = "cancelled" if cancel_payloads else "running"
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod-1"},
+                                  json=inventory.model_copy(update={"state": state}).model_dump(by_alias=True, mode="json"))
+        raise AssertionError(request.url)
+
+    control = await assemble(
+        config, environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},
+        ach_transport=httpx.MockTransport(_catalog_handler), mini_transport=httpx.MockTransport(mini),
+    )
+    endpoint = WorkspaceEndpoint(WorkspaceRef(config.agent.namespace, config.agent.uid, "a" * 64),
+                                 "workspace", "pod-1", "http://mini")
+    try:
+        _publish(control, endpoint)
+        observed = asyncio.create_task(control._observe_run(endpoint, inventory))
+        await status_seen.wait()
+        assert not cancel_payloads
+        control.cancel_requested.add(inventory.invocation_id)
+        status = await asyncio.wait_for(observed, timeout=5)
+        assert status.state == "cancelled"
+        assert cancel_payloads == [{"invocationId": "cancelled-run", "reason": "cancelled by the caller"}]
+        assert "limit_reached" not in anomaly_kinds
+        assert inventory.invocation_id not in control.cancel_requested
+    finally:
+        await control.close()
+
+
 @pytest.mark.parametrize(
     ("reason", "expected"),
     [
@@ -1193,6 +1242,7 @@ async def test_start_timeout_is_limit_only_after_original_deadline(expired, monk
     control = Control.__new__(Control)
     control.delivery = TimedOutDelivery()
     control._prepared = {"inv-timeout": None}
+    control.cancel_requested = set()
     deadline = now - timedelta(seconds=1) if expired else now + timedelta(seconds=1)
     ticket = SimpleNamespace(invocation_id="inv-timeout", deadline_at=deadline)
     event = RoutedEvent(Event("evt-timeout", "channel", "kind", "source"), "workspace", "session")
@@ -1220,6 +1270,7 @@ async def test_gateway_unavailable_start_failure_raises_the_gateway_alarm(monkey
     control = Control.__new__(Control)
     control.delivery = DownDelivery()
     control._prepared = {"inv-gw": None}
+    control.cancel_requested = set()
     ticket = SimpleNamespace(
         invocation_id="inv-gw", workspace_ref="a" * 64, session_ref="s",
         deadline_at=datetime.now(timezone.utc) + timedelta(seconds=30),
@@ -2575,6 +2626,7 @@ async def test_start_failure_logs_redacted_reason(monkeypatch, caplog):
     control = Control.__new__(Control)
     control.delivery = FailingDelivery()
     control._prepared = {"inv-fail": None}
+    control.cancel_requested = set()
     ticket = SimpleNamespace(invocation_id="inv-fail", deadline_at=datetime(2999, 1, 1, tzinfo=timezone.utc))
     event = RoutedEvent(Event("evt-fail", "channel", "kind", "source"), "workspace", "session")
 
@@ -2623,6 +2675,7 @@ async def test_start_failure_reason_reaches_real_control_log_output(monkeypatch,
     control = Control.__new__(Control)
     control.delivery = FailingDelivery()
     control._prepared = {}
+    control.cancel_requested = set()
     ticket = SimpleNamespace(invocation_id="inv-fail", deadline_at=datetime(2999, 1, 1, tzinfo=timezone.utc))
     event = RoutedEvent(Event("evt-fail", "channel", "kind", "source"), "workspace", "session")
 
@@ -3005,3 +3058,21 @@ async def test_recovered_run_outcome_is_kept_for_the_channel_waiting_on_it() -> 
         assert control.finished_runs["kept-run"].state == "completed"
     finally:
         await control.close()
+
+
+async def test_a_run_cancelled_while_queued_never_reaches_its_workspace():
+    from types import SimpleNamespace
+
+    class NoDelivery:
+        async def start(self, _ticket):
+            raise AssertionError("a cancelled run must not start")
+
+    control = Control.__new__(Control)
+    control.delivery = NoDelivery()
+    control.cancel_requested = {"inv-queued"}
+    ticket = SimpleNamespace(invocation_id="inv-queued", deadline_at=datetime(2030, 1, 1, tzinfo=timezone.utc))
+    event = RoutedEvent(Event("evt-queued", "channel", "kind", "source"), "workspace", "session")
+
+    with pytest.raises(RuntimeError, match="cancelled by the caller"):
+        await control.run(event, ticket)
+    assert control.cancel_requested == set()

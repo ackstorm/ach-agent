@@ -7,8 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ACHAgentRunsFailing`: 3 or more failed runs of an agent in an hour and none completed. Runs that
+  start and then fail (a model or MCP call refused for budget or auth, an upstream down) record no
+  anomaly, so nothing alerted on them.
+
+### Changed
+
+- `workspace.maxConcurrentSessions` bounds live sessions, not only running ones: before a session
+  starts its engine in a full Workspace, the longest-idle session is closed (saved, as on its idle
+  timeout). Idle sessions kept their engine for the session idle timeout without counting, so a
+  user's third conversation could get a 500 MiB sandbox OOM-killed mid-start.
+
 ### Fixed
 
+- `ACHAgentStartFailing` is no longer silenced by failed runs: only a completed run in the hour
+  clears it.
 - An A2A reply block with a raw line break inside a string value (a model wrote `thoughts` across
   lines) was rejected as invalid JSON, so a completed turn reached the caller as `failed` /
   `invalid terminal output` and the answer was lost. The block is now parsed leniently.

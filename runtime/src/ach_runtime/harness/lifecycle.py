@@ -385,6 +385,7 @@ class Lifecycle:
 
     async def restore_session(self, ticket: Any, endpoint: Any) -> None:
         """Restore only the admitted opaque session ref; a live local session wins."""
+        await self._make_room(ticket, endpoint)
         persistence = self.control.config.workspace.persistence.type
         if persistence == "volume":
             await self._resume_session(ticket, endpoint)
@@ -427,6 +428,29 @@ class Lifecycle:
         if kept:
             # Its HOME was kept after the close archive: resume it in place, nothing to download.
             await self._resume_session(ticket, endpoint)
+
+    async def _make_room(self, ticket: Any, endpoint: Any) -> None:
+        """An idle session's engine holds as much memory as a running one: before a session that
+        is not live starts its engine, close the longest-idle sessions until the Workspace holds
+        fewer than `maxConcurrentSessions` live ones. Live sessions are the ones the last tick
+        saw; admission caps running sessions, so while the Workspace is full one of them is idle."""
+        workspace_ref = endpoint.ref.workspace_ref
+        live = {ref: last for (ws, ref), last in self._last_session.items() if ws == workspace_ref}
+        if not live or ticket.session_ref in live:
+            return
+        excess = len(live) - self.control.config.workspace.max_concurrent_sessions + 1
+        idle = sorted(
+            (last, ref) for ref, last in live.items()
+            if not self.control.admission.has_work(workspace_ref, ref)
+        )
+        persistence = self.control.config.workspace.persistence.type
+        for _, session_ref in idle[:max(excess, 0)]:
+            failed_key = (workspace_ref, session_ref, endpoint.instance_id)
+            # Live while idle means its idle timeout is above 0: an s3 session keeps its HOME.
+            if await self._attempt_session_save(endpoint, session_ref, failed_key, keep_home=persistence == "s3"):
+                if persistence == "s3":
+                    self._confirmed_session_closes.add(failed_key)
+                self._last_session.pop((workspace_ref, session_ref), None)
 
     async def _resume_session(self, ticket: Any, endpoint: Any) -> None:
         """type volume: the HOME is on the Workspace PVC; the pod resumes the session from it."""

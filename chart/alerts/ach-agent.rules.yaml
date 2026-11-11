@@ -55,7 +55,7 @@ groups:
       expr: |
         sum by (namespace, agent) (increase(ach_agent_anomalies_total{kind="start_failed"}[1h])) >= 3
         unless on (namespace, agent)
-        sum by (namespace, agent) (increase(ach_agent_runs_total[1h])) > 0
+        sum by (namespace, agent) (increase(ach_agent_runs_total{outcome="completed"}[1h])) > 0
       labels:
         severity: warning
       annotations:
@@ -64,6 +64,22 @@ groups:
           {{ $value | printf "%.0f" }} invocations of agent {{ $labels.agent }} in
           namespace {{ $labels.namespace }} failed to start in the last hour and
           none completed. Check the agent pod logs for the start_failed cause.
+    # Runs that start and then fail record no anomaly: a model or MCP call the gateway
+    # refuses (budget, auth), a provider or MCP server down, a broken prompt or config.
+    - alert: ACHAgentRunsFailing
+      expr: |
+        sum by (namespace, agent) (increase(ach_agent_runs_total{outcome="failed"}[1h])) >= 3
+        unless on (namespace, agent)
+        sum by (namespace, agent) (increase(ach_agent_runs_total{outcome="completed"}[1h])) > 0
+      labels:
+        severity: warning
+      annotations:
+        summary: ACH agent {{ $labels.agent }} keeps failing its runs
+        description: >-
+          {{ $value | printf "%.0f" }} runs of agent {{ $labels.agent }} in namespace
+          {{ $labels.namespace }} failed in the last hour and none completed. The
+          gateway's failed requests for the agent's key usually say why: budget,
+          auth, or a model provider or MCP server down.
     - alert: ACHRepeatedPodFailures
       expr: |
         sum by (namespace, agent, environment) (

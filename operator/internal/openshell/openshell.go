@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-	osv1 "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1"
-	ostypes "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
+	osv1 "github.com/ai-openshell/sdk-go/openshell/v1"
+	ostypes "github.com/ai-openshell/sdk-go/openshell/v1/types"
 	"github.com/ackstorm/ach-agent/operator/internal/render"
 	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"

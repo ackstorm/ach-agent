@@ -24,8 +24,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	osv1 "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1"
-	ostypes "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1/types"
+	osv1 "github.com/ai-openshell/sdk-go/openshell/v1"
+	ostypes "github.com/ai-openshell/sdk-go/openshell/v1/types"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"google.golang.org/grpc/codes"

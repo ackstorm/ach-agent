@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An A2A `tasks/cancel` stops the run in its sandbox, like a run past its deadline, and frees its
+  session for the next request; a cancelled request that has not started yet never starts.
 - A run adopted by the control after a restart is logged at INFO and no longer counts as a
   `start_outcome_unknown` anomaly, so a normal restart with a run in flight no longer fires
   `ACHStartOutcomeUnknown`.

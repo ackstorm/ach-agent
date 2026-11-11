@@ -25,7 +25,7 @@ from ach_runtime.config.schema import RuntimeConfig
 from ach_runtime.engine import opencode as opencode_module
 from ach_runtime.engine.base import EngineInvocation, NativeLaunchFailed, _HaltBudget
 from ach_runtime.engine.opencode import OpenCodeEngine, _InvocationState, _managed_fingerprint
-from ach_runtime.engine.config import build_env, managed_content, to_fixture
+from ach_runtime.engine.config import build_env, managed_content, to_fixture, with_session_baggage
 
 FIXTURE_PATH = Path(__file__).parent.parent / "config" / "fixtures" / "pr-review-runtime.json"
 _LOOPBACK_SERVER = Path(__file__).parent / "fixtures" / "fake_native_server.py"
@@ -101,6 +101,7 @@ def _scripted_session(engine, session_ref, handler, *, sid=None, invocation=None
             fixture["providers"][invocation.public.model.type]["baseURL"] = (
                 invocation.provider_base_url_override
             )
+        with_session_baggage(fixture, invocation.session_ref)
         content = managed_content(invocation.public, fixture)
         env = build_env(
             home=home,

@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ach_runtime.config.public import PublicConfig
-from ach_runtime.engine.config import GRANT_KEYS, base_env, to_fixture
+from ach_runtime.engine.config import GRANT_KEYS, base_env, to_fixture, with_session_baggage
 
 PROVIDER_ID = "ach"
 FIXED_ARGS = ["--no-approve", "-ne", "-e", "builtin:mcp", "--offline", "--no-skills", "--no-context-files"]
@@ -49,7 +50,7 @@ def _model_entry(public: PublicConfig, metadata: dict[str, Any], params: dict[st
 def to_pi_config(
     public: PublicConfig, *, home: Path, catalog: dict[str, Any] | None, mcp: dict[str, Any] | None,
     resolved_system_prompt: str | None, provider_base_url_override: str | None = None,
-    lookup_only_prompt: bool = False,
+    lookup_only_prompt: bool = False, session_ref: str | None = None,
 ) -> PiConfig:
     """Raises ValueError for a config pi cannot honour."""
     if public.model.type != "openai":
@@ -59,6 +60,10 @@ def to_pi_config(
     fixture = to_fixture(
         public, catalog=catalog, resolved_system_prompt=resolved_system_prompt, lookup_only_prompt=lookup_only_prompt,
     )
+    if mcp:
+        fixture["mcp"] = copy.deepcopy(mcp)
+    if session_ref is not None:
+        with_session_baggage(fixture, session_ref)
     provider = fixture["providers"][public.model.type]
     entry = _model_entry(public, provider["models"][public.model.name], params)
     models = {"providers": {PROVIDER_ID: {
@@ -69,7 +74,7 @@ def to_pi_config(
         "headers": provider.get("headers", {}),
         "models": [entry],
     }}}
-    servers = mcp or fixture["mcp"]
+    servers = fixture["mcp"]
     compaction = public.engine.compaction
     thinking = public.model.thinking
     args = [

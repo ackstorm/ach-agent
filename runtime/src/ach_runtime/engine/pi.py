@@ -362,6 +362,7 @@ class PiEngine:
                 public, home=home, catalog=invocation.catalog, mcp=invocation.mcp,
                 resolved_system_prompt=invocation.resolved_system_prompt,
                 provider_base_url_override=invocation.provider_base_url_override,
+                session_ref=invocation.session_ref,
             )
         except ValueError as exc:
             raise NativeLaunchFailed(str(exc)) from exc

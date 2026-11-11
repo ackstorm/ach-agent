@@ -124,6 +124,7 @@ const modelProxy = createServer(async (request, response) => {
     heldModel: holdModel,
     achHeaders: Object.fromEntries(Object.entries(request.headers).filter(([key]) => key.startsWith("x-ach-") || key === "authorization").map(([key, value]) => [key, key === "authorization" ? "<present>" : value])),
     responseClosed: false,
+    baggage: request.headers["baggage"] ?? null,
   }
   records.push(record)
   response.on("close", () => { record.responseClosed = true })
@@ -167,8 +168,10 @@ const modelUrl = `http://127.0.0.1:${modelProxy.address().port}/v1`
 // managed GitLab business tool required by this composed integration and retaining its
 // calls for assertions at the test boundary.
 const mcpTokens = []
+const mcpBaggage = []
 const mcpProxy = createServer(async (request, response) => {
   mcpTokens.push(request.headers["x-ach-facade-token"] ?? null)
+  mcpBaggage.push(request.headers["baggage"] ?? null)
   const chunks = []
   for await (const chunk of request) chunks.push(chunk)
   const raw = Buffer.concat(chunks).toString("utf8")
@@ -216,7 +219,7 @@ process.stdin.on("data", (chunk) => {
     let command
     try { command = JSON.parse(line) } catch { continue }
     if (command.command === "capture") {
-      process.stdout.write(JSON.stringify({ records, mcpCalls, mcpTokens, closedResponses: records.filter((record) => record.responseClosed).length, heldModelRequests: heldResponses.filter((held) => !held.response.__achClosed).length }) + "\n")
+      process.stdout.write(JSON.stringify({ records, mcpCalls, mcpTokens, mcpBaggage, closedResponses: records.filter((record) => record.responseClosed).length, heldModelRequests: heldResponses.filter((held) => !held.response.__achClosed).length }) + "\n")
     } else if (command.command === "hold") {
       holdModel = true
       process.stdout.write(JSON.stringify({ held: true }) + "\n")

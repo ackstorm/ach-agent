@@ -247,3 +247,17 @@ async def test_each_step_and_tool_call_is_logged_with_its_invocation(
     tool = tools[0]
     assert (tool.invocation_id, tool.tool, tool.outcome) == ("steps-1", "bash", "success")
     assert tool.duration_ms >= 0
+
+
+async def test_model_and_mcp_requests_carry_the_session_baggage(tmp_path: Path, public, engine) -> None:
+    async with fake_facades("text") as fakes:
+        invocation = _invocation(
+            public, tmp_path, invocation_id="baggage-1", session_ref="baggage-session-1",
+            model_url=fakes.model_url, mcp={"demo": {"url": fakes.mcp_url, "headers": {}}},
+        )
+        await engine.start(invocation, home=tmp_path / "home", scratch=tmp_path / "scratch")
+        assert await asyncio.wait_for(engine.wait_settled("baggage-1"), timeout=15.0) == "completed"
+        capture = await fakes.control({"command": "capture"})
+    expected = "session.id=baggage-session-1"
+    assert capture["records"] and {record["baggage"] for record in capture["records"]} == {expected}
+    assert capture["mcpBaggage"] and set(capture["mcpBaggage"]) == {expected}

@@ -259,11 +259,18 @@ async def test_model_facade_strips_caller_correlation_when_no_trusted_carrier() 
             "langfuse_trace_id": "forged-trace",
             "x-litellm-session-id": "forged-session",
             "x-litellm-trace-id": "forged-litellm-trace",
+            # The engine's own session ids outrank the sandbox's `baggage` at the gateway.
+            "x-opencode-session-id": "ses_engine",
+            "x-session-id": "ses_engine",
+            "baggage": "session.id=sandbox-session",
         },
     )
 
     assert resp.status_code == 200
     names = {name.decode().lower() for name, _ in seen["raw"]}
+    assert "x-opencode-session-id" not in names
+    assert "x-session-id" not in names
+    assert (b"baggage", b"session.id=sandbox-session") in [(n.lower(), v) for n, v in seen["raw"]]
     assert "traceparent" not in names
     assert "tracestate" not in names
     assert "langfuse_trace_id" not in names

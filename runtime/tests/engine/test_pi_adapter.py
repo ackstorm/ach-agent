@@ -74,6 +74,17 @@ async def test_mcp_tools_reach_the_model(tmp_path, engine) -> None:
         assert any(name.startswith("mcp__demo__") for name in names), names
 
 
+async def test_model_and_mcp_requests_carry_the_session_baggage(tmp_path, engine) -> None:
+    async with fake_facades("text") as fakes:
+        mcp = {"demo": {"url": fakes.mcp_url, "headers": {}}}
+        await engine.start(_invocation(tmp_path, fakes.model_url, mcp=mcp), home=tmp_path / "home", scratch=tmp_path / "scratch")
+        await engine.wait_settled("inv-1")
+        capture = await fakes.control({"command": "capture"})
+    expected = "session.id=session-1"
+    assert capture["records"] and {record["baggage"] for record in capture["records"]} == {expected}
+    assert capture["mcpBaggage"] and set(capture["mcpBaggage"]) == {expected}
+
+
 async def test_planted_system_prompt_files_never_reach_the_model(tmp_path, engine) -> None:
     async with fake_facades("text") as fakes:
         invocation = _invocation(tmp_path, fakes.model_url)

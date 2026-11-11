@@ -65,12 +65,15 @@ _LITELLM_TRACE_HEADER = "x-litellm-trace-id"
 
 
 def is_correlation_header(name: str) -> bool:
-    """True for a header that could claim a trace/session the harness did not grant."""
+    """True for a header that could claim a trace/session the harness did not grant. An
+    engine's own `x-<vendor>-session-id` (opencode's) outranks the sandbox's `baggage` session
+    at the gateway, which would split a run's model and tool calls into two sessions."""
     lowered = name.lower()
     return (
         lowered.startswith("langfuse_")
         or lowered in ("traceparent", "tracestate")
         or lowered in (_LITELLM_SESSION_HEADER, _LITELLM_TRACE_HEADER)
+        or (lowered.startswith("x-") and lowered.endswith("-session-id"))
     )
 
 

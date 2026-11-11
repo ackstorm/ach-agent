@@ -54,7 +54,7 @@ _SAFE_LOG_FIELDS = (
     "agent", "environment", "invocation_id", "run_id", "actor", "event_id", "channel",
     "workspace_ref", "session_ref", "config_version", "model", "outcome", "duration_ms",
     "usage_source", "usage_basis", "usage_input", "usage_output", "usage_reasoning",
-    "usage_cache_read", "usage_cache_write", "usage_cost_usd", "kind",
+    "usage_cache_read", "usage_cache_write", "usage_cost_usd", "kind", "tool", "ttft_ms",
 )
 _OWNED_HANDLER_ATTR = "_ach_owned_handler"
 
@@ -251,6 +251,26 @@ def record_run(record: RunRecord) -> None:
         extra={key: redact(value) if isinstance(value, str) else value for key, value in fields.items()},
     )
     observe(record)
+
+
+def log_step(
+    invocation_id: str, *, duration_ms: float, ttft_ms: float | None, outcome: str | None,
+    input: object, output: object, cache_read: object, cache_write: object, cost_usd: object,
+) -> None:
+    """One engine step (a model call) of a run, written by the execution process as it ends."""
+    logging.getLogger(__name__).info("run step", extra={
+        "invocation_id": invocation_id, "duration_ms": round(duration_ms), "outcome": outcome,
+        "ttft_ms": None if ttft_ms is None else round(ttft_ms),
+        "usage_input": input, "usage_output": output, "usage_cache_read": cache_read,
+        "usage_cache_write": cache_write, "usage_cost_usd": cost_usd,
+    })
+
+
+def log_tool(invocation_id: str, *, tool: str, outcome: str, duration_ms: float) -> None:
+    """One tool call of a run, written by the execution process as it ends."""
+    logging.getLogger(__name__).info("run tool", extra={
+        "invocation_id": invocation_id, "tool": tool, "outcome": outcome, "duration_ms": round(duration_ms),
+    })
 
 
 def alarm(

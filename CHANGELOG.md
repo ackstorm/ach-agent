@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- The sandbox logs one `run step` line per model call (duration, time to first token, tokens, finish
+  reason) and one `run tool` line per tool call (tool, outcome, duration), keyed by `invocation_id`.
+
+### Fixed
+
+- A run adopted by the control after a restart is logged at INFO and no longer counts as a
+  `start_outcome_unknown` anomaly, so a normal restart with a run in flight no longer fires
+  `ACHStartOutcomeUnknown`.
+
 ## [0.7.0] - 2026-11-10
 
 ### Added

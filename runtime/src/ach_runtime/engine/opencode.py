@@ -44,7 +44,7 @@ from ach_runtime.engine.base import (
     install_restored_home,
 )
 from ach_runtime.engine.config import build_env, managed_content, scrub_engine_global_config, to_fixture
-from ach_runtime.observability.runs import RunUsage
+from ach_runtime.observability.runs import RunUsage, log_step, log_tool
 
 OPENCODE_BIN = os.environ.get("OPENCODE_BIN", "opencode2")
 STARTUP_TIMEOUT_SECONDS = 20.0
@@ -128,6 +128,9 @@ class _NativeSession:
         # live processing would have rejected as stale/duplicate/foreign-aggregate.
         self._event_log: list[tuple[dict[str, Any], bool]] = []
         self._invocations: dict[str, _InvocationState] = {}
+        # Open steps and tools for the `run step` / `run tool` lines: monotonic start times.
+        self._steps: dict[Any, list[float | None]] = {}
+        self._tools: dict[Any, list[Any]] = {}
         self._stderr_tail = bytearray()
         self._stderr_task: asyncio.Task[None] | None = None
         self._stdout_task: asyncio.Task[None] | None = None
@@ -388,6 +391,47 @@ class _NativeSession:
                 continue
             self._apply_event(state, event)
         self._resolve_pending()
+        if isinstance(data, dict) and data.get("sessionID") == self.sid:
+            self._log_progress(str(event.get("type")), data)
+
+    def _log_progress(self, kind: str, data: dict[str, Any]) -> None:
+        """`run step` / `run tool` lines, for the first unsettled invocation: the session runs
+        its inputs in order."""
+        now = time.monotonic()
+        step = data.get("assistantMessageID")
+        if kind == "session.step.started":
+            self._steps[step] = [now, None]
+        elif kind in ("session.text.started", "session.reasoning.started", "session.tool.input.started"):
+            if (clock := self._steps.get(step)) is not None and clock[1] is None:
+                clock[1] = now
+            if kind == "session.tool.input.started":
+                self._tools[data.get("id")] = [data.get("name"), now]
+        elif kind == "session.tool.called":
+            if (tool := self._tools.get(data.get("id"))) is not None:
+                tool[1] = now  # the tool runs from here; before, the model was writing its input
+        elif kind in ("session.tool.success", "session.tool.failed"):
+            tool = self._tools.pop(data.get("id"), None)
+            if tool is not None and (invocation := self._running()) is not None:
+                log_tool(invocation, tool=str(tool[0]), outcome=kind.rsplit(".", 1)[1],
+                         duration_ms=(now - tool[1]) * 1000)
+        elif kind in ("session.step.ended", "session.step.failed"):
+            clock = self._steps.pop(step, None)
+            if clock is None or (invocation := self._running()) is None:
+                return
+            started, first = clock
+            tokens = data.get("tokens") if isinstance(data.get("tokens"), dict) else {}
+            cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+            log_step(
+                invocation, duration_ms=(now - started) * 1000,
+                ttft_ms=None if first is None else (first - started) * 1000,
+                outcome=data.get("finish") if kind == "session.step.ended" else "failed",
+                input=tokens.get("input"), output=tokens.get("output"), cache_read=cache.get("read"),
+                cache_write=cache.get("write"), cost_usd=data.get("cost"),
+            )
+
+    def _running(self) -> str | None:
+        return next((invocation_id for invocation_id, state in self._invocations.items()
+                     if not state.settled.is_set()), None)
 
     def _apply_durable_event(self, kind: str | None, data: dict[str, Any], seq: int) -> None:
         """Owned-busy-period tracking (review focus 3): one interval per `started`->terminal

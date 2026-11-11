@@ -26,7 +26,7 @@ from ach_runtime.engine.base import (
     RestoreMismatch, SnapshotManifest, TuiCommand, _HaltBudget, _OwnedProcessGroup, check_manifest, install_restored_home,
 )
 from ach_runtime.engine.pi_config import PiConfig, build_pi_env, to_pi_config, write_pi_config
-from ach_runtime.observability.runs import RunUsage
+from ach_runtime.observability.runs import RunUsage, log_step, log_tool
 
 log = logging.getLogger(__name__)
 
@@ -80,6 +80,9 @@ class _PiSession:
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._ids = itertools.count(1)
         self._current: _PiInvocation | None = None
+        # Open model call and tools for the `run step` / `run tool` lines: monotonic start times.
+        self._step: list[float | None] | None = None
+        self._tools: dict[Any, tuple[Any, float]] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         self.tui_args: list[str] = []
         self.tui_env: dict[str, str] = {}
@@ -176,6 +179,7 @@ class _PiSession:
             return
         state.last_progress_at = time.monotonic()
         kind = record.get("type")
+        self._log_progress(state, kind, record)
         if kind == "message_end":
             message = record.get("message") or {}
             if message.get("role") == "assistant":
@@ -190,6 +194,33 @@ class _PiSession:
                 self._background(self._abort())
         elif kind == "agent_settled":
             self._background(self._settle(state, aborted=bool(record.get("aborted"))))
+
+    def _log_progress(self, state: _PiInvocation, kind: Any, record: dict[str, Any]) -> None:
+        """`run step` (one assistant message: a model call) and `run tool` lines."""
+        now = time.monotonic()
+        message = record.get("message") if isinstance(record.get("message"), dict) else {}
+        if kind == "message_start" and message.get("role") == "assistant":
+            self._step = [now, None]
+        elif kind == "message_update" and self._step is not None and self._step[1] is None:
+            self._step[1] = now
+        elif kind == "tool_execution_start":
+            self._tools[record.get("toolCallId")] = (record.get("toolName"), now)
+        invocation = next((key for key, value in self.invocations.items() if value is state), None)
+        if invocation is None:
+            return
+        if kind == "message_end" and message.get("role") == "assistant" and self._step is not None:
+            (started, first), self._step = self._step, None
+            usage = message.get("usage") if isinstance(message.get("usage"), dict) else {}
+            cost = usage.get("cost") if isinstance(usage.get("cost"), dict) else {}
+            log_step(
+                invocation, duration_ms=(now - started) * 1000,
+                ttft_ms=None if first is None else (first - started) * 1000, outcome=message.get("stopReason"),
+                input=usage.get("input"), output=usage.get("output"), cache_read=usage.get("cacheRead"),
+                cache_write=usage.get("cacheWrite"), cost_usd=cost.get("total"),
+            )
+        elif kind == "tool_execution_end" and (tool := self._tools.pop(record.get("toolCallId"), None)):
+            log_tool(invocation, tool=str(tool[0]), outcome="failed" if record.get("isError") else "success",
+                     duration_ms=(now - tool[1]) * 1000)
 
     async def _abort(self, timeout: float = COMMAND_TIMEOUT_SECONDS) -> None:
         with contextlib.suppress(NativeLaunchFailed, TimeoutError):

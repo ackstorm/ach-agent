@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -217,3 +218,32 @@ async def test_denied_native_tools_leave_the_real_opencode_tool_list(tmp_path: P
     names = await _first_request_tool_names(public, tmp_path / "denied")
     assert not set(denied) & names
     assert {"read", "shell"} <= names
+
+
+async def test_each_step_and_tool_call_is_logged_with_its_invocation(
+    tmp_path: Path, public, engine, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The fake model calls tools only over the OpenAI API.
+    model = public.model.model_copy(update={"type": "openai", "params": {}})
+    openai_public = public.model_copy(update={"model": model})
+    caplog.set_level(logging.INFO, logger="ach_runtime.observability.runs")
+    async with fake_facades("tool-loop") as fakes:
+        invocation = _invocation(
+            openai_public, tmp_path, invocation_id="steps-1", session_ref="steps-session-1", model_url=fakes.model_url
+        )
+        await engine.start(invocation, home=tmp_path / "home", scratch=tmp_path / "scratch")
+        for _ in range(100):
+            if any(r.getMessage() == "run tool" for r in caplog.records):
+                break
+            await asyncio.sleep(0.1)
+        await asyncio.wait_for(engine.cancel("steps-1", "test done"), timeout=13.0)
+    steps = [r for r in caplog.records if r.getMessage() == "run step"]
+    tools = [r for r in caplog.records if r.getMessage() == "run tool"]
+    assert steps and tools
+    step = steps[0]
+    assert step.invocation_id == "steps-1" and step.outcome == "tool-calls"
+    assert (step.usage_input, step.usage_output) == (100, 10)
+    assert step.duration_ms >= step.ttft_ms >= 0
+    tool = tools[0]
+    assert (tool.invocation_id, tool.tool, tool.outcome) == ("steps-1", "bash", "success")
+    assert tool.duration_ms >= 0

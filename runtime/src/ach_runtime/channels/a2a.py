@@ -575,7 +575,8 @@ def build_a2a_app(agent_card: Any, executor: A2AAgentExecutorBridge, task_store:
     add_a2a_routes_to_fastapi(
         sub_app,
         agent_card_routes=card_routes,
-        jsonrpc_routes=create_jsonrpc_routes(handler, rpc_url="/"),
+        # LiteLLM's A2A gateway forwards GetTask / CancelTask as the 0.3 tasks/get / tasks/cancel.
+        jsonrpc_routes=create_jsonrpc_routes(handler, rpc_url="/", enable_v0_3_compat=True),
         rest_routes=create_rest_routes(handler),
     )
     return sub_app

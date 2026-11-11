@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -240,6 +241,62 @@ def test_mounted_sdk_send_message_uses_real_admission_future(monkeypatch) -> Non
         assert len(deliveries) == 1
         assert deliveries[0][0].event_id == f"a2a:{task['id']}"
         assert deliveries[0][0].event.payload["text"] == "hello from SDK"
+
+    asyncio.run(scenario())
+    asyncio.run(control.admission.close())
+
+
+def test_a2a_0_3_task_methods_reach_the_handler(monkeypatch) -> None:
+    """A gateway that speaks A2A 0.3 (LiteLLM forwards GetTask / CancelTask as tasks/get /
+    tasks/cancel) reads and cancels tasks; 1.0 callers are unaffected."""
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+    config = _channel()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def runner(routed, ticket):
+        ticket.mark_started()
+        if routed.event.payload["text"] == "slow":
+            entered.set()
+            await release.wait()
+        return _completed(ticket, "answer")
+
+    control = _control(config, runner)
+    app = create_app(control)
+    app.state.ready = True
+    v1 = {"x-a2a-custom-api-key": SECRET, "a2a-version": "1.0"}
+    v03 = {"x-a2a-custom-api-key": SECRET}
+
+    def send(text: str, context: str) -> dict:
+        return {"jsonrpc": "2.0", "id": 1, "method": "SendMessage", "params": {"message": {
+            "messageId": f"message-{text}", "contextId": context, "role": "ROLE_USER", "parts": [{"text": text}]}}}
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            async def rpc(method: str, task_id: str, headers: dict) -> dict:
+                body = {"jsonrpc": "2.0", "id": 2, "method": method, "params": {"id": task_id}}
+                return (await client.post("/a2a/review/", json=body, headers=headers)).json()
+
+            done = (await client.post("/a2a/review/", json=send("fast", "ctx-fast"), headers=v1)).json()
+            task_id = done["result"]["task"]["id"]
+            assert (await rpc("tasks/get", task_id, v03))["result"]["status"]["state"] == "completed"
+            assert (await rpc("GetTask", task_id, v1))["result"]["status"]["state"] == "TASK_STATE_COMPLETED"
+
+            running = asyncio.create_task(client.post("/a2a/review/", json=send("slow", "ctx-slow"), headers=v1))
+            await entered.wait()
+            bridge = app.state.a2a_bridges["review"]
+            slow_id, invocation = next(iter(bridge._task_invocations.items()))
+            for _ in range(100):  # a caller cancels a task it has been told about: wait until it is stored
+                if "result" in await rpc("GetTask", slow_id, v1):
+                    break
+                await asyncio.sleep(0.01)
+            cancelled = await rpc("tasks/cancel", slow_id, v03)
+            assert "error" not in cancelled, cancelled
+            assert control.cancel_requested == {invocation}
+            release.set()
+            running.cancel()  # a blocking SendMessage on a task another request cancelled never returns
+            with contextlib.suppress(asyncio.CancelledError):
+                await running
 
     asyncio.run(scenario())
     asyncio.run(control.admission.close())

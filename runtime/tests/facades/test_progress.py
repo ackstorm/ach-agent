@@ -70,3 +70,15 @@ async def test_inform_user_rejects_a_foreign_workspace_token() -> None:
     ) as client:
         response = await client.post("/runs/inv-1/", json={})
         assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_inform_user_description_carries_the_update_rules() -> None:
+    async def inform(token: str, invocation_id: str, message: str) -> bool:
+        return True
+
+    app = ProgressFacade(key=KEY, owned_workspace=_owned, inform=inform).app()
+    async with app.router.lifespan_context(app), _session(app, facade_token(KEY, "owned-ws")) as session:
+        description = (await session.list_tools()).tools[0].description
+    for rule in ("never the tool", "language of the user's request", "30 seconds"):
+        assert rule in description

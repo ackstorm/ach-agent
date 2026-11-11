@@ -38,7 +38,11 @@ class ProgressFacade:
             name=TOOL_NAME,
             description=(
                 "Send a short progress update to the user while you keep working. "
-                "The final answer still goes in your reply."
+                "The final answer still goes in your reply. "
+                "Describe the work, never the tool, skill, script, API or command behind it: "
+                "\"Reviewing last month's costs\", not \"Running the cost query\". "
+                "Write in the language of the user's request. "
+                "Send one only when something changed, at most about one every 30 seconds."
             ),
         )
         async def inform_user(message: str, ctx: Context) -> str:

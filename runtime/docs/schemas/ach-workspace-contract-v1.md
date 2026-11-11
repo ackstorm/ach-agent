@@ -86,7 +86,7 @@ Dos eventos de un Workspace inactivo comparten una única activación. El primer
 | --- | --- |
 | `limits.maxActiveWorkspaces` | Workspaces arrancando, activos o cerrándose de un ACHAgent; solo desaparecen del contador al desactivarse. Con el límite lleno, la activación espera un hueco liberado hasta el plazo de la invocación y después falla; no se expulsan Workspaces inactivos. |
 | `limits.maxConcurrentInvocations` | Ejecuciones de agente activas entre todos sus Workspaces. |
-| `workspace.maxConcurrentSessions` | Sesiones ejecutando trabajo simultáneamente en un Workspace; sesiones abiertas inactivas no ocupan ese permiso. |
+| `workspace.maxConcurrentSessions` | Sesiones vivas en un Workspace: las que ejecutan trabajo y las inactivas cuyo motor sigue arrancado. Una sesión que necesita sitio cierra la que lleva más tiempo inactiva. |
 | `channels[].concurrency` | Ejecuciones activas de ese channel, a través de todos los Workspaces. |
 | `limits.maxQueuedTotal` | Eventos admitidos aún no terminados; siempre finito. |
 | `limits.maxInvocationSeconds` | Plazo desde la admisión, incluyendo espera, activación, handoff y ejecución. |

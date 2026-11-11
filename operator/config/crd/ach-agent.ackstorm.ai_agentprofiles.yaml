@@ -536,7 +536,8 @@ spec:
                         type: integer
                       maxConcurrentSessions:
                         description: |-
-                          MaxConcurrentSessions bounds sessions executing work simultaneously in a Workspace.
+                          MaxConcurrentSessions bounds the live sessions in a Workspace: running ones and idle
+                          ones whose engine is still up. A session that needs room closes the longest-idle one.
                           A handoff with a shared destination requires this to be 1 (contract §6).
                         format: int64
                         minimum: 1

@@ -204,7 +204,8 @@ type WorkspaceSpec struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ShutdownTimeoutSeconds *int64 `json:"shutdownTimeoutSeconds,omitempty"`
-	// MaxConcurrentSessions bounds sessions executing work simultaneously in a Workspace.
+	// MaxConcurrentSessions bounds the live sessions in a Workspace: running ones and idle
+	// ones whose engine is still up. A session that needs room closes the longest-idle one.
 	// A handoff with a shared destination requires this to be 1 (contract §6).
 	// +optional
 	// +kubebuilder:validation:Minimum=1

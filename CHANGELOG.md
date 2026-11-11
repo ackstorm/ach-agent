@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `ACHAgentStartFailing` is no longer silenced by failed runs: only a completed run in the hour
   clears it.
+- An A2A reply block with a raw line break inside a string value (a model wrote `thoughts` across
+  lines) was rejected as invalid JSON, so a completed turn reached the caller as `failed` /
+  `invalid terminal output` and the answer was lost. The block is now parsed leniently.
 
 - `run step` times a model call from when the request goes out (input delivered, previous step or
   tool ended), not from the engine's step start event, which both engines emit only with the first

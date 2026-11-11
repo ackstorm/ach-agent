@@ -93,7 +93,8 @@ def extract_terminal(accumulated_text: str) -> dict[str, Any] | None:
         if end < 0:
             continue
         try:
-            result = json.loads(text[pos : end + 1])
+            # Models break lines inside string values (seen in "thoughts"): accept raw control characters.
+            result = json.loads(text[pos : end + 1], strict=False)
         except json.JSONDecodeError:
             continue
         if isinstance(result, dict):

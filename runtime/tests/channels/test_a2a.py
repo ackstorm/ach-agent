@@ -398,6 +398,9 @@ def test_terminal_extraction_and_strict_a2a_reply_validation() -> None:
     cases = [
         ('```json\n{"action":"a2a_reply","text":"pretty {\\"x\\"}"}\n```', "pretty {\"x\"}"),
         ('preface\n{\n "action": "a2a_reply", "text": "escaped \\\"quote\\\""\n} trailing prose { "action"', 'escaped "quote"'),
+        # A raw line break inside a string value, as a model wrote "thoughts" in prod.
+        ('{"action":"a2a_reply","text":"line one\\nline two","thoughts":"Checked:\n1. first\n2. second"}',
+         "line one\nline two"),
     ]
     for raw, expected in cases:
         obj = extract_terminal(raw)

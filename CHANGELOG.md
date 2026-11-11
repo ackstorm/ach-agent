@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A2A channels also accept the A2A 0.3 method names (`tasks/get`, `tasks/cancel`, ...). LiteLLM's A2A
   gateway forwards `GetTask` and `CancelTask` under those names, so both failed with `Method not found`
   and a cancel through the gateway never reached the run.
+- An A2A cancel ends the caller's open `SendMessage` or `SendStreamingMessage` request on the task
+  with `canceled`; before, that request never returned.
 - An A2A `tasks/cancel` stops the run in its sandbox, like a run past its deadline, and frees its
   session for the next request; a cancelled request that has not started yet never starts.
 - A run adopted by the control after a restart is logged at INFO and no longer counts as a

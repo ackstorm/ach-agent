@@ -293,6 +293,9 @@ class A2AAgentExecutorBridge:
         self._waiter_counts: dict[str, int] = {}
         # The invocation of each task with a waiter: what `tasks/cancel` asks the control to stop.
         self._task_invocations: dict[str, str] = {}
+        # The queue each task's waiters read. The SDK hands `cancel` a tap of it, and a tap's
+        # events never reach the waiters, so a cancel enqueued there leaves them hanging.
+        self._task_queues: dict[str, Any] = {}
         # True when a run outlives this control: the next control adopts it.
         self.runs_outlive_control = False
         self._shutting_down = False
@@ -349,6 +352,7 @@ class A2AAgentExecutorBridge:
             return
         CHANNEL_INBOUND.labels(channel=self._channel_cfg.name, type="a2a").inc()
         cancel_event = self._cancel_events.setdefault(task_id, asyncio.Event())
+        self._task_queues.setdefault(task_id, event_queue)
         self._waiter_counts[task_id] = self._waiter_counts.get(task_id, 0) + 1
         emit: Callable[[str], Awaitable[None]] | None = None
         invocation_id = ""
@@ -417,6 +421,7 @@ class A2AAgentExecutorBridge:
                 self._waiter_counts.pop(task_id, None)
                 self._cancel_events.pop(task_id, None)
                 self._task_invocations.pop(task_id, None)
+                self._task_queues.pop(task_id, None)
 
     async def _watch(self, ticket: Any, pulse: _Pulse) -> None:
         """Say so when the run is queued or slow to start, then whenever the waiter is silent."""
@@ -497,10 +502,11 @@ class A2AAgentExecutorBridge:
         context_id = getattr(context, "context_id", None) or ""
         if (invocation_id := self._task_invocations.get(task_id)) is not None:
             self._control.cancel_requested.add(invocation_id)
+        queue = self._task_queues.get(task_id, event_queue)
         waiter = self._cancel_events.get(task_id)
         if waiter is not None:
             waiter.set()
-        await event_queue.enqueue_event(_status_event("canceled", None, task_id, context_id))
+        await queue.enqueue_event(_status_event("canceled", None, task_id, context_id))
 
 
 def make_a2a_agent_card(agent_name: str, channel_name: str) -> Any:

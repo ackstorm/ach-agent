@@ -386,6 +386,9 @@ conversation its own sandbox, so every new conversation pays the full cold start
 channel, a per-user key (`"{{ event.headers.x-litellm-user-id }}"`) sends a user's new conversations
 to their running sandbox; set `workspace.maxConcurrentSessions` to the channel concurrency. A user's
 conversations then share `/sandbox/ach/workspace`, and a channel with a `handoff` needs `workspaceKey: session`.
+`maxConcurrentSessions` counts live sessions, idle ones whose engine is still up included, so the
+profile's memory must fit that many engines (opencode takes about 200 MiB each). At the limit a new
+conversation closes the longest-idle one, which resumes on its next message like after its idle timeout.
 
 The trade-off is pods held against restore cost: each active Workspace keeps one sandbox (the
 profile's resources) for the session timeout plus `idleTimeoutSeconds` after its last message.

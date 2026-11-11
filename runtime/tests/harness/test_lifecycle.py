@@ -46,7 +46,7 @@ class _Manager:
 class _Control:
     def __init__(self):
         policy = type("P", (), {"type": "none", "retention_days": None})
-        self.config = type("C", (), {"workspace": type("W", (), {"persistence": policy(), "session_retention_days": None, "session": type("S", (), {"idle_timeout_seconds": 20})(), "idle_timeout_seconds": 30, "shutdown_timeout_seconds": 5})(), "channels": [], "agent": AgentIdentity(name="agent", namespace="ach", uid="3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77")})()
+        self.config = type("C", (), {"workspace": type("W", (), {"persistence": policy(), "session_retention_days": None, "session": type("S", (), {"idle_timeout_seconds": 20})(), "idle_timeout_seconds": 30, "shutdown_timeout_seconds": 5, "max_concurrent_sessions": 2})(), "channels": [], "agent": AgentIdentity(name="agent", namespace="ach", uid="3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77")})()
         self.admission = _Admission()
         self.manager = _Manager()
         self.storage = None
@@ -2641,4 +2641,60 @@ def test_volume_workspace_start_prunes_sessions_and_never_blocks() -> None:
         assert control.workspace_hooks == [("start", False), ("start", False)]
         await lifecycle.close()
 
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("ticket_session", "busy", "closed"),
+    [
+        ("d" * 64, set(), ["b" * 64]),  # full: the longest-idle session makes room
+        ("c" * 64, set(), []),  # the session is already live: no new engine
+        ("d" * 64, {"b" * 64}, ["c" * 64]),  # a running session is never closed, however old
+    ],
+)
+def test_a_new_session_closes_the_longest_idle_one_when_the_workspace_is_full(ticket_session, busy, closed) -> None:
+    import httpx
+    from types import SimpleNamespace
+    from ach_runtime.harness.workspaces import WorkspaceEndpoint, WorkspaceRef
+
+    async def scenario():
+        live = {"b" * 64: 15, "c" * 64: 5}  # session -> idle seconds the pod reports
+        archived: list[str] = []
+
+        pod = {"X-ACH-Instance-Id": "pod"}
+
+        async def handler(request):
+            path = request.url.path
+            if path == "/sessions":
+                return httpx.Response(200, headers=pod, json=[{"sessionRef": ref} for ref in live])
+            ref = path.split("/")[2]
+            if path.endswith("/info"):
+                return httpx.Response(200, headers=pod, json={"active": True, "uncertain": False, "initialized": True,
+                                                 "idleSeconds": live[ref]})
+            if path.endswith("/archive"):
+                archived.append(ref)
+                return httpx.Response(200, headers=pod, content=b"snapshot")
+            if path.endswith("/retire"):
+                live.pop(ref)
+                return httpx.Response(200, headers=pod, json={"status": "retired", "sessionRef": ref})
+            raise AssertionError(request.url)
+
+        control = _Control()  # maxConcurrentSessions 2, session idle timeout 20 s
+        control.mini_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        control._headers = lambda endpoint: {"X-ACH-Instance-Id": endpoint.instance_id}
+        control._mini_json = _mini_json(control)
+        control.manager._bootstrap_complete = True
+        endpoint = WorkspaceEndpoint(WorkspaceRef("ach", "3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77", "a" * 64), "ws", "pod", "http://mini")
+        control.manager._active = {"a" * 64: endpoint}
+        control.delivery = _Delivery()
+        control.admission.tickets = [SimpleNamespace(workspace_ref="a" * 64, session_ref=ref) for ref in busy]
+        lifecycle = Lifecycle(control)
+        await lifecycle.tick(datetime(2026, 10, 1, tzinfo=UTC))  # sees both sessions live, under their timeout
+        assert archived == []
+        ticket = SimpleNamespace(session_ref=ticket_session, workspace_ref="a" * 64)
+        await lifecycle.restore_session(ticket, endpoint)
+        assert archived == closed
+        assert set(live) == {"b" * 64, "c" * 64} - set(closed)
+        await lifecycle.close()
+        await control.mini_client.aclose()
     asyncio.run(scenario())

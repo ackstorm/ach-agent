@@ -36,6 +36,7 @@ _CLOSE_ARCHIVE_BYTES = 2 * 1024**3
 # Tick delay by consecutive idle ticks (index 0 = activity seen): 1 s while busy, then
 # 1 s, 2 s, 5 s while idle -- always capped below a tenth of the smallest idle timeout.
 _TICK_DELAYS = (1.0, 1.0, 2.0, 5.0)
+_TERMINAL_RUN_STATES = frozenset({"completed", "failed", "cancelled", "skipped"})
 
 
 async def _owned(func, /, *args, **kwargs):
@@ -106,6 +107,8 @@ class Lifecycle:
         self._failed_workspace_retry_at: dict[tuple[str, str], float] = {}
         self._confirmed_session_closes: set[tuple[str, str, str]] = set()
         self._pending_session_retire: set[tuple[str, str, str]] = set()
+        # Per Workspace: sessions prepared to start whose engine the pod may not list yet.
+        self._starting: dict[str, set[str]] = {}
         control.manager.bind_callbacks(restore=self.restore_workspace, commit=self.commit_workspace)
 
     @staticmethod
@@ -432,25 +435,59 @@ class Lifecycle:
     async def _make_room(self, ticket: Any, endpoint: Any) -> None:
         """An idle session's engine holds as much memory as a running one: before a session that
         is not live starts its engine, close the longest-idle sessions until the Workspace holds
-        fewer than `maxConcurrentSessions` live ones. Live sessions are the ones the last tick
-        saw; admission caps running sessions, so while the Workspace is full one of them is idle."""
+        fewer than `maxConcurrentSessions` live ones. Admission caps running sessions, so while
+        the Workspace is full one of them is idle."""
         workspace_ref = endpoint.ref.workspace_ref
-        live = {ref: last for (ws, ref), last in self._last_session.items() if ws == workspace_ref}
-        if not live or ticket.session_ref in live:
-            return
-        excess = len(live) - self.control.config.workspace.max_concurrent_sessions + 1
-        idle = sorted(
-            (last, ref) for ref, last in live.items()
-            if not self.control.admission.has_work(workspace_ref, ref)
-        )
-        persistence = self.control.config.workspace.persistence.type
-        for _, session_ref in idle[:max(excess, 0)]:
+        status, sessions = await self.control._mini_json(endpoint, "GET", "/sessions")
+        if status != 200 or not isinstance(sessions, list):
+            raise RuntimeError("mini-harness returned invalid session inventory")
+        runs: list[Any] | None = None
+        live: dict[str, float | None] = {}  # live session -> idle seconds, None when it cannot close
+        for item in sessions:
+            session_ref = item.get("sessionRef") if isinstance(item, dict) else None
+            if not isinstance(session_ref, str):
+                raise RuntimeError("mini-harness returned invalid session inventory")
+            info_status, info = await self.control._mini_json(endpoint, "GET", f"/sessions/{session_ref}/info")
+            if info_status != 200 or not isinstance(info, dict) or not info.get("active"):
+                continue
+            if session_ref == ticket.session_ref:
+                return
+            if runs is None:
+                runs = await self.control.delivery.list_runs(endpoint)
             failed_key = (workspace_ref, session_ref, endpoint.instance_id)
-            # Live while idle means its idle timeout is above 0: an s3 session keeps its HOME.
-            if await self._attempt_session_save(endpoint, session_ref, failed_key, keep_home=persistence == "s3"):
-                if persistence == "s3":
-                    self._confirmed_session_closes.add(failed_key)
-                self._last_session.pop((workspace_ref, session_ref), None)
+            busy = (
+                self.control.admission.has_work(workspace_ref, session_ref)
+                or any(r.session_ref == session_ref and r.state not in _TERMINAL_RUN_STATES for r in runs)
+                or (failed_key in self._failed_session_saves  # a failed save waits for its retry, as in tick
+                    and time.monotonic() < self._failed_session_retry_at.get(failed_key, float("inf")))
+            )
+            live[session_ref] = None if busy else float(info.get("idleSeconds") or 0)
+        # A session prepared earlier may not have its engine up yet: it still takes a place.
+        starting = {
+            ref for ref in self._starting.get(workspace_ref, set())
+            if ref != ticket.session_ref and self.control.admission.has_work(workspace_ref, ref)
+        }
+        self._starting[workspace_ref] = starting | {ticket.session_ref}
+        excess = len(live.keys() | starting) - self.control.config.workspace.max_concurrent_sessions + 1
+        idle = sorted(((seconds, ref) for ref, seconds in live.items() if seconds is not None), reverse=True)
+        channel_types = {c.name: c.type for c in self.control.config.channels}
+        session_channel = {r.session_ref: channel_types.get(r.channel) for r in runs or []}
+        for _, session_ref in idle[:max(excess, 0)]:
+            await self._close_live_session(endpoint, session_ref, session_channel.get(session_ref))
+
+    async def _close_live_session(self, endpoint: Any, session_ref: str, channel_type: str | None) -> bool:
+        """Save and stop a live session, as its idle timeout does."""
+        persistence = self.control.config.workspace.persistence.type
+        # An s3 session that may get another message keeps its HOME after its close
+        # archive, so a return to this sandbox resumes it without a download.
+        keep_home = session_idle_timeout(self.control.config.workspace, channel_type) > 0 and persistence == "s3"
+        key = (endpoint.ref.workspace_ref, session_ref, endpoint.instance_id)
+        if not await self._attempt_session_save(endpoint, session_ref, key, keep_home):
+            return False
+        if persistence == "s3":
+            self._confirmed_session_closes.add(key)
+        self._last_session.pop((endpoint.ref.workspace_ref, session_ref), None)
+        return True
 
     async def _resume_session(self, ticket: Any, endpoint: Any) -> None:
         """type volume: the HOME is on the Workspace PVC; the pod resumes the session from it."""
@@ -671,7 +708,7 @@ class Lifecycle:
                     continue
                 native_live = bool(info.get("active"))
                 has_work = self.control.admission.has_work(workspace_ref, session_ref)
-                has_run = any(r.session_ref == session_ref and r.state not in {"completed", "failed", "cancelled", "skipped"} for r in runs)
+                has_run = any(r.session_ref == session_ref and r.state not in _TERMINAL_RUN_STATES for r in runs)
                 key = (workspace_ref, session_ref)
                 failed_key = (workspace_ref, session_ref, endpoint.instance_id)
                 if has_work or has_run:
@@ -701,12 +738,9 @@ class Lifecycle:
                     )
                     idle = (now - last).total_seconds()
                     if idle >= session_timeout:
-                        if not await self._attempt_session_save(endpoint, session_ref, failed_key, keep_home):
+                        if not await self._close_live_session(endpoint, session_ref, session_channel.get(session_ref)):
                             active_refs.add(session_ref)
                             continue
-                        if self.control.config.workspace.persistence.type == "s3":
-                            self._confirmed_session_closes.add(session_close_key)
-                        self._last_session.pop(key, None)
                 else:
                     self._last_session.pop(key, None)
                     initialized = bool(info.get("initialized"))

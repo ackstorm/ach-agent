@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- The live-session bound of 0.7.2 reads the pod's sessions instead of the lifecycle's last idle
+  check, so it no longer misses sessions started since that check, or counts sessions of a lost
+  pod. It also counts sessions whose engine is still starting, skips sessions with a run still
+  active on the pod or a failed save waiting for its retry, and closes through the same path as
+  the idle timeout.
+
 ## [0.7.2] - 2026-11-11
 
 ### Added
@@ -27,7 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An A2A reply block with a raw line break inside a string value (a model wrote `thoughts` across
   lines) was rejected as invalid JSON, so a completed turn reached the caller as `failed` /
   `invalid terminal output` and the answer was lost. The block is now parsed leniently.
-
 - `run step` times a model call from when the request goes out (input delivered, previous step or
   tool ended), not from the engine's step start event, which both engines emit only with the first
   streamed chunk. `ttft_ms` was 0 and `duration_ms` left out the time to first token.

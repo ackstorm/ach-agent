@@ -223,15 +223,20 @@ async def test_followup_note_reuses_native_session_with_refreshed_checkout(e2e_s
 
 async def test_other_mr_and_other_project_route_to_correct_owners(e2e_stack_factory):
     stack = await e2e_stack_factory(scenario="review")
-    assert (await stack.post_event()).status_code == 202
-    first = stack.started[0]
-    assert (await stack.post_event(iid=5)).status_code == 202
-    second = stack.started[1]
-    assert (await stack.post_event(project_id=2, project_path="team/other", iid=4)).status_code == 202
-    third = stack.started[2]
-    for run in (first, second, third):
+    # maxConcurrentSessions is 1: each MR's session is read once its run settles, because the
+    # next MR's session closes it when it starts in the same Workspace.
+    sessions = []
+    for event in ({}, {"iid": 5}, {"project_id": 2, "project_path": "team/other", "iid": 4}):
+        assert (await stack.post_event(**event)).status_code == 202
+        run = stack.started[-1]
         assert (await _settled(stack, run)).state == "completed"
-    endpoints = [_workspace_and_session(stack, item)[0] for item in (first, second, third)]
+        endpoint, state, native = _workspace_and_session(stack, run)
+        _assert_delivered_once(native, run)
+        sessions.append((endpoint, state))
+    first, second, third = stack.started[:3]
+    first_mini = stack.minis[sessions[0][0].instance_id].state.service
+    assert first_mini._sessions.get(first.session_ref) is None, "the second MR's session closed the idle first one"
+    endpoints = [endpoint for endpoint, _ in sessions]
     assert endpoints[0].ref.workspace_ref == endpoints[1].ref.workspace_ref
     assert endpoints[0].instance_id == endpoints[1].instance_id
     assert endpoints[0].name == endpoints[1].name
@@ -239,12 +244,10 @@ async def test_other_mr_and_other_project_route_to_correct_owners(e2e_stack_fact
     assert endpoints[2].instance_id != endpoints[0].instance_id
     assert endpoints[2].name != endpoints[0].name
     assert len(stack.host.units) == stack.host.started_count == 2
-    identities = [_workspace_and_session(stack, item)[1].native_session_id for item in (first, second, third)]
+    identities = [state.native_session_id for _, state in sessions]
     assert all(identities) and len(set(identities)) == 3
     assert len(_business_input_occurrences((await stack.captured())["records"])) == 3
-    for run in (first, second, third):
-        _assert_delivered_once(_workspace_and_session(stack, run)[2], run)
-    homes = [_workspace_and_session(stack, item)[1].home for item in (first, second, third)]
+    homes = [state.home for _, state in sessions]
     assert len(set(homes)) == 3
     calls = (await stack.captured())["mcpCalls"]
     assert len(calls) == 3

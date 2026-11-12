@@ -17,7 +17,7 @@ RUN python -m pip install --no-cache-dir --target=/work/deps ".[control]" \
 FROM node:22.23.3-alpine3.24 AS opencode-builder
 WORKDIR /opt/opencode
 RUN npm install --no-save @opencode/cli@2.2.5 \
-    && ./node_modules/.bin/opencode2 --version
+    && ./node_modules/@opencode/cli/bin/opencode.exe --version
 
 FROM node:22.23.3-alpine3.24 AS pig-builder
 WORKDIR /opt/pig

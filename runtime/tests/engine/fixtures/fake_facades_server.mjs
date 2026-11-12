@@ -1,6 +1,6 @@
 // Thin control wrapper around the Task 1 spike's proven fake model+MCP fixture
 // (tests/fixtures/fake-facades.mjs) — reused as-is, not reimplemented. Spawned as a
-// short-lived process by Python tests so the REAL opencode2 binary can point at a
+// short-lived process by Python tests so the REAL opencode binary can point at a
 // scripted, loopback model/MCP backend instead of an unreachable HTTPS facade.
 //
 // argv[2] selects the scenario; prints one JSON line `{modelUrl, mcpUrl}` to stdout once

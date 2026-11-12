@@ -54,7 +54,7 @@ async def test_tcp_cold_configure_start_status(public_config_fixture: object, tm
         port = sock.getsockname()[1]
     bootstrap = ROOT / "tests/config/fixtures/bootstrap.json"
     fake = ROOT / "tests/engine/fixtures/ready_native_server.py"
-    wrapper = tmp_path / "opencode2"
+    wrapper = tmp_path / "opencode"
     command = shlex.join([sys.executable, str(fake), public.model.type, public.model.name,
                           str(public.limits.max_steps)])
     wrapper.write_text(f"#!/bin/sh\nexec {command}\n", encoding="utf-8")

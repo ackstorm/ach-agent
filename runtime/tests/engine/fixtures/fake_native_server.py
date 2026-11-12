@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""A real loopback process standing in for `opencode2 serve --stdio`'s HTTP/SSE wire,
+"""A real loopback process standing in for `opencode serve --stdio`'s HTTP/SSE wire,
 scripted over stdin and introspected over `/_control/state` — not the real binary, because
 these tests need to deterministically withhold responses, inject out-of-order/stale
 `durable.seq` events, and return malformed bodies, none of which the real binary can be
@@ -16,7 +16,7 @@ Protocol:
     unless `flood` writes more (never closed by us).
   - stdin: newline-delimited JSON commands (see `_handle_command`); EOF is the documented
     clean-stop signal — the process exits 0.
-  - HTTP: the opencode2 subset `_NativeSession`/`OpenCodeEngine` actually calls, plus
+  - HTTP: the opencode subset `_NativeSession`/`OpenCodeEngine` actually calls, plus
     `/_control/state` (GET) for test-side synchronization.
 """
 

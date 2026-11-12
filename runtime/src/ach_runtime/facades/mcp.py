@@ -115,13 +115,19 @@ def _listed_tools(
     Anything that does not parse as a JSON-RPC result with a `tools` list is left as is:
     the filter never fails the request."""
 
+    def excluded(tool: Any) -> bool:
+        if not isinstance(tool, dict):
+            return False
+        name = tool.get("name")
+        return name in exclude_tools or (isinstance(name, str) and prefix + name in exclude_tools)
+
     def drop(message: bytes) -> bytes:
         try:
             parsed = json.loads(message)
             tools = parsed["result"]["tools"]
             if not isinstance(tools, list):
                 return message
-            kept = [t for t in tools if not (isinstance(t, dict) and t.get("name") in exclude_tools)]
+            kept = [t for t in tools if not excluded(t)]
             for tool in kept:
                 name = tool.get("name") if isinstance(tool, dict) else None
                 if isinstance(name, str) and name.startswith(prefix) and len(name) > len(prefix):

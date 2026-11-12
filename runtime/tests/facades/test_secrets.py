@@ -568,6 +568,23 @@ async def test_mcp_facade_hides_excluded_tools_from_tools_list(sse: bool) -> Non
     assert [t["name"] for t in json.loads(text)["result"]["tools"]] == ["safe_tool"]
 
 
+async def test_mcp_facade_hides_a_server_qualified_exclusion_on_a_bare_name_listing() -> None:
+    reply = json.dumps(
+        {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "safe_tool"}, {"name": "dangerous_tool"}]}}
+    ).encode()
+    facade = _mcp_facade(
+        handler=lambda request: _streamed(200, reply, headers={"content-type": "application/json"}),
+        servers={"m1": "https://mcp.example.com/mcp"},
+        exclude_tools=frozenset({"m1.dangerous_tool"}),
+    )
+    resp = await _call(
+        facade.app(), "POST", "/mcp/m1", token=facade_token(KEY, "owned-ws"),
+        json={"jsonrpc": "2.0", "method": "tools/list", "id": 1},
+    )
+
+    assert [t["name"] for t in resp.json()["result"]["tools"]] == ["safe_tool"]
+
+
 async def test_mcp_facade_tools_list_filter_keeps_sse_crlf_and_meta() -> None:
     meta = {"litellm.ai/server_outcomes": {"m1": "ok"}}
     reply = {"jsonrpc": "2.0", "id": 1, "result": {"_meta": meta, "tools": [{"name": "m1.safe_tool"}, {"name": "m1.dangerous_tool"}]}}

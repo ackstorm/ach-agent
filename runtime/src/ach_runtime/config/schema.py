@@ -18,6 +18,7 @@ import re
 import uuid as _uuid
 from functools import cached_property
 from pathlib import PurePosixPath
+from urllib.parse import quote
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -255,17 +256,61 @@ class StandaloneMcpServer(BaseModel):
         return self
 
 
+class StandaloneSkill(BaseModel):
+    """One archive of skills. `type` only builds the archive URL; `headers` are sent as written."""
+
+    model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
+
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,62}$")
+    type: Literal["url", "gitlab", "github", "bitbucket"] = "url"
+    url: str | None = Field(default=None, pattern=_ENDPOINT_PATTERN)
+    repo: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$")
+    ref: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._/-]+$")
+    base_url: str | None = Field(default=None, alias="baseUrl", pattern=_ENDPOINT_PATTERN)
+    headers: dict[str, HeaderValue] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _shape(self) -> StandaloneSkill:
+        where = f"capability.standalone.skills[{self.name}]"
+        _check_headers(self.headers, f"{where}.headers")
+        if self.type == "url":
+            if self.url is None or self.repo or self.ref or self.base_url:
+                raise ValueError(f"{where}: type url takes url only")
+        elif self.repo is None or self.url is not None:
+            raise ValueError(f"{where}: type {self.type} takes repo, not url")
+        elif self.type == "bitbucket" and self.base_url:
+            raise ValueError(f"{where}: type bitbucket is Bitbucket Cloud; use type url for a server")
+        return self
+
+    def archive_url(self) -> str:
+        if self.type == "url":
+            return self.url or ""
+        repo = self.repo or ""
+        if self.type == "gitlab":
+            base = (self.base_url or "https://gitlab.com").rstrip("/")
+            query = f"?sha={quote(self.ref, safe='')}" if self.ref else ""
+            return f"{base}/api/v4/projects/{quote(repo, safe='')}/repository/archive.tar.gz{query}"
+        if self.type == "github":
+            base = (self.base_url or "https://api.github.com").rstrip("/")
+            return f"{base}/repos/{repo}/tarball" + (f"/{self.ref}" if self.ref else "")
+        return f"https://bitbucket.org/{repo}/get/{self.ref or 'HEAD'}.tar.gz"
+
+
 class StandaloneServer(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
 
     model: StandaloneModel
     mcp_servers: list[StandaloneMcpServer] = Field(default_factory=list, alias="mcpServers")
+    skills: list[StandaloneSkill] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _names_are_unique(self) -> StandaloneServer:
         names = [server.name for server in self.mcp_servers]
         if len(names) != len(set(names)):
             raise ValueError("capability.standalone.mcpServers: duplicate name")
+        skill_names = [skill.name for skill in self.skills]
+        if len(skill_names) != len(set(skill_names)):
+            raise ValueError("capability.standalone.skills: duplicate name")
         return self
 
 
@@ -310,8 +355,6 @@ class CapabilityBlock(BaseModel):
                 f"capability: server {self.server!r} requires capability.{self.server} "
                 "and no other server block"
             )
-        if self.server == "standalone" and self.filter.exclude.skills:
-            raise ValueError("capability.filter.exclude.skills requires server 'ach'")
         return self
 
 

@@ -1636,12 +1636,112 @@
           },
           "title": "Mcpservers",
           "type": "array"
+        },
+        "skills": {
+          "items": {
+            "$ref": "#/$defs/StandaloneSkill"
+          },
+          "title": "Skills",
+          "type": "array"
         }
       },
       "required": [
         "model"
       ],
       "title": "StandaloneServer",
+      "type": "object"
+    },
+    "StandaloneSkill": {
+      "additionalProperties": false,
+      "description": "One archive of skills. `type` only builds the archive URL; `headers` are sent as written.",
+      "properties": {
+        "name": {
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "default": "url",
+          "enum": [
+            "url",
+            "gitlab",
+            "github",
+            "bitbucket"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "pattern": "^https?://[^/\\s]+",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        },
+        "repo": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repo"
+        },
+        "ref": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9._/-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ref"
+        },
+        "baseUrl": {
+          "anyOf": [
+            {
+              "pattern": "^https?://[^/\\s]+",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Baseurl"
+        },
+        "headers": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SecretAlias"
+              },
+              {
+                "$ref": "#/$defs/HeaderLiteral"
+              }
+            ]
+          },
+          "title": "Headers",
+          "type": "object"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "StandaloneSkill",
       "type": "object"
     },
     "SystemAch": {

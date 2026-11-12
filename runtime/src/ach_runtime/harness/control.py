@@ -11,6 +11,7 @@ import tempfile
 import time
 from pathlib import Path
 import re
+import shutil
 import ssl
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
@@ -66,6 +67,7 @@ from ach_runtime.harness.hosted import HostedSource
 from ach_runtime.harness.keys import Exchange, KeySource
 from ach_runtime.harness.lifecycle import Lifecycle
 from ach_runtime.harness.handoff import run_handoff
+from ach_runtime.harness.skills import SkillsError, fetch_skills
 from ach_runtime.harness.scripts import run_webhook_script
 from ach_runtime.harness.transfer import put_archive
 from ach_runtime.storage.archive import _run_owned, pack
@@ -220,6 +222,8 @@ class Control:
     progress_facade: ProgressFacade | None
     mini_client: httpx.AsyncClient
     facade_transport: httpx.AsyncBaseTransport | None = None
+    # Standalone skills, downloaded at start and packed into every session's context.
+    local_context: Path | None = None
     facade_clients: list[httpx.AsyncClient] = field(default_factory=list)
     _prepared: dict[str, tuple[WorkspaceEndpoint, Any]] = field(default_factory=dict)
     _started_run: dict[str, str] = field(default_factory=dict)
@@ -535,7 +539,9 @@ class Control:
         if channel is None:
             raise WorkspaceAssemblyUnavailable("admitted channel is no longer configured")
         event = routed.event
-        if any(item.download_url for item in (*self.catalog.skills, *self.catalog.prompts, *self.catalog.artifacts)):
+        if self.local_context is not None or any(
+            item.download_url for item in (*self.catalog.skills, *self.catalog.prompts, *self.catalog.artifacts)
+        ):
             await self._transfer_context(ticket, endpoint)
         if channel.handoff is not None:
             await self._run_handoff(channel.handoff, event, ticket, endpoint)
@@ -591,14 +597,15 @@ class Control:
         with tempfile.TemporaryDirectory(prefix="ach-context-") as temporary:
             root = Path(temporary) / "context"
             root.mkdir()
-            async with httpx.AsyncClient(timeout=30, auth=ach_key.auth if ach_key else None,
-                                         headers=with_identity_headers({}, identity)) as client:
-                await stage_context(
-                    self.catalog, root, excluded_skills=self.config.capability.filter.exclude.skills,
-                    client=client,
-                )
+            if self.local_context is None:
+                async with httpx.AsyncClient(timeout=30, auth=ach_key.auth if ach_key else None,
+                                             headers=with_identity_headers({}, identity)) as client:
+                    await stage_context(
+                        self.catalog, root, excluded_skills=self.config.capability.filter.exclude.skills,
+                        client=client,
+                    )
             archive = Path(temporary) / "context.tar.gz"
-            _, cancelled, error = await _run_owned(pack, root, archive, max_bytes=512 * 1024**2)
+            _, cancelled, error = await _run_owned(pack, self.local_context or root, archive, max_bytes=512 * 1024**2)
             if cancelled:
                 raise asyncio.CancelledError()
             if error:
@@ -891,6 +898,8 @@ class Control:
                 await client.aclose()
             except BaseException as exc:
                 errors.append(exc)
+        if self.local_context is not None:
+            shutil.rmtree(self.local_context, ignore_errors=True)
         if errors:
             raise errors[0]
 
@@ -1012,6 +1021,7 @@ async def assemble(
         raise RuntimeError("ACH_SANDBOX_KEY is required and must not be empty")
     key = raw_key.encode("utf-8")
     verify_key = engine_verify_key(key)
+    local_context: Path | None = None
     own_servers: frozenset[str] = frozenset()  # MCP servers that carry their own headers, never the ACH key
     if config.capability.ach is not None:
         ach = config.capability.ach
@@ -1051,6 +1061,23 @@ async def assemble(
         resolved_mcp = {item.name: resolve_headers(item.headers, env) for item in server.mcp_servers}
         mcp_headers = {name: headers for name, (headers, _) in resolved_mcp.items()}
         upstream_secrets = (*model_secrets, *(value for _, secrets in resolved_mcp.values() for value in secrets))
+        if server.skills:
+            skills_dir = tempfile.mkdtemp(prefix="ach-skills-context-")
+            try:
+                async with httpx.AsyncClient() as skills_client:
+                    installed = await fetch_skills(
+                        server.skills, env, Path(skills_dir),
+                        excluded=config.capability.filter.exclude.skills, client=skills_client)
+            except SkillsError as exc:
+                shutil.rmtree(skills_dir, ignore_errors=True)
+                raise WorkspaceAssemblyUnavailable(str(exc)) from exc
+            except BaseException:
+                shutil.rmtree(skills_dir, ignore_errors=True)
+                raise
+            upstream_secrets += tuple(
+                value for item in server.skills for value in resolve_headers(item.headers, env)[1])
+            log.info("standalone skills installed: %s", ", ".join(installed))
+            local_context = Path(skills_dir)
     identity = ProcessIdentity(agent=config.agent.name, environment=config.identity_environment)
     public = public_config(config, config.engine.env)
     storage = storage_from_env(config, env)
@@ -1110,6 +1137,7 @@ async def assemble(
     control._private_env = dict(env)
     control.ach_key, control._memory_auth = ach_key, memory_auth
     control.upstream_secrets = upstream_secrets
+    control.local_context = local_context
     control._model_headers, control._mcp_headers = model_headers, mcp_headers
     control.source, control.manager, control.delivery = source, manager, None
     control.admission, control.model_facade, control.mcp_facade = None, None, None

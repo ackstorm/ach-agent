@@ -743,3 +743,27 @@ def test_channel_delivery_is_for_webhook_cron_and_queue_only() -> None:
         ChannelConfig.model_validate({**base, "delivery": {"url": "ftp://x"}})
     with pytest.raises(ValueError, match="reserved"):
         ChannelConfig.model_validate({**base, "delivery": {"url": "https://x.example", "headers": {"Host": {"value": "y"}}}})
+
+
+def test_standalone_skill_types_build_their_archive_url() -> None:
+    from ach_runtime.config.schema import StandaloneSkill
+
+    def url(**fields) -> str:
+        return StandaloneSkill.model_validate({"name": "s", **fields}).archive_url()
+
+    assert url(url="https://a.example/s.tar.gz") == "https://a.example/s.tar.gz"
+    assert url(type="gitlab", repo="platform/toolkit") == \
+        "https://gitlab.com/api/v4/projects/platform%2Ftoolkit/repository/archive.tar.gz"
+    assert url(type="gitlab", repo="platform/toolkit", ref="v1.4.0", baseUrl="https://gl.example.com/") == \
+        "https://gl.example.com/api/v4/projects/platform%2Ftoolkit/repository/archive.tar.gz?sha=v1.4.0"
+    assert url(type="github", repo="acme/skills") == "https://api.github.com/repos/acme/skills/tarball"
+    assert url(type="github", repo="acme/skills", ref="main", baseUrl="https://ghe.example.com/api/v3") == \
+        "https://ghe.example.com/api/v3/repos/acme/skills/tarball/main"
+    assert url(type="bitbucket", repo="ws/skills", ref="v2") == "https://bitbucket.org/ws/skills/get/v2.tar.gz"
+    assert url(type="bitbucket", repo="ws/skills") == "https://bitbucket.org/ws/skills/get/HEAD.tar.gz"
+
+    for bad in ({"type": "gitlab"}, {"type": "url", "repo": "a/b"}, {"url": "https://a.example", "ref": "x"},
+                {"type": "gitlab", "repo": "a/b", "url": "https://a.example"},
+                {"type": "bitbucket", "repo": "a/b", "baseUrl": "https://bb.example"}):
+        with pytest.raises(ValueError):
+            StandaloneSkill.model_validate({"name": "s", **bad})

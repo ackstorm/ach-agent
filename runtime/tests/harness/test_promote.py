@@ -128,6 +128,11 @@ mcpServers:
   - name: extra
     url: https://mcp.example/mcp
     headers: {Authorization: {env: EXTRA_TOKEN}}
+skills:
+  - name: toolkit
+    type: github
+    repo: acme/skills
+    headers: {Authorization: {env: SKILLS_TOKEN}}
 """
     deploy = "secretName: agent-x\nspec: {profileRef: {name: default}}\n"
     config, deploy_file = _files(tmp_path, agent=agent, deploy=deploy)
@@ -142,6 +147,10 @@ mcpServers:
             "mcpServers": [{
                 "name": "extra", "url": "https://mcp.example/mcp",
                 "headers": {"Authorization": {"secretKeyRef": {"name": "agent-x", "key": "EXTRA_TOKEN"}}},
+            }],
+            "skills": [{
+                "name": "toolkit", "type": "github", "repo": "acme/skills",
+                "headers": {"Authorization": {"secretKeyRef": {"name": "agent-x", "key": "SKILLS_TOKEN"}}},
             }],
         },
         "profileRef": {"name": "default"},

@@ -774,3 +774,17 @@ async def test_cold_import_from_another_workspace_path_starts_fresh(
     assert state is not None and state.native_session_id is None
     assert not (state.home / "user-data").exists()
     assert session_ref not in engine._sessions
+
+
+async def test_hydration_with_only_skills_links_skills_and_leaves_the_rest_empty(tmp_path: Path) -> None:
+    import ach_runtime.execution.snapshots as snapshots
+
+    service = _service(tmp_path)
+    state = service._sessions.get_or_create("session-ref")
+    archive = _tar_bytes({"skills/triage/SKILL.md": b"# triage", "skills/triage/references/r.md": b"steps"})
+    await snapshots.import_hydration(service, "session-ref", _chunks(archive))
+
+    link = state.home / ".config" / "opencode" / "skills"
+    assert (link / "triage" / "references" / "r.md").read_text() == "steps"
+    assert list((state.home / ".ach-state" / "prompts").iterdir()) == []
+    assert list((state.home / ".ach-state" / "artifacts").iterdir()) == []

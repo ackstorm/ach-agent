@@ -2295,6 +2295,7 @@ async def test_control_close_joins_lifecycle_before_clients() -> None:
         a2a_facade=None,
         delivery=SimpleNamespace(close=closer("delivery")),
         result_delivery=None,
+        local_context=None,
         source=SimpleNamespace(close=lambda: closed.append("source")),
         manager=SimpleNamespace(cancel_adoption=lambda: closed.append("adoption")),
         mini_client=SimpleNamespace(aclose=closer("mini")),

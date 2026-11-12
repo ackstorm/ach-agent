@@ -61,7 +61,7 @@ spec:                                  # any Agent CR spec field
 ```
 
 `promote` copies `agent.yaml` as written, under `spec`, with `ach.environment`, `model` and `mcpServers`
-under `spec.ach` and `capabilityServer: ach` set. A manifest with no `ach:` gets `model` and `mcpServers`
+under `spec.ach` and `capabilityServer: ach` set. A manifest with no `ach:` gets `model`, `mcpServers` and `skills`
 under `spec.standalone` and `capabilityServer: standalone`, and needs no `spec.ach` in `deploy.yaml`. It
 drops `ach.profile`, turns each `{env: NAME}` header into a `secretKeyRef`, and inlines a `prompt.system`
 file as text. A field set in both files is an error. No environment variable is read, so no secret value
@@ -100,7 +100,7 @@ engine: {type: opencode, denyTools: [question]}   # optional
 ```
 
 Without `ach:` the agent is standalone: it calls the model endpoint directly and has only the
-`mcpServers` listed, with no hydration (no skills, prompts or artifacts from an environment):
+`mcpServers` and `skills` listed, with no hydration (no prompts or artifacts from an environment):
 
 ```yaml
 model:
@@ -115,8 +115,29 @@ mcpServers:
     url: https://api.githubcopilot.com/mcp/
     headers: {Authorization: {env: GITHUB_MCP_AUTH}}
 prompt: {system: {type: text, text: You review pull requests.}}
-filter: {exclude: {tools: [delete_repository]}}   # skills are not allowed without ach
+filter: {exclude: {tools: [delete_repository]}}
+skills:
+  - name: toolkit
+    type: gitlab
+    repo: platform/toolkit
+    ref: v1.4.0                              # optional: the default branch, read at start
+    baseUrl: https://gitlab.example.com      # optional: a self-hosted instance
+    headers: {PRIVATE-TOKEN: {env: GITLAB_SKILLS_TOKEN}}
 ```
+
+Each `skills` entry is one `.tar.gz` archive. Every directory in it with a `SKILL.md` is a skill and is
+copied whole (references, scripts, subdirectories) to `skills/<directory name>/`; a skill's own directory
+is not searched for nested skills. Skills load once, when the agent starts, so an entry without `ref`
+follows the default branch at the next start. A failed download, an archive with no `SKILL.md` or two
+skills with the same name stop the agent. `filter.exclude.skills` drops skills by name. `headers` go only
+to the archive host, not to a redirect target on another host.
+
+| `type` | Archive URL built | Usual header |
+|---|---|---|
+| `url` (default) | `url` as written | any |
+| `gitlab` | `<baseUrl or https://gitlab.com>/api/v4/projects/<repo>/repository/archive.tar.gz?sha=<ref>` | `PRIVATE-TOKEN` |
+| `github` | `<baseUrl or https://api.github.com>/repos/<repo>/tarball/<ref>` | `Authorization: Bearer ...` |
+| `bitbucket` | `https://bitbucket.org/<repo>/get/<ref or HEAD>.tar.gz` (Cloud; use `url` for a server) | `Authorization: Bearer ...` |
 
 A model served on your machine (Ollama, vLLM, LM Studio) is reachable from the container as
 `host.docker.internal`:
@@ -132,6 +153,7 @@ model: {name: qwen3-coder, api: openai, baseUrl: "http://host.docker.internal:11
 | `ach.environment` | with `ach` | | `capability.ach.environment` |
 | `model` | yes | | `capability.ach.model` (`name`, `api`, `params`, `thinking`, `limits`) or `capability.standalone.model` (also `baseUrl`, `headers`) |
 | `mcpServers` (`name`, `url`, `headers`) | no | none | `capability.ach.mcpServers` or `capability.standalone.mcpServers` |
+| `skills` (`name`, `type`, `url` or `repo`, `ref`, `baseUrl`, `headers`) | no, standalone only | none | `capability.standalone.skills` |
 | `prompt.system` (`type`: `text`, `file`, `ach`) | no | none | `prompt.system`; a file is read and sent as text |
 | `prompt.compose` | no | `append` | `prompt.compose` |
 | `filter.include` (`tools`) | no | nothing | `capability.filter.include` |

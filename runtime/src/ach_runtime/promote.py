@@ -100,6 +100,11 @@ def promote(config: Path, deploy: Path, *, name: str) -> str:
             if entry.get("headers"):
                 entry["headers"] = _headers(entry["headers"], secret_name, f"mcpServers.{entry.get('name')}")
         capability["mcpServers"] = servers
+    if server == "standalone" and (skills := written.get("skills")):
+        for entry in skills:
+            if entry.get("headers"):
+                entry["headers"] = _headers(entry["headers"], secret_name, f"skills.{entry.get('name')}")
+        capability["skills"] = skills
     spec: dict[str, Any] = {"capabilityServer": server, server: capability}
     spec.update({key: written[key] for key in _COPIED if key in written})
     if manifest.prompt is not None and manifest.prompt.system.type == "file":

@@ -78,11 +78,10 @@ def test_standalone_memory_server_must_be_a_standalone_mcp_server():
         _parse(wire)
 
 
-def test_standalone_rejects_skill_exclusions():
+def test_standalone_accepts_skill_exclusions():
     wire = _wire("standalone-runtime.json")
     wire["capability"]["filter"] = {"exclude": {"skills": ["x"], "tools": [], "mcpServers": []}}
-    with pytest.raises(ConfigError, match="skills"):
-        _parse(wire)
+    assert _parse(wire).capability.filter.exclude.skills == ["x"]
 
 
 def test_public_projection_never_carries_upstreams_or_headers():

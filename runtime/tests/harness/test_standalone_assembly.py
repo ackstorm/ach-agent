@@ -134,3 +134,70 @@ def test_header_is_exactly_an_env_alias_or_a_literal(header):
     wire["configVersion"] = compute_config_version(wire)
     with pytest.raises(ValueError):
         parse_config(wire)
+
+
+def _skills_config():
+    wire = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    wire["workspace"]["persistence"] = {"type": "none"}
+    wire["artifacts"]["enabled"] = False
+    wire["capability"]["standalone"]["skills"] = [
+        {"name": "toolkit", "url": "https://skills.example/t.tar.gz", "headers": {"X-Token": {"env": "SKILLS_TOKEN"}}}]
+    wire["configVersion"] = compute_config_version(wire)
+    return parse_config(wire)
+
+
+async def test_standalone_skills_are_fetched_once_and_packed_into_the_session_context(monkeypatch, tmp_path):
+    import io
+    import tarfile
+
+    from ach_runtime.harness import control as control_module
+    from ach_runtime.harness.workspaces import WorkspaceEndpoint, WorkspaceRef
+
+    async def fake_fetch(skills, env, root, *, excluded, client):
+        (root / "skills" / "triage").mkdir(parents=True)
+        (root / "skills" / "triage" / "SKILL.md").write_text("# triage")
+        return ["triage"]
+
+    sent: list[bytes] = []
+
+    async def fake_put(client, endpoint, headers, path, chunks, **kwargs):
+        sent.append(b"".join([block async for block in chunks]))
+        return {"status": "imported", "sessionRef": kwargs["params"]["session_ref"]}
+
+    monkeypatch.setattr(control_module, "fetch_skills", fake_fetch)
+    monkeypatch.setattr(control_module, "put_archive", fake_put)
+    control = await assemble(_skills_config(), environ={**ENV, "SKILLS_TOKEN": "skills-secret"})
+    directory = control.local_context
+    try:
+        assert directory is not None and (directory / "skills" / "triage" / "SKILL.md").exists()
+        assert "skills-secret" in control.upstream_secrets
+        ticket = type("T", (), {"session_ref": "s1"})()
+        endpoint = WorkspaceEndpoint(
+            WorkspaceRef(control.config.agent.namespace, control.config.agent.uid, "a" * 64),
+            "workspace", "pod-1", "http://mini")
+        await control._transfer_context(ticket, endpoint)
+        with tarfile.open(fileobj=io.BytesIO(sent[0])) as tar:
+            assert "skills/triage/SKILL.md" in {m.name.lstrip("./") for m in tar.getmembers()}
+    finally:
+        await control.close()
+    assert not directory.exists()
+
+
+async def test_standalone_skills_failure_stops_assembly(monkeypatch):
+    from ach_runtime.harness import control as control_module
+    from ach_runtime.harness.skills import SkillsError
+
+    async def failing(*args, **kwargs):
+        raise SkillsError("skills toolkit: download answered 404")
+
+    monkeypatch.setattr(control_module, "fetch_skills", failing)
+    with pytest.raises(WorkspaceAssemblyUnavailable, match="404"):
+        await assemble(_skills_config(), environ={**ENV, "SKILLS_TOKEN": "x"})
+
+
+async def test_standalone_without_skills_has_no_local_context():
+    control = await assemble(_config(), environ=ENV)
+    try:
+        assert control.local_context is None
+    finally:
+        await control.close()

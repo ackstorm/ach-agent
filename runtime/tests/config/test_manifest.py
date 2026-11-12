@@ -197,9 +197,29 @@ def test_ach_model_limits_reach_the_config(tmp_path) -> None:
 def test_the_runtime_schema_validates_the_passed_through_fields(tmp_path) -> None:
     with pytest.raises(ConfigError, match="baseUrl"):  # an ach model is served by ACH
         _wire(tmp_path, MINIMAL.replace("api: gemini}", "api: gemini, baseUrl: 'https://x.example/v1'}"))
-    with pytest.raises(ConfigError, match="skills"):
-        manifest_to_wire(load_manifest(_write(tmp_path, STANDALONE + "filter: {exclude: {skills: [s]}}\n")),
+    with pytest.raises(ConfigError, match="repo"):
+        manifest_to_wire(load_manifest(_write(tmp_path, STANDALONE + "skills: [{name: s, type: github}]\n")),
                          base_dir=tmp_path, name="a")
+
+
+SKILLS = """\
+skills:
+  - {name: toolkit, type: github, repo: acme/skills, headers: {Authorization: {env: SKILLS_TOKEN}}}
+"""
+
+
+def test_a_standalone_manifest_carries_its_skills_to_the_wire(tmp_path) -> None:
+    manifest = load_manifest(_write(tmp_path, STANDALONE + SKILLS))
+    wire = manifest_to_wire(manifest, base_dir=tmp_path, name="a")
+    assert wire["capability"]["standalone"]["skills"][0]["repo"] == "acme/skills"
+    assert parse_config(wire).capability.standalone.skills[0].archive_url() == \
+        "https://api.github.com/repos/acme/skills/tarball"
+    assert "SKILLS_TOKEN" in secret_env_names(manifest)
+
+
+def test_skills_need_a_standalone_manifest(tmp_path) -> None:
+    with pytest.raises(ManifestError, match="standalone"):
+        manifest_to_wire(load_manifest(_write(tmp_path, MINIMAL + SKILLS)), base_dir=tmp_path, name="a")
 
 
 def test_model_type_is_rejected_in_favour_of_api(tmp_path) -> None:

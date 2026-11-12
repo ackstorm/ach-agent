@@ -138,6 +138,8 @@ class Manifest(BaseModel):
     model: dict[str, Any]
     # Passed through to capability.<server>.mcpServers; with `ach:`, added to the environment's.
     mcp_servers: list[dict[str, Any]] = Field(default_factory=list, alias="mcpServers")
+    # Archives of skills, passed through to capability.standalone.skills; with `ach:` they come from the environment.
+    skills: list[dict[str, Any]] = Field(default_factory=list)
     prompt: PromptSpec | None = None
     filter: FilterSpec = Field(default_factory=FilterSpec)
     # Merged over the `limits` defaults; the RuntimeConfig schema validates the values.
@@ -173,7 +175,7 @@ class Manifest(BaseModel):
 
 def secret_env_names(manifest: Manifest) -> list[str]:
     """The environment variables the manifest's `{env: NAME}` headers read."""
-    groups = [manifest.model.get("headers") or {}, *(server.get("headers") or {} for server in manifest.mcp_servers)]
+    groups = [manifest.model.get("headers") or {}, *(server.get("headers") or {} for server in (*manifest.mcp_servers, *manifest.skills))]
     return sorted({value["env"] for group in groups for value in group.values()
                    if isinstance(value, dict) and isinstance(value.get("env"), str)})
 
@@ -212,7 +214,10 @@ def _wire_model(model: dict[str, Any]) -> dict[str, Any]:
 def _capability(manifest: Manifest, base_url: str | None) -> dict[str, Any]:
     model = _wire_model(manifest.model)
     if manifest.ach is None:
-        return {"server": "standalone", "standalone": {"model": model, "mcpServers": manifest.mcp_servers}}
+        return {"server": "standalone", "standalone": {
+            "model": model, "mcpServers": manifest.mcp_servers, "skills": manifest.skills}}
+    if manifest.skills:
+        raise ManifestError("skills needs a standalone manifest; with ach: they come from the environment")
     return {
         "server": "ach",
         "ach": {

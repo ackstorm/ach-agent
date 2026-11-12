@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -76,6 +77,13 @@ func httpRouteServed(cfg *rest.Config) (bool, error) {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "validate" {
+		if err := runValidate(os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	var metricsAddr, probeAddr string
 	var leaderElect bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "address the metrics endpoint binds to")

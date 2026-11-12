@@ -485,7 +485,7 @@ func TestRenderFilterV1_AbsentFilterStillEmitsEmptyExclude(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := `{"include":{"tools":[]},"exclude":{"tools":[],"mcpServers":[],"skills":[]}}`; string(b) != want {
+	if want := `{"exclude":{"tools":[],"mcpServers":[],"skills":[]}}`; string(b) != want {
 		t.Fatalf("filter = %s, want %s", b, want)
 	}
 }

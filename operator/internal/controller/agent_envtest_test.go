@@ -397,6 +397,9 @@ func TestAgent_CEL_Rejections(t *testing.T) {
 		"url skill with a ref": func(a *achv1alpha1.Agent) {
 			a.Spec.Standalone.Skills = []achv1alpha1.StandaloneSkillSpec{{Name: "kit", Type: "url", URL: "https://example.com/k.tar.gz", Ref: "main"}}
 		},
+		"bitbucket skill with a baseUrl": func(a *achv1alpha1.Agent) {
+			a.Spec.Standalone.Skills = []achv1alpha1.StandaloneSkillSpec{{Name: "kit", Type: "bitbucket", Repo: "o/r", BaseURL: "https://bitbucket.example.com"}}
+		},
 		"include entry without a dot": func(a *achv1alpha1.Agent) {
 			a.Spec.Filter = &achv1alpha1.FilterSpec{Include: &achv1alpha1.IncludeSpec{Tools: []string{"serper"}}}
 		},

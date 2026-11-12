@@ -48,10 +48,12 @@ const AchKeyEnv = "ACH_SECRET_IDENTITY"
 // the three list fields: the fixture always emits tools/mcpServers/skills explicitly
 // (including an empty tools: []), matching how the Python producer serializes its model
 // defaults. Neither is schema-required (AchCapabilityFilterExclude has no required list),
-// so this is a byte-parity choice, not a contract requirement.
+// so this is a byte-parity choice, not a contract requirement. include is rendered only when
+// the CR sets filter.include, so an Agent without it keeps its configVersion; the runtime
+// defaults an absent include to an empty allow list.
 type WSFilterBlock struct {
-	Include WSIncludeBlock `json:"include"`
-	Exclude WSExcludeBlock `json:"exclude"`
+	Include *WSIncludeBlock `json:"include,omitempty"`
+	Exclude WSExcludeBlock  `json:"exclude"`
 }
 
 type WSIncludeBlock struct {
@@ -76,20 +78,18 @@ func emptyIfNil(s []string) []string {
 	return s
 }
 
-// renderFilterV1 always renders the include and exclude gates with non-null arrays.
+// renderFilterV1 always renders the exclude gate with non-null arrays, and the include gate
+// when the CR sets it.
 func renderFilterV1(f *v1.FilterSpec) WSFilterBlock {
-	var i v1.IncludeSpec
 	var e v1.ExcludeSpec
-	if f != nil && f.Include != nil {
-		i = *f.Include
-	}
 	if f != nil && f.Exclude != nil {
 		e = *f.Exclude
 	}
-	return WSFilterBlock{
-		Include: WSIncludeBlock{Tools: emptyIfNil(i.Tools)},
-		Exclude: WSExcludeBlock{Tools: emptyIfNil(e.Tools), McpServers: emptyIfNil(e.McpServers), Skills: emptyIfNil(e.Skills)},
+	out := WSFilterBlock{Exclude: WSExcludeBlock{Tools: emptyIfNil(e.Tools), McpServers: emptyIfNil(e.McpServers), Skills: emptyIfNil(e.Skills)}}
+	if f != nil && f.Include != nil {
+		out.Include = &WSIncludeBlock{Tools: emptyIfNil(f.Include.Tools)}
 	}
+	return out
 }
 
 // WSCompactionKeepBlock is engine.compaction.keep (schema CompactionKeepBlock — tokens

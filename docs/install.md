@@ -318,6 +318,9 @@ spec:
           PRIVATE-TOKEN: {secretKeyRef: {name: gitlab-skills, key: token}}
 ```
 
+The `delivery` and `skills` header values, Secrets included, are sent to whatever URL the entry names, so
+use an `https://` URL for any host outside the mesh.
+
 The AgentProfile holds the images, the sandbox resources and the defaults every Agent of the namespace
 inherits:
 

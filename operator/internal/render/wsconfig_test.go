@@ -371,16 +371,23 @@ func TestRender_FilterIncludeTools(t *testing.T) {
 		filter *v1.FilterSpec
 		want   string
 	}{
-		"listed": {&v1.FilterSpec{Include: &v1.IncludeSpec{Tools: []string{"gh.read"}}}, `["gh.read"]`},
-		"absent": {nil, `[]`},
+		"listed":       {&v1.FilterSpec{Include: &v1.IncludeSpec{Tools: []string{"gh.read"}}}, `{"tools":["gh.read"]}`},
+		"empty listed": {&v1.FilterSpec{Include: &v1.IncludeSpec{}}, `{"tools":[]}`},
+		"absent":       {nil, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p, a := minimalFixture()
 			a.Spec.Filter = tc.filter
 			doc, _ := renderDoc(t, p, a)
-			include := doc["capability"].(map[string]any)["filter"].(map[string]any)["include"]
-			if got := jsonOf(t, include); got != `{"tools":`+tc.want+`}` {
-				t.Fatalf("capability.filter.include = %s, want tools %s", got, tc.want)
+			include, present := doc["capability"].(map[string]any)["filter"].(map[string]any)["include"]
+			if tc.want == "" {
+				if present {
+					t.Fatalf("capability.filter.include = %s, want no include key", jsonOf(t, include))
+				}
+				return
+			}
+			if got := jsonOf(t, include); got != tc.want {
+				t.Fatalf("capability.filter.include = %s, want %s", got, tc.want)
 			}
 		})
 	}

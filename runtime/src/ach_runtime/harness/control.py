@@ -1131,12 +1131,16 @@ async def assemble(
     mcp_client = httpx.AsyncClient(transport=facade_transport, timeout=facade_timeout)
     model_client = httpx.AsyncClient(transport=facade_transport, timeout=facade_timeout)
     control.facade_clients.extend((mcp_client, model_client))
-    mcp = McpFacade(
-        servers=mcp_servers, server_headers=mcp_headers, key=key, owned_workspace=control._owned_live,
-        exclude=excluded | frozenset(memory_excluded),
-        exclude_tools=frozenset(config.capability.filter.exclude.tools), identity=identity,
-        client=mcp_client, auth=ach_key.auth if ach_key else None, own_servers=own_servers,
-    )
+    try:
+        mcp = McpFacade(
+            servers=mcp_servers, server_headers=mcp_headers, key=key, owned_workspace=control._owned_live,
+            exclude=excluded | frozenset(memory_excluded),
+            exclude_tools=frozenset(config.capability.filter.exclude.tools),
+            include_tools=frozenset(config.capability.filter.include.tools), identity=identity,
+            client=mcp_client, auth=ach_key.auth if ach_key else None, own_servers=own_servers,
+        )
+    except ValueError as exc:
+        raise WorkspaceAssemblyUnavailable(str(exc)) from exc
     model = ModelFacade(
         endpoint=model_endpoint, headers=model_headers, api=config.model.type, model=config.model.name,
         key=key,

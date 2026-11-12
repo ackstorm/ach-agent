@@ -91,6 +91,8 @@ prompt:                        # optional
   system: {type: file, file: ./AGENTS.md}     # text | file | ach (+ achFile)
   compose: append                             # append (default) | replace
 filter:                        # optional
+  include:
+    tools: [github.get_pull_request]   # <server>.<tool>
   exclude:
     mcpServers: [mcp-slack]
     tools: [zoho_desk_delete_ticket]
@@ -132,6 +134,7 @@ model: {name: qwen3-coder, api: openai, baseUrl: "http://host.docker.internal:11
 | `mcpServers` (`name`, `url`, `headers`) | no | none | `capability.ach.mcpServers` or `capability.standalone.mcpServers` |
 | `prompt.system` (`type`: `text`, `file`, `ach`) | no | none | `prompt.system`; a file is read and sent as text |
 | `prompt.compose` | no | `append` | `prompt.compose` |
+| `filter.include` (`tools`) | no | nothing | `capability.filter.include` |
 | `filter.exclude` (`mcpServers`, `tools`, `skills`) | no | nothing | `capability.filter.exclude` |
 | `engine.type` (`opencode` or `pi`) | no | `opencode` | `engine.type` |
 | `engine.denyTools` | no | none | `engine.denyTools` |
@@ -141,6 +144,10 @@ Every field has the Agent CR's name and shape, so `promote` copies it. `model.ap
 `model.type`. A `prompt.system` file is relative to the manifest; in the Agent CR a `file` is a path the
 runtime reads, so `run` and `promote` send it as text. `limits.maxStallSeconds` is a runtime limit with
 no Agent CR field: `run` takes it, the cluster rejects it in a promoted CR.
+
+`filter.include.tools` entries are `<server>.<tool>`. A server with entries exposes only those tools,
+a server with none exposes all, and `filter.exclude` wins over `include`. An entry for a server the
+agent does not route stops the agent at start.
 
 A header is `{env: NAME}` (a secret read from your shell) or `{value: …}` (a literal). The value of
 `NAME` is sent as is, so an `Authorization` header needs its `Bearer ` prefix inside the variable. With

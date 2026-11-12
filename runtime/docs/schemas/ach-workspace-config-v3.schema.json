@@ -44,6 +44,9 @@
     "AchCapabilityFilter": {
       "additionalProperties": false,
       "properties": {
+        "include": {
+          "$ref": "#/$defs/AchCapabilityFilterInclude"
+        },
         "exclude": {
           "$ref": "#/$defs/AchCapabilityFilterExclude"
         }
@@ -77,6 +80,20 @@
         }
       },
       "title": "AchCapabilityFilterExclude",
+      "type": "object"
+    },
+    "AchCapabilityFilterInclude": {
+      "additionalProperties": false,
+      "properties": {
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tools",
+          "type": "array"
+        }
+      },
+      "title": "AchCapabilityFilterInclude",
       "type": "object"
     },
     "AchMemoryAuthAch": {

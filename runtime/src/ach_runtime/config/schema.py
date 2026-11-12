@@ -119,9 +119,28 @@ class AchCapabilityFilterExclude(BaseModel):
     skills: list[str] = Field(default_factory=list)
 
 
+class AchCapabilityFilterInclude(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # `<server>.<tool>`: a server with an entry exposes only its listed tools.
+    tools: list[str] = Field(default_factory=list)
+
+    @field_validator("tools")
+    @classmethod
+    def _check_tools(cls, v: list[str]) -> list[str]:
+        for name in v:
+            server, dot, tool = name.partition(".")
+            if not (server and dot and tool):
+                raise ValueError(f"capability.filter.include.tools entry {name!r} must be <server>.<tool>")
+        if len(set(v)) != len(v):
+            raise ValueError("capability.filter.include.tools has duplicate names")
+        return v
+
+
 class AchCapabilityFilter(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    include: AchCapabilityFilterInclude = Field(default_factory=AchCapabilityFilterInclude)
     exclude: AchCapabilityFilterExclude = Field(default_factory=AchCapabilityFilterExclude)
 
 

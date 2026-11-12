@@ -715,3 +715,14 @@ def test_persistence_volume_parses(pr_review_wire: dict[str, Any]) -> None:
     cfg = parse_config(_resign(pr_review_wire))
     assert cfg.workspace.persistence.type == "volume"
     assert cfg.workspace.session_retention_days == 7
+
+
+def test_filter_include_tools_must_be_server_qualified() -> None:
+    from ach_runtime.config.schema import AchCapabilityFilter
+
+    ok = AchCapabilityFilter.model_validate({"include": {"tools": ["github.get_pull_request"]}})
+    assert ok.include.tools == ["github.get_pull_request"]
+    assert AchCapabilityFilter().include.tools == []
+    for bad in (["get_pull_request"], [".x"], ["github."], ["a.b", "a.b"]):
+        with pytest.raises(ValueError, match="include.tools"):
+            AchCapabilityFilter.model_validate({"include": {"tools": bad}})

@@ -105,6 +105,11 @@ def test_exclude_maps_to_the_capability_filter(tmp_path) -> None:
     assert config.capability.filter.exclude.tools == []
 
 
+def test_include_maps_to_the_capability_filter(tmp_path) -> None:
+    wire = _wire(tmp_path, MINIMAL + "filter: {include: {tools: [github.get_pull_request]}}\n")
+    assert wire["capability"]["filter"]["include"]["tools"] == ["github.get_pull_request"]
+
+
 def test_limits_override_the_defaults(tmp_path) -> None:
     config = parse_config(_wire(tmp_path, MINIMAL + "limits: {maxSteps: 400, maxInvocationSeconds: 3600}\n"))
     assert config.limits.max_steps == 400

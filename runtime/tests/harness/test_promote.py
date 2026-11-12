@@ -13,7 +13,7 @@ mcpServers:
     url: https://mcp.example/mcp
     headers: {Authorization: {env: EXTRA_TOKEN}, X-Tag: {value: lit}}
 engine: {denyTools: [question]}
-filter: {exclude: {tools: [bash]}}
+filter: {include: {tools: [extra.read]}, exclude: {tools: [bash]}}
 prompt: {system: {type: file, file: AGENTS.md}, compose: append}
 limits: {maxSteps: 400}
 """
@@ -60,7 +60,7 @@ def test_promote_copies_the_manifest_and_merges_deploy(tmp_path) -> None:
                 "keyFrom": {"tokenExchange": {"identity": "svc"}},
             },
             "engine": {"denyTools": ["question"]},
-            "filter": {"exclude": {"tools": ["bash"]}},
+            "filter": {"include": {"tools": ["extra.read"]}, "exclude": {"tools": ["bash"]}},
             "prompt": {"system": {"type": "text", "text": "You are FinOps.\nBe brief.\n"}, "compose": "append"},
             "limits": {"maxSteps": 400},
             "profileRef": {"name": "default"},

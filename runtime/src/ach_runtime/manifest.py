@@ -122,6 +122,7 @@ class FilterSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # Passed through: the RuntimeConfig schema validates the names.
+    include: dict[str, list[str]] = Field(default_factory=dict)
     exclude: dict[str, list[str]] = Field(default_factory=dict)
 
 
@@ -238,7 +239,10 @@ def manifest_to_wire(
         },
         "capability": {
             **_capability(manifest, base_url),
-            "filter": {"exclude": {"tools": [], "mcpServers": [], "skills": [], **manifest.filter.exclude}},
+            "filter": {
+                "include": {"tools": [], **manifest.filter.include},
+                "exclude": {"tools": [], "mcpServers": [], "skills": [], **manifest.filter.exclude},
+            },
         },
         **copy.deepcopy(_DEFAULTS),
         "channels": [copy.deepcopy(_TUI_CHANNEL)],

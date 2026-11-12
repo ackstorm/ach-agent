@@ -55,6 +55,13 @@ def _owned_once(claim: str = "owned-ws") -> Any:
     return owned
 
 
+def _owned_always(claim: str = "owned-ws") -> Any:
+    async def owned(candidate: str) -> bool:
+        return True
+
+    return owned
+
+
 def _flipping(claim: str = "owned-ws") -> Any:
     """Owned-live callback that starts `True` and flips to `False` after each call."""
     state = {"owned": True, "count": 0}
@@ -377,6 +384,7 @@ def _mcp_facade(
     servers: dict[str, str],
     exclude: frozenset[str] = frozenset(),
     exclude_tools: frozenset[str] = frozenset(),
+    include_tools: frozenset[str] = frozenset(),
     owned_workspace: Any = None,
     correlation_headers: Any = None,
 ) -> McpFacade:
@@ -388,6 +396,7 @@ def _mcp_facade(
         owned_workspace=owned_workspace or _owned_once(),
         exclude=exclude,
         exclude_tools=exclude_tools,
+        include_tools=include_tools,
         identity=IDENTITY,
         correlation_headers=correlation_headers,
         client=upstream,
@@ -1059,3 +1068,41 @@ async def test_mcp_facade_refuses_an_excluded_tool_call_hidden_behind_a_second_c
     )
     assert resp.status_code == 415
     assert not called
+
+
+async def test_mcp_facade_include_lists_and_calls_only_allowed_tools() -> None:
+    reply = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"tools": [
+        {"name": "read_issue"}, {"name": "delete_repo"}, {"name": "list_commits"}]}}).encode()
+    calls: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.content)
+        return _streamed(200, reply, headers={"content-type": "application/json"})
+
+    facade = _mcp_facade(
+        handler=handler, servers={"gh": "https://mcp.example.com/mcp", "other": "https://o.example.com/mcp"},
+        include_tools=frozenset({"gh.read_issue", "gh.list_commits"}),
+        exclude_tools=frozenset({"gh.list_commits"}),
+        owned_workspace=_owned_always(),
+    )
+    token = facade_token(KEY, "owned-ws")
+    listed = await _call(facade.app(), "POST", "/mcp/gh", token=token,
+                         json={"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+    assert [t["name"] for t in listed.json()["result"]["tools"]] == ["read_issue"]  # exclude wins
+
+    denied = await _call(facade.app(), "POST", "/mcp/gh", token=token, json={
+        "jsonrpc": "2.0", "method": "tools/call", "id": 2, "params": {"name": "delete_repo"}})
+    assert denied.status_code == 403
+    allowed = await _call(facade.app(), "POST", "/mcp/gh", token=token, json={
+        "jsonrpc": "2.0", "method": "tools/call", "id": 3, "params": {"name": "read_issue"}})
+    assert allowed.status_code == 200
+
+    unrestricted = await _call(facade.app(), "POST", "/mcp/other", token=token,
+                               json={"jsonrpc": "2.0", "method": "tools/list", "id": 4})
+    assert len(unrestricted.json()["result"]["tools"]) == 3
+
+
+def test_mcp_facade_include_for_an_unrouted_server_is_an_error() -> None:
+    with pytest.raises(ValueError, match="nosuch"):
+        _mcp_facade(handler=lambda request: None, servers={"gh": "https://mcp.example.com/mcp"},
+                    include_tools=frozenset({"nosuch.tool"}))

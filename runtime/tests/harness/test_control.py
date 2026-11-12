@@ -3198,3 +3198,80 @@ async def test_run_delivers_the_result_of_a_channel_with_delivery(raises, monkey
         "text": None if raises else "done",
         "error": "RuntimeError: sandbox did not start" if raises else None,
     }]
+
+
+def _openai_config():
+    wire = json.loads((Path(__file__).parents[1] / "config/fixtures/pr-review-runtime.json").read_text())
+    wire["workspace"]["persistence"] = {"type": "none"}
+    wire["artifacts"]["enabled"] = False
+    wire["channels"] = [{"name": "chat", "type": "openai", "openai": {"auth": {"env": "CHAT_KEY"}}}]
+    wire["configVersion"] = compute_config_version(wire)
+    return parse_config(wire)
+
+
+async def test_openai_prepare_publishes_attachments_and_asks_streams_for_progress() -> None:
+    from types import SimpleNamespace
+
+    from ach_runtime.channels.openai import OPENAI_PROGRESS_INSTRUCTIONS
+
+    config = _openai_config()
+
+    async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
+        if request.url.path == "/configure":
+            body = json.loads(request.content)
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod-1"},
+                                  json={"configVersion": body["public"]["configVersion"]})
+        if request.url.path == "/readyz":
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod-1"}, json={"ready": True})
+        raise AssertionError(f"unexpected mini request {request.url}")
+
+    control = await assemble(
+        config, environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},
+        ach_transport=httpx.MockTransport(_catalog_handler), mini_transport=httpx.MockTransport(mini),
+    )
+    stored = []
+
+    async def create_artifact(owner, producer, idempotency_key, stream, *, mime, name, policy):
+        data = b"".join([part async for part in stream])
+        stored.append((owner.workspace_ref, producer.invocation_id, idempotency_key, name, mime, data))
+        return SimpleNamespace(artifact_id="art-1", metadata=SimpleNamespace(size=len(data)))
+
+    control.storage = SimpleNamespace(create_artifact=create_artifact)
+    event = Event(
+        event_id="openai:1", channel="chat", type="openai", source="openai",
+        payload={"text": "summarise", "attachments": [{"name": "a.pdf", "mime": "application/pdf", "data": b"hello"}]},
+        context={"openai": {"conversation": "c1", "stream": True}},
+    )
+
+    def ticket_for(invocation_id: str, event: Event) -> AdmissionTicket:
+        return AdmissionTicket(
+            invocation_id, config.agent.namespace, config.agent.uid, "a" * 64, "b" * 64,
+            route(event, config.channels[0]), datetime.now(timezone.utc) + timedelta(minutes=1),
+            asyncio.get_running_loop().create_future(), asyncio.get_running_loop().create_future(),
+        )
+
+    ticket = ticket_for("inv-openai", event)
+    endpoint = WorkspaceEndpoint(
+        WorkspaceRef(config.agent.namespace, config.agent.uid, "a" * 64), "workspace", "pod-1", "http://mini",
+    )
+    try:
+        request = await control.prepare(ticket, endpoint)
+        assert stored == [("a" * 64, "inv-openai", "inv-openai:0", "a.pdf", "application/pdf", b"hello")]
+        assert request.prompt.startswith(
+            "summarise\n\n<attachments>\n"
+            "The user attached these files. Read one with the `read_artifact` tool and its artifact_id.\n"
+            "- a.pdf (application/pdf, 5 bytes): artifact_id art-1\n</attachments>"
+        )
+        assert request.prompt.endswith(OPENAI_PROGRESS_INSTRUCTIONS)
+        assert request.inform_user is True
+        assert "attachments" not in event.payload  # the retained event holds no file bytes
+        again = await control.prepare(ticket, endpoint)
+        assert len(stored) == 1 and again.prompt == request.prompt
+        plain = await control.prepare(ticket_for("inv-plain", Event(
+            event_id="openai:2", channel="chat", type="openai", source="openai", payload={"text": "hi"},
+            context={"openai": {"conversation": "c2", "stream": False}})), endpoint)
+        assert OPENAI_PROGRESS_INSTRUCTIONS not in plain.prompt and plain.inform_user is False
+    finally:
+        await control.close()

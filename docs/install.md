@@ -386,6 +386,45 @@ boundary is the OpenShell policy, and `denyTools` is not one.
 To run upstream pi instead of PiG, use an image with node and the pi package and add `node` to
 `runtimeBinaries` (in `operator/internal/openshell/policy.go`); this adds about 215 MB on Alpine. Agents, config and sessions stay as they are.
 
+### OpenAI-compatible channel
+
+A `type: openai` channel answers the OpenAI Chat Completions API, so an OpenAI client uses the
+Agent as a model: base URL `https://<host>/openai/<channel>/v1`, API key the Secret's value.
+
+```yaml
+channels:
+  - name: chat
+    type: openai
+    openai:
+      auth:
+        secretRef: {name: chat-api-key, key: token}
+```
+
+- `GET /v1/models` lists one model, the Agent's name. The `model` of a request is not checked.
+- `POST /v1/chat/completions` with `stream: true` sends the agent's `inform_user` progress as
+  `reasoning_content` deltas and a `: keepalive` comment every 15 s, then the whole answer in one
+  chunk. Without `stream` the answer arrives when the run ends, so a run longer than a proxy's idle
+  timeout (60 s on many load balancers) needs `stream: true`.
+- The client sends the whole conversation on every request. When the messages before the last user
+  message are an earlier request plus the answer it got, the run continues that session and the
+  agent receives only the last message. Otherwise (a new conversation, an edited or regenerated
+  message) a new session starts with the visible conversation in its prompt.
+- With `persistence: s3` or `volume`, that match is kept in the Agent's S3 store for the session
+  retention, so a conversation continues after the sandbox and the control restart. With
+  `persistence: none` it is kept in the control's memory, and a conversation continues only while
+  its session is alive in its sandbox. The session ends with its idle timeout
+  (`workspace.session.idleTimeoutSeconds`, 60 s by default), an eviction by
+  `maxConcurrentSessions`, the sandbox going away, or a control restart;
+  the next message then replays the conversation.
+- `tools`, `temperature`, `max_tokens`, `n` and the other sampling fields are ignored: the agent
+  runs with its own model settings and tools.
+- `file` parts (`file_data`) and `image_url` parts with a base64 `data:` URI become Workspace
+  artifacts the agent reads with `read_artifact`. They need `artifacts.enabled` on the
+  AgentProfile and `read_artifact` not excluded; each file is bound by `artifacts.maxArtifactBytes`,
+  a request by 32 MiB. `file_id` and `https://` image URLs are rejected.
+- `routing.sessionKey` is not allowed. `routing.workspaceKey: session` gives every conversation its
+  own sandbox.
+
 ## 7. An ACH Agent
 
 With `capabilityServer: ach` the Agent takes its model, MCP servers and context from an ACH Environment,
@@ -461,7 +500,7 @@ is committed and the sandbox deleted. `0` acts on the next lifecycle tick (about
 
 `workspace.idleTimeoutSeconds` is per Agent. `workspace.session.idleTimeoutSeconds`, when set, also
 applies to every channel; unset, a session takes the default of the channel it last ran on: `0` for
-`cron` and `webhook-script`, whose sessions never get a follow-up, and `60` for `a2a`, `webhook` and
+`cron` and `webhook-script`, whose sessions never get a follow-up, and `60` for `a2a`, `openai`, `webhook` and
 `queue`. An Agent with a cron and a chat channel and `workspace.idleTimeoutSeconds: 0` then deletes
 the sandbox right after a tick, and a minute after the last chat message.
 

@@ -699,7 +699,7 @@ class AchMemoryMemory(BaseModel):
 # ---------------------------------------------------------------------------
 
 CONVERSATIONAL_GITLAB_EVENTS = frozenset({"merge_request", "issue", "note"})
-ChannelType = Literal["webhook", "webhook-script", "cron", "queue", "a2a"]
+ChannelType = Literal["webhook", "webhook-script", "cron", "queue", "a2a", "openai"]
 
 # Env names the Harness pins for every handoff/script invocation (contract §6). A config entry
 # with one of these names would be silently discarded — reject it instead.
@@ -839,6 +839,25 @@ class A2ABlock(BaseModel):
     auth: A2AAuthBlock
 
 
+class OpenAIAuthBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    env: str
+
+    @field_validator("env")
+    @classmethod
+    def _valid_name(cls, v: str) -> str:
+        if not _ENV_NAME_RE.match(v):
+            raise ValueError(f"openai.auth.env is not a valid env alias: {v!r}")
+        return v
+
+
+class OpenAIBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    auth: OpenAIAuthBlock
+
+
 class CronBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -973,6 +992,7 @@ class ChannelConfig(BaseModel):
     cron: CronBlock | None = None
     queue: QueueBlock | None = None
     a2a: A2ABlock | None = None
+    openai: OpenAIBlock | None = None
     delivery: DeliveryBlock | None = None
 
     @model_validator(mode="after")
@@ -993,7 +1013,7 @@ class ChannelConfig(BaseModel):
                     f"channel '{self.name}': webhook-script requires webhook.gitlabEvents"
                 )
         elif getattr(self, t) is None:
-            article = "an" if t == "a2a" else "a"
+            article = "an" if t in ("a2a", "openai") else "a"
             raise ValueError(f"channel '{self.name}': type='{t}' requires {article} '{t}' block")
 
         if t in ("webhook", "webhook-script") and self.source is None:
@@ -1011,10 +1031,15 @@ class ChannelConfig(BaseModel):
                 f"channel '{self.name}': routing.sessionKey is required "
                 "(this source has no standard conversation identity)"
             )
-        for foreign in ("webhook", "cron", "queue", "a2a"):
+        for foreign in ("webhook", "cron", "queue", "a2a", "openai"):
             allowed = foreign == t or (t == "webhook-script" and foreign == "webhook")
             if not allowed and getattr(self, foreign) is not None:
                 raise ValueError(f"channel '{self.name}': type='{t}' forbids '{foreign}' block")
+        if t == "openai" and self.routing is not None and self.routing.session_key is not None:
+            raise ValueError(
+                f"channel '{self.name}': type='openai' forbids routing.sessionKey "
+                "(the session comes from the conversation)"
+            )
         if t != "webhook-script" and self.script is not None:
             raise ValueError(f"channel '{self.name}': type='{t}' forbids 'script' block")
         if self.delivery is not None and t not in ("webhook", "cron", "queue"):

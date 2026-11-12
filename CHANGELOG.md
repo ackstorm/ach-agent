@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- An `openai` channel type answers the OpenAI Chat Completions API (`/v1/chat/completions`,
+  `/v1/models`, streaming or not) so any OpenAI client can use the Agent as a model. A conversation
+  continues its session by matching the history the client resends, kept in the Agent's S3 store
+  when sessions are persisted; attached files and images become Workspace artifacts.
+
 ## [0.7.3] - 2026-11-11
 
 ### Fixed

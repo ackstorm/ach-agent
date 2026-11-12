@@ -174,6 +174,8 @@ async def run_control(
         for name, store in getattr(ingress.state, "a2a_stores", {}).items():
             if store is not None:
                 recoveries.append(asyncio.create_task(ingress.state.a2a_bridges[name].recover(store)))
+        for store in getattr(ingress.state, "openai_stores", {}).values():
+            recoveries.append(asyncio.create_task(store.prune()))
         sources.extend(await _start_channel_sources(config, control))
         ingress.state.ready = True
         shutdown_task = asyncio.create_task(shutdown_requested.wait())

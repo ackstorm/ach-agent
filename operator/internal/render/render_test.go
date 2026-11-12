@@ -36,16 +36,35 @@ func TestChannelSecretEnv_NamesAndRefs(t *testing.T) {
 		{Name: "gitlab-mr-review", Type: "webhook", Webhook: &v1.WebhookSpec{Auth: v1.WebhookAuthSpec{Type: "gitlab_token", SecretRef: &v1.SecretKeyRef{Name: "gl", Key: "secret"}}}},
 		{Name: "peer-intake", Type: "a2a", A2A: &v1.A2ASpec{Auth: v1.A2AAuthSpec{SecretRef: v1.SecretKeyRef{Name: "peer", Key: "apikey"}}}},
 		{Name: "daily", Type: "cron", Cron: &v1.CronSpec{Schedule: "* * * * *"}}, // no secret
+		{Name: "chat", Type: "openai", OpenAI: &v1.OpenAISpec{Auth: v1.OpenAIAuthSpec{SecretRef: v1.SecretKeyRef{Name: "chat-key", Key: "token"}}}},
 	}}}
 	got := ChannelSecretEnv(v1.AgentProfile{}, a)
-	if len(got) != 2 {
-		t.Fatalf("ChannelSecretEnv len = %d, want 2", len(got))
+	if len(got) != 3 {
+		t.Fatalf("ChannelSecretEnv len = %d, want 3", len(got))
 	}
 	if got[0].EnvName != "ACH_SECRET_GITLAB_MR_REVIEW_WEBHOOK" || got[0].SecretName != "gl" || got[0].Key != "secret" {
 		t.Errorf("webhook ref = %+v", got[0])
 	}
 	if got[1].EnvName != "ACH_SECRET_PEER_INTAKE_A2A" || got[1].SecretName != "peer" || got[1].Key != "apikey" {
 		t.Errorf("a2a ref = %+v", got[1])
+	}
+	if got[2].EnvName != "ACH_SECRET_CHAT_OPENAI" || got[2].SecretName != "chat-key" || got[2].Key != "token" {
+		t.Errorf("openai ref = %+v", got[2])
+	}
+}
+
+func TestRenderOpenAIV1_UsesTheChannelSecretAlias(t *testing.T) {
+	ch := &v1.ChannelSpec{Name: "chat", Type: "openai", OpenAI: &v1.OpenAISpec{Auth: v1.OpenAIAuthSpec{SecretRef: v1.SecretKeyRef{Name: "s", Key: "k"}}}}
+	got := RenderOpenAIV1(ch)
+	if got == nil || got.Auth.Env != "ACH_SECRET_CHAT_OPENAI" {
+		t.Fatalf("RenderOpenAIV1 = %+v, want auth.env ACH_SECRET_CHAT_OPENAI", got)
+	}
+	if RenderOpenAIV1(&v1.ChannelSpec{Name: "x", Type: "cron"}) != nil {
+		t.Fatal("RenderOpenAIV1 without an openai block must be nil")
+	}
+	a := v1.Agent{Spec: v1.AgentSpec{Channels: []v1.ChannelSpec{*ch}}}
+	if keys := ReferencedSecrets(v1.AgentProfile{}, a)["s"]; !slices.Contains(keys, "k") {
+		t.Errorf("ReferencedSecrets misses the openai secret: %v", keys)
 	}
 }
 

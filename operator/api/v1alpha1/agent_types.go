@@ -234,6 +234,18 @@ type A2ASpec struct {
 	Auth A2AAuthSpec `json:"auth"`
 }
 
+// OpenAIAuthSpec configures openai inbound auth: the bearer token clients send (config: channels[].openai.auth; secretRef → env).
+type OpenAIAuthSpec struct {
+	// +kubebuilder:validation:Required
+	SecretRef SecretKeyRef `json:"secretRef"`
+}
+
+// OpenAISpec configures an openai channel: the Agent answers the OpenAI Chat Completions API (config: channels[].openai).
+type OpenAISpec struct {
+	// +kubebuilder:validation:Required
+	Auth OpenAIAuthSpec `json:"auth"`
+}
+
 // RoutingSpec overrides the Harness's default Workspace/Session identity for a channel
 // (config: channels[].routing, contract §2). Both fields are optional and independent: an
 // omitted one keeps the adapter's default. A present one is a non-empty {{ }} template
@@ -326,19 +338,20 @@ type DeliverySpec struct {
 }
 
 // ChannelSpec is one inbound channel (config: channels[]).
-// +kubebuilder:validation:XValidation:rule="((self.type=='webhook' || self.type=='webhook-script') && has(self.webhook)) || (self.type=='cron' && has(self.cron)) || (self.type=='queue' && has(self.queue)) || (self.type=='a2a' && has(self.a2a))",message="channels: the block matching type is required"
+// +kubebuilder:validation:XValidation:rule="((self.type=='webhook' || self.type=='webhook-script') && has(self.webhook)) || (self.type=='cron' && has(self.cron)) || (self.type=='queue' && has(self.queue)) || (self.type=='a2a' && has(self.a2a)) || (self.type=='openai' && has(self.openai))",message="channels: the block matching type is required"
 // +kubebuilder:validation:XValidation:rule="self.type=='webhook' || self.type=='webhook-script' || !has(self.source)",message="channels.source is only valid for webhook channels"
 // +kubebuilder:validation:XValidation:rule="self.type=='webhook-script' ? has(self.script) : !has(self.script)",message="channels.script is required only for webhook-script"
 // +kubebuilder:validation:XValidation:rule="self.type!='webhook-script' || (!has(self.prompt) && !has(self.handoff))",message="webhook-script forbids prompt and handoff"
 // +kubebuilder:validation:XValidation:rule="self.type!='webhook-script' || !has(self.rateLimit)",message="webhook-script forbids rateLimit"
 // +kubebuilder:validation:XValidation:rule="!(self.type=='queue' || (self.type=='webhook' && has(self.source) && self.source=='generic')) || (has(self.routing) && has(self.routing.sessionKey))",message="generic webhook and queue channels require routing.sessionKey"
+// +kubebuilder:validation:XValidation:rule="self.type!='openai' || !has(self.routing) || !has(self.routing.sessionKey)",message="openai channels take the session from the conversation: routing.sessionKey is not allowed"
 // +kubebuilder:validation:XValidation:rule="!has(self.delivery) || self.type in ['webhook','cron','queue']",message="channels.delivery is only valid for webhook, cron and queue channels"
 type ChannelSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=webhook;webhook-script;cron;queue;a2a
+	// +kubebuilder:validation:Enum=webhook;webhook-script;cron;queue;a2a;openai
 	Type string `json:"type"`
 	// +optional
 	// +kubebuilder:validation:Enum=gitlab;github;generic
@@ -365,6 +378,8 @@ type ChannelSpec struct {
 	Queue *QueueSpec `json:"queue,omitempty"`
 	// +optional
 	A2A *A2ASpec `json:"a2a,omitempty"`
+	// +optional
+	OpenAI *OpenAISpec `json:"openai,omitempty"`
 	// Handoff runs in the harness, in an empty directory; its output wholesale-replaces the
 	// session workspace's handoff/ (content-agnostic — a repo clone, a DB extract, arbitrary
 	// files). It runs every invocation; for per-session files set

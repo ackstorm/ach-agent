@@ -8,6 +8,7 @@ Defaults (contract §2 table):
   GitHub pull request    -> workspace "github:<channel>:<repo>", session "pr:<number>"
   Redis queue            -> workspace "queue:<channel>", session: routing.sessionKey (required)
   A2A                    -> workspace "a2a:<channel>", session the contextId (else taskId)
+  OpenAI chat            -> workspace "openai:<channel>", session the conversation fingerprint's session
   cron                   -> workspace "cron:<channel>", session the original scheduled UTC tick
 
 `routing.workspaceKey: session` is a reserved keyword: one workspace per session, keyed
@@ -36,7 +37,7 @@ from ach_runtime.templating.render import UnresolvedTemplateError, render_routin
 
 SESSION_WORKSPACE = "session"  # routing.workspaceKey keyword: one workspace per session
 
-_DOMAIN = {"webhook": "webhook", "queue": "queue", "a2a": "a2a", "cron": "cron"}
+_DOMAIN = {"webhook": "webhook", "queue": "queue", "a2a": "a2a", "cron": "cron", "openai": "openai"}
 
 
 class RoutingError(ValueError):
@@ -86,6 +87,11 @@ def _default_session_key(event: Event, channel: ChannelConfig) -> str:
         task_id = event.context.get("a2a", {}).get("taskId")
         context_id = event.context.get("a2a", {}).get("contextId")
         return context_id or task_id or ""
+    if channel.type == "openai":
+        conversation = event.context.get("openai", {}).get("conversation")
+        if not conversation:
+            raise RoutingError("openai event missing context.openai.conversation")
+        return conversation
     raise RoutingError(f"channel {channel.name!r}: routing.sessionKey is required")
 
 

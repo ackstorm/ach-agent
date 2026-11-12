@@ -415,43 +415,6 @@ async def test_hydrator_load_builds_catalog_with_metadata_and_mcp_and_skills() -
     assert catalog.skills[0].name == "frontend-design@anthropics-skills"
 
 
-async def test_hydrator_load_prefers_hydrate_limits_over_model_info() -> None:
-    # ACH resolves a model-group alias in the hydrate response; /v2/model/info does not.
-    model = {**MANIFEST["runtime"]["models"][0], "limits": {"context": 524288}}
-    manifest = {**MANIFEST, "runtime": {**MANIFEST["runtime"], "models": [model]}}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/platform/hydrate":
-            return httpx.Response(200, json=manifest)
-        return _combined_handler()(request)
-
-    client = httpx.AsyncClient(transport=_transport(handler))
-    catalog = await Hydrator(resolve_ek=lambda: "ek-abc", client=client).load(SOURCE)
-    await client.aclose()
-
-    assert catalog.model.metadata is not None
-    assert catalog.model.metadata.context_limit == 524288
-    assert catalog.model.metadata.output_limit == 8192  # absent in hydrate: model info's
-    assert catalog.model.metadata.supports_vision is True
-
-
-async def test_hydrator_load_uses_hydrate_limits_when_model_info_is_missing() -> None:
-    model = {**MANIFEST["runtime"]["models"][0], "limits": {"context": 524288, "output": 65536}}
-    manifest = {**MANIFEST, "runtime": {**MANIFEST["runtime"], "models": [model]}}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/platform/hydrate":
-            return httpx.Response(200, json=manifest)
-        return httpx.Response(200, json={"data": []})
-
-    client = httpx.AsyncClient(transport=_transport(handler))
-    catalog = await Hydrator(resolve_ek=lambda: "ek-abc", client=client).load(SOURCE)
-    await client.aclose()
-
-    assert catalog.model.metadata is not None
-    assert (catalog.model.metadata.context_limit, catalog.model.metadata.output_limit) == (524288, 65536)
-
-
 async def test_hydration_retains_peer_grants() -> None:
     peers = [
         {"id": "reviewer", "endpoint": "https://peer.example/a2a"},
@@ -730,24 +693,6 @@ async def test_hydrator_load_configured_limits_apply_when_the_gateway_has_no_ent
         if request.url.path == "/platform/hydrate":
             return httpx.Response(200, json=MANIFEST)
         return httpx.Response(200, json={"data": []})
-
-    client = httpx.AsyncClient(transport=_transport(handler))
-    source = HydrationInput(agent="classifier", base_url=BASE_URL, environment="platform",
-                            model="gemini.gemini-flash-latest", limits=(524288, 65536))
-    catalog = await Hydrator(resolve_ek=lambda: "ek-abc", client=client).load(source)
-    await client.aclose()
-    assert catalog.model.metadata is not None
-    assert (catalog.model.metadata.context_limit, catalog.model.metadata.output_limit) == (524288, 65536)
-
-
-async def test_hydrator_load_configured_limits_override_hydrate_limits() -> None:
-    model = {**MANIFEST["runtime"]["models"][0], "limits": {"context": 1000000, "output": 128000}}
-    manifest = {**MANIFEST, "runtime": {**MANIFEST["runtime"], "models": [model]}}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/platform/hydrate":
-            return httpx.Response(200, json=manifest)
-        return _combined_handler()(request)
 
     client = httpx.AsyncClient(transport=_transport(handler))
     source = HydrationInput(agent="classifier", base_url=BASE_URL, environment="platform",

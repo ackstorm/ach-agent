@@ -123,3 +123,18 @@ async def test_fetch_skills_rejects_a_hardlink(tmp_path) -> None:
     with pytest.raises(SkillsError, match="link"):
         await fetch_skills([_skill()], {}, tmp_path, excluded=[], client=client)
     assert list((tmp_path / "skills").iterdir()) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fields", [{"type": "github", "repo": "o/r"}, {"type": "gitlab", "repo": "o/r", "baseUrl": "https://g.example"}])
+async def test_fetch_skills_names_a_root_skill_after_the_entry_in_a_typed_archive(tmp_path, fields) -> None:
+    content = _archive({
+        "repo-sha/SKILL.md": ("# root", 0o644),
+        "repo-sha/references/a.md": ("ref", 0o644),
+    })
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, content=content)))
+    names = await fetch_skills([_skill(url=None, **fields)], {}, tmp_path, excluded=[], client=client)
+
+    assert names == ["toolkit"]
+    assert (tmp_path / "skills" / "toolkit" / "SKILL.md").read_text() == "# root"
+    assert (tmp_path / "skills" / "toolkit" / "references" / "a.md").read_text() == "ref"

@@ -3000,6 +3000,7 @@ async def test_configure_payload_stays_readable_by_older_execution_pods(hooks, e
         assert set(public["hooks"]) == expected
         assert "maxStallSeconds" not in public["limits"]
         assert "denyTools" not in public["engine"]
+        assert "include" not in public["capability"]["filter"]
         # An execution pod on this version still parses what it receives.
         assert PublicConfig.model_validate(public).config_version == control.public.config_version
     finally:
@@ -3020,6 +3021,24 @@ async def test_configure_payload_sends_deny_tools_when_set() -> None:
     try:
         await control.configure_workspace(_hook_endpoint(config))
         assert calls[0][1]["public"]["engine"]["denyTools"] == ["question"]
+    finally:
+        await control.close()
+
+
+async def test_public_wire_keeps_include_tools_when_set() -> None:
+    from ach_runtime.harness.control import _public_wire
+
+    control = await assemble(
+        _config(), environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},
+        ach_transport=httpx.MockTransport(_catalog_handler),
+    )
+    try:
+        capability = control.public.capability
+        include = capability.filter.include.model_copy(update={"tools": ["srv.tool"]})
+        capability = capability.model_copy(update={
+            "filter": capability.filter.model_copy(update={"include": include})})
+        public = control.public.model_copy(update={"capability": capability})
+        assert _public_wire(public)["capability"]["filter"]["include"] == {"tools": ["srv.tool"]}
     finally:
         await control.close()
 

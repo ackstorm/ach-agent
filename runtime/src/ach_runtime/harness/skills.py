@@ -96,6 +96,11 @@ async def fetch_skills(
                 raise SkillsError(f"skills {skill.name}: archive could not be extracted") from exc
             if _has_link(staged):
                 raise SkillsError(f"skills {skill.name}: archive contains a symbolic or hard link")
+            if skill.type != "url":
+                # git hosts wrap the repository in one `owner-repo-<sha>/` directory.
+                entries = list(staged.iterdir())
+                if len(entries) == 1 and entries[0].is_dir():
+                    staged = entries[0]
             found = _skill_dirs(staged)
             if not found:
                 raise SkillsError(f"skills {skill.name}: archive has no SKILL.md")

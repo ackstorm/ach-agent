@@ -1259,6 +1259,9 @@ def _public_wire(public: Any) -> dict[str, Any]:
     # Added in 0.1.22: sent only when set, so a warm older execution pod still parses it.
     if not public.engine.deny_tools:
         wire["engine"].pop("denyTools", None)
+    # Sent only when set: an older execution pod's filter has no `include`.
+    if not public.capability.filter.include.tools:
+        wire["capability"]["filter"].pop("include", None)
     return wire
 
 

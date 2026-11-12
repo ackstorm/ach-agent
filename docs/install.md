@@ -285,13 +285,14 @@ spec:
   expose: {service: true}
 ```
 
-A `webhook`, `cron` or `queue` channel answers 202 and the agent's final answer would be lost, so it can set
-`delivery`: when a run finishes, the control pod POSTs
+A `webhook` or `queue` channel answers 202 and a `cron` channel answers nothing, so the agent's final answer would
+be lost; either can set `delivery`: when a run finishes, the control pod POSTs
 `{"invocation_id": "...", "channel": "hook", "state": "completed", "text": "...", "error": null}` to the URL
-(`text` is the agent's final text, `null` when there is none; `state` is `failed` and `error` set when the run
-raised). One attempt per run, 10 s timeout, redirects not followed. A failed POST is logged and counted in
-`ach_agent_channel_delivery_failures_total{channel}`. A run that expires in the admission queue and a run recovered after a control pod restart are not
-delivered. The control pod needs egress to the URL under the mesh policy (`docs/mesh/`).
+(`text` is the agent's final text, `null` when there is none; `state` is `completed`, `failed`, `cancelled` or
+`skipped`, and `error` is set when the run raised; `invocation_id` equals the `task_id` / `X-ACH-Task-Id` of the 202,
+so a receiver can correlate). One attempt per run, 10 s timeout, redirects not followed. A failed POST is logged
+and counted in `ach_agent_channel_delivery_failures_total{channel}`. A run that expires in the admission queue
+and a run recovered after a control pod restart are not delivered. The control pod needs egress to the URL under the mesh policy (`docs/mesh/`).
 
 `filter.include.tools` limits an MCP server to the tools listed as `<server>.<tool>`. A server with
 entries exposes only those tools, a server with none exposes all, and `filter.exclude` wins:

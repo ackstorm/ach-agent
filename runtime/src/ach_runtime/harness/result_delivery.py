@@ -48,7 +48,7 @@ class ResultDelivery:
                     body: dict[str, Any]) -> None:
         url, headers = target
         try:
-            response = await self._client.post(url, json=body, headers=headers, timeout=_TIMEOUT_SECONDS)
+            response = await self._client.post(url, json=body, headers=headers)
             response.raise_for_status()
         except Exception as exc:  # noqa: BLE001 - a delivery failure never fails the run
             DELIVERY_FAILURES.labels(channel=channel).inc()

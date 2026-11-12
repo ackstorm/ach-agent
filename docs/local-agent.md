@@ -127,7 +127,8 @@ skills:
 
 Each `skills` entry is one `.tar.gz` archive. Every directory in it with a `SKILL.md` is a skill and is
 copied whole (references, scripts, subdirectories) to `skills/<directory name>/`; a skill's own directory
-is not searched for nested skills. Skills load once, when the agent starts, so an entry without `ref`
+is not searched for nested skills. A `SKILL.md` at the root of a `gitlab`, `github` or `bitbucket` archive
+installs as `skills/<entry name>/`. Skills load once, when the agent starts, so an entry without `ref`
 follows the default branch at the next start. A failed download, an archive with no `SKILL.md` or two
 skills with the same name stop the agent. `filter.exclude.skills` drops skills by name. `headers` go only
 to the archive host, not to a redirect target on another host.

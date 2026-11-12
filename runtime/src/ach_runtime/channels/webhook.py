@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Webhook Event normalization, retaining the legacy generic delivery-ID priority."""
 
+import hashlib
+import json
 from typing import Any
 
 from ach_runtime.channels.event import Event
@@ -9,7 +11,7 @@ from ach_runtime.config.schema import ChannelConfig
 
 
 class MissingWebhookDeliveryId(ValueError):
-    """A generic webhook has no stable delivery ID in its supported headers."""
+    """A GitHub webhook has no stable delivery ID in its supported headers."""
 
 
 _GENERIC_ID_HEADERS = (
@@ -60,7 +62,12 @@ def normalize_webhook(
         if event_id := _header(headers, name):
             break
     if not event_id:
-        raise MissingWebhookDeliveryId("generic webhook requires a stable delivery ID")
+        if channel.source == "github":
+            raise MissingWebhookDeliveryId("github webhook requires a stable delivery ID")
+        # Senders with no delivery header (Alertmanager): a retry repeats the payload, so its
+        # digest deduplicates it. Identical payloads inside the idempotency window are one event.
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        event_id = "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
     if channel.source == "github":
         repo, pr_number = _parse_github(payload)
         return Event(

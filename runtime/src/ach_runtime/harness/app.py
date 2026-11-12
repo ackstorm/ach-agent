@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import uuid
 
 from fastapi import FastAPI, Request
 from prometheus_client import make_asgi_app
@@ -124,7 +123,7 @@ def create_app(control: Control) -> FastAPI:
         # caller disconnect. Retrieve failures without clearing or cancelling them.
         ticket.started.add_done_callback(_retrieve_outcome)
         ticket.completed.add_done_callback(_retrieve_outcome)
-        task_id = uuid.uuid4().hex
+        task_id = ticket.invocation_id
         return JSONResponse(
             {"status": "accepted", "task_id": task_id},
             status_code=202,

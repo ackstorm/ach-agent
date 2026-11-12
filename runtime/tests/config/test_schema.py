@@ -18,7 +18,7 @@ import pytest
 from pydantic import ValidationError
 
 from ach_runtime.config.canonical import canonical_config_bytes, compute_config_version
-from ach_runtime.config.schema import ConfigError, QueueBlock, RuntimeConfig, parse_config
+from ach_runtime.config.schema import ChannelConfig, ConfigError, QueueBlock, RuntimeConfig, parse_config
 
 
 def _resign(wire: dict[str, Any]) -> dict[str, Any]:
@@ -767,3 +767,37 @@ def test_standalone_skill_types_build_their_archive_url() -> None:
                 {"type": "bitbucket", "repo": "a/b", "baseUrl": "https://bb.example"}):
         with pytest.raises(ValueError):
             StandaloneSkill.model_validate({"name": "s", **bad})
+
+
+def _openai_channel(**extra):
+    return {"name": "chat", "type": "openai", "openai": {"auth": {"env": "CHAT_KEY"}}, **extra}
+
+
+def test_openai_channel_parses() -> None:
+    channel = ChannelConfig.model_validate(_openai_channel())
+    assert channel.type == "openai"
+    assert channel.openai is not None and channel.openai.auth.env == "CHAT_KEY"
+
+
+@pytest.mark.parametrize("raw, message", [
+    ({"name": "chat", "type": "openai"}, "requires an 'openai' block"),
+    (_openai_channel(routing={"sessionKey": "{{ payload.x }}"}), "routing.sessionKey"),
+    (_openai_channel(delivery={"url": "https://hooks.example.com"}), "forbids 'delivery'"),
+    ({"name": "q", "type": "a2a", "a2a": {"auth": {"env": "K"}}, "openai": {"auth": {"env": "K"}}},
+     "forbids 'openai' block"),
+    (_openai_channel(openai={"auth": {"env": "not-an-env"}}), "not a valid env alias"),
+])
+def test_openai_channel_rejects(raw, message) -> None:
+    with pytest.raises(ValidationError, match=message):
+        ChannelConfig.model_validate(raw)
+
+
+def test_openai_routing_defaults() -> None:
+    from ach_runtime.channels.event import Event
+    from ach_runtime.channels.routing import route
+
+    channel = ChannelConfig.model_validate(_openai_channel())
+    event = Event(event_id="openai:1", channel="chat", type="openai", source="openai",
+                  payload={"text": "hi"}, context={"openai": {"conversation": "c1"}})
+    routed = route(event, channel)
+    assert (routed.workspace_key, routed.session_key) == ("openai:chat", "c1")

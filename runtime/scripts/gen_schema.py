@@ -125,7 +125,7 @@ def _not_null() -> dict:
     return {"not": {"type": "null"}}
 
 
-_ALL_CHANNEL_BLOCKS = ("webhook", "cron", "queue", "a2a", "script")
+_ALL_CHANNEL_BLOCKS = ("webhook", "cron", "queue", "a2a", "openai", "script")
 
 
 def _patch_channel_config(defs: dict) -> None:
@@ -141,6 +141,7 @@ def _patch_channel_config(defs: dict) -> None:
         "cron": ["cron"],
         "queue": ["queue"],
         "a2a": ["a2a"],
+        "openai": ["openai"],
     }
     # "webhook-script" is the one type allowed to carry BOTH its own block and "webhook"
     # (ScriptBlock.check_type_block_coherence's one exception); every other foreign block
@@ -193,6 +194,13 @@ def _patch_channel_config(defs: dict) -> None:
                     }
                 }
             )
+        if type_ == "openai":
+            then["properties"]["routing"] = {
+                "anyOf": [
+                    {"type": "null"},
+                    {"properties": {"sessionKey": {"type": "null"}}},
+                ]
+            }
         allOf.append({"if": {"required": ["type"], "properties": {"type": {"const": type_}}}, "then": then})
     channel["allOf"] = allOf
 

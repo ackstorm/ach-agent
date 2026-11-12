@@ -397,7 +397,8 @@
             "webhook-script",
             "cron",
             "queue",
-            "a2a"
+            "a2a",
+            "openai"
           ],
           "title": "Type",
           "type": "string"
@@ -525,6 +526,17 @@
           ],
           "default": null
         },
+        "openai": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OpenAIBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "delivery": {
           "anyOf": [
             {
@@ -597,6 +609,9 @@
               "a2a": {
                 "type": "null"
               },
+              "openai": {
+                "type": "null"
+              },
               "script": {
                 "type": "null"
               }
@@ -659,6 +674,9 @@
               "a2a": {
                 "type": "null"
               },
+              "openai": {
+                "type": "null"
+              },
               "prompt": {
                 "type": "null"
               },
@@ -701,6 +719,9 @@
               "a2a": {
                 "type": "null"
               },
+              "openai": {
+                "type": "null"
+              },
               "script": {
                 "type": "null"
               }
@@ -735,6 +756,9 @@
                 "type": "null"
               },
               "a2a": {
+                "type": "null"
+              },
+              "openai": {
                 "type": "null"
               },
               "script": {
@@ -773,8 +797,64 @@
               "queue": {
                 "type": "null"
               },
+              "openai": {
+                "type": "null"
+              },
               "script": {
                 "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "openai"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "openai"
+            ],
+            "properties": {
+              "openai": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "webhook": {
+                "type": "null"
+              },
+              "cron": {
+                "type": "null"
+              },
+              "queue": {
+                "type": "null"
+              },
+              "a2a": {
+                "type": "null"
+              },
+              "script": {
+                "type": "null"
+              },
+              "routing": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "properties": {
+                      "sessionKey": {
+                        "type": "null"
+                      }
+                    }
+                  }
+                ]
               }
             }
           }
@@ -1252,6 +1332,33 @@
         "output"
       ],
       "title": "ModelLimits",
+      "type": "object"
+    },
+    "OpenAIAuthBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "env": {
+          "title": "Env",
+          "type": "string"
+        }
+      },
+      "required": [
+        "env"
+      ],
+      "title": "OpenAIAuthBlock",
+      "type": "object"
+    },
+    "OpenAIBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "auth": {
+          "$ref": "#/$defs/OpenAIAuthBlock"
+        }
+      },
+      "required": [
+        "auth"
+      ],
+      "title": "OpenAIBlock",
       "type": "object"
     },
     "PersistenceBlock": {

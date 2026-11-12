@@ -334,3 +334,127 @@ func TestRender_ReadyTimeoutComesFromTheProfileExecutionOrIsOmitted(t *testing.T
 		t.Fatalf("workspace.readyTimeoutSeconds = %v, want 90", cfg.Workspace.ReadyTimeoutSeconds)
 	}
 }
+
+// renderDoc renders and returns the wire document as generic JSON plus the env bindings.
+func renderDoc(t *testing.T, p v1.AgentProfile, a v1.Agent) (map[string]any, map[string]EnvBinding) {
+	t.Helper()
+	cfg, env, err := Render(p, a)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	bindings := map[string]EnvBinding{}
+	for _, b := range env {
+		bindings[b.Name] = b
+	}
+	return doc, bindings
+}
+
+func jsonOf(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func TestRender_FilterIncludeTools(t *testing.T) {
+	for name, tc := range map[string]struct {
+		filter *v1.FilterSpec
+		want   string
+	}{
+		"listed":       {&v1.FilterSpec{Include: &v1.IncludeSpec{Tools: []string{"gh.read"}}}, `{"tools":["gh.read"]}`},
+		"empty listed": {&v1.FilterSpec{Include: &v1.IncludeSpec{}}, `{"tools":[]}`},
+		"absent":       {nil, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, a := minimalFixture()
+			a.Spec.Filter = tc.filter
+			doc, _ := renderDoc(t, p, a)
+			include, present := doc["capability"].(map[string]any)["filter"].(map[string]any)["include"]
+			if tc.want == "" {
+				if present {
+					t.Fatalf("capability.filter.include = %s, want no include key", jsonOf(t, include))
+				}
+				return
+			}
+			if got := jsonOf(t, include); got != tc.want {
+				t.Fatalf("capability.filter.include = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRender_ChannelDeliveryHeaders(t *testing.T) {
+	p, a := minimalFixture()
+	a.Spec.Channels = []v1.ChannelSpec{{
+		Name: "hook-in", Type: "webhook", Source: "gitlab",
+		Webhook: &v1.WebhookSpec{Auth: v1.WebhookAuthSpec{Type: "none"}},
+		Delivery: &v1.DeliverySpec{URL: "https://hooks.example.com/result", Headers: map[string]v1.HeaderValue{
+			"Authorization": {SecretKeyRef: &v1.SecretKeyRef{Name: "hook-delivery", Key: "authorization"}},
+			"X-Source":      {Value: ptr("ach-agent")},
+		}},
+	}}
+	doc, env := renderDoc(t, p, a)
+	got := jsonOf(t, doc["channels"].([]any)[0].(map[string]any)["delivery"])
+	want := `{"headers":{"Authorization":{"env":"ACH_AGENT_DELIVERY_HOOK_IN_H0"},"X-Source":{"value":"ach-agent"}},"url":"https://hooks.example.com/result"}`
+	if got != want {
+		t.Fatalf("channels[0].delivery = %s, want %s", got, want)
+	}
+	b, ok := env["ACH_AGENT_DELIVERY_HOOK_IN_H0"]
+	if !ok || b.SecretKeyRef == nil || b.SecretKeyRef.Name != "hook-delivery" || b.SecretKeyRef.Key != "authorization" {
+		t.Fatalf("delivery binding = %#v (all: %#v)", b, env)
+	}
+	for name := range env {
+		if strings.HasPrefix(name, "ACH_AGENT_DELIVERY_") && name != "ACH_AGENT_DELIVERY_HOOK_IN_H0" {
+			t.Errorf("literal delivery header got a binding: %s", name)
+		}
+	}
+}
+
+func TestRender_StandaloneSkills(t *testing.T) {
+	p, a := minimalFixture()
+	a.Spec.Standalone.Skills = []v1.StandaloneSkillSpec{
+		{Name: "tool-kit", Type: "gitlab", Repo: "platform/toolkit", Ref: "v1.4.0", BaseURL: "https://gitlab.example.com",
+			Headers: map[string]v1.HeaderValue{"PRIVATE-TOKEN": {SecretKeyRef: &v1.SecretKeyRef{Name: "gl-skills", Key: "token"}}}},
+		{Name: "plain", URL: "https://example.com/skills.tar.gz"},
+	}
+	doc, env := renderDoc(t, p, a)
+	got := jsonOf(t, doc["capability"].(map[string]any)["standalone"].(map[string]any)["skills"])
+	want := `[{"baseUrl":"https://gitlab.example.com","headers":{"PRIVATE-TOKEN":{"env":"ACH_AGENT_SKILL_TOOL_KIT_H0"}},"name":"tool-kit","ref":"v1.4.0","repo":"platform/toolkit","type":"gitlab"},` +
+		`{"headers":{},"name":"plain","type":"url","url":"https://example.com/skills.tar.gz"}]`
+	if got != want {
+		t.Fatalf("capability.standalone.skills = %s\nwant %s", got, want)
+	}
+	b, ok := env["ACH_AGENT_SKILL_TOOL_KIT_H0"]
+	if !ok || b.SecretKeyRef == nil || b.SecretKeyRef.Name != "gl-skills" || b.SecretKeyRef.Key != "token" {
+		t.Fatalf("skill binding = %#v (all: %#v)", b, env)
+	}
+}
+
+func TestRender_SkillEnvPrefixCollisionFails(t *testing.T) {
+	p, a := minimalFixture()
+	a.Spec.Standalone.Skills = []v1.StandaloneSkillSpec{{Name: "a-b", URL: "https://x"}, {Name: "a_b", URL: "https://y"}}
+	if _, _, err := Render(p, a); err == nil || !strings.Contains(err.Error(), "env prefix") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRender_DeliveryEnvPrefixCollisionFails(t *testing.T) {
+	p, a := minimalFixture()
+	cron := func(name string) v1.ChannelSpec {
+		return v1.ChannelSpec{Name: name, Type: "cron", Cron: &v1.CronSpec{Schedule: "* * * * *"}, Delivery: &v1.DeliverySpec{URL: "https://h"}}
+	}
+	a.Spec.Channels = []v1.ChannelSpec{cron("a-b"), cron("a.b")}
+	if _, _, err := Render(p, a); err == nil || !strings.Contains(err.Error(), "env prefix") {
+		t.Fatalf("err = %v", err)
+	}
+}

@@ -61,10 +61,12 @@ spec:                                  # any Agent CR spec field
 ```
 
 `promote` copies `agent.yaml` as written, under `spec`, with `ach.environment`, `model` and `mcpServers`
-under `spec.ach` and `capabilityServer: ach` set. It drops `ach.profile`, turns each `{env: NAME}` header
-into a `secretKeyRef`, and inlines a `prompt.system` file as text. A field set in both files is an error.
-Standalone manifests are not promoted. No environment variable is read, so no secret value is printed.
-Validate the result with `kubectl apply --dry-run=server -f -`.
+under `spec.ach` and `capabilityServer: ach` set. A manifest with no `ach:` gets `model`, `mcpServers` and `skills`
+under `spec.standalone` and `capabilityServer: standalone`, and needs no `spec.ach` in `deploy.yaml`. It
+drops `ach.profile`, turns each `{env: NAME}` header into a `secretKeyRef`, and inlines a `prompt.system`
+file as text. A field set in both files is an error. No environment variable is read, so no secret value
+is printed. Validate the result with `kubectl apply --dry-run=server -f -`, or without a cluster as
+[install.md](install.md#6-a-standalone-agent) shows.
 
 ## Manifest
 
@@ -89,6 +91,8 @@ prompt:                        # optional
   system: {type: file, file: ./AGENTS.md}     # text | file | ach (+ achFile)
   compose: append                             # append (default) | replace
 filter:                        # optional
+  include:
+    tools: [github.get_pull_request]   # <server>.<tool>
   exclude:
     mcpServers: [mcp-slack]
     tools: [zoho_desk_delete_ticket]
@@ -96,7 +100,7 @@ engine: {type: opencode, denyTools: [question]}   # optional
 ```
 
 Without `ach:` the agent is standalone: it calls the model endpoint directly and has only the
-`mcpServers` listed, with no hydration (no skills, prompts or artifacts from an environment):
+`mcpServers` and `skills` listed, with no hydration (no prompts or artifacts from an environment):
 
 ```yaml
 model:
@@ -111,8 +115,30 @@ mcpServers:
     url: https://api.githubcopilot.com/mcp/
     headers: {Authorization: {env: GITHUB_MCP_AUTH}}
 prompt: {system: {type: text, text: You review pull requests.}}
-filter: {exclude: {tools: [delete_repository]}}   # skills are not allowed without ach
+filter: {exclude: {tools: [delete_repository]}}
+skills:
+  - name: toolkit
+    type: gitlab
+    repo: platform/toolkit
+    ref: v1.4.0                              # optional: the default branch, read at start
+    baseUrl: https://gitlab.example.com      # optional: a self-hosted instance
+    headers: {PRIVATE-TOKEN: {env: GITLAB_SKILLS_TOKEN}}
 ```
+
+Each `skills` entry is one `.tar.gz` archive. Every directory in it with a `SKILL.md` is a skill and is
+copied whole (references, scripts, subdirectories) to `skills/<directory name>/`; a skill's own directory
+is not searched for nested skills. A `SKILL.md` at the root of a `gitlab`, `github` or `bitbucket` archive
+installs as `skills/<entry name>/`. Skills load once, when the agent starts, so an entry without `ref`
+follows the default branch at the next start. A failed download, an archive with no `SKILL.md` or two
+skills with the same name stop the agent. `filter.exclude.skills` drops skills by name. `headers` go only
+to the archive host, not to a redirect target on another host.
+
+| `type` | Archive URL built | Usual header |
+|---|---|---|
+| `url` (default) | `url` as written | any |
+| `gitlab` | `<baseUrl or https://gitlab.com>/api/v4/projects/<repo>/repository/archive.tar.gz?sha=<ref>` | `PRIVATE-TOKEN` |
+| `github` | `<baseUrl or https://api.github.com>/repos/<repo>/tarball/<ref>` | `Authorization: Bearer ...` |
+| `bitbucket` | `https://bitbucket.org/<repo>/get/<ref or HEAD>.tar.gz` (Cloud; use `url` for a server) | `Authorization: Bearer ...` |
 
 A model served on your machine (Ollama, vLLM, LM Studio) is reachable from the container as
 `host.docker.internal`:
@@ -128,8 +154,10 @@ model: {name: qwen3-coder, api: openai, baseUrl: "http://host.docker.internal:11
 | `ach.environment` | with `ach` | | `capability.ach.environment` |
 | `model` | yes | | `capability.ach.model` (`name`, `api`, `params`, `thinking`, `limits`) or `capability.standalone.model` (also `baseUrl`, `headers`) |
 | `mcpServers` (`name`, `url`, `headers`) | no | none | `capability.ach.mcpServers` or `capability.standalone.mcpServers` |
+| `skills` (`name`, `type`, `url` or `repo`, `ref`, `baseUrl`, `headers`) | no, standalone only | none | `capability.standalone.skills` |
 | `prompt.system` (`type`: `text`, `file`, `ach`) | no | none | `prompt.system`; a file is read and sent as text |
 | `prompt.compose` | no | `append` | `prompt.compose` |
+| `filter.include` (`tools`) | no | nothing | `capability.filter.include` |
 | `filter.exclude` (`mcpServers`, `tools`, `skills`) | no | nothing | `capability.filter.exclude` |
 | `engine.type` (`opencode` or `pi`) | no | `opencode` | `engine.type` |
 | `engine.denyTools` | no | none | `engine.denyTools` |
@@ -140,6 +168,10 @@ Every field has the Agent CR's name and shape, so `promote` copies it. `model.ap
 runtime reads, so `run` and `promote` send it as text. `limits.maxStallSeconds` is a runtime limit with
 no Agent CR field: `run` takes it, the cluster rejects it in a promoted CR.
 
+`filter.include.tools` entries are `<server>.<tool>`. A server with entries exposes only those tools,
+a server with none exposes all, and `filter.exclude` wins over `include`. An entry for a server the
+agent does not route stops the agent at start.
+
 A header is `{env: NAME}` (a secret read from your shell) or `{value: …}` (a literal). The value of
 `NAME` is sent as is, so an `Authorization` header needs its `Bearer ` prefix inside the variable. With
 `ach:`, an extra MCP server is never sent the ACH credential, and a name the environment already has is
@@ -148,8 +180,11 @@ an error at start.
 `model.limits` sets the context and output window the engine compacts against. With `ach:` it
 wins over the limits ACH reports for the model; set it only when the model's real window differs.
 
-`engine.denyTools` hides native engine tools from the model: opencode names such as `[websearch, webfetch]`, or pi
-names such as `[bash, write]`; a name that is not a pi tool is an error at start with pi. It is not a
+`engine.denyTools` hides native engine tools from the model. With opencode a name is a permission action:
+`read`, `edit`, `glob`, `grep`, `shell`, `webfetch`, `websearch`, `question`, `skill`, `subagent`, `browser`
+(`opencode debug agents` prints the ones in use). The shell is `shell`: `bash` matches nothing there, and
+opencode names are not checked. With pi the names are `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`,
+`codemode`, `tool_search`; a name that is not a pi tool is an error at start. It is not a
 boundary: `bash` reaches what a denied tool would. With opencode, `execute` (Code Mode) is always denied, so
 MCP tools are called directly.
 

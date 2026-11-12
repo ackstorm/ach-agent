@@ -56,8 +56,13 @@ async def test_generic_stable_id_required_and_priority() -> None:
         assert event is not None
         assert event.event_id == expected
 
-    with pytest.raises(ValueError, match="stable"):
-        normalize_webhook({}, {}, channel)
+    # No delivery header: the payload digest is the id, so a retry is the same event.
+    digest = normalize_webhook({"b": 1, "a": 2}, {}, channel)
+    reordered = normalize_webhook({"a": 2, "b": 1}, {}, channel)
+    other = normalize_webhook({"a": 3}, {}, channel)
+    assert digest is not None and reordered is not None and other is not None
+    assert digest.event_id.startswith("sha256:")
+    assert digest.event_id == reordered.event_id != other.event_id
 
     # The current admission ledger uses the normalized stable ID as its dedup key.
     first = normalize_webhook({}, {"Idempotency-Key": "same-delivery"}, channel)
@@ -71,19 +76,28 @@ async def test_generic_stable_id_required_and_priority() -> None:
         max_invocation_seconds=20, workspace_max_concurrent_sessions=1,
         channel_concurrency={"hooks": 1}, clock=lambda: datetime.now(timezone.utc), runner=_hold_runner,
     )
-    app = create_app(SimpleNamespace(config=SimpleNamespace(channels=[channel], agent=SimpleNamespace(name="test-agent"), identity_environment="test-env"), admission=admission, _stopping=False))
-    app.state.ready = True
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://control") as client:
-        missing_id = await client.post("/channels/hooks/events", json={"action": "created"})
-    assert missing_id.status_code == 422
-    assert admission.queued_total == 0
-
     ticket_a = admission.admit(route(first, channel))
     ticket_b = admission.admit(route(repeated, channel))
     assert ticket_a is ticket_b
     assert admission.queued_total == 1
     await admission.close()
+
+
+@pytest.mark.asyncio
+async def test_generic_webhook_without_a_delivery_header_is_admitted_once_per_payload() -> None:
+    app, entered, release, admission = _deferred_app()
+    app.state.ready = True
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://control") as client:
+        try:
+            first = await client.post("/channels/hooks/events", json={"action": "created"})
+            retry = await client.post("/channels/hooks/events", json={"action": "created"})
+            assert len(admission._tickets) == 1
+        finally:
+            release.set()
+            await admission.close()
+    assert first.status_code == retry.status_code == 202
+    assert first.json()["task_id"] == retry.json()["task_id"]
 
 
 async def _hold_runner(event, ticket) -> None:
@@ -131,8 +145,7 @@ async def test_webhook_ack_on_admission_does_not_wait_for_started() -> None:
             await admission.close()
     assert response.status_code == 202
     assert response.json()["status"] == "accepted"
-    assert response.json()["task_id"] == response.headers["x-ach-task-id"]
-    assert len(response.json()["task_id"]) == 32
+    assert response.json()["task_id"] == response.headers["x-ach-task-id"] == ticket.invocation_id
 
 
 @pytest.mark.asyncio

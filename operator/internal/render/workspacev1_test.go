@@ -502,7 +502,7 @@ func TestRenderChannelV1RateLimit(t *testing.T) {
 			{Key: "sender:{{ payload.sender }}", MaxPerHour: 10},
 		}},
 	}
-	got, err := RenderChannelV1(&ch, nil)
+	got, _, err := RenderChannelV1(&ch, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

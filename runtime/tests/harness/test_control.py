@@ -2294,6 +2294,8 @@ async def test_control_close_joins_lifecycle_before_clients() -> None:
         lifecycle=SimpleNamespace(close=closer("lifecycle")),
         a2a_facade=None,
         delivery=SimpleNamespace(close=closer("delivery")),
+        result_delivery=None,
+        local_context=None,
         source=SimpleNamespace(close=lambda: closed.append("source")),
         manager=SimpleNamespace(cancel_adoption=lambda: closed.append("adoption")),
         mini_client=SimpleNamespace(aclose=closer("mini")),
@@ -2998,6 +3000,7 @@ async def test_configure_payload_stays_readable_by_older_execution_pods(hooks, e
         assert set(public["hooks"]) == expected
         assert "maxStallSeconds" not in public["limits"]
         assert "denyTools" not in public["engine"]
+        assert "include" not in public["capability"]["filter"]
         # An execution pod on this version still parses what it receives.
         assert PublicConfig.model_validate(public).config_version == control.public.config_version
     finally:
@@ -3018,6 +3021,24 @@ async def test_configure_payload_sends_deny_tools_when_set() -> None:
     try:
         await control.configure_workspace(_hook_endpoint(config))
         assert calls[0][1]["public"]["engine"]["denyTools"] == ["question"]
+    finally:
+        await control.close()
+
+
+async def test_public_wire_keeps_include_tools_when_set() -> None:
+    from ach_runtime.harness.control import _public_wire
+
+    control = await assemble(
+        _config(), environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},
+        ach_transport=httpx.MockTransport(_catalog_handler),
+    )
+    try:
+        capability = control.public.capability
+        include = capability.filter.include.model_copy(update={"tools": ["srv.tool"]})
+        capability = capability.model_copy(update={
+            "filter": capability.filter.model_copy(update={"include": include})})
+        public = control.public.model_copy(update={"capability": capability})
+        assert _public_wire(public)["capability"]["filter"]["include"] == {"tools": ["srv.tool"]}
     finally:
         await control.close()
 
@@ -3136,3 +3157,44 @@ async def test_a_run_cancelled_while_queued_never_reaches_its_workspace():
     with pytest.raises(RuntimeError, match="cancelled by the caller"):
         await control.run(event, ticket)
     assert control.cancel_requested == set()
+
+
+@pytest.mark.parametrize("raises", [False, True])
+async def test_run_delivers_the_result_of_a_channel_with_delivery(raises, monkeypatch):
+    from types import SimpleNamespace
+
+    from ach_runtime.harness.result_delivery import ResultDelivery
+
+    posts: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posts.append(json.loads(request.content))
+        return httpx.Response(204)
+
+    async def fake_run(_self, _event, _ticket):
+        if raises:
+            raise RuntimeError("sandbox did not start")
+        return SimpleNamespace(channel="alerts", state="completed", result={"text": "done"}, error=None)
+
+    control = Control.__new__(Control)
+    monkeypatch.setattr(Control, "run", fake_run)
+    control.result_delivery = ResultDelivery(
+        {"alerts": ("https://hooks.example.com/r", {})},
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    event = RoutedEvent(Event("evt-d", "alerts", "kind", "source"), "workspace", "session")
+    ticket = SimpleNamespace(invocation_id="inv-d")
+
+    if raises:
+        with pytest.raises(RuntimeError):
+            await control.run_and_deliver(event, ticket)
+    else:
+        await control.run_and_deliver(event, ticket)
+    await control.result_delivery.close()
+
+    assert posts == [{
+        "invocation_id": "inv-d", "channel": "alerts",
+        "state": "failed" if raises else "completed",
+        "text": None if raises else "done",
+        "error": "RuntimeError: sandbox did not start" if raises else None,
+    }]

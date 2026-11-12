@@ -226,6 +226,14 @@ func checkGracePeriod(p *achv1alpha1.AgentProfile, a *achv1alpha1.Agent) error {
 	return nil
 }
 
+// Validate runs the checks of Reconcile that need only the two objects.
+func Validate(p achv1alpha1.AgentProfile, a achv1alpha1.Agent) error {
+	if _, _, err := render.Render(p, a); err != nil {
+		return err
+	}
+	return checkGracePeriod(&p, &a)
+}
+
 //nolint:gocyclo // Single linear resolve→render→apply→status flow; splitting scatters status ordering.
 func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("agent", req.NamespacedName)

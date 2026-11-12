@@ -13,7 +13,7 @@ mcpServers:
     url: https://mcp.example/mcp
     headers: {Authorization: {env: EXTRA_TOKEN}, X-Tag: {value: lit}}
 engine: {denyTools: [question]}
-filter: {exclude: {tools: [bash]}}
+filter: {include: {tools: [extra.read]}, exclude: {tools: [bash]}}
 prompt: {system: {type: file, file: AGENTS.md}, compose: append}
 limits: {maxSteps: 400}
 """
@@ -60,7 +60,7 @@ def test_promote_copies_the_manifest_and_merges_deploy(tmp_path) -> None:
                 "keyFrom": {"tokenExchange": {"identity": "svc"}},
             },
             "engine": {"denyTools": ["question"]},
-            "filter": {"exclude": {"tools": ["bash"]}},
+            "filter": {"include": {"tools": ["extra.read"]}, "exclude": {"tools": ["bash"]}},
             "prompt": {"system": {"type": "text", "text": "You are FinOps.\nBe brief.\n"}, "compose": "append"},
             "limits": {"maxSteps": 400},
             "profileRef": {"name": "default"},
@@ -117,10 +117,44 @@ def test_promote_validates_like_run(tmp_path) -> None:
         promote(config, deploy, name="finops")
 
 
-def test_promote_rejects_a_standalone_manifest(tmp_path) -> None:
-    config, deploy = _files(tmp_path, agent="model: {name: m, api: openai, baseUrl: 'https://m.example/v1'}\n")
-    with pytest.raises(PromoteError, match="standalone"):
-        promote(config, deploy, name="finops")
+def test_promote_puts_a_standalone_manifest_under_spec_standalone(tmp_path) -> None:
+    agent = """\
+model:
+  name: m
+  api: openai
+  baseUrl: https://m.example/v1
+  headers: {Authorization: {env: MODEL_KEY}}
+mcpServers:
+  - name: extra
+    url: https://mcp.example/mcp
+    headers: {Authorization: {env: EXTRA_TOKEN}}
+skills:
+  - name: toolkit
+    type: github
+    repo: acme/skills
+    headers: {Authorization: {env: SKILLS_TOKEN}}
+"""
+    deploy = "secretName: agent-x\nspec: {profileRef: {name: default}}\n"
+    config, deploy_file = _files(tmp_path, agent=agent, deploy=deploy)
+    spec = yaml.safe_load(promote(config, deploy_file, name="x"))["spec"]
+    assert spec == {
+        "capabilityServer": "standalone",
+        "standalone": {
+            "model": {
+                "name": "m", "api": "openai", "baseUrl": "https://m.example/v1",
+                "headers": {"Authorization": {"secretKeyRef": {"name": "agent-x", "key": "MODEL_KEY"}}},
+            },
+            "mcpServers": [{
+                "name": "extra", "url": "https://mcp.example/mcp",
+                "headers": {"Authorization": {"secretKeyRef": {"name": "agent-x", "key": "EXTRA_TOKEN"}}},
+            }],
+            "skills": [{
+                "name": "toolkit", "type": "github", "repo": "acme/skills",
+                "headers": {"Authorization": {"secretKeyRef": {"name": "agent-x", "key": "SKILLS_TOKEN"}}},
+            }],
+        },
+        "profileRef": {"name": "default"},
+    }
 
 
 def test_promote_needs_secret_name_for_an_env_header(tmp_path) -> None:

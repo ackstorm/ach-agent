@@ -715,3 +715,55 @@ def test_persistence_volume_parses(pr_review_wire: dict[str, Any]) -> None:
     cfg = parse_config(_resign(pr_review_wire))
     assert cfg.workspace.persistence.type == "volume"
     assert cfg.workspace.session_retention_days == 7
+
+
+def test_filter_include_tools_must_be_server_qualified() -> None:
+    from ach_runtime.config.schema import AchCapabilityFilter
+
+    ok = AchCapabilityFilter.model_validate({"include": {"tools": ["github.get_pull_request"]}})
+    assert ok.include.tools == ["github.get_pull_request"]
+    assert AchCapabilityFilter().include.tools == []
+    for bad in (["get_pull_request"], [".x"], ["github."], ["a.b", "a.b"]):
+        with pytest.raises(ValueError, match="include.tools"):
+            AchCapabilityFilter.model_validate({"include": {"tools": bad}})
+
+
+def test_channel_delivery_is_for_webhook_cron_and_queue_only() -> None:
+    from ach_runtime.config.schema import ChannelConfig
+
+    base = {"name": "hooks", "type": "webhook", "source": "generic",
+            "routing": {"sessionKey": "k"}, "webhook": {"auth": {"type": "none"}}}
+    delivery = {"url": "https://hooks.example.com/result", "headers": {"Authorization": {"env": "DELIVERY_TOKEN"}}}
+    channel = ChannelConfig.model_validate({**base, "delivery": delivery})
+    assert channel.delivery.url == "https://hooks.example.com/result"
+    with pytest.raises(ValueError, match="delivery"):
+        ChannelConfig.model_validate({"name": "chat", "type": "a2a", "a2a": {"auth": {"env": "A2A_KEY"}},
+                                      "delivery": delivery})
+    with pytest.raises(ValueError):
+        ChannelConfig.model_validate({**base, "delivery": {"url": "ftp://x"}})
+    with pytest.raises(ValueError, match="reserved"):
+        ChannelConfig.model_validate({**base, "delivery": {"url": "https://x.example", "headers": {"Host": {"value": "y"}}}})
+
+
+def test_standalone_skill_types_build_their_archive_url() -> None:
+    from ach_runtime.config.schema import StandaloneSkill
+
+    def url(**fields) -> str:
+        return StandaloneSkill.model_validate({"name": "s", **fields}).archive_url()
+
+    assert url(url="https://a.example/s.tar.gz") == "https://a.example/s.tar.gz"
+    assert url(type="gitlab", repo="platform/toolkit") == \
+        "https://gitlab.com/api/v4/projects/platform%2Ftoolkit/repository/archive.tar.gz"
+    assert url(type="gitlab", repo="platform/toolkit", ref="v1.4.0", baseUrl="https://gl.example.com/") == \
+        "https://gl.example.com/api/v4/projects/platform%2Ftoolkit/repository/archive.tar.gz?sha=v1.4.0"
+    assert url(type="github", repo="acme/skills") == "https://api.github.com/repos/acme/skills/tarball"
+    assert url(type="github", repo="acme/skills", ref="main", baseUrl="https://ghe.example.com/api/v3") == \
+        "https://ghe.example.com/api/v3/repos/acme/skills/tarball/main"
+    assert url(type="bitbucket", repo="ws/skills", ref="v2") == "https://bitbucket.org/ws/skills/get/v2.tar.gz"
+    assert url(type="bitbucket", repo="ws/skills") == "https://bitbucket.org/ws/skills/get/HEAD.tar.gz"
+
+    for bad in ({"type": "gitlab"}, {"type": "url", "repo": "a/b"}, {"url": "https://a.example", "ref": "x"},
+                {"type": "gitlab", "repo": "a/b", "url": "https://a.example"},
+                {"type": "bitbucket", "repo": "a/b", "baseUrl": "https://bb.example"}):
+        with pytest.raises(ValueError):
+            StandaloneSkill.model_validate({"name": "s", **bad})

@@ -11,6 +11,7 @@ import tempfile
 import time
 from pathlib import Path
 import re
+import shutil
 import ssl
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
@@ -50,6 +51,7 @@ from ach_runtime.harness.admission import (
     ScriptAdmissionTicket,
     WorkspaceOwnerLost,
 )
+from ach_runtime.harness.result_delivery import ResultDelivery
 from ach_runtime.harness.delivery import Delivery, GatewayUnavailable, StartOutcomeUnknown
 from ach_runtime.observability.metrics import WORKSPACE_START_SECONDS
 from ach_runtime.observability.runs import register_secrets
@@ -65,6 +67,7 @@ from ach_runtime.harness.hosted import HostedSource
 from ach_runtime.harness.keys import Exchange, KeySource
 from ach_runtime.harness.lifecycle import Lifecycle
 from ach_runtime.harness.handoff import run_handoff
+from ach_runtime.harness.skills import SkillsError, fetch_skills
 from ach_runtime.harness.scripts import run_webhook_script
 from ach_runtime.harness.transfer import put_archive
 from ach_runtime.storage.archive import _run_owned, pack
@@ -219,11 +222,14 @@ class Control:
     progress_facade: ProgressFacade | None
     mini_client: httpx.AsyncClient
     facade_transport: httpx.AsyncBaseTransport | None = None
+    # Standalone skills, downloaded at start and packed into every session's context.
+    local_context: Path | None = None
     facade_clients: list[httpx.AsyncClient] = field(default_factory=list)
     _prepared: dict[str, tuple[WorkspaceEndpoint, Any]] = field(default_factory=dict)
     _started_run: dict[str, str] = field(default_factory=dict)
     _stopping: bool = False
     lifecycle: Lifecycle | None = None
+    result_delivery: ResultDelivery | None = None
     _private_env: dict[str, str] = field(default_factory=dict, repr=False)
     ach_key: KeySource | None = field(default=None, repr=False)
     _memory_auth: Any = field(default=None, repr=False)
@@ -533,7 +539,9 @@ class Control:
         if channel is None:
             raise WorkspaceAssemblyUnavailable("admitted channel is no longer configured")
         event = routed.event
-        if any(item.download_url for item in (*self.catalog.skills, *self.catalog.prompts, *self.catalog.artifacts)):
+        if self.local_context is not None or any(
+            item.download_url for item in (*self.catalog.skills, *self.catalog.prompts, *self.catalog.artifacts)
+        ):
             await self._transfer_context(ticket, endpoint)
         if channel.handoff is not None:
             await self._run_handoff(channel.handoff, event, ticket, endpoint)
@@ -589,14 +597,15 @@ class Control:
         with tempfile.TemporaryDirectory(prefix="ach-context-") as temporary:
             root = Path(temporary) / "context"
             root.mkdir()
-            async with httpx.AsyncClient(timeout=30, auth=ach_key.auth if ach_key else None,
-                                         headers=with_identity_headers({}, identity)) as client:
-                await stage_context(
-                    self.catalog, root, excluded_skills=self.config.capability.filter.exclude.skills,
-                    client=client,
-                )
+            if self.local_context is None:
+                async with httpx.AsyncClient(timeout=30, auth=ach_key.auth if ach_key else None,
+                                             headers=with_identity_headers({}, identity)) as client:
+                    await stage_context(
+                        self.catalog, root, excluded_skills=self.config.capability.filter.exclude.skills,
+                        client=client,
+                    )
             archive = Path(temporary) / "context.tar.gz"
-            _, cancelled, error = await _run_owned(pack, root, archive, max_bytes=512 * 1024**2)
+            _, cancelled, error = await _run_owned(pack, self.local_context or root, archive, max_bytes=512 * 1024**2)
             if cancelled:
                 raise asyncio.CancelledError()
             if error:
@@ -638,6 +647,23 @@ class Control:
             )
             if result.get("status") != "imported":
                 raise WorkspaceAssemblyUnavailable("mini-harness did not confirm handoff import")
+
+    async def run_and_deliver(
+        self,
+        event: RoutedEvent | Event,
+        ticket: AdmissionTicket | ScriptAdmissionTicket,
+    ) -> RunStatus | None:
+        """`run`, then POST its outcome to the channel's delivery target, if it has one."""
+        assert self.result_delivery is not None
+        try:
+            status = await self.run(event, ticket)
+        except Exception as exc:
+            if isinstance(event, RoutedEvent):
+                self.result_delivery.send(event.event.channel, ticket.invocation_id, None, _failure_reason(exc))
+            raise
+        if status is not None:
+            self.result_delivery.send(status.channel, ticket.invocation_id, status, None)
+        return status
 
     async def run(
         self,
@@ -857,6 +883,8 @@ class Control:
         if self.a2a_facade is not None:
             closers.append(self.a2a_facade.aclose)
         closers.extend((self.delivery.close, self.mini_client.aclose))
+        if self.result_delivery is not None:
+            closers.append(self.result_delivery.close)
         ach_key = getattr(self, "ach_key", None)
         if ach_key is not None:
             closers.append(ach_key.close)
@@ -870,6 +898,8 @@ class Control:
                 await client.aclose()
             except BaseException as exc:
                 errors.append(exc)
+        if self.local_context is not None:
+            shutil.rmtree(self.local_context, ignore_errors=True)
         if errors:
             raise errors[0]
 
@@ -991,6 +1021,7 @@ async def assemble(
         raise RuntimeError("ACH_SANDBOX_KEY is required and must not be empty")
     key = raw_key.encode("utf-8")
     verify_key = engine_verify_key(key)
+    local_context: Path | None = None
     own_servers: frozenset[str] = frozenset()  # MCP servers that carry their own headers, never the ACH key
     if config.capability.ach is not None:
         ach = config.capability.ach
@@ -1030,6 +1061,23 @@ async def assemble(
         resolved_mcp = {item.name: resolve_headers(item.headers, env) for item in server.mcp_servers}
         mcp_headers = {name: headers for name, (headers, _) in resolved_mcp.items()}
         upstream_secrets = (*model_secrets, *(value for _, secrets in resolved_mcp.values() for value in secrets))
+        if server.skills:
+            skills_dir = tempfile.mkdtemp(prefix="ach-skills-context-")
+            try:
+                async with httpx.AsyncClient() as skills_client:
+                    installed = await fetch_skills(
+                        server.skills, env, Path(skills_dir),
+                        excluded=config.capability.filter.exclude.skills, client=skills_client)
+            except SkillsError as exc:
+                shutil.rmtree(skills_dir, ignore_errors=True)
+                raise WorkspaceAssemblyUnavailable(str(exc)) from exc
+            except BaseException:
+                shutil.rmtree(skills_dir, ignore_errors=True)
+                raise
+            upstream_secrets += tuple(
+                value for item in server.skills for value in resolve_headers(item.headers, env)[1])
+            log.info("standalone skills installed: %s", ", ".join(installed))
+            local_context = Path(skills_dir)
     identity = ProcessIdentity(agent=config.agent.name, environment=config.identity_environment)
     public = public_config(config, config.engine.env)
     storage = storage_from_env(config, env)
@@ -1089,6 +1137,7 @@ async def assemble(
     control._private_env = dict(env)
     control.ach_key, control._memory_auth = ach_key, memory_auth
     control.upstream_secrets = upstream_secrets
+    control.local_context = local_context
     control._model_headers, control._mcp_headers = model_headers, mcp_headers
     control.source, control.manager, control.delivery = source, manager, None
     control.admission, control.model_facade, control.mcp_facade = None, None, None
@@ -1125,18 +1174,22 @@ async def assemble(
             for channel in config.channels
             if channel.rate_limit is not None
         },
-        clock=_clock, runner=control.run, alarm=_alarm,
+        clock=_clock, runner=control.run_and_deliver, alarm=_alarm,
     )
     facade_timeout = httpx.Timeout(None, connect=30.0)
     mcp_client = httpx.AsyncClient(transport=facade_transport, timeout=facade_timeout)
     model_client = httpx.AsyncClient(transport=facade_transport, timeout=facade_timeout)
     control.facade_clients.extend((mcp_client, model_client))
-    mcp = McpFacade(
-        servers=mcp_servers, server_headers=mcp_headers, key=key, owned_workspace=control._owned_live,
-        exclude=excluded | frozenset(memory_excluded),
-        exclude_tools=frozenset(config.capability.filter.exclude.tools), identity=identity,
-        client=mcp_client, auth=ach_key.auth if ach_key else None, own_servers=own_servers,
-    )
+    try:
+        mcp = McpFacade(
+            servers=mcp_servers, server_headers=mcp_headers, key=key, owned_workspace=control._owned_live,
+            exclude=excluded | frozenset(memory_excluded),
+            exclude_tools=frozenset(config.capability.filter.exclude.tools),
+            include_tools=frozenset(config.capability.filter.include.tools), identity=identity,
+            client=mcp_client, auth=ach_key.auth if ach_key else None, own_servers=own_servers,
+        )
+    except ValueError as exc:
+        raise WorkspaceAssemblyUnavailable(str(exc)) from exc
     model = ModelFacade(
         endpoint=model_endpoint, headers=model_headers, api=config.model.type, model=config.model.name,
         key=key,
@@ -1173,7 +1226,15 @@ async def assemble(
         )
     metadata = catalog.model.metadata
     control._priced = metadata is not None and metadata.input_cost_per_token is not None
-    register_secrets((*upstream_secrets, *memory_auth_secrets))
+    delivery_targets: dict[str, tuple[str, dict[str, str]]] = {}
+    delivery_secrets: list[str] = []
+    for channel in config.channels:
+        if channel.delivery is not None:
+            delivery_headers, secrets = resolve_headers(channel.delivery.headers, env)
+            delivery_targets[channel.name] = (channel.delivery.url, delivery_headers)
+            delivery_secrets.extend(secrets)
+    control.result_delivery = ResultDelivery(delivery_targets)
+    register_secrets((*upstream_secrets, *memory_auth_secrets, *delivery_secrets))
     lifecycle = Lifecycle(control)
     control.lifecycle = lifecycle
     return control
@@ -1198,6 +1259,9 @@ def _public_wire(public: Any) -> dict[str, Any]:
     # Added in 0.1.22: sent only when set, so a warm older execution pod still parses it.
     if not public.engine.deny_tools:
         wire["engine"].pop("denyTools", None)
+    # Sent only when set: an older execution pod's filter has no `include`.
+    if not public.capability.filter.include.tools:
+        wire["capability"]["filter"].pop("include", None)
     return wire
 
 

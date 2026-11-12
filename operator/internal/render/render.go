@@ -454,6 +454,13 @@ func ReferencedSecrets(p v1.AgentProfile, a v1.Agent) map[string][]string {
 				add(ch.A2A.Auth.SecretRef.Name, ch.A2A.Auth.SecretRef.Key)
 			}
 		}
+		if ch.Delivery != nil {
+			for _, h := range ch.Delivery.Headers {
+				if h.SecretKeyRef != nil {
+					add(h.SecretKeyRef.Name, h.SecretKeyRef.Key)
+				}
+			}
+		}
 	}
 	if ref := MemorySecretEnv(a); ref != nil {
 		add(ref.SecretName, ref.Key)
@@ -466,6 +473,13 @@ func ReferencedSecrets(p v1.AgentProfile, a v1.Agent) map[string][]string {
 		}
 		for _, srv := range st.McpServers {
 			for _, h := range srv.Headers {
+				if h.SecretKeyRef != nil {
+					add(h.SecretKeyRef.Name, h.SecretKeyRef.Key)
+				}
+			}
+		}
+		for _, s := range st.Skills {
+			for _, h := range s.Headers {
 				if h.SecretKeyRef != nil {
 					add(h.SecretKeyRef.Name, h.SecretKeyRef.Key)
 				}

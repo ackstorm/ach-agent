@@ -289,6 +289,46 @@ spec:
                       required:
                       - schedule
                       type: object
+                    delivery:
+                      description: Delivery POSTs the final result of each run to
+                        a URL.
+                      properties:
+                        headers:
+                          additionalProperties:
+                            description: 'HeaderValue is one HTTP header value: a
+                              Secret key or a literal.'
+                            properties:
+                              secretKeyRef:
+                                description: SecretKeyRef identifies a key in a same-namespace
+                                  Secret.
+                                properties:
+                                  key:
+                                    description: Key is the data key inside the Secret.
+                                    minLength: 1
+                                    type: string
+                                  name:
+                                    description: Name is the Kubernetes Secret name.
+                                    minLength: 1
+                                    type: string
+                                required:
+                                - key
+                                - name
+                                type: object
+                              value:
+                                type: string
+                            type: object
+                            x-kubernetes-validations:
+                            - message: exactly one of secretKeyRef or value must be
+                                set
+                              rule: has(self.secretKeyRef) != has(self.value)
+                          maxProperties: 64
+                          type: object
+                        url:
+                          pattern: ^https?://[^/\s]+
+                          type: string
+                      required:
+                      - url
+                      type: object
                     handoff:
                       description: |-
                         Handoff runs in the harness, in an empty directory; its output wholesale-replaces the
@@ -546,6 +586,9 @@ spec:
                   - message: generic webhook and queue channels require routing.sessionKey
                     rule: '!(self.type==''queue'' || (self.type==''webhook'' && has(self.source)
                       && self.source==''generic'')) || (has(self.routing) && has(self.routing.sessionKey))'
+                  - message: channels.delivery is only valid for webhook, cron and
+                      queue channels
+                    rule: '!has(self.delivery) || self.type in [''webhook'',''cron'',''queue'']'
                 minItems: 1
                 type: array
                 x-kubernetes-list-map-keys:
@@ -845,6 +888,21 @@ spec:
                         items:
                           type: string
                         type: array
+                    type: object
+                  include:
+                    description: 'IncludeSpec is the allow list of the capability
+                      filter (config: capability.filter.include).'
+                    properties:
+                      tools:
+                        description: |-
+                          Tools lists MCP tools as <server>.<tool>. A server with an entry exposes only its
+                          listed tools; a server with none exposes all. exclude wins over include.
+                        items:
+                          pattern: ^[^.]+\..+$
+                          type: string
+                        maxItems: 512
+                        type: array
+                        x-kubernetes-list-type: set
                     type: object
                 type: object
               hooks:
@@ -1328,6 +1386,82 @@ spec:
                     - baseUrl
                     - name
                     type: object
+                  skills:
+                    items:
+                      description: |-
+                        StandaloneSkillSpec is one archive of skills (config: capability.standalone.skills). type
+                        only builds the archive URL; headers are sent as written.
+                      properties:
+                        baseUrl:
+                          pattern: ^https?://[^/\s]+
+                          type: string
+                        headers:
+                          additionalProperties:
+                            description: 'HeaderValue is one HTTP header value: a
+                              Secret key or a literal.'
+                            properties:
+                              secretKeyRef:
+                                description: SecretKeyRef identifies a key in a same-namespace
+                                  Secret.
+                                properties:
+                                  key:
+                                    description: Key is the data key inside the Secret.
+                                    minLength: 1
+                                    type: string
+                                  name:
+                                    description: Name is the Kubernetes Secret name.
+                                    minLength: 1
+                                    type: string
+                                required:
+                                - key
+                                - name
+                                type: object
+                              value:
+                                type: string
+                            type: object
+                            x-kubernetes-validations:
+                            - message: exactly one of secretKeyRef or value must be
+                                set
+                              rule: has(self.secretKeyRef) != has(self.value)
+                          maxProperties: 64
+                          type: object
+                        name:
+                          pattern: ^[a-z0-9][a-z0-9_-]{0,62}$
+                          type: string
+                        ref:
+                          pattern: ^[A-Za-z0-9._/-]+$
+                          type: string
+                        repo:
+                          pattern: ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$
+                          type: string
+                        type:
+                          default: url
+                          enum:
+                          - url
+                          - gitlab
+                          - github
+                          - bitbucket
+                          type: string
+                        url:
+                          pattern: ^https?://[^/\s]+
+                          type: string
+                      required:
+                      - name
+                      type: object
+                      x-kubernetes-validations:
+                      - message: 'skills: type url takes url only; the other types
+                          take repo'
+                        rule: 'self.type == ''url'' ? (has(self.url) && !has(self.repo)
+                          && !has(self.ref) && !has(self.baseUrl)) : (has(self.repo)
+                          && !has(self.url))'
+                      - message: 'skills: type bitbucket is Bitbucket Cloud; use type
+                          url for a server'
+                        rule: self.type != 'bitbucket' || !has(self.baseUrl)
+                    maxItems: 32
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
                 required:
                 - model
                 type: object
@@ -1443,10 +1577,6 @@ spec:
             - message: capabilityServer selects exactly one of standalone/ach
               rule: 'self.capabilityServer == ''standalone'' ? (has(self.standalone)
                 && !has(self.ach)) : (has(self.ach) && !has(self.standalone))'
-            - message: filter.exclude.skills requires capabilityServer ach
-              rule: '!has(self.filter) || !has(self.filter.exclude) || !has(self.filter.exclude.skills)
-                || size(self.filter.exclude.skills) == 0 || self.capabilityServer
-                == ''ach'''
           status:
             description: AgentStatus is the observed state.
             properties:

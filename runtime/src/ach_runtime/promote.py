@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""`promote`: the Agent CR for an `ach:` manifest, from `agent.yaml` plus `deploy.yaml`.
+"""`promote`: the Agent CR for a manifest, from `agent.yaml` plus `deploy.yaml`.
 
 agent.yaml uses the CR's field names, so its fields are copied as written, with three changes: `ach.profile`
 is dropped, each `{env: NAME}` header becomes a `secretKeyRef` into `deploy.yaml`'s `secretName`, and a
-`prompt.system` file is inlined as text. `deploy.yaml` is a partial Agent CR (`metadata`, `spec`) plus
+`prompt.system` file is inlined as text. `model` and `mcpServers` go under `spec.ach`, or under
+`spec.standalone` for a manifest with no `ach:`. `deploy.yaml` is a partial Agent CR (`metadata`, `spec`) plus
 `secretName`; a field set in both files is an error. No environment variable is read.
 """
 
@@ -79,8 +80,6 @@ def _read_deploy(path: Path) -> dict[str, Any]:
 def promote(config: Path, deploy: Path, *, name: str) -> str:
     """The Agent CR YAML for `config` (agent.yaml) and `deploy` (deploy.yaml)."""
     manifest = load_manifest(config)
-    if manifest.ach is None:
-        raise PromoteError("promote needs an `ach:` manifest; standalone agents are not promoted")
     raw = _read_deploy(deploy)
     deploy_ach = (raw.get("spec") or {}).get("ach") or {}
     try:  # what `run` accepts: the runtime schema, as the agent's config at boot
@@ -91,13 +90,22 @@ def promote(config: Path, deploy: Path, *, name: str) -> str:
     secret_name = raw.get("secretName")
     written = manifest.model_dump(by_alias=True, exclude_unset=True)
 
-    ach: dict[str, Any] = {"environment": manifest.ach.environment, "model": written["model"]}
+    server = "standalone" if manifest.ach is None else "ach"
+    capability: dict[str, Any] = {} if manifest.ach is None else {"environment": manifest.ach.environment}
+    capability["model"] = model = written["model"]
+    if model.get("headers"):
+        model["headers"] = _headers(model["headers"], secret_name, "model")
     if servers := written.get("mcpServers"):
-        for server in servers:
-            if server.get("headers"):
-                server["headers"] = _headers(server["headers"], secret_name, f"mcpServers.{server.get('name')}")
-        ach["mcpServers"] = servers
-    spec: dict[str, Any] = {"capabilityServer": "ach", "ach": ach}
+        for entry in servers:
+            if entry.get("headers"):
+                entry["headers"] = _headers(entry["headers"], secret_name, f"mcpServers.{entry.get('name')}")
+        capability["mcpServers"] = servers
+    if server == "standalone" and (skills := written.get("skills")):
+        for entry in skills:
+            if entry.get("headers"):
+                entry["headers"] = _headers(entry["headers"], secret_name, f"skills.{entry.get('name')}")
+        capability["skills"] = skills
+    spec: dict[str, Any] = {"capabilityServer": server, server: capability}
     spec.update({key: written[key] for key in _COPIED if key in written})
     if manifest.prompt is not None and manifest.prompt.system.type == "file":
         try:

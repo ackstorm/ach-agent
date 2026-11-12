@@ -386,8 +386,22 @@ func TestAgent_CEL_Rejections(t *testing.T) {
 		"route without service": func(a *achv1alpha1.Agent) {
 			a.Spec.Expose = &achv1alpha1.ExposeSpec{Route: &achv1alpha1.RouteSpec{Hostname: "a.example.com"}}
 		},
-		"skills exclusion in standalone": func(a *achv1alpha1.Agent) {
-			a.Spec.Filter = &achv1alpha1.FilterSpec{Exclude: &achv1alpha1.ExcludeSpec{Skills: []string{"s"}}}
+		"delivery on an a2a channel": func(a *achv1alpha1.Agent) {
+			a.Spec.Channels = []achv1alpha1.ChannelSpec{{Name: "peer", Type: "a2a",
+				A2A:      &achv1alpha1.A2ASpec{Auth: achv1alpha1.A2AAuthSpec{SecretRef: achv1alpha1.SecretKeyRef{Name: "s", Key: "k"}}},
+				Delivery: &achv1alpha1.DeliverySpec{URL: "https://hooks.example.com"}}}
+		},
+		"gitlab skill without repo": func(a *achv1alpha1.Agent) {
+			a.Spec.Standalone.Skills = []achv1alpha1.StandaloneSkillSpec{{Name: "kit", Type: "gitlab"}}
+		},
+		"url skill with a ref": func(a *achv1alpha1.Agent) {
+			a.Spec.Standalone.Skills = []achv1alpha1.StandaloneSkillSpec{{Name: "kit", Type: "url", URL: "https://example.com/k.tar.gz", Ref: "main"}}
+		},
+		"bitbucket skill with a baseUrl": func(a *achv1alpha1.Agent) {
+			a.Spec.Standalone.Skills = []achv1alpha1.StandaloneSkillSpec{{Name: "kit", Type: "bitbucket", Repo: "o/r", BaseURL: "https://bitbucket.example.com"}}
+		},
+		"include entry without a dot": func(a *achv1alpha1.Agent) {
+			a.Spec.Filter = &achv1alpha1.FilterSpec{Include: &achv1alpha1.IncludeSpec{Tools: []string{"serper"}}}
 		},
 		"header with both secretKeyRef and value": func(a *achv1alpha1.Agent) {
 			v := "x"
@@ -411,6 +425,25 @@ func TestAgent_CEL_Rejections(t *testing.T) {
 		a.Spec.Expose = &achv1alpha1.ExposeSpec{Service: true, Route: &achv1alpha1.RouteSpec{Hostname: "a.example.com"}}
 		if err := k8sClient.Create(ctx, a); err != nil {
 			t.Fatalf("route + service must be accepted: %v", err)
+		}
+	})
+	t.Run("delivery, tool allow list and skills are accepted", func(t *testing.T) {
+		a := testAgentObject("aa-cel-features-ok", "aa-cel-p")
+		a.Spec.Filter = &achv1alpha1.FilterSpec{
+			Include: &achv1alpha1.IncludeSpec{Tools: []string{"serper.echo"}},
+			Exclude: &achv1alpha1.ExcludeSpec{Skills: []string{"frontend-design"}},
+		}
+		a.Spec.Channels[0].Delivery = &achv1alpha1.DeliverySpec{URL: "https://hooks.example.com/result",
+			Headers: map[string]achv1alpha1.HeaderValue{"Authorization": {SecretKeyRef: &achv1alpha1.SecretKeyRef{Name: "d", Key: "auth"}}}}
+		a.Spec.Standalone.Skills = []achv1alpha1.StandaloneSkillSpec{
+			{Name: "kit", Type: "gitlab", Repo: "platform/toolkit", Ref: "v1.4.0", BaseURL: "https://gitlab.example.com"},
+			{Name: "plain", URL: "https://example.com/skills.tar.gz"},
+		}
+		if err := k8sClient.Create(ctx, a); err != nil {
+			t.Fatalf("delivery, include and skills must be accepted: %v", err)
+		}
+		if got := getAgent(t, ctx, "aa-cel-features-ok").Spec.Standalone.Skills[1].Type; got != "url" {
+			t.Errorf("skills[plain].type = %q, want the default url", got)
 		}
 	})
 	t.Run("tokenExchange over https with an environment is accepted", func(t *testing.T) {

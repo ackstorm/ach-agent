@@ -48,6 +48,17 @@ func McpEnvPrefix(server string) string {
 	return "ACH_AGENT_MCP_" + strings.ToUpper(strings.ReplaceAll(server, "-", "_"))
 }
 
+// DeliveryEnvPrefix maps a channel name to the env prefix of its delivery headers. Channel
+// names are not pattern-checked, so every character outside [A-Z0-9] becomes '_'.
+func DeliveryEnvPrefix(channel string) string {
+	return "ACH_AGENT_DELIVERY_" + sanitizeEnvSegment(channel)
+}
+
+// SkillEnvPrefix maps a skills entry name to its env prefix.
+func SkillEnvPrefix(skill string) string {
+	return "ACH_AGENT_SKILL_" + strings.ToUpper(strings.ReplaceAll(skill, "-", "_"))
+}
+
 // The header rules mirror the runtime's config validation (ach_runtime/config/schema.py): the
 // proxy, the HTTP framing and the tracing layer own the reserved names and prefixes.
 var (

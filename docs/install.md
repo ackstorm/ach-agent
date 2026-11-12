@@ -58,7 +58,7 @@ Label every Agent namespace `istio.io/dataplane-mode=ambient`.
 ## 5. Operator
 
 ```bash
-helm install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --version 0.2.1 \
+helm install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --version 0.7.3 \
   -n ach-agent-system --create-namespace \
   --set openshell.gateway=http://openshell.openshell.svc.cluster.local:8080
 ```
@@ -278,13 +278,97 @@ spec:
       prompt: "{{ payload | json }}"
       webhook:
         auth: {type: header_token, header: X-Token, secretRef: {name: hook, key: token}}
+      delivery:
+        url: https://hooks.example.com/result
+        headers:
+          Authorization: {secretKeyRef: {name: hook-delivery, key: authorization}}
   expose: {service: true}
 ```
 
-The AgentProfile (image, resources, defaults) is in `test/e2e/fixtures/profile.yaml`; copy it and
-change the images to `ghcr.io/ackstorm/ach-agent-control:0.2.1` and
-`ghcr.io/ackstorm/ach-agent-execution:0.2.1`. `test/e2e/fixtures/` holds tested examples of a
-standalone Agent and an ACH Agent.
+A `webhook` or `queue` channel answers 202 and a `cron` channel answers nothing, so the agent's final answer would
+be lost; either can set `delivery`: when a run finishes, the control pod POSTs
+`{"invocation_id": "...", "channel": "hook", "state": "completed", "text": "...", "error": null}` to the URL
+(`text` is the agent's final text, `null` when there is none; `state` is `completed`, `failed`, `cancelled` or
+`skipped`, and `error` is set when the run raised; `invocation_id` equals the `task_id` / `X-ACH-Task-Id` of the 202,
+so a receiver can correlate). One attempt per run, 10 s timeout, redirects not followed. A failed POST is logged
+and counted in `ach_agent_channel_delivery_failures_total{channel}`. A run that expires in the admission queue
+and a run recovered after a control pod restart are not delivered. The control pod needs egress to the URL under the mesh policy (`docs/mesh/`).
+
+`filter.include.tools` limits an MCP server to the tools listed as `<server>.<tool>`. A server with
+entries exposes only those tools, a server with none exposes all, and `filter.exclude` wins:
+
+```yaml
+spec:
+  filter:
+    include: {tools: [github.get_pull_request]}
+```
+
+`standalone.skills` loads archives of skills when the control pod starts, as in
+[local-agent.md](local-agent.md#manifest) (same fields and types), with header values from Secrets:
+
+```yaml
+spec:
+  standalone:
+    skills:
+      - name: toolkit
+        type: gitlab
+        repo: platform/toolkit
+        ref: v1.4.0
+        baseUrl: https://gitlab.example.com
+        headers:
+          PRIVATE-TOKEN: {secretKeyRef: {name: gitlab-skills, key: token}}
+```
+
+The `delivery` and `skills` header values, Secrets included, are sent to whatever URL the entry names, so
+use an `https://` URL for any host outside the mesh.
+
+The AgentProfile holds the images, the sandbox resources and the defaults every Agent of the namespace
+inherits:
+
+```yaml
+apiVersion: ach-agent.ackstorm.ai/v1alpha1
+kind: AgentProfile
+metadata: {name: default, namespace: demo}
+spec:
+  control:
+    image: ghcr.io/ackstorm/ach-agent-control:0.7.3
+    terminationGracePeriodSeconds: 60
+  sandbox:
+    openshell:
+      image: ghcr.io/ackstorm/ach-agent-execution:0.7.3
+      resources: {cpu: 500m, memory: 1Gi}
+      readyTimeoutSeconds: 180
+  defaults:
+    limits:
+      maxActiveWorkspaces: 4
+      maxConcurrentInvocations: 4
+      maxConcurrentScripts: 2
+      maxInvocationSeconds: 300
+      maxQueuedTotal: 100
+      idempotencyWindowSeconds: 3600
+      maxSteps: 50
+    engine:
+      compaction: {auto: true, keep: {tokens: 8000}, buffer: 20000}
+    workspace:
+      idleTimeoutSeconds: 600
+      shutdownTimeoutSeconds: 30
+      maxConcurrentSessions: 1
+      persistence: {type: none}
+      session:
+        idleTimeoutSeconds: 300
+    artifacts: {enabled: false, maxArtifactBytes: 1048576, retentionDays: 1}
+```
+
+`test/e2e/fixtures/` holds tested examples of a standalone Agent and an ACH Agent.
+
+The operator image checks an Agent against its AgentProfile without a cluster: the rendered runtime
+config and the rules the controller reports as conditions (for example the grace period against
+`workspace.shutdownTimeoutSeconds`). CRD defaults and CEL rules are not applied; those need
+`kubectl apply --dry-run=server`.
+
+```bash
+cat profile.yaml agent.yaml | docker run --rm -i ghcr.io/ackstorm/ach-agent-operator:0.7.3 validate -f -
+```
 
 ### Engine
 

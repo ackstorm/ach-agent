@@ -9,6 +9,9 @@ per-server exclude):
 
 - `exclude` (contract `ach.capability.filter.exclude.mcpServers`) — a server id in it is
   never routed at all, applied at construction time (old-ach-agent semantic).
+- `include_tools` (`...include.tools`, `<server>.<tool>`) — a server with an entry exposes only
+  its listed tools, enforced like `exclude_tools`; exclusion wins. An entry naming a server
+  that is not routed raises `ValueError`.
 - `exclude_tools` (`...exclude.tools`) — a `tools/call` JSON-RPC request naming an excluded
   tool, alone or inside a batch, is denied per request, and the excluded tools are dropped from a `tools/list`
   reply (JSON or SSE) so the model never sees them; any other method/body passes through
@@ -90,10 +93,15 @@ def _upstream_tool_names(body: bytes, upstream: Mapping[str, str]) -> bytes:
     return json.dumps(parsed, separators=(",", ":")).encode()
 
 
-def _excluded_tool_call(body: bytes, exclude_tools: frozenset[str], prefix: str) -> bool:
-    """True when the body, or any message of a JSON-RPC batch, calls an excluded tool, by its
-    upstream name or by the bare name under this server's prefix."""
-    if not exclude_tools or not body:
+def _bare(name: str, prefix: str) -> str:
+    return name[len(prefix):] if name.startswith(prefix) and len(name) > len(prefix) else name
+
+
+def _denied_tool_call(body: bytes, exclude_tools: frozenset[str], prefix: str,
+                      allowed: frozenset[str] | None) -> bool:
+    """True when the body, or any message of a JSON-RPC batch, calls a tool that is excluded
+    (by its upstream name or by the bare name under this server's prefix) or not allowed."""
+    if not body or (not exclude_tools and allowed is None):
         return False
     try:
         parsed = json.loads(body)
@@ -103,17 +111,28 @@ def _excluded_tool_call(body: bytes, exclude_tools: frozenset[str], prefix: str)
         not isinstance(name := params.get("name"), str)
         or name in exclude_tools
         or prefix + name in exclude_tools
+        or (allowed is not None and _bare(name, prefix) not in allowed)
         for params in _tool_calls(parsed)
     )
 
 
 def _listed_tools(
-    exclude_tools: frozenset[str], prefix: str, upstream: dict[str, str]
+    exclude_tools: frozenset[str], prefix: str, upstream: dict[str, str], allowed: frozenset[str] | None
 ) -> Callable[[bytes], bytes]:
     """Drop excluded tools from a `tools/list` reply, plain JSON or SSE `data:` lines, and
     advertise each `<prefix><tool>` as `<tool>`, recording the upstream name in `upstream`.
     Anything that does not parse as a JSON-RPC result with a `tools` list is left as is:
     the filter never fails the request."""
+
+    def excluded(tool: Any) -> bool:
+        if not isinstance(tool, dict):
+            return False
+        name = tool.get("name")
+        return (
+            name in exclude_tools
+            or (isinstance(name, str) and prefix + name in exclude_tools)
+            or (allowed is not None and isinstance(name, str) and _bare(name, prefix) not in allowed)
+        )
 
     def drop(message: bytes) -> bytes:
         try:
@@ -121,7 +140,7 @@ def _listed_tools(
             tools = parsed["result"]["tools"]
             if not isinstance(tools, list):
                 return message
-            kept = [t for t in tools if not (isinstance(t, dict) and t.get("name") in exclude_tools)]
+            kept = [t for t in tools if not excluded(t)]
             for tool in kept:
                 name = tool.get("name") if isinstance(tool, dict) else None
                 if isinstance(name, str) and name.startswith(prefix) and len(name) > len(prefix):
@@ -159,6 +178,7 @@ class McpFacade:
         owned_workspace: OwnedWorkspace,
         exclude: frozenset[str],
         exclude_tools: frozenset[str],
+        include_tools: frozenset[str] = frozenset(),
         identity: ProcessIdentity,
         correlation_headers: CorrelationHeaders = None,
         client: httpx.AsyncClient | None = None,
@@ -169,6 +189,18 @@ class McpFacade:
         self._client = client or httpx.AsyncClient(timeout=_INTERNAL_CLIENT_TIMEOUT)
         self._responses: set[httpx.Response] = set()
         endpoints = {sid: ep.rstrip("/") for sid, ep in servers.items() if sid not in exclude}
+        # Per server: the bare tool names it may expose; a server with no entry exposes all.
+        allowed: dict[str, frozenset[str]] = {}
+        unmatched = set(include_tools)
+        for sid in endpoints:
+            names = frozenset(entry[len(sid) + 1:] for entry in include_tools if entry.startswith(f"{sid}."))
+            if names:
+                allowed[sid] = names
+                unmatched -= {f"{sid}.{name}" for name in names}
+        if unmatched:
+            raise ValueError(
+                f"capability.filter.include.tools: {', '.join(sorted(unmatched))} name no routed MCP server"
+            )
         headers_by_server = {sid: dict(h) for sid, h in server_headers.items()}
         # Per server: bare tool name -> upstream name, learnt from its `tools/list` replies.
         upstream_names: dict[str, dict[str, str]] = {sid: {} for sid in endpoints}
@@ -186,12 +218,12 @@ class McpFacade:
                 return JSONResponse({"detail": "unknown or excluded mcp server"}, status_code=404)
 
             body = await request.body()
-            if exclude_tools and has_encoded_body(request.headers):
+            if (exclude_tools or server_id in allowed) and has_encoded_body(request.headers):
                 # An encoded body cannot be inspected for an excluded tools/call.
                 return JSONResponse({"detail": "encoded request body not accepted"}, status_code=415)
             prefix = f"{server_id}."
             body = _upstream_tool_names(body, upstream_names[server_id])
-            if _excluded_tool_call(body, exclude_tools, prefix):
+            if _denied_tool_call(body, exclude_tools, prefix, allowed.get(server_id)):
                 return JSONResponse({"detail": "tool excluded by capability filter"}, status_code=403)
 
             target = join_tail(endpoint, request.path_params.get("tail", ""))
@@ -208,7 +240,8 @@ class McpFacade:
                 correlation=correlation,
                 mcp=True,
                 body=body,
-                transform=_listed_tools(exclude_tools, prefix, upstream_names[server_id]) if listing else None,
+                transform=_listed_tools(exclude_tools, prefix, upstream_names[server_id], allowed.get(server_id))
+                if listing else None,
                 auth=None if server_id in own_servers else auth,
                 _responses=self._responses,
             )

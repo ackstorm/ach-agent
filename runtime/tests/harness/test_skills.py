@@ -87,7 +87,7 @@ async def test_fetch_skills_rejects_a_symbolic_link(tmp_path) -> None:
         link.type, link.linkname = tarfile.SYMTYPE, "."
         tar.addfile(link)
     client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, content=buffer.getvalue())))
-    with pytest.raises(SkillsError, match="symbolic link"):
+    with pytest.raises(SkillsError, match="symbolic or hard link"):
         await fetch_skills([_skill()], {}, tmp_path, excluded=[], client=client)
     assert list((tmp_path / "skills").iterdir()) == []
 
@@ -106,3 +106,20 @@ async def test_fetch_skills_drops_headers_on_a_same_host_downgrade(tmp_path) -> 
     skill = _skill(headers={"Authorization": {"env": "T"}})
     await fetch_skills([skill], {"T": "secret"}, tmp_path, excluded=[], client=client)
     assert seen == [("https", "secret"), ("http", None)]
+
+
+@pytest.mark.asyncio
+async def test_fetch_skills_rejects_a_hardlink(tmp_path) -> None:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        for path, data in (("r/s/SKILL.md", b"# s"), ("r/s/big.bin", b"x" * 1000)):
+            info = tarfile.TarInfo(path)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        link = tarfile.TarInfo("r/s/copy.bin")
+        link.type, link.linkname = tarfile.LNKTYPE, "r/s/big.bin"
+        tar.addfile(link)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, content=buffer.getvalue())))
+    with pytest.raises(SkillsError, match="link"):
+        await fetch_skills([_skill()], {}, tmp_path, excluded=[], client=client)
+    assert list((tmp_path / "skills").iterdir()) == []

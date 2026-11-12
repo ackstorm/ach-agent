@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import tempfile
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -47,8 +48,13 @@ async def _download(client: httpx.AsyncClient, url: str, headers: Mapping[str, s
 
 
 def _has_link(root: Path) -> bool:
-    return any(path.is_symlink() for current, dirs, files in os.walk(root)
-               for path in (Path(current, name) for name in (*dirs, *files)))
+    """A symbolic link, or a file with several names (hardlink): copying either multiplies the bytes written."""
+    for current, dirs, files in os.walk(root):
+        for name in (*dirs, *files):
+            info = os.lstat(Path(current, name))
+            if stat.S_ISLNK(info.st_mode) or (stat.S_ISREG(info.st_mode) and info.st_nlink > 1):
+                return True
+    return False
 
 
 def _skill_dirs(root: Path) -> list[Path]:
@@ -89,7 +95,7 @@ async def fetch_skills(
             except Exception as exc:  # noqa: BLE001 - any unreadable archive stops the agent
                 raise SkillsError(f"skills {skill.name}: archive could not be extracted") from exc
             if _has_link(staged):
-                raise SkillsError(f"skills {skill.name}: archive contains a symbolic link")
+                raise SkillsError(f"skills {skill.name}: archive contains a symbolic or hard link")
             found = _skill_dirs(staged)
             if not found:
                 raise SkillsError(f"skills {skill.name}: archive has no SKILL.md")

@@ -20,6 +20,7 @@ const (
 	channelTypeWebhook       = "webhook"
 	channelTypeWebhookScript = "webhook-script"
 	channelTypeA2A           = "a2a"
+	channelTypeOpenAI        = "openai"
 )
 
 // memoryAuthSecretEnvName is the fixed env var carrying the memory-backend auth
@@ -91,6 +92,10 @@ func ChannelSecretEnv(p v1.AgentProfile, a v1.Agent) []ChannelSecretEnvRef {
 		case channelTypeA2A:
 			if ch.A2A != nil {
 				out = append(out, ChannelSecretEnvRef{EnvName: channelSecretEnvName(ch), SecretName: ch.A2A.Auth.SecretRef.Name, Key: ch.A2A.Auth.SecretRef.Key})
+			}
+		case channelTypeOpenAI:
+			if ch.OpenAI != nil {
+				out = append(out, ChannelSecretEnvRef{EnvName: channelSecretEnvName(ch), SecretName: ch.OpenAI.Auth.SecretRef.Name, Key: ch.OpenAI.Auth.SecretRef.Key})
 			}
 		}
 		// Hook credentials need a generated alias so harness secret redaction cannot
@@ -452,6 +457,10 @@ func ReferencedSecrets(p v1.AgentProfile, a v1.Agent) map[string][]string {
 		case channelTypeA2A:
 			if ch.A2A != nil {
 				add(ch.A2A.Auth.SecretRef.Name, ch.A2A.Auth.SecretRef.Key)
+			}
+		case channelTypeOpenAI:
+			if ch.OpenAI != nil {
+				add(ch.OpenAI.Auth.SecretRef.Name, ch.OpenAI.Auth.SecretRef.Key)
 			}
 		}
 		if ch.Delivery != nil {

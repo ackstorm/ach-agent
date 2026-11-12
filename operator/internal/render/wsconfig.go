@@ -55,6 +55,21 @@ func RenderA2AV1(ch *v1.ChannelSpec) *WSA2ABlock {
 	return &WSA2ABlock{Mode: "async", Auth: WSA2AAuthBlock{Header: ch.A2A.Auth.Header, Env: channelSecretEnvName(ch)}}
 }
 
+type WSOpenAIAuthBlock struct {
+	Env string `json:"env"`
+}
+
+type WSOpenAIBlock struct {
+	Auth WSOpenAIAuthBlock `json:"auth"`
+}
+
+func RenderOpenAIV1(ch *v1.ChannelSpec) *WSOpenAIBlock {
+	if ch.OpenAI == nil {
+		return nil
+	}
+	return &WSOpenAIBlock{Auth: WSOpenAIAuthBlock{Env: channelSecretEnvName(ch)}}
+}
+
 // RenderScriptV1 maps channels[].script (schema ScriptBlock — shape-compatible with the
 // existing PrepareBlock: script/env/secretEnv/timeoutSeconds, no scope or destination).
 // Strict (renderHookV1): a forwardEnv name absent from the merged environment errors
@@ -82,6 +97,7 @@ type WSChannelBlock struct {
 	Cron        *CronBlock        `json:"cron,omitempty"`
 	Queue       *WSQueueBlock     `json:"queue,omitempty"`
 	A2A         *WSA2ABlock       `json:"a2a,omitempty"`
+	OpenAI      *WSOpenAIBlock    `json:"openai,omitempty"`
 	Delivery    *WSDelivery       `json:"delivery,omitempty"`
 }
 
@@ -107,7 +123,7 @@ func RenderChannelV1(ch *v1.ChannelSpec, resolvedEnv []corev1.EnvVar) (WSChannel
 		Name: ch.Name, Type: ch.Type, Concurrency: ch.Concurrency, RateLimit: ch.RateLimit, Source: ch.Source,
 		Routing: RenderRoutingV1(ch.Routing), Prompt: ch.Prompt,
 		Webhook: RenderWebhookV1(ch), Handoff: handoff, Script: script,
-		Queue: RenderQueueV1(ch.Queue), A2A: RenderA2AV1(ch),
+		Queue: RenderQueueV1(ch.Queue), A2A: RenderA2AV1(ch), OpenAI: RenderOpenAIV1(ch),
 	}
 	if ch.Cron != nil {
 		cb.Cron = &CronBlock{Schedule: ch.Cron.Schedule, Timezone: ch.Cron.Timezone}

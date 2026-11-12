@@ -386,6 +386,15 @@ func TestAgent_CEL_Rejections(t *testing.T) {
 		"route without service": func(a *achv1alpha1.Agent) {
 			a.Spec.Expose = &achv1alpha1.ExposeSpec{Route: &achv1alpha1.RouteSpec{Hostname: "a.example.com"}}
 		},
+		"openai channel without its block": func(a *achv1alpha1.Agent) {
+			a.Spec.Channels = []achv1alpha1.ChannelSpec{{Name: "chat", Type: "openai"}}
+		},
+		"routing.sessionKey on an openai channel": func(a *achv1alpha1.Agent) {
+			sk := "{{ payload.x }}"
+			a.Spec.Channels = []achv1alpha1.ChannelSpec{{Name: "chat", Type: "openai",
+				OpenAI:  &achv1alpha1.OpenAISpec{Auth: achv1alpha1.OpenAIAuthSpec{SecretRef: achv1alpha1.SecretKeyRef{Name: "s", Key: "k"}}},
+				Routing: &achv1alpha1.RoutingSpec{SessionKey: &sk}}}
+		},
 		"delivery on an a2a channel": func(a *achv1alpha1.Agent) {
 			a.Spec.Channels = []achv1alpha1.ChannelSpec{{Name: "peer", Type: "a2a",
 				A2A:      &achv1alpha1.A2ASpec{Auth: achv1alpha1.A2AAuthSpec{SecretRef: achv1alpha1.SecretKeyRef{Name: "s", Key: "k"}}},

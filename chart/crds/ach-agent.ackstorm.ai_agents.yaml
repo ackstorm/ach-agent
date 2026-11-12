@@ -375,6 +375,37 @@ spec:
                     name:
                       minLength: 1
                       type: string
+                    openai:
+                      description: 'OpenAISpec configures an openai channel: the Agent
+                        answers the OpenAI Chat Completions API (config: channels[].openai).'
+                      properties:
+                        auth:
+                          description: 'OpenAIAuthSpec configures openai inbound auth:
+                            the bearer token clients send (config: channels[].openai.auth;
+                            secretRef → env).'
+                          properties:
+                            secretRef:
+                              description: SecretKeyRef identifies a key in a same-namespace
+                                Secret.
+                              properties:
+                                key:
+                                  description: Key is the data key inside the Secret.
+                                  minLength: 1
+                                  type: string
+                                name:
+                                  description: Name is the Kubernetes Secret name.
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - key
+                              - name
+                              type: object
+                          required:
+                          - secretRef
+                          type: object
+                      required:
+                      - auth
+                      type: object
                     prompt:
                       type: string
                     queue:
@@ -483,6 +514,7 @@ spec:
                       - cron
                       - queue
                       - a2a
+                      - openai
                       type: string
                     webhook:
                       description: WebhookSpec configures webhook ingress for model
@@ -574,7 +606,7 @@ spec:
                     rule: ((self.type=='webhook' || self.type=='webhook-script') &&
                       has(self.webhook)) || (self.type=='cron' && has(self.cron))
                       || (self.type=='queue' && has(self.queue)) || (self.type=='a2a'
-                      && has(self.a2a))
+                      && has(self.a2a)) || (self.type=='openai' && has(self.openai))
                   - message: channels.source is only valid for webhook channels
                     rule: self.type=='webhook' || self.type=='webhook-script' || !has(self.source)
                   - message: channels.script is required only for webhook-script
@@ -586,6 +618,9 @@ spec:
                   - message: generic webhook and queue channels require routing.sessionKey
                     rule: '!(self.type==''queue'' || (self.type==''webhook'' && has(self.source)
                       && self.source==''generic'')) || (has(self.routing) && has(self.routing.sessionKey))'
+                  - message: 'openai channels take the session from the conversation:
+                      routing.sessionKey is not allowed'
+                    rule: self.type!='openai' || !has(self.routing) || !has(self.routing.sessionKey)
                   - message: channels.delivery is only valid for webhook, cron and
                       queue channels
                     rule: '!has(self.delivery) || self.type in [''webhook'',''cron'',''queue'']'

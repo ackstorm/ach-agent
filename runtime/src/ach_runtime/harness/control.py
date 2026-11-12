@@ -50,6 +50,7 @@ from ach_runtime.harness.admission import (
     ScriptAdmissionTicket,
     WorkspaceOwnerLost,
 )
+from ach_runtime.harness.result_delivery import ResultDelivery
 from ach_runtime.harness.delivery import Delivery, GatewayUnavailable, StartOutcomeUnknown
 from ach_runtime.observability.metrics import WORKSPACE_START_SECONDS
 from ach_runtime.observability.runs import register_secrets
@@ -224,6 +225,7 @@ class Control:
     _started_run: dict[str, str] = field(default_factory=dict)
     _stopping: bool = False
     lifecycle: Lifecycle | None = None
+    result_delivery: ResultDelivery | None = None
     _private_env: dict[str, str] = field(default_factory=dict, repr=False)
     ach_key: KeySource | None = field(default=None, repr=False)
     _memory_auth: Any = field(default=None, repr=False)
@@ -639,6 +641,23 @@ class Control:
             if result.get("status") != "imported":
                 raise WorkspaceAssemblyUnavailable("mini-harness did not confirm handoff import")
 
+    async def run_and_deliver(
+        self,
+        event: RoutedEvent | Event,
+        ticket: AdmissionTicket | ScriptAdmissionTicket,
+    ) -> RunStatus | None:
+        """`run`, then POST its outcome to the channel's delivery target, if it has one."""
+        assert self.result_delivery is not None
+        try:
+            status = await self.run(event, ticket)
+        except Exception as exc:
+            if isinstance(event, RoutedEvent):
+                self.result_delivery.send(event.event.channel, ticket.invocation_id, None, _failure_reason(exc))
+            raise
+        if status is not None:
+            self.result_delivery.send(status.channel, ticket.invocation_id, status, None)
+        return status
+
     async def run(
         self,
         event: RoutedEvent | Event,
@@ -857,6 +876,8 @@ class Control:
         if self.a2a_facade is not None:
             closers.append(self.a2a_facade.aclose)
         closers.extend((self.delivery.close, self.mini_client.aclose))
+        if self.result_delivery is not None:
+            closers.append(self.result_delivery.close)
         ach_key = getattr(self, "ach_key", None)
         if ach_key is not None:
             closers.append(ach_key.close)
@@ -1125,7 +1146,7 @@ async def assemble(
             for channel in config.channels
             if channel.rate_limit is not None
         },
-        clock=_clock, runner=control.run, alarm=_alarm,
+        clock=_clock, runner=control.run_and_deliver, alarm=_alarm,
     )
     facade_timeout = httpx.Timeout(None, connect=30.0)
     mcp_client = httpx.AsyncClient(transport=facade_transport, timeout=facade_timeout)
@@ -1177,7 +1198,15 @@ async def assemble(
         )
     metadata = catalog.model.metadata
     control._priced = metadata is not None and metadata.input_cost_per_token is not None
-    register_secrets((*upstream_secrets, *memory_auth_secrets))
+    delivery_targets: dict[str, tuple[str, dict[str, str]]] = {}
+    delivery_secrets: list[str] = []
+    for channel in config.channels:
+        if channel.delivery is not None:
+            delivery_headers, secrets = resolve_headers(channel.delivery.headers, env)
+            delivery_targets[channel.name] = (channel.delivery.url, delivery_headers)
+            delivery_secrets.extend(secrets)
+    control.result_delivery = ResultDelivery(delivery_targets)
+    register_secrets((*upstream_secrets, *memory_auth_secrets, *delivery_secrets))
     lifecycle = Lifecycle(control)
     control.lifecycle = lifecycle
     return control

@@ -278,8 +278,20 @@ spec:
       prompt: "{{ payload | json }}"
       webhook:
         auth: {type: header_token, header: X-Token, secretRef: {name: hook, key: token}}
+      delivery:
+        url: https://hooks.example.com/result
+        headers:
+          Authorization: {value: "Bearer ..."}
   expose: {service: true}
 ```
+
+A `webhook`, `cron` or `queue` channel answers 202 and the agent's final answer would be lost, so it can set
+`delivery`: when a run finishes, the control pod POSTs
+`{"invocation_id": "...", "channel": "hook", "state": "completed", "text": "...", "error": null}` to the URL
+(`text` is the agent's final text, `null` when there is none; `state` is `failed` and `error` set when the run
+raised). One attempt per run, 10 s timeout, redirects not followed. A failed POST is logged and counted in
+`ach_agent_channel_delivery_failures_total{channel}`. A run that expires in the admission queue is not
+delivered. The control pod needs egress to the URL under the mesh policy (`docs/mesh/`).
 
 The AgentProfile holds the images, the sandbox resources and the defaults every Agent of the namespace
 inherits:

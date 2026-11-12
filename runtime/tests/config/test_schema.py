@@ -726,3 +726,20 @@ def test_filter_include_tools_must_be_server_qualified() -> None:
     for bad in (["get_pull_request"], [".x"], ["github."], ["a.b", "a.b"]):
         with pytest.raises(ValueError, match="include.tools"):
             AchCapabilityFilter.model_validate({"include": {"tools": bad}})
+
+
+def test_channel_delivery_is_for_webhook_cron_and_queue_only() -> None:
+    from ach_runtime.config.schema import ChannelConfig
+
+    base = {"name": "hooks", "type": "webhook", "source": "generic",
+            "routing": {"sessionKey": "k"}, "webhook": {"auth": {"type": "none"}}}
+    delivery = {"url": "https://hooks.example.com/result", "headers": {"Authorization": {"env": "DELIVERY_TOKEN"}}}
+    channel = ChannelConfig.model_validate({**base, "delivery": delivery})
+    assert channel.delivery.url == "https://hooks.example.com/result"
+    with pytest.raises(ValueError, match="delivery"):
+        ChannelConfig.model_validate({"name": "chat", "type": "a2a", "a2a": {"auth": {"env": "A2A_KEY"}},
+                                      "delivery": delivery})
+    with pytest.raises(ValueError):
+        ChannelConfig.model_validate({**base, "delivery": {"url": "ftp://x"}})
+    with pytest.raises(ValueError, match="reserved"):
+        ChannelConfig.model_validate({**base, "delivery": {"url": "https://x.example", "headers": {"Host": {"value": "y"}}}})

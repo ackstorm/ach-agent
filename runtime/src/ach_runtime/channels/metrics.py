@@ -20,3 +20,9 @@ WEBHOOK_SCRIPT_RUNS = Counter(
     "webhook-script handlers run, labeled by channel and outcome",
     ["channel", "status"],
 )
+
+DELIVERY_FAILURES = Counter(
+    "ach_agent_channel_delivery_failures_total",
+    "Result deliveries that did not get a 2xx response, labeled by channel name",
+    ["channel"],
+)

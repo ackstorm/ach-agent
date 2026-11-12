@@ -900,6 +900,20 @@ class HandoffBlock(ScriptBlock):
         return _valid_relative_destination(v)
 
 
+class DeliveryBlock(BaseModel):
+    """`channels[].delivery`: where the final result of a run is POSTed."""
+
+    model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
+
+    url: str = Field(pattern=_ENDPOINT_PATTERN)
+    headers: dict[str, HeaderValue] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _headers_are_valid(self) -> DeliveryBlock:
+        _check_headers(self.headers, "channels[].delivery.headers")
+        return self
+
+
 class ChannelConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
 
@@ -916,6 +930,7 @@ class ChannelConfig(BaseModel):
     cron: CronBlock | None = None
     queue: QueueBlock | None = None
     a2a: A2ABlock | None = None
+    delivery: DeliveryBlock | None = None
 
     @model_validator(mode="after")
     def _check_type_block_coherence(self) -> ChannelConfig:
@@ -959,6 +974,8 @@ class ChannelConfig(BaseModel):
                 raise ValueError(f"channel '{self.name}': type='{t}' forbids '{foreign}' block")
         if t != "webhook-script" and self.script is not None:
             raise ValueError(f"channel '{self.name}': type='{t}' forbids 'script' block")
+        if self.delivery is not None and t not in ("webhook", "cron", "queue"):
+            raise ValueError(f"channel '{self.name}': type='{t}' forbids 'delivery'")
         return self
 
 

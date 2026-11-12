@@ -524,6 +524,17 @@
             }
           ],
           "default": null
+        },
+        "delivery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeliveryBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -826,6 +837,36 @@
         "schedule"
       ],
       "title": "CronBlock",
+      "type": "object"
+    },
+    "DeliveryBlock": {
+      "additionalProperties": false,
+      "description": "`channels[].delivery`: where the final result of a run is POSTed.",
+      "properties": {
+        "url": {
+          "pattern": "^https?://[^/\\s]+",
+          "title": "Url",
+          "type": "string"
+        },
+        "headers": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SecretAlias"
+              },
+              {
+                "$ref": "#/$defs/HeaderLiteral"
+              }
+            ]
+          },
+          "title": "Headers",
+          "type": "object"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "title": "DeliveryBlock",
       "type": "object"
     },
     "EngineBlock": {

@@ -58,7 +58,7 @@ Label every Agent namespace `istio.io/dataplane-mode=ambient`.
 ## 5. Operator
 
 ```bash
-helm install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --version 0.2.1 \
+helm install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --version 0.7.3 \
   -n ach-agent-system --create-namespace \
   --set openshell.gateway=http://openshell.openshell.svc.cluster.local:8080
 ```
@@ -281,10 +281,53 @@ spec:
   expose: {service: true}
 ```
 
-The AgentProfile (image, resources, defaults) is in `test/e2e/fixtures/profile.yaml`; copy it and
-change the images to `ghcr.io/ackstorm/ach-agent-control:0.2.1` and
-`ghcr.io/ackstorm/ach-agent-execution:0.2.1`. `test/e2e/fixtures/` holds tested examples of a
-standalone Agent and an ACH Agent.
+The AgentProfile holds the images, the sandbox resources and the defaults every Agent of the namespace
+inherits:
+
+```yaml
+apiVersion: ach-agent.ackstorm.ai/v1alpha1
+kind: AgentProfile
+metadata: {name: default, namespace: demo}
+spec:
+  control:
+    image: ghcr.io/ackstorm/ach-agent-control:0.7.3
+    terminationGracePeriodSeconds: 60
+  sandbox:
+    openshell:
+      image: ghcr.io/ackstorm/ach-agent-execution:0.7.3
+      resources: {cpu: 500m, memory: 1Gi}
+      readyTimeoutSeconds: 180
+  defaults:
+    limits:
+      maxActiveWorkspaces: 4
+      maxConcurrentInvocations: 4
+      maxConcurrentScripts: 2
+      maxInvocationSeconds: 300
+      maxQueuedTotal: 100
+      idempotencyWindowSeconds: 3600
+      maxSteps: 50
+    engine:
+      compaction: {auto: true, keep: {tokens: 8000}, buffer: 20000}
+    workspace:
+      idleTimeoutSeconds: 600
+      shutdownTimeoutSeconds: 30
+      maxConcurrentSessions: 1
+      persistence: {type: none}
+      session:
+        idleTimeoutSeconds: 300
+    artifacts: {enabled: false, maxArtifactBytes: 1048576, retentionDays: 1}
+```
+
+`test/e2e/fixtures/` holds tested examples of a standalone Agent and an ACH Agent.
+
+The operator image checks an Agent against its AgentProfile without a cluster: the rendered runtime
+config and the rules the controller reports as conditions (for example the grace period against
+`workspace.shutdownTimeoutSeconds`). CRD defaults and CEL rules are not applied; those need
+`kubectl apply --dry-run=server`.
+
+```bash
+cat profile.yaml agent.yaml | docker run --rm -i ghcr.io/ackstorm/ach-agent-operator:0.7.3 validate -f -
+```
 
 ### Engine
 

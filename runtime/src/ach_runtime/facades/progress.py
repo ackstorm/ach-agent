@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """`inform_user`: progress messages from a running invocation to its A2A caller.
 
-Mounted per run (`/runs/{invocation_id}/`) like the artifacts facade, so a tool call names
-the invocation whose A2A task receives the message. Only A2A runs get this server in their
+Mounted per session (`/sessions/{session_ref}/`) like the artifacts facade: the run the
+session is executing receives the message on its A2A task. Only A2A runs get this server in their
 catalog (`StartRequest.inform_user`).
 """
 
@@ -21,7 +21,7 @@ from ach_runtime.harness.tokens import FACADE_TOKEN_HEADER
 
 log = logging.getLogger(__name__)
 OwnedWorkspace = Callable[[str], Awaitable[bool]]
-# (facade token, invocation id, message) -> whether a caller received it.
+# (facade token, session ref, message) -> whether a caller received it.
 Inform = Callable[[str, str, str], Awaitable[bool]]
 
 TOOL_NAME = "inform_user"
@@ -48,9 +48,9 @@ class ProgressFacade:
         async def inform_user(message: str, ctx: Context) -> str:
             request = ctx.request_context.request
             token = request.headers.get(FACADE_TOKEN_HEADER, "")
-            invocation_id = str(request.path_params["invocation_id"])
-            if not await inform(token, invocation_id, message):
-                log.warning("inform_user: no caller is listening (invocation %s)", invocation_id)
+            session_ref = str(request.path_params["session_ref"])
+            if not await inform(token, session_ref, message):
+                log.warning("inform_user: no caller is listening (session %s)", session_ref)
             return "Update sent to user"
 
     def app(self) -> Starlette:
@@ -62,4 +62,4 @@ class ProgressFacade:
             async with mcp_app.router.lifespan_context(mcp_app):
                 yield
 
-        return Starlette(routes=[Mount("/runs/{invocation_id}", app=guarded)], lifespan=lifespan)
+        return Starlette(routes=[Mount("/sessions/{session_ref}", app=guarded)], lifespan=lifespan)

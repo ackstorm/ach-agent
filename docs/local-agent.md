@@ -61,10 +61,12 @@ spec:                                  # any Agent CR spec field
 ```
 
 `promote` copies `agent.yaml` as written, under `spec`, with `ach.environment`, `model` and `mcpServers`
-under `spec.ach` and `capabilityServer: ach` set. It drops `ach.profile`, turns each `{env: NAME}` header
-into a `secretKeyRef`, and inlines a `prompt.system` file as text. A field set in both files is an error.
-Standalone manifests are not promoted. No environment variable is read, so no secret value is printed.
-Validate the result with `kubectl apply --dry-run=server -f -`.
+under `spec.ach` and `capabilityServer: ach` set. A manifest with no `ach:` gets `model` and `mcpServers`
+under `spec.standalone` and `capabilityServer: standalone`, and needs no `spec.ach` in `deploy.yaml`. It
+drops `ach.profile`, turns each `{env: NAME}` header into a `secretKeyRef`, and inlines a `prompt.system`
+file as text. A field set in both files is an error. No environment variable is read, so no secret value
+is printed. Validate the result with `kubectl apply --dry-run=server -f -`, or without a cluster as
+[install.md](install.md#6-a-standalone-agent) shows.
 
 ## Manifest
 
@@ -148,8 +150,11 @@ an error at start.
 `model.limits` sets the context and output window the engine compacts against. With `ach:` it
 wins over the limits ACH reports for the model; set it only when the model's real window differs.
 
-`engine.denyTools` hides native engine tools from the model: opencode names such as `[websearch, webfetch]`, or pi
-names such as `[bash, write]`; a name that is not a pi tool is an error at start with pi. It is not a
+`engine.denyTools` hides native engine tools from the model. With opencode a name is a permission action:
+`read`, `edit`, `glob`, `grep`, `shell`, `webfetch`, `websearch`, `question`, `skill`, `subagent`, `browser`
+(`opencode debug agents` prints the ones in use). The shell is `shell`: `bash` matches nothing there, and
+opencode names are not checked. With pi the names are `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`,
+`codemode`, `tool_search`; a name that is not a pi tool is an error at start. It is not a
 boundary: `bash` reaches what a denied tool would. With opencode, `execute` (Code Mode) is always denied, so
 MCP tools are called directly.
 

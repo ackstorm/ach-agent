@@ -84,7 +84,7 @@ def base_env(*, home: Path, scratch: Path, approved_env: dict[str, str]) -> dict
 
 
 def build_env(*, home: Path, scratch: Path, approved_env: dict[str, str], password: str) -> dict[str, str]:
-    """`base_env` plus the OpenCode lines for one `opencode2 serve --stdio` subprocess.
+    """`base_env` plus the OpenCode lines for one `opencode serve --stdio` subprocess.
 
     Adds the private server password and the two project-config-discovery kill switches:
     `wid` (the shared Workspace directory) is untrusted content, and

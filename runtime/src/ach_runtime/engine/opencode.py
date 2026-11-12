@@ -49,7 +49,7 @@ from ach_runtime.engine.config import (
 )
 from ach_runtime.observability.runs import RunUsage, log_step, log_tool
 
-OPENCODE_BIN = os.environ.get("OPENCODE_BIN", "opencode2")
+OPENCODE_BIN = os.environ.get("OPENCODE_BIN", "opencode")
 STARTUP_TIMEOUT_SECONDS = 20.0
 REQUEST_TIMEOUT_SECONDS = 30.0
 # Cancellation's own HTTP calls (interrupt/inbox-delete) must be short enough that two of
@@ -110,7 +110,7 @@ class _InvocationState:
 
 
 class _NativeSession:
-    """One `opencode2 serve --stdio` process + HTTP client, owned by one `session_ref`."""
+    """One `opencode serve --stdio` process + HTTP client, owned by one `session_ref`."""
 
     def __init__(self, session_ref: str, home: Path, scratch: Path) -> None:
         self.session_ref = session_ref
@@ -233,7 +233,7 @@ class _NativeSession:
                 chunk = await proc.stdout.read(4096)
                 if not chunk:
                     raise NativeLaunchFailed(
-                        f"opencode2 serve --stdio exited before printing a URL "
+                        f"opencode serve --stdio exited before printing a URL "
                         f"(code={proc.returncode}): {self._tail()}"
                     )
                 buf = (buf + chunk)[-max_buf:]

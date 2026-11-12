@@ -581,6 +581,7 @@ async def test_a2a_prepare_adds_legacy_directive_only_to_a2a_prompt() -> None:
 
 async def test_inform_user_reaches_only_the_owning_workspace_runs_listeners() -> None:
     from ach_runtime.harness.tokens import WorkspaceAuthenticationFailed
+    from types import SimpleNamespace
 
     config = _a2a_config()
     control = await assemble(
@@ -595,24 +596,24 @@ async def test_inform_user_reaches_only_the_owning_workspace_runs_listeners() ->
             "workspace", "pod-1", "http://mini",
         )
         control._hook_endpoints["workspace"] = endpoint  # owned-live without a running unit
-        control._prepared["inv-1"] = (endpoint, None)
+        control._prepared["inv-1"] = (endpoint, SimpleNamespace(session_ref="session-1"))
         received: list[str] = []
 
         async def emit(message: str) -> None:
             received.append(message)
 
         token = facade_token(control.key, "workspace")
-        assert await control.inform_user(token, "inv-1", "no listener yet") is False
+        assert await control.inform_user(token, "session-1", "no listener yet") is False
         control.progress["inv-1"] = [emit]
-        assert await control.inform_user(token, "inv-1", "working on it") is True
+        assert await control.inform_user(token, "session-1", "working on it") is True
         assert received == ["working on it"]
-        assert await control.inform_user(token, "inv-unknown", "x") is False
+        assert await control.inform_user(token, "session-unknown", "x") is False
 
         control._hook_endpoints["other"] = WorkspaceEndpoint(
             WorkspaceRef(config.agent.namespace, config.agent.uid, "c" * 64), "other", "pod-2", "http://mini",
         )
         with pytest.raises(WorkspaceAuthenticationFailed):
-            await control.inform_user(facade_token(control.key, "other"), "inv-1", "foreign")
+            await control.inform_user(facade_token(control.key, "other"), "session-1", "foreign")
         assert received == ["working on it"]
         assert "progress" in control._catalog_for(endpoint)["mcp"]
     finally:

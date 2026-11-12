@@ -267,6 +267,14 @@ class Admission:
             return None
         return self._recovered.get(invocation_id)
 
+    def recovered_session_run(self, session_ref: str) -> RecoveredRun | None:
+        """The recovered run that still owns `session_ref`, if any."""
+        return next(
+            (run for run in self._recovered.values()
+             if run.session_ref == session_ref and run.invocation_id not in self._released),
+            None,
+        )
+
     # -- permit pools -------------------------------------------------------
 
     def _channel_sem(self, channel: str) -> asyncio.Semaphore:

@@ -22,6 +22,7 @@ SESSION_B = "c" * 64
 INV_A = "inv-a"
 INV_B = "inv-b"
 INV_RECOVERED = "inv-recovered"
+SESSION_RECOVERED = "d" * 64
 WORKSPACE_NAME = "ach-workspace"
 
 
@@ -102,8 +103,8 @@ async def test_artifact_context_prepared_and_recovered() -> None:
     control = _control()
     assert await control._owned_live(WORKSPACE_NAME)
 
-    first = await control.artifact_operations(facade_token(KEY, WORKSPACE_NAME), INV_A)
-    second = await control.artifact_operations(facade_token(KEY, WORKSPACE_NAME), INV_B)
+    first = await control.artifact_operations(facade_token(KEY, WORKSPACE_NAME), SESSION_A)
+    second = await control.artifact_operations(facade_token(KEY, WORKSPACE_NAME), SESSION_B)
     assert isinstance(first, ArtifactOperations)
     assert first._owner.workspace_ref == WORKSPACE_REF
     assert first._producer.session_ref == SESSION_A
@@ -117,7 +118,7 @@ async def test_artifact_context_prepared_and_recovered() -> None:
         invocation_id=INV_RECOVERED,
         channel="webhook",
         workspace_ref=WORKSPACE_REF,
-        session_ref="d" * 64,
+        session_ref=SESSION_RECOVERED,
         config_version="f" * 64,
         deadline_at=datetime.now(timezone.utc) + timedelta(minutes=2),
         instance_id="pod-live",
@@ -128,17 +129,17 @@ async def test_artifact_context_prepared_and_recovered() -> None:
     control._prepared.clear()
     control.admission._recovered[INV_RECOVERED] = recovered
     recovered_ops = await control.artifact_operations(
-        facade_token(KEY, WORKSPACE_NAME), INV_RECOVERED
+        facade_token(KEY, WORKSPACE_NAME), SESSION_RECOVERED
     )
-    assert recovered_ops._producer.session_ref == "d" * 64
+    assert recovered_ops._producer.session_ref == SESSION_RECOVERED
     assert recovered_ops._producer.invocation_id == INV_RECOVERED
 
     with pytest.raises(WorkspaceAuthenticationFailed):
-        await control.artifact_operations("forged.token", INV_A)
+        await control.artifact_operations("forged.token", SESSION_A)
     with pytest.raises(WorkspaceAuthenticationFailed):
         await control.artifact_operations(facade_token(KEY, WORKSPACE_NAME), "unknown")
     with pytest.raises(WorkspaceAuthenticationFailed):
-        await control.artifact_operations(facade_token(KEY, "foreign-workspace"), INV_A)
+        await control.artifact_operations(facade_token(KEY, "foreign-workspace"), SESSION_A)
 
     control._prepared[INV_A] = _prepared(
         INV_A,
@@ -146,25 +147,25 @@ async def test_artifact_context_prepared_and_recovered() -> None:
         workspace_ref="e" * 64,
     )
     with pytest.raises(WorkspaceAuthenticationFailed):
-        await control.artifact_operations(facade_token(KEY, WORKSPACE_NAME), INV_A)
+        await control.artifact_operations(facade_token(KEY, WORKSPACE_NAME), SESSION_A)
     control._prepared[INV_A] = _prepared(
         INV_A,
         SESSION_A,
         deadline_at=datetime.now(timezone.utc) - timedelta(seconds=1),
     )
     with pytest.raises(WorkspaceAuthenticationFailed):
-        await control.artifact_operations(facade_token(KEY, WORKSPACE_NAME), INV_A)
+        await control.artifact_operations(facade_token(KEY, WORKSPACE_NAME), SESSION_A)
 
     control.admission._released.add(INV_RECOVERED)
     with pytest.raises(WorkspaceAuthenticationFailed):
-        await control.artifact_operations(facade_token(KEY, WORKSPACE_NAME), INV_RECOVERED)
+        await control.artifact_operations(facade_token(KEY, WORKSPACE_NAME), SESSION_RECOVERED)
 
     control.admission._released.discard(INV_RECOVERED)
     control.admission._recovered[INV_RECOVERED] = RecoveredRun(
         invocation_id=INV_RECOVERED,
         channel="webhook",
         workspace_ref=WORKSPACE_REF,
-        session_ref="d" * 64,
+        session_ref=SESSION_RECOVERED,
         config_version="f" * 64,
         deadline_at=datetime.now(timezone.utc) - timedelta(seconds=1),
         instance_id="pod-live",
@@ -173,7 +174,7 @@ async def test_artifact_context_prepared_and_recovered() -> None:
         completed=asyncio.get_running_loop().create_future(),
     )
     with pytest.raises(WorkspaceAuthenticationFailed):
-        await control.artifact_operations(facade_token(KEY, WORKSPACE_NAME), INV_RECOVERED)
+        await control.artifact_operations(facade_token(KEY, WORKSPACE_NAME), SESSION_RECOVERED)
 
     control._prepared[INV_A] = _prepared(
         INV_A,
@@ -181,4 +182,4 @@ async def test_artifact_context_prepared_and_recovered() -> None:
         endpoint=_endpoint("pod-stale"),
     )
     with pytest.raises(WorkspaceAuthenticationFailed):
-        await control.artifact_operations(facade_token(KEY, WORKSPACE_NAME), INV_A)
+        await control.artifact_operations(facade_token(KEY, WORKSPACE_NAME), SESSION_A)

@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   continues its session by matching the history the client resends, kept in the Agent's S3 store
   when sessions are persisted; attached files and images become Workspace artifacts.
 
+### Fixed
+
+- A session's engine keeps running between its runs instead of restarting for each one, which
+  cost about 3 s per reply (opencode boot and MCP reconnect). The progress and artifacts MCP
+  servers are addressed per session (`/sessions/{session_ref}/`) instead of per run, so a
+  session's engine config no longer changes from one run to the next.
+
 ## [0.7.3] - 2026-11-11
 
 ### Fixed

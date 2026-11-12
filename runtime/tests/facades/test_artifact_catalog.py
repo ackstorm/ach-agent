@@ -127,7 +127,7 @@ async def test_artifact_catalog_and_mount_policy(monkeypatch: pytest.MonkeyPatch
                 headers={FACADE_TOKEN_HEADER: facade_token(enabled.key, endpoint.name)},
             ) as client:
                 async with streamable_http_client(
-                    f"http://localhost:8094/facades/artifacts/runs/{invocation_id}/",
+                    f"http://localhost:8094/facades/artifacts/sessions/{session_ref}/",
                     http_client=client,
                 ) as (read, write, _):
                     async with ClientSession(read, write) as session:

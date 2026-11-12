@@ -126,7 +126,7 @@ class ArtifactFacade:
 
     def _context(self, ctx: Context) -> tuple[str, str]:
         request = ctx.request_context.request
-        return request.headers.get(FACADE_TOKEN_HEADER, ""), str(request.path_params["invocation_id"])
+        return request.headers.get(FACADE_TOKEN_HEADER, ""), str(request.path_params["session_ref"])
 
     def _register_create(self) -> None:
         @self._mcp.tool(
@@ -140,8 +140,8 @@ class ArtifactFacade:
             name: str,
             ctx: Context,
         ) -> ArtifactReceipt:
-            token, invocation_id = self._context(ctx)
-            operations = await self._operations(token, invocation_id)
+            token, session_ref = self._context(ctx)
+            operations = await self._operations(token, session_ref)
             payload = content.encode("utf-8")
 
             async def chunks() -> AsyncIterator[bytes]:
@@ -159,8 +159,8 @@ class ArtifactFacade:
             structured_output=False,
         )
         async def read_artifact(artifact_id: str, ctx: Context) -> list[EmbeddedResource]:
-            token, invocation_id = self._context(ctx)
-            operations = await self._operations(token, invocation_id)
+            token, session_ref = self._context(ctx)
+            operations = await self._operations(token, session_ref)
             receipt = await operations.read_artifact(token, artifact_id)
             content = b"".join([part async for part in receipt.open()])
             return [
@@ -186,6 +186,6 @@ class ArtifactFacade:
                 yield
 
         return Starlette(
-            routes=[Mount("/runs/{invocation_id}", app=guarded)],
+            routes=[Mount("/sessions/{session_ref}", app=guarded)],
             lifespan=lifespan,
         )

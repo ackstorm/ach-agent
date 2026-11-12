@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -16,7 +17,7 @@ import ssl
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
 
 import httpx
@@ -322,7 +323,7 @@ class Control:
         )
 
     async def inform_user(self, token: str, invocation_id: str, message: str) -> bool:
-        """Send `message` to the A2A callers waiting on `invocation_id`, if the run belongs
+        """Send `message` to the callers (A2A or OpenAI stream) waiting on `invocation_id`, if the run belongs
         to the token's Workspace. False when nobody is listening."""
         claim = await authenticate_facade(self.key, token, owned_workspace=self._owned_live)
         prepared = self._prepared.get(invocation_id)
@@ -562,6 +563,8 @@ class Control:
             prompt = str(event.payload["text"])
         else:
             prompt = json.dumps(event.payload, ensure_ascii=False, sort_keys=True)
+        if channel.type == "openai" and event.payload.get("attachments"):
+            prompt = f"{prompt}\n\n{await self._publish_attachments(ticket, event.payload['attachments'])}"
         memory_available: bool | None = None
         if self._memory_configured:
             # I7: the one `prepare_ach_memory` call per non-script invocation, appended
@@ -578,16 +581,44 @@ class Control:
             if self.progress_facade is not None:
                 prompt = f"{prompt}\n\n{A2A_PROGRESS_INSTRUCTIONS}"
             prompt = f"{prompt}\n\n{A2A_OUTPUT_INSTRUCTIONS}"
+        if channel.type == "openai" and self.progress_facade is not None:
+            from ach_runtime.channels.openai import OPENAI_PROGRESS_INSTRUCTIONS
+
+            prompt = f"{prompt}\n\n{OPENAI_PROGRESS_INSTRUCTIONS}"
         request = StartRequest(
             invocationId=ticket.invocation_id, channel=event.channel,
             workspaceRef=ticket.workspace_ref, sessionRef=ticket.session_ref,
             workspaceKey=routed.workspace_key, sessionKey=routed.session_key,
             configVersion=self.public.config_version, prompt=prompt,
             deadlineAt=ticket.deadline_at, memoryAvailable=memory_available,
-            informUser=channel.type == "a2a" and self.progress_facade is not None,
+            informUser=channel.type in ("a2a", "openai") and self.progress_facade is not None,
         )
         self._prepared[ticket.invocation_id] = (endpoint, request)
         return request
+
+    async def _publish_attachments(self, ticket: AdmissionTicket, attachments: list[dict[str, str]]) -> str:
+        """Store an openai request's files as Workspace artifacts; the prompt block naming them."""
+        owner = StateRef(agent=self.config.agent, workspace_ref=ticket.workspace_ref, domain="workspace")
+        producer = ArtifactProducer(session_ref=ticket.session_ref, invocation_id=ticket.invocation_id)
+        lines = []
+        for index, item in enumerate(attachments):
+            data = base64.b64decode(item["data"])
+
+            async def chunks(data: bytes = data) -> AsyncIterator[bytes]:
+                yield data
+
+            receipt = await self.storage.create_artifact(
+                owner, producer, f"{ticket.invocation_id}:{index}", chunks(),
+                mime=item["mime"], name=item["name"], policy=self.config.artifacts,
+            )
+            lines.append(
+                f"- {item['name']} ({item['mime']}, {receipt.metadata.size} bytes): "
+                f"artifact_id {receipt.artifact_id}"
+            )
+        return (
+            "<attachments>\nThe user attached these files. Read one with the `read_artifact` "
+            "tool and its artifact_id.\n" + "\n".join(lines) + "\n</attachments>"
+        )
 
     async def _transfer_context(self, ticket: AdmissionTicket, endpoint: WorkspaceEndpoint) -> None:
         # The credential travels only in the download requests (KeyAuth), never in the archive
@@ -1219,7 +1250,7 @@ async def assemble(
             operations=control.artifact_operations,
             exclude_tools=frozenset(config.capability.filter.exclude.tools),
         )
-    if (any(channel.type == "a2a" for channel in config.channels)
+    if (any(channel.type in ("a2a", "openai") for channel in config.channels)
             and INFORM_USER_TOOL not in config.capability.filter.exclude.tools):
         control.progress_facade = ProgressFacade(
             key=key, owned_workspace=control._owned_live, inform=control.inform_user,

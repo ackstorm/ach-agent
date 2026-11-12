@@ -1,23 +1,34 @@
 from __future__ import annotations
 
+import asyncio
 import base64
+import json
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
+import httpx
 import pytest
+from starlette.applications import Starlette
+from starlette.routing import Mount
 
 from ach_runtime.channels.openai import (
     Continuation,
     FingerprintStore,
     RequestError,
+    build_openai_app,
     chunk,
     completion,
     error_body,
+    fingerprint_store,
     parse_request,
     prompt_text,
     run_outcome,
     sse,
 )
+from ach_runtime.config.schema import ChannelConfig
 from ach_runtime.execution.wire import RunStatus
+from ach_runtime.harness.admission import Admission
+from ach_runtime.harness.refs import workspace_ref
 
 PDF = base64.b64encode(b"%PDF-1.4 hello").decode()
 
@@ -187,3 +198,196 @@ def test_response_shapes() -> None:
     assert sse({"a": "é"}) == 'data: {"a": "é"}\n\n'
     assert error_body("bad", 400) == {"error": {"message": "bad", "type": "invalid_request_error", "code": None}}
     assert error_body("down", 503)["error"]["type"] == "server_error"
+
+
+KEY = "test-openai-key"
+AUTH = {"Authorization": f"Bearer {KEY}"}
+WORKSPACE = workspace_ref("ach", "agent", "openai:chat")  # what Admission derives for this channel
+
+
+def _admission(runner) -> Admission:
+    return Admission(
+        namespace="ach", agent_uid="agent", max_concurrent_invocations=10,
+        max_queued_total=10, idempotency_window_seconds=60, max_invocation_seconds=60,
+        workspace_max_concurrent_sessions=10, channel_concurrency=None,
+        clock=lambda: datetime.now(UTC), runner=runner,
+    )
+
+
+def _done(ticket, text: str, state: str = "completed") -> RunStatus:
+    return RunStatus(
+        invocationId=ticket.invocation_id, channel="chat", workspaceRef=ticket.workspace_ref,
+        sessionRef=ticket.session_ref, runId="r", configVersion="a" * 64,
+        deadlineAt=ticket.deadline_at, state=state, error=None if state == "completed" else "boom",
+        result={"text": text},
+    )
+
+
+def _client(runner, *, files: bool = True, persistence: str = "none", storage=None,
+            monkeypatch) -> tuple[httpx.AsyncClient, SimpleNamespace]:
+    monkeypatch.setenv("CHAT_KEY", KEY)
+    channel = ChannelConfig.model_validate({"name": "chat", "type": "openai", "openai": {"auth": {"env": "CHAT_KEY"}}})
+    endpoints = {"w": SimpleNamespace(ref=SimpleNamespace(workspace_ref=WORKSPACE), instance_id="pod-1")}
+    control = SimpleNamespace(
+        config=SimpleNamespace(
+            agent=SimpleNamespace(name="test-agent"), channels=[channel],
+            artifacts=SimpleNamespace(max_artifact_bytes=1024),
+            capability=SimpleNamespace(filter=SimpleNamespace(exclude=SimpleNamespace(tools=[]))),
+            workspace=SimpleNamespace(persistence=SimpleNamespace(type=persistence), session_retention_days=30),
+        ),
+        admission=None, progress={}, storage=storage if storage is not None else (object() if files else None),
+        artifact_facade=object() if files else None,
+        manager=SimpleNamespace(active_endpoints=lambda: dict(endpoints)), endpoints=endpoints,
+    )
+    control.admission = _admission(lambda routed, ticket: runner(control, routed, ticket))
+    app = Starlette(routes=[Mount("/openai/chat", app=build_openai_app(
+        control, channel, lambda: True, fingerprint_store(control, channel)))])
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test"), control
+
+
+async def test_models_requires_the_key_and_lists_the_agent(monkeypatch) -> None:
+    async def runner(control, routed, ticket):
+        raise AssertionError("no run")
+
+    client, _ = _client(runner, monkeypatch=monkeypatch)
+    async with client:
+        assert (await client.get("/openai/chat/v1/models")).status_code == 401
+        listed = (await client.get("/openai/chat/v1/models", headers=AUTH)).json()
+    assert [m["id"] for m in listed["data"]] == ["test-agent"]
+
+
+async def test_completion_continues_the_session_with_the_last_message(monkeypatch) -> None:
+    seen = []
+
+    async def runner(control, routed, ticket):
+        ticket.mark_started()
+        seen.append((routed.session_key, routed.event.payload["text"]))
+        return _done(ticket, f"reply-{len(seen)}")
+
+    client, _ = _client(runner, monkeypatch=monkeypatch)
+    async with client:
+        first = await client.post("/openai/chat/v1/chat/completions", headers=AUTH,
+                                  json={"model": "x", "messages": [_user("one")]})
+        second = await client.post("/openai/chat/v1/chat/completions", headers=AUTH, json={"messages": [
+            _user("one"), {"role": "assistant", "content": "reply-1"}, _user("two")]})
+    assert first.json()["choices"][0]["message"]["content"] == "reply-1"
+    assert first.json()["model"] == "x"
+    assert second.json()["model"] == "test-agent"
+    assert seen[1] == (seen[0][0], "two")
+
+
+async def test_unknown_history_replays_in_a_new_session(monkeypatch) -> None:
+    seen = []
+
+    async def runner(control, routed, ticket):
+        ticket.mark_started()
+        seen.append((routed.session_key, routed.event.payload["text"]))
+        return _done(ticket, "ok")
+
+    client, _ = _client(runner, monkeypatch=monkeypatch)
+    async with client:
+        await client.post("/openai/chat/v1/chat/completions", headers=AUTH, json={"messages": [_user("a")]})
+        await client.post("/openai/chat/v1/chat/completions", headers=AUTH, json={"messages": [
+            _user("a"), {"role": "assistant", "content": "edited"}, _user("b")]})
+    assert seen[0][0] != seen[1][0]
+    assert seen[1][1].startswith("The conversation so far:")
+
+
+async def _first_turn(client) -> None:
+    await client.post("/openai/chat/v1/chat/completions", headers=AUTH, json={"messages": [_user("one")]})
+
+
+async def _second_turn(client) -> None:
+    await client.post("/openai/chat/v1/chat/completions", headers=AUTH, json={"messages": [
+        _user("one"), {"role": "assistant", "content": "reply-1"}, _user("two")]})
+
+
+def _recording_runner(seen):
+    async def runner(control, routed, ticket):
+        ticket.mark_started()
+        seen.append((routed.session_key, routed.event.payload["text"]))
+        return _done(ticket, f"reply-{len(seen)}")
+    return runner
+
+
+async def test_persistence_none_replays_once_the_sandbox_instance_changed(monkeypatch) -> None:
+    seen = []
+    client, control = _client(_recording_runner(seen), monkeypatch=monkeypatch)
+    async with client:
+        await _first_turn(client)
+        control.endpoints["w"] = SimpleNamespace(ref=SimpleNamespace(workspace_ref=WORKSPACE), instance_id="pod-2")
+        await _second_turn(client)
+    assert seen[0][0] != seen[1][0]
+    assert seen[1][1].startswith("The conversation so far:")
+
+
+async def test_durable_sessions_continue_after_a_control_restart(monkeypatch) -> None:
+    seen = []
+    records = Records()
+    first, control = _client(_recording_runner(seen), persistence="s3", storage=records, monkeypatch=monkeypatch)
+    async with first:
+        await _first_turn(first)
+    restarted, _ = _client(_recording_runner(seen), persistence="s3", storage=records, monkeypatch=monkeypatch)
+    async with restarted:
+        await _second_turn(restarted)
+    assert seen[1] == (seen[0][0], "two")
+    assert len(records.records) == 1  # the first entry was taken; the one left ends with reply-2
+
+
+async def test_stream_sends_progress_answer_and_done(monkeypatch) -> None:
+    async def runner(control, routed, ticket):
+        ticket.mark_started()
+        for _ in range(1000):  # bounded (~1 s): wait until the stream listens
+            if control.progress.get(ticket.invocation_id):
+                break
+            await asyncio.sleep(0.001)
+        for emit in list(control.progress.get(ticket.invocation_id, [])):
+            await emit("reading the repo")
+        return _done(ticket, "the answer")
+
+    client, control = _client(runner, monkeypatch=monkeypatch)
+    async with client:
+        response = await client.post("/openai/chat/v1/chat/completions", headers=AUTH,
+                                     json={"stream": True, "messages": [_user("go")]})
+    events = [line[len("data: "):] for line in response.text.split("\n\n") if line.startswith("data: ")]
+    assert events[-1] == "[DONE]"
+    deltas = [json.loads(e)["choices"][0] for e in events[:-1]]
+    assert deltas[0]["delta"] == {"role": "assistant", "content": ""}
+    assert {"reasoning_content": "reading the repo\n"} in [d["delta"] for d in deltas]
+    assert deltas[-2]["delta"] == {"content": "the answer"}
+    assert deltas[-1] == {"index": 0, "delta": {}, "finish_reason": "stop"}
+    assert control.progress == {}
+
+
+async def test_failed_run_is_an_openai_error(monkeypatch) -> None:
+    async def runner(control, routed, ticket):
+        ticket.mark_started()
+        return _done(ticket, "", state="failed")
+
+    client, _ = _client(runner, monkeypatch=monkeypatch)
+    async with client:
+        plain = await client.post("/openai/chat/v1/chat/completions", headers=AUTH, json={"messages": [_user("x")]})
+        streamed = await client.post("/openai/chat/v1/chat/completions", headers=AUTH,
+                                     json={"stream": True, "messages": [_user("y")]})
+    assert plain.status_code == 500 and plain.json()["error"]["message"] == "boom"
+    assert '"error"' in streamed.text and "[DONE]" not in streamed.text
+
+
+async def test_files_need_artifacts_and_reach_the_payload(monkeypatch) -> None:
+    payloads = []
+
+    async def runner(control, routed, ticket):
+        ticket.mark_started()
+        payloads.append(routed.event.payload)
+        return _done(ticket, "ok")
+
+    message = {"messages": [_user([{"type": "file", "file": {"filename": "a.pdf", "file_data": PDF}}])]}
+    without, _ = _client(runner, files=False, monkeypatch=monkeypatch)
+    async with without:
+        rejected = await without.post("/openai/chat/v1/chat/completions", headers=AUTH, json=message)
+    with_files, _ = _client(runner, monkeypatch=monkeypatch)
+    async with with_files:
+        accepted = await with_files.post("/openai/chat/v1/chat/completions", headers=AUTH, json=message)
+    assert rejected.status_code == 400
+    assert accepted.status_code == 200
+    assert payloads[0]["attachments"] == [{"name": "a.pdf", "mime": "application/pdf", "data": PDF}]

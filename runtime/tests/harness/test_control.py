@@ -3198,3 +3198,72 @@ async def test_run_delivers_the_result_of_a_channel_with_delivery(raises, monkey
         "text": None if raises else "done",
         "error": "RuntimeError: sandbox did not start" if raises else None,
     }]
+
+
+def _openai_config():
+    wire = json.loads((Path(__file__).parents[1] / "config/fixtures/pr-review-runtime.json").read_text())
+    wire["workspace"]["persistence"] = {"type": "none"}
+    wire["artifacts"]["enabled"] = False
+    wire["channels"] = [{"name": "chat", "type": "openai", "openai": {"auth": {"env": "CHAT_KEY"}}}]
+    wire["configVersion"] = compute_config_version(wire)
+    return parse_config(wire)
+
+
+async def test_openai_prepare_publishes_attachments_and_asks_for_progress() -> None:
+    import base64
+    from types import SimpleNamespace
+
+    from ach_runtime.channels.openai import OPENAI_PROGRESS_INSTRUCTIONS
+
+    config = _openai_config()
+
+    async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
+        if request.url.path == "/configure":
+            body = json.loads(request.content)
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod-1"},
+                                  json={"configVersion": body["public"]["configVersion"]})
+        if request.url.path == "/readyz":
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod-1"}, json={"ready": True})
+        raise AssertionError(f"unexpected mini request {request.url}")
+
+    control = await assemble(
+        config, environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},
+        ach_transport=httpx.MockTransport(_catalog_handler), mini_transport=httpx.MockTransport(mini),
+    )
+    stored = []
+
+    async def create_artifact(owner, producer, idempotency_key, stream, *, mime, name, policy):
+        data = b"".join([part async for part in stream])
+        stored.append((owner.workspace_ref, producer.invocation_id, idempotency_key, name, mime, data))
+        return SimpleNamespace(artifact_id="art-1", metadata=SimpleNamespace(size=len(data)))
+
+    control.storage = SimpleNamespace(create_artifact=create_artifact)
+    event = Event(
+        event_id="openai:1", channel="chat", type="openai", source="openai",
+        payload={"text": "summarise", "attachments": [
+            {"name": "a.pdf", "mime": "application/pdf", "data": base64.b64encode(b"hello").decode()}]},
+        context={"openai": {"conversation": "c1"}},
+    )
+    routed = route(event, config.channels[0])
+    ticket = AdmissionTicket(
+        "inv-openai", config.agent.namespace, config.agent.uid, "a" * 64, "b" * 64, routed,
+        datetime.now(timezone.utc) + timedelta(minutes=1),
+        asyncio.get_running_loop().create_future(), asyncio.get_running_loop().create_future(),
+    )
+    endpoint = WorkspaceEndpoint(
+        WorkspaceRef(config.agent.namespace, config.agent.uid, "a" * 64), "workspace", "pod-1", "http://mini",
+    )
+    try:
+        request = await control.prepare(ticket, endpoint)
+        assert stored == [("a" * 64, "inv-openai", "inv-openai:0", "a.pdf", "application/pdf", b"hello")]
+        assert request.prompt.startswith(
+            "summarise\n\n<attachments>\n"
+            "The user attached these files. Read one with the `read_artifact` tool and its artifact_id.\n"
+            "- a.pdf (application/pdf, 5 bytes): artifact_id art-1\n</attachments>"
+        )
+        assert request.prompt.endswith(OPENAI_PROGRESS_INSTRUCTIONS)
+        assert request.inform_user is True
+    finally:
+        await control.close()

@@ -8,14 +8,16 @@ channel gave; otherwise it starts a new session with the visible conversation in
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import hashlib
 import json
 import mimetypes
 import time
+import uuid
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -23,7 +25,24 @@ from urllib.parse import quote
 
 import structlog
 
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.routing import Route
+
+from ach_runtime.channels.auth import verify_header_token
+from ach_runtime.channels.event import Event
+from ach_runtime.channels.metrics import CHANNEL_INBOUND
+from ach_runtime.channels.routing import RoutingError, route
+from ach_runtime.config.schema import ChannelConfig
 from ach_runtime.execution.wire import RunStatus
+from ach_runtime.harness.admission import (
+    AdmissionClosedError,
+    AdmissionQueueFullError,
+    AdmissionRateLimitedError,
+    AdmissionTicket,
+)
+from ach_runtime.harness.workspaces import WorkspaceAssemblyUnavailable
 
 log = structlog.get_logger(__name__)
 
@@ -287,3 +306,181 @@ def sse(data: dict[str, Any] | str) -> str:
 def error_body(message: str, status: int) -> dict[str, Any]:
     kind = "invalid_request_error" if status < 500 else "server_error"
     return {"error": {"message": message, "type": kind, "code": None}}
+
+
+def _fail(message: str, status: int) -> JSONResponse:
+    return JSONResponse(error_body(message, status), status_code=status)
+
+
+def _retrieve(future: asyncio.Future[Any]) -> None:
+    """Admission owns the outcome; mark a failure retrieved so asyncio does not log it."""
+    if not future.cancelled():
+        future.exception()
+
+
+def _settled(future: asyncio.Future[Any]) -> tuple[bool, str]:
+    if future.cancelled() or future.exception() is not None:
+        return False, "Invocation failed"
+    return run_outcome(future.result())
+
+
+def _files_limit(control: Any) -> int | None:
+    """Bytes per file, or None when the agent cannot read files."""
+    if control.artifact_facade is None or control.storage is None:
+        return None
+    if "read_artifact" in control.config.capability.filter.exclude.tools:
+        return None
+    return control.config.artifacts.max_artifact_bytes
+
+
+def fingerprint_store(control: Any, channel: ChannelConfig) -> FingerprintStore:
+    """In the Agent's S3 store when session HOMEs outlive the sandbox and the store exists;
+    in memory otherwise."""
+    workspace = control.config.workspace
+    durable = workspace.persistence.type != "none" and control.storage is not None
+    return FingerprintStore(
+        control.storage if durable else None, agent=control.config.agent.name,
+        channel=channel.name, retention_days=workspace.session_retention_days,
+    )
+
+
+def _instance(control: Any, workspace_ref: str) -> str:
+    """The active sandbox instance of a Workspace, "" when none is active."""
+    return next((endpoint.instance_id for endpoint in control.manager.active_endpoints().values()
+                 if endpoint.ref.workspace_ref == workspace_ref), "")
+
+
+def _continues(control: Any, found: Continuation | None) -> bool:
+    """With persistence none a session's history lives only in the sandbox instance that ran it."""
+    if found is None:
+        return False
+    if control.config.workspace.persistence.type != "none":
+        return True
+    return found.instance_id != "" and _instance(control, found.workspace_ref) == found.instance_id
+
+
+async def _stream(
+    control: Any, ticket: AdmissionTicket, request_id: str, model: str,
+    answered: Callable[[str], Awaitable[None]],
+) -> AsyncIterator[str]:
+    progress: asyncio.Queue[str] = asyncio.Queue()
+
+    async def emit(message: str) -> None:
+        progress.put_nowait(message)
+
+    control.progress.setdefault(ticket.invocation_id, []).append(emit)
+    try:
+        yield sse(chunk(request_id, model, {"role": "assistant", "content": ""}))
+        while not ticket.completed.done():
+            getter = asyncio.ensure_future(progress.get())
+            try:
+                done, _ = await asyncio.wait(
+                    {getter, ticket.completed}, timeout=KEEPALIVE_SECONDS,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            finally:
+                if not getter.done():
+                    getter.cancel()
+            if getter.done() and not getter.cancelled():
+                yield sse(chunk(request_id, model, {"reasoning_content": getter.result() + "\n"}))
+            elif not done:
+                yield ": keepalive\n\n"
+        ok, text = _settled(ticket.completed)
+        if not ok:
+            yield sse(error_body(text, 500))
+            return
+        await answered(text)
+        yield sse(chunk(request_id, model, {"content": text}))
+        yield sse(chunk(request_id, model, {}, "stop"))
+        yield sse("[DONE]")
+    finally:
+        emitters = control.progress.get(ticket.invocation_id, [])
+        if emit in emitters:
+            emitters.remove(emit)
+        if not emitters:
+            control.progress.pop(ticket.invocation_id, None)
+
+
+def build_openai_app(
+    control: Any, channel: ChannelConfig, ready: Callable[[], bool], store: FingerprintStore,
+) -> Starlette:
+    """`GET /v1/models` and `POST /v1/chat/completions` for one `openai` channel."""
+    assert channel.openai is not None
+    env = channel.openai.auth.env
+    agent_name = control.config.agent.name
+
+    def authorized(request: Request) -> bool:
+        scheme, _, token = request.headers.get("authorization", "").partition(" ")
+        return scheme.lower() == "bearer" and verify_header_token(token.strip(), env)
+
+    async def models(request: Request) -> Response:
+        if not authorized(request):
+            return _fail("invalid API key", 401)
+        return JSONResponse({"object": "list", "data": [
+            {"id": agent_name, "object": "model", "created": 0, "owned_by": "ach-agent"}]})
+
+    async def chat(request: Request) -> Response:
+        if not authorized(request):
+            return _fail("invalid API key", 401)
+        if not ready():
+            return _fail("the agent is not ready", 503)
+        body = bytearray()
+        async for part in request.stream():
+            body.extend(part)
+            if len(body) > MAX_BODY_BYTES:
+                return _fail(f"the request body exceeds {MAX_BODY_BYTES} bytes", 413)
+        try:
+            parsed = parse_request(json.loads(body), max_file_bytes=_files_limit(control))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return _fail("the request body is not JSON", 400)
+        except RequestError as exc:
+            return _fail(str(exc), exc.status)
+        found = await store.take(parsed.messages[:-1])
+        continued = _continues(control, found)
+        session_key = found.session_key if continued and found is not None else uuid.uuid4().hex
+        payload: dict[str, Any] = {"text": prompt_text(parsed, continued=continued)}
+        if parsed.attachments:
+            payload["attachments"] = [
+                {"name": a.name, "mime": a.mime, "data": a.data} for a in parsed.attachments]
+        event = Event(
+            event_id=f"openai:{uuid.uuid4().hex}", channel=channel.name, type="openai",
+            source="openai", payload=payload, context={"openai": {"conversation": session_key}},
+        )
+        try:
+            routed = route(event, channel)
+            CHANNEL_INBOUND.labels(channel=channel.name, type="openai").inc()
+            ticket = control.admission.admit(routed)
+        except RoutingError as exc:
+            return _fail(str(exc), 400)
+        except AdmissionRateLimitedError as exc:
+            return _fail(str(exc), 429)
+        except (AdmissionQueueFullError, AdmissionClosedError, WorkspaceAssemblyUnavailable):
+            return _fail("the request could not be admitted", 503)
+        if not isinstance(ticket, AdmissionTicket):
+            return _fail("the request could not be admitted", 503)
+        ticket.started.add_done_callback(_retrieve)
+        ticket.completed.add_done_callback(_retrieve)
+        request_id = f"chatcmpl-{uuid.uuid4().hex}"
+        model = parsed.model or agent_name
+
+        async def answered(text: str) -> None:
+            await store.remember(parsed.messages, text, Continuation(
+                session_key, ticket.workspace_ref, _instance(control, ticket.workspace_ref)))
+
+        if parsed.stream:
+            return StreamingResponse(
+                _stream(control, ticket, request_id, model, answered),
+                media_type="text/event-stream", headers={"Cache-Control": "no-cache"},
+            )
+        # asyncio.wait never cancels the run's future when this request is dropped.
+        await asyncio.wait({ticket.completed})
+        ok, text = _settled(ticket.completed)
+        if not ok:
+            return _fail(text, 500)
+        await answered(text)
+        return JSONResponse(completion(request_id, model, text))
+
+    return Starlette(routes=[
+        Route("/v1/models", models, methods=["GET"]),
+        Route("/v1/chat/completions", chat, methods=["POST"]),
+    ])

@@ -17,6 +17,7 @@ from ach_runtime.channels.gitlab import MalformedGitlabEventError
 from ach_runtime.channels.routing import RoutingError, route
 from ach_runtime.channels.webhook import normalize_webhook
 from ach_runtime.channels.metrics import CHANNEL_INBOUND
+from ach_runtime.channels.openai import build_openai_app, fingerprint_store
 from ach_runtime.config.schema import ChannelConfig
 from ach_runtime.harness.admission import AdmissionClosedError, AdmissionQueueFullError, AdmissionRateLimitedError
 from ach_runtime.harness.control import Control, create_facade_app
@@ -38,6 +39,7 @@ def create_app(control: Control) -> FastAPI:
     app.state.ready = False
     app.state.a2a_bridges = {}
     app.state.a2a_stores = {}
+    app.state.openai_stores = {}
 
     def serving() -> bool:
         ach_key = getattr(control, "ach_key", None)
@@ -60,6 +62,12 @@ def create_app(control: Control) -> FastAPI:
             f"/a2a/{configured.name}",
             build_a2a_app(make_a2a_agent_card(control.config.agent.name, configured.name), bridge, store),
         )
+
+    for configured in control.config.channels:
+        if configured.type == "openai":
+            store = fingerprint_store(control, configured)
+            app.state.openai_stores[configured.name] = store
+            app.mount(f"/openai/{configured.name}", build_openai_app(control, configured, serving, store))
 
     @app.get("/healthz")
     async def healthz() -> Response:

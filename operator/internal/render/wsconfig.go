@@ -82,18 +82,26 @@ type WSChannelBlock struct {
 	Cron        *CronBlock        `json:"cron,omitempty"`
 	Queue       *WSQueueBlock     `json:"queue,omitempty"`
 	A2A         *WSA2ABlock       `json:"a2a,omitempty"`
+	Delivery    *WSDelivery       `json:"delivery,omitempty"`
+}
+
+// WSDelivery is channels[].delivery (schema DeliveryBlock).
+type WSDelivery struct {
+	URL     string              `json:"url"`
+	Headers map[string]WSHeader `json:"headers"`
 }
 
 // RenderChannelV1 maps one ChannelSpec to the wire shape, reusing the legacy CronBlock
-// (unchanged) and the handoff/webhook/routing/script mappers above.
-func RenderChannelV1(ch *v1.ChannelSpec, resolvedEnv []corev1.EnvVar) (WSChannelBlock, error) {
+// (unchanged) and the handoff/webhook/routing/script mappers above, plus the env bindings of
+// its delivery headers.
+func RenderChannelV1(ch *v1.ChannelSpec, resolvedEnv []corev1.EnvVar) (WSChannelBlock, []EnvBinding, error) {
 	handoff, err := RenderHandoffV1(ch, resolvedEnv)
 	if err != nil {
-		return WSChannelBlock{}, err
+		return WSChannelBlock{}, nil, err
 	}
 	script, err := RenderScriptV1(ch, resolvedEnv)
 	if err != nil {
-		return WSChannelBlock{}, err
+		return WSChannelBlock{}, nil, err
 	}
 	cb := WSChannelBlock{
 		Name: ch.Name, Type: ch.Type, Concurrency: ch.Concurrency, RateLimit: ch.RateLimit, Source: ch.Source,
@@ -104,7 +112,15 @@ func RenderChannelV1(ch *v1.ChannelSpec, resolvedEnv []corev1.EnvVar) (WSChannel
 	if ch.Cron != nil {
 		cb.Cron = &CronBlock{Schedule: ch.Cron.Schedule, Timezone: ch.Cron.Timezone}
 	}
-	return cb, nil
+	if d := ch.Delivery; d != nil {
+		if err := checkHeaderNames("channels["+ch.Name+"].delivery", d.Headers); err != nil {
+			return WSChannelBlock{}, nil, err
+		}
+		headers, env := HeaderEnv(DeliveryEnvPrefix(ch.Name), d.Headers)
+		cb.Delivery = &WSDelivery{URL: d.URL, Headers: headers}
+		return cb, env, nil
+	}
+	return cb, nil, nil
 }
 
 // WSHooksBlockFull is the top-level hooks{...} — WSHooksBlock already defined above covers
@@ -199,6 +215,19 @@ type WSCapabilityBlock struct {
 type WSStandalone struct {
 	Model      WSStandaloneModel `json:"model"`
 	McpServers []WSMcpServer     `json:"mcpServers"`
+	// omitempty keeps an Agent without skills on its existing configVersion.
+	Skills []WSSkill `json:"skills,omitempty"`
+}
+
+// WSSkill is one capability.standalone.skills entry (schema StandaloneSkill).
+type WSSkill struct {
+	Name    string              `json:"name"`
+	Type    string              `json:"type"`
+	URL     string              `json:"url,omitempty"`
+	Repo    string              `json:"repo,omitempty"`
+	Ref     string              `json:"ref,omitempty"`
+	BaseURL string              `json:"baseUrl,omitempty"`
+	Headers map[string]WSHeader `json:"headers"`
 }
 
 // WSHeader is one upstream header of the standalone model or an MCP server: exactly one of
@@ -378,8 +407,12 @@ func renderCapability(a *v1.Agent) (WSCapabilityBlock, []EnvBinding, error) {
 		if err != nil {
 			return cap, nil, err
 		}
-		cap.Standalone = &WSStandalone{Model: model, McpServers: servers}
-		return cap, append(env, bindings...), nil
+		skills, skillEnv, err := renderSkills(st.Skills)
+		if err != nil {
+			return cap, nil, err
+		}
+		cap.Standalone = &WSStandalone{Model: model, McpServers: servers, Skills: skills}
+		return cap, append(append(env, bindings...), skillEnv...), nil
 	}
 	return cap, nil, fmt.Errorf("unknown capabilityServer %q", a.Spec.CapabilityServer)
 }
@@ -404,6 +437,32 @@ func renderMcpServers(where string, specs []v1.StandaloneMcpServerSpec) ([]WSMcp
 		env = append(env, bindings...)
 	}
 	return servers, env, nil
+}
+
+// renderSkills renders the standalone skills archives with the env bindings of their Secret
+// headers. An empty type is the CRD default, url.
+func renderSkills(specs []v1.StandaloneSkillSpec) ([]WSSkill, []EnvBinding, error) {
+	var skills []WSSkill
+	var env []EnvBinding
+	prefixes := map[string]string{}
+	for _, s := range specs {
+		prefix := SkillEnvPrefix(s.Name)
+		if other, ok := prefixes[prefix]; ok {
+			return nil, nil, fmt.Errorf("skill %q and %q map to the same env prefix %s", other, s.Name, prefix)
+		}
+		prefixes[prefix] = s.Name
+		if err := checkHeaderNames("standalone.skills["+s.Name+"]", s.Headers); err != nil {
+			return nil, nil, err
+		}
+		typ := s.Type
+		if typ == "" {
+			typ = "url"
+		}
+		aliases, bindings := HeaderEnv(prefix, s.Headers)
+		skills = append(skills, WSSkill{Name: s.Name, Type: typ, URL: s.URL, Repo: s.Repo, Ref: s.Ref, BaseURL: s.BaseURL, Headers: aliases})
+		env = append(env, bindings...)
+	}
+	return skills, env, nil
 }
 
 // Render collapses profile + agent into the full workspace-v3 WSConfig, including
@@ -462,12 +521,22 @@ func Render(p v1.AgentProfile, a v1.Agent) (WSConfig, []EnvBinding, error) {
 		Memory:         memory,
 		Infrastructure: RenderInfrastructureV2(a.Name, a.Namespace),
 	}
+	deliveryPrefixes := map[string]string{}
 	for i := range a.Spec.Channels {
-		cb, err := RenderChannelV1(&a.Spec.Channels[i], resolvedEnv)
+		ch := &a.Spec.Channels[i]
+		if ch.Delivery != nil {
+			prefix := DeliveryEnvPrefix(ch.Name)
+			if other, ok := deliveryPrefixes[prefix]; ok {
+				return WSConfig{}, nil, fmt.Errorf("channel %q and %q map to the same delivery env prefix %s", other, ch.Name, prefix)
+			}
+			deliveryPrefixes[prefix] = ch.Name
+		}
+		cb, env, err := RenderChannelV1(ch, resolvedEnv)
 		if err != nil {
 			return WSConfig{}, nil, err
 		}
 		cfg.Channels = append(cfg.Channels, cb)
+		bindings = append(bindings, env...)
 	}
 
 	version, err := ComputeConfigVersion(cfg)

@@ -16,6 +16,7 @@ spec:
         url: http://e2e-stub.ach-agent-e2e.svc.cluster.local:8091/mcp
         headers:
           X-API-KEY: {secretKeyRef: {name: e2e-serper, key: apiKey}}
+  filter: {include: {tools: [serper.echo]}}
   channels:
     - name: hook
       type: webhook

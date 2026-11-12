@@ -485,7 +485,7 @@ func TestRenderFilterV1_AbsentFilterStillEmitsEmptyExclude(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := `{"exclude":{"tools":[],"mcpServers":[],"skills":[]}}`; string(b) != want {
+	if want := `{"include":{"tools":[]},"exclude":{"tools":[],"mcpServers":[],"skills":[]}}`; string(b) != want {
 		t.Fatalf("filter = %s, want %s", b, want)
 	}
 }
@@ -502,7 +502,7 @@ func TestRenderChannelV1RateLimit(t *testing.T) {
 			{Key: "sender:{{ payload.sender }}", MaxPerHour: 10},
 		}},
 	}
-	got, err := RenderChannelV1(&ch, nil)
+	got, _, err := RenderChannelV1(&ch, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

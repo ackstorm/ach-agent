@@ -623,3 +623,17 @@ func TestReservedForwardEnvDenylist_MatchesVendoredSchema(t *testing.T) {
 		}
 	}
 }
+
+func TestReferencedSecrets_DeliveryAndSkillHeaders(t *testing.T) {
+	a := v1.Agent{Spec: v1.AgentSpec{
+		Standalone: &v1.StandaloneSpec{Skills: []v1.StandaloneSkillSpec{{Name: "kit", Type: "github", Repo: "o/r",
+			Headers: map[string]v1.HeaderValue{"Authorization": {SecretKeyRef: &v1.SecretKeyRef{Name: "gh", Key: "token"}}}}}},
+		Channels: []v1.ChannelSpec{{Name: "cr", Type: "cron", Cron: &v1.CronSpec{Schedule: "* * * * *"},
+			Delivery: &v1.DeliverySpec{URL: "https://h", Headers: map[string]v1.HeaderValue{
+				"Authorization": {SecretKeyRef: &v1.SecretKeyRef{Name: "dl", Key: "auth"}}, "X-Lit": {Value: ptr("x")}}}}},
+	}}
+	got := ReferencedSecrets(v1.AgentProfile{}, a)
+	if len(got) != 2 || len(got["gh"]) != 1 || got["gh"][0] != "token" || len(got["dl"]) != 1 || got["dl"][0] != "auth" {
+		t.Errorf("ReferencedSecrets = %v, want {gh:[token] dl:[auth]}", got)
+	}
+}

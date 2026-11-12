@@ -50,7 +50,8 @@ port of the ach `v0.14.2` agent operator (read it with `git -C <ach> archive v0.
   is rejected); the runtime binaries and code (`/usr/local/bin`, `/usr/local/lib`,
   `/opt/opencode`, `/opt/pi`, `/work`) are never writable. The policy document uses the proto field names
   (`network_policies`, `filesystem`, `landlock`).
-- Header env names: `ACH_AGENT_MODEL_H<i>`, `ACH_AGENT_MCP_<NAME>_H<i>` (index in the
+- Header env names: `ACH_AGENT_MODEL_H<i>`, `ACH_AGENT_MCP_<NAME>_H<i>`,
+  `ACH_AGENT_DELIVERY_<CHANNEL>_H<i>`, `ACH_AGENT_SKILL_<NAME>_H<i>` (index in the
   case-insensitive sorted header names, literals included); only `secretKeyRef` headers get one.
   A literal renders as `{"value": ...}` with no binding. The ACH key from `keyFrom.secretKeyRef` is `ACH_SECRET_IDENTITY`. A `keyFrom.tokenExchange` Agent gets no key env:
   its pod keeps the usual control ServiceAccount (profile `serviceAccountName`, else `ach-agent-control-<uid>`) and gets a

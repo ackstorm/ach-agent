@@ -18,8 +18,21 @@ type ExcludeSpec struct {
 	Skills []string `json:"skills,omitempty"`
 }
 
-// FilterSpec wraps the exclude gate.
+// IncludeSpec is the allow list of the capability filter (config: capability.filter.include).
+type IncludeSpec struct {
+	// Tools lists MCP tools as <server>.<tool>. A server with an entry exposes only its
+	// listed tools; a server with none exposes all. exclude wins over include.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=512
+	// +kubebuilder:validation:items:Pattern=`^[^.]+\..+$`
+	Tools []string `json:"tools,omitempty"`
+}
+
+// FilterSpec wraps the include and exclude gates.
 type FilterSpec struct {
+	// +optional
+	Include *IncludeSpec `json:"include,omitempty"`
 	// +optional
 	Exclude *ExcludeSpec `json:"exclude,omitempty"`
 }
@@ -302,6 +315,16 @@ type RateLimitKeySpec struct {
 	MaxPerHour int64 `json:"maxPerHour"`
 }
 
+// DeliverySpec is where a channel POSTs the final result of each run (config: channels[].delivery).
+type DeliverySpec struct {
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^https?://[^/\s]+`
+	URL string `json:"url"`
+	// +optional
+	// +kubebuilder:validation:MaxProperties=64
+	Headers map[string]HeaderValue `json:"headers,omitempty"`
+}
+
 // ChannelSpec is one inbound channel (config: channels[]).
 // +kubebuilder:validation:XValidation:rule="((self.type=='webhook' || self.type=='webhook-script') && has(self.webhook)) || (self.type=='cron' && has(self.cron)) || (self.type=='queue' && has(self.queue)) || (self.type=='a2a' && has(self.a2a))",message="channels: the block matching type is required"
 // +kubebuilder:validation:XValidation:rule="self.type=='webhook' || self.type=='webhook-script' || !has(self.source)",message="channels.source is only valid for webhook channels"
@@ -309,6 +332,7 @@ type RateLimitKeySpec struct {
 // +kubebuilder:validation:XValidation:rule="self.type!='webhook-script' || (!has(self.prompt) && !has(self.handoff))",message="webhook-script forbids prompt and handoff"
 // +kubebuilder:validation:XValidation:rule="self.type!='webhook-script' || !has(self.rateLimit)",message="webhook-script forbids rateLimit"
 // +kubebuilder:validation:XValidation:rule="!(self.type=='queue' || (self.type=='webhook' && has(self.source) && self.source=='generic')) || (has(self.routing) && has(self.routing.sessionKey))",message="generic webhook and queue channels require routing.sessionKey"
+// +kubebuilder:validation:XValidation:rule="!has(self.delivery) || self.type in ['webhook','cron','queue']",message="channels.delivery is only valid for webhook, cron and queue channels"
 type ChannelSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
@@ -352,6 +376,9 @@ type ChannelSpec struct {
 	// temporary and removed after each event.
 	// +optional
 	Script *PrepareSpec `json:"script,omitempty"`
+	// Delivery POSTs the final result of each run to a URL.
+	// +optional
+	Delivery *DeliverySpec `json:"delivery,omitempty"`
 }
 
 // HookSpec is a script run inside the agent's execution environment (the mini-harness),
@@ -461,6 +488,34 @@ type StandaloneMcpServerSpec struct {
 	Headers map[string]HeaderValue `json:"headers,omitempty"`
 }
 
+// StandaloneSkillSpec is one archive of skills (config: capability.standalone.skills). type
+// only builds the archive URL; headers are sent as written.
+// +kubebuilder:validation:XValidation:rule="self.type == 'url' ? (has(self.url) && !has(self.repo) && !has(self.ref) && !has(self.baseUrl)) : (has(self.repo) && !has(self.url))",message="skills: type url takes url only; the other types take repo"
+// +kubebuilder:validation:XValidation:rule="self.type != 'bitbucket' || !has(self.baseUrl)",message="skills: type bitbucket is Bitbucket Cloud; use type url for a server"
+type StandaloneSkillSpec struct {
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9_-]{0,62}$`
+	Name string `json:"name"`
+	// +kubebuilder:default=url
+	// +kubebuilder:validation:Enum=url;gitlab;github;bitbucket
+	Type string `json:"type,omitempty"`
+	// +optional
+	// +kubebuilder:validation:Pattern=`^https?://[^/\s]+`
+	URL string `json:"url,omitempty"`
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$`
+	Repo string `json:"repo,omitempty"`
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9._/-]+$`
+	Ref string `json:"ref,omitempty"`
+	// +optional
+	// +kubebuilder:validation:Pattern=`^https?://[^/\s]+`
+	BaseURL string `json:"baseUrl,omitempty"`
+	// +optional
+	// +kubebuilder:validation:MaxProperties=64
+	Headers map[string]HeaderValue `json:"headers,omitempty"`
+}
+
 // StandaloneSpec is the capability source of an Agent that talks to its own model and MCP
 // servers.
 type StandaloneSpec struct {
@@ -471,6 +526,11 @@ type StandaloneSpec struct {
 	// +listMapKey=name
 	// +kubebuilder:validation:MaxItems=64
 	McpServers []StandaloneMcpServerSpec `json:"mcpServers,omitempty"`
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=32
+	Skills []StandaloneSkillSpec `json:"skills,omitempty"`
 }
 
 // AchModelSpec selects the ACH-served model.
@@ -595,7 +655,6 @@ type ExposeSpec struct {
 
 // AgentSpec defines the desired state of an Agent.
 // +kubebuilder:validation:XValidation:rule="self.capabilityServer == 'standalone' ? (has(self.standalone) && !has(self.ach)) : (has(self.ach) && !has(self.standalone))",message="capabilityServer selects exactly one of standalone/ach"
-// +kubebuilder:validation:XValidation:rule="!has(self.filter) || !has(self.filter.exclude) || !has(self.filter.exclude.skills) || size(self.filter.exclude.skills) == 0 || self.capabilityServer == 'ach'",message="filter.exclude.skills requires capabilityServer ach"
 type AgentSpec struct {
 	// +kubebuilder:validation:Required
 	ProfileRef LocalObjectRef `json:"profileRef"`

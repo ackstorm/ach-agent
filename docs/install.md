@@ -293,6 +293,31 @@ raised). One attempt per run, 10 s timeout, redirects not followed. A failed POS
 `ach_agent_channel_delivery_failures_total{channel}`. A run that expires in the admission queue and a run recovered after a control pod restart are not
 delivered. The control pod needs egress to the URL under the mesh policy (`docs/mesh/`).
 
+`filter.include.tools` limits an MCP server to the tools listed as `<server>.<tool>`. A server with
+entries exposes only those tools, a server with none exposes all, and `filter.exclude` wins:
+
+```yaml
+spec:
+  filter:
+    include: {tools: [github.get_pull_request]}
+```
+
+`standalone.skills` loads archives of skills when the control pod starts, as in
+[local-agent.md](local-agent.md#manifest) (same fields and types), with header values from Secrets:
+
+```yaml
+spec:
+  standalone:
+    skills:
+      - name: toolkit
+        type: gitlab
+        repo: platform/toolkit
+        ref: v1.4.0
+        baseUrl: https://gitlab.example.com
+        headers:
+          PRIVATE-TOKEN: {secretKeyRef: {name: gitlab-skills, key: token}}
+```
+
 The AgentProfile holds the images, the sandbox resources and the defaults every Agent of the namespace
 inherits:
 

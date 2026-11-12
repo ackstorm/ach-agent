@@ -50,7 +50,12 @@ const AchKeyEnv = "ACH_SECRET_IDENTITY"
 // defaults. Neither is schema-required (AchCapabilityFilterExclude has no required list),
 // so this is a byte-parity choice, not a contract requirement.
 type WSFilterBlock struct {
+	Include WSIncludeBlock `json:"include"`
 	Exclude WSExcludeBlock `json:"exclude"`
+}
+
+type WSIncludeBlock struct {
+	Tools []string `json:"tools"`
 }
 
 type WSExcludeBlock struct {
@@ -71,13 +76,20 @@ func emptyIfNil(s []string) []string {
 	return s
 }
 
-// renderFilterV1 always renders the exclude gate with non-null arrays.
+// renderFilterV1 always renders the include and exclude gates with non-null arrays.
 func renderFilterV1(f *v1.FilterSpec) WSFilterBlock {
+	var i v1.IncludeSpec
 	var e v1.ExcludeSpec
+	if f != nil && f.Include != nil {
+		i = *f.Include
+	}
 	if f != nil && f.Exclude != nil {
 		e = *f.Exclude
 	}
-	return WSFilterBlock{Exclude: WSExcludeBlock{Tools: emptyIfNil(e.Tools), McpServers: emptyIfNil(e.McpServers), Skills: emptyIfNil(e.Skills)}}
+	return WSFilterBlock{
+		Include: WSIncludeBlock{Tools: emptyIfNil(i.Tools)},
+		Exclude: WSExcludeBlock{Tools: emptyIfNil(e.Tools), McpServers: emptyIfNil(e.McpServers), Skills: emptyIfNil(e.Skills)},
+	}
 }
 
 // WSCompactionKeepBlock is engine.compaction.keep (schema CompactionKeepBlock — tokens

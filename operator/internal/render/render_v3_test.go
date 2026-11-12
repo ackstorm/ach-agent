@@ -38,7 +38,7 @@ func TestRender_StandaloneProducesV3CapabilityAndEnvBindings(t *testing.T) {
 	for _, want := range []string{`"schemaVersion":"workspace-v3"`, `"server":"standalone"`,
 		`"x-litellm-api-key":{"env":"ACH_AGENT_MODEL_H0"}`, `"X-API-KEY":{"env":"ACH_AGENT_MCP_SERPER_H0"}`,
 		`"limits":{"context":200000,"output":32000}`, `"type":"openai"`,
-		`"filter":{"exclude":{"tools":[],"mcpServers":[],"skills":[]}}`} {
+		`"filter":{"include":{"tools":[]},"exclude":{"tools":[],"mcpServers":[],"skills":[]}}`} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("config lacks %s\n%s", want, doc)
 		}
@@ -131,7 +131,7 @@ func TestRender_AchModelLimits(t *testing.T) {
 		t.Errorf("unset limits reached the wire: %s", raw)
 	}
 	// Pinned: an Agent without limits must keep the configVersion it had before the field existed.
-	if want := "e6ce6f47b76721d43b4e3fe78581bccb4d24eba52c590d85294fe75b39138ae8"; unset.ConfigVersion != want {
+	if want := "49574204ab2dcfb7e1686cb8ee09a66d3278d6a45aed3f08f68959de70afefd4"; unset.ConfigVersion != want {
 		t.Errorf("configVersion = %s, want %s", unset.ConfigVersion, want)
 	}
 

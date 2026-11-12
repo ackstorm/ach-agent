@@ -24,11 +24,16 @@ class SkillsError(RuntimeError):
     """A configured skills archive could not be downloaded or holds no usable skill."""
 
 
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parsed = httpx.URL(url)
+    return parsed.scheme, parsed.host, parsed.port or {"http": 80, "https": 443}.get(parsed.scheme)
+
+
 async def _download(client: httpx.AsyncClient, url: str, headers: Mapping[str, str]) -> bytes:
-    origin = httpx.URL(url).host
+    origin = _origin(url)
     for _ in range(_MAX_REDIRECTS + 1):
-        # A provider redirects the archive to a storage host: the credential stays with the first host.
-        sent = headers if httpx.URL(url).host == origin else {}
+        # A provider redirects the archive to a storage host: the credential stays with the first origin.
+        sent = headers if _origin(url) == origin else {}
         response = await client.get(url, headers=dict(sent), timeout=_TIMEOUT_SECONDS, follow_redirects=False)
         if response.is_redirect and "location" in response.headers:
             url = urljoin(url, response.headers["location"])
@@ -39,6 +44,11 @@ async def _download(client: httpx.AsyncClient, url: str, headers: Mapping[str, s
             raise SkillsError("archive exceeds 512 MiB")
         return response.content
     raise SkillsError("too many redirects")
+
+
+def _has_link(root: Path) -> bool:
+    return any(path.is_symlink() for current, dirs, files in os.walk(root)
+               for path in (Path(current, name) for name in (*dirs, *files)))
 
 
 def _skill_dirs(root: Path) -> list[Path]:
@@ -78,6 +88,8 @@ async def fetch_skills(
                 extract(archive, staged, max_expanded_bytes=4 * 1024**3, max_members=10_000)
             except Exception as exc:  # noqa: BLE001 - any unreadable archive stops the agent
                 raise SkillsError(f"skills {skill.name}: archive could not be extracted") from exc
+            if _has_link(staged):
+                raise SkillsError(f"skills {skill.name}: archive contains a symbolic link")
             found = _skill_dirs(staged)
             if not found:
                 raise SkillsError(f"skills {skill.name}: archive has no SKILL.md")
@@ -87,6 +99,9 @@ async def fetch_skills(
                     continue
                 if (target_root / name).exists():
                     raise SkillsError(f"skills {skill.name}: duplicate skill name {name}")
-                shutil.copytree(directory, target_root / name)
+                try:
+                    shutil.copytree(directory, target_root / name)
+                except (OSError, shutil.Error) as exc:
+                    raise SkillsError(f"skills {skill.name}: could not install {name}") from exc
                 installed.append(name)
     return installed

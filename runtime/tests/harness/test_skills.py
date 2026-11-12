@@ -73,3 +73,36 @@ async def test_fetch_skills_fails_closed(tmp_path, content, status, match) -> No
     client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(status, content=content)))
     with pytest.raises(SkillsError, match=match):
         await fetch_skills([_skill()], {}, tmp_path, excluded=[], client=client)
+
+
+@pytest.mark.asyncio
+async def test_fetch_skills_rejects_a_symbolic_link(tmp_path) -> None:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        data = b"# s"
+        info = tarfile.TarInfo("r/s/SKILL.md")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+        link = tarfile.TarInfo("r/s/loop")
+        link.type, link.linkname = tarfile.SYMTYPE, "."
+        tar.addfile(link)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, content=buffer.getvalue())))
+    with pytest.raises(SkillsError, match="symbolic link"):
+        await fetch_skills([_skill()], {}, tmp_path, excluded=[], client=client)
+    assert list((tmp_path / "skills").iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_skills_drops_headers_on_a_same_host_downgrade(tmp_path) -> None:
+    seen: list[tuple[str, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.scheme, request.headers.get("authorization")))
+        if request.url.scheme == "https":
+            return httpx.Response(302, headers={"location": "http://a.example/t.tar.gz"})
+        return httpx.Response(200, content=REPO)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    skill = _skill(headers={"Authorization": {"env": "T"}})
+    await fetch_skills([skill], {"T": "secret"}, tmp_path, excluded=[], client=client)
+    assert seen == [("https", "secret"), ("http", None)]

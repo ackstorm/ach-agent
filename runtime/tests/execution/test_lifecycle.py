@@ -525,8 +525,9 @@ async def test_cold_import_restores_exact_sid_without_prompt_posts(
     state = service._sessions.get(session_ref)
     assert state is not None and state.native_session_id == sid
     assert (state.home / "user-data").read_text() == "restored"
-    assert observed == [("GET", f"/api/session/{sid}")]
+    assert observed == []  # opencode is launched, and the sid checked, by the run's start
     assert engine._sessions[session_ref].sid == sid
+    assert engine._sessions[session_ref].sid_unverified
 
 
 async def _start_and_settle(service: ExecutionService, request: StartRequest):

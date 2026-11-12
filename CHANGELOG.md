@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ach-agent run` starts the `opencode` binary by default instead of `opencode2`; `OPENCODE_BIN`
   still overrides it. The images set it to their bundled binary and are unchanged.
 
+### Fixed
+
+- Resuming a session whose opencode had stopped (kept HOME, S3 restore or volume) boots opencode
+  once instead of twice: the restore installs the HOME and records the session id, and the run's
+  start launches opencode with its full config and checks that id. A session id opencode no
+  longer knows starts a fresh session in the same HOME instead of failing the restore.
+
 ## [0.7.4] - 2026-11-12
 
 ### Added

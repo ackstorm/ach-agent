@@ -14,6 +14,7 @@ import contextlib
 import copy
 import hashlib
 import json
+import logging
 import math
 import os
 import secrets
@@ -48,6 +49,8 @@ from ach_runtime.engine.config import (
     build_env, managed_content, scrub_engine_global_config, to_fixture, with_session_baggage,
 )
 from ach_runtime.observability.runs import RunUsage, log_step, log_tool
+
+log = logging.getLogger(__name__)
 
 OPENCODE_BIN = os.environ.get("OPENCODE_BIN", "opencode")
 STARTUP_TIMEOUT_SECONDS = 20.0
@@ -118,6 +121,8 @@ class _NativeSession:
         self.scratch = scratch
         self.url: str | None = None
         self.sid: str | None = None
+        # A restored sid that the next launch must find before the session reuses it.
+        self.sid_unverified = False
         self.password: str | None = None
         self.config_version: str | None = None
         self._managed_fingerprint: str | None = None
@@ -1143,6 +1148,14 @@ class OpenCodeEngine:
                 await session.ensure_started(env=env, config_path=config_path, deadline=deadline)
                 is_new_process = True
 
+            if session.sid_unverified:
+                session.sid_unverified = False
+                status, _ = await setup_request("GET", f"/api/session/{session.sid}")
+                if status != 200:
+                    log.warning("restored session %s did not resolve (%s); session starts fresh",
+                                session.sid, status)
+                    session.sid = None
+
             if session.sid is None:
                 status, body = await setup_request(
                     "POST",
@@ -1634,6 +1647,7 @@ class OpenCodeEngine:
                 state.outcome = state.outcome or "unknown"
                 state.settled.set()
         session.sid = None
+        session.sid_unverified = False
         session.url = None
         session.config_version = None
         session._managed_fingerprint = None
@@ -1659,15 +1673,16 @@ class OpenCodeEngine:
         in_place: bool = False,
         deadline_at: datetime | None = None,
     ) -> None:
-        """Validate, download, relaunch and verify — never adopts archive metadata as
+        """Validate, download and install the HOME — never adopts archive metadata as
         destination authority (finding #11): every identity field is checked against an
-        explicit `expected` destination, the archived payload is required, and restoration
-        is not complete until the relaunched process answers `GET /api/session/:sid` for the
-        exact restored sid. No synthetic prompt is sent. The engine version is not an identity
-        field: a session saved by an older opencode release restores under the running one
-        (2.0.20 → 2.2.5 verified), and the sid check above still catches an unreadable store.
-        With `in_place` the session's HOME already holds its state (persistence type volume):
-        nothing is downloaded or staged, and the relaunch resumes from it.
+        explicit `expected` destination and the archived payload is required. opencode is not
+        launched here: the session's next `start` launches it and checks that it answers
+        `GET /api/session/:sid` for the restored sid, and starts a fresh session in the same
+        HOME when it does not. No synthetic prompt is sent. The engine version is not an
+        identity field: a session saved by an older opencode release restores under the
+        running one (2.0.20 → 2.2.5 verified), and the sid check still catches an unreadable
+        store. With `in_place` the session's HOME already holds its state (persistence type
+        volume): nothing is downloaded or staged.
         """
         check_manifest(manifest, expected)
         session = self._sessions.get(session_ref)
@@ -1689,41 +1704,9 @@ class OpenCodeEngine:
             await self._transfer.download(manifest.archive_ref, dest=session.home)
 
         previous_home = install_restored_home(session.home, restored_home) if restored_home is not None else None
-
-        fixture = to_fixture(public, managed_agent=managed_agent, lookup_only_prompt=True)
-        content = managed_content(public, fixture)
-        config_path = session.home / "opencode.config.json"
-        config_path.write_text(json.dumps(content), encoding="utf-8")
-        env = build_env(
-            home=session.home,
-            scratch=session.scratch,
-            approved_env=engine_env,
-            password=secrets.token_hex(16),
-        )
-        deadline = self._startup_deadline(public.engine.startup_timeout_seconds, deadline_at)
-        try:
-            await session.ensure_started(env=env, config_path=config_path, deadline=deadline)
-            status, body = await asyncio.wait_for(
-                session.request("GET", f"/api/session/{manifest.native_session_id}"),
-                timeout=max(0.0, deadline - time.monotonic()),
-            )
-            if status != 200:
-                raise RestoreMismatch(
-                    f"restored sid {manifest.native_session_id} did not resolve after relaunch: "
-                    f"{status} {body!r}"
-                )
-            session.sid = manifest.native_session_id
-            session.config_version = public.config_version
-            session._managed_fingerprint = _managed_fingerprint(content, env)
-        except BaseException:
-            if session.alive:
-                await session._kill(confirm_timeout=5.0)
-            session.sid = None
-            if previous_home is not None:
-                shutil.rmtree(session.home, ignore_errors=True)
-                if previous_home.exists():
-                    previous_home.rename(session.home)
-            raise
-        else:
-            if previous_home is not None:
-                shutil.rmtree(previous_home, ignore_errors=True)
+        if previous_home is not None:
+            shutil.rmtree(previous_home, ignore_errors=True)
+        # The run's `start` launches opencode with its full config and checks the sid there:
+        # a launch here, without the run's MCP servers, would be stopped and relaunched by it.
+        session.sid = manifest.native_session_id
+        session.sid_unverified = True

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
 import os
@@ -564,7 +563,11 @@ class Control:
         else:
             prompt = json.dumps(event.payload, ensure_ascii=False, sort_keys=True)
         if channel.type == "openai" and event.payload.get("attachments"):
-            prompt = f"{prompt}\n\n{await self._publish_attachments(ticket, event.payload['attachments'])}"
+            # The retained event keeps the block, not the file bytes; a re-prepare reuses it.
+            event.payload["attachmentsBlock"] = await self._publish_attachments(ticket, event.payload["attachments"])
+            del event.payload["attachments"]
+        if channel.type == "openai" and event.payload.get("attachmentsBlock"):
+            prompt = f"{prompt}\n\n{event.payload['attachmentsBlock']}"
         memory_available: bool | None = None
         if self._memory_configured:
             # I7: the one `prepare_ach_memory` call per non-script invocation, appended
@@ -581,7 +584,9 @@ class Control:
             if self.progress_facade is not None:
                 prompt = f"{prompt}\n\n{A2A_PROGRESS_INSTRUCTIONS}"
             prompt = f"{prompt}\n\n{A2A_OUTPUT_INSTRUCTIONS}"
-        if channel.type == "openai" and self.progress_facade is not None:
+        streamed = channel.type == "openai" and event.context.get("openai", {}).get("stream") is True
+        inform_user = self.progress_facade is not None and (channel.type == "a2a" or streamed)
+        if channel.type == "openai" and inform_user:
             from ach_runtime.channels.openai import OPENAI_PROGRESS_INSTRUCTIONS
 
             prompt = f"{prompt}\n\n{OPENAI_PROGRESS_INSTRUCTIONS}"
@@ -591,20 +596,19 @@ class Control:
             workspaceKey=routed.workspace_key, sessionKey=routed.session_key,
             configVersion=self.public.config_version, prompt=prompt,
             deadlineAt=ticket.deadline_at, memoryAvailable=memory_available,
-            informUser=channel.type in ("a2a", "openai") and self.progress_facade is not None,
+            informUser=inform_user,
         )
         self._prepared[ticket.invocation_id] = (endpoint, request)
         return request
 
-    async def _publish_attachments(self, ticket: AdmissionTicket, attachments: list[dict[str, str]]) -> str:
+    async def _publish_attachments(self, ticket: AdmissionTicket, attachments: list[dict[str, Any]]) -> str:
         """Store an openai request's files as Workspace artifacts; the prompt block naming them."""
         owner = StateRef(agent=self.config.agent, workspace_ref=ticket.workspace_ref, domain="workspace")
         producer = ArtifactProducer(session_ref=ticket.session_ref, invocation_id=ticket.invocation_id)
         lines = []
         for index, item in enumerate(attachments):
-            data = base64.b64decode(item["data"])
 
-            async def chunks(data: bytes = data) -> AsyncIterator[bytes]:
+            async def chunks(data: bytes = item["data"]) -> AsyncIterator[bytes]:
                 yield data
 
             receipt = await self.storage.create_artifact(

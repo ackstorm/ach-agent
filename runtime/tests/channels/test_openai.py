@@ -11,6 +11,7 @@ import pytest
 from starlette.applications import Starlette
 from starlette.routing import Mount
 
+from ach_runtime.channels.event import Event
 from ach_runtime.channels.openai import (
     Continuation,
     FingerprintStore,
@@ -24,11 +25,13 @@ from ach_runtime.channels.openai import (
     prompt_text,
     run_outcome,
     sse,
+    _stream,
 )
+from ach_runtime.channels.routing import route
 from ach_runtime.config.schema import ChannelConfig
 from ach_runtime.execution.wire import RunStatus
 from ach_runtime.harness.admission import Admission
-from ach_runtime.harness.refs import workspace_ref
+from ach_runtime.harness.refs import session_ref, workspace_ref
 
 PDF = base64.b64encode(b"%PDF-1.4 hello").decode()
 
@@ -54,6 +57,7 @@ def test_parse_takes_last_user_message_and_ignores_sampling_fields() -> None:
     ({"messages": [_user("")]}, 400, "empty"),
     ({"messages": [_user([{"type": "input_audio", "input_audio": {}}])]}, 400, "unsupported"),
     ({"messages": [_user([{"type": "file", "file": {"file_data": PDF, "filename": "a.pdf"}}])]}, 400, "does not accept files"),
+    ({"messages": [_user(5), _user("hi")]}, 400, "message content"),
 ])
 def test_parse_rejects(body, status, message) -> None:
     with pytest.raises(RequestError, match=message) as caught:
@@ -67,10 +71,12 @@ def test_parse_decodes_files_and_images() -> None:
         {"type": "file", "file": {"filename": "a.pdf", "file_data": f"data:application/pdf;base64,{PDF}"}},
         {"type": "file", "file": {"filename": "b.pdf", "file_data": PDF}},
         {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{PDF}"}},
+        {"type": "file", "file": {"filename": "c.txt", "file_data": f"data:text/plain;charset=utf-8;base64,{PDF}"}},
     ])]}, max_file_bytes=1024)
     assert [(a.name, a.mime) for a in request.attachments] == [
-        ("a.pdf", "application/pdf"), ("b.pdf", "application/pdf"), ("image-3.png", "image/png")]
-    assert base64.b64decode(request.attachments[0].data) == b"%PDF-1.4 hello"
+        ("a.pdf", "application/pdf"), ("b.pdf", "application/pdf"), ("image-3.png", "image/png"),
+        ("c.txt", "text/plain")]
+    assert request.attachments[0].data == b"%PDF-1.4 hello"
 
 
 @pytest.mark.parametrize("part, status, message", [
@@ -78,6 +84,10 @@ def test_parse_decodes_files_and_images() -> None:
     ({"type": "image_url", "image_url": {"url": "https://example.com/a.png"}}, 400, "data URI"),
     ({"type": "file", "file": {"filename": "a.pdf", "file_data": "!!!"}}, 400, "base64"),
     ({"type": "file", "file": {"filename": "a.pdf", "file_data": PDF}}, 413, "exceeds"),
+    ({"type": "file", "file": {"filename": "a" * 256, "file_data": "aGk="}}, 400, "255"),
+    ({"type": "file", "file": {"filename": "a", "file_data": "data:text/plain\u00e9;base64,aGk="}}, 400, "MIME"),
+    ({"type": "file", "file": {"filename": "a", "file_data": f"data:text/{'x' * 128};base64,aGk="}}, 400, "MIME"),
+    ({"type": "image_url", "image_url": {"url": "data:image;base64,aGk="}}, 400, "MIME"),
 ])
 def test_parse_rejects_files(part, status, message) -> None:
     with pytest.raises(RequestError, match=message) as caught:
@@ -238,7 +248,14 @@ def _client(runner, *, files: bool = True, persistence: str = "none", storage=No
         admission=None, progress={}, storage=storage if storage is not None else (object() if files else None),
         artifact_facade=object() if files else None,
         manager=SimpleNamespace(active_endpoints=lambda: dict(endpoints)), endpoints=endpoints,
+        session_status=200, session_lookups=[],
     )
+
+    async def mini_json(endpoint, method, path):
+        control.session_lookups.append((endpoint.instance_id, method, path))
+        return control.session_status, {}
+
+    control._mini_json = mini_json
     control.admission = _admission(lambda routed, ticket: runner(control, routed, ticket))
     app = Starlette(routes=[Mount("/openai/chat", app=build_openai_app(
         control, channel, lambda: True, fingerprint_store(control, channel)))])
@@ -321,6 +338,18 @@ async def test_persistence_none_replays_once_the_sandbox_instance_changed(monkey
     assert seen[1][1].startswith("The conversation so far:")
 
 
+async def test_persistence_none_replays_once_the_session_is_retired(monkeypatch) -> None:
+    seen = []
+    client, control = _client(_recording_runner(seen), monkeypatch=monkeypatch)
+    async with client:
+        await _first_turn(client)
+        control.session_status = 404  # idle close or eviction deleted the session HOME
+        await _second_turn(client)
+    assert control.session_lookups == [("pod-1", "GET", f"/sessions/{session_ref(WORKSPACE, seen[0][0])}/info")]
+    assert seen[0][0] != seen[1][0]
+    assert seen[1][1].startswith("The conversation so far:")
+
+
 async def test_durable_sessions_continue_after_a_control_restart(monkeypatch) -> None:
     seen = []
     records = Records()
@@ -390,4 +419,35 @@ async def test_files_need_artifacts_and_reach_the_payload(monkeypatch) -> None:
         accepted = await with_files.post("/openai/chat/v1/chat/completions", headers=AUTH, json=message)
     assert rejected.status_code == 400
     assert accepted.status_code == 200
-    assert payloads[0]["attachments"] == [{"name": "a.pdf", "mime": "application/pdf", "data": PDF}]
+    assert payloads[0]["attachments"] == [{"name": "a.pdf", "mime": "application/pdf", "data": b"%PDF-1.4 hello"}]
+
+
+async def test_stream_disconnect_leaves_the_run_running(monkeypatch) -> None:
+    release = asyncio.Event()
+
+    async def runner(control, routed, ticket):
+        ticket.mark_started()
+        await release.wait()
+        return _done(ticket, "late")
+
+    client, control = _client(runner, monkeypatch=monkeypatch)
+    async with client:
+        channel = control.config.channels[0]
+        ticket = control.admission.admit(route(Event(
+            event_id="openai:1", channel="chat", type="openai", source="openai", payload={"text": "go"},
+            context={"openai": {"conversation": "c1", "stream": True}}), channel))
+
+        async def answered(text: str) -> None:
+            raise AssertionError("nobody is listening")
+
+        stream = _stream(control, ticket, "chatcmpl-1", "m", answered)
+        await anext(stream)  # the role chunk
+        reading = asyncio.ensure_future(anext(stream))
+        await asyncio.sleep(0.01)
+        reading.cancel()  # what Starlette does when the client disconnects
+        with pytest.raises(asyncio.CancelledError):
+            await reading
+        release.set()
+        status = await asyncio.wait_for(ticket.completed, 1)
+    assert not ticket.completed.cancelled() and status.state == "completed"
+    assert control.progress == {}

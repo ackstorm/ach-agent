@@ -14,6 +14,7 @@ import binascii
 import hashlib
 import json
 import mimetypes
+import re
 import time
 import uuid
 from collections import OrderedDict
@@ -42,6 +43,7 @@ from ach_runtime.harness.admission import (
     AdmissionRateLimitedError,
     AdmissionTicket,
 )
+from ach_runtime.harness.refs import session_ref
 from ach_runtime.harness.workspaces import WorkspaceAssemblyUnavailable
 
 log = structlog.get_logger(__name__)
@@ -72,7 +74,7 @@ class RequestError(ValueError):
 class Attachment:
     name: str
     mime: str
-    data: str  # base64
+    data: bytes
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +109,7 @@ def _decode(value: str, default_mime: str) -> tuple[str, bytes]:
         header, separator, data = value.partition(",")
         if not separator or not header.endswith(";base64"):
             raise RequestError("file data must be a base64 data URI")
-        mime = header[len("data:"):-len(";base64")] or default_mime
+        mime = header[len("data:"):-len(";base64")].partition(";")[0] or default_mime
     try:
         return mime, base64.b64decode(data, validate=True)
     except (binascii.Error, ValueError) as exc:
@@ -129,10 +131,15 @@ def _attachment(part: dict[str, Any], index: int, max_bytes: int) -> Attachment:
         if not isinstance(data, str):
             raise RequestError("a file part requires file_data")
         name = str(file.get("filename") or f"file-{index}")
+        if len(name) > 255:
+            raise RequestError("a filename exceeds 255 characters")
         mime, raw = _decode(data, mimetypes.guess_type(name)[0] or "application/octet-stream")
+    # Name and MIME go into the artifact's S3 user metadata, capped at 2 KB.
+    if len(mime) > 127 or not re.fullmatch(r"[\w.+-]+/[\w.+-]+", mime, re.ASCII):
+        raise RequestError(f"{mime[:127]!r} is not a MIME type")
     if len(raw) > max_bytes:
         raise RequestError(f"{name} exceeds {max_bytes} bytes", status=413)
-    return Attachment(name=name, mime=mime, data=base64.b64encode(raw).decode("ascii"))
+    return Attachment(name=name, mime=mime, data=raw)
 
 
 def parse_request(body: Any, *, max_file_bytes: int | None) -> ChatRequest:
@@ -142,6 +149,8 @@ def parse_request(body: Any, *, max_file_bytes: int | None) -> ChatRequest:
     messages = body.get("messages")
     if not isinstance(messages, list) or not messages or not all(isinstance(m, dict) for m in messages):
         raise RequestError("messages must be a non-empty list of objects")
+    for message in messages:
+        _parts(message.get("content"))
     last = messages[-1]
     if last.get("role") != "user":
         raise RequestError("the last message must have role user")
@@ -344,19 +353,29 @@ def fingerprint_store(control: Any, channel: ChannelConfig) -> FingerprintStore:
     )
 
 
-def _instance(control: Any, workspace_ref: str) -> str:
-    """The active sandbox instance of a Workspace, "" when none is active."""
-    return next((endpoint.instance_id for endpoint in control.manager.active_endpoints().values()
-                 if endpoint.ref.workspace_ref == workspace_ref), "")
+def _endpoint(control: Any, workspace_ref: str) -> Any | None:
+    """The active sandbox endpoint of a Workspace, None when none is active."""
+    return next((endpoint for endpoint in control.manager.active_endpoints().values()
+                 if endpoint.ref.workspace_ref == workspace_ref), None)
 
 
-def _continues(control: Any, found: Continuation | None) -> bool:
-    """With persistence none a session's history lives only in the sandbox instance that ran it."""
+async def _continues(control: Any, found: Continuation | None) -> bool:
+    """With persistence none a session's history lives in its HOME on the sandbox instance that
+    ran it, until the session is retired (idle close, eviction); continue only while it is there."""
     if found is None:
         return False
     if control.config.workspace.persistence.type != "none":
         return True
-    return found.instance_id != "" and _instance(control, found.workspace_ref) == found.instance_id
+    endpoint = _endpoint(control, found.workspace_ref)
+    if endpoint is None or not found.instance_id or endpoint.instance_id != found.instance_id:
+        return False
+    try:
+        status, _ = await control._mini_json(
+            endpoint, "GET", f"/sessions/{session_ref(found.workspace_ref, found.session_key)}/info")
+    except Exception as exc:
+        log.warning("openai session lookup failed", error=str(exc))
+        return False
+    return status == 200
 
 
 async def _stream(
@@ -436,15 +455,15 @@ def build_openai_app(
         except RequestError as exc:
             return _fail(str(exc), exc.status)
         found = await store.take(parsed.messages[:-1])
-        continued = _continues(control, found)
+        continued = await _continues(control, found)
         session_key = found.session_key if continued and found is not None else uuid.uuid4().hex
         payload: dict[str, Any] = {"text": prompt_text(parsed, continued=continued)}
         if parsed.attachments:
             payload["attachments"] = [
                 {"name": a.name, "mime": a.mime, "data": a.data} for a in parsed.attachments]
         event = Event(
-            event_id=f"openai:{uuid.uuid4().hex}", channel=channel.name, type="openai",
-            source="openai", payload=payload, context={"openai": {"conversation": session_key}},
+            event_id=f"openai:{uuid.uuid4().hex}", channel=channel.name, type="openai", source="openai",
+            payload=payload, context={"openai": {"conversation": session_key, "stream": parsed.stream}},
         )
         try:
             routed = route(event, channel)
@@ -464,8 +483,9 @@ def build_openai_app(
         model = parsed.model or agent_name
 
         async def answered(text: str) -> None:
+            endpoint = _endpoint(control, ticket.workspace_ref)
             await store.remember(parsed.messages, text, Continuation(
-                session_key, ticket.workspace_ref, _instance(control, ticket.workspace_ref)))
+                session_key, ticket.workspace_ref, endpoint.instance_id if endpoint is not None else ""))
 
         if parsed.stream:
             return StreamingResponse(

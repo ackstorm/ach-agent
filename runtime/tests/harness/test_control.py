@@ -3209,8 +3209,7 @@ def _openai_config():
     return parse_config(wire)
 
 
-async def test_openai_prepare_publishes_attachments_and_asks_for_progress() -> None:
-    import base64
+async def test_openai_prepare_publishes_attachments_and_asks_streams_for_progress() -> None:
     from types import SimpleNamespace
 
     from ach_runtime.channels.openai import OPENAI_PROGRESS_INSTRUCTIONS
@@ -3242,16 +3241,18 @@ async def test_openai_prepare_publishes_attachments_and_asks_for_progress() -> N
     control.storage = SimpleNamespace(create_artifact=create_artifact)
     event = Event(
         event_id="openai:1", channel="chat", type="openai", source="openai",
-        payload={"text": "summarise", "attachments": [
-            {"name": "a.pdf", "mime": "application/pdf", "data": base64.b64encode(b"hello").decode()}]},
-        context={"openai": {"conversation": "c1"}},
+        payload={"text": "summarise", "attachments": [{"name": "a.pdf", "mime": "application/pdf", "data": b"hello"}]},
+        context={"openai": {"conversation": "c1", "stream": True}},
     )
-    routed = route(event, config.channels[0])
-    ticket = AdmissionTicket(
-        "inv-openai", config.agent.namespace, config.agent.uid, "a" * 64, "b" * 64, routed,
-        datetime.now(timezone.utc) + timedelta(minutes=1),
-        asyncio.get_running_loop().create_future(), asyncio.get_running_loop().create_future(),
-    )
+
+    def ticket_for(invocation_id: str, event: Event) -> AdmissionTicket:
+        return AdmissionTicket(
+            invocation_id, config.agent.namespace, config.agent.uid, "a" * 64, "b" * 64,
+            route(event, config.channels[0]), datetime.now(timezone.utc) + timedelta(minutes=1),
+            asyncio.get_running_loop().create_future(), asyncio.get_running_loop().create_future(),
+        )
+
+    ticket = ticket_for("inv-openai", event)
     endpoint = WorkspaceEndpoint(
         WorkspaceRef(config.agent.namespace, config.agent.uid, "a" * 64), "workspace", "pod-1", "http://mini",
     )
@@ -3265,5 +3266,12 @@ async def test_openai_prepare_publishes_attachments_and_asks_for_progress() -> N
         )
         assert request.prompt.endswith(OPENAI_PROGRESS_INSTRUCTIONS)
         assert request.inform_user is True
+        assert "attachments" not in event.payload  # the retained event holds no file bytes
+        again = await control.prepare(ticket, endpoint)
+        assert len(stored) == 1 and again.prompt == request.prompt
+        plain = await control.prepare(ticket_for("inv-plain", Event(
+            event_id="openai:2", channel="chat", type="openai", source="openai", payload={"text": "hi"},
+            context={"openai": {"conversation": "c2", "stream": False}})), endpoint)
+        assert OPENAI_PROGRESS_INSTRUCTIONS not in plain.prompt and plain.inform_user is False
     finally:
         await control.close()

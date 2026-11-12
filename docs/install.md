@@ -411,10 +411,11 @@ channels:
   message) a new session starts with the visible conversation in its prompt.
 - With `persistence: s3` or `volume`, that match is kept in the Agent's S3 store for the session
   retention, so a conversation continues after the sandbox and the control restart. With
-  `persistence: none` it is kept in the control's memory and holds only while the sandbox that ran
-  the session is alive: after the sandbox is deleted or replaced, or the control restarts, the next
-  message replays the conversation. With `none`, a session closed by `maxConcurrentSessions` while
-  its sandbox lives also loses its history, and the agent then sees only the last message.
+  `persistence: none` it is kept in the control's memory, and a conversation continues only while
+  its session is alive in its sandbox. The session ends with its idle timeout
+  (`workspace.session.idleTimeoutSeconds`, 60 s by default), an eviction by
+  `maxConcurrentSessions`, the sandbox going away, or a control restart;
+  the next message then replays the conversation.
 - `tools`, `temperature`, `max_tokens`, `n` and the other sampling fields are ignored: the agent
   runs with its own model settings and tools.
 - `file` parts (`file_data`) and `image_url` parts with a base64 `data:` URI become Workspace

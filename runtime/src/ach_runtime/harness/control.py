@@ -54,7 +54,7 @@ from ach_runtime.harness.admission import (
 from ach_runtime.harness.result_delivery import ResultDelivery
 from ach_runtime.harness.delivery import Delivery, GatewayUnavailable, StartOutcomeUnknown
 from ach_runtime.observability.metrics import WORKSPACE_START_SECONDS
-from ach_runtime.observability.runs import register_secrets
+from ach_runtime.observability.runs import log_started, register_secrets
 from ach_runtime.harness.hydrate import (
     HydratedCatalog,
     HydrationInput,
@@ -745,7 +745,9 @@ class Control:
         started = None
         try:
             started = await self.delivery.start(ticket)
-            WORKSPACE_START_SECONDS.labels(phase="ready").observe(time.monotonic() - ticket.admitted_at)
+            ready = time.monotonic() - ticket.admitted_at
+            WORKSPACE_START_SECONDS.labels(phase="ready").observe(ready)
+            log_started(ticket.invocation_id, duration_ms=ready * 1000)
         except StartOutcomeUnknown:
             # Delivery has exhausted its same-pod cached-start recovery. Keep the ticket
             # and permits while observing the pinned pod; never replay a possibly-sent

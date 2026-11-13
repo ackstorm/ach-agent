@@ -14,7 +14,7 @@ pytestmark = [
     pytest.mark.skipif(shutil.which(OPENCODE_BIN) is None, reason="needs the opencode binary"),
 ]
 
-# Stands in for `opencode2 mini`: proves the attach target answers with its password.
+# Stands in for the opencode TUI: proves the attach target answers with its password.
 FAKE_TUI = r"""
 import base64, os, sys, urllib.request
 args = dict(zip(sys.argv[1::2], sys.argv[2::2]))

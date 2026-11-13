@@ -449,14 +449,10 @@ class ExecutionService:
                 artifact_url = artifacts.get("url") if isinstance(artifacts, dict) else None
                 facade = inv.public.infrastructure.facade_endpoint.rstrip("/")
                 if artifact_url == f"{facade}/artifacts":
-                    artifacts["url"] = (
-                        f"{artifact_url}/runs/{quote(request.invocation_id, safe='')}/"
-                    )
+                    artifacts["url"] = f"{artifact_url}/sessions/{quote(request.session_ref, safe='')}/"
                 progress = mcp.get("progress") if isinstance(mcp, dict) else None
                 if isinstance(progress, dict) and progress.get("url") == f"{facade}/progress":
-                    progress["url"] = (
-                        f"{facade}/progress/runs/{quote(request.invocation_id, safe='')}/"
-                    )
+                    progress["url"] = f"{facade}/progress/sessions/{quote(request.session_ref, safe='')}/"
             elif inv.catalog is not None and hasattr(invocation, "mcp"):
                 invocation.mcp = copy.deepcopy(inv.catalog.get("mcp", {}))
         except asyncio.CancelledError:

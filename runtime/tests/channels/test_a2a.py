@@ -603,7 +603,7 @@ def test_channel_secret_is_resolved_again_for_each_request(monkeypatch) -> None:
         ("cancelled", {"text": '{"action":"a2a_reply","text":"no"}'}),
         ("unknown", {"text": '{"action":"a2a_reply","text":"no"}'}),
         ("completed", None),
-        ("completed", {"text": "not JSON"}),
+        ("completed", {"text": '{"action":"other","text":"no"}'}),
         ("completed", {"text": '{"action":"a2a_reply","text":"  "}'}),
     ],
 )
@@ -624,6 +624,27 @@ def test_noncompleted_or_invalid_native_result_fails(state, result, monkeypatch)
     asyncio.run(A2AAgentExecutorBridge(control, config).execute(_Context(f"task-{state}-{result}"), queue))
     assert queue.events[-1].status.state == 4
     assert len(queue.events) == 2
+    asyncio.run(control.admission.close())
+
+
+def test_a_reply_without_the_a2a_object_is_delivered_as_text(monkeypatch) -> None:
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+    config = _channel()
+
+    async def runner(routed, ticket):
+        ticket.mark_started()
+        return RunStatus(
+            invocationId=ticket.invocation_id, channel=routed.channel,
+            workspaceRef=ticket.workspace_ref, sessionRef=ticket.session_ref, runId="run-1",
+            configVersion="a" * 64, deadlineAt=ticket.deadline_at, state="completed",
+            result={"text": "ok\n"},
+        )
+
+    control = _control(config, runner)
+    queue = _Queue()
+    asyncio.run(A2AAgentExecutorBridge(control, config).execute(_Context("plain-text"), queue))
+    assert queue.events[-1].status.state == 3
+    assert queue.events[-1].status.message.parts[0].text == "ok"
     asyncio.run(control.admission.close())
 
 

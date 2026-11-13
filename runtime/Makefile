@@ -86,7 +86,7 @@ e2e:
 		-v "$(CURDIR)/src:/work/src:ro" -v "$(CURDIR)/tests:/work/tests:ro" \
 		-v "$(CURDIR)/plugins:/work/plugins:ro" \
 		-e PYTHONPATH=/work/src:/work/tests/storage:/work/tests/engine:/work/tests/facades:/work/tests/harness \
-		-e PYTHONDONTWRITEBYTECODE=1 -e OPENCODE_BIN=/work/node_modules/.bin/opencode2 \
+		-e PYTHONDONTWRITEBYTECODE=1 -e OPENCODE_BIN=/work/node_modules/@opencode/cli/bin/opencode.exe \
 		-e ACH_STORAGE_TEST_S3_ENDPOINT="$(E2E_S3_ENDPOINT)" -e ACH_STORAGE_TEST_S3_BUCKET=ach-storage-test \
 		-e ACH_STORAGE_TEST_S3_ACCESS_KEY=ach-storage-test -e ACH_STORAGE_TEST_S3_SECRET_KEY=ach-storage-test-secret \
 		-e AWS_ACCESS_KEY_ID=ach-storage-test -e AWS_SECRET_ACCESS_KEY=ach-storage-test-secret -e AWS_DEFAULT_REGION=us-east-1 \

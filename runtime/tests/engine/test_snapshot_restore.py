@@ -8,6 +8,7 @@ snapshot -> restore into a fresh engine/session -> same sid resolves, no synthet
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import os
 import shutil
@@ -18,7 +19,7 @@ import pytest
 
 from ach_runtime.config.public import public_config
 from ach_runtime.config.schema import RuntimeConfig
-from ach_runtime.engine.base import EngineInvocation, RestoreMismatch, SnapshotManifest
+from ach_runtime.engine.base import EngineInvocation, NativeLaunchFailed, RestoreMismatch, SnapshotManifest
 from ach_runtime.engine.opencode import (
     ENGINE_PACKAGE,
     ENGINE_VERSION,
@@ -135,6 +136,37 @@ async def test_restore_rejects_missing_archive_payload(public) -> None:
         )
 
 
+def _count_launches(session) -> list[int]:
+    launches = [0]
+    original = session.ensure_started
+
+    async def counted(**kwargs):
+        launches[0] += 1
+        return await original(**kwargs)
+
+    session.ensure_started = counted
+    return launches
+
+
+async def _run(engine, invocation_id, session_ref, home, scratch, workspace_dir, public):
+    async with fake_facades("text") as fakes:
+        receipt = await engine.start(
+            EngineInvocation(
+                invocation_id=invocation_id,
+                session_ref=session_ref,
+                workspace_dir=workspace_dir,
+                prompt="reply with the single word: pong",
+                public=public,
+                engine_env=dict(public.engine.env),
+                provider_base_url_override=fakes.model_url,
+            ),
+            home=home,
+            scratch=scratch,
+        )
+        await asyncio.wait_for(engine.wait_settled(invocation_id), timeout=15.0)
+    return receipt
+
+
 class _LocalDirTransfer:
     """Minimal in-process ArchiveTransfer stand-in — Task 6 owns the real one; this proves
     only that Task 4's snapshot/restore orchestration calls upload/download correctly."""
@@ -208,7 +240,7 @@ async def test_full_snapshot_restore_round_trip_same_sid(tmp_path: Path, public)
         )
         restored_session = fresh_engine._sessions["native-session-snap"]
         assert restored_session.sid == receipt.native_session_id
-        assert restored_session.alive
+        assert not restored_session.alive  # the session's next start launches opencode
     finally:
         for instance in (engine, locals().get("fresh_engine")):
             if instance is None:
@@ -336,7 +368,89 @@ async def test_in_place_resume_from_the_same_home_same_sid(tmp_path: Path, publi
         )
         restored = fresh_engine._sessions["native-session-volume"]
         assert restored.sid == receipt.native_session_id
-        assert restored.alive
+        assert not restored.alive
+        # No process yet: a suspend before the next run has nothing to stop.
+        assert await fresh_engine.suspend("native-session-volume") is True
+
+        # The next run launches opencode once, with its own config, on the restored sid.
+        launches = _count_launches(restored)
+        resumed = await _run(fresh_engine, "native-volume-2", "native-session-volume",
+                             home, scratch, workspace_dir, public)
+        assert resumed.native_session_id == receipt.native_session_id
+        assert launches == [1]
+    finally:
+        for instance in (engine, fresh_engine):
+            if instance is None:
+                continue
+            for session in list(instance._sessions.values()):
+                await session._kill(confirm_timeout=5.0)
+
+
+async def test_a_restored_sid_opencode_does_not_know_starts_a_fresh_session(tmp_path: Path, public) -> None:
+    engine = OpenCodeEngine()
+    home, scratch, workspace_dir = tmp_path / "home", tmp_path / "scratch", tmp_path / "workspace"
+    workspace_dir.mkdir()
+    fresh_engine = None
+    try:
+        await _run(engine, "native-gone-1", "native-session-gone", home, scratch, workspace_dir, public)
+        assert await engine.suspend("native-session-gone") is True
+        saved = await engine.snapshot("native-session-gone", agent={"name": "a", "namespace": "ns", "uid": "u"},
+                                      workspace_ref="ws-ref", registry={"workspace_path": str(workspace_dir)})
+
+        fresh_engine = OpenCodeEngine()
+        await fresh_engine.restore(
+            "native-session-gone", dataclasses.replace(saved, native_session_id="ses_gone"),
+            expected={"engine_family": "opencode", "workspace_ref": "ws-ref",
+                      "session_ref": "native-session-gone", "workspace_path": str(workspace_dir)},
+            public=public, engine_env=dict(public.engine.env), home=home, scratch=scratch, in_place=True,
+        )
+        receipt = await _run(fresh_engine, "native-gone-2", "native-session-gone",
+                             home, scratch, workspace_dir, public)
+        assert receipt.native_session_id not in {"ses_gone", saved.native_session_id}
+    finally:
+        for instance in (engine, fresh_engine):
+            if instance is None:
+                continue
+            for session in list(instance._sessions.values()):
+                await session._kill(confirm_timeout=5.0)
+
+
+async def test_a_restored_sid_that_fails_to_resolve_fails_the_run_and_keeps_the_sid(
+    tmp_path: Path, public,
+) -> None:
+    engine = OpenCodeEngine()
+    home, scratch, workspace_dir = tmp_path / "home", tmp_path / "scratch", tmp_path / "workspace"
+    workspace_dir.mkdir()
+    fresh_engine = None
+    try:
+        first = await _run(engine, "native-503-1", "native-session-503", home, scratch, workspace_dir, public)
+        assert await engine.suspend("native-session-503") is True
+        saved = await engine.snapshot("native-session-503", agent={"name": "a", "namespace": "ns", "uid": "u"},
+                                      workspace_ref="ws-ref", registry={"workspace_path": str(workspace_dir)})
+
+        fresh_engine = OpenCodeEngine()
+        await fresh_engine.restore(
+            "native-session-503", saved,
+            expected={"engine_family": "opencode", "workspace_ref": "ws-ref",
+                      "session_ref": "native-session-503", "workspace_path": str(workspace_dir)},
+            public=public, engine_env=dict(public.engine.env), home=home, scratch=scratch, in_place=True,
+        )
+        restored = fresh_engine._sessions["native-session-503"]
+        original = restored.request
+
+        async def store_not_ready(method, path, **kwargs):
+            if method == "GET" and path == f"/api/session/{first.native_session_id}":
+                return 503, None
+            return await original(method, path, **kwargs)
+
+        restored.request = store_not_ready
+        with pytest.raises(NativeLaunchFailed, match="did not resolve: 503"):
+            await _run(fresh_engine, "native-503-2", "native-session-503", home, scratch, workspace_dir, public)
+        assert restored.sid == first.native_session_id and restored.sid_unverified
+
+        restored.request = original
+        resumed = await _run(fresh_engine, "native-503-3", "native-session-503", home, scratch, workspace_dir, public)
+        assert resumed.native_session_id == first.native_session_id
     finally:
         for instance in (engine, fresh_engine):
             if instance is None:

@@ -90,8 +90,8 @@ async def test_artifact_catalog_specialization_is_invocation_local(
             service.start(_request(public_config_fixture.config_version, "run-b", "session-b")),
         )
         by_id = {invocation.invocation_id: invocation for invocation in engine.invocations}
-        assert by_id["run-a"].catalog["mcp"]["artifacts"]["url"] == f"{base}/runs/run-a/"
-        assert by_id["run-b"].catalog["mcp"]["artifacts"]["url"] == f"{base}/runs/run-b/"
+        assert by_id["run-a"].catalog["mcp"]["artifacts"]["url"] == f"{base}/sessions/session-a/"
+        assert by_id["run-b"].catalog["mcp"]["artifacts"]["url"] == f"{base}/sessions/session-b/"
         assert by_id["run-a"].catalog["mcp"]["calendar"] == original["mcp"]["calendar"]
         assert by_id["run-b"].catalog["mcp"]["calendar"] == original["mcp"]["calendar"]
         assert original["mcp"]["artifacts"]["url"] == base
@@ -102,20 +102,21 @@ async def test_artifact_catalog_specialization_is_invocation_local(
             _request(public_config_fixture.config_version, "run-a-later", "session-a")
         )
         later = next(inv for inv in engine.invocations if inv.invocation_id == "run-a-later")
-        assert later.catalog["mcp"]["artifacts"]["url"] == f"{base}/runs/run-a-later/"
+        # A session's later run gets the same catalog, so its engine keeps running.
+        assert later.catalog == by_id["run-a"].catalog
         assert original["mcp"]["calendar"] == {
             "url": "http://calendar.invalid/mcp", "headers": {"x-read": "yes"}
         }
 
         fixture = to_fixture(public_config_fixture, catalog=by_id["run-a"].catalog)
-        assert fixture["mcp"]["artifacts"]["url"] == f"{base}/runs/run-a/"
+        assert fixture["mcp"]["artifacts"]["url"] == f"{base}/sessions/session-a/"
         assert fixture["mcp"]["calendar"] == original["mcp"]["calendar"]
     finally:
         await service.close()
 
 
 @pytest.mark.asyncio
-async def test_tools_preflight_probes_the_per_run_artifacts_url(
+async def test_tools_preflight_probes_the_per_session_artifacts_url(
     tmp_path: Path, public_config_fixture, monkeypatch
 ) -> None:
     import ach_runtime.execution.service as service_module
@@ -143,7 +144,7 @@ async def test_tools_preflight_probes_the_per_run_artifacts_url(
     service.configure(public_config_fixture, catalog=catalog)
     try:
         await service.start(_request(public_config_fixture.config_version, "run-a", "session-a"))
-        assert probed == [f"{base}/runs/run-a/"]  # the facade 404s on the bare artifacts URL
+        assert probed == [f"{base}/sessions/session-a/"]  # the facade 404s on the bare artifacts URL
         assert [inv.invocation_id for inv in engine.invocations] == ["run-a"]
     finally:
         await service.close()
@@ -254,7 +255,7 @@ async def test_progress_server_only_in_inform_user_runs_at_its_per_run_url(
         await asyncio.gather(service.start(cron), service.start(a2a))
         by_id = {invocation.invocation_id: invocation for invocation in engine.invocations}
         assert "progress" not in by_id["run-cron"].catalog["mcp"]
-        assert by_id["run-a2a"].catalog["mcp"]["progress"]["url"] == f"{base}/runs/run-a2a/"
+        assert by_id["run-a2a"].catalog["mcp"]["progress"]["url"] == f"{base}/sessions/session-b/"
         assert original["mcp"]["progress"]["url"] == base
     finally:
         await service.close()

@@ -266,6 +266,14 @@ def log_step(
     })
 
 
+def log_started(invocation_id: str, *, duration_ms: float) -> None:
+    """A run's start, written by the control process: its event admitted to the engine
+    accepting its prompt. Sandbox start, engine boot and MCP connect fall in it; the model does not."""
+    logging.getLogger(__name__).info("run started", extra={
+        "invocation_id": invocation_id, "duration_ms": round(duration_ms),
+    })
+
+
 def log_tool(invocation_id: str, *, tool: str, outcome: str, duration_ms: float) -> None:
     """One tool call of a run, written by the execution process as it ends."""
     logging.getLogger(__name__).info("run tool", extra={

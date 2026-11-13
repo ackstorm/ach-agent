@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Native adapter unit control: a scripted httpx transport stands in for the opencode2
+"""Native adapter unit control: a scripted httpx transport stands in for the opencode
 HTTP/SSE wire (receipt-validation, cross-invocation correlation and the bounded-cancel
 sequence) so these specific failure shapes — a malformed/mismatched receipt, a non-200 SSE
 handshake, a stalled cancel phase — can be proven deterministically. The real pinned
-`opencode2` binary's own behavior for the happy paths is proven separately in
+`opencode` binary's own behavior for the happy paths is proven separately in
 test_opencode_adapter.py (contract §4); process ownership/kill mechanics are proven with
 real subprocesses in test_process_kill.py."""
 

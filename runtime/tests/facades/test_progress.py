@@ -26,14 +26,14 @@ async def _session(app: Any, token: str) -> AsyncIterator[ClientSession]:
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url=BASE, headers={FACADE_TOKEN_HEADER: token}
     ) as client:
-        async with streamable_http_client(f"{BASE}/runs/inv-1/", http_client=client) as (read, write, _):
+        async with streamable_http_client(f"{BASE}/sessions/session-1/", http_client=client) as (read, write, _):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 yield session
 
 
 @pytest.mark.asyncio
-async def test_inform_user_forwards_message_with_token_and_invocation() -> None:
+async def test_inform_user_forwards_message_with_token_and_session() -> None:
     calls: list[tuple[str, str, str]] = []
     listening = True
 
@@ -50,7 +50,7 @@ async def test_inform_user_forwards_message_with_token_and_invocation() -> None:
 
         result = await session.call_tool("inform_user", {"message": "Reading the repo"})
         assert not result.isError
-        assert calls == [(token, "inv-1", "Reading the repo")]
+        assert calls == [(token, "session-1", "Reading the repo")]
 
         # Nobody listening (blocking caller gone, stream closed): still a success for the agent.
         listening = False
@@ -68,7 +68,7 @@ async def test_inform_user_rejects_a_foreign_workspace_token() -> None:
         transport=httpx.ASGITransport(app=app), base_url=BASE,
         headers={FACADE_TOKEN_HEADER: facade_token(KEY, "other-ws")},
     ) as client:
-        response = await client.post("/runs/inv-1/", json={})
+        response = await client.post("/sessions/session-1/", json={})
         assert response.status_code == 403
 
 

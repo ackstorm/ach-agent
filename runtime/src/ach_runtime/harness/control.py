@@ -54,7 +54,7 @@ from ach_runtime.harness.admission import (
 from ach_runtime.harness.result_delivery import ResultDelivery
 from ach_runtime.harness.delivery import Delivery, GatewayUnavailable, StartOutcomeUnknown
 from ach_runtime.observability.metrics import WORKSPACE_START_SECONDS
-from ach_runtime.observability.runs import register_secrets
+from ach_runtime.observability.runs import log_started, register_secrets
 from ach_runtime.harness.hydrate import (
     HydratedCatalog,
     HydrationInput,
@@ -273,7 +273,17 @@ class Control:
                 return True
         return False
 
-    async def artifact_operations(self, token: str, invocation_id: str) -> ArtifactOperations:
+    def _session_run(self, session_ref: str) -> str:
+        """The invocation running in `session_ref`, "" if none. Admission runs one at a time
+        per session, so the facades address a session and its engine config stays the same
+        across runs; a per-run URL would restart the engine on every run."""
+        for invocation_id, (_, request) in self._prepared.items():
+            if request.session_ref == session_ref:
+                return invocation_id
+        recovered = self.admission.recovered_session_run(session_ref)
+        return recovered.invocation_id if recovered is not None else ""
+
+    async def artifact_operations(self, token: str, session_ref: str) -> ArtifactOperations:
         """Resolve artifact ownership only from this live Workspace and run records."""
         claim = await authenticate_facade(self.key, token, owned_workspace=self._owned_live)
         endpoint = next(
@@ -282,6 +292,7 @@ class Control:
         if endpoint is None:
             raise WorkspaceAuthenticationFailed(claim)
 
+        invocation_id = self._session_run(session_ref)
         prepared = self._prepared.get(invocation_id)
         if prepared is not None:
             prepared_endpoint, request = prepared
@@ -321,10 +332,11 @@ class Control:
             owned_workspace=self._owned_live,
         )
 
-    async def inform_user(self, token: str, invocation_id: str, message: str) -> bool:
-        """Send `message` to the callers (A2A or OpenAI stream) waiting on `invocation_id`, if the run belongs
-        to the token's Workspace. False when nobody is listening."""
+    async def inform_user(self, token: str, session_ref: str, message: str) -> bool:
+        """Send `message` to the callers (A2A or OpenAI stream) waiting on the run in
+        `session_ref`, if the run belongs to the token's Workspace. False when nobody is listening."""
         claim = await authenticate_facade(self.key, token, owned_workspace=self._owned_live)
+        invocation_id = self._session_run(session_ref)
         prepared = self._prepared.get(invocation_id)
         if prepared is None:
             return False
@@ -733,7 +745,9 @@ class Control:
         started = None
         try:
             started = await self.delivery.start(ticket)
-            WORKSPACE_START_SECONDS.labels(phase="ready").observe(time.monotonic() - ticket.admitted_at)
+            ready = time.monotonic() - ticket.admitted_at
+            WORKSPACE_START_SECONDS.labels(phase="ready").observe(ready)
+            log_started(ticket.invocation_id, duration_ms=ready * 1000)
         except StartOutcomeUnknown:
             # Delivery has exhausted its same-pod cached-start recovery. Keep the ticket
             # and permits while observing the pinned pod; never replay a possibly-sent

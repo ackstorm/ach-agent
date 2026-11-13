@@ -5,7 +5,54 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.7] - 2026-11-13
+
+### Added
+
+- `ach-agent run` builds a `Dockerfile` beside `agent.yaml` on top of the runtime image, passed
+  as the `ACH_AGENT_IMAGE` build argument, and runs the result: an agent's own tools work locally.
+
+### Changed
+
+- `ach-agent run` opens the full opencode TUI on the session instead of `opencode mini`.
+
+### Fixed
+
+- An A2A reply the model wrote without the `a2a_reply` JSON object is delivered as text and the
+  task completes, instead of failing with "invalid terminal output". An object that is present
+  but invalid still fails the task.
+
+## [0.7.6] - 2026-11-13
+
+### Added
+
+- The control log writes a `run started` line per run with `duration_ms` from the event's
+  admission to the engine accepting its prompt: the wait before the model starts, including
+  sandbox start, engine boot and MCP connect.
+
+### Fixed
+
+- A restored opencode session that has not run yet can be suspended, archived and closed:
+  with no process started there is nothing to stop.
+- A restored session id starts a fresh session only when opencode answers 404 for it; any other
+  answer, or no answer, fails the run and the next run checks the same id again, so a store
+  still opening no longer loses the restored conversation.
+
+## [0.7.5] - 2026-11-12
+
+### Changed
+
+- `ach-agent run` starts the `opencode` binary by default instead of `opencode2`; `OPENCODE_BIN`
+  still overrides it. The images set it to their bundled binary and are unchanged.
+
+### Fixed
+
+- Resuming a session whose opencode had stopped (kept HOME, S3 restore or volume) boots opencode
+  once instead of twice: the restore installs the HOME and records the session id, and the run's
+  start launches opencode with its full config and checks that id. A session id opencode no
+  longer knows starts a fresh session in the same HOME instead of failing the restore.
+
+## [0.7.4] - 2026-11-12
 
 ### Added
 
@@ -19,6 +66,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An ACH Agent takes its model's context and output limits from `/v2/model/info`, which resolves
   LiteLLM model-group aliases; the limits in the `/platform/hydrate` response are ignored.
   `capability.ach.model.limits` still wins over model info.
+
+### Fixed
+
+- A session's engine keeps running between its runs instead of restarting for each one, which
+  cost about 3 s per reply (opencode boot and MCP reconnect). The progress and artifacts MCP
+  servers are addressed per session (`/sessions/{session_ref}/`) instead of per run, so a
+  session's engine config no longer changes from one run to the next.
 
 ## [0.7.3] - 2026-11-11
 

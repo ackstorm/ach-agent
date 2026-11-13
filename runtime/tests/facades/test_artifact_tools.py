@@ -25,6 +25,7 @@ from tests.storage.fakes import FakeS3Client
 KEY = b"artifact-tools-key"
 WORKSPACE = "owned-ws"
 INVOCATION = "invocation-one"
+SESSION = "b" * 64
 BASE = "http://localhost:8093"
 TOKEN = facade_token(KEY, WORKSPACE)
 CONTENT = "Résumé 🧪"
@@ -50,7 +51,7 @@ def _operations(storage: Any) -> ArtifactOperations:
     return ArtifactOperations(
         storage=storage,
         owner=OWNER,
-        producer=ArtifactProducer(session_ref="b" * 64, invocation_id=INVOCATION),
+        producer=ArtifactProducer(session_ref=SESSION, invocation_id=INVOCATION),
         policy=ArtifactsBlock(enabled=True, maxArtifactBytes=4096, retentionDays=30),
         workspace_name=WORKSPACE,
         key=KEY,
@@ -64,7 +65,7 @@ async def _session(app: Any, *, base_url: str = BASE) -> AsyncIterator[ClientSes
         transport=httpx.ASGITransport(app=app), base_url=base_url, headers={FACADE_TOKEN_HEADER: TOKEN}
     ) as client:
         async with streamable_http_client(
-            f"{base_url}/runs/{INVOCATION}/", http_client=client
+            f"{base_url}/sessions/{SESSION}/", http_client=client
         ) as (read, write, _):
             async with ClientSession(read, write) as session:
                 await session.initialize()
@@ -139,7 +140,7 @@ async def test_mcp_artifact_roundtrip_and_failures(base_url: str) -> None:
         assert unavailable.isError
         assert unavailable.structuredContent is None
 
-    assert calls and all(token == TOKEN and invocation == INVOCATION for token, invocation in calls)
+    assert calls and all(token == TOKEN and session == SESSION for token, session in calls)
 
 
 @pytest.mark.asyncio

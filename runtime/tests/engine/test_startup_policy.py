@@ -3,7 +3,7 @@
 readiness) must share ONE deadline derived from configured `engine.startupTimeoutSeconds`
 clipped by the original invocation/restore deadline -- never each phase's own fixed or
 independently-refreshed timer. Native method/source path regressions: a real (fake)
-loopback subprocess stands in for `opencode2` (tests/engine/fixtures/fake_native_server.py,
+loopback subprocess stands in for `opencode` (tests/engine/fixtures/fake_native_server.py,
 also used by test_native_control.py/test_process_kill.py), real owned-process-group
 tracking, not an unreachable real native acceptance claim."""
 

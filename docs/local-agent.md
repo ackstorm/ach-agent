@@ -15,6 +15,15 @@ install -m 0755 runtime/bin/ach-agent ~/.local/bin/ach-agent
 
 It runs `ghcr.io/ackstorm/ach-agent-local:latest`; set `ACH_AGENT_IMAGE` to use another image.
 
+An agent that needs tools the image lacks (Node, a browser) keeps a `Dockerfile` beside `agent.yaml`.
+`ach-agent run` builds it before every run, Docker's cache making an unchanged build take about a second,
+and runs the result. The Dockerfile must start from the runtime image it is given:
+
+```dockerfile
+ARG ACH_AGENT_IMAGE=ghcr.io/ackstorm/ach-agent-execution:<version>   # the default is the production base
+FROM ${ACH_AGENT_IMAGE}
+```
+
 ## Authoring flow
 
 1. Create an ACH environment in the Hub with the MCPs, skills, prompts and artifacts the agent needs.
@@ -33,7 +42,7 @@ so a bad environment, model or credential fails before you type anything.
 Quit the opencode TUI with `ctrl+c` twice, or `/exit`; quit the pi TUI with `ctrl+d` on an empty editor, or
 `/quit`. That stops the agent and removes the container
 (`ach-agent: stopped`). `/exit` is not a pi command: it goes to the model as a prompt, and `ctrl+c` in pi
-only clears the editor. The `Continue opencode mini -s ses_…` line opencode prints on exit and the
+only clears the editor. The resume hint opencode prints on exit and the
 "To resume this session" hint pi prints are their own hints and do not apply here: the session lived in the
 removed container, so the next `ach-agent run` starts a new one.
 

@@ -1075,9 +1075,8 @@ class OpenCodeEngine:
     ) -> float:
         """One absolute monotonic native-startup deadline (I5), shared across launch/URL/
         SSE/readiness rather than each phase's own fixed/refreshed timer: the configured
-        `engine.startup_timeout_seconds`, clipped by whatever remains on the original
-        invocation/restore deadline. No deadline (restore without a ticket) keeps the
-        configured bound as-is."""
+        `engine.startup_timeout_seconds`, clipped by whatever remains on the invocation's
+        deadline. No deadline keeps the configured bound as-is."""
         bound = startup_timeout_seconds
         if deadline_at is not None:
             remaining = (deadline_at - datetime.now(timezone.utc)).total_seconds()
@@ -1149,12 +1148,14 @@ class OpenCodeEngine:
                 is_new_process = True
 
             if session.sid_unverified:
-                session.sid_unverified = False
                 status, _ = await setup_request("GET", f"/api/session/{session.sid}")
-                if status != 200:
-                    log.warning("restored session %s did not resolve (%s); session starts fresh",
-                                session.sid, status)
+                if status == 404:
+                    log.warning("restored session %s is unknown to opencode; session starts fresh",
+                                session.sid)
                     session.sid = None
+                elif status != 200:
+                    raise NativeLaunchFailed(f"restored session {session.sid} did not resolve: {status}")
+                session.sid_unverified = False
 
             if session.sid is None:
                 status, body = await setup_request(
@@ -1677,11 +1678,10 @@ class OpenCodeEngine:
         destination authority (finding #11): every identity field is checked against an
         explicit `expected` destination and the archived payload is required. opencode is not
         launched here: the session's next `start` launches it and checks that it answers
-        `GET /api/session/:sid` for the restored sid, and starts a fresh session in the same
-        HOME when it does not. No synthetic prompt is sent. The engine version is not an
-        identity field: a session saved by an older opencode release restores under the
-        running one (2.0.20 → 2.2.5 verified), and the sid check still catches an unreadable
-        store. With `in_place` the session's HOME already holds its state (persistence type
+        `GET /api/session/:sid` for the restored sid: a 404 starts a fresh session in the same
+        HOME, any other failure fails the run. No synthetic prompt is sent. The engine version
+        is not an identity field: a session saved by an older opencode release restores under
+        the running one (2.0.20 → 2.2.5 verified). With `in_place` the session's HOME already holds its state (persistence type
         volume): nothing is downloaded or staged.
         """
         check_manifest(manifest, expected)
@@ -1710,3 +1710,6 @@ class OpenCodeEngine:
         # a launch here, without the run's MCP servers, would be stopped and relaunched by it.
         session.sid = manifest.native_session_id
         session.sid_unverified = True
+        # No process runs until that `start`: a suspend or close before it has nothing to stop.
+        session.clean_exit = True
+        session._confirmed_halted = True

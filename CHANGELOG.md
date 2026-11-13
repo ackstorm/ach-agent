@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   admission to the engine accepting its prompt: the wait before the model starts, including
   sandbox start, engine boot and MCP connect.
 
+### Fixed
+
+- A restored opencode session that has not run yet can be suspended, archived and closed:
+  with no process started there is nothing to stop.
+- A restored session id starts a fresh session only when opencode answers 404 for it; any other
+  answer, or no answer, fails the run and the next run checks the same id again, so a store
+  still opening no longer loses the restored conversation.
+
 ## [0.7.5] - 2026-11-12
 
 ### Changed

@@ -352,7 +352,9 @@ func buildStatefulSet(a *achv1alpha1.Agent, p *achv1alpha1.AgentProfile, configH
 		VolumeMounts:   mounts,
 		Resources:      resources,
 		StartupProbe:   &corev1.Probe{ProbeHandler: probe("/healthz"), PeriodSeconds: 5, FailureThreshold: startupFail},
-		ReadinessProbe: &corev1.Probe{ProbeHandler: probe("/readyz"), PeriodSeconds: 10, FailureThreshold: 3},
+		// /readyz passes a few seconds after the process serves; a 2 s period adds the pod to
+		// the Service at once. 15 failures keep 30 s of tolerance before it leaves.
+		ReadinessProbe: &corev1.Probe{ProbeHandler: probe("/readyz"), PeriodSeconds: 2, FailureThreshold: 15},
 		LivenessProbe:  &corev1.Probe{ProbeHandler: probe("/healthz"), PeriodSeconds: 20, FailureThreshold: 3},
 		SecurityContext: &corev1.SecurityContext{
 			ReadOnlyRootFilesystem:   &trueVal,

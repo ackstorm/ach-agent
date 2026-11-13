@@ -246,6 +246,9 @@ def _outcome_status(result: Any) -> tuple[str, str]:
         return "failed", result.error or "Invocation failed"
     raw_text = result.result.get("text") if isinstance(result.result, dict) else None
     terminal = extract_terminal(raw_text) if isinstance(raw_text, str) else None
+    if terminal is None and isinstance(raw_text, str) and raw_text.strip():
+        # The model answered without the a2a_reply object (seen on short, literal prompts).
+        return "completed", raw_text.strip()
     reply = validate_a2a_reply(terminal)
     if reply is None:
         return "failed", "invalid terminal output"

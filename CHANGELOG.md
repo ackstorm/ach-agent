@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ach-agent run` builds a `Dockerfile` beside `agent.yaml` on top of the runtime image, passed
   as the `ACH_AGENT_IMAGE` build argument, and runs the result: an agent's own tools work locally.
 
+### Changed
+
+- `ach-agent run` opens the full opencode TUI on the session instead of `opencode mini`.
+
 ## [0.7.6] - 2026-11-13
 
 ### Added

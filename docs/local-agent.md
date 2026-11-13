@@ -42,7 +42,7 @@ so a bad environment, model or credential fails before you type anything.
 Quit the opencode TUI with `ctrl+c` twice, or `/exit`; quit the pi TUI with `ctrl+d` on an empty editor, or
 `/quit`. That stops the agent and removes the container
 (`ach-agent: stopped`). `/exit` is not a pi command: it goes to the model as a prompt, and `ctrl+c` in pi
-only clears the editor. The `Continue opencode mini -s ses_…` line opencode prints on exit and the
+only clears the editor. The resume hint opencode prints on exit and the
 "To resume this session" hint pi prints are their own hints and do not apply here: the session lived in the
 removed container, so the next `ach-agent run` starts a new one.
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import filecmp
 import json
 import logging
 import os
@@ -301,6 +302,30 @@ def _remove_path(path: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
+def _same_tree(left: Path, right: Path) -> bool:
+    if not right.is_dir() or right.is_symlink():
+        return False
+    cmp = filecmp.dircmp(left, right, ignore=[])
+    if cmp.left_only or cmp.right_only or cmp.common_funny:
+        return False
+    _, mismatch, errors = filecmp.cmpfiles(left, right, cmp.common_files, shallow=False)
+    if mismatch or errors:
+        return False
+    return all(_same_tree(left / name, right / name) for name in cmp.common_dirs)
+
+
+def _hydration_installed(staged: Path, installed: Path) -> bool:
+    """Whether `installed` already holds exactly the skills/prompts/artifacts in `staged`."""
+    for kind in ("skills", "prompts", "artifacts"):
+        target = installed / kind
+        if (staged / kind).is_dir():
+            if not _same_tree(staged / kind, target):
+                return False
+        elif not target.is_dir() or target.is_symlink() or any(target.iterdir()):
+            return False
+    return True
+
+
 def _install_managed_batch(staged: Path, public: Path) -> None:
     """Replace skills/prompts/artifacts as one rollback-capable HOME batch. Synchronous and
     run as one `_owned` worker, so no cancellation lands between a rename and its rollback
@@ -372,16 +397,26 @@ async def import_hydration(
             await write_capped(chunks, archive, max_bytes=MAX_HANDOFF_BYTES)
             await _owned(extract, archive, staged, max_expanded_bytes=MAX_HANDOFF_BYTES * 8,
                          max_members=MAX_ARCHIVE_MEMBERS)
+            public = service._workspace_dir / ".ach-state"
+            home_context = state.home / ".ach-state"
+            skills_link = state.home / ".config" / "opencode" / "skills"
+            # The control sends the context before every run; the same context needs no
+            # install, and so no engine stop.
+            if (
+                await _owned(_hydration_installed, staged, public)
+                and await _owned(_hydration_installed, staged, home_context)
+                and (service._engine.family != "opencode" or (
+                    skills_link.is_symlink() and skills_link.resolve() == (home_context / "skills").resolve()
+                ))
+            ):
+                return
             if native is not None and getattr(native, "alive", False):
                 if not await service._engine.suspend(session_ref):
                     raise RuntimeError("cannot import hydration without confirmed native suspend")
-            public = service._workspace_dir / ".ach-state"
             await _owned(_install_managed_batch, staged, public)
-            home_context = state.home / ".ach-state"
             await _owned(_remove_managed_link, home_context, public)
             await _owned(_install_managed_batch, staged, home_context)
             if service._engine.family == "opencode":
-                skills_link = state.home / ".config" / "opencode" / "skills"
                 await _owned(_remove_managed_link, skills_link, public / "skills")
                 await _owned(_link_managed, skills_link, home_context / "skills")
         finally:

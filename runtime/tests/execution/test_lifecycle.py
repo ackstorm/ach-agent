@@ -439,6 +439,27 @@ async def test_idle_session_hydration_can_repeat(tmp_path: Path) -> None:
     assert engine.suspend_calls == [session_ref, session_ref]
 
 
+async def test_the_same_context_again_keeps_the_engine_running(tmp_path: Path) -> None:
+    import ach_runtime.execution.snapshots as snapshots
+
+    session_ref = "session-ref"
+    engine = _IdleEngine()
+    service = _service(tmp_path, engine=engine)
+    state = service._sessions.get_or_create(session_ref)
+    context = {"prompts/a.md": b"context A", "skills/s/SKILL.md": b"skill"}
+    await snapshots.import_hydration(service, session_ref, _chunks(_tar_bytes(context)))
+    engine._sessions[session_ref] = SimpleNamespace(alive=True)
+    engine.suspend_result = True
+
+    await snapshots.import_hydration(service, session_ref, _chunks(_tar_bytes(context)))
+    assert engine.suspend_calls == []
+
+    changed = {**context, "prompts/a.md": b"context B"}
+    await snapshots.import_hydration(service, session_ref, _chunks(_tar_bytes(changed)))
+    assert engine.suspend_calls == [session_ref]
+    assert (state.home / ".ach-state/prompts/a.md").read_bytes() == b"context B"
+
+
 async def test_hydrated_context_survives_home_archive_round_trip(tmp_path: Path) -> None:
     import ach_runtime.execution.snapshots as snapshots
     from ach_runtime.storage.archive import extract

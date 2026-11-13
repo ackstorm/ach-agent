@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- A run whose environment context (ACH skills, prompts, artifacts) is already installed in the
+  session keeps opencode running: the context is sent before every run, and installing it
+  stopped opencode, so every message of an agent with ACH context paid an engine boot and MCP
+  reconnect (~3.5 s). A changed context still installs and restarts the engine.
+
 ## [0.7.7] - 2026-11-13
 
 ### Added

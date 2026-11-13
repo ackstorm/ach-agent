@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- An ACH Agent takes its model's context and output limits from `/v2/model/info`, which resolves
+  LiteLLM model-group aliases; the limits in the `/platform/hydrate` response are ignored.
+  `capability.ach.model.limits` still wins over model info.
+
+### Fixed
+
+- A run whose environment context (ACH skills, prompts, artifacts) is already installed in the
+  session keeps opencode running: the context is sent before every run, and installing it
+  stopped opencode, so every message of an agent with ACH context paid an engine boot and MCP
+  reconnect (~3.5 s). A changed context still installs and restarts the engine.
+
 ## [0.7.7] - 2026-11-13
 
 ### Added
@@ -60,12 +75,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/v1/models`, streaming or not) so any OpenAI client can use the Agent as a model. A conversation
   continues its session by matching the history the client resends, kept in the Agent's S3 store
   when sessions are persisted; attached files and images become Workspace artifacts.
-
-### Changed
-
-- An ACH Agent takes its model's context and output limits from `/v2/model/info`, which resolves
-  LiteLLM model-group aliases; the limits in the `/platform/hydrate` response are ignored.
-  `capability.ach.model.limits` still wins over model info.
 
 ### Fixed
 

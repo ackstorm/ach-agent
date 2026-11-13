@@ -11,7 +11,7 @@ import pytest
 
 from ach_runtime.config.public import public_config
 from ach_runtime.config.schema import RuntimeConfig, ThinkingBlock
-from ach_runtime.engine.base import EngineInvocation, NativeLaunchFailed
+from ach_runtime.engine.base import EngineInvocation, McpToolsUnavailable, NativeLaunchFailed
 from ach_runtime.engine.opencode import OpenCodeEngine, _managed_fingerprint
 from fake_facades import fake_facades
 
@@ -209,3 +209,31 @@ async def test_failed_refresh_stop_sends_no_business_prompt(tmp_path, public, en
         assert after["records"] == before["records"]
         assert session._managed_fingerprint is None
         assert session.config_version is None
+
+
+async def test_the_mcp_tools_check_runs_once_per_process_and_gates_the_session(tmp_path, public, engine):
+    checks: list[bool] = []
+    passing = False
+
+    async def check():
+        checks.append(passing)
+        if not passing:
+            raise RuntimeError("mcp tools unavailable: srv (0 tools)")
+
+    async with fake_facades("text") as fakes:
+        def run(invocation_id):
+            invocation = _invocation(
+                public, tmp_path, invocation_id=invocation_id, session_ref="check-session",
+                model_url=fakes.model_url, prompt="hello",
+            )
+            invocation.mcp_check = check
+            return engine.start(invocation, home=tmp_path / "home", scratch=tmp_path / "scratch")
+
+        with pytest.raises(McpToolsUnavailable, match="srv"):
+            await run("check-a")
+        assert engine._sessions["check-session"].sid is None  # nothing for a client to attach to
+        passing = True
+        for invocation_id in ("check-b", "check-c"):
+            await run(invocation_id)
+            assert await asyncio.wait_for(engine.wait_settled(invocation_id), timeout=20) == "completed"
+    assert checks == [False, True]  # the failed launch checks again; the running process does not

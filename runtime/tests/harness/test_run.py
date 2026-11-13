@@ -8,6 +8,7 @@ import pytest
 
 from ach_runtime.engine.opencode import OPENCODE_BIN
 from ach_runtime.harness.run import run_local
+from fake_facades import fake_facades
 
 pytestmark = [
     pytest.mark.asyncio,
@@ -90,19 +91,21 @@ async def test_run_gives_a_clean_env_tui_only_the_engines_env(tmp_path, monkeypa
     monkeypatch.setenv("ACH_KEY", "test-key-not-a-secret")
     monkeypatch.setenv("ACH_URL", "https://ach.example")
     monkeypatch.setenv("MANIFEST_SECRET", "s3cret-value")
-    manifest = tmp_path / "agent.yaml"
-    manifest.write_text(
-        "ach: {environment: engineering-prod}\nmodel: {name: gemini.gemini-flash-latest, api: gemini}\n"
-        "mcpServers: [{name: extra, url: 'http://127.0.0.1:9/mcp', headers: {X-Key: {env: MANIFEST_SECRET}}}]\n"
-    )
     workspace = tmp_path / "project"
     workspace.mkdir()
     dump = tmp_path / "env.json"
     script = f"import json, os; json.dump(dict(os.environ), open({str(dump)!r}, 'w'))"
-    rc = await run_local(
-        manifest, workspace=workspace, name="smoke", data_dir=tmp_path / "data",
-        tui=[sys.executable, "-c", script], ach_transport=httpx.MockTransport(_catalog),
-    )
+    # opencode must connect to the server before the session starts: a reachable fake one.
+    async with fake_facades("text") as fakes:
+        manifest = tmp_path / "agent.yaml"
+        manifest.write_text(
+            "ach: {environment: engineering-prod}\nmodel: {name: gemini.gemini-flash-latest, api: gemini}\n"
+            f"mcpServers: [{{name: extra, url: '{fakes.mcp_url}', headers: {{X-Key: {{env: MANIFEST_SECRET}}}}}}]\n"
+        )
+        rc = await run_local(
+            manifest, workspace=workspace, name="smoke", data_dir=tmp_path / "data",
+            tui=[sys.executable, "-c", script], ach_transport=httpx.MockTransport(_catalog),
+        )
     assert rc == 0
     seen = json.loads(dump.read_text())
     # The interpreter may add its own locale variables; nothing of the harness's environment passes.

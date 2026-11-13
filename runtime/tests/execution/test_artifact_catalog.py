@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from ach_runtime.engine.config import to_fixture
-from ach_runtime.engine.base import EngineReceipt
+from ach_runtime.engine.base import EngineReceipt, finish_mcp_check, start_mcp_check
 from ach_runtime.execution.service import ExecutionService
 from ach_runtime.execution.sessions import SessionRegistry
 from ach_runtime.execution.wire import StartRequest
@@ -23,6 +23,7 @@ class _InvocationEngine:
         self.invocations = []
 
     async def start(self, invocation, *, home, scratch, password=None):
+        await finish_mcp_check(start_mcp_check(invocation))
         self.invocations.append(invocation)
         return EngineReceipt(
             native_session_id=f"native-{invocation.invocation_id}",

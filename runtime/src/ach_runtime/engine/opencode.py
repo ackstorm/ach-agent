@@ -35,6 +35,8 @@ from ach_runtime.engine.base import (
     TuiCommand,
     EngineInvocation,
     EngineOutcome,
+    finish_mcp_check,
+    start_mcp_check,
     EngineReceipt,
     NativeLaunchFailed,
     RestoreMismatch,
@@ -1135,6 +1137,7 @@ class OpenCodeEngine:
 
         provider_id = invocation.public.model.type
         model_id = invocation.public.model.name
+        check: asyncio.Task[None] | None = None
         try:
             if session.alive and needs_refresh:
                 session._managed_fingerprint = None
@@ -1143,9 +1146,29 @@ class OpenCodeEngine:
                     raise NativeLaunchFailed("managed refresh requires a confirmed clean native stop")
                 is_new_process = True
             if not session.alive:
+                check = start_mcp_check(invocation)
                 config_path.write_text(json.dumps(content), encoding="utf-8")
                 await session.ensure_started(env=env, config_path=config_path, deadline=deadline)
                 is_new_process = True
+            required_mcp = sorted(
+                ((invocation.catalog or {}).get("mcp") or invocation.mcp or {}).keys()
+            )
+            if is_new_process:
+                await _await_native_readiness(
+                    session,
+                    wid=wid,
+                    managed_agent=invocation.managed_agent,
+                    required_mcp=required_mcp,
+                    provider_id=provider_id,
+                    model_id=model_id,
+                    max_steps=invocation.public.limits.max_steps,
+                    expect_system=_expects_native_system(fixture),
+                    deadline=deadline,
+                )
+
+            # Before any session exists; the check ran beside the launch and readiness. On failure
+            # the fingerprint stays unset, so the next run relaunches and checks again.
+            await finish_mcp_check(check)
 
             if session.sid_unverified:
                 status, _ = await setup_request("GET", f"/api/session/{session.sid}")
@@ -1173,22 +1196,6 @@ class OpenCodeEngine:
                 session.sid = str(body["data"].get("id", ""))
                 if not session.sid:
                     raise NativeLaunchFailed(f"session create omitted native id: {body!r}")
-
-            required_mcp = sorted(
-                ((invocation.catalog or {}).get("mcp") or invocation.mcp or {}).keys()
-            )
-            if is_new_process:
-                await _await_native_readiness(
-                    session,
-                    wid=wid,
-                    managed_agent=invocation.managed_agent,
-                    required_mcp=required_mcp,
-                    provider_id=provider_id,
-                    model_id=model_id,
-                    max_steps=invocation.public.limits.max_steps,
-                    expect_system=_expects_native_system(fixture),
-                    deadline=deadline,
-                )
 
             status, body = await setup_request("GET", f"/api/session/{session.sid}")
             data = body.get("data") if isinstance(body, dict) else None
@@ -1246,6 +1253,8 @@ class OpenCodeEngine:
             session._selected_agent = invocation.managed_agent
             session.config_version = invocation.public.config_version
         except BaseException:
+            if check is not None:
+                check.cancel()
             session._managed_fingerprint = None
             session.config_version = None
             raise

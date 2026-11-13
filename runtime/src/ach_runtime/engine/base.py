@@ -18,7 +18,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Callable, Coroutine, Literal, Protocol, runtime_checkable
 
 from ach_runtime.config.public import PublicConfig
 from ach_runtime.observability.runs import RunUsage
@@ -40,6 +40,10 @@ class NativeLaunchFailed(RuntimeError):
     def __init__(self, message: str, *, ambiguous: bool = False) -> None:
         super().__init__(message)
         self.ambiguous = ambiguous
+
+
+class McpToolsUnavailable(NativeLaunchFailed):
+    """The launch's MCP tools check failed; no prompt was sent."""
 
 
 class RestoreMismatch(RuntimeError):
@@ -75,6 +79,23 @@ class EngineInvocation:
     provider_base_url_override: str | None = None
     resolved_system_prompt: str | None = None
     deadline_at: datetime | None = None
+    # The MCP tools check: runs beside the launch of a new engine process, and the prompt waits
+    # for it. A process that is already running passed it at its own launch.
+    mcp_check: Callable[[], Coroutine[Any, Any, None]] | None = None
+
+
+def start_mcp_check(invocation: EngineInvocation) -> asyncio.Task[None] | None:
+    return asyncio.create_task(invocation.mcp_check()) if invocation.mcp_check is not None else None
+
+
+async def finish_mcp_check(check: asyncio.Task[None] | None) -> None:
+    """Await a launch's MCP tools check; a failed check fails the run before its prompt."""
+    if check is None:
+        return
+    try:
+        await check
+    except Exception as exc:  # noqa: BLE001 - every check failure is a clean pre-send failure
+        raise McpToolsUnavailable(str(exc)) from exc
 
 
 @dataclass

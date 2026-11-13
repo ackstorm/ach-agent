@@ -1046,7 +1046,7 @@ class OpenCodeEngine:
         if session is None or None in (session.url, session.sid, session.password):
             return None
         return TuiCommand(
-            program=[OPENCODE_BIN, "mini"], args=["--server", session.url, "--session", session.sid],
+            program=[OPENCODE_BIN], args=["--server", session.url, "--session", session.sid],
             env={"OPENCODE_SERVER_PASSWORD": session.password}, clean_env=False,
         )
 

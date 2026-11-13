@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `ach-agent run` builds a `Dockerfile` beside `agent.yaml` on top of the runtime image, passed
+  as the `ACH_AGENT_IMAGE` build argument, and runs the result: an agent's own tools work locally.
+
 ## [0.7.6] - 2026-11-13
 
 ### Added

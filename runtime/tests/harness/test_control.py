@@ -620,7 +620,7 @@ async def test_inform_user_reaches_only_the_owning_workspace_runs_listeners() ->
         await control.close()
 
 
-async def test_real_admission_and_control_run_forward_terminal_status() -> None:
+async def test_real_admission_and_control_run_forward_terminal_status(caplog) -> None:
     config = _a2a_config()
 
     async def mini(request: httpx.Request) -> httpx.Response:
@@ -672,9 +672,12 @@ async def test_real_admission_and_control_run_forward_terminal_status() -> None:
     )
     ticket = control.admission.admit(route(event, config.channels[0]))
     try:
-        await ticket.started
-        assert await ticket.completed is not None
+        with caplog.at_level("INFO", logger="ach_runtime.observability.runs"):
+            await ticket.started
+            assert await ticket.completed is not None
         assert ticket.completed.result().result == terminal_result
+        [started] = [r for r in caplog.records if r.getMessage() == "run started"]
+        assert started.invocation_id == ticket.invocation_id and started.duration_ms >= 0
     finally:
         await control.close()
 

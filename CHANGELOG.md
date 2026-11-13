@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- An Agent's control pod joins its Service sooner after it starts: the readiness probe runs
+  every 2 s instead of every 10 s (15 failures, so the 30 s tolerance stays). A pod whose first
+  readiness check missed took 21 s to take messages instead of 10–11 s.
+
 ## [0.7.8] - 2026-11-13
 
 ### Changed

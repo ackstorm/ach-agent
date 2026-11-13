@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `ach-agent run` opens the full opencode TUI on the session instead of `opencode mini`.
 
+### Fixed
+
+- An A2A reply the model wrote without the `a2a_reply` JSON object is delivered as text and the
+  task completes, instead of failing with "invalid terminal output". An object that is present
+  but invalid still fails the task.
+
 ## [0.7.6] - 2026-11-13
 
 ### Added

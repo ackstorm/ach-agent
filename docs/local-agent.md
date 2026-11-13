@@ -15,6 +15,15 @@ install -m 0755 runtime/bin/ach-agent ~/.local/bin/ach-agent
 
 It runs `ghcr.io/ackstorm/ach-agent-local:latest`; set `ACH_AGENT_IMAGE` to use another image.
 
+An agent that needs tools the image lacks (Node, a browser) keeps a `Dockerfile` beside `agent.yaml`.
+`ach-agent run` builds it before every run, Docker's cache making an unchanged build take about a second,
+and runs the result. The Dockerfile must start from the runtime image it is given:
+
+```dockerfile
+ARG ACH_AGENT_IMAGE=ghcr.io/ackstorm/ach-agent-execution:<version>   # the default is the production base
+FROM ${ACH_AGENT_IMAGE}
+```
+
 ## Authoring flow
 
 1. Create an ACH environment in the Hub with the MCPs, skills, prompts and artifacts the agent needs.

@@ -63,6 +63,13 @@ if [ "$mode" = ach ]; then
   set -- "$@" -e ACH_URL -e ACH_KEY
 fi
 
+# An agent directory with a Dockerfile adds its own tools to the runtime image:
+# the Dockerfile builds FROM the image passed in the ACH_AGENT_IMAGE build argument.
+if [ -f "$dir/Dockerfile" ]; then
+  echo "ach-agent: building $dir/Dockerfile" >&2
+  image=$(docker build -q --build-arg ACH_AGENT_IMAGE="$image" "$dir") || exit 1
+fi
+
 # host.docker.internal reaches a model served on this machine (Docker Desktop has it built in).
 # --event runs with no TTY (CI); the TUI needs one.
 if [ -n "$event" ]; then tty=""; else tty="-it"; fi

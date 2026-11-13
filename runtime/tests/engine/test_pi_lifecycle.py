@@ -270,3 +270,34 @@ async def test_a_resumed_start_after_a_crash_is_not_failed_by_the_old_reader(tmp
             assert session.running
         finally:
             server.close()
+
+
+async def test_the_mcp_tools_check_runs_once_per_process_and_after_a_restore(tmp_path, engine) -> None:
+    checks: list[str] = []
+
+    def start(target: PiEngine, model_url: str, invocation_id: str):
+        invocation = _invocation(tmp_path, model_url, invocation_id=invocation_id)
+
+        async def check():
+            checks.append(invocation_id)
+
+        invocation.mcp_check = check
+        return target.start(invocation, home=tmp_path / "home", scratch=tmp_path / "scratch")
+
+    async with fake_facades("text") as fakes:
+        for invocation_id in ("inv-1", "inv-2"):
+            await start(engine, fakes.model_url, invocation_id)
+            assert await engine.wait_settled(invocation_id) == "completed"
+        assert checks == ["inv-1"]
+        assert await engine.suspend("session-1")
+        manifest = await engine.snapshot(
+            "session-1", agent={"name": "a"}, workspace_ref="ws", registry={"workspace_path": str(tmp_path / "workspace")},
+        )
+        restored = PiEngine()
+        try:
+            await _restore(restored, tmp_path, manifest)  # launches pi without a check
+            await start(restored, fakes.model_url, "inv-3")
+            assert await restored.wait_settled("inv-3") == "completed"
+        finally:
+            await restored.close()
+    assert checks == ["inv-1", "inv-3"]

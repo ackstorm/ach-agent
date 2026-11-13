@@ -42,6 +42,7 @@ from ach_runtime.engine.base import (
     CANCEL_KILL_BOUND_SECONDS,
     EngineOutcome,
     EngineReceipt,
+    McpToolsUnavailable,
     SnapshotManifest,
     _HaltBudget,
 )
@@ -460,14 +461,10 @@ class ExecutionService:
         except Exception as exc:  # noqa: BLE001 - never built/sent anything: safe pre-send release
             self._fail_before_started(inv, exc, "failed", release=session_lock)
             return
-        try:
-            # Probe the catalog the engine gets: it carries the per-run artifacts URL.
-            await _require_mcp_tools(getattr(invocation, "catalog", None) or inv.catalog)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - still pre-send: a recorded failed run
-            self._finish_without_engine(inv, "failed", str(exc))
-            return
+        # The MCP tools check runs in the engine, beside the launch of a new process. It probes
+        # the catalog the engine gets, which carries the per-run artifacts URL.
+        checked = getattr(invocation, "catalog", None) or inv.catalog
+        invocation.mcp_check = lambda: _require_mcp_tools(checked)
         if _remaining_seconds(deadline) <= 0:
             # Still pre-send: nothing was ever dispatched, so this is safe to release
             # immediately like the preparation-phase failures above.
@@ -485,6 +482,10 @@ class ExecutionService:
             inv.possible_send = True
             receipt_coro = self._engine.start(invocation, home=session.home, scratch=session.scratch)
             receipt = await asyncio.wait_for(receipt_coro, timeout=_remaining_seconds(deadline))
+        except McpToolsUnavailable as exc:
+            # The engine's launch check failed before it sent the prompt: a recorded failed run.
+            self._finish_without_engine(inv, "failed", str(exc))
+            return
         except asyncio.CancelledError:
             # Same cancel-owns-cleanup rule as the preparation phase.
             raise

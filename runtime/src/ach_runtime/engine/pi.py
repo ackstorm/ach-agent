@@ -23,7 +23,8 @@ from typing import Any
 from ach_runtime.config.public import PublicConfig
 from ach_runtime.engine.base import (
     CANCEL_KILL_BOUND_SECONDS, SNAPSHOT_VERSION, EngineInvocation, EngineOutcome, EngineReceipt, NativeLaunchFailed,
-    RestoreMismatch, SnapshotManifest, TuiCommand, _HaltBudget, _OwnedProcessGroup, check_manifest, install_restored_home,
+    RestoreMismatch, SnapshotManifest, TuiCommand, _HaltBudget, _OwnedProcessGroup, check_manifest, finish_mcp_check,
+    install_restored_home, start_mcp_check,
 )
 from ach_runtime.engine.pi_config import PiConfig, build_pi_env, to_pi_config, write_pi_config
 from ach_runtime.observability.runs import RunUsage, log_step, log_tool
@@ -74,6 +75,8 @@ class _PiSession:
         self.session_ref, self.home, self.scratch = session_ref, home, scratch
         self.sid: str | None = None
         self.fingerprint: str | None = None
+        # Whether the running process passed the MCP tools check; a restore launches it unchecked.
+        self.mcp_checked = False
         self.invocations: dict[str, _PiInvocation] = {}
         self._proc: asyncio.subprocess.Process | None = None
         self._owned: _OwnedProcessGroup | None = None
@@ -314,10 +317,23 @@ class PiEngine:
                 return state
         return None
 
-    async def _ensure_running(self, session: _PiSession, config: PiConfig, env: dict[str, str], cwd: Path, public: PublicConfig) -> None:
+    async def _ensure_running(self, session: _PiSession, config: PiConfig, env: dict[str, str], cwd: Path, public: PublicConfig, invocation: EngineInvocation | None = None) -> None:
         fingerprint = hashlib.sha256(json.dumps([config.models, config.mcp, config.settings, config.args, config.system_prompt, env], sort_keys=True).encode()).hexdigest()
-        if session.running and session.fingerprint == fingerprint:
-            return
+        launch = not (session.running and session.fingerprint == fingerprint)
+        check = start_mcp_check(invocation) if invocation is not None and (launch or not session.mcp_checked) else None
+        try:
+            if launch:
+                await self._launch(session, config, env, cwd, public, fingerprint)
+            await finish_mcp_check(check)
+        except BaseException:
+            if check is not None:
+                check.cancel()
+            raise
+        if check is not None:
+            session.mcp_checked = True
+
+    async def _launch(self, session: _PiSession, config: PiConfig, env: dict[str, str], cwd: Path, public: PublicConfig, fingerprint: str) -> None:
+        session.mcp_checked = False
         if session.alive:
             was_running = session.running
             clean = await session.stop()
@@ -377,7 +393,7 @@ class PiEngine:
         session.invocations[invocation.invocation_id] = state
         session.tui_args, session.tui_env = config.args, env
         try:
-            await self._ensure_running(session, config, env, invocation.workspace_dir, public)
+            await self._ensure_running(session, config, env, invocation.workspace_dir, public, invocation)
             await session.begin(state)
         except BaseException:
             session._finish(state, "failed")  # never left unsettled: cancel() waits on it

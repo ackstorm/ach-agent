@@ -17,7 +17,7 @@ import pytest
 
 import ach_runtime.execution.service as service_module
 from ach_runtime.config.schema import HookBlock
-from ach_runtime.engine.base import EngineReceipt, SnapshotManifest
+from ach_runtime.engine.base import EngineReceipt, SnapshotManifest, finish_mcp_check, start_mcp_check
 from ach_runtime.config.schema import PromptBlock, SystemAch, SystemFile, SystemText
 from ach_runtime.execution.service import (
     CapacityExceeded,
@@ -76,6 +76,7 @@ class FakeEngine:
         self.invocations.append(invocation)
         if self.start_delay:
             await asyncio.sleep(self.start_delay)
+        await finish_mcp_check(start_mcp_check(invocation))  # every fake start launches a process
         # Acceptance is recorded the instant native would have taken the request — before
         # the receipt (the HTTP response) is ever withheld by `start_permit` — so a test can
         # assert "native accepted this" independently of "the service has the receipt back".
@@ -343,7 +344,7 @@ async def test_mcp_server_listing_no_tools_is_retried_before_the_send(
     assert engine.start_calls == ["inv-1"]
 
 
-async def test_mcp_server_still_listing_no_tools_fails_the_run_without_the_engine(
+async def test_mcp_server_still_listing_no_tools_fails_the_run_before_the_prompt(
     tmp_path, public_config_fixture, monkeypatch
 ):
     probed = _probe_tools(monkeypatch, [0])

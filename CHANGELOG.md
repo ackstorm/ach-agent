@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The MCP tools check (every MCP server lists at least one tool) runs when the engine launches a
+  process, beside its boot, instead of before every run. A message to a running engine skips it,
+  since that process passed it at launch: measured at 1.0–2.3 s of every message to a running
+  engine, all of its variation. A failed check still fails the run before its prompt, with the
+  same `mcp tools unavailable` reason, and the next run checks again.
+  opencode now creates or resumes the session only after it is ready and the check has passed.
+
 ## [0.7.9] - 2026-11-13
 
 ### Changed

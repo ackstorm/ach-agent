@@ -2,9 +2,9 @@
 """Hydration + model-metadata facade input (contract §5; Task 7).
 
 `Hydrator.load(source) -> HydratedCatalog` combines the two authorized ACH surfaces:
-POST `/platform/hydrate` (granted model/MCP/A2A ids+endpoints, model limits with aliases
-resolved, hydrated context) and GET `/v2/model/info?model=<granted id>` (modalities, cost,
-and any limit hydrate omits; it does not resolve model-group aliases).
+POST `/platform/hydrate` (granted model/MCP/A2A ids+endpoints, hydrated context) and GET
+`/v2/model/info?model=<granted id>` (limits, modalities, cost);
+`capability.ach.model.limits` wins over model info's limits.
 
 Reused from `old-ach-agent/src/ach_agent/engine/{hydrate,cost}.py`
 (`task-7-reuse-handoff.md`): the typed `{id,endpoint}` manifest objects, the POST/GET
@@ -71,17 +71,9 @@ class HydrationError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
-class ModelLimitsEntry(BaseModel):
-    # A key is absent when LiteLLM does not know it.
-    context: int | None = None
-    output: int | None = None
-
-
 class ModelEntry(BaseModel):
     id: str
     endpoint: str = ""
-    # ACH resolves LiteLLM model-group aliases here; /v2/model/info does not.
-    limits: ModelLimitsEntry | None = None
 
 
 class McpServerEntry(BaseModel):
@@ -356,7 +348,7 @@ class HydrationInput:
     base_url: str
     environment: str
     model: str
-    limits: tuple[int, int] | None = None  # (context, output); wins over hydrate and model info
+    limits: tuple[int, int] | None = None  # (context, output); wins over model info
 
     @classmethod
     def from_config(cls, config: RuntimeConfig) -> HydrationInput:
@@ -409,10 +401,6 @@ class Hydrator:
         )
         entry = resolve_model(manifest, source.model)
         metadata = await fetch_model_metadata(source.base_url, ek, source.model, client=self._client)
-        if entry.limits is not None:
-            known = {f"{k}_limit": v for k, v in entry.limits.model_dump(exclude_none=True).items()}
-            if known:
-                metadata = (metadata or ModelMetadata()).model_copy(update=known)
         if source.limits is not None:
             context, output = source.limits
             metadata = (metadata or ModelMetadata()).model_copy(

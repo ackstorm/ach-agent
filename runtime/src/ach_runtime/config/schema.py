@@ -221,8 +221,7 @@ class ModelLimits(BaseModel):
 
 
 class AchModel(ModelBlock):
-    # The gateway's /v2/model/info does not resolve LiteLLM model-group aliases, so an
-    # alias otherwise reaches the engine with no context limit and compacts at its default.
+    # Wins over the limits ACH reports, for a model whose real window differs.
     limits: ModelLimits | None = None
 
 

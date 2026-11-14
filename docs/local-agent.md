@@ -190,9 +190,9 @@ an error at start.
 wins over the limits ACH reports for the model; set it only when the model's real window differs.
 
 `engine.denyTools` hides native engine tools from the model. With opencode a name is a permission action:
-`read`, `edit`, `glob`, `grep`, `shell`, `webfetch`, `websearch`, `question`, `skill`, `subagent`, `browser`
+`read`, `edit`, `glob`, `grep`, `shell`, `webfetch`, `websearch`, `question`, `skill`, `browser`
 (`opencode debug agents` prints the ones in use). The shell is `shell`: `bash` matches nothing there, and
-opencode names are not checked. With pi the names are `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`,
+opencode names are not checked. Subagents are always denied with opencode, and pi has none. With pi the names are `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`,
 `codemode`, `tool_search`; a name that is not a pi tool is an error at start. It is not a
 boundary: `bash` reaches what a denied tool would. With opencode, `execute` (Code Mode) is always denied, so
 MCP tools are called directly.

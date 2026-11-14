@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The MCP tools check gives each server 10 s to list its tools instead of 4 s. Its probes run
+  while the engine connects to the same servers, and 43% of them took over 4 s (up to 7 s),
+  so a launch retried after a 2 s wait: 4 of 8 local launches, about 4 s each. A server that
+  never answers fails the run after 120 s instead of 84 s.
+
 ## [0.7.10] - 2026-11-13
 
 ### Changed

@@ -142,6 +142,19 @@ follows the default branch at the next start. A failed download, an archive with
 skills with the same name stop the agent. `filter.exclude.skills` drops skills by name. `headers` go only
 to the archive host, not to a redirect target on another host.
 
+A skill you are still writing is a folder, with or without `ach:`:
+
+```yaml
+skills:
+  - {name: release-notes, type: dir, path: ./skills/release-notes}   # relative to the manifest
+```
+
+The folder must hold a `SKILL.md`; it is copied to `skills/<name>/` at the start of every run, so an
+edit shows at the next `ach-agent run`, and it replaces a skill of the same name from the environment
+or an archive. Every engine loads it the same way. `type: dir` takes only `name` and `path`, and
+`promote` leaves it out of the Agent CR: in production the skill comes from the environment or an
+archive.
+
 | `type` | Archive URL built | Usual header |
 |---|---|---|
 | `url` (default) | `url` as written | any |
@@ -164,6 +177,7 @@ model: {name: qwen3-coder, api: openai, baseUrl: "http://host.docker.internal:11
 | `model` | yes | | `capability.ach.model` (`name`, `api`, `params`, `thinking`, `limits`) or `capability.standalone.model` (also `baseUrl`, `headers`) |
 | `mcpServers` (`name`, `url`, `headers`) | no | none | `capability.ach.mcpServers` or `capability.standalone.mcpServers` |
 | `skills` (`name`, `type`, `url` or `repo`, `ref`, `baseUrl`, `headers`) | no, standalone only | none | `capability.standalone.skills` |
+| `skills` with `type: dir` (`name`, `path`) | no | none | nothing: local runs only |
 | `prompt.system` (`type`: `text`, `file`, `ach`) | no | none | `prompt.system`; a file is read and sent as text |
 | `prompt.compose` | no | `append` | `prompt.compose` |
 | `filter.include` (`tools`) | no | nothing | `capability.filter.include` |

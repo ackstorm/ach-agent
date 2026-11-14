@@ -66,7 +66,9 @@ DEFAULT_WORKSPACE_DIR = Path("/sandbox/ach/workspace")  # root path ruling: fixe
 # run without its tools. Probe each configured server before the send; sleep between tries.
 # The sleeps add up to 60 s, so a gateway restart in progress does not fail the run.
 MCP_TOOLS_BACKOFF_SECONDS = (2.0, 4.0, 8.0, 16.0, 30.0)
-MCP_TOOLS_PROBE_TIMEOUT_SECONDS = 4.0
+# A probe sent while the engine connects to the same servers took up to 7 s (median 3.8 s,
+# measured locally, 7 servers); alone, under 4.3 s.
+MCP_TOOLS_PROBE_TIMEOUT_SECONDS = 10.0
 
 
 class ConflictingStart(ValueError):

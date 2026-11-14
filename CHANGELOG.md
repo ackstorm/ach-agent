@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `agent.yaml` `skills` entries of `type: dir` load a skill folder from disk in `ach-agent run`,
+  with or without `ach:`, for either engine. The folder is copied at the start of every run and
+  replaces a skill of the same name from the environment; `promote` leaves it out of the Agent CR.
+
 ## [0.7.11] - 2026-11-14
 
 ### Changed

@@ -224,6 +224,8 @@ class Control:
     facade_transport: httpx.AsyncBaseTransport | None = None
     # Standalone skills, downloaded at start and packed into every session's context.
     local_context: Path | None = None
+    # `ach-agent run` only: skill folders on disk, copied over the context on every transfer.
+    local_skills: dict[str, Path] = field(default_factory=dict)
     facade_clients: list[httpx.AsyncClient] = field(default_factory=list)
     _prepared: dict[str, tuple[WorkspaceEndpoint, Any]] = field(default_factory=dict)
     _started_run: dict[str, str] = field(default_factory=dict)
@@ -551,7 +553,7 @@ class Control:
         if channel is None:
             raise WorkspaceAssemblyUnavailable("admitted channel is no longer configured")
         event = routed.event
-        if self.local_context is not None or any(
+        if self.local_context is not None or self.local_skills or any(
             item.download_url for item in (*self.catalog.skills, *self.catalog.prompts, *self.catalog.artifacts)
         ):
             await self._transfer_context(ticket, endpoint)
@@ -651,8 +653,12 @@ class Control:
                         self.catalog, root, excluded_skills=self.config.capability.filter.exclude.skills,
                         client=client,
                     )
+            source = self.local_context or root
+            if self.local_skills:
+                await asyncio.to_thread(_overlay_skills, self.local_context, root, self.local_skills)
+                source = root
             archive = Path(temporary) / "context.tar.gz"
-            _, cancelled, error = await _run_owned(pack, self.local_context or root, archive, max_bytes=512 * 1024**2)
+            _, cancelled, error = await _run_owned(pack, source, archive, max_bytes=512 * 1024**2)
             if cancelled:
                 raise asyncio.CancelledError()
             if error:
@@ -1052,6 +1058,17 @@ def execution_verify(env: Mapping[str, str]) -> ssl.SSLContext | bool:
     return ssl.create_default_context(cadata=pem) if pem else True
 
 
+def _overlay_skills(base: Path | None, root: Path, skills: dict[str, Path]) -> None:
+    """Copies `base` into `root`, then each skill folder to `root/skills/<name>`, replacing a
+    downloaded skill of the same name."""
+    if base is not None:
+        shutil.copytree(base, root, dirs_exist_ok=True)
+    for name, folder in skills.items():
+        target = root / "skills" / name
+        shutil.rmtree(target, ignore_errors=True)
+        shutil.copytree(folder, target)
+
+
 async def assemble(
     config: RuntimeConfig,
     *,
@@ -1187,6 +1204,7 @@ async def assemble(
     control.ach_key, control._memory_auth = ach_key, memory_auth
     control.upstream_secrets = upstream_secrets
     control.local_context = local_context
+    control.local_skills = {}
     control._model_headers, control._mcp_headers = model_headers, mcp_headers
     control.source, control.manager, control.delivery = source, manager, None
     control.admission, control.model_facade, control.mcp_facade = None, None, None

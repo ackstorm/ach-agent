@@ -55,8 +55,12 @@ needed. The request reaches the agent as a webhook message, not through an A2A c
 
 ## Promote
 
-`ach-agent promote` prints the Agent CR for `agent.yaml` and `deploy.yaml` (beside it, or `--deploy <file>`).
-`deploy.yaml` holds what only production has:
+`ach-agent promote` prints the Agent CR for `agent.yaml` and `deploy.yaml` (beside it, or `--deploy <file>`),
+so `ach-agent promote | kubectl apply -f -` deploys it. `deploy.yaml` holds what only production has: the
+namespace, the identity the agent runs as, its channels and the Secrets they read. `ach-agent promote --init`
+writes a first one: `baseUrl` from the manifest's ach-cli profile, an `openai` channel, commented examples of
+the other channel types, and `CHANGE_ME` for each decision left; `promote` refuses the file until none is left.
+A full one:
 
 ```yaml
 metadata: {namespace: achagents}       # metadata.name defaults to the agent's directory name

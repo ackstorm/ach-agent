@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [unreleased]
+
+### Added
+
+- `ach-agent promote --init` writes a `deploy.yaml` skeleton beside `agent.yaml`: `baseUrl` from the
+  manifest's ach-cli profile, an `openai` channel, commented examples of the other channel types, and
+  `CHANGE_ME` for each decision left. `promote` refuses a `deploy.yaml` that still holds a `CHANGE_ME`,
+  and a missing `deploy.yaml` names `--init`.
+
 ## [0.7.11] - 2026-11-14
 
 ### Changed

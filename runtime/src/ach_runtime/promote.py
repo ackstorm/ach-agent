@@ -5,7 +5,8 @@ agent.yaml uses the CR's field names, so its fields are copied as written, with 
 is dropped, each `{env: NAME}` header becomes a `secretKeyRef` into `deploy.yaml`'s `secretName`, and a
 `prompt.system` file is inlined as text. `model` and `mcpServers` go under `spec.ach`, or under
 `spec.standalone` for a manifest with no `ach:`. `deploy.yaml` is a partial Agent CR (`metadata`, `spec`) plus
-`secretName`; a field set in both files is an error. No environment variable is read.
+`secretName`; a field set in both files is an error. No environment variable is read. `deploy_skeleton` writes
+a first `deploy.yaml` whose decisions are `CHANGE_ME` placeholders, which `promote` refuses until replaced.
 """
 
 from __future__ import annotations
@@ -16,13 +17,14 @@ from typing import Any
 import yaml
 
 from ach_runtime.config.schema import ConfigError
-from ach_runtime.manifest import ManifestError, _system_prompt, load_manifest, manifest_to_wire
+from ach_runtime.manifest import ManifestError, _system_prompt, load_manifest, manifest_to_wire, secret_env_names
 
 API_VERSION = "ach-agent.ackstorm.ai/v1alpha1"
 _DEPLOY_KEYS = {"metadata", "secretName", "spec"}
 _COPIED = ("engine", "filter", "prompt", "limits")
 # Validation needs a Hub URL; deploy.yaml usually has the real one.
 _PLACEHOLDER_BASE_URL = "https://ach.invalid"
+_UNSET = "CHANGE_ME"
 
 
 class PromoteError(ValueError):
@@ -67,9 +69,12 @@ def _merge(base: dict[str, Any], extra: dict[str, Any], path: str) -> dict[str, 
 
 def _read_deploy(path: Path) -> dict[str, Any]:
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        text = path.read_text(encoding="utf-8")
+        raw = yaml.safe_load(text) or {}
     except (OSError, yaml.YAMLError) as exc:
         raise PromoteError(f"cannot read {path}: {exc}") from exc
+    if _UNSET in text:
+        raise PromoteError(f"{path.name}: replace every {_UNSET} first")
     if not isinstance(raw, dict):
         raise PromoteError(f"{path.name}: expected a mapping")
     if unknown := sorted(set(raw) - _DEPLOY_KEYS):
@@ -120,3 +125,41 @@ def promote(config: Path, deploy: Path, *, name: str) -> str:
         "spec": _merge(spec, raw.get("spec") or {}, "spec"),
     }
     return yaml.dump(cr, Dumper=_Dumper, sort_keys=False, allow_unicode=True, width=1000)
+
+
+def deploy_skeleton(config: Path, *, base_url: str | None = None) -> str:
+    """A first deploy.yaml for `config`: what only production has, its decisions left as CHANGE_ME."""
+    manifest = load_manifest(config)
+    lines = [
+        "# Production settings for this agent. `ach-agent promote` builds the Agent CR from agent.yaml and",
+        "# merges this file into it; a field set in both is an error. Replace every CHANGE_ME, then:",
+        "#   ach-agent promote | kubectl apply -f -",
+        "# Every Agent CR field: docs/install.md in github.com/ackstorm/ach-agent.",
+        "metadata:",
+        "  namespace: ach-agent",
+    ]
+    if names := secret_env_names(manifest):
+        lines.append(f"secretName: {_UNSET}   # Secret with keys {', '.join(names)}: the agent.yaml {{env: NAME}} headers")
+    lines += ["spec:", "  profileRef: {name: default}   # the AgentProfile"]
+    if manifest.ach is not None:
+        lines += [
+            "  ach:",
+            f"    baseUrl: {base_url or _UNSET}   # ACH's ACH_BASE_URL",
+            "    keyFrom:   # needs an ACH KeyGrant for the identity; or secretKeyRef: {name, key} to a Secret with an ek_",
+            f"      tokenExchange: {{identity: {_UNSET}}}",
+        ]
+    lines += [
+        "  channels:   # how requests reach the agent; at least one",
+        "    - name: chat   # OpenAI Chat Completions at https://<host>/openai/chat/v1",
+        "      type: openai",
+        "      openai:",
+        f"        auth: {{secretRef: {{name: {_UNSET}, key: token}}}}   # Secret with the clients' API key",
+        "    # - name: tick",
+        "    #   type: cron",
+        '    #   cron: {schedule: "*/15 * * * *"}',
+        "    # - name: hook   # also webhook, webhook-script, queue, a2a: see docs/install.md",
+        "    #   type: webhook",
+        "    #   source: generic",
+        "    #   webhook: {auth: {type: header_token, header: X-Token, secretRef: {name: hook, key: token}}}",
+    ]
+    return "\n".join(lines) + "\n"

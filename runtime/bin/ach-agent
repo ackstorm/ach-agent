@@ -7,8 +7,9 @@ set -eu
 usage() {
   cat >&2 <<'USAGE'
 usage: ach-agent run [--config <agent.yaml>] [--event <text|@file>]
-       ach-agent promote [--config <agent.yaml>] [--deploy <deploy.yaml>]
+       ach-agent promote [--config <agent.yaml>] [--deploy <deploy.yaml>] [--init]
 --config defaults to ./agent.yaml, --deploy to deploy.yaml beside it.
+--init writes a deploy.yaml skeleton to fill in instead of printing the Agent CR.
 USAGE
   exit 2
 }
@@ -17,11 +18,13 @@ case "$cmd" in run|promote) shift ;; *) usage ;; esac
 config=agent.yaml
 event=""
 deploy=""
+init=""
 while [ $# -gt 0 ]; do
   case "$cmd:$1" in
     *:--config) [ $# -ge 2 ] || usage; config=$2; shift 2 ;;
     run:--event) [ $# -ge 2 ] && [ -n "$2" ] || usage; event=$2; shift 2 ;;
     promote:--deploy) [ $# -ge 2 ] || usage; deploy=$2; shift 2 ;;
+    promote:--init) init=1; shift ;;
     *) echo "ach-agent: unknown argument: $1" >&2; usage ;;
   esac
 done
@@ -32,7 +35,20 @@ image=${ACH_AGENT_IMAGE:-ghcr.io/ackstorm/ach-agent-local:latest}
 
 if [ "$cmd" = promote ]; then
   deploy=${deploy:-$dir/deploy.yaml}
-  [ -f "$deploy" ] || { echo "ach-agent: no such file: $deploy" >&2; exit 2; }
+  if [ -n "$init" ]; then
+    [ ! -e "$deploy" ] || { echo "ach-agent: $deploy already exists" >&2; exit 2; }
+    info=$(docker run --rm -v "$dir:/agent:ro" "$image" inspect --config "/agent/$file") || exit 2
+    profile=$(printf '%s\n' "$info" | sed -n 2p)
+    url=""
+    if [ "$(printf '%s\n' "$info" | sed -n 1p)" = ach ] && command -v ach-cli >/dev/null 2>&1; then
+      url=$(ach-cli profile show ${profile:+"$profile"} 2>/dev/null | awk '$1 == "URL" { print $2 }') || url=""
+    fi
+    out=$(docker run --rm -v "$dir:/agent:ro" "$image" promote --init --config "/agent/$file" ${url:+--base-url "$url"}) || exit 1
+    printf '%s\n' "$out" > "$deploy"
+    echo "ach-agent: wrote $deploy; replace every CHANGE_ME, then: ach-agent promote | kubectl apply -f -" >&2
+    exit 0
+  fi
+  [ -f "$deploy" ] || { echo "ach-agent: no such file: $deploy (ach-agent promote --init writes one)" >&2; exit 2; }
   ddir=$(cd "$(dirname "$deploy")" && pwd)
   exec docker run --rm -v "$dir:/agent:ro" -v "$ddir:/deploy:ro" "$image" \
     promote --config "/agent/$file" --deploy "/deploy/$(basename "$deploy")" --name "$(basename "$dir")"

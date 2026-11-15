@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""`inform_user`: progress messages from a running invocation to its A2A caller.
+"""`inform_user` and `report_failure`: a running invocation's progress and failure, for its caller.
 
 Mounted per session (`/sessions/{session_ref}/`) like the artifacts facade: the run the
 session is executing receives the message on its A2A task. Only A2A runs get this server in their
@@ -25,10 +25,11 @@ OwnedWorkspace = Callable[[str], Awaitable[bool]]
 Inform = Callable[[str, str, str], Awaitable[bool]]
 
 TOOL_NAME = "inform_user"
+FAILURE_TOOL_NAME = "report_failure"
 
 
 class ProgressFacade:
-    def __init__(self, *, key: bytes, owned_workspace: OwnedWorkspace, inform: Inform) -> None:
+    def __init__(self, *, key: bytes, owned_workspace: OwnedWorkspace, inform: Inform, report_failure: Inform) -> None:
         self._key = key
         self._owned_workspace = owned_workspace
         # Mounted in the Harness's cluster-facing listener, not a loopback server.
@@ -52,6 +53,23 @@ class ProgressFacade:
             if not await inform(token, session_ref, message):
                 log.warning("inform_user: no caller is listening (session %s)", session_ref)
             return "Update sent to user"
+
+        @self._mcp.tool(
+            name=FAILURE_TOOL_NAME,
+            description=(
+                "Mark this task as failed: you could not do what was asked (access denied, a tool or "
+                "data you need is missing, the request cannot be done as stated). Then write your "
+                "report as your final message. Not for an answer the user may dislike, such as "
+                "nothing found."
+            ),
+        )
+        async def report_failure_tool(reason: str, ctx: Context) -> str:
+            request = ctx.request_context.request
+            token = request.headers.get(FACADE_TOKEN_HEADER, "")
+            session_ref = str(request.path_params["session_ref"])
+            if not await report_failure(token, session_ref, reason):
+                log.warning("report_failure: no run is tracked (session %s)", session_ref)
+            return "Task marked as failed. Write your report as your final message."
 
     def app(self) -> Starlette:
         mcp_app = self._mcp.streamable_http_app()

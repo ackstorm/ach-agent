@@ -37,11 +37,8 @@ _OPENER_RE = re.compile(r'\{\s*"action"')
 
 A2A_OUTPUT_INSTRUCTIONS = (
     "<output_format>\n"
-    "Do your reasoning and tool work first. Then END your reply with exactly one compact "
-    "JSON object on its own line — this object is the ONLY thing delivered to the caller:\n"
-    '{"action":"a2a_reply","text":"<RESULT>","thoughts":"<OPTIONAL>"}\n'
-    '"text" is what the caller reads — keep it non-empty. Single line, keys in this order, '
-    "no code fences.\n"
+    "Your final message is delivered to the caller exactly as written, and only it: put the "
+    "complete answer there, with no lead-in (\"Here is the report\") and nothing after it.\n"
     "</output_format>"
 )
 
@@ -49,9 +46,19 @@ A2A_PROGRESS_INSTRUCTIONS = (
     "<progress_updates>\n"
     "The caller waits while you work. Before slow work (a long analysis, a heavy tool run, a "
     "multi-step change), call the `inform_user` tool with one short sentence on what you are "
-    "doing. Use it for milestones only, not for every step. It never replaces the final "
-    "a2a_reply.\n"
+    "doing. Use it for milestones only, not for every step. It never replaces your final "
+    "message.\n"
     "</progress_updates>"
+)
+
+A2A_FAILURE_INSTRUCTIONS = (
+    "<failure>\n"
+    "If you could not do what was asked (access denied, a tool or data you need is missing, the "
+    "request cannot be done as stated), call the `report_failure` tool with one sentence on why, "
+    "then make your final message a report: what you did, what failed and why, and what would "
+    "unblock it. An answer the caller may not like (nothing found, not ready, no) is not a "
+    "failure, and neither is asking the caller a question.\n"
+    "</failure>"
 )
 
 
@@ -236,8 +243,8 @@ RESUME_PROMPT = (
 )
 
 
-def _outcome_status(result: Any) -> tuple[str, str]:
-    """The A2A task state and text of a finished run."""
+def _outcome_status(result: Any, failure: str | None = None) -> tuple[str, str]:
+    """The A2A task state and text of a finished run; `failure` is the agent's `report_failure` reason."""
     if not isinstance(result, RunStatus):
         return "failed", "Invocation failed"
     if result.state == "skipped":
@@ -245,20 +252,20 @@ def _outcome_status(result: Any) -> tuple[str, str]:
     if result.state != "completed":
         return "failed", result.error or "Invocation failed"
     raw_text = result.result.get("text") if isinstance(result.result, dict) else None
-    terminal = extract_terminal(raw_text) if isinstance(raw_text, str) else None
-    if terminal is None and isinstance(raw_text, str) and raw_text.strip():
-        # The model answered without the a2a_reply object (seen on short, literal prompts).
-        return "completed", raw_text.strip()
-    reply = validate_a2a_reply(terminal)
-    if reply is None and not (isinstance(raw_text, str) and raw_text.strip()):
-        # Seen when a model keeps calling tools after the step limit switched them off.
-        reporting = result.result.get("reporting") if isinstance(result.result, dict) else None
-        usage = reporting.get("usage") if isinstance(reporting, dict) else None
-        steps = usage.get("steps") if isinstance(usage, dict) else None
-        return "failed", "The agent ended without an answer" + (f" after {steps} steps." if steps else ".")
-    if reply is None:
-        return "failed", "invalid terminal output"
-    return "completed", reply["text"]
+    text = raw_text.strip() if isinstance(raw_text, str) else ""
+    # Agents prompted for the former a2a_reply object still get its text delivered.
+    reply = validate_a2a_reply(extract_terminal(text)) if text else None
+    if reply is not None:
+        text = reply["text"].strip()
+    if failure is not None:
+        return "failed", text or failure
+    if text:
+        return "completed", text
+    # Seen when a model keeps calling tools after the step limit switched them off.
+    reporting = result.result.get("reporting") if isinstance(result.result, dict) else None
+    usage = reporting.get("usage") if isinstance(reporting, dict) else None
+    steps = usage.get("steps") if isinstance(usage, dict) else None
+    return "failed", "The agent ended without an answer" + (f" after {steps} steps." if steps else ".")
 
 
 class _Pulse:
@@ -398,7 +405,7 @@ class A2AAgentExecutorBridge:
                     await event_queue.enqueue_event(
                         _status_event("working", RESTARTING_RUNNING, task_id, context_id))
                 return
-            state, text = _outcome_status(result)
+            state, text = _outcome_status(result, self._control.failures.get(invocation_id))
             await event_queue.enqueue_event(_status_event(state, text, task_id, context_id))
         except (AdmissionClosedError, AdmissionQueueFullError, AdmissionRateLimitedError,
                 WorkspaceAssemblyUnavailable, TimeoutError) as exc:
@@ -426,6 +433,7 @@ class A2AAgentExecutorBridge:
                 emitters.remove(emit)
                 if not emitters:
                     self._control.progress.pop(invocation_id, None)
+                    self._control.failures.pop(invocation_id, None)
             self._waiter_counts[task_id] -= 1
             if self._waiter_counts[task_id] == 0:
                 self._waiter_counts.pop(task_id, None)

@@ -250,6 +250,12 @@ def _outcome_status(result: Any) -> tuple[str, str]:
         # The model answered without the a2a_reply object (seen on short, literal prompts).
         return "completed", raw_text.strip()
     reply = validate_a2a_reply(terminal)
+    if reply is None and not (isinstance(raw_text, str) and raw_text.strip()):
+        # Seen when a model keeps calling tools after the step limit switched them off.
+        reporting = result.result.get("reporting") if isinstance(result.result, dict) else None
+        usage = reporting.get("usage") if isinstance(reporting, dict) else None
+        steps = usage.get("steps") if isinstance(usage, dict) else None
+        return "failed", "The agent ended without an answer" + (f" after {steps} steps." if steps else ".")
     if reply is None:
         return "failed", "invalid terminal output"
     return "completed", reply["text"]

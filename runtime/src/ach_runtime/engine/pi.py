@@ -12,6 +12,7 @@ import hashlib
 import itertools
 import json
 import logging
+import math
 import os
 import shutil
 import time
@@ -53,10 +54,28 @@ class _PiInvocation:
     stop_reason: str | None = None
     error: str | None = None
     step_limited: bool = False
+    step_warned: bool = False
     cancel_requested: bool = False
     result: str | None = None
     usage: RunUsage | None = None
     stats_before: dict[str, Any] = field(default_factory=dict)
+
+
+def _warn_from(max_steps: int) -> int:
+    """The turn after which the model is told to finish: 90% of the budget, two turns early at least.
+
+    PiG queues a steer during a turn and delivers it one turn later than upstream pi.
+    """
+    return min(max_steps - 2, math.ceil(max_steps * 0.9))
+
+
+def _step_notice(turns: int, max_steps: int) -> str:
+    return (
+        f"[Step limit] You have used {turns} of {max_steps} steps; {max_steps - turns} remain. When none "
+        "remain the run is stopped and nothing is delivered. Finish now: stop investigating, call a tool "
+        "only if the answer cannot do without it, and give your final answer in the required format. If "
+        "it is incomplete, say so plainly: what you verified, what you could not, and what is left to check."
+    )
 
 
 def _usage(before: dict[str, Any], after: dict[str, Any], turns: int) -> RunUsage:
@@ -194,6 +213,9 @@ class _PiSession:
                 state.error = message.get("errorMessage") or state.error
         elif kind == "turn_end":
             state.turns += 1
+            if _warn_from(state.max_steps) <= state.turns < state.max_steps and not state.step_warned:
+                state.step_warned = True
+                self._background(self._steer(_step_notice(state.turns, state.max_steps)))
             if state.turns >= state.max_steps and not state.step_limited:
                 # ponytail: a soft limit that can overshoot by a turn or two; the abort races the turn loop. An exact one needs an extension.
                 state.step_limited = True
@@ -230,6 +252,10 @@ class _PiSession:
         elif kind == "tool_execution_end" and (tool := self._tools.pop(record.get("toolCallId"), None)):
             log_tool(invocation, tool=str(tool[0]), outcome="failed" if record.get("isError") else "success",
                      duration_ms=(now - tool[1]) * 1000)
+
+    async def _steer(self, message: str) -> None:
+        with contextlib.suppress(NativeLaunchFailed, TimeoutError):
+            await self.call({"type": "steer", "message": message})
 
     async def _abort(self, timeout: float = COMMAND_TIMEOUT_SECONDS) -> None:
         with contextlib.suppress(NativeLaunchFailed, TimeoutError):

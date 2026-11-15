@@ -14,7 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   then on, plus a text-only notice at the limit; pi sends it once as a steer, at least two turns
   before the limit. `ackstorm.smart` ignored opencode's own limit notice and kept calling tools,
   so 2 of 20 aws-devops test tickets ended with no answer.
-
 - A2A agents get a `report_failure` tool next to `inform_user`. An agent that could not do
   what was asked calls it and writes a report as its final message; the task ends `failed`
   with that report, so A2A callers (the ACH agent-as-tool bridge reports `IsError`) can tell a
@@ -28,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JSON string. A message that still holds an `a2a_reply` object delivers the object's text.
 - An A2A run that ends with no answer reports "The agent ended without an answer after N
   steps." instead of "invalid terminal output".
+
+### Fixed
+
+- An opencode launch whose required MCP server fails to connect relaunches the engine once
+  instead of waiting out `engine.startupTimeoutSeconds` and failing the run with HTTP 502.
+  opencode never retries a failed server; a server rolling out during the launch (ach-memory on
+  2026-11-14) failed 2 starts since 2026-10-30. A second failure fails the start at once, naming
+  the server.
 
 ## [0.7.11] - 2026-11-14
 

@@ -12,6 +12,7 @@ import asyncio
 import base64
 import contextlib
 import copy
+import functools
 import hashlib
 import json
 import logging
@@ -884,6 +885,10 @@ class _NativeSession:
         return False
 
 
+class _McpServerFailed(NativeLaunchFailed):
+    """A required MCP server failed to connect; opencode does not retry it in this process."""
+
+
 def _expects_native_system(fixture: dict[str, Any]) -> bool:
     """Only `compose: replace` sets the native agent's `system`; `append` pushes the prompt
     through a session `context` hook and no prompt leaves OpenCode's default in place."""
@@ -979,6 +984,10 @@ async def _await_native_readiness(
 
         def _mcp_settled(body: Any) -> bool:
             nonlocal connected_since
+            for entry in body.get("data", []) if isinstance(body, dict) else []:
+                status = entry.get("status") if isinstance(entry, dict) else None
+                if entry.get("name") in required_mcp and isinstance(status, dict) and status.get("status") == "failed":
+                    raise _McpServerFailed(f"MCP server {entry['name']} failed to connect: {status.get('error')}")
             if not _mcp_connected(body):
                 connected_since = None
                 return False
@@ -987,7 +996,11 @@ async def _await_native_readiness(
                 connected_since = now
             return now - connected_since >= NATIVE_MCP_TOOL_SETTLE_SECONDS
 
-        await poll("/api/mcp", ok=_mcp_settled)
+        try:
+            await poll("/api/mcp", ok=_mcp_settled)
+        except _McpServerFailed:
+            await session._kill(confirm_timeout=5.0)
+            raise
 
 
 def _managed_fingerprint(content: dict[str, Any], env: dict[str, str]) -> str:
@@ -1154,7 +1167,8 @@ class OpenCodeEngine:
                 ((invocation.catalog or {}).get("mcp") or invocation.mcp or {}).keys()
             )
             if is_new_process:
-                await _await_native_readiness(
+                ready = functools.partial(
+                    _await_native_readiness,
                     session,
                     wid=wid,
                     managed_agent=invocation.managed_agent,
@@ -1165,6 +1179,13 @@ class OpenCodeEngine:
                     expect_system=_expects_native_system(fixture),
                     deadline=deadline,
                 )
+                try:
+                    await ready()
+                except _McpServerFailed as exc:
+                    # Seen when an MCP backend rolls out during the launch. A new process connects again.
+                    log.warning("opencode session %s: %s; relaunching once", invocation.session_ref, exc)
+                    await session.ensure_started(env=env, config_path=config_path, deadline=deadline)
+                    await ready()
 
             # Before any session exists; the check ran beside the launch and readiness. On failure
             # the fingerprint stays unset, so the next run relaunches and checks again.

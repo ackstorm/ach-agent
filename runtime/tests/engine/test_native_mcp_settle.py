@@ -60,7 +60,8 @@ async def test_mcp_readiness_holds_connected_for_native_tool_reload_window() -> 
 
 
 async def test_mcp_settle_restarts_when_connection_drops() -> None:
-    stub = _ReadinessStub(["connected", "failed", "connected"])
+    # opencode shows a reconnecting server as pending.
+    stub = _ReadinessStub(["connected", "pending", "connected"])
     await _ready(stub, budget=5.0)
     assert len(stub.mcp_at) >= 4
     assert stub.mcp_at[-1] - stub.mcp_at[2] >= opencode.NATIVE_MCP_TOOL_SETTLE_SECONDS - _SKEW
@@ -104,3 +105,13 @@ async def test_missing_system_prompt_still_fails_when_one_is_expected() -> None:
 )
 def test_native_system_is_expected_only_when_replace_sets_it(fixture: dict[str, Any], expected: bool) -> None:
     assert opencode._expects_native_system(fixture) is expected
+
+
+async def test_a_failed_mcp_server_fails_readiness_at_once() -> None:
+    # opencode never retries a server it marked failed, so waiting out the deadline is pointless.
+    stub = _ReadinessStub(["pending", "failed"])
+    started = time.monotonic()
+    with pytest.raises(NativeLaunchFailed, match="MCP server srv failed to connect"):
+        await _ready(stub, budget=5.0)
+    assert time.monotonic() - started < 1.0
+    assert stub.killed

@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- An opencode launch whose required MCP server fails to connect relaunches the engine once
+  instead of waiting out `engine.startupTimeoutSeconds` and failing the run with HTTP 502.
+  opencode never retries a failed server; a server rolling out during the launch (ach-memory on
+  2026-11-14) failed 2 starts since 2026-10-30. A second failure fails the start at once, naming
+  the server.
+
 ## [0.7.11] - 2026-11-14
 
 ### Changed

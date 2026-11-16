@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from ach_runtime.config.schema import ConfigError, parse_config
-from ach_runtime.manifest import ManifestError, load_manifest, manifest_to_wire, secret_env_names
+from ach_runtime.manifest import ManifestError, load_manifest, local_skill_dirs, manifest_to_wire, secret_env_names
 
 MINIMAL = """
 ach: {environment: engineering-prod}
@@ -220,6 +220,29 @@ def test_a_standalone_manifest_carries_its_skills_to_the_wire(tmp_path) -> None:
 def test_skills_need_a_standalone_manifest(tmp_path) -> None:
     with pytest.raises(ManifestError, match="standalone"):
         manifest_to_wire(load_manifest(_write(tmp_path, MINIMAL + SKILLS)), base_dir=tmp_path, name="a")
+
+
+def test_a_dir_skill_stays_out_of_the_wire_with_either_capability(tmp_path) -> None:
+    (tmp_path / "skills" / "deck").mkdir(parents=True)
+    (tmp_path / "skills" / "deck" / "SKILL.md").write_text("---\nname: deck\n---\n")
+    entry = "skills: [{name: deck, type: dir, path: ./skills/deck}]\n"
+    for text, server in ((MINIMAL, "ach"), (STANDALONE, "standalone")):
+        manifest = load_manifest(_write(tmp_path, text + entry))
+        wire = manifest_to_wire(manifest, base_dir=tmp_path, name="a", base_url="https://api.ackstorm.ai")
+        assert wire["capability"][server].get("skills", []) == []
+        assert local_skill_dirs(manifest, tmp_path) == {"deck": tmp_path / "skills" / "deck"}
+
+
+@pytest.mark.parametrize(("entry", "error"), [
+    ("{name: deck, type: dir, path: ./missing}", "no SKILL.md"),
+    ("{name: deck, type: dir, path: ., ref: main}", "nothing else"),
+    ("{name: ../deck, type: dir, path: .}", "lowercase name"),
+    ("{name: deck, type: dir, path: .}, {name: deck, type: dir, path: .}", "twice"),
+])
+def test_a_bad_dir_skill_is_rejected(tmp_path, entry, error) -> None:
+    (tmp_path / "SKILL.md").write_text("---\nname: deck\n---\n")
+    with pytest.raises(ManifestError, match=error):
+        local_skill_dirs(load_manifest(_write(tmp_path, MINIMAL + f"skills: [{entry}]\n")), tmp_path)
 
 
 def test_model_type_is_rejected_in_favour_of_api(tmp_path) -> None:

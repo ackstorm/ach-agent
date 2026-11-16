@@ -3279,3 +3279,17 @@ async def test_openai_prepare_publishes_attachments_and_asks_streams_for_progres
         assert OPENAI_PROGRESS_INSTRUCTIONS not in plain.prompt and plain.inform_user is False
     finally:
         await control.close()
+
+
+def test_local_skills_replace_a_downloaded_skill_of_the_same_name(tmp_path) -> None:
+    from ach_runtime.harness.control import _overlay_skills
+
+    base, root, local = tmp_path / "base", tmp_path / "root", tmp_path / "local"
+    for folder, text in ((base / "skills" / "a", "old a"), (base / "skills" / "b", "b"), (local / "a", "new a")):
+        folder.mkdir(parents=True)
+        (folder / "SKILL.md").write_text(text)
+    (base / "skills" / "a" / "stale.md").write_text("gone")
+    root.mkdir()
+    _overlay_skills(base, root, {"a": local / "a"})
+    assert sorted(p.relative_to(root).as_posix() for p in root.rglob("*.md")) == ["skills/a/SKILL.md", "skills/b/SKILL.md"]
+    assert (root / "skills" / "a" / "SKILL.md").read_text() == "new a"

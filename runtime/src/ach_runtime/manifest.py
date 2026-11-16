@@ -32,6 +32,8 @@ TUI_CHANNEL = "tui"
 TUI_WORKSPACE = "tui"
 TUI_SESSION = "tui"
 TUI_TOKEN_ENV = "ACH_SECRET_TUI"
+LOCAL_SKILL_TYPE = "dir"
+_SKILL_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 
 # ponytail: idle timeouts are a day so the workspace the TUI is attached to is never retired
 # under it; a dev session longer than that restarts `run`.
@@ -138,7 +140,8 @@ class Manifest(BaseModel):
     model: dict[str, Any]
     # Passed through to capability.<server>.mcpServers; with `ach:`, added to the environment's.
     mcp_servers: list[dict[str, Any]] = Field(default_factory=list, alias="mcpServers")
-    # Archives of skills, passed through to capability.standalone.skills; with `ach:` they come from the environment.
+    # Archives of skills, passed through to capability.standalone.skills; with `ach:` they come from the
+    # environment. `type: dir` entries are local folders with either: see `local_skill_dirs`.
     skills: list[dict[str, Any]] = Field(default_factory=list)
     prompt: PromptSpec | None = None
     filter: FilterSpec = Field(default_factory=FilterSpec)
@@ -180,6 +183,29 @@ def secret_env_names(manifest: Manifest) -> list[str]:
                    if isinstance(value, dict) and isinstance(value.get("env"), str)})
 
 
+def _archive_skills(manifest: Manifest) -> list[dict[str, Any]]:
+    return [entry for entry in manifest.skills if entry.get("type") != LOCAL_SKILL_TYPE]
+
+
+def local_skill_dirs(manifest: Manifest, base_dir: Path) -> dict[str, Path]:
+    """The `type: dir` skills: folders beside the manifest, copied into the context on every run.
+    They never reach the wire config or the Agent CR; production gets its skills elsewhere."""
+    found: dict[str, Path] = {}
+    for entry in manifest.skills:
+        if entry.get("type") != LOCAL_SKILL_TYPE:
+            continue
+        name = str(entry.get("name", ""))
+        if set(entry) != {"name", "type", "path"} or not _SKILL_NAME.fullmatch(name):
+            raise ManifestError(f"skills {name!r}: type dir takes a lowercase name and a path, nothing else")
+        if name in found:
+            raise ManifestError(f"skills {name!r}: listed twice")
+        path = (base_dir / str(entry["path"])).resolve()
+        if not (path / "SKILL.md").is_file():
+            raise ManifestError(f"skills {name!r}: no SKILL.md in {path}")
+        found[name] = path
+    return found
+
+
 def load_manifest(path: Path) -> Manifest:
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -215,9 +241,10 @@ def _capability(manifest: Manifest, base_url: str | None) -> dict[str, Any]:
     model = _wire_model(manifest.model)
     if manifest.ach is None:
         return {"server": "standalone", "standalone": {
-            "model": model, "mcpServers": manifest.mcp_servers, "skills": manifest.skills}}
-    if manifest.skills:
-        raise ManifestError("skills needs a standalone manifest; with ach: they come from the environment")
+            "model": model, "mcpServers": manifest.mcp_servers, "skills": _archive_skills(manifest)}}
+    if _archive_skills(manifest):
+        raise ManifestError("skill archives need a standalone manifest; with ach: they come from the environment "
+                            "(type dir works with both)")
     return {
         "server": "ach",
         "ach": {

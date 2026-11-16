@@ -17,7 +17,14 @@ from typing import Any
 import yaml
 
 from ach_runtime.config.schema import ConfigError
-from ach_runtime.manifest import ManifestError, _system_prompt, load_manifest, manifest_to_wire, secret_env_names
+from ach_runtime.manifest import (
+    LOCAL_SKILL_TYPE,
+    ManifestError,
+    _system_prompt,
+    load_manifest,
+    manifest_to_wire,
+    secret_env_names,
+)
 
 API_VERSION = "ach-agent.ackstorm.ai/v1alpha1"
 _DEPLOY_KEYS = {"metadata", "secretName", "spec"}
@@ -105,7 +112,9 @@ def promote(config: Path, deploy: Path, *, name: str) -> str:
             if entry.get("headers"):
                 entry["headers"] = _headers(entry["headers"], secret_name, f"mcpServers.{entry.get('name')}")
         capability["mcpServers"] = servers
-    if server == "standalone" and (skills := written.get("skills")):
+    # `type: dir` skills are local folders: production gets its skills from archives or the environment.
+    skills = [entry for entry in written.get("skills", []) if entry.get("type") != LOCAL_SKILL_TYPE]
+    if server == "standalone" and skills:
         for entry in skills:
             if entry.get("headers"):
                 entry["headers"] = _headers(entry["headers"], secret_name, f"skills.{entry.get('name')}")

@@ -34,7 +34,7 @@ from ach_runtime.harness.local import LocalRoutingTransport, LocalSource
 from ach_runtime.harness.refs import session_ref, workspace_name, workspace_ref
 from ach_runtime.manifest import (
     KEY_ENV, LOCAL_NAMESPACE, TUI_CHANNEL, TUI_SESSION, TUI_TOKEN_ENV, TUI_WORKSPACE, URL_ENV,
-    load_manifest, manifest_to_wire, secret_env_names,
+    load_manifest, local_skill_dirs, manifest_to_wire, secret_env_names,
 )
 
 log = logging.getLogger(__name__)
@@ -121,6 +121,7 @@ async def run_local(
     base_dir = manifest_path.resolve().parent
     name = name or base_dir.name
     wire = manifest_to_wire(manifest, base_dir=base_dir, name=name, base_url=base_url)
+    local_skills = local_skill_dirs(manifest, base_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
     config_path = data_dir / "config.json"
     config_path.write_text(json.dumps(wire), encoding="utf-8")
@@ -151,6 +152,7 @@ async def run_local(
 
         async def assembly(config):
             controls.append(control := await inner(config))
+            control.local_skills = local_skills
             return control
 
         task = asyncio.create_task(run_control(

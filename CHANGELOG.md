@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `agent.yaml` `skills` entries of `type: dir` load a skill folder from disk in `ach-agent run`,
+  with or without `ach:`, for either engine. The folder is copied at the start of every run and
+  replaces a skill of the same name from the environment; `promote` leaves it out of the Agent CR.
 - `ach-agent promote --init` writes a `deploy.yaml` skeleton beside `agent.yaml`: `baseUrl` from the
   manifest's ach-cli profile, an `openai` channel, commented examples of the other channel types, and
   `CHANGE_ME` for each decision left. `promote` refuses a `deploy.yaml` that still holds a `CHANGE_ME`,

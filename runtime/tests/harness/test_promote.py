@@ -133,6 +133,7 @@ skills:
     type: github
     repo: acme/skills
     headers: {Authorization: {env: SKILLS_TOKEN}}
+  - {name: draft, type: dir, path: ./skills/draft}      # local only: never promoted
 """
     deploy = "secretName: agent-x\nspec: {profileRef: {name: default}}\n"
     config, deploy_file = _files(tmp_path, agent=agent, deploy=deploy)

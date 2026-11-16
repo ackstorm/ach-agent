@@ -41,7 +41,10 @@ function capturingContext(fixture, agents = { build: { system: ["native base"], 
       },
     },
     session: {
-      async hook(name, handler) { hooks[name] = handler },
+      async hook(name, handler) {
+        const previous = hooks[name]
+        hooks[name] = previous ? async (e) => { await previous(e); await handler(e) } : handler
+      },
     },
   }
   return ctx
@@ -126,7 +129,9 @@ test("absent or empty prompt text leaves the native base and request untouched",
       await plugin.setup(ctx)
 
       assert.deepEqual(ctx.agents.build.system, ["native base"])
-      assert.equal(ctx.hooks.context, undefined)
+      const event = { agent: "build", sessionID: "s", system: [{ type: "text", text: "native request" }], messages: [] }
+      await ctx.hooks.context(event)
+      assert.deepEqual(event.system, [{ type: "text", text: "native request" }])
     })
   }
 })
@@ -230,4 +235,27 @@ test("absent denyTools adds no extra rules", async () => {
   const ctx = capturingContext(baseFixture())
   await plugin.setup(ctx)
   assert.equal(ctx.agents.build.permissions.some((r) => r.action === "question"), false)
+})
+
+test("the managed agent is told its remaining steps from 90% of the budget", async () => {
+  const ctx = capturingContext(baseFixture({ maxSteps: 10 }))
+  await plugin.setup(ctx)
+  const notices = async (sessionID, agent = "build") => {
+    const event = { agent, sessionID, system: [], messages: [{ role: "user", content: [] }] }
+    await ctx.hooks.context(event)
+    return event.messages.slice(1).map((m) => [m.role, m.content[0].text])
+  }
+
+  await ctx.hooks.prompt({ sessionID: "a" })
+  for (let step = 1; step <= 8; step++) assert.deepEqual(await notices("a"), [])
+  const [[role, warning]] = await notices("a")
+  assert.equal(role, "user")
+  assert.match(warning, /step 9 of 10/)
+  assert.match(warning, /incomplete, say so/)
+  assert.match((await notices("a"))[0][1], /No steps remain/)
+  assert.deepEqual(await notices("b"), [], "steps are counted per session")
+  assert.deepEqual(await notices("a", "other"), [], "other agents are not counted")
+
+  await ctx.hooks.prompt({ sessionID: "a" })
+  assert.deepEqual(await notices("a"), [], "a new prompt starts a new count")
 })

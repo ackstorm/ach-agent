@@ -30,6 +30,7 @@ e2e: e2e-up e2e-run
 
 # What docs/install.md pins to the release: the chart and the three images.
 DOC_VERSIONED := charts/ach-agent --version |ach-agent-(control|execution|operator):
+SEMVER := [0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?
 
 release-check: ## runtime, chart, CHANGELOG and docs/install.md agree on VERSION (default: the runtime version)
 	@v="$(VERSION)"; \
@@ -40,7 +41,7 @@ release-check: ## runtime, chart, CHANGELOG and docs/install.md agree on VERSION
 	[ -n "$$v" ] && [ "$$run_v" = "$$v" ] && [ "$$pkg_v" = "$$v" ] && [ "$$chart_v" = "$$v" ] && [ "$$chart_a" = "$$v" ] || \
 	  { echo "FAIL: versions differ: want $$v, runtime=$$run_v __version__=$$pkg_v chart=$$chart_v appVersion=$$chart_a" >&2; exit 1; }; \
 	grep -Fq "## [$$v]" CHANGELOG.md || { echo "FAIL: CHANGELOG.md has no ## [$$v]" >&2; exit 1; }; \
-	doc_v=$$(grep -Eo '($(DOC_VERSIONED))[0-9]+\.[0-9]+\.[0-9]+' docs/install.md | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+$$' | sort -u | tr '\n' ' '); \
+	doc_v=$$(grep -Eo '($(DOC_VERSIONED))$(SEMVER)' docs/install.md | grep -Eo '$(SEMVER)$$' | sort -u | tr '\n' ' '); \
 	[ "$$doc_v" = "$$v " ] || { echo "FAIL: docs/install.md cites $$doc_v, want $$v" >&2; exit 1; }; \
 	echo "release-check ok: $$v"
 
@@ -49,7 +50,7 @@ release-bump: ## set runtime and chart versions and add a CHANGELOG heading (VER
 	sed -i -E 's/^version = ".*"/version = "$(VERSION)"/' runtime/pyproject.toml
 	sed -i -E 's/^__version__ = ".*"/__version__ = "$(VERSION)"/' runtime/src/ach_runtime/__init__.py
 	sed -i -E 's/^version: .*/version: $(VERSION)/; s/^appVersion: .*/appVersion: "$(VERSION)"/' chart/Chart.yaml
-	sed -i -E 's#($(DOC_VERSIONED))[0-9]+\.[0-9]+\.[0-9]+#\1$(VERSION)#g' docs/install.md
+	sed -i -E 's#($(DOC_VERSIONED))$(SEMVER)#\1$(VERSION)#g' docs/install.md
 	grep -Fq "## [$(VERSION)]" CHANGELOG.md || \
 	  sed -i -E '0,/^## \[/s//## [$(VERSION)] - '"$$(date +%F)"'\n\n&/' CHANGELOG.md
 	@echo "Bumped to $(VERSION). Edit CHANGELOG.md, then commit chore(release): v$(VERSION) on main."

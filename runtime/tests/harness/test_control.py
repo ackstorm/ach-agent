@@ -535,7 +535,7 @@ async def test_one_restore_per_activation_and_none_from_reconnect(monkeypatch) -
 
 
 async def test_a2a_prepare_adds_legacy_directive_only_to_a2a_prompt() -> None:
-    from ach_runtime.channels.a2a import A2A_OUTPUT_INSTRUCTIONS, A2A_PROGRESS_INSTRUCTIONS
+    from ach_runtime.channels.a2a import A2A_FAILURE_INSTRUCTIONS, A2A_OUTPUT_INSTRUCTIONS, A2A_PROGRESS_INSTRUCTIONS
 
     config = _a2a_config()
 
@@ -572,7 +572,7 @@ async def test_a2a_prepare_adds_legacy_directive_only_to_a2a_prompt() -> None:
         request = await control.prepare(ticket, endpoint)
         assert request.prompt == (
             "hello\n\n## Memory\n\nUnavailable (no endpoint).\n\n"
-            + A2A_PROGRESS_INSTRUCTIONS + "\n\n" + A2A_OUTPUT_INSTRUCTIONS
+            + A2A_PROGRESS_INSTRUCTIONS + "\n\n" + A2A_FAILURE_INSTRUCTIONS + "\n\n" + A2A_OUTPUT_INSTRUCTIONS
         )
         assert request.inform_user is True
     finally:
@@ -1899,7 +1899,7 @@ async def test_real_admission_delivery_acks_admission_and_holds_workspace_permit
 async def test_mounted_a2a_uses_real_admission_delivery_and_retained_get_task(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, terminal_state: str, terminal_text: str,
 ) -> None:
-    from ach_runtime.channels.a2a import A2A_OUTPUT_INSTRUCTIONS, A2A_PROGRESS_INSTRUCTIONS
+    from ach_runtime.channels.a2a import A2A_FAILURE_INSTRUCTIONS, A2A_OUTPUT_INSTRUCTIONS, A2A_PROGRESS_INSTRUCTIONS
     from ach_runtime.harness.app import create_app
 
     config = _a2a_config()
@@ -1995,7 +1995,7 @@ async def test_mounted_a2a_uses_real_admission_delivery_and_retained_get_task(
         assert len(start_requests) == 1
         assert start_requests[0]["prompt"] == (
             "hello to native\n\n## Memory\n\nUnavailable (no endpoint).\n\n"
-            + A2A_PROGRESS_INSTRUCTIONS + "\n\n" + A2A_OUTPUT_INSTRUCTIONS
+            + A2A_PROGRESS_INSTRUCTIONS + "\n\n" + A2A_FAILURE_INSTRUCTIONS + "\n\n" + A2A_OUTPUT_INSTRUCTIONS
         )
         expected_state = "TASK_STATE_COMPLETED" if terminal_state == "completed" else "TASK_STATE_FAILED"
         saved_task = None

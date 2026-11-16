@@ -418,6 +418,7 @@ async def _stream(
             emitters.remove(emit)
         if not emitters:
             control.progress.pop(ticket.invocation_id, None)
+            control.failures.pop(ticket.invocation_id, None)
 
 
 def build_openai_app(

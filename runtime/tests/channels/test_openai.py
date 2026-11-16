@@ -245,7 +245,7 @@ def _client(runner, *, files: bool = True, persistence: str = "none", storage=No
             capability=SimpleNamespace(filter=SimpleNamespace(exclude=SimpleNamespace(tools=[]))),
             workspace=SimpleNamespace(persistence=SimpleNamespace(type=persistence), session_retention_days=30),
         ),
-        admission=None, progress={}, storage=storage if storage is not None else (object() if files else None),
+        admission=None, progress={}, failures={}, storage=storage if storage is not None else (object() if files else None),
         artifact_facade=object() if files else None,
         manager=SimpleNamespace(active_endpoints=lambda: dict(endpoints)), endpoints=endpoints,
         session_status=200, session_lookups=[],

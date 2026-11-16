@@ -42,10 +42,10 @@ async def test_inform_user_forwards_message_with_token_and_session() -> None:
         return listening
 
     token = facade_token(KEY, "owned-ws")
-    app = ProgressFacade(key=KEY, owned_workspace=_owned, inform=inform).app()
+    app = ProgressFacade(key=KEY, owned_workspace=_owned, inform=inform, report_failure=inform).app()
     async with app.router.lifespan_context(app), _session(app, token) as session:
         tools = (await session.list_tools()).tools
-        assert [tool.name for tool in tools] == ["inform_user"]
+        assert [tool.name for tool in tools] == ["inform_user", "report_failure"]
         assert set(tools[0].inputSchema["properties"]) == {"message"}
 
         result = await session.call_tool("inform_user", {"message": "Reading the repo"})
@@ -63,7 +63,7 @@ async def test_inform_user_rejects_a_foreign_workspace_token() -> None:
     async def inform(token: str, invocation_id: str, message: str) -> bool:
         raise AssertionError("must not be reached")
 
-    app = ProgressFacade(key=KEY, owned_workspace=_owned, inform=inform).app()
+    app = ProgressFacade(key=KEY, owned_workspace=_owned, inform=inform, report_failure=inform).app()
     async with app.router.lifespan_context(app), httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url=BASE,
         headers={FACADE_TOKEN_HEADER: facade_token(KEY, "other-ws")},
@@ -77,8 +77,27 @@ async def test_inform_user_description_carries_the_update_rules() -> None:
     async def inform(token: str, invocation_id: str, message: str) -> bool:
         return True
 
-    app = ProgressFacade(key=KEY, owned_workspace=_owned, inform=inform).app()
+    app = ProgressFacade(key=KEY, owned_workspace=_owned, inform=inform, report_failure=inform).app()
     async with app.router.lifespan_context(app), _session(app, facade_token(KEY, "owned-ws")) as session:
         description = (await session.list_tools()).tools[0].description
     for rule in ("never the tool", "language of the user's request", "30 seconds"):
         assert rule in description
+
+
+@pytest.mark.asyncio
+async def test_report_failure_forwards_reason_with_token_and_session() -> None:
+    calls: list[tuple[str, str, str]] = []
+
+    async def report(token: str, session_ref: str, reason: str) -> bool:
+        calls.append((token, session_ref, reason))
+        return True
+
+    async def inform(*_: str) -> bool:
+        return True
+
+    token = facade_token(KEY, "owned-ws")
+    app = ProgressFacade(key=KEY, owned_workspace=_owned, inform=inform, report_failure=report).app()
+    async with app.router.lifespan_context(app), _session(app, token) as session:
+        result = await session.call_tool("report_failure", {"reason": "Access denied to the account"})
+        assert not result.isError
+        assert calls == [(token, "session-1", "Access denied to the account")]

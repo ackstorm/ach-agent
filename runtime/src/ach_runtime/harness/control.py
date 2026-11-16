@@ -253,6 +253,8 @@ class Control:
     _hook_endpoints: dict[str, WorkspaceEndpoint] = field(default_factory=dict, repr=False)
     # A2A event emitters per running invocation, registered by the A2A bridge while it waits.
     progress: dict[str, list[Callable[[str], Awaitable[None]]]] = field(default_factory=dict, repr=False)
+    # `report_failure` reasons per running invocation; removed with the invocation's progress emitters.
+    failures: dict[str, str] = field(default_factory=dict, repr=False)
     # Invocations an A2A caller cancelled: a queued one never starts, a running one is cancelled
     # in its Workspace like a run past its deadline.
     cancel_requested: set[str] = field(default_factory=set, repr=False)
@@ -332,16 +334,31 @@ class Control:
             owned_workspace=self._owned_live,
         )
 
-    async def inform_user(self, token: str, session_ref: str, message: str) -> bool:
-        """Send `message` to the callers (A2A or OpenAI stream) waiting on the run in
-        `session_ref`, if the run belongs to the token's Workspace. False when nobody is listening."""
+    async def _facade_run(self, token: str, session_ref: str) -> str | None:
+        """The invocation running in `session_ref`, if it belongs to the token's Workspace."""
         claim = await authenticate_facade(self.key, token, owned_workspace=self._owned_live)
         invocation_id = self._session_run(session_ref)
         prepared = self._prepared.get(invocation_id)
         if prepared is None:
-            return False
+            return None
         if prepared[0].name != claim:
             raise WorkspaceAuthenticationFailed(claim)
+        return invocation_id
+
+    async def report_failure(self, token: str, session_ref: str, reason: str) -> bool:
+        """Record that the run in `session_ref` failed its task; its A2A caller sees `failed`."""
+        invocation_id = await self._facade_run(token, session_ref)
+        if invocation_id is None:
+            return False
+        self.failures[invocation_id] = reason
+        return True
+
+    async def inform_user(self, token: str, session_ref: str, message: str) -> bool:
+        """Send `message` to the callers (A2A or OpenAI stream) waiting on the run in
+        `session_ref`, if the run belongs to the token's Workspace. False when nobody is listening."""
+        invocation_id = await self._facade_run(token, session_ref)
+        if invocation_id is None:
+            return False
         emitters = tuple(self.progress.get(invocation_id, ()))
         for emit in emitters:
             await emit(message)
@@ -591,10 +608,14 @@ class Control:
             )
             prompt = f"{prompt}\n\n{memory_section}"
         if channel.type == "a2a":
-            from ach_runtime.channels.a2a import A2A_OUTPUT_INSTRUCTIONS, A2A_PROGRESS_INSTRUCTIONS
+            from ach_runtime.channels.a2a import (
+                A2A_FAILURE_INSTRUCTIONS,
+                A2A_OUTPUT_INSTRUCTIONS,
+                A2A_PROGRESS_INSTRUCTIONS,
+            )
 
             if self.progress_facade is not None:
-                prompt = f"{prompt}\n\n{A2A_PROGRESS_INSTRUCTIONS}"
+                prompt = f"{prompt}\n\n{A2A_PROGRESS_INSTRUCTIONS}\n\n{A2A_FAILURE_INSTRUCTIONS}"
             prompt = f"{prompt}\n\n{A2A_OUTPUT_INSTRUCTIONS}"
         streamed = channel.type == "openai" and event.context.get("openai", {}).get("stream") is True
         inform_user = self.progress_facade is not None and (channel.type == "a2a" or streamed)
@@ -1195,6 +1216,7 @@ async def assemble(
     control.artifact_facade = None
     control.progress_facade = None
     control.progress = {}
+    control.failures = {}
     control.finished_runs = {}
     control.cancel_requested = set()
     control.facade_transport = facade_transport
@@ -1272,6 +1294,7 @@ async def assemble(
             and INFORM_USER_TOOL not in config.capability.filter.exclude.tools):
         control.progress_facade = ProgressFacade(
             key=key, owned_workspace=control._owned_live, inform=control.inform_user,
+            report_failure=control.report_failure,
         )
     metadata = catalog.model.metadata
     control._priced = metadata is not None and metadata.input_cost_per_token is not None

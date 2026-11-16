@@ -425,6 +425,56 @@ channels:
 - `routing.sessionKey` is not allowed. `routing.workspaceKey: session` gives every conversation its
   own sandbox.
 
+### Waiting for a long job
+
+An agent that polls a job with `sleep` in the shell makes a model call per poll, carries every poll in its
+context and holds an invocation slot for the whole wait; `maxInvocationSeconds` and `maxSteps` bound it.
+With opencode, `engine.denyTools: [shell]` takes the shell away. Two patterns end the run instead and
+start a new one when the job is done.
+
+The job calls back. When the job can POST on completion, give the agent a generic webhook channel whose
+session comes from the payload, and have the agent pass the job that URL and its session key when it
+starts the job:
+
+```yaml
+channels:
+  - name: job-done
+    type: webhook
+    source: generic
+    routing: {sessionKey: "{{ payload.session }}"}
+    prompt: "The job finished: {{ payload | json }}"
+    webhook:
+      auth: {type: header_token, header: X-Token, secretRef: {name: job-done, key: token}}
+```
+
+The callback continues the session that started the job only if both runs use the same workspace and
+session key (`routing.workspaceKey` and `routing.sessionKey` on both channels), and only while the
+session is open (`workspace.session.idleTimeoutSeconds`) or, with `persistence: s3` or `volume`, saved.
+
+A cron tick checks. A `cron` channel plus a `hooks.sessionStart` script that checks the job: exit 78 skips
+the tick with no model call, exit 0 runs the agent with the script's stdout appended to the prompt. Every
+cron tick is a new session, so the hook runs on each one. Hooks are per Agent, so the script must exit 0
+for the other channels (`$ACH_CHANNEL` names the channel). It runs in the sandbox with no Secret
+(`engine.forwardEnv` takes literal values only), so it fits a status the job publishes without a
+credential, and it reaches the job's host only through a network rule in
+`spec.sandbox.openshell.policy`. With `delivery` on the cron channel, a skipped tick is POSTed with
+`state: skipped`.
+
+```yaml
+channels:
+  - name: job-check
+    type: cron
+    cron: {schedule: "*/2 * * * *"}
+    prompt: "Write the report for the finished job."
+hooks:
+  sessionStart:
+    script: |
+      [ "$ACH_CHANNEL" = job-check ] || exit 0
+      status=$(wget -qO- https://jobs.example.com/v1/latest)
+      echo "$status" | grep -q '"state": *"done"' || exit 78
+      echo "$status"
+```
+
 ## 7. An ACH Agent
 
 With `capabilityServer: ach` the Agent takes its model, MCP servers and context from an ACH Environment,

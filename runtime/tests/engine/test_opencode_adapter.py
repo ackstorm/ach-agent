@@ -8,8 +8,10 @@ cases, not fast-failure-by-accident. Not a re-run of Task 1's 121-case audit."""
 from __future__ import annotations
 
 import asyncio
+import http.server
 import json
 import logging
+import threading
 from pathlib import Path
 
 import pytest
@@ -134,6 +136,65 @@ async def test_readiness_waits_for_connected_mcp_before_first_prompt(
         assert receipt.native_session_id
         outcome = await asyncio.wait_for(engine.wait_settled("native-mcp-1"), timeout=15.0)
         assert outcome == "completed"
+
+
+class _FlakyMcp(http.server.BaseHTTPRequestHandler):
+    """An MCP server whose first tools/list fails, like a backend that goes away mid-rollout."""
+
+    tools_lists = 0
+
+    def log_message(self, *_: object) -> None:
+        pass
+
+    def do_DELETE(self) -> None:
+        self.send_response(200)
+        self.end_headers()
+
+    def do_GET(self) -> None:
+        self.send_response(405)
+        self.end_headers()
+
+    def do_POST(self) -> None:
+        rpc = json.loads(self.rfile.read(int(self.headers["content-length"])))
+        if "id" not in rpc:
+            self.send_response(202)
+            self.end_headers()
+            return
+        reply: dict = {"jsonrpc": "2.0", "id": rpc["id"]}
+        if rpc["method"] == "initialize":
+            reply["result"] = {"protocolVersion": rpc["params"]["protocolVersion"], "capabilities": {"tools": {}},
+                               "serverInfo": {"name": "flaky", "version": "0"}}
+        elif rpc["method"] == "tools/list":
+            type(self).tools_lists += 1
+            if type(self).tools_lists == 1:
+                reply["error"] = {"code": -32603, "message": "upstream went away"}
+            else:
+                reply["result"] = {"tools": [{"name": "echo", "inputSchema": {"type": "object"}}]}
+        else:
+            reply["result"] = {}
+        body = json.dumps(reply).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+async def test_a_failed_mcp_server_relaunches_the_engine_once(tmp_path: Path, public, engine) -> None:
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _FlakyMcp)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        async with fake_facades("text") as fakes:
+            invocation = _invocation(
+                public, tmp_path, invocation_id="flaky-mcp-1", session_ref="flaky-mcp-session",
+                model_url=fakes.model_url,
+                mcp={"flaky": {"url": f"http://127.0.0.1:{server.server_port}/", "headers": {}}},
+            )
+            await engine.start(invocation, home=tmp_path / "home", scratch=tmp_path / "scratch")
+            assert await asyncio.wait_for(engine.wait_settled("flaky-mcp-1"), timeout=15.0) == "completed"
+    finally:
+        server.shutdown()
+    assert _FlakyMcp.tools_lists == 2
 
 
 async def test_every_engine_request_carries_the_facade_token_header(

@@ -14,11 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   then on, plus a text-only notice at the limit; pi sends it once as a steer, at least two turns
   before the limit. `ackstorm.smart` ignored opencode's own limit notice and kept calling tools,
   so 2 of 20 aws-devops test tickets ended with no answer.
-
 - A2A agents get a `report_failure` tool next to `inform_user`. An agent that could not do
-  what was asked calls it and writes a report as its final message; the task ends `failed`
-  with that report, so A2A callers (the ACH agent-as-tool bridge reports `IsError`) can tell a
-  failed mission from an answer.
+  what was asked, or refused an action its rules forbid, calls it and writes a report as its
+  final message; the task ends `failed` with that report, so A2A callers (the ACH agent-as-tool
+  bridge reports `IsError`) can tell a failed mission from an answer.
 
 ### Changed
 

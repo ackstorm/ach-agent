@@ -648,6 +648,27 @@ def test_a_reply_without_the_a2a_object_is_delivered_as_text(monkeypatch) -> Non
     asyncio.run(control.admission.close())
 
 
+def test_a_run_with_no_answer_says_so_with_its_steps(monkeypatch) -> None:
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+    config = _channel()
+
+    async def runner(routed, ticket):
+        ticket.mark_started()
+        return RunStatus(
+            invocationId=ticket.invocation_id, channel=routed.channel,
+            workspaceRef=ticket.workspace_ref, sessionRef=ticket.session_ref, runId="run-1",
+            configVersion="a" * 64, deadlineAt=ticket.deadline_at, state="completed",
+            result={"reporting": {"duration_ms": 1.0, "usage": {"steps": 100}}},
+        )
+
+    control = _control(config, runner)
+    queue = _Queue()
+    asyncio.run(A2AAgentExecutorBridge(control, config).execute(_Context("no-answer"), queue))
+    assert queue.events[-1].status.state == 4
+    assert queue.events[-1].status.message.parts[0].text == "The agent ended without an answer after 100 steps."
+    asyncio.run(control.admission.close())
+
+
 def test_failed_native_status_preserves_the_provider_error(monkeypatch) -> None:
     monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
     config = _channel()

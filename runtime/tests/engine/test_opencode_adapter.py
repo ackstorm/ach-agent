@@ -311,6 +311,32 @@ async def test_each_step_and_tool_call_is_logged_with_its_invocation(
     assert tool.duration_ms >= 0
 
 
+async def test_the_model_is_told_its_remaining_steps_before_the_limit(tmp_path: Path, public, engine) -> None:
+    # The fake model calls a tool on every request; with 4 steps, step 3 warns and step 4 is the last.
+    model = public.model.model_copy(update={"type": "openai", "params": {}})
+    limits = public.limits.model_copy(update={"max_steps": 4})
+    openai_public = public.model_copy(update={"model": model, "limits": limits})
+    async with fake_facades("tool-loop") as fakes:
+        invocation = _invocation(
+            openai_public, tmp_path, invocation_id="limit-1", session_ref="limit-session-1", model_url=fakes.model_url
+        )
+        await engine.start(invocation, home=tmp_path / "home", scratch=tmp_path / "scratch")
+        await asyncio.wait_for(engine.wait_settled("limit-1"), timeout=30.0)
+        capture = await fakes.control({"command": "capture"})
+
+    def last_user_text(record: dict) -> str:
+        users = [m for m in record["body"].get("messages", []) if m.get("role") == "user"]
+        content = users[-1]["content"] if users else ""
+        return content if isinstance(content, str) else " ".join(p.get("text", "") for p in content)
+
+    # Agent steps carry the tool list; the title request does not.
+    steps = [last_user_text(r) for r in capture["records"] if r["body"].get("tools")]
+    assert len(steps) == 4
+    assert not any("[Step limit]" in text for text in steps[:2])
+    assert "step 3 of 4" in steps[2]
+    assert "No steps remain" in steps[3]
+
+
 async def test_model_and_mcp_requests_carry_the_session_baggage(tmp_path: Path, public, engine) -> None:
     async with fake_facades("text") as fakes:
         invocation = _invocation(

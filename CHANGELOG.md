@@ -12,6 +12,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `agent.yaml` `skills` entries of `type: dir` load a skill folder from disk in `ach-agent run`,
   with or without `ach:`, for either engine. The folder is copied at the start of every run and
   replaces a skill of the same name from the environment; `promote` leaves it out of the Agent CR.
+- `ach-agent promote --init` writes a `deploy.yaml` skeleton beside `agent.yaml`: `baseUrl` from the
+  manifest's ach-cli profile, an `openai` channel, commented examples of the other channel types, and
+  `CHANGE_ME` for each decision left. `promote` refuses a `deploy.yaml` that still holds a `CHANGE_ME`,
+  and a missing `deploy.yaml` names `--init`.
+
+## [0.8.0] - 2026-11-16
+
+### Added
+
+- From 90% of `limits.maxSteps`, the model is told how many steps remain and to give its final
+  answer now, saying plainly what is incomplete. opencode adds the notice to every request from
+  then on, plus a text-only notice at the limit; pi sends it once as a steer, at least two turns
+  before the limit. `ackstorm.smart` ignored opencode's own limit notice and kept calling tools,
+  so 2 of 20 aws-devops test tickets ended with no answer.
+- A2A agents get a `report_failure` tool next to `inform_user`. An agent that could not do
+  what was asked, or refused an action its rules forbid, calls it and writes a report as its
+  final message; the task ends `failed` with that report, so A2A callers (the ACH agent-as-tool
+  bridge reports `IsError`) can tell a failed mission from an answer.
+
+### Changed
+
+- A2A replies are plain text: the agent's final message is delivered as written, with no
+  `{"action":"a2a_reply",...}` object. Models wrote the answer outside the object and sent a
+  one-line summary (5 of 16 aws-devops answers lost up to 6.5 KB), and long markdown broke the
+  JSON string. A message that still holds an `a2a_reply` object delivers the object's text.
+- An A2A run that ends with no answer reports "The agent ended without an answer after N
+  steps." instead of "invalid terminal output".
+
+### Fixed
+
+- An opencode launch whose required MCP server fails to connect relaunches the engine once
+  instead of waiting out `engine.startupTimeoutSeconds` and failing the run with HTTP 502.
+  opencode never retries a failed server; a server rolling out during the launch (ach-memory on
+  2026-11-14) failed 2 starts since 2026-10-30. A second failure fails the start at once, naming
+  the server.
 
 ## [0.7.11] - 2026-11-14
 

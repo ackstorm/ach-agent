@@ -38,7 +38,10 @@ def _parser() -> argparse.ArgumentParser:
     inspect.add_argument("--config", type=Path, required=True, help="the agent.yaml manifest")
     promote = commands.add_parser("promote", help="print the Agent CR for an agent.yaml and its deploy.yaml")
     promote.add_argument("--config", type=Path, required=True, help="the agent.yaml manifest")
-    promote.add_argument("--deploy", type=Path, required=True, help="the deploy.yaml file")
+    mode = promote.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--deploy", type=Path, help="the deploy.yaml file")
+    mode.add_argument("--init", action="store_true", help="print a deploy.yaml skeleton instead")
+    promote.add_argument("--base-url", default=None, help="with --init: ACH's base URL")
     promote.add_argument("--name", default=None, help="agent name (default: the manifest's directory name)")
     return parser
 
@@ -94,10 +97,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(name)
     elif args.command == "promote":
         from ach_runtime.manifest import ManifestError
-        from ach_runtime.promote import PromoteError, promote
+        from ach_runtime.promote import PromoteError, deploy_skeleton, promote
 
         try:
-            sys.stdout.write(promote(args.config, args.deploy, name=args.name or args.config.resolve().parent.name))
+            if args.init:
+                sys.stdout.write(deploy_skeleton(args.config, base_url=args.base_url))
+            else:
+                sys.stdout.write(promote(args.config, args.deploy, name=args.name or args.config.resolve().parent.name))
         except (ManifestError, PromoteError) as exc:
             print(f"ach-agent: {exc}", file=sys.stderr)
             return 1

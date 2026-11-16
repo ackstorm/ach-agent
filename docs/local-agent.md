@@ -55,8 +55,12 @@ needed. The request reaches the agent as a webhook message, not through an A2A c
 
 ## Promote
 
-`ach-agent promote` prints the Agent CR for `agent.yaml` and `deploy.yaml` (beside it, or `--deploy <file>`).
-`deploy.yaml` holds what only production has:
+`ach-agent promote` prints the Agent CR for `agent.yaml` and `deploy.yaml` (beside it, or `--deploy <file>`),
+so `ach-agent promote | kubectl apply -f -` deploys it. `deploy.yaml` holds what only production has: the
+namespace, the identity the agent runs as, its channels and the Secrets they read. `ach-agent promote --init`
+writes a first one: `baseUrl` from the manifest's ach-cli profile, an `openai` channel, commented examples of
+the other channel types, and `CHANGE_ME` for each decision left; `promote` refuses the file until none is left.
+A full one:
 
 ```yaml
 metadata: {namespace: achagents}       # metadata.name defaults to the agent's directory name
@@ -204,9 +208,9 @@ an error at start.
 wins over the limits ACH reports for the model; set it only when the model's real window differs.
 
 `engine.denyTools` hides native engine tools from the model. With opencode a name is a permission action:
-`read`, `edit`, `glob`, `grep`, `shell`, `webfetch`, `websearch`, `question`, `skill`, `subagent`, `browser`
+`read`, `edit`, `glob`, `grep`, `shell`, `webfetch`, `websearch`, `question`, `skill`, `browser`
 (`opencode debug agents` prints the ones in use). The shell is `shell`: `bash` matches nothing there, and
-opencode names are not checked. With pi the names are `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`,
+opencode names are not checked. Subagents are always denied with opencode, and pi has none. With pi the names are `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`,
 `codemode`, `tool_search`; a name that is not a pi tool is an error at start. It is not a
 boundary: `bash` reaches what a denied tool would. With opencode, `execute` (Code Mode) is always denied, so
 MCP tools are called directly.

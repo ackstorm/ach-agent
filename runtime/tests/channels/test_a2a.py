@@ -65,7 +65,7 @@ def _admission(runner) -> Admission:
 
 
 def _control(config, runner) -> SimpleNamespace:
-    return SimpleNamespace(config=SimpleNamespace(channels=[config], agent=SimpleNamespace(name="test-agent"), identity_environment="test-env"), admission=_admission(runner), _stopping=False, progress={}, storage=None, cancel_requested=set())
+    return SimpleNamespace(config=SimpleNamespace(channels=[config], agent=SimpleNamespace(name="test-agent"), identity_environment="test-env"), admission=_admission(runner), _stopping=False, progress={}, failures={}, storage=None, cancel_requested=set())
 
 
 def _completed(ticket, text: str = "answer") -> RunStatus:
@@ -603,8 +603,6 @@ def test_channel_secret_is_resolved_again_for_each_request(monkeypatch) -> None:
         ("cancelled", {"text": '{"action":"a2a_reply","text":"no"}'}),
         ("unknown", {"text": '{"action":"a2a_reply","text":"no"}'}),
         ("completed", None),
-        ("completed", {"text": '{"action":"other","text":"no"}'}),
-        ("completed", {"text": '{"action":"a2a_reply","text":"  "}'}),
     ],
 )
 def test_noncompleted_or_invalid_native_result_fails(state, result, monkeypatch) -> None:
@@ -645,6 +643,81 @@ def test_a_reply_without_the_a2a_object_is_delivered_as_text(monkeypatch) -> Non
     asyncio.run(A2AAgentExecutorBridge(control, config).execute(_Context("plain-text"), queue))
     assert queue.events[-1].status.state == 3
     assert queue.events[-1].status.message.parts[0].text == "ok"
+    asyncio.run(control.admission.close())
+
+
+def test_a_run_with_no_answer_says_so_with_its_steps(monkeypatch) -> None:
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+    config = _channel()
+
+    async def runner(routed, ticket):
+        ticket.mark_started()
+        return RunStatus(
+            invocationId=ticket.invocation_id, channel=routed.channel,
+            workspaceRef=ticket.workspace_ref, sessionRef=ticket.session_ref, runId="run-1",
+            configVersion="a" * 64, deadlineAt=ticket.deadline_at, state="completed",
+            result={"reporting": {"duration_ms": 1.0, "usage": {"steps": 100}}},
+        )
+
+    control = _control(config, runner)
+    queue = _Queue()
+    asyncio.run(A2AAgentExecutorBridge(control, config).execute(_Context("no-answer"), queue))
+    assert queue.events[-1].status.state == 4
+    assert queue.events[-1].status.message.parts[0].text == "The agent ended without an answer after 100 steps."
+    asyncio.run(control.admission.close())
+
+
+@pytest.mark.parametrize(
+    "raw,delivered",
+    [
+        ("## Report\n\nAll *good*.\n", "## Report\n\nAll *good*."),
+        ('{"action":"other","text":"no"}', '{"action":"other","text":"no"}'),
+        ('Details\n{"action":"a2a_reply","text":"from the object"}', "from the object"),
+    ],
+)
+def test_the_final_message_is_delivered_as_written(raw, delivered, monkeypatch) -> None:
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+    config = _channel()
+
+    async def runner(routed, ticket):
+        ticket.mark_started()
+        return RunStatus(
+            invocationId=ticket.invocation_id, channel=routed.channel,
+            workspaceRef=ticket.workspace_ref, sessionRef=ticket.session_ref, runId="run-1",
+            configVersion="a" * 64, deadlineAt=ticket.deadline_at, state="completed",
+            result={"text": raw},
+        )
+
+    control = _control(config, runner)
+    queue = _Queue()
+    asyncio.run(A2AAgentExecutorBridge(control, config).execute(_Context(f"as-written-{raw}"), queue))
+    assert queue.events[-1].status.state == 3
+    assert queue.events[-1].status.message.parts[0].text == delivered
+    asyncio.run(control.admission.close())
+
+
+@pytest.mark.parametrize("raw,delivered", [("## What failed\nAccess denied.", "## What failed\nAccess denied."), ("", "no access")])
+def test_a_reported_failure_fails_the_task_with_the_report(raw, delivered, monkeypatch) -> None:
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+    config = _channel()
+    control = None
+
+    async def runner(routed, ticket):
+        ticket.mark_started()
+        control.failures[ticket.invocation_id] = "no access"
+        return RunStatus(
+            invocationId=ticket.invocation_id, channel=routed.channel,
+            workspaceRef=ticket.workspace_ref, sessionRef=ticket.session_ref, runId="run-1",
+            configVersion="a" * 64, deadlineAt=ticket.deadline_at, state="completed",
+            result={"text": raw},
+        )
+
+    control = _control(config, runner)
+    queue = _Queue()
+    asyncio.run(A2AAgentExecutorBridge(control, config).execute(_Context(f"reported-{raw}"), queue))
+    assert queue.events[-1].status.state == 4
+    assert queue.events[-1].status.message.parts[0].text == delivered
+    assert control.failures == {}
     asyncio.run(control.admission.close())
 
 

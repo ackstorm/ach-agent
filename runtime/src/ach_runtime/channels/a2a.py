@@ -53,8 +53,8 @@ A2A_PROGRESS_INSTRUCTIONS = (
 
 A2A_FAILURE_INSTRUCTIONS = (
     "<failure>\n"
-    "If you could not do what was asked (access denied, a tool or data you need is missing, the "
-    "request cannot be done as stated), call the `report_failure` tool with one sentence on why, "
+    "If you could not do what was asked (access denied, a tool or data you need is missing, an "
+    "action your rules forbid, the request cannot be done as stated), call the `report_failure` tool with one sentence on why, "
     "then make your final message a report: what you did, what failed and why, and what would "
     "unblock it. An answer the caller may not like (nothing found, not ready, no) is not a "
     "failure, and neither is asking the caller a question.\n"

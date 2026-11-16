@@ -3,7 +3,7 @@ import pytest
 import yaml
 
 from ach_runtime.__main__ import main
-from ach_runtime.promote import PromoteError, promote
+from ach_runtime.promote import PromoteError, deploy_skeleton, promote
 
 AGENT = """\
 ach: {profile: dev, environment: agent-finops}
@@ -194,3 +194,30 @@ def test_cli_promote_reports_errors_on_stderr(tmp_path, capsys) -> None:
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "enviroment" in captured.err
+
+
+def test_deploy_skeleton_promotes_once_its_placeholders_are_filled(tmp_path) -> None:
+    config, deploy = _files(tmp_path)
+    skeleton = deploy_skeleton(config, base_url="https://hub.example")
+    deploy.write_text(skeleton)
+    with pytest.raises(PromoteError, match="replace every CHANGE_ME"):
+        promote(config, deploy, name="finops")
+    deploy.write_text(skeleton.replace("CHANGE_ME", "filled"))
+    cr = yaml.safe_load(promote(config, deploy, name="finops"))
+    assert cr["metadata"] == {"name": "finops", "namespace": "ach-agent"}
+    assert cr["spec"]["ach"]["baseUrl"] == "https://hub.example"
+    assert cr["spec"]["ach"]["keyFrom"] == {"tokenExchange": {"identity": "filled"}}
+    assert cr["spec"]["ach"]["mcpServers"][0]["headers"]["Authorization"]["secretKeyRef"]["name"] == "filled"
+    assert cr["spec"]["channels"] == [{"name": "chat", "type": "openai", "openai": {"auth": {"secretRef": {"name": "filled", "key": "token"}}}}]
+
+
+def test_deploy_skeleton_omits_what_the_manifest_does_not_need(tmp_path) -> None:
+    config, _ = _files(tmp_path, agent="model: {name: m, baseUrl: https://m.example/v1}\n")
+    raw = yaml.safe_load(deploy_skeleton(config))
+    assert "secretName" not in raw and "ach" not in raw["spec"]
+
+
+def test_cli_promote_init_prints_the_skeleton(tmp_path, capsys) -> None:
+    config, _ = _files(tmp_path, agent="ach: {environment: e}\nmodel: {name: m}\n")
+    assert main(["promote", "--config", str(config), "--init"]) == 0
+    assert yaml.safe_load(capsys.readouterr().out)["spec"]["ach"]["baseUrl"] == "CHANGE_ME"

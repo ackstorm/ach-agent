@@ -41,6 +41,16 @@ async def test_max_steps_aborts_as_failed_with_no_result(tmp_path, engine) -> No
         assert 3 <= engine.usage("inv-1").steps <= 3 + 2
 
 
+async def test_the_model_is_told_its_remaining_steps_before_the_limit(tmp_path, engine) -> None:
+    async with fake_facades("tool-loop") as fakes:
+        await engine.start(_invocation(tmp_path, fakes.model_url, max_steps=10), home=tmp_path / "home", scratch=tmp_path / "scratch")
+        await engine.wait_settled("inv-1")
+        capture = await fakes.control({"command": "capture"})
+    warned = ["[Step limit] You have used 8 of 10 steps" in json.dumps(r["body"]) for r in capture["records"]]
+    # Sent after turn 8; it reaches the model before the abort at turn 10.
+    assert not any(warned[:8]) and any(warned[:10])
+
+
 async def test_each_step_and_tool_call_is_logged_with_its_invocation(tmp_path, engine, caplog) -> None:
     caplog.set_level(logging.INFO, logger="ach_runtime.observability.runs")
     async with fake_facades("tool-loop") as fakes:

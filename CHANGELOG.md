@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- From 90% of `limits.maxSteps`, the model is told how many steps remain and to give its final
+  answer now, saying plainly what is incomplete. opencode adds the notice to every request from
+  then on, plus a text-only notice at the limit; pi sends it once as a steer, at least two turns
+  before the limit. `ackstorm.smart` ignored opencode's own limit notice and kept calling tools,
+  so 2 of 20 aws-devops test tickets ended with no answer.
+
+### Changed
+
+- An A2A run that ends with no answer reports "The agent ended without an answer after N
+  steps." instead of "invalid terminal output".
+
 ## [0.7.11] - 2026-11-14
 
 ### Changed

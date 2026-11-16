@@ -52,6 +52,14 @@ function toModelInfo(providerID, id, m) {
   }
 }
 
+function stepNotice(step, maxSteps, warnFrom) {
+  if (step >= maxSteps) {
+    return "[Step limit] No steps remain: your tools are switched off. Answer now, as text only, in the required format, from what you already have. If the answer is incomplete, say so plainly: what you verified, what you could not, and what is left to check."
+  }
+  if (step < warnFrom) return undefined
+  return `[Step limit] This is step ${step} of ${maxSteps}. After step ${maxSteps} your tools are switched off and the run ends. Finish now: stop investigating, call a tool only if the answer cannot do without it, and give your final answer in the required format. If it is incomplete, say so plainly: what you verified, what you could not, and what is left to check.`
+}
+
 // F1: the managed step budget is the load-bearing loop-safety invariant (contract §4) -- an
 // absent, zero, negative, fractional or non-numeric value must reject the whole fixture
 // (zero provider registration, zero primary model calls), not silently fall through to
@@ -110,6 +118,23 @@ export default {
         if (e.agent === agentID) e.options = { ...e.options, ...fixture.requestOptions }
       })
     }
+
+    // OpenCode counts steps per prompt and, at the limit, asks for a text-only answer with
+    // an assistant-role notice that some models ignore (they call tools and the run ends
+    // with no text). From 90% of the budget each request ends with a user-role notice.
+    // Requests are counted per prompt; a retried step counts twice and only warns earlier.
+    const steps = new Map()
+    const warnFrom = Math.min(fixture.maxSteps - 1, Math.ceil(fixture.maxSteps * 0.9))
+    await ctx.session.hook("prompt", (e) => {
+      steps.set(e.sessionID, 0)
+    })
+    await ctx.session.hook("context", (e) => {
+      if (e.agent !== agentID || !Array.isArray(e.messages)) return
+      const step = (steps.get(e.sessionID) ?? 0) + 1
+      steps.set(e.sessionID, step)
+      const text = stepNotice(step, fixture.maxSteps, warnFrom)
+      if (text) e.messages.push({ role: "user", content: [{ type: "text", text }] })
+    })
 
     if (fixture.systemPrompt && fixture.promptCompose === "append") {
       await ctx.session.hook("context", (e) => {

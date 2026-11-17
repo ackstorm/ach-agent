@@ -231,6 +231,22 @@ async def test_commit_failure_keeps_serving_or_records_the_error() -> None:
     assert key in h.manager._occupied and h.source.retire_calls == []
 
 
+async def test_rejected_snapshot_keeps_the_workspace_serving() -> None:
+    from ach_runtime.storage.api import SnapshotRejected
+
+    h = _Harness(_config())
+    ref = _ref(h.config, "wk-rejected")
+    key = ref.workspace_ref
+    endpoint = await h.manager.ensure(ref)
+    h.commit_error = SnapshotRejected("archive has more than 10000 members")
+    with pytest.raises(SnapshotRejected):
+        await h.manager.close(ref)
+    assert key not in h.manager._errors
+    assert key in h.manager._occupied and h.source.retire_calls == []
+    # The next event is served by the same unit instead of being refused with the save's error.
+    assert await h.manager.ensure(ref) == endpoint
+
+
 # 4 ---------------------------------------------------------------------------------------------
 
 async def test_retire_timeout_keeps_the_slot_and_late_completion_frees_it_once(alarms: list[str]) -> None:

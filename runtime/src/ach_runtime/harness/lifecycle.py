@@ -19,8 +19,13 @@ from typing import Any
 import httpx
 
 from ach_runtime.config.schema import session_idle_timeout
-from ach_runtime.storage.api import PersistReceipt, SnapshotTransientFailure
-from ach_runtime.storage.archive import _run_owned, write_capped
+from ach_runtime.storage.api import (
+    PersistReceipt,
+    SnapshotExpired,
+    SnapshotRejected,
+    SnapshotTransientFailure,
+)
+from ach_runtime.storage.archive import ArchiveTooLarge, _run_owned, write_capped
 from ach_runtime.storage.refs import DOMAIN_SESSION, DOMAIN_WORKSPACE, StateRef
 from ach_runtime.harness.transfer import get_archive, put_archive
 
@@ -245,12 +250,21 @@ class Lifecycle:
             log.warning("session prune failed: %s", exc)
             alarm("persistence_failed", workspace_ref=endpoint.ref.workspace_ref)
 
+    async def _stored_snapshot(self, ref: StateRef, retention_days: int | None) -> Any:
+        """The snapshot to restore, None when there is none. A snapshot past its retention
+        counts as none: the Workspace or session starts fresh, and its next close replaces
+        the expired entry."""
+        try:
+            return await self.control.storage.restore(ref, retention_days=retention_days)
+        except SnapshotExpired:
+            return None
+
     async def _restore_workspace_archive(self, endpoint: Any) -> bool:
         retention_days = self.control.config.workspace.persistence.retention_days
         ref = self.workspace_state_ref(endpoint)
         try:
             with _storage_timer("restore", DOMAIN_WORKSPACE) as timer:
-                receipt = await self.control.storage.restore(ref, retention_days=retention_days)
+                receipt = await self._stored_snapshot(ref, retention_days)
                 if receipt is not None:
                     await put_archive(self.control.mini_client, endpoint, self.control._headers(endpoint),
                                       "/workspace/archive", receipt.open(),
@@ -383,6 +397,13 @@ class Lifecycle:
                 timer["outcome"] = "ok"
             return receipt
         except Exception as exc:
+            if isinstance(exc, ArchiveTooLarge) or (
+                isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 422
+            ):
+                # The unit refuses to pack these files, or the archive is over a size cap.
+                rejected = SnapshotRejected(str(exc))
+                self._report_failure(rejected, "Harness Workspace persistence failed")
+                raise rejected from exc
             self._report_failure(exc, "Harness Workspace persistence failed")
             raise
 
@@ -410,7 +431,7 @@ class Lifecycle:
                 raise RuntimeError("mini-harness returned invalid session information")
             if not local:
                 with _storage_timer("restore", DOMAIN_SESSION) as timer:
-                    receipt = await self.control.storage.restore(ref, retention_days=retention_days)
+                    receipt = await self._stored_snapshot(ref, retention_days)
                     if receipt is not None:
                         await put_archive(
                             self.control.mini_client, endpoint, self.control._headers(endpoint),
@@ -771,7 +792,7 @@ class Lifecycle:
                     await self.control.manager.close(endpoint.ref)
                 except Exception as exc:
                     self._failed_workspace_saves.add(workspace_key)
-                    if isinstance(exc, SnapshotTransientFailure):
+                    if isinstance(exc, (SnapshotTransientFailure, SnapshotRejected)):
                         self._failed_workspace_retry_at[workspace_key] = time.monotonic() + 30.0
                     if not getattr(exc, "_ach_anomaly_reported", False):
                         self._alarm("Harness Workspace persistence failed")

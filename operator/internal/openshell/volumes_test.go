@@ -50,7 +50,7 @@ func TestVolumeName_StableDNSSafeAndPerAgentUID(t *testing.T) {
 	}
 }
 
-// The driver_config invariant (operator/CLAUDE.md): exactly the Workspace PVC at /sandbox/ach,
+// The driver_config invariant (operator/AGENTS.md): exactly the Workspace PVC at /sandbox/ach,
 // read-write, nothing else.
 func TestOpenShell_CreateWithVolumeMountsOnlyTheWorkspacePVC(t *testing.T) {
 	for _, tc := range []struct {

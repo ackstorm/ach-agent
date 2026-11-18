@@ -96,7 +96,7 @@ async def test_reporting_is_retained_in_status_snapshot_and_restore(tmp_path, pu
                                 build_invocation=lambda req, _public, _workspace: BuiltInvocation(req.invocation_id))
     restored.configure(public_config_fixture)
     await restored.restore(request.session_ref, request.workspace_ref, manifest)
-    assert await restored.status(request.invocation_id) == status
+    assert await restored.status(request.invocation_id) == status.model_copy(update={"observed": True})
     assert (await restored.session_info(request.session_ref))["suspendHookFailed"] is False
 
 

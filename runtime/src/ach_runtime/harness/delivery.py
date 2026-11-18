@@ -194,6 +194,8 @@ class Delivery:
             ):
                 raise DeliveryError("prepared StartRequest does not match immutable ticket/config")
             payload = request.model_dump(by_alias=True, mode="json")
+            if not request.recovery:
+                payload.pop("recovery", None)
             delay = 0.5
             while True:
                 try:
@@ -259,8 +261,12 @@ class Delivery:
         ):
             raise DeliveryError("Workspace RunStatus identity did not match expected run")
 
-    async def status(self, endpoint: WorkspaceEndpoint, invocation_id: str) -> RunStatus:
-        code, raw = await self._request(endpoint, "GET", f"/status/{invocation_id}")
+    async def status(
+        self, endpoint: WorkspaceEndpoint, invocation_id: str, *, observe: bool = False
+    ) -> RunStatus:
+        code, raw = await self._request(
+            endpoint, "GET", f"/status/{invocation_id}" + ("?observe=true" if observe else "")
+        )
         if code != 200:
             raise DeliveryError(f"Workspace status returned HTTP {code}")
         try:

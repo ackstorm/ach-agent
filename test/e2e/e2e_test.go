@@ -467,8 +467,9 @@ func TestE2E(t *testing.T) {
 		waitCond(t, name, "Ready", "True", 5*time.Minute)
 		// Same session key: the second and third events queue behind the first run.
 		for i := 1; i <= 3; i++ {
+			reqID := fmt.Sprintf("e2e-journal-%d-%d", time.Now().UnixNano(), i)
 			until(t, 2*time.Minute, "webhook never answered 202 for event", agentYAML(name), func() bool {
-				return postWebhookBody(t, name, fmt.Sprintf(`{"ask":"evt-%d"}`, i)) == 202
+				return postWebhookBody(t, name, fmt.Sprintf(`{"ask":"evt-%d"}`, i), reqID) == 202
 			})
 			time.Sleep(time.Second)
 		}

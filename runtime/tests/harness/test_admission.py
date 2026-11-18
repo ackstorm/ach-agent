@@ -2066,7 +2066,7 @@ class RecordingJournal:
         self.ops: list[str] = []
         self.fail, self.record_gate = fail, record_gate
 
-    async def record(self, invocation_id, *, kind, event, routed) -> None:
+    async def record(self, invocation_id, *, kind, event, routed, accepted_at=None) -> None:
         if self.fail:
             raise OSError("s3 down")
         if self.record_gate is not None:

@@ -28,6 +28,34 @@ def test_record_then_pending_round_trips_the_routed_event():
     asyncio.run(scenario())
 
 
+def test_record_keeps_a_given_accept_time():
+    async def scenario():
+        j = _journal()
+        t = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+        await j.record("inv1", kind="agent", event=EVENT, routed=ROUTED, accepted_at=t)
+        [entry] = await j.pending()
+        assert entry.accepted_at == t
+    asyncio.run(scenario())
+
+
+def test_one_unreadable_record_does_not_stop_pending():
+    async def scenario():
+        storage = S3Storage(bucket="b", prefix="p", client=FakeS3Client())
+        j = EventJournal(storage, agent="rev/iew")
+        await j.record("good", kind="agent", event=EVENT, routed=ROUTED)
+        await j.record("bad", kind="agent", event=EVENT, routed=ROUTED)
+        real = storage.get_record
+
+        async def get_record(name):
+            if "bad" in name:
+                raise OSError("down")
+            return await real(name)
+
+        storage.get_record = get_record
+        assert [e.invocation_id for e in await j.pending()] == ["good"]
+    asyncio.run(scenario())
+
+
 def test_forget_removes_the_entry_and_is_idempotent():
     async def scenario():
         j = _journal()

@@ -1084,12 +1084,12 @@ class _Journal:
     async def pending(self):
         return list(self.entries)
 
-    async def record(self, invocation_id, *, kind, event, routed) -> None:
+    async def record(self, invocation_id, *, kind, event, routed, accepted_at=None) -> None:
         from ach_runtime.harness.journal import JournalEntry
 
         self.records.append((invocation_id, kind))
         self.entries.append(JournalEntry(
-            invocation_id=invocation_id, accepted_at=datetime.now(UTC), kind=kind, event=event,
+            invocation_id=invocation_id, accepted_at=accepted_at or datetime.now(UTC), kind=kind, event=event,
             workspace_key=routed.workspace_key, session_key=routed.session_key, rate_keys=routed.rate_keys,
         ))
 

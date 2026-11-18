@@ -86,8 +86,7 @@ class CronScheduler:
             return
         now = datetime.now(ZoneInfo(channel.cron.timezone))
         prev = croniter(channel.cron.schedule, now).get_prev(datetime)
-        nxt = croniter(channel.cron.schedule, prev).get_next(datetime)
-        if last is not None and last < prev and now < nxt:
+        if last is not None and last < prev:
             await self._fire(channel, prev)
 
     async def _fire(self, channel: ChannelConfig, scheduled_tick: datetime) -> None:
@@ -104,6 +103,7 @@ class CronScheduler:
         CHANNEL_INBOUND.labels(channel=channel.name, type="cron").inc()
         try:
             ticket = await self._control.admission.accept(route(event, channel))
+            await self._record_tick(channel, scheduled_tick)
             await asyncio.shield(ticket.started)
         except Exception as exc:  # noqa: BLE001
             log.warning(
@@ -113,11 +113,14 @@ class CronScheduler:
                 error=str(exc),
             )
             return
-        journal = getattr(self._control, "journal", None)
-        if journal is not None:
-            try:
-                await journal.record_tick(channel.name, scheduled_tick)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("cron: tick not recorded", channel=channel.name, error=str(exc))
-                alarm("journal_unavailable")
         log.info("cron: tick started", channel=channel.name, tick=utc_tick)
+
+    async def _record_tick(self, channel: ChannelConfig, tick: datetime) -> None:
+        journal = getattr(self._control, "journal", None)
+        if journal is None:
+            return
+        try:
+            await journal.record_tick(channel.name, tick)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("cron: tick not recorded", channel=channel.name, error=str(exc))
+            alarm("journal_unavailable")

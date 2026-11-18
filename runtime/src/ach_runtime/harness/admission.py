@@ -571,25 +571,26 @@ class Admission:
 
     # -- accepted-event journal ------------------------------------------------
 
-    async def accept(self, routed_event: RoutedEvent, *, rate_limited: bool = True) -> AdmissionTicket | RecoveredRun:
+    async def accept(self, routed_event: RoutedEvent, *, rate_limited: bool = True,
+                     accepted_at: datetime | None = None) -> AdmissionTicket | RecoveredRun:
         """`admit`, then journal a ticket this call created before the caller acknowledges it."""
         before = self._tickets.get(self._dedup_key(self._agent_uid, routed_event))
         ticket = self.admit(routed_event, rate_limited=rate_limited)
         if isinstance(ticket, AdmissionTicket) and ticket is not before:
-            await self._journal_record(ticket, "agent", routed_event.event, routed_event)
+            await self._journal_record(ticket, "agent", routed_event.event, routed_event, accepted_at)
         return ticket
 
-    async def accept_script(self, event: Event) -> ScriptAdmissionTicket:
+    async def accept_script(self, event: Event, *, accepted_at: datetime | None = None) -> ScriptAdmissionTicket:
         """`admit_script`, then journal a ticket this call created."""
         before = self._tickets.get(invocation_digest(self._agent_uid, event.channel, event.event_id))
         ticket = self.admit_script(event)
         if ticket is not before:
-            await self._journal_record(ticket, "script", event, None)
+            await self._journal_record(ticket, "script", event, None, accepted_at)
         return ticket
 
     async def _journal_record(
         self, ticket: AdmissionTicket | ScriptAdmissionTicket, kind: str, event: Event,
-        routed: RoutedEvent | None,
+        routed: RoutedEvent | None, accepted_at: datetime | None,
     ) -> None:
         journal = self.journal
         if journal is None:
@@ -599,7 +600,7 @@ class Admission:
         ticket.completed.add_done_callback(lambda _: self.forget(invocation_id))
         write = asyncio.ensure_future(_journal_call(
             "record", invocation_id,
-            journal.record(invocation_id, kind=kind, event=event, routed=routed)))
+            journal.record(invocation_id, kind=kind, event=event, routed=routed, accepted_at=accepted_at)))
         self._journal_writes[invocation_id] = write
         write.add_done_callback(lambda _: self._journal_writes.pop(invocation_id, None))
         # Shielded: a caller that goes away does not cancel the write.

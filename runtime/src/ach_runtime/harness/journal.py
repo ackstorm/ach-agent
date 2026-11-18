@@ -46,11 +46,11 @@ class EventJournal:
         return f"{self._dir}{quote(invocation_id, safe='')}.json"
 
     async def record(self, invocation_id: str, *, kind: str, event: Event,
-                     routed: RoutedEvent | None) -> None:
+                     routed: RoutedEvent | None, accepted_at: datetime | None = None) -> None:
         body = {
             "version": _VERSION,
             "invocationId": invocation_id,
-            "acceptedAt": datetime.now(timezone.utc).isoformat(),
+            "acceptedAt": (accepted_at or datetime.now(timezone.utc)).isoformat(),
             "kind": kind,
             "event": {"eventId": event.event_id, "channel": event.channel, "type": event.type,
                       "source": event.source, "payload": event.payload,
@@ -69,7 +69,11 @@ class EventJournal:
         names = await self._storage.list_records(self._dir)
         entries: list[JournalEntry] = []
         for name, _ in names:
-            raw = await self._storage.get_record(name)
+            try:
+                raw = await self._storage.get_record(name)
+            except Exception as exc:  # noqa: BLE001 - one unreadable record must not stop the replay
+                log.warning("journal record %s not read: %s", name, exc)
+                continue
             if raw is None:
                 continue
             try:

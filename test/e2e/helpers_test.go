@@ -210,20 +210,20 @@ var postSeq int
 // postWebhook posts to the Agent's channel through its -http Service and returns the status code.
 func postWebhook(t *testing.T, agent string) int {
 	t.Helper()
-	return postWebhookBody(t, agent, `{"ask":"hi"}`)
+	postSeq++
+	return postWebhookBody(t, agent, `{"ask":"hi"}`, fmt.Sprintf("e2e-%d-%d", time.Now().UnixNano(), postSeq))
 }
 
-// postWebhookBody is postWebhook with a body (no single quotes).
-func postWebhookBody(t *testing.T, agent, body string) int {
+// postWebhookBody is postWebhook with a body (no single quotes) and a request id; a retry reuses the id so a slow accepted POST is not accepted twice.
+func postWebhookBody(t *testing.T, agent, body, reqID string) int {
 	t.Helper()
-	postSeq++
 	svc := "agent-" + agent + "-http"
 	code := fmt.Sprintf(`import urllib.request as u,urllib.error as e
-r=u.Request('http://%s.%s.svc.cluster.local:8080/channels/hook/events',data=b'%s',method='POST',headers={'X-E2E-Token':%q,'X-Request-Id':'e2e-%d-%d','Content-Type':'application/json'})
+r=u.Request('http://%s.%s.svc.cluster.local:8080/channels/hook/events',data=b'%s',method='POST',headers={'X-E2E-Token':%q,'X-Request-Id':%q,'Content-Type':'application/json'})
 try:
     print(u.urlopen(r,timeout=20).status)
 except e.HTTPError as x:
-    print(x.code)`, svc, agentNS, body, hookToken, time.Now().UnixNano(), postSeq)
+    print(x.code)`, svc, agentNS, body, hookToken, reqID)
 	out, err := stubExec(t, code)
 	if err != nil {
 		t.Fatalf("post webhook: %v\n%s", err, out)

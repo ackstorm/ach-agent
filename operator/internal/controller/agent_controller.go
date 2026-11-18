@@ -761,12 +761,9 @@ func (r *AgentReconciler) agentsForProfile(ctx context.Context, obj client.Objec
 	return reqs
 }
 
-// agentsForSecret enqueues every Agent that references a changed Secret: by identity, by
-// an AgentProfile/Agent channel reference, or — only when the Secret is the operator's
-// configured global storage credentials Secret AND the agent's successfully resolved Render
-// config actually requires storage — the shared namespace-local credential Secret (Task2 D1
-// amendment, Step 6). The Render call here is best-effort: a transient render error simply
-// does not count as a match, it never blocks the identity/channel matches above.
+// agentsForSecret enqueues every Agent that references a changed Secret: by workspace key
+// identity or by an AgentProfile/Agent reference, plus every Agent in the namespace when the
+// Secret is the operator's storage credentials Secret and a bucket is set.
 func (r *AgentReconciler) agentsForSecret(ctx context.Context, obj client.Object) []reconcile.Request {
 	var list achv1alpha1.AgentList
 	if err := r.List(ctx, &list, client.InNamespace(obj.GetNamespace())); err != nil {

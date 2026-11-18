@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The operator gives every agent's control the storage env whenever the agent has a bucket. With a bucket
   configured, the credentials Secret must exist in every agent namespace.
+- Upgrade: list every Agent namespace in `storage.namespaces`; an Agent in another namespace waits for the Secret
+  (`SecretsResolved=False`). Upgrading the operator restarts every Agent's control, because its env changes.
 
 ### Fixed
 

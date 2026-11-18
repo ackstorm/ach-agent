@@ -3943,7 +3943,7 @@ class _Journal:
             raise OSError("s3 down")
         return list(self.entries)
 
-    async def record(self, invocation_id, *, kind, event, routed) -> None:
+    async def record(self, invocation_id, *, kind, event, routed, accepted_at=None) -> None:
         self.records.append((invocation_id, kind))
 
     async def forget(self, invocation_id) -> None:

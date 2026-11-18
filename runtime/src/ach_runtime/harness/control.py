@@ -697,9 +697,10 @@ class Control:
                 continue
             try:
                 if entry.kind == "script":
-                    await self.admission.accept_script(entry.event)
+                    await self.admission.accept_script(entry.event, accepted_at=entry.accepted_at)
                     continue
-                ticket = await self.admission.accept(entry.routed_event, rate_limited=False)
+                ticket = await self.admission.accept(entry.routed_event, rate_limited=False,
+                                                     accepted_at=entry.accepted_at)
             except Exception as exc:  # noqa: BLE001 - the entry stays for the next control
                 log.warning("journal entry not replayed (invocation %s): %s", entry.invocation_id, exc)
                 continue

@@ -169,7 +169,7 @@ which sets `openshell.tls.secret` instead and needs no such flag.
 | Value | Default | Notes |
 |-------|---------|-------|
 | `storage.enabled` | `true` | `false` keeps control pods on S3 directly, with their own credentials. Drain the storage server first (below). |
-| `storage.namespaces` | `[]` | The Agent namespaces; required when a bucket is set. An Agent elsewhere with `persistence.type: s3` or artifacts enabled waits for the Secret `ach-agent-storage-s3`. |
+| `storage.namespaces` | `[]` | The Agent namespaces; required when a bucket is set. Every Agent namespace must be listed: an Agent in another namespace waits for the Secret `ach-agent-storage-s3` (`SecretsResolved=False`). |
 | `storage.remote.type` | `s3` | `s3` replicates to `runtime.storage.s3.bucket`; `gcs` to `storage.remote.gcs.bucket`. |
 | `storage.remote.gcs.{bucket,project,prefix,credentialsSecret}` | `prefix: ach` | GCS only; `project` is required. `credentialsSecret` names an existing Secret with the key `credentials.json` (a service account key); leave it empty for Workload Identity. |
 | `storage.serviceAccount.annotations` | `{}` | Annotations on the ServiceAccount `ach-agent-storage`, for example `iam.gke.io/gcp-service-account` for GKE Workload Identity. |
@@ -708,8 +708,8 @@ are kept. `openai` is not: its caller holds the connection and retries when it d
 - A stopping control does not replace a lost sandbox. The next control does when work needs it.
 - Replay waits for adopted units only when an entry still needs matching. An empty journal never delays readiness.
 
-A `cron` channel records each tick it fires. At boot it runs the latest tick it missed, if that tick is less than
-one interval old. It runs one tick, never a backlog, and none while no tick has been recorded for that channel or without storage.
+A `cron` channel records each tick it fires. At boot it runs the latest tick it missed.
+It runs one tick, never a backlog, and none while no tick has been recorded for that channel or without storage.
 
 An event sent while no control is ready (a restart takes about 15 s) gets 503 from the route. The mesh does not
 retry it, so a sender that does not retry, such as a GitLab webhook, loses it.

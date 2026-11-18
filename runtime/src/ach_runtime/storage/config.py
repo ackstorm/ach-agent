@@ -38,6 +38,17 @@ def storage_from_env(config: RuntimeConfig, env: Mapping[str, str]) -> S3Storage
     if not bucket:
         raise StorageUnavailable("ACH_STORAGE_S3_BUCKET is required when storage is enabled")
 
+    return _s3_storage(env, bucket)
+
+
+def records_storage_from_env(env: Mapping[str, str]) -> S3Storage | None:
+    """The operator S3Storage when `ACH_STORAGE_S3_BUCKET` is set, whatever the config enables:
+    the accepted-event journal lives there even for an Agent without persistence or artifacts."""
+    bucket = env.get("ACH_STORAGE_S3_BUCKET")
+    return _s3_storage(env, bucket) if bucket else None
+
+
+def _s3_storage(env: Mapping[str, str], bucket: str) -> S3Storage:
     client_kwargs: dict[str, Any] = {}
     region = env.get("ACH_STORAGE_S3_REGION")
     if region:

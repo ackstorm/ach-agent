@@ -222,3 +222,19 @@ def test_storage_from_env_preserves_config_projection(
         assert "sentinel-backend-name" not in serialized
         assert "sentinel-access-key" not in serialized
         assert "sentinel-secret-key" not in serialized
+
+
+def test_records_storage_from_env_needs_only_the_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ach_runtime.storage.config import records_storage_from_env
+
+    client_mock = MagicMock(return_value=_RecordingClient())
+    monkeypatch.setattr("ach_runtime.storage.config.boto3.client", client_mock)
+
+    assert records_storage_from_env({}) is None
+    client_mock.assert_not_called()
+
+    storage = records_storage_from_env(
+        {"ACH_STORAGE_S3_BUCKET": "runtime-bucket", "ACH_STORAGE_S3_PREFIX": "tenant/runtime"})
+    assert isinstance(storage, S3Storage)
+    assert storage._prefix == "tenant/runtime"
+    assert storage._require_client() == (client_mock.return_value, "runtime-bucket")

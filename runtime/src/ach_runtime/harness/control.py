@@ -82,7 +82,8 @@ from ach_runtime.harness.workspaces import (
     WorkspaceSource,
     instance_changed,
 )
-from ach_runtime.storage.config import storage_from_env
+from ach_runtime.harness.journal import EventJournal
+from ach_runtime.storage.config import records_storage_from_env, storage_from_env
 from ach_runtime.storage.api import ArtifactProducer
 from ach_runtime.storage.refs import StateRef
 
@@ -281,6 +282,8 @@ class Control:
     _retrying: set[str] = field(default_factory=set, repr=False)
     # Runs adopted after a restart, by invocation id: each settles to its final outcome.
     _recovery_outcomes: dict[str, asyncio.Future] = field(default_factory=dict, repr=False)
+    # Accepted events kept until their run reached a sandbox; None without operator storage.
+    journal: EventJournal | None = field(default=None, repr=False)
 
     async def _owned_live(self, claim: str) -> bool:
         # No I/O (spec 6.3). The only wait is for adoption of the units that already run: a
@@ -1387,6 +1390,9 @@ async def assemble(
     control = Control.__new__(Control)
     control.config, control.key, control.verify_key = config, key, verify_key
     control.catalog, control.public, control.storage = catalog, public, storage
+    journal_storage = storage or records_storage_from_env(env)
+    control.journal = (
+        EventJournal(journal_storage, agent=config.agent.name) if journal_storage else None)
     control._private_env = dict(env)
     control.ach_key, control._memory_auth = ach_key, memory_auth
     control.upstream_secrets = upstream_secrets

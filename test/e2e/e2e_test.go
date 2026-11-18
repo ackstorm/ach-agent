@@ -307,8 +307,9 @@ func TestE2E(t *testing.T) {
 
 		env := jsonpath(t, "-n", agentNS, "get", "pod", "-l", "ach-agent.ackstorm.ai/agent="+name+",ach-agent.ackstorm.ai/component=control",
 			"-o", "jsonpath={.items[*].spec.containers[*].env[*].name}")
-		if strings.Contains(env, "ACH_STORAGE_S3_BUCKET") {
-			t.Errorf("a volume Agent with artifacts off got the S3 store: %s", env)
+		// The control journals accepted events in agent storage whatever the persistence type.
+		if !strings.Contains(env, "ACH_STORAGE_S3_BUCKET") {
+			t.Errorf("a volume Agent's control has no S3 store for its journal: %s", env)
 		}
 		pods, vols := sandboxes(t, uid), workspaceVolumes(t, uid)
 		if len(pods) != 1 || len(vols) != 1 {

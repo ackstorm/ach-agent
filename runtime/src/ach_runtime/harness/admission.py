@@ -88,7 +88,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from ach_runtime import observability
 from ach_runtime.channels.event import Event, RoutedEvent
 from ach_runtime.harness.refs import invocation_digest
 from ach_runtime.harness.refs import session_ref as compute_session_ref
@@ -966,7 +965,9 @@ async def _journal_call(action: str, invocation_id: str, call: Awaitable[None]) 
         await call
     except Exception:  # noqa: BLE001
         log.warning("journal %s failed (invocation %s)", action, invocation_id, exc_info=True)
-        observability.alarm("journal_unavailable", invocation_id=invocation_id)
+        from ach_runtime.observability import alarm
+
+        alarm("journal_unavailable", invocation_id=invocation_id)
 
 
 class _Lane:

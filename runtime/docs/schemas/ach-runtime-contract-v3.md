@@ -152,7 +152,7 @@ The host owns names, routing and TLS for these listeners. `infrastructure.facade
 
 - **One agent, one control.** At most one `agent` or `control` unit per `agent.uid` runs at a time. There is no high availability for the coordinator. Storage fencing (v1 §7) protects data against an overlap, but does not make one correct.
 - **One Workspace, one live instance.** The host runs at most one execution unit per Workspace name. Storage fencing turns a stale instance into a failed writer, not a second writer.
-- **Same release.** `control` and its `execution` units must run the same runtime release. The internal protocol (section 6) is only compatible within one release. The control unit checks the release on every probe (5.6) and never drives a unit of another release.
+- **Same release.** `control` and its `execution` units must run the same runtime release. The internal protocol (section 6) is only compatible within one release. The control unit checks the release on every probe (5.6). It sends no new work it places to a unit of another release; at adoption it adopts such a unit, observes and recovers its runs, and retires it once idle (5.4).
 - **Shutdown.** SIGTERM starts a drain bounded by `workspace.shutdownTimeoutSeconds`. The host must allow at least that plus 15 seconds before killing the unit. A kill before the drain ends can lose uncommitted work (v1 §7).
 - **Restart.** The host restarts failed units. A restarted `control` unit rebuilds its state from storage and from the host's inventory (5.4).
 - **Health.** `GET /healthz` is liveness. `GET /readyz` is readiness. Both are on `8080`, on every role. Section 4 has their meaning.
@@ -255,7 +255,7 @@ All routes are on `control` `8081`, under `/host/v1`, and are served from proces
 **`DELETE /host/v1/workspaces/{name}/instance[?instanceId=<id>]`** reports that a unit has stopped. It always answers 204.
 
 - For a `released` entry, it confirms the unit has stopped, and the entry disappears.
-- For a `running` entry with a registered unit, it reports an unexpected loss. The entry disappears, and the runtime lists the Workspace `running` again for a fresh unit (5.6). Runs whose outcome cannot be established become `unknown` and are never replayed (v1 §7).
+- For a `running` entry with a registered unit, it reports an unexpected loss. The entry disappears, and the runtime lists the Workspace `running` again for a fresh unit (5.6). Runs whose outcome cannot be established become `unknown` and are recovered at most once under the lost-run rule (v1 §3).
 - **Precondition.** Once the runtime has observed an instance ID for the entry, a `DELETE` must carry that same `instanceId`; any other `DELETE`, including one without `instanceId`, is a no-op. Hosts always pass the `instanceId` from the last listing.
 - An unknown name, or an entry with no registered unit, is a no-op.
 - Before the first successful probe there is no ID to check, so a late `DELETE` can remove a registration that has not served yet. That unit holds no work; the cost is one more start.
@@ -303,7 +303,7 @@ All routes are on `control` `8081`, under `/host/v1`, and are served from proces
 
 - It contains no secrets. The verify key is public, and Workspace names and refs are opaque identifiers. So the host may store `launch` in plain workload definitions, logs or status.
 - It is stable for the Workspace's lifetime. Every instance of a Workspace, including replacements and in-place restarts, uses the same `launch`, because the instance identity is minted by the process (5.6), not by the host.
-- It changes only when the control unit's configuration or release changes. A host should start new instances from the current `launch`. It may keep running instances until they are released, but a unit of another release is never driven by the control unit (5.6).
+- It changes only when the control unit's configuration or release changes. A host should start new instances from the current `launch`. It may keep running instances until they are released, but the control unit sends no new work it places to a unit of another release; it adopts such a unit at adoption, observes and recovers its runs, and retires it once idle (5.4, 5.6).
 
 An execution unit must be started with:
 
@@ -321,7 +321,7 @@ Workspace names are runtime-owned opaque strings: at most 52 characters of `[a-z
 ### 5.6 Instance identity
 
 - Every execution process mints a fresh random instance ID when it starts. It returns the ID on every response, in the `X-ACH-Instance-Id` header.
-- `GET /healthz` on an execution unit answers `{"status": "ok", "release": "<runtime release>"}`. The control unit treats a unit of another release as a failed probe.
+- `GET /healthz` on an execution unit answers `{"status": "ok", "release": "<runtime release>"}`. The control unit places no new work on a unit of another release; it observes and recovers that unit's runs and retires it once idle (5.4).
 - The host does not provide, choose or copy the instance ID.
 - The runtime binds a registration to the first instance ID it observes there:
   - Any later different ID on the same Workspace means the unit was restarted, so its local files cannot be trusted. The runtime restores before serving again (v1 §7).

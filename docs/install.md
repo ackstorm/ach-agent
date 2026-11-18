@@ -577,8 +577,8 @@ Recovery has limits:
 - With A2A on `persistence: none` or `volume`, `tasks/get` cannot return a resume's result after a restart.
 - A resume gets its own `maxInvocationSeconds`, so one event can run for up to twice that.
 - A resume queues behind events admitted after the restart.
-- A unit of another release is resumed only from the release after this one onwards: older units do not report the routing keys.
-- A custom execution image of an earlier release rejects a retry or resume start. That recovery fails and the original outcome is reported.
+- Runs on a unit started by a release without lost-run recovery are not resumed: it does not report the routing keys.
+- A custom execution image of an earlier release rejects a retry or resume start. That recovery fails: for a resume the original outcome stands, for a retry the run ends failed.
 - The runs a unit of an earlier release finished before the upgrade count as delivered. They are not delivered again or resumed.
 - If the control stops after admitting a resume but before it reaches the sandbox, the event is not recovered. Recovery is at most once.
 

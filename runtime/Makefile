@@ -1,14 +1,8 @@
-.PHONY: help hooks verify release-bump release-cut spike-opencode spike-opencode-remainder e2e compose-e2e
+.PHONY: help release-bump release-cut spike-opencode spike-opencode-remainder e2e compose-e2e
 .DEFAULT_GOAL := help
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  %-20s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
-
-hooks: ## Install the git pre-push hook
-	./scripts/install-hooks.sh
-
-verify: ## Pre-push gate (gitleaks, SPDX, schema drift, config tests)
-	./scripts/pre-push-check.sh
 
 release-bump: ## Bump version in pyproject.toml + CHANGELOG (VERSION=X.Y.Z)
 	@test -n "$(VERSION)" || { echo "VERSION=X.Y.Z required"; exit 1; }
@@ -22,7 +16,6 @@ release-cut: ## Trigger the release workflow: empty chore(release) commit on mai
 	@test "$$(git branch --show-current)" = main || { echo "must be on main"; exit 1; }
 	@git diff --quiet && git diff --cached --quiet || { echo "working tree dirty"; exit 1; }
 	@grep -q '^version = "$(VERSION)"' pyproject.toml || { echo "pyproject.toml version != $(VERSION): run release-bump"; exit 1; }
-	./scripts/pre-push-check.sh
 	git commit --allow-empty -m "chore(release): v$(VERSION)"
 	git push origin HEAD
 

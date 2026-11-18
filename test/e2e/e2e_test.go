@@ -307,8 +307,9 @@ func TestE2E(t *testing.T) {
 
 		env := jsonpath(t, "-n", agentNS, "get", "pod", "-l", "ach-agent.ackstorm.ai/agent="+name+",ach-agent.ackstorm.ai/component=control",
 			"-o", "jsonpath={.items[*].spec.containers[*].env[*].name}")
-		if strings.Contains(env, "ACH_STORAGE_S3_BUCKET") {
-			t.Errorf("a volume Agent with artifacts off got the S3 store: %s", env)
+		// The control journals accepted events in agent storage whatever the persistence type.
+		if !strings.Contains(env, "ACH_STORAGE_S3_BUCKET") {
+			t.Errorf("a volume Agent's control has no S3 store for its journal: %s", env)
 		}
 		pods, vols := sandboxes(t, uid), workspaceVolumes(t, uid)
 		if len(pods) != 1 || len(vols) != 1 {
@@ -374,8 +375,8 @@ func TestE2E(t *testing.T) {
 	// extra model header line.
 	startLostRuns := func(t *testing.T, on, off, fail string) {
 		clearStub(t)
-		apply(t, "fixtures/lost-run-agent.yaml", map[string]string{"NAME": on, "FAIL": fail})
-		apply(t, "fixtures/lost-run-agent.yaml", map[string]string{"NAME": off, "FAIL": fail, "RETRY": "retryLostRuns: false"})
+		apply(t, "fixtures/lost-run-agent.yaml", map[string]string{"NAME": on, "FAIL": fail, "STREAM": "180"})
+		apply(t, "fixtures/lost-run-agent.yaml", map[string]string{"NAME": off, "FAIL": fail, "STREAM": "180", "RETRY": "retryLostRuns: false"})
 		// Waits for the sandboxes to go, so no stream still running reaches a later subtest's waitChat.
 		t.Cleanup(func() {
 			if out, err := kubectl("", "-n", agentNS, "delete", "agent", on, off, "--wait", "--timeout=3m"); err != nil {
@@ -452,6 +453,57 @@ func TestE2E(t *testing.T) {
 		}
 		if n := len(lostRunChats(t, off, resume)); n != 0 {
 			t.Errorf("%s (retryLostRuns: false) resumed its run %d times, want 0", off, n)
+		}
+	})
+
+	t.Run("queued-events-survive-restart", func(t *testing.T) {
+		const name = "journal"
+		clearStub(t)
+		apply(t, "fixtures/lost-run-agent.yaml", map[string]string{"NAME": name, "STREAM": "60"})
+		t.Cleanup(func() {
+			if out, err := kubectl("", "-n", agentNS, "delete", "agent", name, "--wait", "--timeout=3m"); err != nil {
+				t.Errorf("delete the Agent: %v\n%s", err, out)
+			}
+		})
+		waitCond(t, name, "Ready", "True", 5*time.Minute)
+		// Same session key: the second and third events queue behind the first run.
+		for i := 1; i <= 3; i++ {
+			reqID := fmt.Sprintf("e2e-journal-%d-%d", time.Now().UnixNano(), i)
+			until(t, 2*time.Minute, "webhook never answered 202 for event", agentYAML(name), func() bool {
+				return postWebhookBody(t, name, fmt.Sprintf(`{"ask":"evt-%d"}`, i), reqID) == 202
+			})
+			time.Sleep(time.Second)
+		}
+		until(t, 4*time.Minute, "the first run never reached the model", agentYAML(name), func() bool {
+			return len(lostRunChats(t, name, "evt-1")) >= 1
+		})
+		pod := "agent-" + name + "-0"
+		old := jsonpath(t, "-n", agentNS, "get", "pod", pod, "-o", "jsonpath={.metadata.uid}")
+		mustKubectl(t, "", "-n", agentNS, "delete", "pod", pod, "--wait=false")
+		until(t, 4*time.Minute, "the new control pod never became Ready", agentYAML(name), func() bool {
+			uid := jsonpath(t, "-n", agentNS, "get", "pod", pod, "-o", "jsonpath={.metadata.uid}")
+			ready := jsonpath(t, "-n", agentNS, "get", "pod", pod, "-o", `jsonpath={.status.conditions[?(@.type=="Ready")].status}`)
+			return uid != "" && uid != old && ready == "True"
+		})
+		// A run's chat carries its own marker and not the next event's (a session replays history).
+		runChats := func(i int) int {
+			n := 0
+			for _, r := range lostRunChats(t, name, fmt.Sprintf("evt-%d", i)) {
+				if !strings.Contains(r.Body, fmt.Sprintf("evt-%d", i+1)) {
+					n++
+				}
+			}
+			return n
+		}
+		until(t, 6*time.Minute, "not every accepted event reached the model after the restart", agentYAML(name), func() bool {
+			return runChats(1) >= 1 && runChats(2) >= 1 && runChats(3) >= 1
+		})
+		time.Sleep(30 * time.Second)
+		// Event 1 was mid-run at the restart: opencode re-issues the model call the restart cut. Events 2 and 3 run once.
+		for i, want := range []int{2, 1, 1} {
+			if n := runChats(i + 1); n != want {
+				t.Errorf("event %d made %d model calls, want %d", i+1, n, want)
+			}
 		}
 	})
 

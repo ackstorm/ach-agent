@@ -298,6 +298,30 @@ async def test_recover_ignores_older_instance_and_replaces_the_matching_one(alar
     assert h.restored == [old, new]
 
 
+async def test_stopped_manager_recover_is_a_noop(alarms: list[str]) -> None:
+    h = _Harness(_config())
+    ref = _ref(h.config, "wk-stop")
+    old = await h.manager.ensure(ref)
+    h.manager.stop()
+    h.manager.stop()
+    assert await h.manager.recover(ref, old.instance_id) is None
+    assert h.manager.active_endpoint(ref.workspace_ref) == old
+    assert h.source.retire_calls == [] and len(h.source.place_calls) == 1
+
+
+async def test_stop_cancels_an_inflight_recover(alarms: list[str]) -> None:
+    h = _Harness(_config())
+    ref = _ref(h.config, "wk-stop-flight")
+    old = await h.manager.ensure(ref)
+    h.source.place_gate = asyncio.Event()
+    task = asyncio.ensure_future(h.manager.recover(ref, old.instance_id))
+    await _settle()
+    assert not task.done() and len(h.source.place_calls) == 2
+    h.manager.stop()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 1)
+
+
 # 6 ---------------------------------------------------------------------------------------------
 
 async def test_recovery_does_not_place_before_the_late_retire_completes(alarms: list[str]) -> None:

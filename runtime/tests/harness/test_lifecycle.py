@@ -48,6 +48,8 @@ class _Manager:
 
 
 class _Control:
+    _stopping = False
+
     def __init__(self):
         policy = type("P", (), {"type": "none", "retention_days": None})
         self.config = type("C", (), {"workspace": type("W", (), {"persistence": policy(), "session_retention_days": None, "session": type("S", (), {"idle_timeout_seconds": 20})(), "idle_timeout_seconds": 30, "shutdown_timeout_seconds": 5, "max_concurrent_sessions": 2})(), "channels": [], "agent": AgentIdentity(name="agent", namespace="ach", uid="3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77")})()
@@ -221,6 +223,35 @@ def test_owner_health_failure_calls_recover_under_operation_lock() -> None:
         assert alarms == []
         assert calls.count((workspace_ref, "/healthz")) == 2
         assert calls.count((workspace_ref, "/sessions")) == 0
+        await lifecycle.close()
+
+    asyncio.run(scenario())
+
+def test_stopping_control_does_not_recover_an_unhealthy_unit() -> None:
+    from ach_runtime.harness.workspaces import WorkspaceEndpoint, WorkspaceRef
+
+    async def scenario():
+        control = _Control()
+        workspace_ref = "a" * 64
+        endpoint = WorkspaceEndpoint(
+            WorkspaceRef("ach", control.config.agent.uid, workspace_ref), "ws", "pod", "http://mini",
+        )
+        control.manager._active = {workspace_ref: endpoint}
+        control.delivery = _Delivery()
+        recovered = []
+
+        async def mini_json(observed, method, path, payload=None):
+            return 503, {"status": "unhealthy"}
+
+        async def recover(ref, lost_instance_id):
+            recovered.append(ref)
+
+        control._mini_json = mini_json
+        control.manager.recover = recover
+        control._stopping = True
+        lifecycle = Lifecycle(control)
+        await lifecycle.tick(datetime(2026, 10, 1, tzinfo=UTC))
+        assert recovered == []
         await lifecycle.close()
 
     asyncio.run(scenario())

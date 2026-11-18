@@ -469,6 +469,8 @@ def build_openai_app(
         try:
             routed = route(event, channel)
             CHANNEL_INBOUND.labels(channel=channel.name, type="openai").inc()
+            # Not journaled: the caller holds the connection until the answer, and a dropped
+            # connection is its signal to retry; nothing was acknowledged to replay.
             ticket = control.admission.admit(routed)
         except RoutingError as exc:
             return _fail(str(exc), 400)

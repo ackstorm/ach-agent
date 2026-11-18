@@ -158,7 +158,12 @@ async def run_control(
                 await asyncio.sleep(0.02)
         # Both HTTP applications, including the facade child lifespans and /host/v1, are
         # serving before adoption, which waits for the host's inventory with no deadline.
-        discovery = asyncio.create_task(control.manager.adopt())
+        async def take_over() -> None:
+            await control.manager.adopt()
+            # Before anything new is accepted: a replayed event keeps its place in its session.
+            await control.replay_journal()
+
+        discovery = asyncio.create_task(take_over())
         while not discovery.done():
             done, _ = await asyncio.wait({discovery, *tasks}, return_when=asyncio.FIRST_COMPLETED)
             if discovery in done:
@@ -185,7 +190,7 @@ async def run_control(
             # Stop new ingress first. Keep the facade server alive while admitted runners
             # settle so running mini processes can finish model/MCP calls.
             ingress.state.ready = False
-            control._stopping = True
+            control.begin_stopping()
             control.source.close()
             await _cancel_all(recoveries)
             await _stop_channel_sources(sources)
@@ -217,7 +222,7 @@ async def run_control(
             raise RuntimeError("a control listener stopped unexpectedly")
     finally:
         ingress.state.ready = False
-        control._stopping = True
+        control.begin_stopping()
         await _cancel_all(recoveries)
         await _stop_channel_sources(sources)
         sources.clear()

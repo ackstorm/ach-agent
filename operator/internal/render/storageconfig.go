@@ -54,8 +54,8 @@ func ValidateRuntimeStorage(cfg WSConfig, options RuntimeStorageOptions) error {
 // coordinates always, plus — only when CredentialsSecretName is set — three AWS
 // SecretKeyRefs into that namespace-local Secret (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
 // required, AWS_SESSION_TOKEN optional). Never a raw credential value and never
-// ACH_STORAGE_S3_CREDENTIALS_SECRET itself in control env — callers gate this on a
-// successfully resolved cfg that actually requires storage (RuntimeRequiresStorage).
+// ACH_STORAGE_S3_CREDENTIALS_SECRET itself in control env — callers emit this whenever
+// the operator has a bucket configured.
 func RuntimeStorageEnv(options RuntimeStorageOptions) []corev1.EnvVar {
 	prefix := options.Prefix
 	if prefix == "" {

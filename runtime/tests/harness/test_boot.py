@@ -221,6 +221,9 @@ async def _run_shutdown(
             async def adopt(self):
                 events.append(("discovery", None))
 
+            def stop(self):
+                events.append(("manager-stop", None))
+
         manager = Manager()
 
         class Lifecycle:
@@ -229,6 +232,14 @@ async def _run_shutdown(
                 events.append(("lifecycle-start", None))
 
         lifecycle = Lifecycle()
+
+        async def replay_journal(self):
+            assert ingress.state.ready is False
+            events.append(("replay", None))
+
+        def begin_stopping(self):
+            self._stopping = True
+            self.manager.stop()
 
         async def close(self):
             events.append(("close", None))
@@ -269,7 +280,7 @@ async def test_run_control_keeps_root_signal_owner_and_facades_through_ingress_d
     # Only the ingress listener keeps an access log.
     assert [(s.config.app, s.config.access_log) for s in instances] == [(ingress, True), (facades, False)]
     assert max(i for i, event in enumerate(events) if event[0] == "root-handler") < events.index(("discovery", None))
-    assert events.index(("discovery", None)) < events.index(("lifecycle-start", None))
+    assert events.index(("discovery", None)) < events.index(("replay", None)) < events.index(("lifecycle-start", None))
     assert events.index(("lifecycle-start", None)) < events.index(("listener-exit", 8080))
     assert ingress.state.ready is False
     assert events.index(("listener-exit", 8080)) < events.index(("listener-exit", 8081))
@@ -284,6 +295,7 @@ async def test_run_control_keeps_root_signal_owner_and_facades_through_ingress_d
     # The host API is mounted once on the facade listener, before either listener starts.
     assert [path for path, _app in facades.mounts] == ["/host/v1"]
     assert events.index("source-close") < events.index(("listener-exit", 8080)), "the ready path closes the source with `_stopping`"
+    assert events.count(("manager-stop", None)) >= 1 and events.index(("manager-stop", None)) < events.index(("listener-exit", 8080))
 
 
 async def test_hosted_shutdown_does_not_wait_for_runs_the_next_control_adopts(tmp_path, monkeypatch) -> None:
@@ -406,6 +418,12 @@ async def test_recovered_boot_accounting_precedes_ingress(tmp_path: Path, monkey
 
             self.lifecycle = Lifecycle()
 
+        async def replay_journal(self):
+            events.append("replay")
+
+        def begin_stopping(self):
+            self._stopping = True
+
         async def close(self):
             events.append("close")
             await self.admission.close()
@@ -447,7 +465,7 @@ async def test_recovered_boot_accounting_precedes_ingress(tmp_path: Path, monkey
         assert events.index("listener-start-8080") < events.index("owners-accounted")
         assert events.index("listener-start-8081") < events.index("owners-accounted")
         assert events.index("facade-start") < events.index("owners-accounted")
-        assert events.index("owners-accounted") < events.index("lifecycle-start")
+        assert events.index("owners-accounted") < events.index("replay") < events.index("lifecycle-start")
         handlers[signal.SIGTERM]()
         for _ in range(100):
             if "listener-stop-8080" in events:
@@ -568,6 +586,9 @@ async def test_recovered_boot_failure_keeps_ingress_closed(tmp_path: Path, monke
                     pass
 
             self.lifecycle = Lifecycle()
+
+        def begin_stopping(self):
+            self._stopping = True
 
         async def close(self):
             await self.admission.close()
@@ -705,6 +726,12 @@ async def test_all_channel_sources_start_after_discovery_and_stop_before_drain(
             self.manager = Manager()
             self.lifecycle = Lifecycle()
 
+        async def replay_journal(self):
+            events.append("replay")
+
+        def begin_stopping(self):
+            self._stopping = True
+
         async def close(self):
             events.append("control-close")
 
@@ -718,7 +745,7 @@ async def test_all_channel_sources_start_after_discovery_and_stop_before_drain(
     assert events.count("cron-instance") == 1
     assert events.count("queue-instance-jobs") == 1
     assert events.count("queue-instance-jobs-secondary") == 1
-    assert events.index("discovery") < events.index("lifecycle-start") < events.index("cron-instance")
+    assert events.index("discovery") < events.index("replay") < events.index("lifecycle-start") < events.index("cron-instance")
     assert events.index("start-cron") < events.index("start-queue-jobs") < events.index("start-queue-jobs-secondary")
     assert events.index("stop-cron") < events.index("drain-check")
     assert events.index("stop-queue-jobs") < events.index("drain-check")
@@ -818,6 +845,12 @@ async def test_source_start_failure_rolls_back_started_sources(tmp_path: Path, m
 
             self.lifecycle = Lifecycle()
 
+        async def replay_journal(self):
+            pass
+
+        def begin_stopping(self):
+            self._stopping = True
+
         async def close(self):
             events.append("close")
 
@@ -912,6 +945,12 @@ async def test_abnormal_listener_stops_sources_before_facade_shutdown(tmp_path: 
 
             self.manager = Manager()
             self.lifecycle = Lifecycle()
+
+        async def replay_journal(self):
+            pass
+
+        def begin_stopping(self):
+            self._stopping = True
 
         async def close(self):
             events.append("control-close")
@@ -1151,6 +1190,9 @@ async def test_pre_readiness_shutdown_closes_the_source_before_the_listeners_sto
                 await gate.wait()
 
         manager = Manager()
+
+        def begin_stopping(self):
+            self._stopping = True
 
         async def close(self):
             events.append("close")

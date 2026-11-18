@@ -310,18 +310,20 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	// 4. Global runtime Storage: required configuration only, never cloud reachability.
-	// All-disabled policies skip this dependency entirely (RuntimeRequiresStorage false).
-	requiresStorage := render.RuntimeRequiresStorage(cfg)
+	// All-disabled policies skip this dependency entirely (no storage-requiring policy).
+	// A configured bucket reaches every control (the runtime journals accepted events in it);
+	// an unconfigured one only blocks agents whose policies require storage.
+	hasStorage := r.Storage.Bucket != ""
 	if err := render.ValidateRuntimeStorage(cfg, r.Storage); err != nil {
 		setCond(&conds, condWorkloadApplied, metav1.ConditionFalse, "StorageUnavailable", err.Error(), agent.Generation)
 		return r.finish(ctx, &agent, conds)
 	}
 
 	// 5. Referenced Secrets + keys (model/MCP headers, ACH key, channels, memory), merged with
-	// the global storage credential Secret's required keys when storage is required.
+	// the global storage credential Secret's required keys when a bucket is configured.
 	refSecrets := render.ReferencedSecrets(profile, agent)
 	checkSecrets, hashSecretsMap := refSecrets, refSecrets
-	if requiresStorage && r.Storage.CredentialsSecretName != "" {
+	if hasStorage && r.Storage.CredentialsSecretName != "" {
 		checkSecrets = mergeSecretKeys(refSecrets, r.Storage.CredentialsSecretName, requiredStorageCredentialKeys)
 		hashSecretsMap = mergeSecretKeys(refSecrets, r.Storage.CredentialsSecretName, allStorageCredentialKeys)
 	}
@@ -348,13 +350,13 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	setCond(&conds, condSecretsResolved, metav1.ConditionTrue, "SecretsFound", "", agent.Generation)
 	hashSecretsMap = mergeSecretKeys(hashSecretsMap, workspaceKeySecretName(string(agent.UID)), []string{workspaceKeyDataKey})
 
-	// 6. Env (once, with the private storage env merged in when required) + salted secret
+	// 6. Env (once, with the private storage env merged in when a bucket is configured) + salted secret
 	// hash + config hash.
 	env := buildAgentEnv(&agent, &profile, bindings)
 	env = overrideEnv(env, []corev1.EnvVar{{Name: "ACH_SANDBOX_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
 		LocalObjectReference: corev1.LocalObjectReference{Name: workspaceKeySecretName(string(agent.UID))}, Key: workspaceKeyDataKey,
 	}}}})
-	if requiresStorage {
+	if hasStorage {
 		env = overrideEnv(env, render.RuntimeStorageEnv(r.Storage))
 	}
 	configMap := buildConfigMap(&agent, configJSON)
@@ -759,12 +761,9 @@ func (r *AgentReconciler) agentsForProfile(ctx context.Context, obj client.Objec
 	return reqs
 }
 
-// agentsForSecret enqueues every Agent that references a changed Secret: by identity, by
-// an AgentProfile/Agent channel reference, or — only when the Secret is the operator's
-// configured global storage credentials Secret AND the agent's successfully resolved Render
-// config actually requires storage — the shared namespace-local credential Secret (Task2 D1
-// amendment, Step 6). The Render call here is best-effort: a transient render error simply
-// does not count as a match, it never blocks the identity/channel matches above.
+// agentsForSecret enqueues every Agent that references a changed Secret: by workspace key
+// identity or by an AgentProfile/Agent reference, plus every Agent in the namespace when the
+// Secret is the operator's storage credentials Secret and a bucket is set.
 func (r *AgentReconciler) agentsForSecret(ctx context.Context, obj client.Object) []reconcile.Request {
 	var list achv1alpha1.AgentList
 	if err := r.List(ctx, &list, client.InNamespace(obj.GetNamespace())); err != nil {
@@ -778,7 +777,7 @@ func (r *AgentReconciler) agentsForSecret(ctx context.Context, obj client.Object
 		}
 	}
 	name := obj.GetName()
-	isGlobalStorageCredSecret := r.Storage.CredentialsSecretName != "" && name == r.Storage.CredentialsSecretName
+	isGlobalStorageCredSecret := r.Storage.Bucket != "" && r.Storage.CredentialsSecretName != "" && name == r.Storage.CredentialsSecretName
 	var reqs []reconcile.Request
 	for i := range list.Items {
 		a := &list.Items[i]
@@ -788,12 +787,7 @@ func (r *AgentReconciler) agentsForSecret(ctx context.Context, obj client.Object
 				hit = true
 			}
 		}
-		if !hit && isGlobalStorageCredSecret {
-			if cfg, _, err := render.Render(profiles[a.Spec.ProfileRef.Name], *a); err == nil && render.RuntimeRequiresStorage(cfg) {
-				hit = true
-			}
-		}
-		if hit {
+		if hit || isGlobalStorageCredSecret {
 			reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: a.Namespace, Name: a.Name}})
 		}
 	}

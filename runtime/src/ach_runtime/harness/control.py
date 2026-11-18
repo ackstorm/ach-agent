@@ -82,7 +82,8 @@ from ach_runtime.harness.workspaces import (
     WorkspaceSource,
     instance_changed,
 )
-from ach_runtime.storage.config import storage_from_env
+from ach_runtime.harness.journal import EventJournal
+from ach_runtime.storage.config import records_storage_from_env, storage_from_env
 from ach_runtime.storage.api import ArtifactProducer
 from ach_runtime.storage.refs import StateRef
 
@@ -281,6 +282,8 @@ class Control:
     _retrying: set[str] = field(default_factory=set, repr=False)
     # Runs adopted after a restart, by invocation id: each settles to its final outcome.
     _recovery_outcomes: dict[str, asyncio.Future] = field(default_factory=dict, repr=False)
+    # Accepted events kept until their run reached a sandbox; None without operator storage.
+    journal: EventJournal | None = field(default=None, repr=False)
 
     async def _owned_live(self, claim: str) -> bool:
         # No I/O (spec 6.3). The only wait is for adoption of the units that already run: a
@@ -608,7 +611,7 @@ class Control:
                 payload={"text": RESUME_PROMPT, "recoveryOf": status.invocation_id},
             )
             try:
-                ticket = self.admission.admit(
+                ticket = await self.admission.accept(
                     RoutedEvent(event, status.workspace_key, status.session_key), rate_limited=False)
                 log.info("resuming a run the restart broke (invocation %s)", status.invocation_id)
                 resumed = await asyncio.shield(ticket.completed)
@@ -654,6 +657,63 @@ class Control:
         if task is not None:
             return await asyncio.shield(task)
         return self.finished_runs.get(invocation_id)
+
+    def recovering(self, invocation_id: str) -> bool:
+        """Whether this control took `invocation_id` over at startup: adopted or replayed."""
+        return invocation_id in self._recovery_outcomes
+
+    async def replay_journal(self) -> None:
+        """Admit again, oldest first, what the previous control accepted but never brought to
+        a sandbox. Runs before this control accepts anything new, so a session keeps its order."""
+        from ach_runtime.observability import alarm
+
+        journal = self.journal
+        if journal is None:
+            return
+        limit = self.config.limits.max_invocation_seconds
+        try:
+            entries = await journal.pending()
+        except Exception:  # noqa: BLE001 - an unreadable journal never keeps the control from starting
+            log.warning("journal could not be read; nothing replayed", exc_info=True)
+            alarm("journal_unavailable")
+            return
+
+        def reached_a_sandbox(invocation_id: str) -> bool:
+            return invocation_id in self.finished_runs or self.admission.is_recovered(invocation_id)
+
+        adopted_all = False
+        for entry in entries:
+            if _clock() - entry.accepted_at > timedelta(seconds=limit):
+                log.warning("journal entry expired before replay (invocation %s)", entry.invocation_id)
+                alarm("journal_unavailable", invocation_id=entry.invocation_id)
+                self.admission.forget(entry.invocation_id)
+                continue
+            if not reached_a_sandbox(entry.invocation_id) and not adopted_all:
+                # A deferred adoption may still register this entry's run: wait before running it again.
+                await self.manager.wait_deferred_adoptions(timeout=limit)
+                adopted_all = True
+            if reached_a_sandbox(entry.invocation_id):
+                self.admission.forget(entry.invocation_id)
+                continue
+            try:
+                if entry.kind == "script":
+                    await self.admission.accept_script(entry.event, accepted_at=entry.accepted_at)
+                    continue
+                ticket = await self.admission.accept(entry.routed_event, rate_limited=False,
+                                                     accepted_at=entry.accepted_at)
+            except Exception as exc:  # noqa: BLE001 - the entry stays for the next control
+                log.warning("journal entry not replayed (invocation %s): %s", entry.invocation_id, exc)
+                continue
+            self._track(entry.invocation_id, self._replayed(ticket))
+
+    @staticmethod
+    async def _replayed(ticket: AdmissionTicket) -> RunStatus | None:
+        """A replayed run's outcome, for a channel that reports runs taken over at startup."""
+        try:
+            result = await asyncio.shield(ticket.completed)
+        except Exception:  # noqa: BLE001 - the run failed: no outcome to report
+            return None
+        return result if isinstance(result, RunStatus) else None
 
     async def _observe_and_keep(self, endpoint: WorkspaceEndpoint, record: RunStatus) -> RunStatus:
         """Admission drops a recovered run's outcome; keep it for the channel that waits on it."""
@@ -955,6 +1015,8 @@ class Control:
         endpoint, request = prepared
         if started is not None:
             ticket.mark_started()
+            # The run is in its sandbox: the next control adopts it instead of replaying the event.
+            self.admission.forget(ticket.invocation_id)
             self._started_run[ticket.invocation_id] = started.run_id
         if not isinstance(request, StartRequest):
             raise WorkspaceAssemblyUnavailable("Delivery retained an invalid StartRequest")
@@ -963,6 +1025,8 @@ class Control:
             event=event.event,
         )
         # A run observed to its end reached the engine, even when Start was ambiguous.
+        if started is None:
+            self.admission.forget(ticket.invocation_id)
         ticket.mark_started()
         return status
 
@@ -1106,8 +1170,14 @@ class Control:
             usage=usage,
         ))
 
-    async def close(self) -> None:
+    def begin_stopping(self) -> None:
+        """Mark the control as stopping: no retry, resume, observing read or delivery for runs
+        that outlive it, and no unit replacement."""
         self._stopping = True
+        self.manager.stop()
+
+    async def close(self) -> None:
+        self.begin_stopping()
         for outcome in self._recovery_outcomes.values():
             outcome.cancel()
         self.source.close()
@@ -1381,6 +1451,9 @@ async def assemble(
     control = Control.__new__(Control)
     control.config, control.key, control.verify_key = config, key, verify_key
     control.catalog, control.public, control.storage = catalog, public, storage
+    journal_storage = storage or records_storage_from_env(env)
+    control.journal = (
+        EventJournal(journal_storage, agent=config.agent.name) if journal_storage else None)
     control._private_env = dict(env)
     control.ach_key, control._memory_auth = ach_key, memory_auth
     control.upstream_secrets = upstream_secrets
@@ -1428,6 +1501,7 @@ async def assemble(
         },
         clock=_clock, runner=control.run_and_deliver, alarm=_alarm,
     )
+    control.admission.journal = control.journal
     facade_timeout = httpx.Timeout(None, connect=30.0)
     mcp_client = httpx.AsyncClient(transport=facade_transport, timeout=facade_timeout)
     model_client = httpx.AsyncClient(transport=facade_transport, timeout=facade_timeout)

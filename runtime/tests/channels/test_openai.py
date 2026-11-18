@@ -273,6 +273,31 @@ async def test_models_requires_the_key_and_lists_the_agent(monkeypatch) -> None:
     assert [m["id"] for m in listed["data"]] == ["test-agent"]
 
 
+async def test_a_completion_is_not_journaled(monkeypatch) -> None:
+    async def runner(control, routed, ticket):
+        ticket.mark_started()
+        return _done(ticket, "ok")
+
+    class Journal:
+        def __init__(self) -> None:
+            self.kinds: list[str] = []
+
+        async def record(self, invocation_id, *, kind, event, routed) -> None:
+            self.kinds.append(kind)
+
+        async def forget(self, invocation_id) -> None:
+            pass
+
+    client, control = _client(runner, monkeypatch=monkeypatch)
+    control.admission.journal = journal = Journal()
+    async with client:
+        response = await client.post("/openai/chat/v1/chat/completions", headers=AUTH,
+                                     json={"model": "x", "messages": [_user("one")]})
+    assert response.status_code == 200
+    assert journal.kinds == []
+    await control.admission.close()
+
+
 async def test_completion_continues_the_session_with_the_last_message(monkeypatch) -> None:
     seen = []
 

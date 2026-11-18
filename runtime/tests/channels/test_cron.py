@@ -18,46 +18,96 @@ def _channel(name: str = "morning") -> ChannelConfig:
     })
 
 
-@pytest.mark.asyncio
-async def test_cron_original_utc_tick_timezone_no_catchup(monkeypatch: pytest.MonkeyPatch) -> None:
-    from ach_runtime.channels import cron
+def _channel15() -> ChannelConfig:
+    return ChannelConfig.model_validate({
+        "name": "quarter",
+        "type": "cron",
+        "cron": {"schedule": "*/15 * * * *", "timezone": "UTC"},
+    })
 
-    fixed_now = datetime(2026, 10, 2, 7, 30, tzinfo=UTC)
+
+async def _boot(monkeypatch, now, last, record_exc=None):
+    """Run the scheduler from `now` until its first sleep; return admitted event ids,
+    recorded ticks and the first sleep length."""
+    from ach_runtime.channels import cron
 
     class FixedDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
-            return fixed_now.astimezone(tz) if tz is not None else fixed_now.replace(tzinfo=None)
+            return now.astimezone(tz) if tz is not None else now.replace(tzinfo=None)
 
     monkeypatch.setattr(cron, "datetime", FixedDateTime)
-    sleeps: list[float] = []
-    tick_admissions: list[object] = []
     started = asyncio.get_running_loop().create_future()
     started.set_result(None)
-
-    async def stop_after_first_tick(seconds: float) -> None:
-        sleeps.append(seconds)
-        if len(sleeps) == 2:
-            raise RuntimeError("stop scheduler test")
+    ids: list[str] = []
+    recorded: list[tuple[str, datetime]] = []
+    sleeps: list[float] = []
 
     class Admission:
-        def admit(self, routed):
-            tick_admissions.append(routed)
+        async def accept(self, routed):
+            ids.append(routed.event.event_id)
             return SimpleNamespace(started=started)
 
-    monkeypatch.setattr(cron.asyncio, "sleep", stop_after_first_tick)
-    scheduler = cron.CronScheduler([_channel()], SimpleNamespace(admission=Admission()))
+    class Journal:
+        async def last_tick(self, channel):
+            return last
+
+        async def record_tick(self, channel, tick):
+            if record_exc is not None:
+                raise record_exc
+            recorded.append((channel, tick))
+
+    async def stop(seconds: float) -> None:
+        sleeps.append(seconds)
+        raise RuntimeError("stop scheduler test")
+
+    monkeypatch.setattr(cron.asyncio, "sleep", stop)
+    control = SimpleNamespace(admission=Admission(), journal=Journal())
+    scheduler = cron.CronScheduler([_channel15()], control)
     with pytest.raises(RuntimeError, match="stop scheduler"):
         await scheduler._run()
+    return ids, recorded, sleeps
 
-    assert len(tick_admissions) == 1
-    routed = tick_admissions[0]
-    expected_tick = "2026-10-03T06:00:00+00:00"
-    assert routed.event.event_id == f"morning:{expected_tick}"
-    assert routed.event.context["cron"]["scheduledTick"] == expected_tick
-    assert routed.event.payload["scheduled_tick"] == expected_tick
-    assert routed.session_key == expected_tick
-    assert routed.event.context["cron"]["scheduledTick"] > fixed_now.isoformat()
+
+@pytest.mark.asyncio
+async def test_cron_catches_up_missed_tick(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime(2026, 10, 2, 15, 0, 7, tzinfo=UTC)
+    last = datetime(2026, 10, 2, 14, 45, tzinfo=UTC)
+    ids, recorded, sleeps = await _boot(monkeypatch, now, last)
+    assert ids == ["quarter:2026-10-02T15:00:00+00:00"]
+    assert recorded[0][0] == "quarter"
+    assert recorded[0][1] == datetime(2026, 10, 2, 15, 0, tzinfo=UTC)
+    assert sleeps == [pytest.approx(15 * 60 - 7)]
+
+
+@pytest.mark.asyncio
+async def test_cron_no_catchup_when_tick_already_ran(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime(2026, 10, 2, 15, 0, 7, tzinfo=UTC)
+    ids, _, _ = await _boot(monkeypatch, now, datetime(2026, 10, 2, 15, 0, tzinfo=UTC))
+    assert ids == []
+
+
+@pytest.mark.asyncio
+async def test_cron_no_catchup_without_record(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime(2026, 10, 2, 15, 0, 7, tzinfo=UTC)
+    ids, _, _ = await _boot(monkeypatch, now, None)
+    assert ids == []
+
+
+@pytest.mark.asyncio
+async def test_cron_catchup_is_one_tick_never_a_backlog(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime(2026, 10, 2, 15, 16, tzinfo=UTC)
+    last = datetime(2026, 10, 2, 14, 45, tzinfo=UTC)
+    ids, _, _ = await _boot(monkeypatch, now, last)
+    assert ids == ["quarter:2026-10-02T15:15:00+00:00"]
+
+
+@pytest.mark.asyncio
+async def test_cron_record_tick_failure_still_admits(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime(2026, 10, 2, 15, 0, 7, tzinfo=UTC)
+    last = datetime(2026, 10, 2, 14, 45, tzinfo=UTC)
+    ids, _, _ = await _boot(monkeypatch, now, last, record_exc=OSError("down"))
+    assert ids == ["quarter:2026-10-02T15:00:00+00:00"]
 
 
 @pytest.mark.asyncio
@@ -79,7 +129,7 @@ async def test_cron_failed_tick_is_logged_and_not_retried(monkeypatch: pytest.Mo
     warnings: list[tuple[object, ...]] = []
 
     class Admission:
-        def admit(self, routed):
+        async def accept(self, routed):
             attempts.append(routed)
             raise RuntimeError("not started")
 

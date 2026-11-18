@@ -169,7 +169,7 @@ which sets `openshell.tls.secret` instead and needs no such flag.
 | Value | Default | Notes |
 |-------|---------|-------|
 | `storage.enabled` | `true` | `false` keeps control pods on S3 directly, with their own credentials. Drain the storage server first (below). |
-| `storage.namespaces` | `[]` | The Agent namespaces; required when a bucket is set. An Agent elsewhere with `persistence.type: s3` or artifacts enabled waits for the Secret `ach-agent-storage-s3`. |
+| `storage.namespaces` | `[]` | The Agent namespaces; required when a bucket is set. Every Agent namespace must be listed: an Agent in another namespace waits for the Secret `ach-agent-storage-s3` (`SecretsResolved=False`). |
 | `storage.remote.type` | `s3` | `s3` replicates to `runtime.storage.s3.bucket`; `gcs` to `storage.remote.gcs.bucket`. |
 | `storage.remote.gcs.{bucket,project,prefix,credentialsSecret}` | `prefix: ach` | GCS only; `project` is required. `credentialsSecret` names an existing Secret with the key `credentials.json` (a service account key); leave it empty for Workload Identity. |
 | `storage.serviceAccount.annotations` | `{}` | Annotations on the ServiceAccount `ach-agent-storage`, for example `iam.gke.io/gcp-service-account` for GKE Workload Identity. |
@@ -184,6 +184,8 @@ which sets `openshell.tls.secret` instead and needs no such flag.
   control ServiceAccount after the switch. `runtime.storage.s3.credentialsSecret` instead names a Secret
   with `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (optionally `AWS_SESSION_TOKEN`) in each listed
   namespace.
+  With a bucket configured, every agent's control gets the storage settings, so this Secret must exist in every
+  agent namespace, not only for agents with persistent storage.
 - **GCS.** With `storage.remote.type=gcs` the storage server replicates to `storage.remote.gcs.bucket`
   with Application Default Credentials: on GKE, Workload Identity, binding a Google service account with
   access to the bucket to `<namespace>/ach-agent-storage` and setting
@@ -577,17 +579,16 @@ turns recovery off. It does not stop the engine's own re-issue of an interrupted
 Recovery has limits:
 
 - A run adopted after a control restart, resumed or not, gets no retry and no `delivery` if its sandbox is then lost.
-- If the sandbox and the control are lost together, nothing is recovered. Only a queue source redelivers.
+- If the sandbox and the control are lost together after the run started, nothing recovers it. Only a queue source redelivers.
 - With `openai`, the caller has gone after a control restart, so a resume's answer reaches no caller; the session keeps it.
 - With A2A on `persistence: none` or `volume`, `tasks/get` cannot return a resume's result after a restart.
 - A resume gets its own `maxInvocationSeconds`, so one event can run for up to twice that.
 - If the control starts stopping while it reads an engine-failed run after a restart, that run is delivered as failed and not resumed.
-- A resume queues behind events admitted after the restart.
+- A resume that is not replayed from the journal queues behind events admitted after the restart.
 - Runs on a unit started by a release without lost-run recovery are not resumed: the unit does not report the routing keys.
 - A custom execution image of an earlier release rejects a retry or resume start. That recovery fails: for a resume the original outcome stands, for a retry the run ends failed.
 - The runs a unit of an earlier release finished before the upgrade count as delivered. They are not delivered again or resumed.
 - A unit of an earlier release keeps its Workspace's new events until it is idle, then it is retired. A Workspace with steady traffic keeps its old-release unit until it goes idle.
-- If the control stops after admitting a resume but before it reaches the sandbox, the event is not recovered. Recovery is at most once.
 
 `routing.workspaceKey` decides how often a message lands on a new sandbox. `session` gives every
 conversation its own sandbox, so every new conversation pays the full cold start. For a chat
@@ -690,3 +691,25 @@ reclaimPolicy: Delete
 Changing `size`, `storageClassName` or `accessMode` applies to new Workspaces; existing PVCs keep
 theirs. Changing `type` on a live Agent starts every Workspace fresh: after a change away from
 `volume` each PVC is deleted once its sandbox is gone.
+
+### Accepted events and restarts
+
+The control keeps every event it acknowledged in agent storage until the event's run reaches a sandbox
+(a `webhook-script` event: until it finishes). After a restart the next control runs what is left, once,
+before it accepts new events. Channels `webhook`, `webhook-script`, `cron`, `queue` and `a2a`, and a resume,
+are kept. `openai` is not: its caller holds the connection and retries when it drops.
+
+- It needs the operator's storage bucket. With none, an event still queued when the control stops is lost.
+- An entry older than `limits.maxInvocationSeconds` is dropped.
+- A replayed event runs outside the channel's rate limits.
+- An `openai` or A2A caller has gone after a restart, so a replayed answer reaches only the session. With A2A on `persistence: s3`, `tasks/get` returns it too.
+- An A2A request still queued when the control stops stays `working` and runs after the restart. Without storage it ends `failed` and is sent again.
+- If the control stops between a run's start and the removal of its entry, the event is matched to the adopted run or, when its sandbox is gone too, run again.
+- A stopping control does not replace a lost sandbox. The next control does when work needs it.
+- Replay waits for adopted units only when an entry still needs matching. An empty journal never delays readiness.
+
+A `cron` channel records each tick it fires. At boot it runs the latest tick it missed.
+It runs one tick, never a backlog, and none while no tick has been recorded for that channel or without storage.
+
+An event sent while no control is ready (a restart takes about 15 s) gets 503 from the route. The mesh does not
+retry it, so a sender that does not retry, such as a GitLab webhook, loses it.

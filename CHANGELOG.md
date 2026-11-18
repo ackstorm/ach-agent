@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The operator gives every agent's control the storage env whenever the agent has a bucket. With a bucket
+  configured, the credentials Secret must exist in every agent namespace.
+- Upgrade: list every Agent namespace in `storage.namespaces`; an Agent in another namespace waits for the Secret
+  (`SecretsResolved=False`). Upgrading the operator restarts every Agent's control, because its env changes.
+
+### Fixed
+
+- A control that stops while a sandbox is lost exits in seconds instead of hanging for its whole grace period.
+- Accepted events that had not reached a sandbox survive a control restart: they are kept in agent storage and
+  run once by the next control. An A2A request queued at stop stays `working` and completes after the restart.
+- The cron tick missed during a restart runs at boot.
+
 ## [0.8.3] - 2026-11-18
 
 ### Changed

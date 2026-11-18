@@ -152,7 +152,7 @@ class QueueConsumer:
         )
         CHANNEL_INBOUND.labels(channel=self._cfg.name, type="queue").inc()
         try:
-            ticket = self._control.admission.admit(route(event, self._cfg))
+            ticket = await self._control.admission.accept(route(event, self._cfg))
             await asyncio.shield(ticket.started)
         except Exception as exc:  # noqa: BLE001
             log.warning(

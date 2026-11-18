@@ -57,7 +57,7 @@ async def test_queue_pending_recovery_ack_after_started() -> None:
     admitted: list[RoutedEvent] = []
 
     class Admission:
-        def admit(self, routed):
+        async def accept(self, routed):
             admitted.append(routed)
             return SimpleNamespace(started=started)
 
@@ -87,7 +87,7 @@ async def test_queue_full_and_started_failure_leave_entries_pending() -> None:
         def __init__(self, failure: Exception):
             self.failure = failure
 
-        def admit(self, routed):
+        async def accept(self, routed):
             raise self.failure
 
     class Redis:
@@ -106,7 +106,7 @@ async def test_queue_full_and_started_failure_leave_entries_pending() -> None:
     started.set_exception(RuntimeError("workspace failed before Started"))
 
     class StartedAdmission:
-        def admit(self, routed):
+        async def accept(self, routed):
             return SimpleNamespace(started=started)
 
     consumer = QueueConsumer(_channel(), SimpleNamespace(admission=StartedAdmission()), redis)
@@ -126,7 +126,7 @@ async def test_queue_duplicate_started_acks_each_delivery_once() -> None:
     calls: list[RoutedEvent] = []
 
     class Admission:
-        def admit(self, routed):
+        async def accept(self, routed):
             calls.append(routed)
             return SimpleNamespace(started=started)
 

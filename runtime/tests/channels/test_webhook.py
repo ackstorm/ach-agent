@@ -292,7 +292,7 @@ async def test_github_legacy_payload_auth_and_identity(monkeypatch: pytest.Monke
     admissions = []
 
     class Admission:
-        def admit(self, routed):
+        async def accept(self, routed):
             admissions.append(routed)
             return SimpleNamespace(
                 invocation_id="started-github", started=started,

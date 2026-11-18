@@ -2360,6 +2360,7 @@ async def test_control_close_joins_lifecycle_before_clients() -> None:
 
     fake = SimpleNamespace(
         _stopping=False,
+        begin_stopping=lambda: None,
         _recovery_outcomes={},
         admission=SimpleNamespace(close=closer("admission")),
         lifecycle=SimpleNamespace(close=closer("lifecycle")),
@@ -3923,5 +3924,198 @@ async def test_reconnect_read_that_races_the_stop_settles_the_outcome_as_marked(
     try:
         assert reads == ["/status/run-race?observe=true"]
         assert (await asyncio.wait_for(control._recovery_outcomes["run-race"], 5)).observed
+    finally:
+        await control.close()
+
+
+# -- accepted-event journal ----------------------------------------------------
+
+
+class _Journal:
+    def __init__(self, entries=(), *, fail: bool = False, calls: list | None = None) -> None:
+        self.entries, self.fail, self.calls = list(entries), fail, calls if calls is not None else []
+        self.records: list[tuple[str, str]] = []
+        self.forgotten: list[str] = []
+
+    async def pending(self):
+        self.calls.append("pending")
+        if self.fail:
+            raise OSError("s3 down")
+        return list(self.entries)
+
+    async def record(self, invocation_id, *, kind, event, routed, accepted_at=None) -> None:
+        self.records.append((invocation_id, kind))
+
+    async def forget(self, invocation_id) -> None:
+        self.forgotten.append(invocation_id)
+
+
+def _journaled(control, journal: _Journal, *, hold: bool = True) -> None:
+    control.journal = control.admission.journal = journal
+    if hold:  # replayed tickets wait in admission instead of starting a Workspace
+        async def held(_event, _ticket):
+            await asyncio.Event().wait()
+
+        control.admission._runner = held
+
+
+def _entry(control, event_id: str, *, age: float = 0.0, kind: str = "agent"):
+    from ach_runtime.harness.journal import JournalEntry
+    from ach_runtime.harness.refs import invocation_digest
+
+    event = Event(event_id, "gitlab-mr-review", "merge_request", "gitlab", payload={"title": "fix"})
+    return JournalEntry(
+        invocation_id=invocation_digest(control.config.agent.uid, event.channel, event_id),
+        accepted_at=datetime.now(timezone.utc) - timedelta(seconds=age), kind=kind, event=event,
+        workspace_key="w", session_key="s", rate_keys=(),
+    )
+
+
+async def _forgotten(journal: _Journal, invocation_id: str) -> None:
+    for _ in range(200):
+        if invocation_id in journal.forgotten:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"{invocation_id} was not forgotten")
+
+
+async def test_start_accepted_forgets_the_journal_entry(monkeypatch) -> None:
+    control = await _control(_config())
+    journal = _Journal()
+    _journaled(control, journal, hold=False)
+    ticket = _memory_ticket(control.config, "inv-journal")
+    completed = _observed_run(control, state="completed", invocation_id=ticket.invocation_id)
+    _retry_harness(control, monkeypatch, [])
+
+    async def observe(self, endpoint, expected, **_kwargs):
+        await _forgotten(journal, ticket.invocation_id)  # while the run is still observed
+        return completed
+
+    monkeypatch.setattr(Control, "_observe_run", observe)
+    try:
+        assert await control.run(ticket.routed_event, ticket) is completed
+    finally:
+        await control.close()
+
+
+async def test_an_ambiguous_start_forgets_the_entry_once_the_run_is_observed(monkeypatch) -> None:
+    from ach_runtime.harness.delivery import StartOutcomeUnknown
+
+    control = await _control(_config())
+    journal = _Journal()
+    _journaled(control, journal, hold=False)
+    ticket = _memory_ticket(control.config, "inv-ambiguous-journal")
+    endpoint = _memory_endpoint(control.config)
+    completed = _observed_run(control, state="completed", invocation_id=ticket.invocation_id)
+
+    async def start(ticket):
+        control._prepared[ticket.invocation_id] = (endpoint, await control._prepare(ticket, endpoint))
+        raise StartOutcomeUnknown("start outcome unknown")
+
+    async def observe(self, endpoint, expected, **_kwargs):
+        await asyncio.sleep(0.05)
+        assert journal.forgotten == []  # the Start may not have reached the sandbox
+        return completed
+
+    monkeypatch.setattr(control.delivery, "start", start)
+    monkeypatch.setattr(Control, "_observe_run", observe)
+    try:
+        assert await control.run(ticket.routed_event, ticket) is completed
+        await _forgotten(journal, ticket.invocation_id)
+    finally:
+        await control.close()
+
+
+async def test_replay_admits_pending_agent_entries_without_rate_limits(monkeypatch) -> None:
+    from ach_runtime.harness.admission import ChannelRateLimit
+
+    control = await _control(_config())
+    calls: list[str] = []
+    entry = _entry(control, "evt-replayed")
+    _journaled(control, _Journal([entry], calls=calls))
+
+    async def deferred(timeout):
+        calls.append(f"deferred:{timeout}")
+
+    monkeypatch.setattr(control.manager, "wait_deferred_adoptions", deferred)
+    control.admission._rate_limits = {"gitlab-mr-review": ChannelRateLimit(max_per_hour=0)}
+    try:
+        await control.replay_journal()
+        assert control.admission.has_ticket(entry.invocation_id)
+        assert calls == ["pending", f"deferred:{control.config.limits.max_invocation_seconds}"]
+    finally:
+        await control.close()
+
+
+async def test_replay_of_an_empty_journal_does_not_wait_for_deferred_adoptions(monkeypatch) -> None:
+    control = await _control(_config())
+    _journaled(control, _Journal())
+
+    async def never(timeout):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(control.manager, "wait_deferred_adoptions", never)
+    try:
+        await asyncio.wait_for(control.replay_journal(), 1)
+    finally:
+        await control.close()
+
+
+async def test_replay_admits_pending_script_entries() -> None:
+    control = await _control(_config())
+    entry = _entry(control, "evt-script", kind="script")
+    _journaled(control, _Journal([entry]))
+    try:
+        await control.replay_journal()
+        assert isinstance(control.admission._tickets[entry.invocation_id], ScriptAdmissionTicket)
+    finally:
+        await control.close()
+
+
+async def test_replay_forgets_an_entry_whose_run_was_adopted(caplog) -> None:
+    import logging
+
+    control = await _control(_config())
+    entry = _entry(control, "evt-adopted")
+    journal = _Journal([entry])
+    _journaled(control, journal)
+    control.admission.recover(
+        invocation_id=entry.invocation_id, channel="gitlab-mr-review", workspace_ref="a" * 64,
+        session_ref="b" * 64, config_version=control.public.config_version,
+        deadline_at=datetime.now(timezone.utc) + timedelta(minutes=1), instance_id="pod-1", run_id="run-1",
+        observer=asyncio.Event().wait,
+    )
+    try:
+        with caplog.at_level(logging.WARNING):
+            await control.replay_journal()
+        await _forgotten(journal, entry.invocation_id)
+        assert not control.admission.has_ticket(entry.invocation_id)
+        assert "start_outcome_unknown" not in [getattr(r, "kind", None) for r in caplog.records]
+    finally:
+        await control.close()
+
+
+async def test_replay_drops_expired_entries() -> None:
+    control = await _control(_config())
+    entry = _entry(control, "evt-expired", age=control.config.limits.max_invocation_seconds + 5)
+    journal = _Journal([entry])
+    _journaled(control, journal)
+    try:
+        await control.replay_journal()
+        await _forgotten(journal, entry.invocation_id)
+        assert not control.admission.has_ticket(entry.invocation_id)
+    finally:
+        await control.close()
+
+
+async def test_replay_survives_an_unreadable_journal(caplog) -> None:
+    import logging
+
+    control = await _control(_config())
+    _journaled(control, _Journal(fail=True))
+    try:
+        with caplog.at_level(logging.WARNING):
+            await control.replay_journal()
+        assert "journal_unavailable" in [getattr(r, "kind", None) for r in caplog.records]
     finally:
         await control.close()

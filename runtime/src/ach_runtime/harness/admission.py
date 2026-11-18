@@ -86,12 +86,16 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from ach_runtime import observability
 from ach_runtime.channels.event import Event, RoutedEvent
 from ach_runtime.harness.refs import invocation_digest
 from ach_runtime.harness.refs import session_ref as compute_session_ref
 from ach_runtime.harness.refs import workspace_ref as compute_workspace_ref
+
+if TYPE_CHECKING:
+    from ach_runtime.harness.journal import EventJournal
 
 log = logging.getLogger(__name__)
 
@@ -245,6 +249,10 @@ class Admission:
         self._monitors: dict[str, asyncio.Task[None]] = {}
         self._lanes: dict[str, _Lane] = {}
         self._closed = False
+        # Accepted events kept until their run reached a sandbox; None without agent storage.
+        self.journal: EventJournal | None = None
+        self._journal_writes: dict[str, asyncio.Task[None]] = {}
+        self._journal_forgets: set[asyncio.Task[None]] = set()
 
     @property
     def queued_total(self) -> int:
@@ -561,6 +569,60 @@ class Admission:
             self._lanes[lane_key] = lane
         lane.put(dedup_key, ticket)
         return ticket
+
+    # -- accepted-event journal ------------------------------------------------
+
+    async def accept(self, routed_event: RoutedEvent, *, rate_limited: bool = True) -> AdmissionTicket | RecoveredRun:
+        """`admit`, then journal a ticket this call created before the caller acknowledges it."""
+        before = self._tickets.get(self._dedup_key(self._agent_uid, routed_event))
+        ticket = self.admit(routed_event, rate_limited=rate_limited)
+        if isinstance(ticket, AdmissionTicket) and ticket is not before:
+            await self._journal_record(ticket, "agent", routed_event.event, routed_event)
+        return ticket
+
+    async def accept_script(self, event: Event) -> ScriptAdmissionTicket:
+        """`admit_script`, then journal a ticket this call created."""
+        before = self._tickets.get(invocation_digest(self._agent_uid, event.channel, event.event_id))
+        ticket = self.admit_script(event)
+        if ticket is not before:
+            await self._journal_record(ticket, "script", event, None)
+        return ticket
+
+    async def _journal_record(
+        self, ticket: AdmissionTicket | ScriptAdmissionTicket, kind: str, event: Event,
+        routed: RoutedEvent | None,
+    ) -> None:
+        journal = self.journal
+        if journal is None:
+            return
+        invocation_id = ticket.invocation_id
+        # An ended ticket never runs again on this control: its entry goes, unless close() ended it.
+        ticket.completed.add_done_callback(lambda _: self.forget(invocation_id))
+        write = asyncio.ensure_future(_journal_call(
+            "record", invocation_id,
+            journal.record(invocation_id, kind=kind, event=event, routed=routed)))
+        self._journal_writes[invocation_id] = write
+        write.add_done_callback(lambda _: self._journal_writes.pop(invocation_id, None))
+        # Shielded: a caller that goes away does not cancel the write.
+        await asyncio.shield(write)
+
+    def forget(self, invocation_id: str) -> None:
+        """Drop `invocation_id`'s journal entry in the background, once its write is done.
+        A closed admission forgets nothing: a ticket close() failed never ran, and the next
+        control replays it."""
+        journal = self.journal
+        if journal is None or self._closed:
+            return
+        write = self._journal_writes.get(invocation_id)
+
+        async def forget_after_write() -> None:
+            if write is not None:
+                await asyncio.wait({write})
+            await _journal_call("forget", invocation_id, journal.forget(invocation_id))
+
+        task = asyncio.get_running_loop().create_task(forget_after_write())
+        self._journal_forgets.add(task)
+        task.add_done_callback(self._journal_forgets.discard)
 
     def recover(
         self,
@@ -887,6 +949,20 @@ class Admission:
                     recovered.completed.set_exception(RuntimeError("admission closed"))
                     recovered.completed.exception()
                 self._release_capacity_once(invocation_id)
+        # A forget lost here leaves an entry the next control matches to its adopted run or runs again.
+        forgets = list(self._journal_forgets)
+        for task in forgets:
+            task.cancel()
+        await asyncio.gather(*forgets, return_exceptions=True)
+
+
+async def _journal_call(action: str, invocation_id: str, call: Awaitable[None]) -> None:
+    """A journal failure never fails intake: log, alarm and carry on."""
+    try:
+        await call
+    except Exception:  # noqa: BLE001
+        log.warning("journal %s failed (invocation %s)", action, invocation_id, exc_info=True)
+        observability.alarm("journal_unavailable", invocation_id=invocation_id)
 
 
 class _Lane:

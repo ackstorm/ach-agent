@@ -83,7 +83,7 @@ class CronScheduler:
         )
         CHANNEL_INBOUND.labels(channel=channel.name, type="cron").inc()
         try:
-            ticket = self._control.admission.admit(route(event, channel))
+            ticket = await self._control.admission.accept(route(event, channel))
             await asyncio.shield(ticket.started)
         except Exception as exc:  # noqa: BLE001
             log.warning(

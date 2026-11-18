@@ -41,7 +41,7 @@ async def test_cron_original_utc_tick_timezone_no_catchup(monkeypatch: pytest.Mo
             raise RuntimeError("stop scheduler test")
 
     class Admission:
-        def admit(self, routed):
+        async def accept(self, routed):
             tick_admissions.append(routed)
             return SimpleNamespace(started=started)
 
@@ -79,7 +79,7 @@ async def test_cron_failed_tick_is_logged_and_not_retried(monkeypatch: pytest.Mo
     warnings: list[tuple[object, ...]] = []
 
     class Admission:
-        def admit(self, routed):
+        async def accept(self, routed):
             attempts.append(routed)
             raise RuntimeError("not started")
 

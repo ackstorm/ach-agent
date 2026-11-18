@@ -359,3 +359,40 @@ async def test_generic_webhook_over_rate_limit_is_429(generic_app) -> None:
     assert second.status_code == 429
     assert second.json() == {"detail": "rateLimit.perKey[0] (1/h) reached"}
     await admission.close()
+
+
+class _Journal:
+    def __init__(self) -> None:
+        self.records: list[tuple[str, str]] = []
+
+    async def record(self, invocation_id, *, kind, event, routed) -> None:
+        self.records.append((invocation_id, kind))
+
+    async def forget(self, invocation_id) -> None:
+        pass
+
+
+async def test_a_webhook_event_is_journaled_before_its_202(generic_app) -> None:
+    app, admission = generic_app
+    app.state.ready = True
+    admission.journal = journal = _Journal()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://control") as client:
+        response = await client.post("/channels/hook/events", headers={"x-request-id": "d1"},
+                                     json={"ticket_id": "#1"})
+    assert response.status_code == 202
+    assert journal.records == [(response.json()["task_id"], "agent")]
+    await admission.close()
+
+
+async def test_a_webhook_script_event_is_journaled_before_its_202(tmp_path: Path) -> None:
+    app, admission = _script_app(":", output=tmp_path / "unused")
+    admission.journal = journal = _Journal()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://control") as client:
+        response = await client.post(
+            "/channels/gitlab-register-hook/events",
+            headers={"X-Gitlab-Event-UUID": "journaled"}, json=_mr_body(),
+        )
+    assert response.status_code == 202
+    assert journal.records == [(response.json()["task_id"], "script")]
+    await asyncio.wait_for(next(iter(admission._tickets.values())).completed, 2)
+    await admission.close()

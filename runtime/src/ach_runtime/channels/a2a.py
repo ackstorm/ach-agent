@@ -370,7 +370,7 @@ class A2AAgentExecutorBridge:
         invocation_id = ""
         watcher: asyncio.Task[None] | None = None
         try:
-            ticket = self._control.admission.admit(routed)
+            ticket = await self._control.admission.accept(routed)
             self._task_invocations[task_id] = ticket.invocation_id
             pulse = _Pulse(event_queue, task_id, context_id, {
                 "invocationId": ticket.invocation_id,
@@ -467,7 +467,8 @@ class A2AAgentExecutorBridge:
         try:
             meta = dict(task.metadata)
             invocation_id = meta.get("invocationId", "")
-            if self._control.admission.has_ticket(invocation_id):
+            if (self._control.admission.has_ticket(invocation_id)
+                    and not self._control.recovering(invocation_id)):
                 return  # a request this control admitted after startup, not one to recover
             result = await self._control.recovered_outcome(invocation_id, self._channel_cfg.name)
             if result is None:

@@ -132,11 +132,11 @@ def _fake_admit(monkeypatch, state: str, *, text: str | None = None, error: str 
                 "state": state, "error": error, "result": None if text is None else {"text": text},
             }))
 
-    def admit(self, routed):
+    async def accept(self, routed):
         seen.append(routed.event.payload["text"])
         return Ticket()
 
-    monkeypatch.setattr(Admission, "admit", admit)
+    monkeypatch.setattr(Admission, "accept", accept)
     return seen
 
 

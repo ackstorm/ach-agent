@@ -611,7 +611,7 @@ class Control:
                 payload={"text": RESUME_PROMPT, "recoveryOf": status.invocation_id},
             )
             try:
-                ticket = self.admission.admit(
+                ticket = await self.admission.accept(
                     RoutedEvent(event, status.workspace_key, status.session_key), rate_limited=False)
                 log.info("resuming a run the restart broke (invocation %s)", status.invocation_id)
                 resumed = await asyncio.shield(ticket.completed)
@@ -657,6 +657,59 @@ class Control:
         if task is not None:
             return await asyncio.shield(task)
         return self.finished_runs.get(invocation_id)
+
+    def recovering(self, invocation_id: str) -> bool:
+        """Whether this control took `invocation_id` over at startup: adopted or replayed."""
+        return invocation_id in self._recovery_outcomes
+
+    async def replay_journal(self) -> None:
+        """Admit again, oldest first, what the previous control accepted but never brought to
+        a sandbox. Runs before this control accepts anything new, so a session keeps its order."""
+        from ach_runtime.observability import alarm
+
+        journal = self.journal
+        if journal is None:
+            return
+        limit = self.config.limits.max_invocation_seconds
+        # Every adopted run is registered first: an entry whose run reached its sandbox dedups
+        # to that run instead of running twice.
+        await self.manager.wait_deferred_adoptions(timeout=limit)
+        try:
+            entries = await journal.pending()
+        except Exception:  # noqa: BLE001 - an unreadable journal never keeps the control from starting
+            log.warning("journal could not be read; nothing replayed", exc_info=True)
+            alarm("journal_unavailable")
+            return
+        for entry in entries:
+            if _clock() - entry.accepted_at > timedelta(seconds=limit):
+                log.warning("journal entry expired before replay (invocation %s)", entry.invocation_id)
+                alarm("journal_unavailable", invocation_id=entry.invocation_id)
+                self.admission.forget(entry.invocation_id)
+                continue
+            if entry.invocation_id in self.finished_runs:  # its sandbox already ran it
+                self.admission.forget(entry.invocation_id)
+                continue
+            try:
+                if entry.kind == "script":
+                    await self.admission.accept_script(entry.event)
+                    continue
+                ticket = await self.admission.accept(entry.routed_event, rate_limited=False)
+            except Exception as exc:  # noqa: BLE001 - the entry stays for the next control
+                log.warning("journal entry not replayed (invocation %s): %s", entry.invocation_id, exc)
+                continue
+            if isinstance(ticket, RecoveredRun):
+                self.admission.forget(entry.invocation_id)
+            else:
+                self._track(entry.invocation_id, self._replayed(ticket))
+
+    @staticmethod
+    async def _replayed(ticket: AdmissionTicket) -> RunStatus | None:
+        """A replayed run's outcome, for a channel that reports runs taken over at startup."""
+        try:
+            result = await asyncio.shield(ticket.completed)
+        except Exception:  # noqa: BLE001 - the run failed: no outcome to report
+            return None
+        return result if isinstance(result, RunStatus) else None
 
     async def _observe_and_keep(self, endpoint: WorkspaceEndpoint, record: RunStatus) -> RunStatus:
         """Admission drops a recovered run's outcome; keep it for the channel that waits on it."""
@@ -958,6 +1011,8 @@ class Control:
         endpoint, request = prepared
         if started is not None:
             ticket.mark_started()
+            # The run is in its sandbox: the next control adopts it instead of replaying the event.
+            self.admission.forget(ticket.invocation_id)
             self._started_run[ticket.invocation_id] = started.run_id
         if not isinstance(request, StartRequest):
             raise WorkspaceAssemblyUnavailable("Delivery retained an invalid StartRequest")
@@ -966,6 +1021,8 @@ class Control:
             event=event.event,
         )
         # A run observed to its end reached the engine, even when Start was ambiguous.
+        if started is None:
+            self.admission.forget(ticket.invocation_id)
         ticket.mark_started()
         return status
 
@@ -1440,6 +1497,7 @@ async def assemble(
         },
         clock=_clock, runner=control.run_and_deliver, alarm=_alarm,
     )
+    control.admission.journal = control.journal
     facade_timeout = httpx.Timeout(None, connect=30.0)
     mcp_client = httpx.AsyncClient(transport=facade_transport, timeout=facade_timeout)
     model_client = httpx.AsyncClient(transport=facade_transport, timeout=facade_timeout)

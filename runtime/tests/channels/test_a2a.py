@@ -1014,7 +1014,7 @@ def _recovering(outcome=None, live=()):
     control = SimpleNamespace(
         config=SimpleNamespace(workspace=SimpleNamespace(persistence=SimpleNamespace(retention_days=1))),
         admission=SimpleNamespace(has_ticket=lambda i: i in live),
-        recovered_outcome=recovered_outcome,
+        recovered_outcome=recovered_outcome, recovering=lambda _i: False,
     )
     return A2AAgentExecutorBridge(control, _channel()), asked
 
@@ -1063,6 +1063,85 @@ def test_recovery_writes_the_outcome_the_control_settled_into_its_task() -> None
         return store
 
     assert asyncio.run(scenario()).log == [("finish", "failed", "boom")]
+
+
+class _Journal:
+    def __init__(self, entries=()) -> None:
+        self.entries = list(entries)
+        self.records: list[tuple[str, str]] = []
+
+    async def pending(self):
+        return list(self.entries)
+
+    async def record(self, invocation_id, *, kind, event, routed) -> None:
+        self.records.append((invocation_id, kind))
+
+    async def forget(self, invocation_id) -> None:
+        pass
+
+
+def test_execute_accepts_through_the_journal(monkeypatch) -> None:
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+    config = _channel()
+
+    async def runner(routed, ticket):
+        return _completed(ticket)
+
+    async def scenario() -> tuple[list, str]:
+        control = _control(config, runner)
+        control.admission.journal = journal = _Journal()
+        queue = _Queue()
+        await A2AAgentExecutorBridge(control, config).execute(_Context("t1", "c1"), queue)
+        await control.admission.close()
+        stamped = next(e for e in queue.events if e.metadata)
+        return journal.records, stamped.metadata["invocationId"]
+
+    records, invocation_id = asyncio.run(scenario())
+    assert records == [(invocation_id, "agent")]
+
+
+def test_a_replayed_request_is_finished_by_task_recovery() -> None:
+    """The stopped control left the task pending; the next control replays its event, and
+    task recovery writes the replayed run's answer into it."""
+    from ach_runtime.harness.control import Control
+    from ach_runtime.harness.journal import JournalEntry
+
+    config = _channel()
+
+    async def runner(routed, ticket):
+        return _completed(ticket, "replayed answer")
+
+    async def at_once(timeout) -> None:
+        return None
+
+    async def scenario() -> list:
+        control = Control.__new__(Control)
+        control.config = SimpleNamespace(
+            channels=[config], agent=SimpleNamespace(name="test-agent", uid="agent"),
+            limits=SimpleNamespace(max_invocation_seconds=60),
+            workspace=SimpleNamespace(persistence=SimpleNamespace(retention_days=1)),
+        )
+        control.admission = _admission(runner)
+        control.manager = SimpleNamespace(wait_adopted=at_once, wait_deferred_adoptions=at_once)
+        control._recovery_outcomes, control.finished_runs = {}, {}
+        event = Event(
+            event_id="a2a:t1", channel="review", type="a2a", source="a2a",
+            payload={"text": "hello", "task_id": "t1", "context_id": "c1"},
+            context={"a2a": {"taskId": "t1", "contextId": "c1"}},
+        )
+        routed = route(event, config)
+        invocation_id = Admission._dedup_key("agent", routed)
+        control.journal = control.admission.journal = _Journal([JournalEntry(
+            invocation_id=invocation_id, accepted_at=datetime.now(UTC), kind="agent", event=event,
+            workspace_key=routed.workspace_key, session_key=routed.session_key, rate_keys=routed.rate_keys,
+        )])
+        await control.replay_journal()
+        store = _Store(_stored_task(invocationId=invocation_id))
+        await A2AAgentExecutorBridge(control, config).recover(store)
+        await control.admission.close()
+        return store.log
+
+    assert asyncio.run(scenario()) == [("finish", "completed", "replayed answer")]
 
 
 def test_execute_stamps_the_run_identity_on_the_first_working_event(monkeypatch) -> None:

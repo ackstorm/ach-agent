@@ -117,10 +117,10 @@ def create_app(control: Control) -> FastAPI:
         try:
             CHANNEL_INBOUND.labels(channel=configured.name, type=configured.type).inc()
             if configured.type == "webhook-script":
-                ticket = control.admission.admit_script(event)
+                ticket = await control.admission.accept_script(event)
             else:
                 assert routed is not None
-                ticket = control.admission.admit(routed)
+                ticket = await control.admission.accept(routed)
         except AdmissionRateLimitedError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=429)
         except (AdmissionQueueFullError, AdmissionClosedError):

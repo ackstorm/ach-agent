@@ -173,7 +173,7 @@ async def run_local(
         say(f"{name} ready; starting the session")
         event = Event(event_id=f"tui:{uuid.uuid4().hex}", channel=TUI_CHANNEL, type="webhook",
                       source="generic", payload={"text": WARMUP_PROMPT if event_text is None else event_text})
-        ticket = controls[0].admission.admit(
+        ticket = await controls[0].admission.accept(
             RoutedEvent(event=event, workspace_key=TUI_WORKSPACE, session_key=TUI_SESSION)
         )
         # Admission owns both outcomes; retrieve a failure so it is never "unretrieved".

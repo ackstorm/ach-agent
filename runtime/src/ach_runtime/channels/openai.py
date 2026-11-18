@@ -469,7 +469,7 @@ def build_openai_app(
         try:
             routed = route(event, channel)
             CHANNEL_INBOUND.labels(channel=channel.name, type="openai").inc()
-            ticket = control.admission.admit(routed)
+            ticket = await control.admission.accept(routed)
         except RoutingError as exc:
             return _fail(str(exc), 400)
         except AdmissionRateLimitedError as exc:

@@ -2052,3 +2052,118 @@ def test_adopting_a_run_after_restart_raises_no_alarm(caplog: pytest.LogCaptureF
         await admission.close()
 
     asyncio.run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# accept: the accepted-event journal
+# ---------------------------------------------------------------------------
+
+
+class RecordingJournal:
+    def __init__(self, fail: bool = False, record_gate: asyncio.Event | None = None) -> None:
+        self.records: list[tuple[str, str]] = []
+        self.forgotten: list[str] = []
+        self.ops: list[str] = []
+        self.fail, self.record_gate = fail, record_gate
+
+    async def record(self, invocation_id, *, kind, event, routed) -> None:
+        if self.fail:
+            raise OSError("s3 down")
+        if self.record_gate is not None:
+            await self.record_gate.wait()
+        self.records.append((invocation_id, kind))
+        self.ops.append("record")
+
+    async def forget(self, invocation_id) -> None:
+        self.forgotten.append(invocation_id)
+        self.ops.append("forget")
+
+
+def test_accept_journals_a_new_ticket_once() -> None:
+    async def scenario() -> None:
+        runner = GatedRunner()
+        admission = _admission(runner, clock=FakeClock(datetime(2026, 10, 1, tzinfo=UTC)))
+        admission.journal = journal = RecordingJournal()
+        ticket = await admission.accept(_routed("evt-1"))
+        again = await admission.accept(_routed("evt-1"))
+        assert again is ticket
+        assert journal.records == [(ticket.invocation_id, "agent")]
+        runner.release("evt-1")
+        await admission.close()
+
+    asyncio.run(scenario())
+
+
+def test_accept_survives_a_journal_failure(caplog: pytest.LogCaptureFixture) -> None:
+    async def scenario() -> None:
+        runner = GatedRunner()
+        admission = _admission(runner, clock=FakeClock(datetime(2026, 10, 1, tzinfo=UTC)))
+        admission.journal = RecordingJournal(fail=True)
+        with caplog.at_level(logging.WARNING):
+            ticket = await admission.accept(_routed("evt-1"))
+        assert ticket.invocation_id and admission.has_ticket(ticket.invocation_id)
+        assert "journal_unavailable" in [getattr(r, "kind", None) for r in caplog.records]
+        runner.release("evt-1")
+        await admission.close()
+
+    asyncio.run(scenario())
+
+
+def test_ticket_that_never_started_is_forgotten_when_it_ends() -> None:
+    async def scenario() -> None:
+        runner = GatedRunner()
+        clock = FakeClock(datetime(2026, 10, 1, tzinfo=UTC))
+        admission = _admission(runner, clock=clock, max_invocation_seconds=5)
+        admission.journal = journal = RecordingJournal()
+        holder = await admission.accept(_routed("evt-holder", session_key="s1"))
+        queued = await admission.accept(_routed("evt-queued", session_key="s1"))
+        await _wait_until(lambda: "evt-holder" in runner.calls)
+        clock.advance(10)
+        with pytest.raises(TimeoutError):
+            await queued.completed
+        await _wait_until(lambda: queued.invocation_id in journal.forgotten)
+        assert holder.invocation_id not in journal.forgotten
+        runner.release("evt-holder")
+        await admission.close()
+
+    asyncio.run(scenario())
+
+
+def test_close_keeps_the_entries_of_queued_tickets() -> None:
+    """A ticket failed by close() never ran: the next control replays its entry."""
+    async def scenario() -> None:
+        runner = GatedRunner()
+        admission = _admission(runner, clock=FakeClock(datetime(2026, 10, 1, tzinfo=UTC)))
+        admission.journal = journal = RecordingJournal()
+        await admission.accept(_routed("evt-holder", session_key="s1"))
+        queued = await admission.accept(_routed("evt-queued", session_key="s1"))
+        await _wait_until(lambda: "evt-holder" in runner.calls)
+        await admission.close()
+        assert queued.completed.done()
+        await asyncio.sleep(POLL * 4)
+        assert journal.forgotten == []
+
+    asyncio.run(scenario())
+
+
+def test_a_finished_script_is_forgotten_only_after_it_was_recorded() -> None:
+    async def scenario() -> None:
+        async def runner(event, ticket):
+            ticket.mark_started()
+
+        admission = _admission(runner, clock=FakeClock(datetime(2026, 10, 1, tzinfo=UTC)))
+        gate = asyncio.Event()
+        admission.journal = journal = RecordingJournal(record_gate=gate)
+        accepting = asyncio.create_task(admission.accept_script(_script_event("script-1")))
+        await _wait_until(lambda: bool(admission._tickets))
+        ticket = next(iter(admission._tickets.values()))
+        await ticket.completed
+        await asyncio.sleep(POLL * 4)
+        assert journal.ops == []
+        gate.set()
+        assert await accepting is ticket
+        await _wait_until(lambda: journal.ops == ["record", "forget"])
+        assert journal.records == [(ticket.invocation_id, "script")]
+        await admission.close()
+
+    asyncio.run(scenario())

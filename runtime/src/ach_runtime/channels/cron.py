@@ -15,6 +15,7 @@ from ach_runtime.channels.event import Event
 from ach_runtime.channels.metrics import CHANNEL_INBOUND
 from ach_runtime.channels.routing import route
 from ach_runtime.config.schema import ChannelConfig
+from ach_runtime.observability import alarm
 
 log = structlog.get_logger(__name__)
 
@@ -47,6 +48,8 @@ class CronScheduler:
 
     async def _run(self) -> None:
         """Compute future ticks, sleep to the earliest, and advance due channels only."""
+        for channel, _, _ in self._slots:
+            await self._catch_up(channel)
         self._slots = [(channel, cron, cron.get_next(datetime)) for channel, cron, _ in self._slots]
 
         while True:
@@ -69,6 +72,23 @@ class CronScheduler:
                 else:
                     updated.append((channel, cron, next_tick))
             self._slots = updated
+
+    async def _catch_up(self, channel: ChannelConfig) -> None:
+        """Fire the latest tick a restart skipped; one tick at most, never a backlog."""
+        journal = getattr(self._control, "journal", None)
+        if journal is None:
+            return
+        try:
+            last = await journal.last_tick(channel.name)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("cron: last tick unreadable", channel=channel.name, error=str(exc))
+            alarm("journal_unavailable")
+            return
+        now = datetime.now(ZoneInfo(channel.cron.timezone))
+        prev = croniter(channel.cron.schedule, now).get_prev(datetime)
+        nxt = croniter(channel.cron.schedule, prev).get_next(datetime)
+        if last is not None and last < prev and now < nxt:
+            await self._fire(channel, prev)
 
     async def _fire(self, channel: ChannelConfig, scheduled_tick: datetime) -> None:
         """Admit one scheduled tick; log Started or drop a failed tick without retry."""
@@ -93,4 +113,11 @@ class CronScheduler:
                 error=str(exc),
             )
             return
+        journal = getattr(self._control, "journal", None)
+        if journal is not None:
+            try:
+                await journal.record_tick(channel.name, scheduled_tick)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("cron: tick not recorded", channel=channel.name, error=str(exc))
+                alarm("journal_unavailable")
         log.info("cron: tick started", channel=channel.name, tick=utc_tick)

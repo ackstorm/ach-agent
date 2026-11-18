@@ -273,7 +273,7 @@ async def test_models_requires_the_key_and_lists_the_agent(monkeypatch) -> None:
     assert [m["id"] for m in listed["data"]] == ["test-agent"]
 
 
-async def test_a_completion_is_accepted_through_the_journal(monkeypatch) -> None:
+async def test_a_completion_is_not_journaled(monkeypatch) -> None:
     async def runner(control, routed, ticket):
         ticket.mark_started()
         return _done(ticket, "ok")
@@ -294,7 +294,7 @@ async def test_a_completion_is_accepted_through_the_journal(monkeypatch) -> None
         response = await client.post("/openai/chat/v1/chat/completions", headers=AUTH,
                                      json={"model": "x", "messages": [_user("one")]})
     assert response.status_code == 200
-    assert journal.kinds == ["agent"]
+    assert journal.kinds == []
     await control.admission.close()
 
 

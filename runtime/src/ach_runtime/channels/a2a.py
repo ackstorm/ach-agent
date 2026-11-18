@@ -229,6 +229,7 @@ RESTARTING_RUNNING = (
     "on this task, or ask again in this conversation."
 )
 RESTARTING_QUEUED = "The agent restarted before your request started. Send it again."
+RESTARTING_REPLAYED = "The agent is restarting; your request runs after the restart."
 # Runtime voice, separate from the agent's inform_user: short, English, tagged in metadata.
 STARTING_AFTER_SECONDS = 5.0
 HEARTBEAT_SECONDS = 120.0  # under Envoy's default 300 s stream idle timeout
@@ -389,8 +390,13 @@ class A2AAgentExecutorBridge:
             if started is _CANCELLED:
                 await _stop(watcher)
                 if self._shutting_down and self.runs_outlive_control:
-                    await event_queue.enqueue_event(
-                        _status_event("failed", RESTARTING_QUEUED, task_id, context_id))
+                    if self._control.journal is not None:
+                        # The next control replays the request; its recovery finds the task by
+                        # the run identity this event carries when it is the task's first.
+                        await pulse.send("working", RESTARTING_REPLAYED)
+                    else:
+                        await event_queue.enqueue_event(
+                            _status_event("failed", RESTARTING_QUEUED, task_id, context_id))
                 return
             await pulse.send("working", None)
             result = await _wait_or_cancel(ticket.completed, cancel_event)

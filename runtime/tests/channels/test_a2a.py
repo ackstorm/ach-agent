@@ -65,7 +65,7 @@ def _admission(runner) -> Admission:
 
 
 def _control(config, runner) -> SimpleNamespace:
-    return SimpleNamespace(config=SimpleNamespace(channels=[config], agent=SimpleNamespace(name="test-agent"), identity_environment="test-env"), admission=_admission(runner), _stopping=False, progress={}, failures={}, storage=None, cancel_requested=set())
+    return SimpleNamespace(config=SimpleNamespace(channels=[config], agent=SimpleNamespace(name="test-agent"), identity_environment="test-env"), admission=_admission(runner), _stopping=False, progress={}, failures={}, storage=None, cancel_requested=set(), journal=None)
 
 
 def _completed(ticket, text: str = "answer") -> RunStatus:
@@ -912,7 +912,7 @@ def test_routing_error_fails_the_task_instead_of_raising(monkeypatch) -> None:
     asyncio.run(control.admission.close())
 
 
-async def _stop_run(*, outlive: bool, started: bool, stop: str):
+async def _stop_run(*, outlive: bool, started: bool, stop: str, journal=None):
     """Run one task against a runner that never finishes, then stop it with `stop`."""
     release = asyncio.Event()
     running = asyncio.Event()
@@ -926,6 +926,7 @@ async def _stop_run(*, outlive: bool, started: bool, stop: str):
 
     config = _channel()
     control = _control(config, runner)
+    control.journal = control.admission.journal = journal
     bridge = A2AAgentExecutorBridge(control, config)
     bridge.runs_outlive_control = outlive
     queue = _Queue()
@@ -955,6 +956,14 @@ def test_shutdown_fails_a_queued_run_so_the_caller_resends(monkeypatch) -> None:
     queue = asyncio.run(_stop_run(outlive=True, started=False, stop="shutdown"))
     assert queue.events[-1].status.state == 4
     assert queue.events[-1].status.message.parts[0].text == RESTARTING_QUEUED
+
+
+def test_shutdown_with_a_journal_leaves_a_queued_run_working(monkeypatch) -> None:
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
+    queue = asyncio.run(_stop_run(outlive=True, started=False, stop="shutdown", journal=_Journal()))
+    assert queue.events[-1].status.state == 2  # TASK_STATE_WORKING
+    assert queue.events[-1].status.message.parts[0].text == (
+        "The agent is restarting; your request runs after the restart.")
 
 
 @pytest.mark.parametrize("outlive,stop", [(True, "cancel"), (False, "shutdown")])
@@ -1066,18 +1075,26 @@ def test_recovery_writes_the_outcome_the_control_settled_into_its_task() -> None
 
 
 class _Journal:
-    def __init__(self, entries=()) -> None:
-        self.entries = list(entries)
+    """In memory: what one control records, the next control reads back as pending."""
+
+    def __init__(self) -> None:
+        self.entries: list = []
         self.records: list[tuple[str, str]] = []
 
     async def pending(self):
         return list(self.entries)
 
     async def record(self, invocation_id, *, kind, event, routed) -> None:
+        from ach_runtime.harness.journal import JournalEntry
+
         self.records.append((invocation_id, kind))
+        self.entries.append(JournalEntry(
+            invocation_id=invocation_id, accepted_at=datetime.now(UTC), kind=kind, event=event,
+            workspace_key=routed.workspace_key, session_key=routed.session_key, rate_keys=routed.rate_keys,
+        ))
 
     async def forget(self, invocation_id) -> None:
-        pass
+        self.entries = [e for e in self.entries if e.invocation_id != invocation_id]
 
 
 def test_execute_accepts_through_the_journal(monkeypatch) -> None:
@@ -1100,12 +1117,12 @@ def test_execute_accepts_through_the_journal(monkeypatch) -> None:
     assert records == [(invocation_id, "agent")]
 
 
-def test_a_replayed_request_is_finished_by_task_recovery() -> None:
-    """The stopped control left the task pending; the next control replays its event, and
-    task recovery writes the replayed run's answer into it."""
+def test_a_replayed_request_is_finished_by_task_recovery(monkeypatch) -> None:
+    """A graceful stop leaves a queued request's task working; the next control replays its
+    event, and task recovery writes the replayed run's answer into that task."""
     from ach_runtime.harness.control import Control
-    from ach_runtime.harness.journal import JournalEntry
 
+    monkeypatch.setenv("A2A_TEST_SECRET", SECRET)
     config = _channel()
 
     async def runner(routed, ticket):
@@ -1115,6 +1132,14 @@ def test_a_replayed_request_is_finished_by_task_recovery() -> None:
         return None
 
     async def scenario() -> list:
+        journal = _Journal()
+        queue = await _stop_run(outlive=True, started=False, stop="shutdown", journal=journal)
+        # The task as the SDK keeps it: stored on its first event, with that event's metadata.
+        first, last = queue.events[0], queue.events[-1]
+        task = Task(id="t1", context_id="c1", status=last.status)
+        task.metadata.update(dict(first.metadata))
+        assert last.status.state == 2 and len(journal.entries) == 1
+
         control = Control.__new__(Control)
         control.config = SimpleNamespace(
             channels=[config], agent=SimpleNamespace(name="test-agent", uid="agent"),
@@ -1124,19 +1149,9 @@ def test_a_replayed_request_is_finished_by_task_recovery() -> None:
         control.admission = _admission(runner)
         control.manager = SimpleNamespace(wait_adopted=at_once, wait_deferred_adoptions=at_once)
         control._recovery_outcomes, control.finished_runs = {}, {}
-        event = Event(
-            event_id="a2a:t1", channel="review", type="a2a", source="a2a",
-            payload={"text": "hello", "task_id": "t1", "context_id": "c1"},
-            context={"a2a": {"taskId": "t1", "contextId": "c1"}},
-        )
-        routed = route(event, config)
-        invocation_id = Admission._dedup_key("agent", routed)
-        control.journal = control.admission.journal = _Journal([JournalEntry(
-            invocation_id=invocation_id, accepted_at=datetime.now(UTC), kind="agent", event=event,
-            workspace_key=routed.workspace_key, session_key=routed.session_key, rate_keys=routed.rate_keys,
-        )])
+        control.journal = control.admission.journal = journal
         await control.replay_journal()
-        store = _Store(_stored_task(invocationId=invocation_id))
+        store = _Store(task)
         await A2AAgentExecutorBridge(control, config).recover(store)
         await control.admission.close()
         return store.log

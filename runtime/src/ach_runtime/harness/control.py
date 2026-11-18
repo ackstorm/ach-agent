@@ -671,22 +671,28 @@ class Control:
         if journal is None:
             return
         limit = self.config.limits.max_invocation_seconds
-        # Every adopted run is registered first: an entry whose run reached its sandbox dedups
-        # to that run instead of running twice.
-        await self.manager.wait_deferred_adoptions(timeout=limit)
         try:
             entries = await journal.pending()
         except Exception:  # noqa: BLE001 - an unreadable journal never keeps the control from starting
             log.warning("journal could not be read; nothing replayed", exc_info=True)
             alarm("journal_unavailable")
             return
+
+        def reached_a_sandbox(invocation_id: str) -> bool:
+            return invocation_id in self.finished_runs or self.admission.is_recovered(invocation_id)
+
+        adopted_all = False
         for entry in entries:
             if _clock() - entry.accepted_at > timedelta(seconds=limit):
                 log.warning("journal entry expired before replay (invocation %s)", entry.invocation_id)
                 alarm("journal_unavailable", invocation_id=entry.invocation_id)
                 self.admission.forget(entry.invocation_id)
                 continue
-            if entry.invocation_id in self.finished_runs:  # its sandbox already ran it
+            if not reached_a_sandbox(entry.invocation_id) and not adopted_all:
+                # A deferred adoption may still register this entry's run: wait before running it again.
+                await self.manager.wait_deferred_adoptions(timeout=limit)
+                adopted_all = True
+            if reached_a_sandbox(entry.invocation_id):
                 self.admission.forget(entry.invocation_id)
                 continue
             try:
@@ -697,10 +703,7 @@ class Control:
             except Exception as exc:  # noqa: BLE001 - the entry stays for the next control
                 log.warning("journal entry not replayed (invocation %s): %s", entry.invocation_id, exc)
                 continue
-            if isinstance(ticket, RecoveredRun):
-                self.admission.forget(entry.invocation_id)
-            else:
-                self._track(entry.invocation_id, self._replayed(ticket))
+            self._track(entry.invocation_id, self._replayed(ticket))
 
     @staticmethod
     async def _replayed(ticket: AdmissionTicket) -> RunStatus | None:

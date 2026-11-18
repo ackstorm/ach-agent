@@ -689,6 +689,10 @@ class Admission:
             for key, run in self._recovered.items()
         )
 
+    def is_recovered(self, invocation_id: str) -> bool:
+        """Whether `invocation_id` is a run adopted after a restart, settled or not."""
+        return invocation_id in self._recovered
+
     def has_ticket(self, invocation_id: str) -> bool:
         """Whether this control admitted `invocation_id` itself (not a recovered run)."""
         return invocation_id in self._tickets

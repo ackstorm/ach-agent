@@ -4042,7 +4042,21 @@ async def test_replay_admits_pending_agent_entries_without_rate_limits(monkeypat
     try:
         await control.replay_journal()
         assert control.admission.has_ticket(entry.invocation_id)
-        assert calls == [f"deferred:{control.config.limits.max_invocation_seconds}", "pending"]
+        assert calls == ["pending", f"deferred:{control.config.limits.max_invocation_seconds}"]
+    finally:
+        await control.close()
+
+
+async def test_replay_of_an_empty_journal_does_not_wait_for_deferred_adoptions(monkeypatch) -> None:
+    control = await _control(_config())
+    _journaled(control, _Journal())
+
+    async def never(timeout):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(control.manager, "wait_deferred_adoptions", never)
+    try:
+        await asyncio.wait_for(control.replay_journal(), 1)
     finally:
         await control.close()
 
@@ -4058,7 +4072,9 @@ async def test_replay_admits_pending_script_entries() -> None:
         await control.close()
 
 
-async def test_replay_forgets_an_entry_whose_run_was_adopted() -> None:
+async def test_replay_forgets_an_entry_whose_run_was_adopted(caplog) -> None:
+    import logging
+
     control = await _control(_config())
     entry = _entry(control, "evt-adopted")
     journal = _Journal([entry])
@@ -4070,9 +4086,11 @@ async def test_replay_forgets_an_entry_whose_run_was_adopted() -> None:
         observer=asyncio.Event().wait,
     )
     try:
-        await control.replay_journal()
+        with caplog.at_level(logging.WARNING):
+            await control.replay_journal()
         await _forgotten(journal, entry.invocation_id)
         assert not control.admission.has_ticket(entry.invocation_id)
+        assert "start_outcome_unknown" not in [getattr(r, "kind", None) for r in caplog.records]
     finally:
         await control.close()
 

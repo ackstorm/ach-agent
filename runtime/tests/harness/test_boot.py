@@ -253,7 +253,7 @@ async def _run_shutdown(
     await boot.run_control(config_path, host_api=host_api, assembly=assemble)
     return SimpleNamespace(
         elapsed=time.monotonic() - sigterm_at[0], events=events, instances=instances,
-        ingress=ingress, facades=facades,
+        ingress=ingress, facades=facades, control=control,
     )
 
 
@@ -289,11 +289,13 @@ async def test_run_control_keeps_root_signal_owner_and_facades_through_ingress_d
 async def test_hosted_shutdown_does_not_wait_for_runs_the_next_control_adopts(tmp_path, monkeypatch) -> None:
     run = await _run_shutdown(tmp_path, monkeypatch, host_api=True, queued_total=1, shutdown_timeout=3)
     assert run.elapsed < 1
+    assert run.control.runs_outlive_control is True
 
 
 async def test_in_process_shutdown_still_drains_runs(tmp_path, monkeypatch) -> None:
     run = await _run_shutdown(tmp_path, monkeypatch, host_api=False, queued_total=1, shutdown_timeout=1)
     assert run.elapsed >= 1
+    assert run.control.runs_outlive_control is False
 
 
 async def test_recovered_boot_accounting_precedes_ingress(tmp_path: Path, monkeypatch) -> None:

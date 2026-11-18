@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A run lost with its sandbox, or broken by a control restart or upgrade, is recovered once on every channel:
+  retried on the replacement sandbox (same invocation, remaining deadline, with a notice that the first attempt
+  may have acted) or resumed in its session after a restart. A resumed or retried result is delivered under the
+  original invocation id. `channels[].retryLostRuns: false` keeps the previous behaviour (outcome `unknown`,
+  alarm only). This changes the contract's never-replay rule; a lost run's side effects can repeat once. Units
+  of another release are adopted and retired once idle instead of retired at adoption, so an upgrade no longer
+  kills in-flight runs. Until then they also run their Workspace's new events: a Workspace with steady traffic
+  keeps its old-release unit until it goes idle. Runs adopted after a restart on `webhook`, `cron` and `queue`
+  channels have their results delivered to `delivery`, which 0.8.2 never did. The A2A-only resume is replaced
+  by this mechanism and no longer resumes runs that hit their deadline or stalled, or fails on channels with
+  `rateLimit.perKey`. A queue message whose run completed after an ambiguous start is acknowledged. A rollback
+  to 0.8.2 retires 0.8.3 units at adoption and kills their in-flight runs.
 - OpenShell 0.1.9: the e2e cluster and `docs/install.md`. The operator keeps the 0.1.8 Go SDK
   (`github.com/ai-openshell/sdk-go` has no 0.1.9 tag yet); the e2e suite passes against a 0.1.9
   gateway. With 0.1.9 a wildcard egress endpoint no longer permits private IP literals
@@ -19,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A failed run reports the engine's error (e.g. the gateway's "Budget has been exceeded!")
   in its run status and its A2A and OpenAI replies, which gave no reason before.
+- With `persistence: s3`, a control pod that starts while the storage server is unreachable keeps the
+  sandboxes that already run and retries their adoption every 5 s, instead of deleting them with their
+  unsaved Workspaces, sessions and runs.
+- The operator retries, with the controller's backoff, an Agent whose child apply or Secret read failed.
 
 ## [0.8.2] - 2026-11-18
 

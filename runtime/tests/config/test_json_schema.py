@@ -205,6 +205,13 @@ def _mutation_webhook_script_with_rate_limit(w: dict[str, Any]) -> None:
     w["channels"][0]["rateLimit"] = {"maxPerHour": 5}
 
 
+def _mutation_webhook_script_with_retry_lost_runs(w: dict[str, Any]) -> None:
+    _mutation_webhook_script_with_rate_limit(w)
+    channel = w["channels"][0]
+    channel.pop("rateLimit", None)
+    channel["retryLostRuns"] = True
+
+
 # review I5 follow-up: endpoint/image/quantity leaves, exported alongside the same I2 patch.
 def _mutation_facade_endpoint_missing_scheme(w: dict[str, Any]) -> None:
     w["infrastructure"]["facadeEndpoint"] = "ach-control.ach.svc:8081"
@@ -261,6 +268,7 @@ NEGATIVE_MUTATIONS = {
     "webhook_with_foreign_cron_block": _mutation_webhook_with_foreign_cron_block,
     "webhook_script_keeps_forbidden_prompt": _mutation_webhook_script_keeps_forbidden_prompt,
     "webhook_script_with_rate_limit": _mutation_webhook_script_with_rate_limit,
+    "webhook_script_with_retry_lost_runs": _mutation_webhook_script_with_retry_lost_runs,
     "facade_endpoint_missing_scheme": _mutation_facade_endpoint_missing_scheme,
     "webhook_script_source_not_gitlab": _mutation_webhook_script_source_not_gitlab,
     "whitespace_only_handoff_destination": _mutation_whitespace_only_handoff_destination,

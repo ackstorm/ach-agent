@@ -649,3 +649,22 @@ def test_volume_session_routes(tmp_path: Path, public_config_fixture) -> None:
     assert client.post("/sessions/prune", json={"retentionDays": 7}).json() == {"status": "ok", "pruned": 0}
     resumed = client.post(f"/sessions/{'se' * 16}/resume", json={"deadlineAt": "2026-10-01T00:00:00+00:00"})
     assert resumed.json() == {"status": "fresh", "sessionRef": "se" * 16}
+
+
+def test_status_observe_query_reaches_the_service(tmp_path: Path, public_config_fixture, monkeypatch) -> None:
+    client = _client(tmp_path, public_config_fixture)
+    client.post("/start", json=_payload(public_config_fixture.config_version))
+    service = client.app.state.service if hasattr(client.app.state, "service") else None
+    assert service is not None
+    seen: list[bool] = []
+    real = service.status
+
+    async def spy(invocation_id, *, observe=False):
+        seen.append(observe)
+        return await real(invocation_id, observe=observe)
+
+    monkeypatch.setattr(service, "status", spy)
+    assert client.get("/status/inv-1?observe=true").status_code == 200
+    assert client.get("/status/inv-1").status_code == 200
+    assert client.get("/runs").status_code == 200
+    assert seen == [True, False, False]

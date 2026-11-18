@@ -150,6 +150,8 @@ class _Invocation:
     # "releases without confirmed native halt") — a cleanup claimed after this point must
     # confirm halt via `engine.cancel()` rather than assume nothing was accepted.
     possible_send: bool = False
+    observed: bool = False
+    engine_failed: bool = False
     # The single retained cleanup's shared clock record (review focus 5) — created once, by
     # whichever trigger claims cleanup first (`_ensure_cleanup`).
     cleanup_budget: _HaltBudget | None = None
@@ -804,6 +806,7 @@ class ExecutionService:
             # late settlement must not race it (review focus 1).
             return
         inv.state = outcome
+        inv.engine_failed = outcome == "failed"
         if outcome == "completed":
             result_getter = getattr(self._engine, "result", None)
             if callable(result_getter):
@@ -908,11 +911,11 @@ class ExecutionService:
 
     # ------------------------------------------------------------------ status/cancel
 
-    async def status(self, invocation_id: str) -> RunStatus:
+    async def status(self, invocation_id: str, *, observe: bool = False) -> RunStatus:
         inv = self._invocations.get(invocation_id)
         if inv is None:
             raise KeyError(invocation_id)
-        return RunStatus(
+        run_status = RunStatus(
             invocationId=inv.request.invocation_id,
             channel=inv.request.channel,
             workspaceRef=inv.request.workspace_ref,
@@ -923,7 +926,15 @@ class ExecutionService:
             state=inv.state,
             error=inv.error,
             result=inv.result,
+            workspaceKey=inv.request.workspace_key,
+            sessionKey=inv.request.session_key,
+            recoveryOf=inv.request.recovery_of,
+            observed=inv.observed,
+            engineFailed=inv.engine_failed,
         )
+        if observe and inv.state in {"completed", "failed", "cancelled", "skipped"}:
+            inv.observed = True
+        return run_status
 
     async def list_runs(self) -> list[RunStatus]:
         return [await self.status(invocation_id) for invocation_id in list(self._invocations)]
@@ -1083,7 +1094,10 @@ class ExecutionService:
                     "workspaceRef": inv.request.workspace_ref,
                     "sessionRef": inv.request.session_ref,
                     "runId": inv.run_id,
-                    "request": inv.request.model_dump(by_alias=True, mode="json"),
+                    # A unit of an earlier release restores this registry and rejects `recoveryOf`.
+                    "request": inv.request.model_dump(
+                        by_alias=True, mode="json",
+                        exclude={"recovery_of"} if inv.request.recovery_of is None else None),
                     "started": self._started_record(inv),
                     "configVersion": inv.request.config_version,
                     "deadlineAt": inv.request.deadline_at.isoformat(),
@@ -1223,6 +1237,7 @@ class ExecutionService:
             error=run.get("error"),
             result=run.get("result"),
             terminal_at=time.monotonic(),
+            observed=True,
         )
 
     async def session_info(self, session_ref: str) -> dict[str, Any]:

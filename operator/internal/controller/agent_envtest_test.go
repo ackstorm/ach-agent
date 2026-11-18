@@ -400,6 +400,13 @@ func TestAgent_CEL_Rejections(t *testing.T) {
 				A2A:      &achv1alpha1.A2ASpec{Auth: achv1alpha1.A2AAuthSpec{SecretRef: achv1alpha1.SecretKeyRef{Name: "s", Key: "k"}}},
 				Delivery: &achv1alpha1.DeliverySpec{URL: "https://hooks.example.com"}}}
 		},
+		"retryLostRuns on a webhook-script channel": func(a *achv1alpha1.Agent) {
+			yes := true
+			a.Spec.Channels = []achv1alpha1.ChannelSpec{{Name: "hook", Type: "webhook-script",
+				Webhook:       &achv1alpha1.WebhookSpec{Auth: achv1alpha1.WebhookAuthSpec{Type: "none"}},
+				Script:        &achv1alpha1.PrepareSpec{Script: "true"},
+				RetryLostRuns: &yes}}
+		},
 		"gitlab skill without repo": func(a *achv1alpha1.Agent) {
 			a.Spec.Standalone.Skills = []achv1alpha1.StandaloneSkillSpec{{Name: "kit", Type: "gitlab"}}
 		},

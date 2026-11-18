@@ -509,6 +509,40 @@ async def test_ensure_waits_for_a_deferred_adoption_instead_of_placing() -> None
     assert h.source.place_calls == []
 
 
+async def test_wait_deferred_adoptions_returns_when_they_finish_or_after_the_timeout() -> None:
+    h = _Harness(_config(capacity=2))
+    bad, _ = await _deferred_unit(h, "fa-wait")
+    assert h.manager._deferred_adoptions
+    started = time.monotonic()
+    await h.manager.wait_deferred_adoptions(timeout=0.05)
+    assert time.monotonic() - started < 1
+    assert h.manager._deferred_adoptions  # still waiting for the gateway
+
+    h.probe_fail.clear()
+    h.source.gateway = True
+    await asyncio.wait_for(h.manager.wait_deferred_adoptions(timeout=30), 5)
+    assert bad.workspace_ref in h.manager.active_endpoints()
+    await h.manager.wait_deferred_adoptions(timeout=30)  # none left: returns at once
+
+
+async def test_wait_deferred_adoptions_awaits_the_deferral_that_replaces_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ws, "_STORAGE_RETRY_SECONDS", 0.02)
+    h = _Harness(_config(capacity=2))
+    ref = _ref(h.config, "fa-redefer")
+    h.adopt_unit(ref)
+    h.reconnect_error = SnapshotTransientFailure("transient S3 registry read failure")
+    await h.manager.adopt()
+
+    waiting = asyncio.ensure_future(h.manager.wait_deferred_adoptions(timeout=30))
+    await asyncio.sleep(0.2)
+    assert h.source.events.count("reconnect") > 2
+    assert not waiting.done()
+
+    h.reconnect_error = None
+    await asyncio.wait_for(waiting, 5)
+    assert ref.workspace_ref in h.manager.active_endpoints()
+
+
 async def test_close_cancels_a_deferred_adoption() -> None:
     h = _Harness(_config(capacity=2))
     await _deferred_unit(h, "fa-cancel")
@@ -544,23 +578,47 @@ def test_reconnect_callback_is_required() -> None:
                          commit_workspace=None, reconnect_workspace=None)
 
 
-async def test_adopting_a_unit_of_another_release_retires_it_without_an_anomaly(
+async def test_adopting_a_unit_of_another_release_keeps_it_until_idle(
     alarms: list[str], caplog: pytest.LogCaptureFixture,
 ) -> None:
     h = _Harness(_config())
     ref = _ref(h.config, "upgrade")
     h.adopt_unit(ref)
     name = _name(h.config, ref)
-    h.probe_error[name] = ws.ReleaseMismatch("execution unit runs release '0.1.1', control runs '0.1.2'")
+    h.probe_error[name] = ws.ReleaseMismatch(
+        "execution unit runs release '0.1.1', control runs '0.1.2'", "pod-old",
+    )
 
     with caplog.at_level(logging.INFO, logger=ws.__name__):
         await h.manager.adopt()
         await _settle()
 
     assert alarms == []
-    assert h.source.retire_calls == [name]
+    assert h.manager.active_endpoint(ref.workspace_ref).instance_id == "pod-old"
+    assert len(h.reconnected) == 1
+    assert h.source.retire_calls == []
+    assert h.manager.is_outdated(ref.workspace_ref)
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
     assert any("release '0.1.1'" in r.getMessage() for r in caplog.records)
+
+    await h.manager.close(ref)
+    assert h.source.retire_calls == [name]
+    assert not h.manager.is_outdated(ref.workspace_ref)
+
+
+async def test_adopting_a_release_mismatch_without_an_instance_id_retires_it(alarms: list[str]) -> None:
+    h = _Harness(_config())
+    ref = _ref(h.config, "upgrade-anon")
+    h.adopt_unit(ref)
+    name = _name(h.config, ref)
+    h.probe_error[name] = ws.ReleaseMismatch("execution unit runs release '0.1.1', control runs '0.1.2'")
+
+    await h.manager.adopt()
+    await _settle()
+
+    assert alarms == []
+    assert h.source.retire_calls == [name]
+    assert not h.manager.is_outdated(ref.workspace_ref)
 
 
 async def test_activating_a_unit_of_another_release_runs_with_a_warning(

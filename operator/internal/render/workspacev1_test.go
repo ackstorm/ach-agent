@@ -516,6 +516,27 @@ func TestRenderChannelV1RateLimit(t *testing.T) {
 	}
 }
 
+func TestRenderChannelV1RetryLostRuns(t *testing.T) {
+	off := false
+	ch := v1.ChannelSpec{Name: "review", Type: "webhook", RetryLostRuns: &off}
+	got, _, err := RenderChannelV1(&ch, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RetryLostRuns == nil || *got.RetryLostRuns {
+		t.Fatalf("RetryLostRuns = %v, want false", got.RetryLostRuns)
+	}
+	ch.RetryLostRuns = nil
+	got, _, err = RenderChannelV1(&ch, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(got)
+	if strings.Contains(string(b), "retryLostRuns") {
+		t.Fatalf("an unset retryLostRuns is rendered: %s", b)
+	}
+}
+
 func TestRenderWorkspaceV1_PersistenceAndSessionRetention(t *testing.T) {
 	ws := func(p *v1.WorkspacePersistenceSpec, sessionDays *int64) *v1.WorkspaceSpec {
 		return &v1.WorkspaceSpec{

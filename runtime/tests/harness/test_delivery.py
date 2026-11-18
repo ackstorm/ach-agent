@@ -620,3 +620,39 @@ async def test_connect_timeout_is_bounded_below_the_overall_deadline(public_conf
     delivery = make_delivery(handler, public_config_fixture, clock=_real_clock())
     await delivery.start(ticket(seconds=30))
     assert seen and seen[0] <= 10
+
+
+async def test_status_observe_sends_the_query(public_config_fixture):
+    t = ticket()
+    seen = []
+
+    async def handler(req):
+        seen.append(req.url.raw_path.decode())
+        return pod_response(200, json=status(t, "completed", version=public_config_fixture.config_version).model_dump(by_alias=True, mode="json"))
+
+    d = make_delivery(handler, public_config_fixture)
+    endpoint = Manager(public_config_fixture.agent.uid).endpoint
+    await d.status(endpoint, "inv-1", observe=True)
+    await d.status(endpoint, "inv-1")
+    assert seen == ["/status/inv-1?observe=true", "/status/inv-1"]
+    await d.close()
+
+
+@pytest.mark.parametrize("recovery_of", [None, "inv-0"])
+async def test_start_payload_carries_recovery_of_only_when_set(public_config_fixture, recovery_of):
+    t = ticket()
+    bodies = []
+
+    async def handler(req):
+        payload = json.loads(await req.aread())
+        bodies.append(payload)
+        return pod_response(202, json={"invocationId": payload["invocationId"], "sessionRef": payload["sessionRef"], "runId": "run-1", "configVersion": payload["configVersion"]})
+
+    async def prepare(ticket_, endpoint):
+        return request(ticket_, public_config_fixture.config_version).model_copy(update={"recovery_of": recovery_of})
+
+    d = make_delivery(handler, public_config_fixture, prepare=prepare)
+    await d.start(t)
+    assert ("recoveryOf" in bodies[0]) is (recovery_of is not None)
+    assert bodies[0].get("recoveryOf") == recovery_of
+    await d.close()

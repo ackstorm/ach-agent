@@ -1,0 +1,29 @@
+apiVersion: ach-agent.ackstorm.ai/v1alpha1
+kind: Agent
+metadata: {name: "${NAME}", namespace: ach-agent-e2e}
+spec:
+  profileRef: {name: e2e}
+  capabilityServer: standalone
+  standalone:
+    model:
+      name: e2e-model
+      api: openai
+      baseUrl: http://e2e-stub.ach-agent-e2e.svc.cluster.local:8090/v1
+      headers:
+        x-litellm-api-key: {secretKeyRef: {name: e2e-model, key: apiKey}}
+        x-e2e-agent: {value: "${NAME}"}
+        # The stub streams the reply over this many seconds: the run is still going when its sandbox or control goes.
+        x-e2e-stream-seconds: {value: "180"}
+        ${FAIL}
+  # The profile's 300 s would end a retry or resume of a 180 s stream on its deadline.
+  limits: {maxInvocationSeconds: 900}
+  channels:
+    - name: hook
+      type: webhook
+      source: generic
+      routing: {sessionKey: "e2e"}
+      prompt: "Reply briefly. {{ payload | json }}"
+      webhook:
+        auth: {type: header_token, header: X-E2E-Token, secretRef: {name: e2e-hook, key: token}}
+      ${RETRY}
+  expose: {service: true}

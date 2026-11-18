@@ -494,6 +494,7 @@ async def test_deadline_after_started_maps_to_failed_and_triggers_engine_cancel(
     status = await service.status(request.invocation_id)
     assert status.state == "failed"
     assert status.error == "deadline expired"
+    assert status.engine_failed is False
     assert engine.cancel_calls == [(request.invocation_id, "deadline expired")]
 
 
@@ -1264,16 +1265,30 @@ async def test_real_snapshot_run_roundtrip(tmp_path, public_config_fixture) -> N
     manifest = await service.snapshot(request.session_ref)
 
     record = manifest.registry["runs"][0]
-    assert record["request"] == request.model_dump(by_alias=True, mode="json")
+    assert record["request"] == request.model_dump(by_alias=True, mode="json", exclude={"recovery_of"})
     assert record["started"] == started.model_dump(by_alias=True, mode="json")
     assert record["runId"] == started.run_id
     assert record["state"] == "completed"
 
     restored, restored_engine = _service(tmp_path / "restored", public_config_fixture)
     await restored.restore(request.session_ref, request.workspace_ref, manifest)
-    assert await restored.status(request.invocation_id) == await service.status(request.invocation_id)
+    assert await restored.status(request.invocation_id) == (
+        await service.status(request.invocation_id)
+    ).model_copy(update={"observed": True})
     assert await restored.start(request) == started
     assert restored_engine.start_calls == []
+
+
+@pytest.mark.parametrize("recovery_of", [None, "inv-0"])
+async def test_snapshot_registry_keeps_recovery_of_only_when_set(recovery_of, tmp_path, public_config_fixture) -> None:
+    # A 0.8.2 unit restoring this registry rejects an unknown `recoveryOf` key.
+    service, _ = _service(tmp_path, public_config_fixture)
+    request = _request(public_config_fixture.config_version, recoveryOf=recovery_of)
+    await service.start(request)
+    await asyncio.sleep(0)
+    saved = (await service.snapshot(request.session_ref)).registry["runs"][0]["request"]
+    assert ("recoveryOf" in saved) == (recovery_of is not None)
+    assert saved.get("recoveryOf") == recovery_of
 
 
 async def test_negative_snapshot_run_roundtrip_never_fabricates_started(
@@ -1300,7 +1315,7 @@ async def test_negative_snapshot_run_roundtrip_never_fabricates_started(
 
     restored, restored_engine = _service(tmp_path / "restored", public_config_fixture)
     await restored.restore(request.session_ref, request.workspace_ref, manifest)
-    assert await restored.status(request.invocation_id) == original_status
+    assert await restored.status(request.invocation_id) == original_status.model_copy(update={"observed": True})
     with pytest.raises(RuntimeError):
         await restored.start(request)
     assert restored_engine.start_calls == []
@@ -2353,3 +2368,39 @@ async def test_session_start_error_redacts_facade_tokens(tmp_path, public_config
     await service.start(_request(public_config_fixture.config_version))
     error = (await service.status("inv-1")).error
     assert token not in error and "<redacted>" in error
+
+
+async def test_status_reports_routed_keys_and_recovery(tmp_path, public_config_fixture) -> None:
+    service, engine = _service(tmp_path, public_config_fixture)
+    request = _request(public_config_fixture.config_version, recoveryOf="inv-0")
+    await service.start(request)
+    status = await service.status(request.invocation_id)
+    assert (status.workspace_key, status.session_key, status.recovery_of) == ("wk", "sk", "inv-0")
+
+
+async def test_observe_marks_a_terminal_run_after_the_read(tmp_path, public_config_fixture) -> None:
+    service, engine = _service(tmp_path, public_config_fixture)
+    request = _request(public_config_fixture.config_version)
+    await service.start(request)
+    inv = service._invocations[request.invocation_id]
+    engine.statuses[request.invocation_id] = "completed"
+    engine._event(request.invocation_id).set()
+    await asyncio.wait_for(inv.settle_task, timeout=5)
+
+    assert (await service.status(request.invocation_id)).observed is False
+    assert (await service.list_runs())[0].observed is False
+    assert (await service.status(request.invocation_id, observe=True)).observed is False
+    assert (await service.status(request.invocation_id)).observed is True
+
+
+async def test_run_restored_from_a_snapshot_is_observed(tmp_path, public_config_fixture) -> None:
+    service, _ = _service(tmp_path, public_config_fixture)
+    request = _request(public_config_fixture.config_version)
+    service._adopt_restored_run({
+        "request": request.model_dump(by_alias=True, mode="json"),
+        "state": "failed",
+        "runId": "run-1",
+        "started": None,
+        "error": "lost",
+    })
+    assert (await service.status(request.invocation_id)).observed is True

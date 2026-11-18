@@ -16,7 +16,7 @@ from typing import Any, Literal
 import structlog
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from ach_runtime.channels.event import Event, RoutedEvent
+from ach_runtime.channels.event import Event
 from ach_runtime.channels.metrics import CHANNEL_INBOUND
 from ach_runtime.channels.routing import RoutingError, route
 from ach_runtime.config.schema import ChannelConfig
@@ -236,11 +236,6 @@ QUEUED_TEXT = "Queued behind an earlier request in this conversation."
 STARTING_TEXT = "Starting the agent, this can take a few seconds..."
 HEARTBEAT_TEXT = "Still working..."
 RUN_LOST = "The agent restarted and this request's run was lost. Send it again."
-RESUME_PROMPT = (
-    "The ACH control restarted while you were working. Model and tool calls made during "
-    "the restart may have failed with connection errors. Continue the task where you "
-    "left off, and repeat any tool call whose result you did not get."
-)
 
 
 def _outcome_status(result: Any, failure: str | None = None) -> tuple[str, str]:
@@ -471,14 +466,10 @@ class A2AAgentExecutorBridge:
     async def _recover_task(self, store: Any, task: Any) -> None:
         try:
             meta = dict(task.metadata)
-            if self._control.admission.has_ticket(meta.get("invocationId", "")):
+            invocation_id = meta.get("invocationId", "")
+            if self._control.admission.has_ticket(invocation_id):
                 return  # a request this control admitted after startup, not one to recover
-            result = await self._recovered_result(meta.get("invocationId", ""))
-            if result is None:
-                await store.finish(task, "failed", RUN_LOST)
-                return
-            if result.state == "failed" and meta.get("resumed") != "1" and "sessionKey" in meta:
-                result = await self._resume(store, task, meta)
+            result = await self._control.recovered_outcome(invocation_id, self._channel_cfg.name)
             if result is None:
                 await store.finish(task, "failed", RUN_LOST)
                 return
@@ -487,33 +478,6 @@ class A2AAgentExecutorBridge:
         except Exception:
             # The task stays non-terminal: the next control's recovery tries again.
             log.warning("a2a task recovery failed", channel=self._channel_cfg.name, task_id=task.id)
-
-    async def _recovered_result(self, invocation_id: str) -> RunStatus | None:
-        run = self._control.admission.recovered_run(invocation_id)
-        if run is not None:
-            try:
-                await asyncio.shield(run.completed)  # resolves to None; the outcome is in finished_runs
-            except Exception:
-                return None
-        return self._control.finished_runs.pop(invocation_id, None)
-
-    async def _resume(self, store: Any, task: Any, meta: dict[str, Any]) -> RunStatus | None:
-        """One message into the same session; its outcome becomes the task's."""
-        event = Event(
-            event_id=f"a2a:{task.id}:resume", channel=self._channel_cfg.name, type="a2a",
-            source="a2a",
-            payload={"text": RESUME_PROMPT, "task_id": task.id, "context_id": task.context_id},
-            context={"a2a": {"taskId": task.id, "contextId": task.context_id}, "headers": {}},
-        )
-        ticket = self._control.admission.admit(
-            RoutedEvent(event=event, workspace_key=meta["workspaceKey"], session_key=meta["sessionKey"]))
-        # Stamped before waiting: if the control restarts again, the next recovery follows
-        # the resume run and never resumes a second time.
-        await store.annotate(task, {"invocationId": ticket.invocation_id, "resumed": "1"})
-        try:
-            return await asyncio.shield(ticket.completed)
-        except Exception:
-            return None
 
     async def cancel(self, context: Any, event_queue: Any) -> None:
         task_id = getattr(context, "task_id", None) or ""

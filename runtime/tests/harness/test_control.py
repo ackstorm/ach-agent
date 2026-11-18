@@ -5,6 +5,7 @@ import json
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -26,12 +27,15 @@ from ach_runtime.harness.workspaces import (
 from fake_host import FakeHost
 
 
-def _config(*, handoff: bool = False, hooks: dict | None = None, persistence: bool = False):
+def _config(*, handoff: bool = False, hooks: dict | None = None, persistence: bool = False,
+            retry_lost_runs: bool = True):
     wire = json.loads((Path(__file__).parents[1] / "config/fixtures/pr-review-runtime.json").read_text())
     wire["workspace"]["persistence"] = {"type": "s3", "retentionDays": 90} if persistence else {"type": "none"}
     wire["artifacts"]["enabled"] = False
     channel = wire["channels"][0]
     channel["prompt"] = "Review {{ payload.title | default(\"untitled\") }} for {{ internal.agent.name }}"
+    if not retry_lost_runs:
+        channel["retryLostRuns"] = False
     if not handoff:
         channel.pop("handoff", None)
     if hooks:
@@ -118,6 +122,9 @@ def test_harness_completion_record_keeps_the_engine_usage_source(monkeypatch, so
 
     config = _config()
     control = Control.__new__(Control)
+    control._retrying = set()
+    control._recovery_outcomes = {}
+    control.runs_outlive_control = False
     control.config = config
     control.public = public_config(config, config.engine.env)
     records = []
@@ -143,6 +150,9 @@ def test_harness_completion_record_carries_normal_and_recovered_correlation(monk
 
     config = _config()
     control = Control.__new__(Control)
+    control._retrying = set()
+    control._recovery_outcomes = {}
+    control.runs_outlive_control = False
     control.config = config
     control.public = public_config(config, config.engine.env)
     records = []
@@ -251,7 +261,7 @@ async def test_observe_run_returns_the_validated_terminal_status(state: str) -> 
         "workspace", "pod-1", "http://mini",
     )
     _publish(control, endpoint)
-    control.delivery.status = lambda *_args: _return_status(terminal)
+    control.delivery.status = lambda *_args, **_kwargs: _return_status(terminal)
     try:
         assert await control._observe_run(endpoint, terminal) is terminal
     finally:
@@ -346,7 +356,7 @@ async def test_t09_terminal_status_from_the_instance_is_kept_when_it_is_lost_in_
     lost: set[str] = set()
     monkeypatch.setattr(control.manager, "is_lost", lambda instance_id: instance_id in lost)
 
-    async def status(_endpoint, _invocation_id):
+    async def status(_endpoint, _invocation_id, **_kwargs):
         # The response was verified against the instance's own ID, then the loss lands.
         lost.add(endpoint.instance_id)
         return terminal
@@ -377,7 +387,7 @@ async def test_a_failed_terminal_status_still_records_failed(error, monkeypatch)
         "workspace", "pod-1", "http://mini",
     )
     _publish(control, endpoint)
-    control.delivery.status = lambda *_args: _return_status(failed)
+    control.delivery.status = lambda *_args, **_kwargs: _return_status(failed)
     try:
         assert await control._observe_run(endpoint, failed) is failed
         assert [record.outcome for record in records] == ["failed"]
@@ -655,7 +665,7 @@ async def test_real_admission_and_control_run_forward_terminal_status(caplog) ->
             runId="run-a2a", configVersion=config_version,
         )
 
-    async def status(_endpoint, invocation_id):
+    async def status(_endpoint, invocation_id, **_kwargs):
         request = control._prepared[invocation_id][1]
         return RunStatus(
             invocationId=invocation_id, channel=request.channel,
@@ -1278,6 +1288,9 @@ async def test_start_timeout_is_limit_only_after_original_deadline(expired, monk
             raise TimeoutError("transport timed out")
 
     control = Control.__new__(Control)
+    control._retrying = set()
+    control._recovery_outcomes = {}
+    control.runs_outlive_control = False
     control.delivery = TimedOutDelivery()
     control._prepared = {"inv-timeout": None}
     control.cancel_requested = set()
@@ -1306,6 +1319,9 @@ async def test_gateway_unavailable_start_failure_raises_the_gateway_alarm(monkey
             raise GatewayUnavailable("gateway_unavailable")
 
     control = Control.__new__(Control)
+    control._retrying = set()
+    control._recovery_outcomes = {}
+    control.runs_outlive_control = False
     control.delivery = DownDelivery()
     control._prepared = {"inv-gw": None}
     control.cancel_requested = set()
@@ -1549,7 +1565,7 @@ async def test_owner_loss_ordinary_waits_for_published_replacement(started_befor
     from ach_runtime.harness.delivery import StartOutcomeUnknown
 
     control = await assemble(
-        _config(), environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},
+        _config(retry_lost_runs=False), environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},
         ach_transport=httpx.MockTransport(_catalog_handler),
     )
     routed = RoutedEvent(Event("owner-loss-ordinary", "gitlab-mr-review", "merge_request", "gitlab"),
@@ -1593,7 +1609,7 @@ async def test_owner_loss_ordinary_waits_for_published_replacement(started_befor
     control_module = __import__("ach_runtime.harness.control", fromlist=["_alarm"])
     monkeypatch.setattr(control_module, "_alarm", lambda reason, _owner=None: lost_alarms.append(reason))
 
-    async def stale_terminal(observed, invocation_id):
+    async def stale_terminal(observed, invocation_id, **_kwargs):
         status_calls.append((observed.instance_id, invocation_id))
         status_seen.set()
         await release_stale_status.wait()
@@ -1664,7 +1680,7 @@ async def test_owner_loss_recovered_waits_for_published_replacement(monkeypatch)
     control_module = __import__("ach_runtime.harness.control", fromlist=["_alarm"])
     monkeypatch.setattr(control_module, "_alarm", lambda reason, _owner=None: alarms.append(reason))
 
-    async def stale_terminal(observed, invocation_id):
+    async def stale_terminal(observed, invocation_id, **_kwargs):
         status_calls.append((observed.instance_id, invocation_id))
         status_seen.set()
         await release_stale_status.wait()
@@ -2344,6 +2360,7 @@ async def test_control_close_joins_lifecycle_before_clients() -> None:
 
     fake = SimpleNamespace(
         _stopping=False,
+        _recovery_outcomes={},
         admission=SimpleNamespace(close=closer("admission")),
         lifecycle=SimpleNamespace(close=closer("lifecycle")),
         a2a_facade=None,
@@ -2732,6 +2749,9 @@ async def test_start_failure_logs_redacted_reason(monkeypatch, caplog):
             )
 
     control = Control.__new__(Control)
+    control._retrying = set()
+    control._recovery_outcomes = {}
+    control.runs_outlive_control = False
     control.delivery = FailingDelivery()
     control._prepared = {"inv-fail": None}
     control.cancel_requested = set()
@@ -2781,6 +2801,9 @@ async def test_start_failure_reason_reaches_real_control_log_output(monkeypatch,
             raise ConnectionError(f"pod unreachable Authorization: Bearer {secret}")
 
     control = Control.__new__(Control)
+    control._retrying = set()
+    control._recovery_outcomes = {}
+    control.runs_outlive_control = False
     control.delivery = FailingDelivery()
     control._prepared = {}
     control.cancel_requested = set()
@@ -2835,7 +2858,7 @@ async def test_observe_run_backs_off_for_long_runs_and_resets_on_state_change(mo
             deadlineAt=datetime(2026, 10, 1, 1, tzinfo=timezone.utc), state=state,
         )
 
-    async def status(*_args):
+    async def status(*_args, **_kwargs):
         return status_for(states.pop(0))
 
     endpoint = WorkspaceEndpoint(
@@ -2889,7 +2912,7 @@ async def test_observe_run_sleep_never_overshoots_the_deadline(monkeypatch) -> N
             configVersion=control.public.config_version, deadlineAt=deadline, state=state,
         )
 
-    async def status(*_args):
+    async def status(*_args, **_kwargs):
         return status_for("cancelled" if cancels else "running")
 
     async def cancel(*_args):
@@ -3203,6 +3226,9 @@ async def test_a_run_cancelled_while_queued_never_reaches_its_workspace():
             raise AssertionError("a cancelled run must not start")
 
     control = Control.__new__(Control)
+    control._retrying = set()
+    control._recovery_outcomes = {}
+    control.runs_outlive_control = False
     control.delivery = NoDelivery()
     control.cancel_requested = {"inv-queued"}
     ticket = SimpleNamespace(invocation_id="inv-queued", deadline_at=datetime(2030, 1, 1, tzinfo=timezone.utc))
@@ -3231,6 +3257,10 @@ async def test_run_delivers_the_result_of_a_channel_with_delivery(raises, monkey
         return SimpleNamespace(channel="alerts", state="completed", result={"text": "done"}, error=None)
 
     control = Control.__new__(Control)
+    control._retrying = set()
+    control._recovery_outcomes = {}
+    control.runs_outlive_control = False
+    control._stopping = False
     monkeypatch.setattr(Control, "run", fake_run)
     control.result_delivery = ResultDelivery(
         {"alerts": ("https://hooks.example.com/r", {})},
@@ -3343,3 +3373,555 @@ def test_local_skills_replace_a_downloaded_skill_of_the_same_name(tmp_path) -> N
     _overlay_skills(base, root, {"a": local / "a"})
     assert sorted(p.relative_to(root).as_posix() for p in root.rglob("*.md")) == ["skills/a/SKILL.md", "skills/b/SKILL.md"]
     assert (root / "skills" / "a" / "SKILL.md").read_text() == "new a"
+
+
+async def _control(config):
+    return await assemble(
+        config, environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},
+        ach_transport=httpx.MockTransport(_catalog_handler), mini_transport=httpx.MockTransport(_memory_mini),
+    )
+
+
+def _retry_harness(control, monkeypatch, outcomes: list):
+    """One fake Start per attempt; `outcomes` is what each attempt's observation does."""
+    endpoint = _memory_endpoint(control.config)
+    prompts: list[tuple[str, str | None]] = []
+
+    async def start(ticket):
+        request = await control._prepare(ticket, endpoint)
+        prompts.append((request.prompt, request.recovery_of))
+        return Started(invocationId=ticket.invocation_id, sessionRef=ticket.session_ref,
+                       runId=f"run-{len(prompts)}", configVersion=control.public.config_version)
+
+    async def observe(self, endpoint, expected, **_kwargs):
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(control.delivery, "start", start)
+    monkeypatch.setattr(Control, "_observe_run", observe)
+    return prompts
+
+
+async def test_a_lost_run_is_retried_once_with_the_notice(monkeypatch) -> None:
+    from ach_runtime.harness.admission import WorkspaceOwnerLost
+    from ach_runtime.harness.control import RETRY_NOTICE
+
+    control = await _control(_config())
+    ticket = _memory_ticket(control.config, "inv-retry")
+    completed = _observed_run(control, state="completed", invocation_id=ticket.invocation_id)
+    prompts = _retry_harness(control, monkeypatch, [WorkspaceOwnerLost("lost"), completed])
+    control.failures[ticket.invocation_id] = "x"
+    try:
+        assert await control.run(ticket.routed_event, ticket) is completed
+        assert [recovery_of for _, recovery_of in prompts] == [None, ticket.invocation_id]
+        assert RETRY_NOTICE not in prompts[0][0] and RETRY_NOTICE in prompts[1][0]
+        assert ticket.started.done() and ticket.started.exception() is None
+        assert ticket.invocation_id not in control._retrying
+        assert ticket.invocation_id not in control.failures
+    finally:
+        await control.close()
+
+
+async def test_a_second_loss_is_final(monkeypatch) -> None:
+    from ach_runtime.harness.admission import WorkspaceOwnerLost
+
+    control = await _control(_config())
+    ticket = _memory_ticket(control.config, "inv-twice")
+    prompts = _retry_harness(control, monkeypatch, [WorkspaceOwnerLost("lost"), WorkspaceOwnerLost("lost")])
+    try:
+        with pytest.raises(WorkspaceOwnerLost):
+            await control.run(ticket.routed_event, ticket)
+        assert len(prompts) == 2
+        assert ticket.invocation_id not in control._retrying
+    finally:
+        await control.close()
+
+
+@pytest.mark.parametrize("case", ["opted_out", "cancelled", "deadline_passed", "resume_event", "stopping"])
+async def test_no_retry(case, monkeypatch) -> None:
+    from dataclasses import replace
+
+    from ach_runtime.harness.admission import WorkspaceOwnerLost
+    from ach_runtime.harness.control import RESUME_EVENT_TYPE
+
+    control = await _control(_config(retry_lost_runs=case != "opted_out"))
+    ticket = _memory_ticket(control.config, f"inv-{case}")
+    if case == "deadline_passed":
+        ticket = replace(ticket, deadline_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+    if case == "resume_event":
+        routed = ticket.routed_event
+        resume = replace(routed.event, type=RESUME_EVENT_TYPE, payload={"text": "continue", "recoveryOf": "inv-0"})
+        ticket = replace(ticket, routed_event=replace(routed, event=resume))
+    lost = WorkspaceOwnerLost("lost", cancelled=case == "cancelled")
+    completed = _observed_run(control, state="completed", invocation_id=ticket.invocation_id)
+    prompts = _retry_harness(control, monkeypatch, [lost, completed])
+    control._stopping = case == "stopping"
+    try:
+        with pytest.raises(WorkspaceOwnerLost):
+            await control.run(ticket.routed_event, ticket)
+        assert len(prompts) == 1
+    finally:
+        await control.close()
+
+
+async def test_a_completed_run_after_an_ambiguous_start_marks_the_ticket_started(monkeypatch) -> None:
+    from ach_runtime.harness.delivery import StartOutcomeUnknown
+
+    control = await _control(_config())
+    ticket = _memory_ticket(control.config, "inv-ambiguous")
+    endpoint = _memory_endpoint(control.config)
+    completed = _observed_run(control, state="completed", invocation_id=ticket.invocation_id)
+
+    async def start(ticket):
+        control._prepared[ticket.invocation_id] = (endpoint, await control._prepare(ticket, endpoint))
+        raise StartOutcomeUnknown("start outcome unknown")
+
+    async def observe(self, endpoint, expected, **_kwargs):
+        return completed
+
+    monkeypatch.setattr(control.delivery, "start", start)
+    monkeypatch.setattr(Control, "_observe_run", observe)
+    try:
+        assert await control.run(ticket.routed_event, ticket) is completed
+        assert ticket.started.done() and ticket.started.exception() is None
+    finally:
+        await control.close()
+
+
+def _stopping_harness(control, monkeypatch, *, stop_during_read: bool = False):
+    """`run` observes a completed run (or raises for `inv-raises`); returns the reads and the sends."""
+    endpoint = _memory_endpoint(control.config)
+    _publish(control, endpoint)
+    terminal = _observed_run(control, state="completed")
+    observes: list[dict] = []
+
+    async def status(_endpoint, _invocation_id, **kwargs):
+        observes.append(kwargs)
+        if stop_during_read:
+            control._stopping = True
+        return terminal
+
+    async def fake_run(self, event, ticket):
+        if ticket.invocation_id == "inv-raises":
+            raise RuntimeError("lost")
+        return await self._observe_run(endpoint, terminal)
+
+    monkeypatch.setattr(control.delivery, "status", status)
+    monkeypatch.setattr(Control, "run", fake_run)
+    control.result_delivery = _RecordingDelivery()
+    return observes, control.result_delivery.sends
+
+
+@pytest.mark.parametrize("outlive", [True, False])
+async def test_a_stopping_control_delivers_what_no_later_control_will(outlive, monkeypatch) -> None:
+    control = await _control(_config())
+    observes, sends = _stopping_harness(control, monkeypatch)
+    control.runs_outlive_control = outlive
+    control._stopping = True
+    try:
+        ticket = _memory_ticket(control.config, "inv-stopping")
+        assert (await control.run_and_deliver(ticket.routed_event, ticket)).state == "completed"
+        raising = _memory_ticket(control.config, "inv-raises")
+        with pytest.raises(RuntimeError):
+            await control.run_and_deliver(raising.routed_event, raising)
+        assert observes == [{"observe": not outlive}]
+        # A failure leaves no record on any unit: it is delivered either way.
+        assert [send[1] for send in sends] == (["inv-raises"] if outlive else ["inv-stopping", "inv-raises"])
+    finally:
+        await control.close()
+
+
+async def test_a_stop_during_an_observing_read_still_delivers(monkeypatch) -> None:
+    control = await _control(_config())
+    observes, sends = _stopping_harness(control, monkeypatch, stop_during_read=True)
+    control.runs_outlive_control = True
+    try:
+        ticket = _memory_ticket(control.config, "inv-race")
+        assert (await control.run_and_deliver(ticket.routed_event, ticket)).observed
+        assert observes == [{"observe": True}]
+        assert [send[1] for send in sends] == ["inv-race"]
+    finally:
+        await control.close()
+
+
+async def test_a_recovery_that_raises_is_logged(caplog) -> None:
+    import logging
+
+    import ach_runtime.harness.control as control_module
+
+    control = await _control(_config())
+
+    async def broken():
+        raise RuntimeError("settle broke")
+
+    try:
+        with caplog.at_level(logging.WARNING, logger=control_module.__name__):
+            control._track("inv-broken", broken())
+            await asyncio.gather(control._recovery_outcomes["inv-broken"], return_exceptions=True)
+            await asyncio.sleep(0)
+        assert "inv-broken" in caplog.text and "settle broke" in caplog.text
+    finally:
+        await control.close()
+
+
+def _adopted(control, *, state="failed", error=None, recovery_of=None, observed=False, invocation_id="adopted",
+             engine_failed=True):
+    return RunStatus(
+        invocationId=invocation_id, channel="gitlab-mr-review",
+        workspaceRef="a" * 64, sessionRef="b" * 64, runId="run-1",
+        configVersion=control.public.config_version,
+        deadlineAt=datetime.now(timezone.utc) + timedelta(minutes=1), state=state, error=error,
+        workspaceKey="w", sessionKey="s", recoveryOf=recovery_of, observed=observed,
+        engineFailed=engine_failed and state == "failed",
+    )
+
+
+class _RecordingDelivery:
+    def __init__(self) -> None:
+        self.sends: list[tuple] = []
+
+    def send(self, *args) -> None:
+        self.sends.append(args)
+
+    async def close(self) -> None:
+        return None
+
+
+def _resume_admit(control, monkeypatch, outcome):
+    """Patch admission to record each resume and complete it with `outcome` (or raise it)."""
+    calls: list[tuple[RoutedEvent, dict]] = []
+
+    def admit(routed, **kwargs):
+        calls.append((routed, kwargs))
+        if isinstance(outcome, BaseException):
+            raise outcome
+        ticket = _memory_ticket(control.config, "resume-run")
+        ticket.completed.set_result(outcome)
+        return ticket
+
+    monkeypatch.setattr(control.admission, "admit", admit)
+    return calls
+
+
+async def test_an_engine_failure_is_resumed_once_on_a_webhook_channel(monkeypatch) -> None:
+    from ach_runtime.harness.control import RESUME_EVENT_TYPE, RESUME_PROMPT
+
+    control = await _control(_config())
+    resumed = _adopted(control, state="completed", invocation_id="resume-run")
+    calls = _resume_admit(control, monkeypatch, resumed)
+    control.result_delivery = _RecordingDelivery()
+    try:
+        assert await control._settle(_adopted(control)) is resumed
+        [(routed, kwargs)] = calls
+        assert (routed.workspace_key, routed.session_key) == ("w", "s")
+        assert routed.event.type == RESUME_EVENT_TYPE
+        assert routed.event.payload == {"text": RESUME_PROMPT, "recoveryOf": "adopted"}
+        assert routed.event.event_id == "resume:adopted"
+        assert kwargs == {"rate_limited": False}
+        assert control.result_delivery.sends == [("gitlab-mr-review", "adopted", resumed, None)]
+    finally:
+        await control.close()
+
+
+async def test_an_engine_failure_carrying_its_error_is_resumed(monkeypatch) -> None:
+    control = await _control(_config())
+    resumed = _adopted(control, state="completed", invocation_id="resume-run")
+    calls = _resume_admit(control, monkeypatch, resumed)
+    control.result_delivery = _RecordingDelivery()
+    try:
+        assert await control._settle(_adopted(control, error="Budget has been exceeded!")) is resumed
+        assert len(calls) == 1
+    finally:
+        await control.close()
+
+
+@pytest.mark.parametrize("change", [
+    {"error": "deadline expired", "engine_failed": False},
+    {"error": "stalled: no engine progress for 300s", "engine_failed": False},
+    {"recovery_of": "inv-0"},
+    {"state": "completed"},
+    {"state": "cancelled"},
+])
+async def test_not_resumed(change, monkeypatch) -> None:
+    control = await _control(_config())
+    calls = _resume_admit(control, monkeypatch, _adopted(control, state="completed"))
+    control.result_delivery = _RecordingDelivery()
+    status = _adopted(control, **change)
+    try:
+        assert await control._settle(status) is status
+        assert calls == []
+        delivered_as = status.recovery_of or "adopted"
+        assert control.result_delivery.sends == [("gitlab-mr-review", delivered_as, status, None)]
+    finally:
+        await control.close()
+
+
+async def test_not_resumed_when_the_channel_opts_out(monkeypatch) -> None:
+    control = await _control(_config(retry_lost_runs=False))
+    calls = _resume_admit(control, monkeypatch, _adopted(control, state="completed"))
+    status = _adopted(control)
+    try:
+        assert await control._settle(status) is status
+        assert calls == []
+    finally:
+        await control.close()
+
+
+async def test_a_stopping_control_neither_resumes_nor_delivers(monkeypatch) -> None:
+    control = await _control(_config())
+    calls = _resume_admit(control, monkeypatch, _adopted(control, state="completed"))
+    control.result_delivery = _RecordingDelivery()
+    control.runs_outlive_control = True
+    control._stopping = True
+    status = _adopted(control)
+    try:
+        assert await control._settle(status) is status
+        assert calls == []
+        assert control.result_delivery.sends == []
+    finally:
+        await control.close()
+
+
+async def test_a_stopping_control_delivers_an_outcome_its_own_read_marked(monkeypatch) -> None:
+    control = await _control(_config())
+    calls = _resume_admit(control, monkeypatch, _adopted(control, state="completed"))
+    control.result_delivery = _RecordingDelivery()
+    control.runs_outlive_control = True
+    control._stopping = True
+    status = _adopted(control, observed=True)
+    try:
+        assert await control._settle(status) is status
+        assert calls == []
+        assert control.result_delivery.sends == [("gitlab-mr-review", "adopted", status, None)]
+    finally:
+        await control.close()
+
+
+async def test_a_resume_read_while_stopping_is_delivered_once_under_the_original_id(monkeypatch) -> None:
+    control = await _control(_config())
+    resumed = _adopted(control, state="completed", invocation_id="resume-run", observed=True)
+    _resume_admit(control, monkeypatch, resumed)
+    plain_admit = control.admission.admit
+
+    def admit(routed, **kwargs):
+        control._stopping = True
+        return plain_admit(routed, **kwargs)
+
+    monkeypatch.setattr(control.admission, "admit", admit)
+    control.result_delivery = _RecordingDelivery()
+    control.runs_outlive_control = True
+    try:
+        assert await control._settle(_adopted(control)) is resumed
+        assert control.result_delivery.sends == [("gitlab-mr-review", "adopted", resumed, None)]
+    finally:
+        await control.close()
+
+
+async def test_a_run_tracked_twice_settles_once(monkeypatch) -> None:
+    control = await _control(_config())
+    settled: list[str] = []
+
+    async def settle(self, status):
+        settled.append(status.invocation_id)
+        return status
+
+    monkeypatch.setattr(Control, "_settle", settle)
+    status = _adopted(control)
+    try:
+        control._track("adopted", control._settle(status))
+        first = control._recovery_outcomes["adopted"]
+        control._track("adopted", control._settle(status))
+        assert control._recovery_outcomes["adopted"] is first
+        assert await first is status
+        assert settled == ["adopted"]
+    finally:
+        await control.close()
+
+
+@pytest.mark.parametrize("state", ["completed", "failed"])
+async def test_a_resume_settled_by_a_later_control_delivers_under_the_original_invocation(state, monkeypatch) -> None:
+    control = await _control(_config())
+    calls = _resume_admit(control, monkeypatch, _adopted(control, state="completed"))
+    control.result_delivery = _RecordingDelivery()
+    resumed = _adopted(control, state=state, recovery_of="original", invocation_id="resume-run")
+    try:
+        assert await control._settle(resumed) is resumed
+        assert calls == []
+        assert control.result_delivery.sends == [("gitlab-mr-review", "original", resumed, None)]
+    finally:
+        await control.close()
+
+
+async def test_a_failed_admit_keeps_the_known_outcome(monkeypatch) -> None:
+    from ach_runtime.harness.admission import AdmissionQueueFullError
+
+    control = await _control(_config())
+    calls = _resume_admit(control, monkeypatch, AdmissionQueueFullError("full"))
+    status = _adopted(control)
+    try:
+        assert await control._settle(status) is status
+        assert len(calls) == 1
+    finally:
+        await control.close()
+
+
+def _resume_ticket(config) -> AdmissionTicket:
+    from ach_runtime.harness.control import RESUME_EVENT_TYPE, RESUME_PROMPT
+
+    routed = RoutedEvent(
+        Event("resume:x", "gitlab-mr-review", RESUME_EVENT_TYPE, "harness", payload={"text": RESUME_PROMPT, "recoveryOf": "x"}),
+        "w", "s",
+    )
+    return AdmissionTicket(
+        "inv-resume", config.agent.namespace, config.agent.uid, "a" * 64, "b" * 64, routed,
+        datetime.now(timezone.utc) + timedelta(seconds=30),
+        asyncio.get_running_loop().create_future(), asyncio.get_running_loop().create_future(),
+    )
+
+
+async def test_the_resume_prompt_skips_the_channel_template_and_handoff(monkeypatch) -> None:
+    from ach_runtime.harness.control import RESUME_PROMPT
+
+    control = await _control(_config(handoff=True))
+    handoffs: list = []
+
+    async def run_handoff(self, *args):
+        handoffs.append(args)
+
+    monkeypatch.setattr(Control, "_run_handoff", run_handoff)
+    try:
+        request = await control._prepare(_resume_ticket(control.config), _memory_endpoint(control.config))
+        assert request.prompt.startswith(RESUME_PROMPT)
+        assert request.recovery_of == "x"
+        assert handoffs == []
+    finally:
+        await control.close()
+
+
+async def test_run_and_deliver_skips_resume_events(monkeypatch) -> None:
+    control = await _control(_config())
+    status = _adopted(control, state="completed", invocation_id="inv-resume")
+
+    async def fake_run(self, event, ticket):
+        return status
+
+    monkeypatch.setattr(Control, "run", fake_run)
+    control.result_delivery = _RecordingDelivery()
+    ticket = _resume_ticket(control.config)
+    try:
+        assert await control.run_and_deliver(ticket.routed_event, ticket) is status
+        assert control.result_delivery.sends == []
+    finally:
+        await control.close()
+
+
+async def test_recovered_outcome_follows_a_resume_started_by_the_previous_control(monkeypatch) -> None:
+    control = await _control(_config())
+
+    async def at_once(timeout):
+        return None
+
+    monkeypatch.setattr(control.manager, "wait_adopted", at_once)
+    monkeypatch.setattr(control.manager, "wait_deferred_adoptions", at_once)
+    resume_id = control._resume_invocation_id("gitlab-mr-review", "adopted")
+    resumed = _adopted(control, state="completed", recovery_of="adopted", invocation_id=resume_id)
+    control.finished_runs.update({"adopted": _adopted(control), resume_id: resumed})
+    try:
+        assert await control.recovered_outcome("adopted", "gitlab-mr-review") is resumed
+    finally:
+        await control.close()
+
+
+async def _reconnect_records(record: RunStatus, *, status_code: int = 200, status: RunStatus | None = None,
+                             drop: tuple[str, ...] = (), stop_during_read: bool = False):
+    """Reconnect pod `pod-1` whose `/runs` lists `record`; the control and the `/status` paths read.
+    `stop_during_read`: a control whose runs outlive it begins stopping during each `/status` read."""
+    reads: list[str] = []
+    stopping: list[Control] = []
+
+    async def mini(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions":
+            return httpx.Response(200, headers={"X-ACH-Instance-Id": request.headers.get("x-ach-instance-id", "")}, json=[])
+        headers = {"X-ACH-Instance-Id": "pod-1"}
+        if request.url.path == "/configure":
+            body = json.loads(request.content)
+            return httpx.Response(200, headers=headers, json={"configVersion": body["public"]["configVersion"]})
+        if request.url.path == "/runs":
+            wire = {k: v for k, v in record.model_dump(by_alias=True, mode="json").items() if k not in drop}
+            return httpx.Response(200, headers=headers, json=[wire])
+        if request.url.path.startswith("/status/"):
+            reads.append(request.url.raw_path.decode())
+            for control in stopping:
+                control._stopping = True
+            return httpx.Response(status_code, headers=headers,
+                                  json=(status or record).model_dump(by_alias=True, mode="json"))
+        return httpx.Response(200, headers=headers, json={})
+
+    config = _config()
+    control = await assemble(
+        config, environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},
+        ach_transport=httpx.MockTransport(_catalog_handler), mini_transport=httpx.MockTransport(mini),
+    )
+    if stop_during_read:
+        control.runs_outlive_control = True
+        stopping.append(control)
+    endpoint = _memory_endpoint(config)
+    _publish(control, endpoint)
+    await control.reconnect_workspace(endpoint)
+    return control, reads
+
+
+# A record written under an earlier config: its configVersion is not this control's.
+_EARLIER = SimpleNamespace(public=SimpleNamespace(config_version="f" * 64))
+
+
+async def test_reconnect_settles_a_running_record_once_observed() -> None:
+    running = _adopted(_EARLIER, state="running", invocation_id="run-a")
+    done = running.model_copy(update={"state": "completed"})
+    control, reads = await _reconnect_records(running, status=done)
+    try:
+        assert "run-a" in control._recovery_outcomes
+        assert (await asyncio.wait_for(control._recovery_outcomes["run-a"], 5)).state == "completed"
+        assert reads and set(reads) == {"/status/run-a?observe=true"}
+    finally:
+        await control.close()
+
+
+async def test_reconnect_treats_a_record_without_a_read_mark_as_delivered() -> None:
+    record = _adopted(_EARLIER, error="boom", engine_failed=False, invocation_id="run-old")
+    control, reads = await _reconnect_records(
+        record, drop=("observed", "workspaceKey", "sessionKey", "recoveryOf"))
+    try:
+        assert "run-old" in control.finished_runs
+        assert reads == [] and control._recovery_outcomes == {}
+    finally:
+        await control.close()
+
+
+@pytest.mark.parametrize("case", ["unobserved", "observed", "unreadable"])
+async def test_reconnect_settles_a_terminal_record_only_when_unobserved(case) -> None:
+    record = _adopted(_EARLIER, error="boom", engine_failed=False, observed=case == "observed", invocation_id="run-t")
+    control, reads = await _reconnect_records(record, status_code=503 if case == "unreadable" else 200)
+    try:
+        assert control.finished_runs["run-t"] == record
+        if case == "observed":
+            assert reads == [] and control._recovery_outcomes == {}
+        elif case == "unreadable":
+            assert reads == ["/status/run-t?observe=true"] and control._recovery_outcomes == {}
+        else:
+            assert reads == ["/status/run-t?observe=true"]
+            assert await asyncio.wait_for(control._recovery_outcomes["run-t"], 5) == record
+    finally:
+        await control.close()
+
+
+async def test_reconnect_read_that_races_the_stop_settles_the_outcome_as_marked() -> None:
+    record = _adopted(_EARLIER, error="boom", engine_failed=False, invocation_id="run-race")
+    control, reads = await _reconnect_records(record, stop_during_read=True)
+    try:
+        assert reads == ["/status/run-race?observe=true"]
+        assert (await asyncio.wait_for(control._recovery_outcomes["run-race"], 5)).observed
+    finally:
+        await control.close()

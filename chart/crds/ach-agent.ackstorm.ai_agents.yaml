@@ -451,6 +451,10 @@ spec:
                             type: object
                           type: array
                       type: object
+                    retryLostRuns:
+                      description: RetryLostRuns retries or resumes, once, a run lost
+                        with its sandbox or its control. Unset means true.
+                      type: boolean
                     routing:
                       description: |-
                         Routing overrides the Harness's default Workspace/Session identity for this
@@ -615,6 +619,8 @@ spec:
                     rule: self.type!='webhook-script' || (!has(self.prompt) && !has(self.handoff))
                   - message: webhook-script forbids rateLimit
                     rule: self.type!='webhook-script' || !has(self.rateLimit)
+                  - message: webhook-script forbids retryLostRuns
+                    rule: self.type!='webhook-script' || !has(self.retryLostRuns)
                   - message: generic webhook and queue channels require routing.sessionKey
                     rule: '!(self.type==''queue'' || (self.type==''webhook'' && has(self.source)
                       && self.source==''generic'')) || (has(self.routing) && has(self.routing.sessionKey))'

@@ -266,6 +266,20 @@ func waitChat(t *testing.T, port int, timeout time.Duration) []recorded {
 	return got
 }
 
+// lostRunChats returns the model calls of one lost-run fixture Agent (its x-e2e-agent
+// header) whose body contains text.
+func lostRunChats(t *testing.T, agent, text string) []recorded {
+	t.Helper()
+	var out []recorded
+	for _, r := range chatRequests(t, 8090) {
+		if v := r.headerValues("x-e2e-agent"); len(v) == 1 && v[0] == agent &&
+			len(r.headerValues("x-e2e-stream-seconds")) == 1 && strings.Contains(r.Body, text) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // headerValues returns every value of one header, case-insensitively, from the raw request.
 func (r recorded) headerValues(name string) []string {
 	var v []string

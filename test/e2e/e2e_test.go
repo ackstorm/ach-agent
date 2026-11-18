@@ -369,6 +369,92 @@ func TestE2E(t *testing.T) {
 		}
 	})
 
+	// Each lost-run subtest runs two Agents side by side, retryLostRuns unset (on) and false (off),
+	// and returns once each has made its first model call carrying the lost-run headers. fail is an
+	// extra model header line.
+	startLostRuns := func(t *testing.T, on, off, fail string) {
+		clearStub(t)
+		apply(t, "fixtures/lost-run-agent.yaml", map[string]string{"NAME": on, "FAIL": fail})
+		apply(t, "fixtures/lost-run-agent.yaml", map[string]string{"NAME": off, "FAIL": fail, "RETRY": "retryLostRuns: false"})
+		// Waits for the sandboxes to go, so no stream still running reaches a later subtest's waitChat.
+		t.Cleanup(func() {
+			if out, err := kubectl("", "-n", agentNS, "delete", "agent", on, off, "--wait", "--timeout=3m"); err != nil {
+				t.Errorf("delete the lost-run Agents: %v\n%s", err, out)
+			}
+		})
+		for _, name := range []string{on, off} {
+			waitCond(t, name, "Ready", "True", 5*time.Minute)
+			postAccepted(t, name, 2*time.Minute)
+		}
+		for _, name := range []string{on, off} {
+			until(t, 4*time.Minute, "no model call carrying the lost-run headers from "+name, agentYAML(name), func() bool {
+				return len(lostRunChats(t, name, "")) >= 1
+			})
+		}
+	}
+
+	t.Run("lost-run-retry", func(t *testing.T) {
+		const on, off = "retry-on", "retry-off"
+		const notice = "before repeating one with side effects"
+		startLostRuns(t, on, off, "")
+		// OpenShell drops its sandboxes on a gateway restart: both runs are lost mid-stream.
+		restartGateway(t)
+		waitCond(t, on, "GatewayAvailable", "True", 3*time.Minute)
+		waitCond(t, off, "GatewayAvailable", "True", 3*time.Minute)
+		until(t, 8*time.Minute, on+" never retried its lost run", agentYAML(on), func() bool {
+			return len(lostRunChats(t, on, "")) >= 2
+		})
+		time.Sleep(30 * time.Second)
+		if got := lostRunChats(t, on, ""); len(got) != 2 {
+			t.Errorf("%s made %d model calls carrying the lost-run headers, want 2 (the run and its one retry)", on, len(got))
+		} else if !strings.Contains(got[1].Body, notice) {
+			t.Errorf("the retried prompt lacks the retry notice %q", notice)
+		}
+		if got := lostRunChats(t, off, ""); len(got) != 1 {
+			t.Errorf("%s (retryLostRuns: false) made %d model calls carrying the lost-run headers, want 1", off, len(got))
+		}
+	})
+
+	t.Run("lost-run-resume", func(t *testing.T) {
+		const on, off = "resume-on", "resume-off"
+		const resume = "The ACH control restarted while you were working"
+		// The engine re-issues the call the restart interrupted; the stub fails that second call,
+		// so the run ends failed and only the control's resume can finish it.
+		startLostRuns(t, on, off, `x-e2e-fail-chat: {value: "2"}`)
+		olds := map[string]string{}
+		for _, name := range []string{on, off} {
+			olds[name] = jsonpath(t, "-n", agentNS, "get", "pod", "agent-"+name+"-0", "-o", "jsonpath={.metadata.uid}")
+			mustKubectl(t, "", "-n", agentNS, "delete", "pod", "agent-"+name+"-0", "--wait=false")
+		}
+		for _, name := range []string{on, off} {
+			pod := "agent-" + name + "-0"
+			until(t, 4*time.Minute, "the new control pod of "+name+" never became Ready", agentYAML(name), func() bool {
+				uid := jsonpath(t, "-n", agentNS, "get", "pod", pod, "-o", "jsonpath={.metadata.uid}")
+				ready := jsonpath(t, "-n", agentNS, "get", "pod", pod, "-o", `jsonpath={.status.conditions[?(@.type=="Ready")].status}`)
+				return uid != "" && uid != olds[name] && ready == "True"
+			})
+		}
+		until(t, 5*time.Minute, on+" never resumed its run", agentYAML(on), func() bool {
+			return len(lostRunChats(t, on, resume)) >= 1
+		})
+		until(t, 3*time.Minute, off+" never re-issued its interrupted model call", agentYAML(off), func() bool {
+			return len(lostRunChats(t, off, "")) >= 2
+		})
+		time.Sleep(60 * time.Second)
+		if n := len(lostRunChats(t, on, "")); n != 3 {
+			t.Errorf("%s made %d model calls carrying the lost-run headers, want 3 (the run, its failed continuation, the resume)", on, n)
+		}
+		if n := len(lostRunChats(t, on, resume)); n != 1 {
+			t.Errorf("%s resumed its run %d times, want 1", on, n)
+		}
+		if n := len(lostRunChats(t, off, "")); n != 2 {
+			t.Errorf("%s (retryLostRuns: false) made %d model calls carrying the lost-run headers, want 2 (the run and its failed continuation)", off, n)
+		}
+		if n := len(lostRunChats(t, off, resume)); n != 0 {
+			t.Errorf("%s (retryLostRuns: false) resumed its run %d times, want 0", off, n)
+		}
+	})
+
 	t.Run("gateway-down-control-restart", func(t *testing.T) {
 		oldUID := jsonpath(t, "-n", agentNS, "get", "pod", "agent-standalone-0", "-o", "jsonpath={.metadata.uid}")
 		uidsBefore := podUIDs(t, sandboxes(t, agentUID(t, "standalone")))

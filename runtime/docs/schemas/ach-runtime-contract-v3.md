@@ -152,7 +152,7 @@ The host owns names, routing and TLS for these listeners. `infrastructure.facade
 
 - **One agent, one control.** At most one `agent` or `control` unit per `agent.uid` runs at a time. There is no high availability for the coordinator. Storage fencing (v1 §7) protects data against an overlap, but does not make one correct.
 - **One Workspace, one live instance.** The host runs at most one execution unit per Workspace name. Storage fencing turns a stale instance into a failed writer, not a second writer.
-- **Same release.** `control` and its `execution` units must run the same runtime release. The internal protocol (section 6) is only compatible within one release. The control unit checks the release on every probe (5.6) and never drives a unit of another release.
+- **Same release.** `control` and its `execution` units must run the same runtime release. The internal protocol (section 6) is compatible with a unit of another release only as far as adoption needs: an adopted unit of another release keeps receiving Starts and status reads, observing reads included, until it is idle. The fields added on the run wire default when a unit omits them; a record without `observed` counts as delivered. A Start omits `recoveryOf` when it is unset, and a unit that does not know `recoveryOf` rejects a recovery Start, so that recovery fails. The control unit checks the release on every probe (5.6). A unit it places runs its own release. A unit of another release found at adoption is adopted and keeps its Workspace's work, new events included, until it is idle; then the control unit retires it (5.4). A Workspace with steady traffic keeps its old-release unit until it goes idle.
 - **Shutdown.** SIGTERM starts a drain bounded by `workspace.shutdownTimeoutSeconds`. The host must allow at least that plus 15 seconds before killing the unit. A kill before the drain ends can lose uncommitted work (v1 §7).
 - **Restart.** The host restarts failed units. A restarted `control` unit rebuilds its state from storage and from the host's inventory (5.4).
 - **Health.** `GET /healthz` is liveness. `GET /readyz` is readiness. Both are on `8080`, on every role. Section 4 has their meaning.
@@ -162,7 +162,7 @@ The host owns names, routing and TLS for these listeners. `infrastructure.facade
 | Surface | Where | Contract |
 |---|---|---|
 | Channel ingress | `agent`/`control` `8080`: `POST /channels/{channel}/events`, `/a2a/{channel}/…` | v1 §2–3: authentication per channel config, HTTP 202 on admission, 503 when the queue is full or closed. |
-| A2A across a restart | `/a2a/{channel}/…` | A restart keeps hosted runs alive: the next control adopts them. The caller's stream ends with `working` and a restart text, and `tasks/get` returns the result once the run ends. A run that never started ends `failed` and is sent again. A run that failed during the restart is resumed once in its session. With `workspace.persistence.type: s3`, tasks are stored in the Agent's storage. |
+| A2A across a restart | `/a2a/{channel}/…` | A restart keeps hosted runs alive: the next control adopts them. The caller's stream ends with `working` and a restart text, and `tasks/get` returns the result once the run ends. A run that never started ends `failed` and is sent again. A run broken by the restart is recovered under the lost-run rule (v1 §3). With `workspace.persistence.type: s3`, tasks are stored in the Agent's storage. |
 | A2A runtime status | `/a2a/{channel}/…` | While a request waits, the runtime sends `working` statuses tagged `metadata.ach`: `queued` (behind an earlier request in the same session), `starting` (not started after 5 s) and `heartbeat` ("Still working..." after 60 s without any event). Their text is fixed English; clients may hide or translate them by tag. |
 | Liveness | `GET /healthz`, every role | 200 while the process serves. A failure means restart the unit. |
 | Readiness | `GET /readyz`, every role | `agent`/`control`: configuration and hydration valid and adapters listening; does not need any Workspace. `control` also waits for the host's inventory (5.4). `execution`: configured by its control unit and restore finished. |
@@ -255,7 +255,7 @@ All routes are on `control` `8081`, under `/host/v1`, and are served from proces
 **`DELETE /host/v1/workspaces/{name}/instance[?instanceId=<id>]`** reports that a unit has stopped. It always answers 204.
 
 - For a `released` entry, it confirms the unit has stopped, and the entry disappears.
-- For a `running` entry with a registered unit, it reports an unexpected loss. The entry disappears, and the runtime lists the Workspace `running` again for a fresh unit (5.6). Runs whose outcome cannot be established become `unknown` and are never replayed (v1 §7).
+- For a `running` entry with a registered unit, it reports an unexpected loss. The entry disappears, and the runtime lists the Workspace `running` again for a fresh unit (5.6). Runs whose outcome cannot be established become `unknown` and are recovered at most once under the lost-run rule (v1 §3).
 - **Precondition.** Once the runtime has observed an instance ID for the entry, a `DELETE` must carry that same `instanceId`; any other `DELETE`, including one without `instanceId`, is a no-op. Hosts always pass the `instanceId` from the last listing.
 - An unknown name, or an entry with no registered unit, is a no-op.
 - Before the first successful probe there is no ID to check, so a late `DELETE` can remove a registration that has not served yet. That unit holds no work; the cost is one more start.
@@ -271,7 +271,8 @@ All routes are on `control` `8081`, under `/host/v1`, and are served from proces
 | 422 | A unit's `name` does not belong to its `workspaceRef`. The whole request is rejected. |
 
 - Every listed unit is adopted, regardless of `limits.maxActiveWorkspaces`: probed, checked and reconnected, and runs that are still executing are recovered (v1 §3). Adopted units count against the limit, so new Workspaces wait until enough of them close.
-- A unit that cannot be adopted is listed as `released`. That covers a unit unreachable until its probe deadline, one of another release, and one whose reconnect fails. Its uncommitted work is lost, as for any lost unit (v1 §7). Its slot stays held until the host's `DELETE`.
+- A unit of another release is adopted and retired once idle, so its busy runs finish first. Until then it also runs its Workspace's new events. A Workspace with steady traffic keeps its old-release unit until it goes idle. Runs it finished before the upgrade count as delivered.
+- A unit that cannot be adopted is listed as `released`. That covers a unit unreachable until its probe deadline and one whose reconnect fails. Its uncommitted work is lost, as for any lost unit (v1 §7). Its slot stays held until the host's `DELETE`.
 
 **`PUT /host/v1/gateway`** reports whether the host's sandbox gateway is reachable. Body: `{"available": true|false}`.
 
@@ -302,7 +303,7 @@ All routes are on `control` `8081`, under `/host/v1`, and are served from proces
 
 - It contains no secrets. The verify key is public, and Workspace names and refs are opaque identifiers. So the host may store `launch` in plain workload definitions, logs or status.
 - It is stable for the Workspace's lifetime. Every instance of a Workspace, including replacements and in-place restarts, uses the same `launch`, because the instance identity is minted by the process (5.6), not by the host.
-- It changes only when the control unit's configuration or release changes. A host should start new instances from the current `launch`. It may keep running instances until they are released, but a unit of another release is never driven by the control unit (5.6).
+- It changes only when the control unit's configuration or release changes. A host should start new instances from the current `launch`. It may keep running instances until they are released. A unit of another release found at adoption keeps its Workspace's work, new events included, until it is idle; then the control unit retires it (5.4, 5.6). A Workspace with steady traffic keeps its old-release unit until it goes idle.
 
 An execution unit must be started with:
 
@@ -320,13 +321,13 @@ Workspace names are runtime-owned opaque strings: at most 52 characters of `[a-z
 ### 5.6 Instance identity
 
 - Every execution process mints a fresh random instance ID when it starts. It returns the ID on every response, in the `X-ACH-Instance-Id` header.
-- `GET /healthz` on an execution unit answers `{"status": "ok", "release": "<runtime release>"}`. The control unit treats a unit of another release as a failed probe.
+- `GET /healthz` on an execution unit answers `{"status": "ok", "release": "<runtime release>"}`. A unit of another release found at adoption keeps its Workspace's work, new events included, until it is idle; then the control unit retires it (5.4). A Workspace with steady traffic keeps its old-release unit until it goes idle.
 - The host does not provide, choose or copy the instance ID.
 - The runtime binds a registration to the first instance ID it observes there:
   - Any later different ID on the same Workspace means the unit was restarted, so its local files cannot be trusted. The runtime restores before serving again (v1 §7).
   - The storage writer identity, which v1 calls `writer_pod_uid`, is this instance ID.
 - Whatever detects the loss of an instance (a different ID, a failed health check, a host `DELETE`), the runtime handles it the same way: the Workspace is listed `released`, then `running` again for a fresh unit, and restored.
-- A run on a lost instance whose outcome was not already confirmed ends `unknown` and is never started again (v1 §3). Loss of access to an instance is not evidence that the run failed. An outcome confirmed before the loss is kept.
+- A run on a lost instance whose outcome was not already confirmed ends `unknown`, and is recovered at most once under the lost-run rule (v1 §3). Loss of access to an instance is not evidence that the run failed. An outcome confirmed before the loss is kept.
 
 This removes the need for the host to expose a platform identity. It also catches restarts that hosts perform silently, such as a process or container restart that keeps the same name, configuration and environment.
 
@@ -336,7 +337,7 @@ These are deliberate, not guarantees the runtime provides:
 
 - **Facade tokens are bound to the Workspace name, not to an instance.** They stop working when the Workspace has no serving instance, but a former instance still running beside a newer one could keep using them. The host's one-live-instance rule (3.6) is what prevents that.
 - **Storage fencing protects storage only.** It turns a stale instance into a failed writer. It does not revoke that instance's access to models or tools.
-- **Some recoveries discard uncommitted work:** an upgrade with busy Workspaces (units of the old release are not adopted), and any unit that cannot be adopted. Work since the last commit is lost, as for any lost unit (v1 §7).
+- **Some recoveries discard uncommitted work:** any unit that cannot be adopted (an upgrade with busy Workspaces retires old-release units only once idle). Work since the last commit is lost, as for any lost unit (v1 §7).
 
 ## 6. Internal topology (not part of the host contract)
 
@@ -369,6 +370,7 @@ The schema is the v1 `workspace-v1` schema, with these changes:
 | `infrastructure.execution.facadeEndpoint` | Moves to `infrastructure.facadeEndpoint`. Required for `control`; optional for `agent`, where it defaults to loopback. |
 | `agent.namespace`, `agent.uid` | Same shape, host-neutral meaning (3.1). The rule that the execution service account equals `ach-execution-<uid>` is dropped. |
 | Bootstrap document | Becomes `bootstrapVersion: "workspace-v3"`, and `controlEndpoint` is removed. The runtime produces it inside `launch.env` as `ACH_BOOTSTRAP_JSON` (5.5); the host no longer renders it. |
+| `channels[].retryLostRuns` | Optional boolean, default `true`, forbidden on `webhook-script`. `false` turns off the retry or resume of a run lost with its sandbox or broken by a control restart (v1 §3). |
 | `workspace.readyTimeoutSeconds` | New, optional, default 30. How long a new execution unit has to become ready (placement, health probe) before activation fails; also bounds adoption and recovery starts. Hosts with slow starts (sandboxes that pull images) raise it. |
 
 These changes ship as `schemaVersion: "workspace-v3"`.

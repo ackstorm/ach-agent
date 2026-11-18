@@ -202,9 +202,9 @@ def create_app(
         return JSONResponse(started.model_dump(by_alias=True, mode="json"), status_code=202)
 
     @app.get("/status/{invocation_id}")
-    async def status(invocation_id: str) -> JSONResponse:
+    async def status(invocation_id: str, observe: bool = False) -> JSONResponse:
         try:
-            run_status = await service.status(invocation_id)
+            run_status = await service.status(invocation_id, observe=observe)
         except KeyError:
             return JSONResponse({"detail": "unknown invocation_id"}, status_code=404)
         return JSONResponse(run_status.model_dump(by_alias=True, mode="json"))

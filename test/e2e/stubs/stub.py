@@ -269,7 +269,14 @@ def handler_for(state, kind):
             except ValueError:
                 return self._send(400, {"error": "invalid JSON"})
             if kind != "mcp" and url.path.endswith("/chat/completions") and self.command == "POST":
-                seconds = int(doc.get("e2e_stream_seconds") or 0)
+                fail = int(headers.get("x-e2e-fail-chat") or 0)
+                agent = headers.get("x-e2e-agent")
+                if fail and fail == sum(1 for r in state.listing(self.server.server_address[1])
+                                        if r["path"].endswith("/chat/completions")
+                                        and r["headers"].get("x-e2e-agent") == agent):
+                    return self._send(400, {"error": {"type": "invalid_request_error",
+                                                      "message": "e2e: failed on request"}})
+                seconds = int(doc.get("e2e_stream_seconds") or headers.get("x-e2e-stream-seconds") or 0)
                 if doc.get("stream") and seconds:
                     return self._stream(doc.get("model", ""), seconds)
                 tool = _echo_tool(doc)

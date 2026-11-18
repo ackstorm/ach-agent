@@ -121,9 +121,9 @@ async def test_result_is_settled_retained_listed_and_restored(tmp_path, public_c
     restored = _service(tmp_path / "after", public_config_fixture, ResultEngine("unused"))
     await restored.restore(request.session_ref, request.workspace_ref, manifest)
     restored_status = await restored.status(request.invocation_id)
-    assert restored_status == status
+    assert restored_status == status.model_copy(update={"observed": True})
     assert await restored.start(request) == started
-    assert await restored.list_runs() == [status]
+    assert await restored.list_runs() == [status.model_copy(update={"observed": True})]
 
 
 async def test_old_engine_without_usage_getter_retains_unknown_usage(tmp_path, public_config_fixture):
@@ -162,3 +162,4 @@ async def test_failed_run_carries_the_engine_error(tmp_path, public_config_fixtu
     status = await service.status(request.invocation_id)
     assert status.state == "failed"
     assert status.error == "Budget has been exceeded!"
+    assert status.engine_failed is True

@@ -557,6 +557,11 @@ func (in *ChannelSpec) DeepCopyInto(out *ChannelSpec) {
 		*out = new(RateLimitSpec)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.RetryLostRuns != nil {
+		in, out := &in.RetryLostRuns, &out.RetryLostRuns
+		*out = new(bool)
+		**out = **in
+	}
 	if in.Routing != nil {
 		in, out := &in.Routing, &out.Routing
 		*out = new(RoutingSpec)

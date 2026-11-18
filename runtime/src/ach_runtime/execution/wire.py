@@ -95,6 +95,8 @@ class StartRequest(_WireModel):
     # True only for A2A runs: keeps the `progress` facade (`inform_user`) in this run's
     # catalog, at its per-run URL. False removes it.
     inform_user: bool = Field(default=False, alias="informUser")
+    # The invocation id of the event this run recovers; a recovery is never recovered again.
+    recovery_of: str | None = Field(default=None, alias="recoveryOf")
 
     _deadline_parse = field_validator("deadline_at", mode="before")(_parse_iso_datetime)
     _deadline_aware = field_validator("deadline_at")(_tz_aware_utc)
@@ -120,6 +122,14 @@ class RunStatus(_WireModel):
     state: RunState
     error: str | None = Field(default=None)
     result: JsonValue = None
+    workspace_key: str | None = Field(default=None, alias="workspaceKey")
+    session_key: str | None = Field(default=None, alias="sessionKey")
+    # The invocation id of the event this run recovers; a recovery is never recovered again.
+    recovery_of: str | None = Field(default=None, alias="recoveryOf")
+    # A control read this terminal outcome while able to act on it; a restart recovers only unread ones.
+    observed: bool = Field(default=False)
+    # The engine itself ended this run as failed; a deadline, stall, cancel or hook failure leaves it false.
+    engine_failed: bool = Field(default=False, alias="engineFailed")
 
     _deadline_parse = field_validator("deadline_at", mode="before")(_parse_iso_datetime)
     _deadline_aware = field_validator("deadline_at")(_tz_aware_utc)

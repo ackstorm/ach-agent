@@ -24,7 +24,7 @@ e2e-down: ## delete the ach-agent-e2e kind cluster
 	test/e2e/cluster.sh down
 
 e2e-run: ## run the e2e scenarios against a running cluster
-	cd test/e2e && go test -tags e2e -count=1 -timeout 55m -v ./...
+	cd test/e2e && go test -tags e2e -count=1 -timeout 80m -v ./...
 
 e2e: e2e-up e2e-run
 

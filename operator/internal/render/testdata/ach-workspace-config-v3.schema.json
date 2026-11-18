@@ -448,6 +448,18 @@
           ],
           "default": null
         },
+        "retryLostRuns": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retrylostruns"
+        },
         "prompt": {
           "anyOf": [
             {
@@ -684,6 +696,9 @@
                 "type": "null"
               },
               "rateLimit": {
+                "type": "null"
+              },
+              "retryLostRuns": {
                 "type": "null"
               }
             }

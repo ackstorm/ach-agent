@@ -562,7 +562,12 @@ class S3Storage(Storage):
     async def current_writer(self, ref: StateRef) -> str | None:
         """Instance ID the registry records as the writer, or None if the domain never persisted."""
         self._require_client()
-        doc, _ = await self._read_registry(ref)
+        try:
+            doc, _ = await self._read_registry(ref)
+        except Exception as exc:
+            if _is_snapshot_transient(exc):
+                raise SnapshotTransientFailure("transient S3 registry read failure") from exc
+            raise
         return doc.writer_instance_id if doc is not None else None
 
     async def acquire_writer(self, ref: StateRef, writer_instance_id: str) -> WriterLease:

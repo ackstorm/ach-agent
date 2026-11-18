@@ -38,6 +38,8 @@ from ach_runtime.observability.runs import redact
 from ach_runtime.storage.api import PersistReceipt, SnapshotRejected, SnapshotTransientFailure
 
 _FULL_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+# Pause between adoption attempts of a unit while Storage does not answer.
+_STORAGE_RETRY_SECONDS = 5.0
 _LOG = logging.getLogger(__name__)
 
 
@@ -644,8 +646,9 @@ class WorkspaceManager:
             await self.wait_gateway(time.monotonic() + 30)
         await self._adopt_one(ref, placement)
 
-    def _defer_adoption(self, ref: WorkspaceRef, placement: Placement) -> None:
-        """Re-run the adoption once the gateway is back, as the ref's own "adopt" task:
+    def _defer_adoption(self, ref: WorkspaceRef, placement: Placement, *, delay: float = 0.0) -> None:
+        """Re-run the adoption after `delay` seconds and once the gateway is back, as the
+        ref's own "adopt" task:
         `ensure()` waits for it (no `place()` against a unit that is still hosted), it runs
         under the ref's lock after the current attempt returns, and `cancel_adoption()`
         cancels it. The task replaces the finishing attempt in `owner.tasks`."""
@@ -654,6 +657,7 @@ class WorkspaceManager:
 
         async def runner() -> None:
             async with owner.lock:
+                await asyncio.sleep(delay)
                 await self._adopt_when_gateway_returns(ref, placement)
 
         task = asyncio.ensure_future(runner())
@@ -684,6 +688,12 @@ class WorkspaceManager:
             if not self._source.gateway_available():
                 _LOG.warning("Workspace adoption deferred: gateway unavailable: workspace_ref=%s", key)
                 self._defer_adoption(ref, placement)
+                return
+            if isinstance(exc, SnapshotTransientFailure):
+                # Storage has not answered, so nothing says this unit is stale: retiring it
+                # would delete state that was never saved.
+                _LOG.warning("Workspace adoption deferred: storage unavailable: workspace_ref=%s", key)
+                self._defer_adoption(ref, placement, delay=_STORAGE_RETRY_SECONDS)
                 return
             if isinstance(exc, ReleaseMismatch):
                 _LOG.info("Workspace adoption: retiring a unit of another release: workspace_ref=%s %s", key, exc)

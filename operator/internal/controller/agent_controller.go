@@ -327,7 +327,13 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 	if failReason, failMsg := r.checkSecrets(ctx, agent.Namespace, checkSecrets); failReason != "" {
 		setCond(&conds, condSecretsResolved, metav1.ConditionFalse, failReason, failMsg, agent.Generation)
-		return r.finish(ctx, &agent, conds)
+		res, err := r.finish(ctx, &agent, conds)
+		if err == nil && failReason == "SecretReadFailed" {
+			// A missing Secret is retried by the Secret watch; a failed read raises no event,
+			// so the returned error makes the controller retry with its backoff.
+			err = errors.New(failMsg)
+		}
+		return res, err
 	}
 
 	// The private key Secret is created only after render and the authored Secret checks pass.
@@ -554,7 +560,12 @@ func (r *AgentReconciler) replaceStaleControlPod(ctx context.Context, a *achv1al
 
 func (r *AgentReconciler) applyFail(ctx context.Context, a *achv1alpha1.Agent, conds []metav1.Condition, what string, err error) (ctrl.Result, error) {
 	setCond(&conds, condWorkloadApplied, metav1.ConditionFalse, "ApplyFailed", fmt.Sprintf("apply %s: %v", what, err), a.Generation)
-	return r.finish(ctx, a, conds)
+	if res, ferr := r.finish(ctx, a, conds); ferr != nil {
+		return res, ferr
+	}
+	// The same failure twice changes no status and so raises no event: the returned error
+	// makes the controller retry with its backoff.
+	return ctrl.Result{}, fmt.Errorf("apply %s: %w", what, err)
 }
 
 func (r *AgentReconciler) deriveWorkloadReady(ctx context.Context, a *achv1alpha1.Agent, configHash string, conds *[]metav1.Condition) {

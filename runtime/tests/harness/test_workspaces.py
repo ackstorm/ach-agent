@@ -79,6 +79,7 @@ class _Harness:
         self.committed: list[WorkspaceEndpoint] = []
         self.reconnected: list[WorkspaceEndpoint] = []
         self.commit_error: BaseException | None = None
+        self.reconnect_error: BaseException | None = None
         self.probe_fail: set[str] = set()
         self.probe_error: dict[str, BaseException] = {}
         self.probes = 0
@@ -103,6 +104,8 @@ class _Harness:
 
     async def reconnect(self, endpoint: WorkspaceEndpoint) -> None:
         self.source.events.append("reconnect")
+        if self.reconnect_error is not None:
+            raise self.reconnect_error
         self.reconnected.append(endpoint)
 
     async def commit(self, endpoint: WorkspaceEndpoint) -> PersistReceipt | None:
@@ -465,6 +468,30 @@ async def test_failed_adoption_is_deferred_while_gateway_unavailable() -> None:
         await asyncio.sleep(0.01)
     assert bad.workspace_ref in h.manager.active_endpoints()
     assert bad_name not in h.source.released
+
+
+async def test_failed_adoption_is_retried_while_storage_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ws, "_STORAGE_RETRY_SECONDS", 0.01)
+    h = _Harness(_config(capacity=2))
+    ref = _ref(h.config, "fa-storage")
+    h.adopt_unit(ref)
+    name = _name(h.config, ref)
+    h.reconnect_error = SnapshotTransientFailure("transient S3 registry read failure")
+
+    await h.manager.adopt()  # readiness does not wait for storage
+    await asyncio.sleep(0.1)
+    assert h.source.events.count("reconnect") > 2
+    assert name not in h.source.released
+    assert ref.workspace_ref in h.manager._occupied
+    assert ref.workspace_ref not in h.manager.active_endpoints()
+
+    h.reconnect_error = None  # storage answers: the unit is adopted, never retired
+    for _ in range(100):
+        if ref.workspace_ref in h.manager.active_endpoints():
+            break
+        await asyncio.sleep(0.01)
+    assert ref.workspace_ref in h.manager.active_endpoints()
+    assert name not in h.source.released and h.source.place_calls == []
 
 
 async def test_ensure_waits_for_a_deferred_adoption_instead_of_placing() -> None:

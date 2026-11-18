@@ -3692,7 +3692,8 @@ async def test_recovered_outcome_follows_a_resume_started_by_the_previous_contro
         await control.close()
 
 
-async def _reconnect_records(record: RunStatus, *, status_code: int = 200, status: RunStatus | None = None):
+async def _reconnect_records(record: RunStatus, *, status_code: int = 200, status: RunStatus | None = None,
+                             drop: tuple[str, ...] = ()):
     """Reconnect pod `pod-1` whose `/runs` lists `record`; the control and the `/status` paths read."""
     reads: list[str] = []
 
@@ -3704,7 +3705,8 @@ async def _reconnect_records(record: RunStatus, *, status_code: int = 200, statu
             body = json.loads(request.content)
             return httpx.Response(200, headers=headers, json={"configVersion": body["public"]["configVersion"]})
         if request.url.path == "/runs":
-            return httpx.Response(200, headers=headers, json=[record.model_dump(by_alias=True, mode="json")])
+            wire = {k: v for k, v in record.model_dump(by_alias=True, mode="json").items() if k not in drop}
+            return httpx.Response(200, headers=headers, json=[wire])
         if request.url.path.startswith("/status/"):
             reads.append(request.url.raw_path.decode())
             return httpx.Response(status_code, headers=headers,
@@ -3734,6 +3736,17 @@ async def test_reconnect_settles_a_running_record_once_observed() -> None:
         assert "run-a" in control._recovery_outcomes
         assert (await asyncio.wait_for(control._recovery_outcomes["run-a"], 5)).state == "completed"
         assert reads and set(reads) == {"/status/run-a?observe=true"}
+    finally:
+        await control.close()
+
+
+async def test_reconnect_treats_a_record_without_a_read_mark_as_delivered() -> None:
+    record = _adopted(_EARLIER, error="boom", invocation_id="run-old")
+    control, reads = await _reconnect_records(
+        record, drop=("observed", "workspaceKey", "sessionKey", "recoveryOf"))
+    try:
+        assert "run-old" in control.finished_runs
+        assert reads == [] and control._recovery_outcomes == {}
     finally:
         await control.close()
 

@@ -548,7 +548,8 @@ class Control:
         for record in records:
             if record.state in {"completed", "failed", "cancelled", "skipped"}:
                 self.finished_runs[record.invocation_id] = record
-                if record.observed:
+                # A unit of an earlier release keeps no read mark: its records count as delivered.
+                if record.observed or "observed" not in record.model_fields_set:
                     continue
                 try:
                     read = await asyncio.wait_for(

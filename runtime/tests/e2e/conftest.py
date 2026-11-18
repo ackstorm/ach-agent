@@ -399,7 +399,7 @@ async def e2e_stack_factory(tmp_path: Path, s3_client, monkeypatch) -> AsyncIter
             *, scenario: str = "review", persistent: bool = False, handoff_scope: str = "event",
             max_steps: int = 4, max_invocation_seconds: int = 30, max_active_workspaces: int = 4,
             max_queued_total: int = 4, session_idle_seconds: int = 2, workspace_idle_seconds: int = 3,
-            shutdown_timeout_seconds: int = 300,
+            shutdown_timeout_seconds: int = 300, retry_lost_runs: bool = True,
         ) -> E2EStack:
             nonlocal upstream_context, upstream
             await upstream.control({"command": "scenario", "text": "pong"})
@@ -427,6 +427,8 @@ async def e2e_stack_factory(tmp_path: Path, s3_client, monkeypatch) -> AsyncIter
             wire["limits"]["maxActiveWorkspaces"] = max_active_workspaces
             wire["limits"]["maxQueuedTotal"] = max_queued_total
             wire["channels"][0]["handoff"]["scope"] = handoff_scope
+            if not retry_lost_runs:
+                wire["channels"][0]["retryLostRuns"] = False
             wire["channels"][0]["handoff"]["env"]["GITLAB_REPO_BASEURL"] = f"file://{tmp_path / 'git'}"
             wire["capability"]["ach"]["baseUrl"] = upstream.model_url.rsplit("/v1", 1)[0]
             wire["capability"]["filter"]["exclude"]["mcpServers"] = [

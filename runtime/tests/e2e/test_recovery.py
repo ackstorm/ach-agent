@@ -229,8 +229,9 @@ async def test_duplicate_and_lost_started_response_do_not_replay(e2e_stack_facto
         assert stack.start_raw_bodies[0] == stack.start_raw_bodies[-1]
 
 
-async def test_lost_started_changed_owner_never_replays(e2e_stack_factory, monkeypatch):
-    stack = await e2e_stack_factory(scenario="review")
+@pytest.mark.parametrize("retry_lost_runs", [False, True], ids=["retry-off", "retry-on"])
+async def test_lost_started_changed_owner_never_replays(e2e_stack_factory, monkeypatch, retry_lost_runs):
+    stack = await e2e_stack_factory(scenario="review", retry_lost_runs=retry_lost_runs)
     unknown_outcomes: list[tuple[str, str, str]] = []
     record_run = type(stack.control)._record_run
 
@@ -255,18 +256,28 @@ async def test_lost_started_changed_owner_never_replays(e2e_stack_factory, monke
     stack.faults["after_lost_started"] = replace_owner
     response = await stack.post_event()
     assert response.status_code == 202  # admitted before the subsequent owner loss
+    invocation_id = stack.start_payloads[0]["invocationId"]
+    assert stack.start_payloads[0]["invocationId"] == stack.started[0].invocation_id
+    old_native = stack.minis[old_uids[0]].state.service._engine._sessions[stack.start_payloads[0]["sessionRef"]]
+    _assert_delivered_once(old_native, stack.started[0])
+    failed_ticket = stack.control.admission._tickets[invocation_id]
+    if retry_lost_runs:
+        # the lost start is retried once inside the same ticket, on the replacement
+        await asyncio.wait({failed_ticket.completed}, timeout=30)
+        assert failed_ticket.completed.done() and failed_ticket.completed.exception() is None
+        assert len(stack.start_payloads) == 2
+        assert [p["invocationId"] for p in stack.start_payloads] == [invocation_id] * 2
+        assert stack.start_instance_ids[0] == old_uids[0] and stack.start_instance_ids[1] != old_uids[0]
+        assert failed_ticket.started.done() and failed_ticket.started.exception() is None
+        assert [u[0] for u in unknown_outcomes] == [invocation_id], "only the lost attempt is recorded unknown"
+        return
     assert len(stack.started) == 1
     assert len(stack.start_payloads) == 1
-    assert stack.start_payloads[0]["invocationId"] == stack.started[0].invocation_id
     assert len([request for request in stack.requests if request.url.path == "/start"]) == 1
     assert len(stack.control.manager.active_endpoints()) == 1
     replacement = next(iter(stack.control.manager.active_endpoints().values()))
     assert replacement.instance_id != old_uids[0]
     assert stack.start_instance_ids == [old_uids[0]]
-    invocation_id = stack.start_payloads[0]["invocationId"]
-    old_native = stack.minis[old_uids[0]].state.service._engine._sessions[stack.start_payloads[0]["sessionRef"]]
-    _assert_delivered_once(old_native, stack.started[0])
-    failed_ticket = stack.control.admission._tickets[invocation_id]
     assert failed_ticket.started.done() and failed_ticket.started.exception() is not None
     assert failed_ticket.completed.done() and failed_ticket.completed.exception() is not None
     assert "unknown" in str(failed_ticket.completed.exception()).lower()

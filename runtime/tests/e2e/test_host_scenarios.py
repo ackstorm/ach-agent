@@ -115,8 +115,30 @@ async def test_scenario_2_idle_close_and_reactivation_restores(e2e_stack_factory
     assert sum(i == again.instance_id and p.endswith("/workspace/archive") for i, p in stack.archive_restores) == 1
 
 
-async def test_scenario_3_recover_ends_runs_in_flight_unknown(e2e_stack_factory, monkeypatch):
-    stack = await e2e_stack_factory(persistent=True)
+RETRY_LOST_RUNS = pytest.mark.parametrize("retry_lost_runs", [False, True], ids=["retry-off", "retry-on"])
+
+
+async def _assert_lost_run_outcome(stack, ticket, outcomes, retry_lost_runs):
+    """Off: the run ends unknown and is never started again. On: one retry, on the replacement, settles it."""
+    if retry_lost_runs:
+        await stack.release_model()
+        await asyncio.wait({ticket.completed}, timeout=30)
+        assert ticket.completed.done() and ticket.completed.exception() is None
+        assert outcomes == ["unknown", "completed"], "the lost attempt is recorded, then the retry settles"
+        assert len(stack.start_payloads) == 2, "one retry, no more"
+        assert stack.start_payloads[0]["invocationId"] == stack.start_payloads[1]["invocationId"]
+        assert stack.start_instance_ids[0] != stack.start_instance_ids[1]
+        return
+    await asyncio.wait({ticket.completed}, timeout=15)
+    assert ticket.completed.done() and "unknown" in str(ticket.completed.exception()).lower()
+    assert outcomes == ["unknown"]
+    assert len(stack.start_payloads) == 1, "an unknown run is never started again"
+    await stack.release_model()
+
+
+@RETRY_LOST_RUNS
+async def test_scenario_3_recover_ends_runs_in_flight_unknown(e2e_stack_factory, monkeypatch, retry_lost_runs):
+    stack = await e2e_stack_factory(persistent=True, retry_lost_runs=retry_lost_runs)
     outcomes: list[str] = []
     record_run = type(stack.control)._record_run
 
@@ -136,11 +158,7 @@ async def test_scenario_3_recover_ends_runs_in_flight_unknown(e2e_stack_factory,
     assert (endpoint.name, endpoint.instance_id) in stack.host.deleted
     assert stack.workspace_restore_calls == [endpoint.instance_id, replacement.instance_id]
     ticket = _ticket(stack, "60000000-0000-4000-8000-000000000003")
-    await asyncio.wait({ticket.completed}, timeout=15)
-    assert ticket.completed.done() and "unknown" in str(ticket.completed.exception()).lower()
-    assert outcomes == ["unknown"]
-    assert len(stack.start_payloads) == 1, "an unknown run is never started again"
-    await stack.release_model()
+    await _assert_lost_run_outcome(stack, ticket, outcomes, retry_lost_runs)
 
 
 async def test_scenario_4_t01_in_place_restart_never_commits_over_the_good_snapshot(e2e_stack_factory):
@@ -351,8 +369,9 @@ async def test_t06_late_put_with_another_url_keeps_the_unit_serving(e2e_stack_fa
     assert stack.control.manager.active_endpoint(endpoint.ref.workspace_ref) == endpoint
 
 
-async def test_t08_t09_kill_mid_run_without_a_report_ends_unknown(e2e_stack_factory, monkeypatch):
-    stack = await e2e_stack_factory()
+@RETRY_LOST_RUNS
+async def test_t08_t09_kill_mid_run_without_a_report_ends_unknown(e2e_stack_factory, monkeypatch, retry_lost_runs):
+    stack = await e2e_stack_factory(retry_lost_runs=retry_lost_runs)
     outcomes: list[str] = []
     record_run = type(stack.control)._record_run
 
@@ -368,11 +387,7 @@ async def test_t08_t09_kill_mid_run_without_a_report_ends_unknown(e2e_stack_fact
     await stack.host.kill(endpoint.name, report=False)
     await stack.control.lifecycle.tick(datetime.now(timezone.utc))  # the health check finds it gone
     ticket = _ticket(stack, event)
-    await asyncio.wait({ticket.completed}, timeout=15)
-    assert ticket.completed.done() and "unknown" in str(ticket.completed.exception()).lower()
-    assert outcomes == ["unknown"]
-    assert len(stack.start_payloads) == 1
-    await stack.release_model()
+    await _assert_lost_run_outcome(stack, ticket, outcomes, retry_lost_runs)
 
 
 async def test_flapping_instance_recovers_one_at_a_time(e2e_stack_factory, anomalies):

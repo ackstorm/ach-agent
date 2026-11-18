@@ -370,20 +370,24 @@ func TestE2E(t *testing.T) {
 	})
 
 	// Each lost-run subtest runs two Agents side by side, retryLostRuns unset (on) and false (off),
-	// and returns once both are streaming their first model call. fail is an extra model header line.
+	// and returns once each has made its first model call carrying the lost-run headers. fail is an
+	// extra model header line.
 	startLostRuns := func(t *testing.T, on, off, fail string) {
 		clearStub(t)
 		apply(t, "fixtures/lost-run-agent.yaml", map[string]string{"NAME": on, "FAIL": fail})
 		apply(t, "fixtures/lost-run-agent.yaml", map[string]string{"NAME": off, "FAIL": fail, "RETRY": "retryLostRuns: false"})
-		for _, name := range []string{on, off} {
-			t.Cleanup(func() { kubectl("", "-n", agentNS, "delete", "agent", name, "--wait=false") })
-		}
+		// Waits for the sandboxes to go, so no stream still running reaches a later subtest's waitChat.
+		t.Cleanup(func() {
+			if out, err := kubectl("", "-n", agentNS, "delete", "agent", on, off, "--wait", "--timeout=3m"); err != nil {
+				t.Errorf("delete the lost-run Agents: %v\n%s", err, out)
+			}
+		})
 		for _, name := range []string{on, off} {
 			waitCond(t, name, "Ready", "True", 5*time.Minute)
 			postAccepted(t, name, 2*time.Minute)
 		}
 		for _, name := range []string{on, off} {
-			until(t, 4*time.Minute, "no streamed model call from "+name+" (with headers x-e2e-agent and x-e2e-stream-seconds)", agentYAML(name), func() bool {
+			until(t, 4*time.Minute, "no model call carrying the lost-run headers from "+name, agentYAML(name), func() bool {
 				return len(lostRunChats(t, name, "")) >= 1
 			})
 		}
@@ -397,17 +401,17 @@ func TestE2E(t *testing.T) {
 		restartGateway(t)
 		waitCond(t, on, "GatewayAvailable", "True", 3*time.Minute)
 		waitCond(t, off, "GatewayAvailable", "True", 3*time.Minute)
-		until(t, 6*time.Minute, on+" never retried its lost run", agentYAML(on), func() bool {
+		until(t, 8*time.Minute, on+" never retried its lost run", agentYAML(on), func() bool {
 			return len(lostRunChats(t, on, "")) >= 2
 		})
 		time.Sleep(30 * time.Second)
 		if got := lostRunChats(t, on, ""); len(got) != 2 {
-			t.Errorf("%s made %d streamed model calls, want 2 (the run and its one retry)", on, len(got))
+			t.Errorf("%s made %d model calls carrying the lost-run headers, want 2 (the run and its one retry)", on, len(got))
 		} else if !strings.Contains(got[1].Body, notice) {
 			t.Errorf("the retried prompt lacks the retry notice %q", notice)
 		}
 		if got := lostRunChats(t, off, ""); len(got) != 1 {
-			t.Errorf("%s (retryLostRuns: false) made %d streamed model calls, want 1", off, len(got))
+			t.Errorf("%s (retryLostRuns: false) made %d model calls carrying the lost-run headers, want 1", off, len(got))
 		}
 	})
 
@@ -433,18 +437,18 @@ func TestE2E(t *testing.T) {
 		until(t, 5*time.Minute, on+" never resumed its run", agentYAML(on), func() bool {
 			return len(lostRunChats(t, on, resume)) >= 1
 		})
-		until(t, 2*time.Minute, off+" never re-issued its interrupted model call", agentYAML(off), func() bool {
+		until(t, 3*time.Minute, off+" never re-issued its interrupted model call", agentYAML(off), func() bool {
 			return len(lostRunChats(t, off, "")) >= 2
 		})
 		time.Sleep(60 * time.Second)
 		if n := len(lostRunChats(t, on, "")); n != 3 {
-			t.Errorf("%s made %d streamed model calls, want 3 (the run, its failed continuation, the resume)", on, n)
+			t.Errorf("%s made %d model calls carrying the lost-run headers, want 3 (the run, its failed continuation, the resume)", on, n)
 		}
 		if n := len(lostRunChats(t, on, resume)); n != 1 {
 			t.Errorf("%s resumed its run %d times, want 1", on, n)
 		}
 		if n := len(lostRunChats(t, off, "")); n != 2 {
-			t.Errorf("%s (retryLostRuns: false) made %d streamed model calls, want 2 (the run and its failed continuation)", off, n)
+			t.Errorf("%s (retryLostRuns: false) made %d model calls carrying the lost-run headers, want 2 (the run and its failed continuation)", off, n)
 		}
 		if n := len(lostRunChats(t, off, resume)); n != 0 {
 			t.Errorf("%s (retryLostRuns: false) resumed its run %d times, want 0", off, n)

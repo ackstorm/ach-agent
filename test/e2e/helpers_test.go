@@ -266,7 +266,7 @@ func waitChat(t *testing.T, port int, timeout time.Duration) []recorded {
 	return got
 }
 
-// lostRunChats returns the streamed model calls of one lost-run fixture Agent (its x-e2e-agent
+// lostRunChats returns the model calls of one lost-run fixture Agent (its x-e2e-agent
 // header) whose body contains text.
 func lostRunChats(t *testing.T, agent, text string) []recorded {
 	t.Helper()

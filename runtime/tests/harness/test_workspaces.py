@@ -466,6 +466,22 @@ async def test_ensure_waits_for_a_deferred_adoption_instead_of_placing() -> None
     assert h.source.place_calls == []
 
 
+async def test_wait_deferred_adoptions_returns_when_they_finish_or_after_the_timeout() -> None:
+    h = _Harness(_config(capacity=2))
+    bad, _ = await _deferred_unit(h, "fa-wait")
+    assert h.manager._deferred_adoptions
+    started = time.monotonic()
+    await h.manager.wait_deferred_adoptions(timeout=0.05)
+    assert time.monotonic() - started < 1
+    assert h.manager._deferred_adoptions  # still waiting for the gateway
+
+    h.probe_fail.clear()
+    h.source.gateway = True
+    await asyncio.wait_for(h.manager.wait_deferred_adoptions(timeout=30), 5)
+    assert bad.workspace_ref in h.manager.active_endpoints()
+    await h.manager.wait_deferred_adoptions(timeout=30)  # none left: returns at once
+
+
 async def test_close_cancels_a_deferred_adoption() -> None:
     h = _Harness(_config(capacity=2))
     await _deferred_unit(h, "fa-cancel")

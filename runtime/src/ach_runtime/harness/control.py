@@ -51,6 +51,7 @@ from ach_runtime.harness.admission import (
     ScriptAdmissionTicket,
     WorkspaceOwnerLost,
 )
+from ach_runtime.harness.refs import invocation_digest
 from ach_runtime.harness.result_delivery import ResultDelivery
 from ach_runtime.harness.delivery import Delivery, GatewayUnavailable, StartOutcomeUnknown
 from ach_runtime.observability.metrics import WORKSPACE_START_SECONDS
@@ -276,6 +277,8 @@ class Control:
     finished_runs: dict[str, Any] = field(default_factory=dict, repr=False)
     # Invocations on their one retry after a run lost with its sandbox.
     _retrying: set[str] = field(default_factory=set, repr=False)
+    # Runs adopted after a restart, by invocation id: each settles to its final outcome.
+    _recovery_outcomes: dict[str, asyncio.Future] = field(default_factory=dict, repr=False)
 
     async def _owned_live(self, claim: str) -> bool:
         # No I/O (spec 6.3). The only wait is for adoption of the units that already run: a
@@ -545,9 +548,18 @@ class Control:
         for record in records:
             if record.state in {"completed", "failed", "cancelled", "skipped"}:
                 self.finished_runs[record.invocation_id] = record
+                if record.observed:
+                    continue
+                try:
+                    read = await asyncio.wait_for(
+                        self.delivery.status(endpoint, record.invocation_id, observe=True), timeout=5)
+                except Exception:  # noqa: BLE001 - unproven: recover nothing rather than twice
+                    continue
+                if not read.observed:
+                    self._track(record.invocation_id, self._settle(read))
                 continue
             try:
-                self.admission.recover(
+                recovered = self.admission.recover(
                     invocation_id=record.invocation_id,
                     channel=record.channel,
                     workspace_ref=record.workspace_ref,
@@ -560,6 +572,64 @@ class Control:
                 )
             except (ValueError, RuntimeError) as exc:
                 raise WorkspaceAssemblyUnavailable("mini-harness run inventory ownership conflicted") from exc
+            self._track(record.invocation_id, self._settle_recovered(recovered))
+
+    def _resume_invocation_id(self, channel: str, invocation_id: str) -> str:
+        return invocation_digest(self.config.agent.uid, channel, f"resume:{invocation_id}")
+
+    def _resumable(self, status: RunStatus) -> bool:
+        channel = next((c for c in self.config.channels if c.name == status.channel), None)
+        return (
+            status.state == "failed" and status.error is None and not status.recovery
+            and bool(status.workspace_key) and bool(status.session_key)
+            and channel is not None and channel.retries_lost_runs
+        )
+
+    async def _settle(self, status: RunStatus) -> RunStatus:
+        """A recovered run's final outcome, its own or that of its one resume, delivered once."""
+        final = status
+        if self._resumable(status):
+            event = Event(
+                event_id=f"resume:{status.invocation_id}", channel=status.channel,
+                type=RESUME_EVENT_TYPE, source="harness", payload={"text": RESUME_PROMPT},
+            )
+            try:
+                ticket = self.admission.admit(
+                    RoutedEvent(event, status.workspace_key, status.session_key), rate_limited=False)
+                log.info("resuming a run the restart broke (invocation %s)", status.invocation_id)
+                resumed = await asyncio.shield(ticket.completed)
+                if isinstance(resumed, RunStatus):
+                    final = resumed
+            except Exception as exc:  # noqa: BLE001 - the original outcome stays the answer
+                log.warning("resume of invocation %s did not run: %s", status.invocation_id, exc)
+        if self.result_delivery is not None and not self._stopping:
+            self.result_delivery.send(status.channel, status.invocation_id, final, None)
+        return final
+
+    async def _settle_recovered(self, recovered: RecoveredRun) -> RunStatus | None:
+        try:
+            await asyncio.shield(recovered.completed)
+        except Exception:
+            return None
+        status = self.finished_runs.get(recovered.invocation_id)
+        return await self._settle(status) if status is not None else None
+
+    def _track(self, invocation_id: str, work: Awaitable[RunStatus | None]) -> None:
+        task = asyncio.ensure_future(work)
+        task.add_done_callback(lambda done: done.cancelled() or done.exception())
+        self._recovery_outcomes[invocation_id] = task
+
+    async def recovered_outcome(self, invocation_id: str, channel: str) -> RunStatus | None:
+        """The outcome a channel reports for a run adopted after a restart, `None` if unknown."""
+        await self.manager.wait_adopted(timeout=60)
+        await self.manager.wait_deferred_adoptions(timeout=self.config.limits.max_invocation_seconds)
+        resume_id = self._resume_invocation_id(channel, invocation_id)
+        if resume_id in self._recovery_outcomes or resume_id in self.finished_runs:
+            return await self.recovered_outcome(resume_id, channel)
+        task = self._recovery_outcomes.get(invocation_id)
+        if task is not None:
+            return await asyncio.shield(task)
+        return self.finished_runs.get(invocation_id)
 
     async def _observe_and_keep(self, endpoint: WorkspaceEndpoint, record: RunStatus) -> RunStatus:
         """Admission drops a recovered run's outcome; keep it for the channel that waits on it."""
@@ -588,7 +658,8 @@ class Control:
             item.download_url for item in (*self.catalog.skills, *self.catalog.prompts, *self.catalog.artifacts)
         ):
             await self._transfer_context(ticket, endpoint)
-        if channel.handoff is not None:
+        # A resume runs in the session that already holds the handoff.
+        if channel.handoff is not None and event.type != RESUME_EVENT_TYPE:
             await self._run_handoff(channel.handoff, event, ticket, endpoint)
         context: dict[str, Any] = {
             "payload": event.payload,
@@ -601,14 +672,16 @@ class Control:
                 "memory": {"bank": ""},
             },
         }
-        if channel.prompt:
+        if event.type == RESUME_EVENT_TYPE:
+            prompt = str(event.payload["text"])
+        elif channel.prompt:
             prompt = _render_prompt(channel.prompt, context)
         elif event.payload.get("text"):
             prompt = str(event.payload["text"])
         else:
             prompt = json.dumps(event.payload, ensure_ascii=False, sort_keys=True)
-        recovery = ticket.invocation_id in self._retrying
-        if recovery:
+        recovery = event.type == RESUME_EVENT_TYPE or ticket.invocation_id in self._retrying
+        if ticket.invocation_id in self._retrying:
             prompt = f"{prompt}\n\n{RETRY_NOTICE}"
         if channel.type == "openai" and event.payload.get("attachments"):
             # The retained event keeps the block, not the file bytes; a re-prepare reuses it.
@@ -745,15 +818,17 @@ class Control:
         ticket: AdmissionTicket | ScriptAdmissionTicket,
     ) -> RunStatus | None:
         """`run`, then POST its outcome to the channel's delivery target, if it has one.
-        A stopping control delivers nothing: the next control settles the unobserved outcome."""
+        A stopping control delivers nothing: the next control settles the unobserved outcome.
+        A resume delivers nothing either: `_settle` posts it under the original invocation."""
         assert self.result_delivery is not None
+        resume = isinstance(event, RoutedEvent) and event.event.type == RESUME_EVENT_TYPE
         try:
             status = await self.run(event, ticket)
         except Exception as exc:
-            if isinstance(event, RoutedEvent) and not self._stopping:
+            if isinstance(event, RoutedEvent) and not self._stopping and not resume:
                 self.result_delivery.send(event.event.channel, ticket.invocation_id, None, _failure_reason(exc))
             raise
-        if status is not None and not self._stopping:
+        if status is not None and not self._stopping and not resume:
             self.result_delivery.send(status.channel, ticket.invocation_id, status, None)
         return status
 
@@ -999,6 +1074,8 @@ class Control:
 
     async def close(self) -> None:
         self._stopping = True
+        for outcome in self._recovery_outcomes.values():
+            outcome.cancel()
         self.source.close()
         self.manager.cancel_adoption()
         errors: list[BaseException] = []
@@ -1287,6 +1364,7 @@ async def assemble(
     control.finished_runs = {}
     control.cancel_requested = set()
     control._retrying = set()
+    control._recovery_outcomes = {}
     control.facade_transport = facade_transport
     control.facade_clients = []
     control._prepared, control._started_run, control._stopping = {}, {}, False

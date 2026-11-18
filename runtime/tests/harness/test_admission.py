@@ -1983,6 +1983,23 @@ def test_rate_sweep_forgets_idle_keys() -> None:
     asyncio.run(scenario())
 
 
+def test_admit_without_rate_limits_skips_the_channel_rate_limit() -> None:
+    async def scenario() -> None:
+        runner = GatedRunner()
+        clock = FakeClock(datetime(2026, 11, 3, tzinfo=UTC))
+        admission = _admission(runner, clock=clock,
+                               rate_limits={"ch": ChannelRateLimit(max_per_hour=None, per_key=(1,))})
+        with pytest.raises(ValueError):
+            admission.admit(_routed("e1"))  # no rate key for perKey[0]
+        ticket = admission.admit(_routed("e1"), rate_limited=False)
+        assert admission._rate_admits == {}
+        runner.release("e1")
+        await ticket.completed
+        await admission.close()
+
+    asyncio.run(scenario())
+
+
 def test_session_busy_sees_an_earlier_ticket_or_recovered_run_in_the_same_session() -> None:
     async def scenario() -> None:
         runner = GatedRunner()

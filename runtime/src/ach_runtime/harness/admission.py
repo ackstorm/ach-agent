@@ -441,8 +441,9 @@ class Admission:
 
     # -- admission --------------------------------------------------------
 
-    def admit(self, routed_event: RoutedEvent) -> AdmissionTicket | RecoveredRun:
-        """Dedup -> capacity -> FIFO-per-(Workspace,session) enqueue (contract §3)."""
+    def admit(self, routed_event: RoutedEvent, *, rate_limited: bool = True) -> AdmissionTicket | RecoveredRun:
+        """Dedup -> capacity -> FIFO-per-(Workspace,session) enqueue (contract §3).
+        `rate_limited=False` admits outside the channel's rate limits (a harness resume)."""
         if self._closed:
             raise AdmissionClosedError("admission is closed")
 
@@ -456,7 +457,7 @@ class Admission:
                 self._alarm_recovered("recovered Started outcome is unknown", existing)
             return existing
 
-        rate_windows = self._check_rate(routed_event)
+        rate_windows = self._check_rate(routed_event) if rate_limited else []
 
         if self._queued_total >= self._max_queued_total:
             if self._alarm is not None:

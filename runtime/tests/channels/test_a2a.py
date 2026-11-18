@@ -967,7 +967,7 @@ def test_client_cancel_and_in_process_shutdown_stay_silent(outlive, stop, monkey
 # -- recovery ---------------------------------------------------------------
 
 from a2a.types.a2a_pb2 import Task, TaskStatus  # noqa: E402
-from ach_runtime.channels.a2a import RESUME_PROMPT, RUN_LOST  # noqa: E402
+from ach_runtime.channels.a2a import RUN_LOST  # noqa: E402
 
 
 class _Store:
@@ -1003,40 +1003,32 @@ def _status(state: str, text: str | None = "ok", error: str | None = None) -> Ru
     )
 
 
-def _recovering(admit_result=None, recovered=None, finished=None, live=()):
-    """A bridge on a fake control; `admit` returns tickets whose outcome is `admit_result`."""
-    admitted = []
+def _recovering(outcome=None, live=()):
+    """A bridge on a fake control whose `recovered_outcome` answers `outcome`; the calls it got."""
+    asked = []
 
-    def admit(routed):
-        loop = asyncio.get_running_loop()
-        ticket = SimpleNamespace(invocation_id="inv-2", completed=loop.create_future())
-        ticket.completed.set_result(admit_result)
-        admitted.append(routed)
-        return ticket
+    async def recovered_outcome(invocation_id, channel):
+        asked.append((invocation_id, channel))
+        return outcome
 
     control = SimpleNamespace(
         config=SimpleNamespace(workspace=SimpleNamespace(persistence=SimpleNamespace(retention_days=1))),
-        admission=SimpleNamespace(
-            recovered_run=lambda i: recovered, admit=admit, has_ticket=lambda i: i in live,
-        ),
-        finished_runs=finished if finished is not None else {},
+        admission=SimpleNamespace(has_ticket=lambda i: i in live),
+        recovered_outcome=recovered_outcome,
     )
-    return A2AAgentExecutorBridge(control, _channel()), admitted
-
+    return A2AAgentExecutorBridge(control, _channel()), asked
 
 
 def test_recovery_writes_a_recovered_runs_reply_into_its_task() -> None:
-    async def scenario() -> _Store:
-        done = asyncio.get_running_loop().create_future()
-        done.set_result(None)  # Admission resolves a recovered run's future with None
-        bridge, _ = _recovering(
-            recovered=SimpleNamespace(completed=done), finished={"inv-1": _status("completed", "the report")},
-        )
+    async def scenario() -> tuple[_Store, list]:
+        bridge, asked = _recovering(_status("completed", "the report"))
         store = _Store(_stored_task())
         await bridge.recover(store)
-        return store
+        return store, asked
 
-    assert asyncio.run(scenario()).log == [("finish", "completed", "the report")]
+    store, asked = asyncio.run(scenario())
+    assert asked == [("inv-1", "review")]
+    assert store.log == [("finish", "completed", "the report")]
 
 
 def test_recovery_that_cannot_read_its_tasks_logs_and_returns() -> None:
@@ -1053,70 +1045,24 @@ def test_recovery_that_cannot_read_its_tasks_logs_and_returns() -> None:
     assert [e["event"] for e in asyncio.run(scenario())] == ["a2a task recovery could not read its tasks"]
 
 
-def test_recovery_uses_a_run_that_finished_before_adoption() -> None:
-    async def scenario() -> _Store:
-        bridge, _ = _recovering(finished={"inv-1": _status("completed", "early")})
-        store = _Store(_stored_task())
-        await bridge.recover(store)
-        return store
-
-    assert asyncio.run(scenario()).log == [("finish", "completed", "early")]
-
-
 def test_recovery_fails_a_task_whose_run_is_unknown() -> None:
     async def scenario() -> _Store:
-        bridge, admitted = _recovering()
+        bridge, _ = _recovering()
         store = _Store(_stored_task())
         await bridge.recover(store)
-        assert admitted == []
         return store
 
     assert asyncio.run(scenario()).log == [("finish", "failed", RUN_LOST)]
 
 
-def test_recovery_resumes_a_failed_run_once_in_the_same_session() -> None:
-    async def scenario() -> tuple[_Store, list]:
-        bridge, admitted = _recovering(
-            admit_result=_status("completed", "resumed reply"), finished={"inv-1": _status("failed", error="boom")},
-        )
+def test_recovery_writes_the_outcome_the_control_settled_into_its_task() -> None:
+    async def scenario() -> _Store:
+        bridge, _ = _recovering(_status("failed", error="boom"))
         store = _Store(_stored_task())
         await bridge.recover(store)
-        return store, admitted
+        return store
 
-    store, admitted = asyncio.run(scenario())
-    assert len(admitted) == 1
-    assert (admitted[0].workspace_key, admitted[0].session_key) == ("w", "s")
-    assert admitted[0].event.payload["text"] == RESUME_PROMPT
-    assert store.log == [
-        ("annotate", {"invocationId": "inv-2", "resumed": "1"}),
-        ("finish", "completed", "resumed reply"),
-    ]
-
-
-def test_recovery_does_not_resume_twice() -> None:
-    async def scenario() -> tuple[_Store, list]:
-        bridge, admitted = _recovering(finished={"inv-1": _status("failed", error="boom")})
-        store = _Store(_stored_task(resumed="1"))
-        await bridge.recover(store)
-        return store, admitted
-
-    store, admitted = asyncio.run(scenario())
-    assert admitted == []
-    assert store.log == [("finish", "failed", "boom")]
-
-
-def test_recovery_reports_a_failed_resume_without_a_second_one() -> None:
-    async def scenario() -> tuple[_Store, list]:
-        bridge, admitted = _recovering(
-            admit_result=_status("failed", error="again"), finished={"inv-1": _status("failed", error="boom")},
-        )
-        store = _Store(_stored_task())
-        await bridge.recover(store)
-        return store, admitted
-
-    store, admitted = asyncio.run(scenario())
-    assert len(admitted) == 1
-    assert store.log[-1] == ("finish", "failed", "again")
+    assert asyncio.run(scenario()).log == [("finish", "failed", "boom")]
 
 
 def test_execute_stamps_the_run_identity_on_the_first_working_event(monkeypatch) -> None:
@@ -1242,10 +1188,10 @@ def test_heartbeat_after_silence_and_progress_resets_it(monkeypatch) -> None:
 
 def test_recovery_leaves_a_request_this_control_admitted_alone() -> None:
     async def scenario() -> _Store:
-        bridge, admitted = _recovering(live={"inv-1"})
+        bridge, asked = _recovering(live={"inv-1"})
         store = _Store(_stored_task())
         await bridge.recover(store)
-        assert admitted == []
+        assert asked == []
         return store
 
     assert asyncio.run(scenario()).log == []

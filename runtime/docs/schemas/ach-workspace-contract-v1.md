@@ -58,6 +58,8 @@ La identidad de Workspace es `(namespace, ACHAgent UID, workspace_key)`. Usar el
 
 `channels[].rateLimit` caps the invocations a channel admits per sliding hour. `maxPerHour` caps the whole channel; each `perKey` entry `{key, maxPerHour}` caps one key, a `{{ }}` template rendered with the same context as `routing` (e.g. `ticket:{{ payload.ticket_id }}`, `sender:{{ payload.sender }}`). Every limit is optional and counted on its own, per channel; a key that fails to render rejects the event like a routing override. Over any limit the event is rejected before admission: HTTP 429 on webhooks, `Rate limited` on A2A; a cron tick is dropped and a Redis queue entry stays pending and is retried later. A duplicate delivery is deduplicated first and does not count. The count lives in the control process and resets when it restarts.
 
+`channels[].retryLostRuns` (boolean, default `true`, forbidden on `webhook-script`) opts a channel out of lost-run recovery (§3) when `false`; the lost run then ends `unknown` or `failed` and only the alarm reports it.
+
 Defaults aprobados el 1 de octubre de 2026:
 
 | Origen | Workspace | Sesión |
@@ -105,7 +107,7 @@ Channel -> Harness admission queue -> HTTP 202 to webhook caller
                                    internal Started(invocationId, sessionRef)
 ```
 
-Once admitted, startup failure, success, failure, cancellation, timeout or pod loss do not revoke the webhook ACK or automatically replay the event. Admission retains the internal Started/completed outcomes and the Harness's existing alarms report startup anomalies. A `webhook-script` does not acquire a Workspace or Session; script spawn remains its internal Started boundary, not its HTTP ACK boundary.
+Once admitted, startup failure, success, failure, cancellation, timeout or pod loss do not revoke the webhook ACK. Only lost-run recovery (§3) runs an event again. Admission retains the internal Started/completed outcomes and the Harness's existing alarms report startup anomalies. A `webhook-script` does not acquire a Workspace or Session; script spawn remains its internal Started boundary, not its HTTP ACK boundary.
 
 The internal mini-harness Started signal still confirms execution acceptance, after session reservation and preparation; it does not wait for a first token or final result. Queue adapters still acknowledge their source at Started, cron still records startup without replaying old ticks, and A2A retains its existing protocol. These adapters are not changed by the webhook HTTP ACK decision.
 
@@ -114,6 +116,8 @@ Webhook admission is not durable. An acknowledged event still waiting in RAM can
 Un reintento de `Start` con el mismo invocationId consulta el registro del mini-harness y devuelve el mismo arranque o resultado; no envía otra entrada a OpenCode. Si se perdió la respuesta y no se puede establecer si el trabajo arrancó, se registra resultado desconocido y alarma; no se reproduce ciegamente una posible mutación. La persistencia del registro está limitada por snapshots, como el resto del estado: no se promete deduplicación perfecta tras perder un pod.
 
 En un reinicio del Harness se redescubren sus StatefulSets por UID del ACHAgent y se consultan runs del mini-harness, incluyendo invocationId, channel, estado y plazo original UTC. Con ellos se reconstruyen permisos de ejecuciones activas. El mini-harness hace cumplir ese plazo independientemente del Harness; un reinicio no lo renueva. Retry de Start solo sobre el mismo pod UID: un escritor nuevo con resultado anterior ambiguo produce unknown y alarma, no otro prompt. Pendientes no confirmados en RAM pueden desaparecer; la redelivery depende del origen. Runs confirmados no se reinician. No se agregan reintentos de negocio por encima de la entrega.
+
+**Recuperación de runs perdidos.** Un run perdido con su sandbox (`unknown`), o roto por un reinicio o actualización del control (`failed` sin error, que ningún control capaz de actuar llegó a leer), se recupera una vez cuando el `retryLostRuns` de su channel no es `false`. La pérdida del sandbox arranca la misma invocación otra vez en el sandbox de reemplazo, dentro de su plazo original, con un aviso de que el intento anterior pudo actuar. El reinicio del control envía un único mensaje de reanudación a la misma sesión, como invocación nueva con plazo propio; el resultado se entrega bajo el invocationId original (`recoveryOf` en el wire del run). Una recuperación no se recupera de nuevo. Plazo, estancamiento, cancelación y fallos reportados por el agente no se recuperan. Un control que se está deteniendo no inicia ni marca nada: lo hace el siguiente. Las unidades de otra versión se adoptan y se retiran cuando quedan inactivas; los runs que terminaron antes de la actualización se tratan como ya entregados. Los efectos laterales de un run perdido pueden repetirse una vez.
 
 ## 4. Ejecución y protección frente a bucles
 
@@ -207,7 +211,7 @@ El Artifact no depende del pod ni de que el Workspace siga montado. Los resultad
 
 ## 9. Resultados y observabilidad
 
-Cada run pasa de queued a starting, running y después completed, failed o cancelled; `skipped` is the terminal state of a run that `sessionStart` decided not to start (exit 78). `unknown` expresa pérdida de observación tras una posible ejecución, no un permiso para repetir. Timeout produce failed con razón timeout. Started is the internal execution-acceptance boundary; webhook HTTP ACK occurs earlier, at Harness admission. Completed no significa que el agente haya decidido publicar un comentario o Artifact.
+Cada run pasa de queued a starting, running y después completed, failed o cancelled; `skipped` is the terminal state of a run that `sessionStart` decided not to start (exit 78). `unknown` expresa pérdida de observación tras una posible ejecución; solo la recuperación de runs perdidos (§3) puede repetirla, una vez. Timeout produce failed con razón timeout. Started is the internal execution-acceptance boundary; webhook HTTP ACK occurs earlier, at Harness admission. Completed no significa que el agente haya decidido publicar un comentario o Artifact.
 
 El mini-harness expone estado por invocationId y stream con secuencia de eventos. El Harness registra actor, channel, referencias, configVersion, duración, tokens y resultado. El origen obtiene resultados mediante sus herramientas/canal; no se inventa un JSON terminal obligatorio para todo agente. Un esquema de resultado específico puede añadirse después por caso de uso.
 

@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- A run lost with its sandbox, or broken by a control restart or upgrade, is recovered once on every channel:
+  retried on the replacement sandbox (same invocation, remaining deadline, with a notice that the first attempt
+  may have acted) or resumed in its session after a restart. A resumed or retried result is delivered under the
+  original invocation id. `channels[].retryLostRuns: false` keeps the previous behaviour (outcome `unknown`,
+  alarm only). This changes the contract's never-replay rule; a lost run's side effects can repeat once. Units
+  of another release are adopted and retired once idle instead of retired at adoption, so an upgrade no longer
+  kills in-flight runs. The A2A-only resume is replaced by this mechanism and no longer resumes runs that hit
+  their deadline or stalled, or fails on channels with `rateLimit.perKey`. A queue message whose run completed
+  after an ambiguous start is acknowledged.
+
 ## [0.8.1] - 2026-11-16
 
 ### Added

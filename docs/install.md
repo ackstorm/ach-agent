@@ -554,6 +554,34 @@ applies to every channel; unset, a session takes the default of the channel it l
 `queue`. An Agent with a cron and a chat channel and `workspace.idleTimeoutSeconds: 0` then deletes
 the sandbox right after a tick, and a minute after the last chat message.
 
+A run can be lost with its sandbox, or broken by a control restart or upgrade. ACH recovers it once
+on every channel that runs an agent. A lost sandbox gets a retry: the same invocation starts again on
+the replacement sandbox, within its original deadline, with a notice that the first attempt may have
+acted. A control restart or upgrade gets a resume: one message into the same session, with its own
+deadline, and its result goes out under the original invocation id. A deadline, a stall, a
+cancellation or a failure the agent reports is not recovered. The first attempt may already have
+caused side effects, so they can repeat once. `retryLostRuns: false` on a channel turns recovery off.
+
+```yaml
+    - name: tick
+      type: cron
+      cron: {schedule: "*/15 * * * *"}
+      retryLostRuns: false   # a repeated tick would repeat its side effects
+```
+
+Recovery has limits:
+
+- A run that was already recovered once after a control restart and then loses its sandbox gets nothing more.
+- If the sandbox and the control are lost together, nothing is recovered. Only a queue source redelivers.
+- With `openai`, the caller has gone after a control restart, so a resume's answer reaches only `delivery`.
+- With A2A on `persistence: none` or `volume`, `tasks/get` cannot return a resume's result after a restart.
+- A resume gets its own `maxInvocationSeconds`, so one event can run for up to twice that.
+- A resume queues behind events admitted after the restart.
+- A unit of another release is resumed only from the release after this one onwards: older units do not report the routing keys.
+- A custom execution image of an earlier release rejects a retry or resume start. That recovery fails and the original outcome is reported.
+- The runs a unit of an earlier release finished before the upgrade count as delivered. They are not delivered again or resumed.
+- If the control stops after admitting a resume but before it reaches the sandbox, the event is not recovered. Recovery is at most once.
+
 `routing.workspaceKey` decides how often a message lands on a new sandbox. `session` gives every
 conversation its own sandbox, so every new conversation pays the full cold start. For a chat
 channel, a per-user key (`"{{ event.headers.x-litellm-user-id }}"`) sends a user's new conversations

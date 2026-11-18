@@ -162,7 +162,7 @@ The host owns names, routing and TLS for these listeners. `infrastructure.facade
 | Surface | Where | Contract |
 |---|---|---|
 | Channel ingress | `agent`/`control` `8080`: `POST /channels/{channel}/events`, `/a2a/{channel}/…` | v1 §2–3: authentication per channel config, HTTP 202 on admission, 503 when the queue is full or closed. |
-| A2A across a restart | `/a2a/{channel}/…` | A restart keeps hosted runs alive: the next control adopts them. The caller's stream ends with `working` and a restart text, and `tasks/get` returns the result once the run ends. A run that never started ends `failed` and is sent again. A run that failed during the restart is resumed once in its session. With `workspace.persistence.type: s3`, tasks are stored in the Agent's storage. |
+| A2A across a restart | `/a2a/{channel}/…` | A restart keeps hosted runs alive: the next control adopts them. The caller's stream ends with `working` and a restart text, and `tasks/get` returns the result once the run ends. A run that never started ends `failed` and is sent again. A run broken by the restart is recovered under the lost-run rule (v1 §3). With `workspace.persistence.type: s3`, tasks are stored in the Agent's storage. |
 | A2A runtime status | `/a2a/{channel}/…` | While a request waits, the runtime sends `working` statuses tagged `metadata.ach`: `queued` (behind an earlier request in the same session), `starting` (not started after 5 s) and `heartbeat` ("Still working..." after 60 s without any event). Their text is fixed English; clients may hide or translate them by tag. |
 | Liveness | `GET /healthz`, every role | 200 while the process serves. A failure means restart the unit. |
 | Readiness | `GET /readyz`, every role | `agent`/`control`: configuration and hydration valid and adapters listening; does not need any Workspace. `control` also waits for the host's inventory (5.4). `execution`: configured by its control unit and restore finished. |
@@ -271,7 +271,8 @@ All routes are on `control` `8081`, under `/host/v1`, and are served from proces
 | 422 | A unit's `name` does not belong to its `workspaceRef`. The whole request is rejected. |
 
 - Every listed unit is adopted, regardless of `limits.maxActiveWorkspaces`: probed, checked and reconnected, and runs that are still executing are recovered (v1 §3). Adopted units count against the limit, so new Workspaces wait until enough of them close.
-- A unit that cannot be adopted is listed as `released`. That covers a unit unreachable until its probe deadline, one of another release, and one whose reconnect fails. Its uncommitted work is lost, as for any lost unit (v1 §7). Its slot stays held until the host's `DELETE`.
+- A unit of another release is adopted and retired once idle, so its busy runs finish first. Runs it finished before the upgrade count as delivered.
+- A unit that cannot be adopted is listed as `released`. That covers a unit unreachable until its probe deadline and one whose reconnect fails. Its uncommitted work is lost, as for any lost unit (v1 §7). Its slot stays held until the host's `DELETE`.
 
 **`PUT /host/v1/gateway`** reports whether the host's sandbox gateway is reachable. Body: `{"available": true|false}`.
 
@@ -326,7 +327,7 @@ Workspace names are runtime-owned opaque strings: at most 52 characters of `[a-z
   - Any later different ID on the same Workspace means the unit was restarted, so its local files cannot be trusted. The runtime restores before serving again (v1 §7).
   - The storage writer identity, which v1 calls `writer_pod_uid`, is this instance ID.
 - Whatever detects the loss of an instance (a different ID, a failed health check, a host `DELETE`), the runtime handles it the same way: the Workspace is listed `released`, then `running` again for a fresh unit, and restored.
-- A run on a lost instance whose outcome was not already confirmed ends `unknown` and is never started again (v1 §3). Loss of access to an instance is not evidence that the run failed. An outcome confirmed before the loss is kept.
+- A run on a lost instance whose outcome was not already confirmed ends `unknown`, and is recovered at most once under the lost-run rule (v1 §3). Loss of access to an instance is not evidence that the run failed. An outcome confirmed before the loss is kept.
 
 This removes the need for the host to expose a platform identity. It also catches restarts that hosts perform silently, such as a process or container restart that keeps the same name, configuration and environment.
 
@@ -336,7 +337,7 @@ These are deliberate, not guarantees the runtime provides:
 
 - **Facade tokens are bound to the Workspace name, not to an instance.** They stop working when the Workspace has no serving instance, but a former instance still running beside a newer one could keep using them. The host's one-live-instance rule (3.6) is what prevents that.
 - **Storage fencing protects storage only.** It turns a stale instance into a failed writer. It does not revoke that instance's access to models or tools.
-- **Some recoveries discard uncommitted work:** an upgrade with busy Workspaces (units of the old release are not adopted), and any unit that cannot be adopted. Work since the last commit is lost, as for any lost unit (v1 §7).
+- **Some recoveries discard uncommitted work:** any unit that cannot be adopted (an upgrade with busy Workspaces retires old-release units only once idle). Work since the last commit is lost, as for any lost unit (v1 §7).
 
 ## 6. Internal topology (not part of the host contract)
 
@@ -369,6 +370,7 @@ The schema is the v1 `workspace-v1` schema, with these changes:
 | `infrastructure.execution.facadeEndpoint` | Moves to `infrastructure.facadeEndpoint`. Required for `control`; optional for `agent`, where it defaults to loopback. |
 | `agent.namespace`, `agent.uid` | Same shape, host-neutral meaning (3.1). The rule that the execution service account equals `ach-execution-<uid>` is dropped. |
 | Bootstrap document | Becomes `bootstrapVersion: "workspace-v3"`, and `controlEndpoint` is removed. The runtime produces it inside `launch.env` as `ACH_BOOTSTRAP_JSON` (5.5); the host no longer renders it. |
+| `channels[].retryLostRuns` | Optional boolean, default `true`, forbidden on `webhook-script`. `false` turns off the retry or resume of a run lost with its sandbox or broken by a control restart (v1 §3). |
 | `workspace.readyTimeoutSeconds` | New, optional, default 30. How long a new execution unit has to become ready (placement, health probe) before activation fails; also bounds adoption and recovery starts. Hosts with slow starts (sandboxes that pull images) raise it. |
 
 These changes ship as `schemaVersion: "workspace-v3"`.

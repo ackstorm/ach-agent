@@ -3381,7 +3381,7 @@ async def test_a_second_loss_is_final(monkeypatch) -> None:
         await control.close()
 
 
-@pytest.mark.parametrize("case", ["opted_out", "cancelled", "deadline_passed", "resume_event"])
+@pytest.mark.parametrize("case", ["opted_out", "cancelled", "deadline_passed", "resume_event", "stopping"])
 async def test_no_retry(case, monkeypatch) -> None:
     from dataclasses import replace
 
@@ -3399,6 +3399,7 @@ async def test_no_retry(case, monkeypatch) -> None:
     lost = WorkspaceOwnerLost("lost", cancelled=case == "cancelled")
     completed = _observed_run(control, state="completed", invocation_id=ticket.invocation_id)
     prompts = _retry_harness(control, monkeypatch, [lost, completed])
+    control._stopping = case == "stopping"
     try:
         with pytest.raises(WorkspaceOwnerLost):
             await control.run(ticket.routed_event, ticket)
@@ -3557,6 +3558,41 @@ async def test_not_resumed_when_the_channel_opts_out(monkeypatch) -> None:
     try:
         assert await control._settle(status) is status
         assert calls == []
+    finally:
+        await control.close()
+
+
+async def test_a_stopping_control_neither_resumes_nor_delivers(monkeypatch) -> None:
+    control = await _control(_config())
+    calls = _resume_admit(control, monkeypatch, _adopted(control, state="completed"))
+    control.result_delivery = _RecordingDelivery()
+    control._stopping = True
+    status = _adopted(control)
+    try:
+        assert await control._settle(status) is status
+        assert calls == []
+        assert control.result_delivery.sends == []
+    finally:
+        await control.close()
+
+
+async def test_a_run_tracked_twice_settles_once(monkeypatch) -> None:
+    control = await _control(_config())
+    settled: list[str] = []
+
+    async def settle(self, status):
+        settled.append(status.invocation_id)
+        return status
+
+    monkeypatch.setattr(Control, "_settle", settle)
+    status = _adopted(control)
+    try:
+        control._track("adopted", control._settle(status))
+        first = control._recovery_outcomes["adopted"]
+        control._track("adopted", control._settle(status))
+        assert control._recovery_outcomes["adopted"] is first
+        assert await first is status
+        assert settled == ["adopted"]
     finally:
         await control.close()
 

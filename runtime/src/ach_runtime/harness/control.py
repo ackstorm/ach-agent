@@ -16,7 +16,7 @@ import ssl
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
 from typing import Any
 
 import httpx
@@ -588,7 +588,8 @@ class Control:
     async def _settle(self, status: RunStatus) -> RunStatus:
         """A recovered run's final outcome, its own or that of its one resume, delivered once."""
         final = status
-        if self._resumable(status):
+        # A stopping control leaves the run unobserved: the next control resumes it.
+        if self._resumable(status) and not self._stopping:
             event = Event(
                 event_id=f"resume:{status.invocation_id}", channel=status.channel,
                 type=RESUME_EVENT_TYPE, source="harness", payload={"text": RESUME_PROMPT},
@@ -614,7 +615,11 @@ class Control:
         status = self.finished_runs.get(recovered.invocation_id)
         return await self._settle(status) if status is not None else None
 
-    def _track(self, invocation_id: str, work: Awaitable[RunStatus | None]) -> None:
+    def _track(self, invocation_id: str, work: Coroutine[Any, Any, RunStatus | None]) -> None:
+        # A Workspace can be reconnected twice: its run settles once.
+        if invocation_id in self._recovery_outcomes:
+            work.close()
+            return
         task = asyncio.ensure_future(work)
         task.add_done_callback(lambda done: done.cancelled() or done.exception())
         self._recovery_outcomes[invocation_id] = task
@@ -882,6 +887,7 @@ class Control:
             and channel.retries_lost_runs
             and event.event.type != RESUME_EVENT_TYPE
             and not lost.cancelled
+            and not self._stopping
             and ticket.deadline_at > _clock()
         )
 

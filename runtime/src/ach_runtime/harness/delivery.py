@@ -194,8 +194,8 @@ class Delivery:
             ):
                 raise DeliveryError("prepared StartRequest does not match immutable ticket/config")
             payload = request.model_dump(by_alias=True, mode="json")
-            if not request.recovery:
-                payload.pop("recovery", None)
+            if request.recovery_of is None:
+                payload.pop("recoveryOf", None)
             delay = 0.5
             while True:
                 try:

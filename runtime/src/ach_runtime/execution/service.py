@@ -918,7 +918,7 @@ class ExecutionService:
             result=inv.result,
             workspaceKey=inv.request.workspace_key,
             sessionKey=inv.request.session_key,
-            recovery=inv.request.recovery,
+            recoveryOf=inv.request.recovery_of,
             observed=inv.observed,
         )
         if observe and inv.state in {"completed", "failed", "cancelled", "skipped"}:

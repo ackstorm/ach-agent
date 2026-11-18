@@ -610,8 +610,8 @@ async def test_status_observe_sends_the_query(public_config_fixture):
     await d.close()
 
 
-@pytest.mark.parametrize("recovery", [False, True])
-async def test_start_payload_carries_recovery_only_when_true(public_config_fixture, recovery):
+@pytest.mark.parametrize("recovery_of", [None, "inv-0"])
+async def test_start_payload_carries_recovery_of_only_when_set(public_config_fixture, recovery_of):
     t = ticket()
     bodies = []
 
@@ -621,10 +621,10 @@ async def test_start_payload_carries_recovery_only_when_true(public_config_fixtu
         return pod_response(202, json={"invocationId": payload["invocationId"], "sessionRef": payload["sessionRef"], "runId": "run-1", "configVersion": payload["configVersion"]})
 
     async def prepare(ticket_, endpoint):
-        return request(ticket_, public_config_fixture.config_version).model_copy(update={"recovery": recovery})
+        return request(ticket_, public_config_fixture.config_version).model_copy(update={"recovery_of": recovery_of})
 
     d = make_delivery(handler, public_config_fixture, prepare=prepare)
     await d.start(t)
-    assert ("recovery" in bodies[0]) is recovery
-    assert bodies[0].get("recovery", False) is recovery
+    assert ("recoveryOf" in bodies[0]) is (recovery_of is not None)
+    assert bodies[0].get("recoveryOf") == recovery_of
     await d.close()

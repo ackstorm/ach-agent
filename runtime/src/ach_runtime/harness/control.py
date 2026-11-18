@@ -580,7 +580,7 @@ class Control:
     def _resumable(self, status: RunStatus) -> bool:
         channel = next((c for c in self.config.channels if c.name == status.channel), None)
         return (
-            status.state == "failed" and status.error is None and not status.recovery
+            status.state == "failed" and status.error is None and status.recovery_of is None
             and bool(status.workspace_key) and bool(status.session_key)
             and channel is not None and channel.retries_lost_runs
         )
@@ -592,7 +592,8 @@ class Control:
         if self._resumable(status) and not self._stopping:
             event = Event(
                 event_id=f"resume:{status.invocation_id}", channel=status.channel,
-                type=RESUME_EVENT_TYPE, source="harness", payload={"text": RESUME_PROMPT},
+                type=RESUME_EVENT_TYPE, source="harness",
+                payload={"text": RESUME_PROMPT, "recoveryOf": status.invocation_id},
             )
             try:
                 ticket = self.admission.admit(
@@ -604,7 +605,8 @@ class Control:
             except Exception as exc:  # noqa: BLE001 - the original outcome stays the answer
                 log.warning("resume of invocation %s did not run: %s", status.invocation_id, exc)
         if self.result_delivery is not None and not self._stopping:
-            self.result_delivery.send(status.channel, status.invocation_id, final, None)
+            # A resume settled by a later control answers the event its caller sent.
+            self.result_delivery.send(status.channel, status.recovery_of or status.invocation_id, final, None)
         return final
 
     async def _settle_recovered(self, recovered: RecoveredRun) -> RunStatus | None:
@@ -685,7 +687,10 @@ class Control:
             prompt = str(event.payload["text"])
         else:
             prompt = json.dumps(event.payload, ensure_ascii=False, sort_keys=True)
-        recovery = event.type == RESUME_EVENT_TYPE or ticket.invocation_id in self._retrying
+        if event.type == RESUME_EVENT_TYPE:
+            recovery_of = str(event.payload["recoveryOf"])
+        else:
+            recovery_of = ticket.invocation_id if ticket.invocation_id in self._retrying else None
         if ticket.invocation_id in self._retrying:
             prompt = f"{prompt}\n\n{RETRY_NOTICE}"
         if channel.type == "openai" and event.payload.get("attachments"):
@@ -726,7 +731,7 @@ class Control:
             workspaceKey=routed.workspace_key, sessionKey=routed.session_key,
             configVersion=self.public.config_version, prompt=prompt,
             deadlineAt=ticket.deadline_at, memoryAvailable=memory_available,
-            informUser=inform_user, recovery=recovery,
+            informUser=inform_user, recoveryOf=recovery_of,
         )
         self._prepared[ticket.invocation_id] = (endpoint, request)
         return request

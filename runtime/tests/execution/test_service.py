@@ -2335,10 +2335,10 @@ async def test_session_start_error_redacts_facade_tokens(tmp_path, public_config
 
 async def test_status_reports_routed_keys_and_recovery(tmp_path, public_config_fixture) -> None:
     service, engine = _service(tmp_path, public_config_fixture)
-    request = _request(public_config_fixture.config_version, recovery=True)
+    request = _request(public_config_fixture.config_version, recoveryOf="inv-0")
     await service.start(request)
     status = await service.status(request.invocation_id)
-    assert (status.workspace_key, status.session_key, status.recovery) == ("wk", "sk", True)
+    assert (status.workspace_key, status.session_key, status.recovery_of) == ("wk", "sk", "inv-0")
 
 
 async def test_observe_marks_a_terminal_run_after_the_read(tmp_path, public_config_fixture) -> None:

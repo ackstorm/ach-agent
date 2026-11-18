@@ -3327,11 +3327,11 @@ async def _control(config):
 def _retry_harness(control, monkeypatch, outcomes: list):
     """One fake Start per attempt; `outcomes` is what each attempt's observation does."""
     endpoint = _memory_endpoint(control.config)
-    prompts: list[tuple[str, bool]] = []
+    prompts: list[tuple[str, str | None]] = []
 
     async def start(ticket):
         request = await control._prepare(ticket, endpoint)
-        prompts.append((request.prompt, request.recovery))
+        prompts.append((request.prompt, request.recovery_of))
         return Started(invocationId=ticket.invocation_id, sessionRef=ticket.session_ref,
                        runId=f"run-{len(prompts)}", configVersion=control.public.config_version)
 
@@ -3357,7 +3357,7 @@ async def test_a_lost_run_is_retried_once_with_the_notice(monkeypatch) -> None:
     control.failures[ticket.invocation_id] = "x"
     try:
         assert await control.run(ticket.routed_event, ticket) is completed
-        assert [recovery for _, recovery in prompts] == [False, True]
+        assert [recovery_of for _, recovery_of in prompts] == [None, ticket.invocation_id]
         assert RETRY_NOTICE not in prompts[0][0] and RETRY_NOTICE in prompts[1][0]
         assert ticket.started.done() and ticket.started.exception() is None
         assert ticket.invocation_id not in control._retrying
@@ -3394,7 +3394,7 @@ async def test_no_retry(case, monkeypatch) -> None:
         ticket = replace(ticket, deadline_at=datetime.now(timezone.utc) - timedelta(seconds=1))
     if case == "resume_event":
         routed = ticket.routed_event
-        resume = replace(routed.event, type=RESUME_EVENT_TYPE, payload={"text": "continue"})
+        resume = replace(routed.event, type=RESUME_EVENT_TYPE, payload={"text": "continue", "recoveryOf": "inv-0"})
         ticket = replace(ticket, routed_event=replace(routed, event=resume))
     lost = WorkspaceOwnerLost("lost", cancelled=case == "cancelled")
     completed = _observed_run(control, state="completed", invocation_id=ticket.invocation_id)
@@ -3474,13 +3474,13 @@ async def test_a_stopping_control_does_not_observe_or_deliver(monkeypatch) -> No
         await control.close()
 
 
-def _adopted(control, *, state="failed", error=None, recovery=False, observed=False, invocation_id="adopted"):
+def _adopted(control, *, state="failed", error=None, recovery_of=None, observed=False, invocation_id="adopted"):
     return RunStatus(
         invocationId=invocation_id, channel="gitlab-mr-review",
         workspaceRef="a" * 64, sessionRef="b" * 64, runId="run-1",
         configVersion=control.public.config_version,
         deadlineAt=datetime.now(timezone.utc) + timedelta(minutes=1), state=state, error=error,
-        workspaceKey="w", sessionKey="s", recovery=recovery, observed=observed,
+        workspaceKey="w", sessionKey="s", recoveryOf=recovery_of, observed=observed,
     )
 
 
@@ -3523,7 +3523,7 @@ async def test_an_engine_failure_is_resumed_once_on_a_webhook_channel(monkeypatc
         [(routed, kwargs)] = calls
         assert (routed.workspace_key, routed.session_key) == ("w", "s")
         assert routed.event.type == RESUME_EVENT_TYPE
-        assert routed.event.payload["text"] == RESUME_PROMPT
+        assert routed.event.payload == {"text": RESUME_PROMPT, "recoveryOf": "adopted"}
         assert routed.event.event_id == "resume:adopted"
         assert kwargs == {"rate_limited": False}
         assert control.result_delivery.sends == [("gitlab-mr-review", "adopted", resumed, None)]
@@ -3534,7 +3534,7 @@ async def test_an_engine_failure_is_resumed_once_on_a_webhook_channel(monkeypatc
 @pytest.mark.parametrize("change", [
     {"error": "deadline expired"},
     {"error": "stalled: no engine progress for 300s"},
-    {"recovery": True},
+    {"recovery_of": "inv-0"},
     {"state": "completed"},
     {"state": "cancelled"},
 ])
@@ -3546,7 +3546,8 @@ async def test_not_resumed(change, monkeypatch) -> None:
     try:
         assert await control._settle(status) is status
         assert calls == []
-        assert control.result_delivery.sends == [("gitlab-mr-review", "adopted", status, None)]
+        delivered_as = status.recovery_of or "adopted"
+        assert control.result_delivery.sends == [("gitlab-mr-review", delivered_as, status, None)]
     finally:
         await control.close()
 
@@ -3597,6 +3598,20 @@ async def test_a_run_tracked_twice_settles_once(monkeypatch) -> None:
         await control.close()
 
 
+@pytest.mark.parametrize("state", ["completed", "failed"])
+async def test_a_resume_settled_by_a_later_control_delivers_under_the_original_invocation(state, monkeypatch) -> None:
+    control = await _control(_config())
+    calls = _resume_admit(control, monkeypatch, _adopted(control, state="completed"))
+    control.result_delivery = _RecordingDelivery()
+    resumed = _adopted(control, state=state, recovery_of="original", invocation_id="resume-run")
+    try:
+        assert await control._settle(resumed) is resumed
+        assert calls == []
+        assert control.result_delivery.sends == [("gitlab-mr-review", "original", resumed, None)]
+    finally:
+        await control.close()
+
+
 async def test_a_failed_admit_keeps_the_known_outcome(monkeypatch) -> None:
     from ach_runtime.harness.admission import AdmissionQueueFullError
 
@@ -3614,7 +3629,7 @@ def _resume_ticket(config) -> AdmissionTicket:
     from ach_runtime.harness.control import RESUME_EVENT_TYPE, RESUME_PROMPT
 
     routed = RoutedEvent(
-        Event("resume:x", "gitlab-mr-review", RESUME_EVENT_TYPE, "harness", payload={"text": RESUME_PROMPT}),
+        Event("resume:x", "gitlab-mr-review", RESUME_EVENT_TYPE, "harness", payload={"text": RESUME_PROMPT, "recoveryOf": "x"}),
         "w", "s",
     )
     return AdmissionTicket(
@@ -3637,7 +3652,7 @@ async def test_the_resume_prompt_skips_the_channel_template_and_handoff(monkeypa
     try:
         request = await control._prepare(_resume_ticket(control.config), _memory_endpoint(control.config))
         assert request.prompt.startswith(RESUME_PROMPT)
-        assert request.recovery is True
+        assert request.recovery_of == "x"
         assert handoffs == []
     finally:
         await control.close()
@@ -3669,7 +3684,7 @@ async def test_recovered_outcome_follows_a_resume_started_by_the_previous_contro
     monkeypatch.setattr(control.manager, "wait_adopted", at_once)
     monkeypatch.setattr(control.manager, "wait_deferred_adoptions", at_once)
     resume_id = control._resume_invocation_id("gitlab-mr-review", "adopted")
-    resumed = _adopted(control, state="completed", recovery=True, invocation_id=resume_id)
+    resumed = _adopted(control, state="completed", recovery_of="adopted", invocation_id=resume_id)
     control.finished_runs.update({"adopted": _adopted(control), resume_id: resumed})
     try:
         assert await control.recovered_outcome("adopted", "gitlab-mr-review") is resumed

@@ -173,9 +173,11 @@ def test_start_inform_user_defaults_false_and_round_trips() -> None:
     assert StartRequest.model_validate(wire).inform_user is True
 
 
-def test_start_request_recovery_defaults_to_false() -> None:
-    assert _start_request().recovery is False
-    assert _start_request(recovery=True).recovery is True
+def test_start_request_recovery_of_defaults_to_none() -> None:
+    assert _start_request().recovery_of is None
+    request = _start_request(recoveryOf="inv-0")
+    assert request.recovery_of == "inv-0"
+    assert request.model_dump(by_alias=True, mode="json")["recoveryOf"] == "inv-0"
 
 
 def test_run_status_without_recovery_fields_still_parses() -> None:
@@ -183,4 +185,4 @@ def test_run_status_without_recovery_fields_still_parses() -> None:
         "invocationId": "i", "channel": "c", "workspaceRef": "a" * 64, "sessionRef": "b" * 64,
         "runId": None, "configVersion": "0" * 64, "deadlineAt": "2026-11-18T00:00:00+00:00", "state": "failed",
     })
-    assert (status.workspace_key, status.session_key, status.recovery, status.observed) == (None, None, False, False)
+    assert (status.workspace_key, status.session_key, status.recovery_of, status.observed) == (None, None, None, False)

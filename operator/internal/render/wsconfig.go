@@ -84,21 +84,22 @@ func RenderScriptV1(ch *v1.ChannelSpec, resolvedEnv []corev1.EnvVar) (*PrepareBl
 // WSChannelBlock is one channels[] entry (schema ChannelConfig — name/type required;
 // routing is always present, explicit null when there is no override).
 type WSChannelBlock struct {
-	Name        string            `json:"name"`
-	Type        string            `json:"type"`
-	Concurrency *int64            `json:"concurrency,omitempty"`
-	RateLimit   *v1.RateLimitSpec `json:"rateLimit,omitempty"`
-	Source      string            `json:"source,omitempty"`
-	Routing     *WSRoutingBlock   `json:"routing"`
-	Prompt      string            `json:"prompt,omitempty"`
-	Webhook     *WSWebhookBlock   `json:"webhook,omitempty"`
-	Handoff     *WSHandoffBlock   `json:"handoff,omitempty"`
-	Script      *PrepareBlock     `json:"script,omitempty"`
-	Cron        *CronBlock        `json:"cron,omitempty"`
-	Queue       *WSQueueBlock     `json:"queue,omitempty"`
-	A2A         *WSA2ABlock       `json:"a2a,omitempty"`
-	OpenAI      *WSOpenAIBlock    `json:"openai,omitempty"`
-	Delivery    *WSDelivery       `json:"delivery,omitempty"`
+	Name          string            `json:"name"`
+	Type          string            `json:"type"`
+	Concurrency   *int64            `json:"concurrency,omitempty"`
+	RateLimit     *v1.RateLimitSpec `json:"rateLimit,omitempty"`
+	RetryLostRuns *bool             `json:"retryLostRuns,omitempty"`
+	Source        string            `json:"source,omitempty"`
+	Routing       *WSRoutingBlock   `json:"routing"`
+	Prompt        string            `json:"prompt,omitempty"`
+	Webhook       *WSWebhookBlock   `json:"webhook,omitempty"`
+	Handoff       *WSHandoffBlock   `json:"handoff,omitempty"`
+	Script        *PrepareBlock     `json:"script,omitempty"`
+	Cron          *CronBlock        `json:"cron,omitempty"`
+	Queue         *WSQueueBlock     `json:"queue,omitempty"`
+	A2A           *WSA2ABlock       `json:"a2a,omitempty"`
+	OpenAI        *WSOpenAIBlock    `json:"openai,omitempty"`
+	Delivery      *WSDelivery       `json:"delivery,omitempty"`
 }
 
 // WSDelivery is channels[].delivery (schema DeliveryBlock).
@@ -120,7 +121,7 @@ func RenderChannelV1(ch *v1.ChannelSpec, resolvedEnv []corev1.EnvVar) (WSChannel
 		return WSChannelBlock{}, nil, err
 	}
 	cb := WSChannelBlock{
-		Name: ch.Name, Type: ch.Type, Concurrency: ch.Concurrency, RateLimit: ch.RateLimit, Source: ch.Source,
+		Name: ch.Name, Type: ch.Type, Concurrency: ch.Concurrency, RateLimit: ch.RateLimit, RetryLostRuns: ch.RetryLostRuns, Source: ch.Source,
 		Routing: RenderRoutingV1(ch.Routing), Prompt: ch.Prompt,
 		Webhook: RenderWebhookV1(ch), Handoff: handoff, Script: script,
 		Queue: RenderQueueV1(ch.Queue), A2A: RenderA2AV1(ch), OpenAI: RenderOpenAIV1(ch),

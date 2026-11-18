@@ -984,6 +984,7 @@ class ChannelConfig(BaseModel):
     source: Literal["gitlab", "github", "generic"] | None = None
     routing: RoutingBlock | None = None
     rate_limit: RateLimitBlock | None = Field(default=None, alias="rateLimit")
+    retry_lost_runs: bool | None = Field(default=None, alias="retryLostRuns")
     prompt: str | None = None
     webhook: WebhookBlock | None = None
     handoff: HandoffBlock | None = None
@@ -994,6 +995,11 @@ class ChannelConfig(BaseModel):
     openai: OpenAIBlock | None = None
     delivery: DeliveryBlock | None = None
 
+    @property
+    def retries_lost_runs(self) -> bool:
+        """A run lost with its sandbox or its control is retried or resumed once, unless set false."""
+        return self.type != "webhook-script" and self.retry_lost_runs is not False
+
     @model_validator(mode="after")
     def _check_type_block_coherence(self) -> ChannelConfig:
         t = self.type
@@ -1002,7 +1008,8 @@ class ChannelConfig(BaseModel):
                 raise ValueError(f"channel '{self.name}': webhook-script requires a webhook block")
             if self.script is None:
                 raise ValueError(f"channel '{self.name}': webhook-script requires a script block")
-            for field, wire_name in (("prompt", "prompt"), ("handoff", "handoff"), ("rate_limit", "rateLimit")):
+            for field, wire_name in (("prompt", "prompt"), ("handoff", "handoff"), ("rate_limit", "rateLimit"),
+                                     ("retry_lost_runs", "retryLostRuns")):
                 if getattr(self, field) is not None:
                     raise ValueError(f"channel '{self.name}': webhook-script forbids '{wire_name}'")
             if self.source != "gitlab":

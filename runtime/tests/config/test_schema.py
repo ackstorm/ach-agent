@@ -406,6 +406,27 @@ def test_rate_limit_forbidden_on_webhook_script(pr_review_wire: dict[str, Any]) 
         parse_config(pr_review_wire)
 
 
+def test_retry_lost_runs_defaults_to_true(pr_review_wire: dict[str, Any]) -> None:
+    config = parse_config(pr_review_wire)
+    assert config.channels[0].retry_lost_runs is None
+    assert config.channels[0].retries_lost_runs is True
+
+
+def test_retry_lost_runs_false_is_kept(pr_review_wire: dict[str, Any]) -> None:
+    pr_review_wire["channels"][0]["retryLostRuns"] = False
+    _resign(pr_review_wire)
+    assert parse_config(pr_review_wire).channels[0].retries_lost_runs is False
+
+
+def test_retry_lost_runs_forbidden_on_webhook_script(pr_review_wire: dict[str, Any]) -> None:
+    channel = pr_review_wire["channels"][0]
+    channel.update(type="webhook-script", prompt=None, handoff=None, retryLostRuns=True,
+                   script={"script": "x", "env": {}, "secretEnv": {}, "timeoutSeconds": 10})
+    _resign(pr_review_wire)
+    with pytest.raises(ConfigError, match="webhook-script forbids 'retryLostRuns'"):
+        parse_config(pr_review_wire)
+
+
 @pytest.mark.parametrize("rate_limit", [
     {"maxPerHour": 0},
     {"perKey": [{"key": "{{ payload.x }}", "maxPerHour": 0}]},

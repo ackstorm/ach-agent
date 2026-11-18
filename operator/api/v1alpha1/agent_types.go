@@ -343,6 +343,7 @@ type DeliverySpec struct {
 // +kubebuilder:validation:XValidation:rule="self.type=='webhook-script' ? has(self.script) : !has(self.script)",message="channels.script is required only for webhook-script"
 // +kubebuilder:validation:XValidation:rule="self.type!='webhook-script' || (!has(self.prompt) && !has(self.handoff))",message="webhook-script forbids prompt and handoff"
 // +kubebuilder:validation:XValidation:rule="self.type!='webhook-script' || !has(self.rateLimit)",message="webhook-script forbids rateLimit"
+// +kubebuilder:validation:XValidation:rule="self.type!='webhook-script' || !has(self.retryLostRuns)",message="webhook-script forbids retryLostRuns"
 // +kubebuilder:validation:XValidation:rule="!(self.type=='queue' || (self.type=='webhook' && has(self.source) && self.source=='generic')) || (has(self.routing) && has(self.routing.sessionKey))",message="generic webhook and queue channels require routing.sessionKey"
 // +kubebuilder:validation:XValidation:rule="self.type!='openai' || !has(self.routing) || !has(self.routing.sessionKey)",message="openai channels take the session from the conversation: routing.sessionKey is not allowed"
 // +kubebuilder:validation:XValidation:rule="!has(self.delivery) || self.type in ['webhook','cron','queue']",message="channels.delivery is only valid for webhook, cron and queue channels"
@@ -364,6 +365,9 @@ type ChannelSpec struct {
 	// limit are rejected before any model call (webhook: HTTP 429). Omit for no limit.
 	// +optional
 	RateLimit *RateLimitSpec `json:"rateLimit,omitempty"`
+	// RetryLostRuns retries or resumes, once, a run lost with its sandbox or its control. Unset means true.
+	// +optional
+	RetryLostRuns *bool `json:"retryLostRuns,omitempty"`
 	// Routing overrides the Harness's default Workspace/Session identity for this
 	// channel (contract §2). Omit for the adapter's default.
 	// +optional

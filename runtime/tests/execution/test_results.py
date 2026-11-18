@@ -142,3 +142,23 @@ async def test_old_engine_without_usage_getter_retains_unknown_usage(tmp_path, p
     assert result["reporting"]["duration_ms"] >= 0
     assert result["reporting"]["usage"] is None
     assert "text" not in result
+
+
+async def test_failed_run_carries_the_engine_error(tmp_path, public_config_fixture):
+    class FailedEngine(ResultEngine):
+        async def wait_settled(self, invocation_id):
+            return "failed"
+
+        def error(self, invocation_id):
+            return "Budget has been exceeded!"
+
+    engine = FailedEngine("unused")
+    service = _service(tmp_path, public_config_fixture, engine)
+    request = _request(public_config_fixture.config_version)
+    await service.start(request)
+    invocation = service._invocations[request.invocation_id]
+    assert invocation.settle_task is not None
+    await invocation.settle_task
+    status = await service.status(request.invocation_id)
+    assert status.state == "failed"
+    assert status.error == "Budget has been exceeded!"

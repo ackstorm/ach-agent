@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (NVIDIA/OpenShell#5522). Going back to 0.1.8 is not a chart revert: a 0.1.8 gateway refuses the
   database migration 0.1.9 adds.
 
+### Fixed
+
+- A failed run reports the engine's error (e.g. the gateway's "Budget has been exceeded!")
+  in its run status and its A2A and OpenAI replies, which gave no reason before.
+
 ## [0.8.2] - 2026-11-18
 
 ### Fixed

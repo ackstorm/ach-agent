@@ -555,7 +555,9 @@ class _NativeSession:
                         interval["outcome"] = "completed"
                     elif kind == "session.execution.failed":
                         interval["outcome"] = "failed"
-                        interval["error"] = json.dumps(data)[:2000]
+                        failure = data.get("error")
+                        message = failure.get("message") if isinstance(failure, dict) else None
+                        interval["error"] = message if isinstance(message, str) and message else json.dumps(data)[:2000]
                     else:
                         interval["outcome"] = "cancelled"
                     texts = interval["texts"]
@@ -1351,6 +1353,16 @@ class OpenCodeEngine:
                 if not state.settlement_confirmed or state.outcome != "completed":
                     return None
                 return state.result
+        return None
+
+    def error(self, invocation_id: str) -> str | None:
+        """Return why a settled invocation did not complete."""
+        for session in self._sessions.values():
+            state = session._invocations.get(invocation_id)
+            if state is not None:
+                if not state.settlement_confirmed or state.outcome == "completed":
+                    return None
+                return state.error
         return None
 
     def usage(self, invocation_id: str) -> RunUsage | None:

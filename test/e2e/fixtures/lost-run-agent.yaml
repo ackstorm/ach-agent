@@ -12,8 +12,8 @@ spec:
       headers:
         x-litellm-api-key: {secretKeyRef: {name: e2e-model, key: apiKey}}
         x-e2e-agent: {value: "${NAME}"}
-        # The stub streams the reply over this many seconds: the run is still going when its sandbox or control goes.
-        x-e2e-stream-seconds: {value: "180"}
+        # The stub streams the reply over this many seconds (STREAM): the run is still going when its sandbox or control goes.
+        x-e2e-stream-seconds: {value: "${STREAM}"}
         ${FAIL}
   # The profile's 300 s would end a retry or resume of a 180 s stream on its deadline.
   limits: {maxInvocationSeconds: 900}

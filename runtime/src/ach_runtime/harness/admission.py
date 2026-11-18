@@ -184,6 +184,10 @@ class AdmissionClosedError(RuntimeError):
 class WorkspaceOwnerLost(RuntimeError):
     """The pinned Workspace pod was replaced before this run was observed terminal."""
 
+    def __init__(self, message: str, *, cancelled: bool = False) -> None:
+        super().__init__(message)
+        self.cancelled = cancelled  # the caller had asked to cancel the lost run
+
 
 class Admission:
     def __init__(

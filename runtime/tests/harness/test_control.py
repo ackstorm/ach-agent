@@ -26,12 +26,15 @@ from ach_runtime.harness.workspaces import (
 from fake_host import FakeHost
 
 
-def _config(*, handoff: bool = False, hooks: dict | None = None, persistence: bool = False):
+def _config(*, handoff: bool = False, hooks: dict | None = None, persistence: bool = False,
+            retry_lost_runs: bool = True):
     wire = json.loads((Path(__file__).parents[1] / "config/fixtures/pr-review-runtime.json").read_text())
     wire["workspace"]["persistence"] = {"type": "s3", "retentionDays": 90} if persistence else {"type": "none"}
     wire["artifacts"]["enabled"] = False
     channel = wire["channels"][0]
     channel["prompt"] = "Review {{ payload.title | default(\"untitled\") }} for {{ internal.agent.name }}"
+    if not retry_lost_runs:
+        channel["retryLostRuns"] = False
     if not handoff:
         channel.pop("handoff", None)
     if hooks:
@@ -118,6 +121,7 @@ def test_harness_completion_record_keeps_the_engine_usage_source(monkeypatch, so
 
     config = _config()
     control = Control.__new__(Control)
+    control._retrying = set()
     control.config = config
     control.public = public_config(config, config.engine.env)
     records = []
@@ -143,6 +147,7 @@ def test_harness_completion_record_carries_normal_and_recovered_correlation(monk
 
     config = _config()
     control = Control.__new__(Control)
+    control._retrying = set()
     control.config = config
     control.public = public_config(config, config.engine.env)
     records = []
@@ -251,7 +256,7 @@ async def test_observe_run_returns_the_validated_terminal_status(state: str) -> 
         "workspace", "pod-1", "http://mini",
     )
     _publish(control, endpoint)
-    control.delivery.status = lambda *_args: _return_status(terminal)
+    control.delivery.status = lambda *_args, **_kwargs: _return_status(terminal)
     try:
         assert await control._observe_run(endpoint, terminal) is terminal
     finally:
@@ -346,7 +351,7 @@ async def test_t09_terminal_status_from_the_instance_is_kept_when_it_is_lost_in_
     lost: set[str] = set()
     monkeypatch.setattr(control.manager, "is_lost", lambda instance_id: instance_id in lost)
 
-    async def status(_endpoint, _invocation_id):
+    async def status(_endpoint, _invocation_id, **_kwargs):
         # The response was verified against the instance's own ID, then the loss lands.
         lost.add(endpoint.instance_id)
         return terminal
@@ -377,7 +382,7 @@ async def test_a_failed_terminal_status_still_records_failed(error, monkeypatch)
         "workspace", "pod-1", "http://mini",
     )
     _publish(control, endpoint)
-    control.delivery.status = lambda *_args: _return_status(failed)
+    control.delivery.status = lambda *_args, **_kwargs: _return_status(failed)
     try:
         assert await control._observe_run(endpoint, failed) is failed
         assert [record.outcome for record in records] == ["failed"]
@@ -655,7 +660,7 @@ async def test_real_admission_and_control_run_forward_terminal_status(caplog) ->
             runId="run-a2a", configVersion=config_version,
         )
 
-    async def status(_endpoint, invocation_id):
+    async def status(_endpoint, invocation_id, **_kwargs):
         request = control._prepared[invocation_id][1]
         return RunStatus(
             invocationId=invocation_id, channel=request.channel,
@@ -1278,6 +1283,7 @@ async def test_start_timeout_is_limit_only_after_original_deadline(expired, monk
             raise TimeoutError("transport timed out")
 
     control = Control.__new__(Control)
+    control._retrying = set()
     control.delivery = TimedOutDelivery()
     control._prepared = {"inv-timeout": None}
     control.cancel_requested = set()
@@ -1306,6 +1312,7 @@ async def test_gateway_unavailable_start_failure_raises_the_gateway_alarm(monkey
             raise GatewayUnavailable("gateway_unavailable")
 
     control = Control.__new__(Control)
+    control._retrying = set()
     control.delivery = DownDelivery()
     control._prepared = {"inv-gw": None}
     control.cancel_requested = set()
@@ -1499,7 +1506,7 @@ async def test_owner_loss_ordinary_waits_for_published_replacement(started_befor
     from ach_runtime.harness.delivery import StartOutcomeUnknown
 
     control = await assemble(
-        _config(), environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},
+        _config(retry_lost_runs=False), environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},
         ach_transport=httpx.MockTransport(_catalog_handler),
     )
     routed = RoutedEvent(Event("owner-loss-ordinary", "gitlab-mr-review", "merge_request", "gitlab"),
@@ -1543,7 +1550,7 @@ async def test_owner_loss_ordinary_waits_for_published_replacement(started_befor
     control_module = __import__("ach_runtime.harness.control", fromlist=["_alarm"])
     monkeypatch.setattr(control_module, "_alarm", lambda reason, _owner=None: lost_alarms.append(reason))
 
-    async def stale_terminal(observed, invocation_id):
+    async def stale_terminal(observed, invocation_id, **_kwargs):
         status_calls.append((observed.instance_id, invocation_id))
         status_seen.set()
         await release_stale_status.wait()
@@ -1614,7 +1621,7 @@ async def test_owner_loss_recovered_waits_for_published_replacement(monkeypatch)
     control_module = __import__("ach_runtime.harness.control", fromlist=["_alarm"])
     monkeypatch.setattr(control_module, "_alarm", lambda reason, _owner=None: alarms.append(reason))
 
-    async def stale_terminal(observed, invocation_id):
+    async def stale_terminal(observed, invocation_id, **_kwargs):
         status_calls.append((observed.instance_id, invocation_id))
         status_seen.set()
         await release_stale_status.wait()
@@ -2682,6 +2689,7 @@ async def test_start_failure_logs_redacted_reason(monkeypatch, caplog):
             )
 
     control = Control.__new__(Control)
+    control._retrying = set()
     control.delivery = FailingDelivery()
     control._prepared = {"inv-fail": None}
     control.cancel_requested = set()
@@ -2731,6 +2739,7 @@ async def test_start_failure_reason_reaches_real_control_log_output(monkeypatch,
             raise ConnectionError(f"pod unreachable Authorization: Bearer {secret}")
 
     control = Control.__new__(Control)
+    control._retrying = set()
     control.delivery = FailingDelivery()
     control._prepared = {}
     control.cancel_requested = set()
@@ -2785,7 +2794,7 @@ async def test_observe_run_backs_off_for_long_runs_and_resets_on_state_change(mo
             deadlineAt=datetime(2026, 10, 1, 1, tzinfo=timezone.utc), state=state,
         )
 
-    async def status(*_args):
+    async def status(*_args, **_kwargs):
         return status_for(states.pop(0))
 
     endpoint = WorkspaceEndpoint(
@@ -2839,7 +2848,7 @@ async def test_observe_run_sleep_never_overshoots_the_deadline(monkeypatch) -> N
             configVersion=control.public.config_version, deadlineAt=deadline, state=state,
         )
 
-    async def status(*_args):
+    async def status(*_args, **_kwargs):
         return status_for("cancelled" if cancels else "running")
 
     async def cancel(*_args):
@@ -3153,6 +3162,7 @@ async def test_a_run_cancelled_while_queued_never_reaches_its_workspace():
             raise AssertionError("a cancelled run must not start")
 
     control = Control.__new__(Control)
+    control._retrying = set()
     control.delivery = NoDelivery()
     control.cancel_requested = {"inv-queued"}
     ticket = SimpleNamespace(invocation_id="inv-queued", deadline_at=datetime(2030, 1, 1, tzinfo=timezone.utc))
@@ -3181,6 +3191,8 @@ async def test_run_delivers_the_result_of_a_channel_with_delivery(raises, monkey
         return SimpleNamespace(channel="alerts", state="completed", result={"text": "done"}, error=None)
 
     control = Control.__new__(Control)
+    control._retrying = set()
+    control._stopping = False
     monkeypatch.setattr(Control, "run", fake_run)
     control.result_delivery = ResultDelivery(
         {"alerts": ("https://hooks.example.com/r", {})},
@@ -3293,3 +3305,158 @@ def test_local_skills_replace_a_downloaded_skill_of_the_same_name(tmp_path) -> N
     _overlay_skills(base, root, {"a": local / "a"})
     assert sorted(p.relative_to(root).as_posix() for p in root.rglob("*.md")) == ["skills/a/SKILL.md", "skills/b/SKILL.md"]
     assert (root / "skills" / "a" / "SKILL.md").read_text() == "new a"
+
+
+async def _control(config):
+    return await assemble(
+        config, environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},
+        ach_transport=httpx.MockTransport(_catalog_handler), mini_transport=httpx.MockTransport(_memory_mini),
+    )
+
+
+def _retry_harness(control, monkeypatch, outcomes: list):
+    """One fake Start per attempt; `outcomes` is what each attempt's observation does."""
+    endpoint = _memory_endpoint(control.config)
+    prompts: list[tuple[str, bool]] = []
+
+    async def start(ticket):
+        request = await control._prepare(ticket, endpoint)
+        prompts.append((request.prompt, request.recovery))
+        return Started(invocationId=ticket.invocation_id, sessionRef=ticket.session_ref,
+                       runId=f"run-{len(prompts)}", configVersion=control.public.config_version)
+
+    async def observe(self, endpoint, expected, **_kwargs):
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(control.delivery, "start", start)
+    monkeypatch.setattr(Control, "_observe_run", observe)
+    return prompts
+
+
+async def test_a_lost_run_is_retried_once_with_the_notice(monkeypatch) -> None:
+    from ach_runtime.harness.admission import WorkspaceOwnerLost
+    from ach_runtime.harness.control import RETRY_NOTICE
+
+    control = await _control(_config())
+    ticket = _memory_ticket(control.config, "inv-retry")
+    completed = _observed_run(control, state="completed", invocation_id=ticket.invocation_id)
+    prompts = _retry_harness(control, monkeypatch, [WorkspaceOwnerLost("lost"), completed])
+    control.failures[ticket.invocation_id] = "x"
+    try:
+        assert await control.run(ticket.routed_event, ticket) is completed
+        assert [recovery for _, recovery in prompts] == [False, True]
+        assert RETRY_NOTICE not in prompts[0][0] and RETRY_NOTICE in prompts[1][0]
+        assert ticket.started.done() and ticket.started.exception() is None
+        assert ticket.invocation_id not in control._retrying
+        assert ticket.invocation_id not in control.failures
+    finally:
+        await control.close()
+
+
+async def test_a_second_loss_is_final(monkeypatch) -> None:
+    from ach_runtime.harness.admission import WorkspaceOwnerLost
+
+    control = await _control(_config())
+    ticket = _memory_ticket(control.config, "inv-twice")
+    prompts = _retry_harness(control, monkeypatch, [WorkspaceOwnerLost("lost"), WorkspaceOwnerLost("lost")])
+    try:
+        with pytest.raises(WorkspaceOwnerLost):
+            await control.run(ticket.routed_event, ticket)
+        assert len(prompts) == 2
+        assert ticket.invocation_id not in control._retrying
+    finally:
+        await control.close()
+
+
+@pytest.mark.parametrize("case", ["opted_out", "cancelled", "deadline_passed", "resume_event"])
+async def test_no_retry(case, monkeypatch) -> None:
+    from dataclasses import replace
+
+    from ach_runtime.harness.admission import WorkspaceOwnerLost
+    from ach_runtime.harness.control import RESUME_EVENT_TYPE
+
+    control = await _control(_config(retry_lost_runs=case != "opted_out"))
+    ticket = _memory_ticket(control.config, f"inv-{case}")
+    if case == "deadline_passed":
+        ticket = replace(ticket, deadline_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+    if case == "resume_event":
+        routed = ticket.routed_event
+        ticket = replace(ticket, routed_event=replace(routed, event=replace(routed.event, type=RESUME_EVENT_TYPE)))
+    lost = WorkspaceOwnerLost("lost", cancelled=case == "cancelled")
+    completed = _observed_run(control, state="completed", invocation_id=ticket.invocation_id)
+    prompts = _retry_harness(control, monkeypatch, [lost, completed])
+    try:
+        with pytest.raises(WorkspaceOwnerLost):
+            await control.run(ticket.routed_event, ticket)
+        assert len(prompts) == 1
+    finally:
+        await control.close()
+
+
+async def test_a_completed_run_after_an_ambiguous_start_marks_the_ticket_started(monkeypatch) -> None:
+    from ach_runtime.harness.delivery import StartOutcomeUnknown
+
+    control = await _control(_config())
+    ticket = _memory_ticket(control.config, "inv-ambiguous")
+    endpoint = _memory_endpoint(control.config)
+    completed = _observed_run(control, state="completed", invocation_id=ticket.invocation_id)
+
+    async def start(ticket):
+        control._prepared[ticket.invocation_id] = (endpoint, await control._prepare(ticket, endpoint))
+        raise StartOutcomeUnknown("start outcome unknown")
+
+    async def observe(self, endpoint, expected, **_kwargs):
+        return completed
+
+    monkeypatch.setattr(control.delivery, "start", start)
+    monkeypatch.setattr(Control, "_observe_run", observe)
+    try:
+        assert await control.run(ticket.routed_event, ticket) is completed
+        assert ticket.started.done() and ticket.started.exception() is None
+    finally:
+        await control.close()
+
+
+async def test_a_stopping_control_does_not_observe_or_deliver(monkeypatch) -> None:
+    control = await _control(_config())
+    endpoint = _memory_endpoint(control.config)
+    _publish(control, endpoint)
+    terminal = _observed_run(control, state="completed")
+    observes: list[dict] = []
+
+    async def status(_endpoint, _invocation_id, **kwargs):
+        observes.append(kwargs)
+        return terminal
+
+    sends: list[tuple] = []
+
+    class RecordingDelivery:
+        def send(self, *args):
+            sends.append(args)
+
+        async def close(self):
+            return None
+
+    async def fake_run(self, event, ticket):
+        if ticket.invocation_id == "inv-raises":
+            raise RuntimeError("lost")
+        return terminal
+
+    monkeypatch.setattr(control.delivery, "status", status)
+    monkeypatch.setattr(Control, "run", fake_run)
+    control.result_delivery = RecordingDelivery()
+    control._stopping = True
+    try:
+        assert await control._observe_run(endpoint, terminal) is terminal
+        assert observes == [{"observe": False}]
+        ticket = _memory_ticket(control.config, "inv-stopping")
+        assert await control.run_and_deliver(ticket.routed_event, ticket) is terminal
+        raising = _memory_ticket(control.config, "inv-raises")
+        with pytest.raises(RuntimeError):
+            await control.run_and_deliver(raising.routed_event, raising)
+        assert sends == []
+    finally:
+        await control.close()

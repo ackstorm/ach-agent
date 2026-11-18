@@ -27,6 +27,7 @@ from ach_runtime.harness.admission import (
     AdmissionRateLimitedError,
     AdmissionTicket,
 )
+from ach_runtime.harness.control import RESUME_PROMPT
 from ach_runtime.harness.workspaces import WorkspaceAssemblyUnavailable
 
 log = structlog.get_logger(__name__)
@@ -236,11 +237,6 @@ QUEUED_TEXT = "Queued behind an earlier request in this conversation."
 STARTING_TEXT = "Starting the agent, this can take a few seconds..."
 HEARTBEAT_TEXT = "Still working..."
 RUN_LOST = "The agent restarted and this request's run was lost. Send it again."
-RESUME_PROMPT = (
-    "The ACH control restarted while you were working. Model and tool calls made during "
-    "the restart may have failed with connection errors. Continue the task where you "
-    "left off, and repeat any tool call whose result you did not get."
-)
 
 
 def _outcome_status(result: Any, failure: str | None = None) -> tuple[str, str]:

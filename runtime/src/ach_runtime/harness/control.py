@@ -90,6 +90,17 @@ _TEMPLATE = re.compile(r'\{\{\s*([A-Za-z0-9_.\-]+)(?:\s*\|\s*(?:default\(\s*"([^
 _MISSING = object()
 # Longest a facade call waits for adoption to publish its unit; the unit's own client timeout bounds it anyway.
 _ADOPTION_WAIT_SECONDS = 30.0
+RESUME_EVENT_TYPE = "resume"
+RESUME_PROMPT = (
+    "The ACH control restarted while you were working. Model and tool calls made during "
+    "the restart may have failed with connection errors. Continue the task where you "
+    "left off, and repeat any tool call whose result you did not get."
+)
+RETRY_NOTICE = (
+    "A previous attempt at this request was interrupted when its sandbox was lost. Its "
+    "actions may already have taken effect: before repeating one with side effects (a "
+    "comment, a ticket, a message, a write), check whether it already happened."
+)
 # A Workspace object name (`refs.workspace_name`) is long enough to look like a token,
 # so it is matched first, as group 1, and kept verbatim.
 _SECRET = re.compile(
@@ -141,6 +152,7 @@ def _alarm(
         "Workspace owner was lost; run outcome is unknown": "run_outcome_unknown",
         "run observation is unavailable; ownership remains held": "run_outcome_unknown",
         "gateway_unavailable": "gateway_unavailable",
+        "lost run retried": "run_retried",
         "Harness lifecycle tick failed": "lifecycle_tick_failed",
         "Harness Workspace persistence failed": "persistence_failed",
         "Harness session persistence failed": "persistence_failed",
@@ -262,6 +274,8 @@ class Control:
     cancel_requested: set[str] = field(default_factory=set, repr=False)
     # Runs already terminal when this control adopted their Workspace, by invocation id.
     finished_runs: dict[str, Any] = field(default_factory=dict, repr=False)
+    # Invocations on their one retry after a run lost with its sandbox.
+    _retrying: set[str] = field(default_factory=set, repr=False)
 
     async def _owned_live(self, claim: str) -> bool:
         # No I/O (spec 6.3). The only wait is for adoption of the units that already run: a
@@ -593,6 +607,9 @@ class Control:
             prompt = str(event.payload["text"])
         else:
             prompt = json.dumps(event.payload, ensure_ascii=False, sort_keys=True)
+        recovery = ticket.invocation_id in self._retrying
+        if recovery:
+            prompt = f"{prompt}\n\n{RETRY_NOTICE}"
         if channel.type == "openai" and event.payload.get("attachments"):
             # The retained event keeps the block, not the file bytes; a re-prepare reuses it.
             event.payload["attachmentsBlock"] = await self._publish_attachments(ticket, event.payload["attachments"])
@@ -631,7 +648,7 @@ class Control:
             workspaceKey=routed.workspace_key, sessionKey=routed.session_key,
             configVersion=self.public.config_version, prompt=prompt,
             deadlineAt=ticket.deadline_at, memoryAvailable=memory_available,
-            informUser=inform_user,
+            informUser=inform_user, recovery=recovery,
         )
         self._prepared[ticket.invocation_id] = (endpoint, request)
         return request
@@ -727,15 +744,16 @@ class Control:
         event: RoutedEvent | Event,
         ticket: AdmissionTicket | ScriptAdmissionTicket,
     ) -> RunStatus | None:
-        """`run`, then POST its outcome to the channel's delivery target, if it has one."""
+        """`run`, then POST its outcome to the channel's delivery target, if it has one.
+        A stopping control delivers nothing: the next control settles the unobserved outcome."""
         assert self.result_delivery is not None
         try:
             status = await self.run(event, ticket)
         except Exception as exc:
-            if isinstance(event, RoutedEvent):
+            if isinstance(event, RoutedEvent) and not self._stopping:
                 self.result_delivery.send(event.event.channel, ticket.invocation_id, None, _failure_reason(exc))
             raise
-        if status is not None:
+        if status is not None and not self._stopping:
             self.result_delivery.send(status.channel, ticket.invocation_id, status, None)
         return status
 
@@ -767,14 +785,41 @@ class Control:
         if ticket.invocation_id in self.cancel_requested:
             self.cancel_requested.discard(ticket.invocation_id)
             raise RuntimeError("cancelled by the caller before it started")
+        try:
+            return await self._attempt(event, ticket)
+        except WorkspaceOwnerLost as lost:
+            if not self._retry_allowed(event, ticket, lost):
+                raise
+            ticket.mark_started()
+            self.failures.pop(ticket.invocation_id, None)
+            self._retrying.add(ticket.invocation_id)
+            _alarm("lost run retried", ticket)
+            try:
+                return await self._attempt(event, ticket)
+            finally:
+                self._retrying.discard(ticket.invocation_id)
+
+    def _retry_allowed(self, event: RoutedEvent, ticket: AdmissionTicket, lost: WorkspaceOwnerLost) -> bool:
+        """One retry of a run lost with its sandbox, when its channel allows it and time is left."""
+        channel = next((c for c in self.config.channels if c.name == event.channel), None)
+        return (
+            channel is not None
+            and channel.retries_lost_runs
+            and event.event.type != RESUME_EVENT_TYPE
+            and not lost.cancelled
+            and ticket.deadline_at > _clock()
+        )
+
+    async def _attempt(self, event: RoutedEvent, ticket: AdmissionTicket) -> RunStatus:
         from ach_runtime.execution.wire import StartRequest
 
         started = None
         try:
             started = await self.delivery.start(ticket)
-            ready = time.monotonic() - ticket.admitted_at
-            WORKSPACE_START_SECONDS.labels(phase="ready").observe(ready)
-            log_started(ticket.invocation_id, duration_ms=ready * 1000)
+            if ticket.invocation_id not in self._retrying:
+                ready = time.monotonic() - ticket.admitted_at
+                WORKSPACE_START_SECONDS.labels(phase="ready").observe(ready)
+                log_started(ticket.invocation_id, duration_ms=ready * 1000)
         except StartOutcomeUnknown:
             # Delivery has exhausted its same-pod cached-start recovery. Keep the ticket
             # and permits while observing the pinned pod; never replay a possibly-sent
@@ -809,10 +854,13 @@ class Control:
             self._started_run[ticket.invocation_id] = started.run_id
         if not isinstance(request, StartRequest):
             raise WorkspaceAssemblyUnavailable("Delivery retained an invalid StartRequest")
-        return await self._observe_run(
+        status = await self._observe_run(
             endpoint, request, started_run_id=started.run_id if started else None,
             event=event.event,
         )
+        # A run observed to its end reached the engine, even when Start was ambiguous.
+        ticket.mark_started()
+        return status
 
     async def _observe_run(self, endpoint: WorkspaceEndpoint, expected: StartRequest | RunStatus,
                            *, started_run_id: str | None = None, event: Event | None = None) -> RunStatus:
@@ -835,10 +883,11 @@ class Control:
             ):
                 self._prepared.pop(expected.invocation_id, None)
                 self._started_run.pop(expected.invocation_id, None)
+                cancelled = expected.invocation_id in self.cancel_requested
                 self.cancel_requested.discard(expected.invocation_id)
                 _alarm("Workspace owner was lost; run outcome is unknown", expected)
                 self._record_run(expected, None, started_run_id, event, outcome="unknown")
-                raise WorkspaceOwnerLost("Workspace owner lost; run outcome is unknown")
+                raise WorkspaceOwnerLost("Workspace owner lost; run outcome is unknown", cancelled=cancelled)
             if current is None:
                 if not warned_owner:
                     _alarm("Workspace owner is not published; run ownership remains held", expected)
@@ -867,7 +916,7 @@ class Control:
                 continue
             try:
                 status = await asyncio.wait_for(
-                    self.delivery.status(endpoint, expected.invocation_id), timeout=5
+                    self.delivery.status(endpoint, expected.invocation_id, observe=not self._stopping), timeout=5
                 )
                 self.delivery._validate_status(status, expected)
                 if started_run_id is not None and status.run_id != started_run_id:
@@ -1237,6 +1286,7 @@ async def assemble(
     control.failures = {}
     control.finished_runs = {}
     control.cancel_requested = set()
+    control._retrying = set()
     control.facade_transport = facade_transport
     control.facade_clients = []
     control._prepared, control._started_run, control._stopping = {}, {}, False

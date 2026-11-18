@@ -2712,3 +2712,152 @@ def test_a_new_session_closes_the_longest_idle_one_when_the_workspace_is_full(ti
         await lifecycle.close()
         await control.mini_client.aclose()
     asyncio.run(scenario())
+
+
+def test_expired_workspace_snapshot_starts_the_workspace_fresh() -> None:
+    from types import SimpleNamespace
+    from ach_runtime.storage.api import SnapshotExpired
+
+    async def scenario():
+        control = _Control()
+        control.config.workspace.persistence.type = "s3"
+        writers = []
+
+        async def restore(_ref, *, retention_days=0):
+            raise SnapshotExpired("snapshot 'snap-1' expired at 2026-01-01T00:00:00Z")
+
+        async def acquire_writer(_ref, instance_id):
+            writers.append(instance_id)
+            return SimpleNamespace(base_etag="expired-etag")
+
+        control.storage = SimpleNamespace(restore=restore, acquire_writer=acquire_writer)
+        lifecycle = Lifecycle(control)
+        endpoint = _ws_endpoint(control)
+        await lifecycle.restore_workspace(endpoint)
+        assert writers == ["pod"]
+        # The next close replaces the expired entry: its base is the registry as it stands.
+        assert lifecycle._bases[("a" * 64, None)] == "expired-etag"
+        assert control.workspace_hooks == [("start", False)]
+        await lifecycle.close()
+    asyncio.run(scenario())
+
+
+def test_expired_session_snapshot_starts_the_session_fresh() -> None:
+    import httpx
+    from types import SimpleNamespace
+    from ach_runtime.storage.api import SnapshotExpired
+
+    async def scenario():
+        control = _Control()
+        control.config.workspace.persistence.type = "s3"
+        requests = []
+
+        async def restore(_ref, *, retention_days=0):
+            raise SnapshotExpired("snapshot 'snap-1' expired at 2026-01-01T00:00:00Z")
+
+        control.storage = SimpleNamespace(restore=restore)
+
+        async def mini(request):
+            requests.append((request.method, request.url.path))
+            if request.url.path == "/sessions":
+                return httpx.Response(200, headers={"X-ACH-Instance-Id": "pod"}, json=[])
+            return httpx.Response(404, headers={"X-ACH-Instance-Id": "pod"}, json={"detail": "unknown session_ref"})
+
+        control.mini_client = httpx.AsyncClient(transport=httpx.MockTransport(mini))
+        control._headers = lambda endpoint: {"X-ACH-Instance-Id": endpoint.instance_id}
+        control._mini_json = _mini_json(control)
+        lifecycle = Lifecycle(control)
+        ticket = SimpleNamespace(session_ref="b" * 64, workspace_ref="a" * 64)
+        await lifecycle.restore_session(ticket, _ws_endpoint(control))
+        assert not any(method == "PUT" for method, _ in requests)
+        await control.mini_client.aclose()
+        await lifecycle.close()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("rejection", ["unit", "storage"])
+def test_workspace_archive_rejection_is_a_rejected_snapshot(rejection) -> None:
+    """The unit refuses to pack the tree (422), or Storage refuses its size: either way the
+    same files fail again, nothing was committed and the unit is intact."""
+    import httpx
+    from ach_runtime.storage.api import SnapshotRejected, WriterLease
+    from ach_runtime.storage.archive import ArchiveTooLarge
+
+    async def scenario():
+        control = _Control()
+        control.config.workspace.persistence.type = "s3"
+        control.config.workspace.persistence.retention_days = 30
+
+        class Storage:
+            async def acquire_writer(self, ref, pod):
+                return WriterLease(ref, pod, 2)
+
+            async def persist(self, ref, snapshot_id, stream, lease, base, *, retention_days=0):
+                raise ArchiveTooLarge("stream exceeds 536870912 bytes")
+
+        control.storage = Storage()
+
+        async def mini(request):
+            pod = {"X-ACH-Instance-Id": "pod"}
+            if rejection == "unit":
+                return httpx.Response(422, headers=pod, json={
+                    "type": "ArchiveRejected", "message": "archive has more than 10000 members"})
+            return httpx.Response(200, headers=pod, content=b"archive")
+
+        control.mini_client = httpx.AsyncClient(transport=httpx.MockTransport(mini))
+        control._headers = lambda observed: {"X-ACH-Instance-Id": observed.instance_id}
+        reports = []
+        lifecycle = Lifecycle(control, alarm=reports.append)
+        expected = "10000 members" if rejection == "unit" else "536870912 bytes"
+        with pytest.raises(SnapshotRejected, match=expected) as raised:
+            await lifecycle.commit_workspace(_ws_endpoint(control))
+        assert reports == ["Harness Workspace persistence failed"]
+        assert getattr(raised.value, "_ach_anomaly_reported", False)
+        await control.mini_client.aclose()
+        await lifecycle.close()
+    asyncio.run(scenario())
+
+
+def test_rejected_workspace_close_is_retried_after_the_cooldown(monkeypatch) -> None:
+    """A Workspace whose save was rejected keeps serving, so its tick must go on: sessions
+    still idle out, and the close is tried again once the files may have changed."""
+    import ach_runtime.harness.lifecycle as lifecycle_module
+    from ach_runtime.storage.api import SnapshotRejected
+
+    async def scenario():
+        control = _Control()
+        control.config.workspace.idle_timeout_seconds = 0
+        endpoint = _ws_endpoint(control)
+        key = endpoint.ref.workspace_ref
+        control.manager._active = {key: endpoint}
+        control.delivery = _Delivery()
+        attempts = []
+
+        async def close(ref):
+            attempts.append(ref)
+            raise SnapshotRejected("refusing absolute link target: '/usr/bin/python3'")
+
+        control.manager.close = close
+
+        async def mini_json(observed, method, path, payload=None):
+            if path == "/healthz":
+                return 200, {"status": "ok"}
+            if path == "/sessions":
+                return 200, []
+            raise AssertionError(path)
+
+        control._mini_json = mini_json
+        now = [100.0]
+        monkeypatch.setattr(lifecycle_module.time, "monotonic", lambda: now[0])
+        lifecycle = Lifecycle(control, alarm=lambda _reason: None)
+        start = datetime(2026, 10, 2, tzinfo=UTC)
+        await lifecycle.tick(start)
+        assert len(attempts) == 1
+        now[0] = 129.0
+        await lifecycle.tick(start)
+        assert len(attempts) == 1
+        now[0] = 130.0
+        await lifecycle.tick(start)
+        assert len(attempts) == 2
+        await lifecycle.close()
+    asyncio.run(scenario())

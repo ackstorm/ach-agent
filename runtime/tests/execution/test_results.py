@@ -162,3 +162,4 @@ async def test_failed_run_carries_the_engine_error(tmp_path, public_config_fixtu
     status = await service.status(request.invocation_id)
     assert status.state == "failed"
     assert status.error == "Budget has been exceeded!"
+    assert status.engine_failed is True

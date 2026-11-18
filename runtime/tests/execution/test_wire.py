@@ -186,3 +186,4 @@ def test_run_status_without_recovery_fields_still_parses() -> None:
         "runId": None, "configVersion": "0" * 64, "deadlineAt": "2026-11-18T00:00:00+00:00", "state": "failed",
     })
     assert (status.workspace_key, status.session_key, status.recovery_of, status.observed) == (None, None, None, False)
+    assert status.engine_failed is False

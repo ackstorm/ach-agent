@@ -581,7 +581,7 @@ class Control:
     def _resumable(self, status: RunStatus) -> bool:
         channel = next((c for c in self.config.channels if c.name == status.channel), None)
         return (
-            status.state == "failed" and status.error is None and status.recovery_of is None
+            status.state == "failed" and status.engine_failed and status.recovery_of is None
             and bool(status.workspace_key) and bool(status.session_key)
             and channel is not None and channel.retries_lost_runs
         )

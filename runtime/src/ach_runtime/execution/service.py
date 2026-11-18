@@ -151,6 +151,7 @@ class _Invocation:
     # confirm halt via `engine.cancel()` rather than assume nothing was accepted.
     possible_send: bool = False
     observed: bool = False
+    engine_failed: bool = False
     # The single retained cleanup's shared clock record (review focus 5) — created once, by
     # whichever trigger claims cleanup first (`_ensure_cleanup`).
     cleanup_budget: _HaltBudget | None = None
@@ -805,6 +806,7 @@ class ExecutionService:
             # late settlement must not race it (review focus 1).
             return
         inv.state = outcome
+        inv.engine_failed = outcome == "failed"
         if outcome == "completed":
             result_getter = getattr(self._engine, "result", None)
             if callable(result_getter):
@@ -928,6 +930,7 @@ class ExecutionService:
             sessionKey=inv.request.session_key,
             recoveryOf=inv.request.recovery_of,
             observed=inv.observed,
+            engineFailed=inv.engine_failed,
         )
         if observe and inv.state in {"completed", "failed", "cancelled", "skipped"}:
             inv.observed = True

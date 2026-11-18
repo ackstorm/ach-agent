@@ -494,6 +494,7 @@ async def test_deadline_after_started_maps_to_failed_and_triggers_engine_cancel(
     status = await service.status(request.invocation_id)
     assert status.state == "failed"
     assert status.error == "deadline expired"
+    assert status.engine_failed is False
     assert engine.cancel_calls == [(request.invocation_id, "deadline expired")]
 
 

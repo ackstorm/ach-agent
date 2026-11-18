@@ -562,7 +562,8 @@ itself and the run completes. The control sends a resume only when the run ends 
 restart: one message into the same session, with its own deadline, and its result goes out under
 the original invocation id. The resume also follows an engine failure in that window that the
 restart did not cause, for example a pi step-limit abort, which then gets a fresh step budget. A
-deadline, a stall, a cancellation or a failure the agent reports is not recovered. The first attempt
+deadline, a stall, a cancellation or a failure the agent reports is not recovered. Neither is a run whose engine process dies
+mid-turn: it ends `failed` with "settlement lost", not settled by the engine. The first attempt
 may already have caused side effects, so they can repeat once. `retryLostRuns: false` on a channel
 turns recovery off. It does not stop the engine's own re-issue of an interrupted call.
 

@@ -128,6 +128,8 @@ class RunStatus(_WireModel):
     recovery_of: str | None = Field(default=None, alias="recoveryOf")
     # A control read this terminal outcome while able to act on it; a restart recovers only unread ones.
     observed: bool = Field(default=False)
+    # The engine itself ended this run as failed; a deadline, stall, cancel or hook failure leaves it false.
+    engine_failed: bool = Field(default=False, alias="engineFailed")
 
     _deadline_parse = field_validator("deadline_at", mode="before")(_parse_iso_datetime)
     _deadline_aware = field_validator("deadline_at")(_tz_aware_utc)

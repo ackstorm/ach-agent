@@ -3524,13 +3524,15 @@ async def test_a_stopping_control_does_not_observe_or_deliver(monkeypatch) -> No
         await control.close()
 
 
-def _adopted(control, *, state="failed", error=None, recovery_of=None, observed=False, invocation_id="adopted"):
+def _adopted(control, *, state="failed", error=None, recovery_of=None, observed=False, invocation_id="adopted",
+             engine_failed=True):
     return RunStatus(
         invocationId=invocation_id, channel="gitlab-mr-review",
         workspaceRef="a" * 64, sessionRef="b" * 64, runId="run-1",
         configVersion=control.public.config_version,
         deadlineAt=datetime.now(timezone.utc) + timedelta(minutes=1), state=state, error=error,
         workspaceKey="w", sessionKey="s", recoveryOf=recovery_of, observed=observed,
+        engineFailed=engine_failed and state == "failed",
     )
 
 
@@ -3581,9 +3583,21 @@ async def test_an_engine_failure_is_resumed_once_on_a_webhook_channel(monkeypatc
         await control.close()
 
 
+async def test_an_engine_failure_carrying_its_error_is_resumed(monkeypatch) -> None:
+    control = await _control(_config())
+    resumed = _adopted(control, state="completed", invocation_id="resume-run")
+    calls = _resume_admit(control, monkeypatch, resumed)
+    control.result_delivery = _RecordingDelivery()
+    try:
+        assert await control._settle(_adopted(control, error="Budget has been exceeded!")) is resumed
+        assert len(calls) == 1
+    finally:
+        await control.close()
+
+
 @pytest.mark.parametrize("change", [
-    {"error": "deadline expired"},
-    {"error": "stalled: no engine progress for 300s"},
+    {"error": "deadline expired", "engine_failed": False},
+    {"error": "stalled: no engine progress for 300s", "engine_failed": False},
     {"recovery_of": "inv-0"},
     {"state": "completed"},
     {"state": "cancelled"},
@@ -3791,7 +3805,7 @@ async def test_reconnect_settles_a_running_record_once_observed() -> None:
 
 
 async def test_reconnect_treats_a_record_without_a_read_mark_as_delivered() -> None:
-    record = _adopted(_EARLIER, error="boom", invocation_id="run-old")
+    record = _adopted(_EARLIER, error="boom", engine_failed=False, invocation_id="run-old")
     control, reads = await _reconnect_records(
         record, drop=("observed", "workspaceKey", "sessionKey", "recoveryOf"))
     try:
@@ -3803,7 +3817,7 @@ async def test_reconnect_treats_a_record_without_a_read_mark_as_delivered() -> N
 
 @pytest.mark.parametrize("case", ["unobserved", "observed", "unreadable"])
 async def test_reconnect_settles_a_terminal_record_only_when_unobserved(case) -> None:
-    record = _adopted(_EARLIER, error="boom", observed=case == "observed", invocation_id="run-t")
+    record = _adopted(_EARLIER, error="boom", engine_failed=False, observed=case == "observed", invocation_id="run-t")
     control, reads = await _reconnect_records(record, status_code=503 if case == "unreadable" else 200)
     try:
         assert control.finished_runs["run-t"] == record

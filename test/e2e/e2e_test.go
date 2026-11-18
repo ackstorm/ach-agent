@@ -370,11 +370,11 @@ func TestE2E(t *testing.T) {
 	})
 
 	// Each lost-run subtest runs two Agents side by side, retryLostRuns unset (on) and false (off),
-	// and returns once both are streaming their first model call.
-	startLostRuns := func(t *testing.T, on, off string) {
+	// and returns once both are streaming their first model call. fail is an extra model header line.
+	startLostRuns := func(t *testing.T, on, off, fail string) {
 		clearStub(t)
-		apply(t, "fixtures/lost-run-agent.yaml", map[string]string{"NAME": on})
-		apply(t, "fixtures/lost-run-agent.yaml", map[string]string{"NAME": off, "RETRY": "retryLostRuns: false"})
+		apply(t, "fixtures/lost-run-agent.yaml", map[string]string{"NAME": on, "FAIL": fail})
+		apply(t, "fixtures/lost-run-agent.yaml", map[string]string{"NAME": off, "FAIL": fail, "RETRY": "retryLostRuns: false"})
 		for _, name := range []string{on, off} {
 			t.Cleanup(func() { kubectl("", "-n", agentNS, "delete", "agent", name, "--wait=false") })
 		}
@@ -392,7 +392,7 @@ func TestE2E(t *testing.T) {
 	t.Run("lost-run-retry", func(t *testing.T) {
 		const on, off = "retry-on", "retry-off"
 		const notice = "before repeating one with side effects"
-		startLostRuns(t, on, off)
+		startLostRuns(t, on, off, "")
 		// OpenShell drops its sandboxes on a gateway restart: both runs are lost mid-stream.
 		restartGateway(t)
 		waitCond(t, on, "GatewayAvailable", "True", 3*time.Minute)
@@ -414,7 +414,9 @@ func TestE2E(t *testing.T) {
 	t.Run("lost-run-resume", func(t *testing.T) {
 		const on, off = "resume-on", "resume-off"
 		const resume = "The ACH control restarted while you were working"
-		startLostRuns(t, on, off)
+		// The engine re-issues the call the restart interrupted; the stub fails that second call,
+		// so the run ends failed and only the control's resume can finish it.
+		startLostRuns(t, on, off, `x-e2e-fail-chat: {value: "2"}`)
 		olds := map[string]string{}
 		for _, name := range []string{on, off} {
 			olds[name] = jsonpath(t, "-n", agentNS, "get", "pod", "agent-"+name+"-0", "-o", "jsonpath={.metadata.uid}")
@@ -431,9 +433,18 @@ func TestE2E(t *testing.T) {
 		until(t, 5*time.Minute, on+" never resumed its run", agentYAML(on), func() bool {
 			return len(lostRunChats(t, on, resume)) >= 1
 		})
+		until(t, 2*time.Minute, off+" never re-issued its interrupted model call", agentYAML(off), func() bool {
+			return len(lostRunChats(t, off, "")) >= 2
+		})
 		time.Sleep(60 * time.Second)
+		if n := len(lostRunChats(t, on, "")); n != 3 {
+			t.Errorf("%s made %d streamed model calls, want 3 (the run, its failed continuation, the resume)", on, n)
+		}
 		if n := len(lostRunChats(t, on, resume)); n != 1 {
 			t.Errorf("%s resumed its run %d times, want 1", on, n)
+		}
+		if n := len(lostRunChats(t, off, "")); n != 2 {
+			t.Errorf("%s (retryLostRuns: false) made %d streamed model calls, want 2 (the run and its failed continuation)", off, n)
 		}
 		if n := len(lostRunChats(t, off, resume)); n != 0 {
 			t.Errorf("%s (retryLostRuns: false) resumed its run %d times, want 0", off, n)

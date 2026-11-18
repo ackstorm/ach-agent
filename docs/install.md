@@ -557,10 +557,14 @@ the sandbox right after a tick, and a minute after the last chat message.
 A run can be lost with its sandbox, or broken by a control restart or upgrade. ACH recovers it once
 on every channel that runs an agent. A lost sandbox gets a retry: the same invocation starts again on
 the replacement sandbox, within its original deadline, with a notice that the first attempt may have
-acted. A control restart or upgrade gets a resume: one message into the same session, with its own
-deadline, and its result goes out under the original invocation id. A deadline, a stall, a
-cancellation or a failure the agent reports is not recovered. The first attempt may already have
-caused side effects, so they can repeat once. `retryLostRuns: false` on a channel turns recovery off.
+acted. Across a control restart or upgrade, the engine usually re-issues the interrupted model call
+itself and the run completes. The control sends a resume only when the run ends failed across the
+restart: one message into the same session, with its own deadline, and its result goes out under
+the original invocation id. The resume also follows an engine failure in that window that the
+restart did not cause, for example a pi step-limit abort, which then gets a fresh step budget. A
+deadline, a stall, a cancellation or a failure the agent reports is not recovered. The first attempt
+may already have caused side effects, so they can repeat once. `retryLostRuns: false` on a channel
+turns recovery off. It does not stop the engine's own re-issue of an interrupted call.
 
 ```yaml
     - name: tick

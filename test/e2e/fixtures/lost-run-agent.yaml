@@ -14,6 +14,7 @@ spec:
         x-e2e-agent: {value: "${NAME}"}
         # The stub streams the reply over this many seconds: the run is still going when its sandbox or control goes.
         x-e2e-stream-seconds: {value: "90"}
+        ${FAIL}
   channels:
     - name: hook
       type: webhook

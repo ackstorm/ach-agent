@@ -576,15 +576,16 @@ turns recovery off. It does not stop the engine's own re-issue of an interrupted
 
 Recovery has limits:
 
-- A run that was already recovered once after a control restart and then loses its sandbox gets nothing more.
+- A run adopted after a control restart, resumed or not, gets no retry and no `delivery` if its sandbox is then lost.
 - If the sandbox and the control are lost together, nothing is recovered. Only a queue source redelivers.
-- With `openai`, the caller has gone after a control restart, so a resume's answer reaches only `delivery`.
+- With `openai`, the caller has gone after a control restart, so a resume's answer reaches no caller; the session keeps it.
 - With A2A on `persistence: none` or `volume`, `tasks/get` cannot return a resume's result after a restart.
 - A resume gets its own `maxInvocationSeconds`, so one event can run for up to twice that.
 - A resume queues behind events admitted after the restart.
-- Runs on a unit started by a release without lost-run recovery are not resumed: it does not report the routing keys.
+- Runs on a unit started by a release without lost-run recovery are not resumed: the unit does not report the routing keys.
 - A custom execution image of an earlier release rejects a retry or resume start. That recovery fails: for a resume the original outcome stands, for a retry the run ends failed.
 - The runs a unit of an earlier release finished before the upgrade count as delivered. They are not delivered again or resumed.
+- A unit of an earlier release keeps its Workspace's new events until it is idle, then it is retired. A Workspace with steady traffic keeps its old-release unit until it goes idle.
 - If the control stops after admitting a resume but before it reaches the sandbox, the event is not recovered. Recovery is at most once.
 
 `routing.workspaceKey` decides how often a message lands on a new sandbox. `session` gives every

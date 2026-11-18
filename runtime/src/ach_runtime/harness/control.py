@@ -243,6 +243,8 @@ class Control:
     _prepared: dict[str, tuple[WorkspaceEndpoint, Any]] = field(default_factory=dict)
     _started_run: dict[str, str] = field(default_factory=dict)
     _stopping: bool = False
+    # A hosted run lives in its own sandbox, which a stopping control leaves to the next one.
+    runs_outlive_control: bool = False
     lifecycle: Lifecycle | None = None
     result_delivery: ResultDelivery | None = None
     _private_env: dict[str, str] = field(default_factory=dict, repr=False)
@@ -557,7 +559,7 @@ class Control:
                 except Exception:  # noqa: BLE001 - unproven: recover nothing rather than twice
                     continue
                 if not read.observed:
-                    self._track(record.invocation_id, self._settle(read))
+                    self._track(record.invocation_id, self._settle(self._own_mark(read)))
                 continue
             try:
                 recovered = self.admission.recover(
@@ -586,10 +588,19 @@ class Control:
             and channel is not None and channel.retries_lost_runs
         )
 
+    def _delivers(self, status: RunStatus) -> bool:
+        """A stopping control whose runs outlive it leaves an unobserved outcome to the next control."""
+        return not (self._stopping and self.runs_outlive_control) or status.observed
+
+    def _own_mark(self, status: RunStatus) -> RunStatus:
+        """`status` as read by this control's observing read: that read set the read mark, so no
+        later control delivers the outcome and this one does, even if it began stopping meanwhile."""
+        return status if self._delivers(status) else status.model_copy(update={"observed": True})
+
     async def _settle(self, status: RunStatus) -> RunStatus:
         """A recovered run's final outcome, its own or that of its one resume, delivered once."""
         final = status
-        # A stopping control leaves the run unobserved: the next control resumes it.
+        # A stopping control does not resume: the next control resumes what it left unobserved.
         if self._resumable(status) and not self._stopping:
             event = Event(
                 event_id=f"resume:{status.invocation_id}", channel=status.channel,
@@ -605,7 +616,7 @@ class Control:
                     final = resumed
             except Exception as exc:  # noqa: BLE001 - the original outcome stays the answer
                 log.warning("resume of invocation %s did not run: %s", status.invocation_id, exc)
-        if self.result_delivery is not None and not self._stopping:
+        if self.result_delivery is not None and self._delivers(status):
             # A resume settled by a later control answers the event its caller sent.
             self.result_delivery.send(status.channel, status.recovery_of or status.invocation_id, final, None)
         return final
@@ -624,7 +635,12 @@ class Control:
             work.close()
             return
         task = asyncio.ensure_future(work)
-        task.add_done_callback(lambda done: done.cancelled() or done.exception())
+
+        def log_failure(done: asyncio.Future[Any]) -> None:
+            if not done.cancelled() and done.exception() is not None:
+                log.warning("recovery of invocation %s failed: %r", invocation_id, done.exception())
+
+        task.add_done_callback(log_failure)
         self._recovery_outcomes[invocation_id] = task
 
     async def recovered_outcome(self, invocation_id: str, channel: str) -> RunStatus | None:
@@ -829,17 +845,18 @@ class Control:
         ticket: AdmissionTicket | ScriptAdmissionTicket,
     ) -> RunStatus | None:
         """`run`, then POST its outcome to the channel's delivery target, if it has one.
-        A stopping control delivers nothing: the next control settles the unobserved outcome.
-        A resume delivers nothing either: `_settle` posts it under the original invocation."""
+        A stopping control whose runs outlive it leaves an unobserved outcome to the next control.
+        A failure leaves no record on any unit, so it is always delivered.
+        A resume delivers nothing: `_settle` posts it under the original invocation."""
         assert self.result_delivery is not None
         resume = isinstance(event, RoutedEvent) and event.event.type == RESUME_EVENT_TYPE
         try:
             status = await self.run(event, ticket)
         except Exception as exc:
-            if isinstance(event, RoutedEvent) and not self._stopping and not resume:
+            if isinstance(event, RoutedEvent) and not resume:
                 self.result_delivery.send(event.event.channel, ticket.invocation_id, None, _failure_reason(exc))
             raise
-        if status is not None and not self._stopping and not resume:
+        if status is not None and not resume and self._delivers(status):
             self.result_delivery.send(status.channel, ticket.invocation_id, status, None)
         return status
 
@@ -1002,8 +1019,9 @@ class Control:
                 await asyncio.sleep(0.25)
                 continue
             try:
+                observe = not (self._stopping and self.runs_outlive_control)
                 status = await asyncio.wait_for(
-                    self.delivery.status(endpoint, expected.invocation_id, observe=not self._stopping), timeout=5
+                    self.delivery.status(endpoint, expected.invocation_id, observe=observe), timeout=5
                 )
                 self.delivery._validate_status(status, expected)
                 if started_run_id is not None and status.run_id != started_run_id:
@@ -1019,7 +1037,7 @@ class Control:
                     self._started_run.pop(expected.invocation_id, None)
                     self.cancel_requested.discard(expected.invocation_id)
                     self._record_run(expected, status, started_run_id, event)
-                    return status
+                    return self._own_mark(status) if observe else status
                 if not check_published_owner():
                     await asyncio.sleep(0.25)
                     continue
@@ -1384,6 +1402,7 @@ async def assemble(
     control.facade_transport = facade_transport
     control.facade_clients = []
     control._prepared, control._started_run, control._stopping = {}, {}, False
+    control.runs_outlive_control = False
     control._hook_endpoints = {}
     control.lifecycle = None
     manager.bind_callbacks(reconnect=control.reconnect_workspace, wait_mini_health=control.wait_mini_health)

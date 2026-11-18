@@ -622,9 +622,12 @@ class WorkspaceManager:
         await asyncio.wait({self._adoption}, timeout=timeout)
 
     async def wait_deferred_adoptions(self, timeout: float) -> None:
-        """Wait for adoptions deferred while the gateway was down; returns after `timeout` at most."""
-        if self._deferred_adoptions:
-            await asyncio.wait(set(self._deferred_adoptions), timeout=timeout)
+        """Wait for adoptions deferred while the gateway or the storage was unavailable, including
+        the deferral that replaces one on each storage retry; returns after `timeout` at most."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while self._deferred_adoptions and (remaining := deadline - loop.time()) > 0:
+            await asyncio.wait(set(self._deferred_adoptions), timeout=remaining)
 
     def cancel_adoption(self) -> None:
         """Shutdown: an adoption still waiting for the host's inventory is cancelled."""

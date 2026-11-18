@@ -140,6 +140,7 @@ def _script_app(script: str, *, output: Path, auth: str = "none", bot: str | Non
     control._stopping = False
     control._retrying = set()
     control._recovery_outcomes = {}
+    control.runs_outlive_control = False
     control.admission = Admission(
         namespace="ns", agent_uid="3fa0b3b2-9c7a-4e1d-8a2f-6d1c0e9b4a77",
         max_concurrent_invocations=1, max_concurrent_scripts=1, max_queued_total=1,

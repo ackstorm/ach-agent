@@ -77,6 +77,7 @@ def _control() -> Control:
     control._hook_endpoints = {}
     control._retrying = set()
     control._recovery_outcomes = {}
+    control.runs_outlive_control = False
     async def runner(_event, _ticket):
         return None
 

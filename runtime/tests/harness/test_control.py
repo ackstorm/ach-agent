@@ -124,6 +124,7 @@ def test_harness_completion_record_keeps_the_engine_usage_source(monkeypatch, so
     control = Control.__new__(Control)
     control._retrying = set()
     control._recovery_outcomes = {}
+    control.runs_outlive_control = False
     control.config = config
     control.public = public_config(config, config.engine.env)
     records = []
@@ -151,6 +152,7 @@ def test_harness_completion_record_carries_normal_and_recovered_correlation(monk
     control = Control.__new__(Control)
     control._retrying = set()
     control._recovery_outcomes = {}
+    control.runs_outlive_control = False
     control.config = config
     control.public = public_config(config, config.engine.env)
     records = []
@@ -1288,6 +1290,7 @@ async def test_start_timeout_is_limit_only_after_original_deadline(expired, monk
     control = Control.__new__(Control)
     control._retrying = set()
     control._recovery_outcomes = {}
+    control.runs_outlive_control = False
     control.delivery = TimedOutDelivery()
     control._prepared = {"inv-timeout": None}
     control.cancel_requested = set()
@@ -1318,6 +1321,7 @@ async def test_gateway_unavailable_start_failure_raises_the_gateway_alarm(monkey
     control = Control.__new__(Control)
     control._retrying = set()
     control._recovery_outcomes = {}
+    control.runs_outlive_control = False
     control.delivery = DownDelivery()
     control._prepared = {"inv-gw": None}
     control.cancel_requested = set()
@@ -2747,6 +2751,7 @@ async def test_start_failure_logs_redacted_reason(monkeypatch, caplog):
     control = Control.__new__(Control)
     control._retrying = set()
     control._recovery_outcomes = {}
+    control.runs_outlive_control = False
     control.delivery = FailingDelivery()
     control._prepared = {"inv-fail": None}
     control.cancel_requested = set()
@@ -2798,6 +2803,7 @@ async def test_start_failure_reason_reaches_real_control_log_output(monkeypatch,
     control = Control.__new__(Control)
     control._retrying = set()
     control._recovery_outcomes = {}
+    control.runs_outlive_control = False
     control.delivery = FailingDelivery()
     control._prepared = {}
     control.cancel_requested = set()
@@ -3222,6 +3228,7 @@ async def test_a_run_cancelled_while_queued_never_reaches_its_workspace():
     control = Control.__new__(Control)
     control._retrying = set()
     control._recovery_outcomes = {}
+    control.runs_outlive_control = False
     control.delivery = NoDelivery()
     control.cancel_requested = {"inv-queued"}
     ticket = SimpleNamespace(invocation_id="inv-queued", deadline_at=datetime(2030, 1, 1, tzinfo=timezone.utc))
@@ -3252,6 +3259,7 @@ async def test_run_delivers_the_result_of_a_channel_with_delivery(raises, monkey
     control = Control.__new__(Control)
     control._retrying = set()
     control._recovery_outcomes = {}
+    control.runs_outlive_control = False
     control._stopping = False
     monkeypatch.setattr(Control, "run", fake_run)
     control.result_delivery = ResultDelivery(
@@ -3482,8 +3490,8 @@ async def test_a_completed_run_after_an_ambiguous_start_marks_the_ticket_started
         await control.close()
 
 
-async def test_a_stopping_control_does_not_observe_or_deliver(monkeypatch) -> None:
-    control = await _control(_config())
+def _stopping_harness(control, monkeypatch, *, stop_during_read: bool = False):
+    """`run` observes a completed run (or raises for `inv-raises`); returns the reads and the sends."""
     endpoint = _memory_endpoint(control.config)
     _publish(control, endpoint)
     terminal = _observed_run(control, state="completed")
@@ -3491,35 +3499,69 @@ async def test_a_stopping_control_does_not_observe_or_deliver(monkeypatch) -> No
 
     async def status(_endpoint, _invocation_id, **kwargs):
         observes.append(kwargs)
+        if stop_during_read:
+            control._stopping = True
         return terminal
-
-    sends: list[tuple] = []
-
-    class RecordingDelivery:
-        def send(self, *args):
-            sends.append(args)
-
-        async def close(self):
-            return None
 
     async def fake_run(self, event, ticket):
         if ticket.invocation_id == "inv-raises":
             raise RuntimeError("lost")
-        return terminal
+        return await self._observe_run(endpoint, terminal)
 
     monkeypatch.setattr(control.delivery, "status", status)
     monkeypatch.setattr(Control, "run", fake_run)
-    control.result_delivery = RecordingDelivery()
+    control.result_delivery = _RecordingDelivery()
+    return observes, control.result_delivery.sends
+
+
+@pytest.mark.parametrize("outlive", [True, False])
+async def test_a_stopping_control_delivers_what_no_later_control_will(outlive, monkeypatch) -> None:
+    control = await _control(_config())
+    observes, sends = _stopping_harness(control, monkeypatch)
+    control.runs_outlive_control = outlive
     control._stopping = True
     try:
-        assert await control._observe_run(endpoint, terminal) is terminal
-        assert observes == [{"observe": False}]
         ticket = _memory_ticket(control.config, "inv-stopping")
-        assert await control.run_and_deliver(ticket.routed_event, ticket) is terminal
+        assert (await control.run_and_deliver(ticket.routed_event, ticket)).state == "completed"
         raising = _memory_ticket(control.config, "inv-raises")
         with pytest.raises(RuntimeError):
             await control.run_and_deliver(raising.routed_event, raising)
-        assert sends == []
+        assert observes == [{"observe": not outlive}]
+        # A failure leaves no record on any unit: it is delivered either way.
+        assert [send[1] for send in sends] == (["inv-raises"] if outlive else ["inv-stopping", "inv-raises"])
+    finally:
+        await control.close()
+
+
+async def test_a_stop_during_an_observing_read_still_delivers(monkeypatch) -> None:
+    control = await _control(_config())
+    observes, sends = _stopping_harness(control, monkeypatch, stop_during_read=True)
+    control.runs_outlive_control = True
+    try:
+        ticket = _memory_ticket(control.config, "inv-race")
+        assert (await control.run_and_deliver(ticket.routed_event, ticket)).observed
+        assert observes == [{"observe": True}]
+        assert [send[1] for send in sends] == ["inv-race"]
+    finally:
+        await control.close()
+
+
+async def test_a_recovery_that_raises_is_logged(caplog) -> None:
+    import logging
+
+    import ach_runtime.harness.control as control_module
+
+    control = await _control(_config())
+
+    async def broken():
+        raise RuntimeError("settle broke")
+
+    try:
+        with caplog.at_level(logging.WARNING, logger=control_module.__name__):
+            control._track("inv-broken", broken())
+            await asyncio.gather(control._recovery_outcomes["inv-broken"], return_exceptions=True)
+            await asyncio.sleep(0)
+        assert "inv-broken" in caplog.text and "settle broke" in caplog.text
     finally:
         await control.close()
 
@@ -3631,12 +3673,28 @@ async def test_a_stopping_control_neither_resumes_nor_delivers(monkeypatch) -> N
     control = await _control(_config())
     calls = _resume_admit(control, monkeypatch, _adopted(control, state="completed"))
     control.result_delivery = _RecordingDelivery()
+    control.runs_outlive_control = True
     control._stopping = True
     status = _adopted(control)
     try:
         assert await control._settle(status) is status
         assert calls == []
         assert control.result_delivery.sends == []
+    finally:
+        await control.close()
+
+
+async def test_a_stopping_control_delivers_an_outcome_its_own_read_marked(monkeypatch) -> None:
+    control = await _control(_config())
+    calls = _resume_admit(control, monkeypatch, _adopted(control, state="completed"))
+    control.result_delivery = _RecordingDelivery()
+    control.runs_outlive_control = True
+    control._stopping = True
+    status = _adopted(control, observed=True)
+    try:
+        assert await control._settle(status) is status
+        assert calls == []
+        assert control.result_delivery.sends == [("gitlab-mr-review", "adopted", status, None)]
     finally:
         await control.close()
 
@@ -3757,9 +3815,11 @@ async def test_recovered_outcome_follows_a_resume_started_by_the_previous_contro
 
 
 async def _reconnect_records(record: RunStatus, *, status_code: int = 200, status: RunStatus | None = None,
-                             drop: tuple[str, ...] = ()):
-    """Reconnect pod `pod-1` whose `/runs` lists `record`; the control and the `/status` paths read."""
+                             drop: tuple[str, ...] = (), stop_during_read: bool = False):
+    """Reconnect pod `pod-1` whose `/runs` lists `record`; the control and the `/status` paths read.
+    `stop_during_read`: a control whose runs outlive it begins stopping during each `/status` read."""
     reads: list[str] = []
+    stopping: list[Control] = []
 
     async def mini(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/sessions":
@@ -3773,6 +3833,8 @@ async def _reconnect_records(record: RunStatus, *, status_code: int = 200, statu
             return httpx.Response(200, headers=headers, json=[wire])
         if request.url.path.startswith("/status/"):
             reads.append(request.url.raw_path.decode())
+            for control in stopping:
+                control._stopping = True
             return httpx.Response(status_code, headers=headers,
                                   json=(status or record).model_dump(by_alias=True, mode="json"))
         return httpx.Response(200, headers=headers, json={})
@@ -3782,6 +3844,9 @@ async def _reconnect_records(record: RunStatus, *, status_code: int = 200, statu
         config, environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},
         ach_transport=httpx.MockTransport(_catalog_handler), mini_transport=httpx.MockTransport(mini),
     )
+    if stop_during_read:
+        control.runs_outlive_control = True
+        stopping.append(control)
     endpoint = _memory_endpoint(config)
     _publish(control, endpoint)
     await control.reconnect_workspace(endpoint)
@@ -3828,5 +3893,15 @@ async def test_reconnect_settles_a_terminal_record_only_when_unobserved(case) ->
         else:
             assert reads == ["/status/run-t?observe=true"]
             assert await asyncio.wait_for(control._recovery_outcomes["run-t"], 5) == record
+    finally:
+        await control.close()
+
+
+async def test_reconnect_read_that_races_the_stop_settles_the_outcome_as_marked() -> None:
+    record = _adopted(_EARLIER, error="boom", engine_failed=False, invocation_id="run-race")
+    control, reads = await _reconnect_records(record, stop_during_read=True)
+    try:
+        assert reads == ["/status/run-race?observe=true"]
+        assert (await asyncio.wait_for(control._recovery_outcomes["run-race"], 5)).observed
     finally:
         await control.close()

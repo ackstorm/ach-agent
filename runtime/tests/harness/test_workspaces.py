@@ -525,6 +525,24 @@ async def test_wait_deferred_adoptions_returns_when_they_finish_or_after_the_tim
     await h.manager.wait_deferred_adoptions(timeout=30)  # none left: returns at once
 
 
+async def test_wait_deferred_adoptions_awaits_the_deferral_that_replaces_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ws, "_STORAGE_RETRY_SECONDS", 0.02)
+    h = _Harness(_config(capacity=2))
+    ref = _ref(h.config, "fa-redefer")
+    h.adopt_unit(ref)
+    h.reconnect_error = SnapshotTransientFailure("transient S3 registry read failure")
+    await h.manager.adopt()
+
+    waiting = asyncio.ensure_future(h.manager.wait_deferred_adoptions(timeout=30))
+    await asyncio.sleep(0.2)
+    assert h.source.events.count("reconnect") > 2
+    assert not waiting.done()
+
+    h.reconnect_error = None
+    await asyncio.wait_for(waiting, 5)
+    assert ref.workspace_ref in h.manager.active_endpoints()
+
+
 async def test_close_cancels_a_deferred_adoption() -> None:
     h = _Harness(_config(capacity=2))
     await _deferred_unit(h, "fa-cancel")

@@ -1094,7 +1094,10 @@ class ExecutionService:
                     "workspaceRef": inv.request.workspace_ref,
                     "sessionRef": inv.request.session_ref,
                     "runId": inv.run_id,
-                    "request": inv.request.model_dump(by_alias=True, mode="json"),
+                    # A unit of an earlier release restores this registry and rejects `recoveryOf`.
+                    "request": inv.request.model_dump(
+                        by_alias=True, mode="json",
+                        exclude={"recovery_of"} if inv.request.recovery_of is None else None),
                     "started": self._started_record(inv),
                     "configVersion": inv.request.config_version,
                     "deadlineAt": inv.request.deadline_at.isoformat(),

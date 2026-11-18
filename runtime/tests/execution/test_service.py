@@ -1265,7 +1265,7 @@ async def test_real_snapshot_run_roundtrip(tmp_path, public_config_fixture) -> N
     manifest = await service.snapshot(request.session_ref)
 
     record = manifest.registry["runs"][0]
-    assert record["request"] == request.model_dump(by_alias=True, mode="json")
+    assert record["request"] == request.model_dump(by_alias=True, mode="json", exclude={"recovery_of"})
     assert record["started"] == started.model_dump(by_alias=True, mode="json")
     assert record["runId"] == started.run_id
     assert record["state"] == "completed"
@@ -1277,6 +1277,18 @@ async def test_real_snapshot_run_roundtrip(tmp_path, public_config_fixture) -> N
     ).model_copy(update={"observed": True})
     assert await restored.start(request) == started
     assert restored_engine.start_calls == []
+
+
+@pytest.mark.parametrize("recovery_of", [None, "inv-0"])
+async def test_snapshot_registry_keeps_recovery_of_only_when_set(recovery_of, tmp_path, public_config_fixture) -> None:
+    # A 0.8.2 unit restoring this registry rejects an unknown `recoveryOf` key.
+    service, _ = _service(tmp_path, public_config_fixture)
+    request = _request(public_config_fixture.config_version, recoveryOf=recovery_of)
+    await service.start(request)
+    await asyncio.sleep(0)
+    saved = (await service.snapshot(request.session_ref)).registry["runs"][0]["request"]
+    assert ("recoveryOf" in saved) == (recovery_of is not None)
+    assert saved.get("recoveryOf") == recovery_of
 
 
 async def test_negative_snapshot_run_roundtrip_never_fabricates_started(

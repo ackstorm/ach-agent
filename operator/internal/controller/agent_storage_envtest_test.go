@@ -168,6 +168,28 @@ func TestAgent_GlobalStorageConditional(t *testing.T) {
 		}
 	}
 
+	// No domain requires storage, bucket configured -> control still gets the storage env.
+	a = reconcileOnce(t, configured, ns, "a-none")
+	if c := apimeta.FindStatusCondition(a.Status.Conditions, condWorkloadApplied); c == nil || c.Status != metav1.ConditionTrue {
+		t.Fatalf("a-none with configured bucket: WorkloadApplied = %+v, want True", c)
+	}
+	for _, name := range []string{"ACH_STORAGE_S3_BUCKET", "ACH_STORAGE_S3_REGION", "ACH_STORAGE_S3_ENDPOINT_URL", "ACH_STORAGE_S3_PREFIX"} {
+		found := false
+		for _, e := range getControlStatefulSetIn(t, ns, "a-none").Spec.Template.Spec.Containers[0].Env {
+			found = found || e.Name == name
+		}
+		if !found {
+			t.Errorf("a-none: control env missing %s with a configured bucket", name)
+		}
+	}
+	// ...and none without a bucket.
+	reconcileOnce(t, emptyBucket, ns, "a-none")
+	for _, e := range getControlStatefulSetIn(t, ns, "a-none").Spec.Template.Spec.Containers[0].Env {
+		if strings.HasPrefix(e.Name, "ACH_STORAGE_S3_") {
+			t.Errorf("a-none: control env carries %s without a configured bucket", e.Name)
+		}
+	}
+
 	// Inherited profile true, explicit agent false -> storage no longer required.
 	newAgent("a-ws-override", "p-ws", func(s *achv1alpha1.AgentSpec) {
 		s.Workspace = &achv1alpha1.WorkspaceSpec{Persistence: &achv1alpha1.WorkspacePersistenceSpec{Type: "none"}}

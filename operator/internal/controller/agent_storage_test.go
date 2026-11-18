@@ -155,9 +155,9 @@ func TestRuntimeStorageSecretHashAndEnqueue(t *testing.T) {
 }
 
 // TestAgentsForSecret_GlobalStorageCredential covers the Task2 D1 amendment's agentsForSecret
-// extension: the shared namespace-local credentials Secret only re-enqueues an agent whose
-// resolved Render2 config actually requires storage — a volatile (all-disabled) agent on the
-// same Secret must not become a storage consumer, and an unrelated Secret matches nothing.
+// extension: with a bucket configured the shared namespace-local credentials Secret re-enqueues
+// every agent (each control carries the storage env), with no bucket none, and an unrelated
+// Secret matches nothing.
 func TestAgentsForSecret_GlobalStorageCredential(t *testing.T) {
 	const ns = "ns"
 	volatileProfile := &achv1alpha1.AgentProfile{ObjectMeta: metav1.ObjectMeta{Name: "p-volatile", Namespace: ns}, Spec: minimalProfileSpec(false)}
@@ -198,8 +198,13 @@ func TestAgentsForSecret_GlobalStorageCredential(t *testing.T) {
 		names = append(names, req.Name)
 	}
 	sort.Strings(names)
-	if len(names) != 1 || names[0] != "a-persist" {
-		t.Errorf("agentsForSecret(global cred secret) = %v, want exactly [a-persist] (volatile agent must not become a storage consumer)", names)
+	if len(names) != 2 || names[0] != "a-persist" || names[1] != "a-volatile" {
+		t.Errorf("agentsForSecret(global cred secret) = %v, want [a-persist a-volatile]", names)
+	}
+
+	noBucket := newFakeStorageReconciler(t, render.RuntimeStorageOptions{CredentialsSecretName: "runtime-s3"}, volatileProfile, persistentProfile, volatileAgent, persistentAgent)
+	if reqs := noBucket.agentsForSecret(context.Background(), credSecretMeta); len(reqs) != 0 {
+		t.Errorf("agentsForSecret(global cred secret, no bucket) = %v, want none", reqs)
 	}
 
 	unrelated := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: ns}}

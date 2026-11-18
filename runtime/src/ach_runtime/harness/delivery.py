@@ -26,6 +26,11 @@ from ach_runtime.harness.workspaces import (
 )
 
 MAX_RESPONSE_BYTES = 1024 * 1024
+# `/runs` returns every run the unit retains (up to 1024), each with its result text, so
+# the inventory outgrows the cap of one run's response.
+# ponytail: fixed cap, 64 KiB of answer per retained run on average; past that the unit
+# has to evict finished runs sooner.
+MAX_INVENTORY_BYTES = 64 * 1024 * 1024
 Prepare = Callable[[AdmissionTicket, WorkspaceEndpoint], Awaitable[StartRequest]]
 Clock = Callable[[], datetime]
 Alarm = Callable[[str, AdmissionTicket | RecoveredRun], None]
@@ -109,6 +114,7 @@ class Delivery:
         *,
         payload: dict | None = None,
         deadline_at: datetime | None = None,
+        max_bytes: int = MAX_RESPONSE_BYTES,
     ) -> tuple[int, bytes]:
         if self._closed:
             raise DeliveryError("delivery is closed")
@@ -130,8 +136,8 @@ class Delivery:
                 size = 0
                 async for chunk in response.aiter_bytes():
                     size += len(chunk)
-                    if size > MAX_RESPONSE_BYTES:
-                        raise DeliveryError("Workspace response exceeds 1 MiB")
+                    if size > max_bytes:
+                        raise DeliveryError(f"Workspace response exceeds {max_bytes // 2**20} MiB")
                     chunks.append(chunk)
                 return response.status_code, b"".join(chunks)
         finally:
@@ -275,7 +281,7 @@ class Delivery:
             raise DeliveryError("Workspace returned invalid RunStatus") from exc
 
     async def list_runs(self, endpoint: WorkspaceEndpoint) -> list[RunStatus]:
-        code, raw = await self._request(endpoint, "GET", "/runs")
+        code, raw = await self._request(endpoint, "GET", "/runs", max_bytes=MAX_INVENTORY_BYTES)
         if code != 200:
             raise DeliveryError(f"Workspace runs returned HTTP {code}")
         try:

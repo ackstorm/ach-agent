@@ -1416,6 +1416,56 @@ async def test_recovered_control_invalid_observation_holds_ownership(fault, monk
         await control.close()
 
 
+async def test_run_still_unknown_after_its_deadline_is_released_as_failed():
+    """A unit that cannot say how a run ended keeps answering `unknown`. Once the deadline's
+    cancel is sent nothing will change that answer, so the run ends `failed` and gives its
+    capacity back."""
+    config = _config()
+    inventory = RunStatus(
+        invocationId="unknown-run", channel="gitlab-mr-review", workspaceRef="a" * 64,
+        sessionRef="b" * 64, runId="run-1", configVersion="f" * 64,
+        deadlineAt=datetime.now(timezone.utc) + timedelta(seconds=0.3), state="unknown",
+        error="settlement lost: event stream lost",
+    )
+    cancels: list[dict] = []
+
+    async def mini(request: httpx.Request) -> httpx.Response:
+        headers = {"X-ACH-Instance-Id": "pod-1"}
+        if request.url.path == "/status/unknown-run":
+            return httpx.Response(200, headers=headers, json=inventory.model_dump(by_alias=True, mode="json"))
+        if request.url.path == "/cancel":
+            cancels.append(json.loads(request.content))
+            return httpx.Response(200, headers=headers, json={})
+        return httpx.Response(200, headers=headers, json=[])
+
+    control = await assemble(
+        config, environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},
+        ach_transport=httpx.MockTransport(_catalog_handler), mini_transport=httpx.MockTransport(mini),
+    )
+    endpoint = WorkspaceEndpoint(WorkspaceRef(config.agent.namespace, config.agent.uid, "a" * 64),
+                                 "workspace", "pod-1", "http://mini")
+    try:
+        _publish(control, endpoint)
+        control.admission.recover(
+            invocation_id=inventory.invocation_id, channel=inventory.channel,
+            workspace_ref=inventory.workspace_ref, session_ref=inventory.session_ref,
+            config_version=inventory.config_version, deadline_at=inventory.deadline_at,
+            instance_id=endpoint.instance_id, run_id=inventory.run_id,
+            observer=lambda: control._observe_and_keep(endpoint, inventory),
+        )
+        for _ in range(300):
+            if control.admission.queued_total == 0:
+                break
+            await asyncio.sleep(0.01)
+        assert control.admission.queued_total == 0
+        assert len(cancels) == 1
+        finished = control.finished_runs["unknown-run"]
+        assert finished.state == "failed"
+        assert finished.error == "settlement lost: event stream lost"
+    finally:
+        await control.close()
+
+
 async def test_recovered_control_redelivery_unknown_and_idempotent_discovery(monkeypatch):
     from ach_runtime.harness.app import create_app
     from ach_runtime.harness.refs import invocation_digest

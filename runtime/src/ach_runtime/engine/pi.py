@@ -449,6 +449,10 @@ class PiEngine:
         state = self._state(invocation_id)
         return state.result if state is not None and state.outcome == "completed" else None
 
+    def error(self, invocation_id: str) -> str | None:
+        state = self._state(invocation_id)
+        return state.error if state is not None and state.outcome not in {"completed", "unknown"} else None
+
     def usage(self, invocation_id: str) -> RunUsage | None:
         state = self._state(invocation_id)
         return state.usage if state is not None else None

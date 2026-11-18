@@ -154,6 +154,29 @@ async def test_native_result_is_none_for_failed_or_absent_text() -> None:
     assert engine.result("inv-result") is None
 
 
+async def test_native_error_is_the_provider_message_of_a_failed_run() -> None:
+    engine, session, state = _bind_engine()
+    events = [
+        _event("session.execution.started", 1),
+        _event("session.inbox.delivered", 2, inboxID="input-result"),
+        _event("session.execution.failed", 3, error={
+            "type": "provider.invalid-request", "message": "Budget has been exceeded!", "status": 422,
+        }),
+    ]
+    for event in events:
+        session._record_and_dispatch(event)
+    state.input_id = "input-result"
+    session.reconcile_from_baseline(state)
+
+    async def confirm(*_args: object) -> None:
+        return None
+
+    engine._confirm_settlement = confirm  # type: ignore[method-assign]
+    assert engine.error("inv-result") is None
+    assert await engine.wait_settled("inv-result") == "failed"
+    assert engine.error("inv-result") == "Budget has been exceeded!"
+
+
 async def test_native_retire_drops_sid_but_keeps_terminal_results_and_usage() -> None:
     """I6: retire clears native SID/config/process identity, but `status`/`result`/`usage`
     must keep working for already-terminal invocations — including a forced-halt

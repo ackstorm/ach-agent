@@ -451,6 +451,34 @@ async def test_restart_lists_owned_runs_without_prompt(public_config_fixture):
     await d.close()
 
 
+async def test_run_inventory_over_one_mebibyte_is_listed(public_config_fixture):
+    """A unit keeps every finished run with its answer, so its inventory outgrows the cap of
+    a single run's response: 400 answers of 3 kB."""
+    version = public_config_fixture.config_version
+    runs = [
+        RunStatus(
+            invocationId=f"inv-{i}", channel="pr-review", workspaceRef=REF, sessionRef=f"session-{i}",
+            runId=f"run-{i}", configVersion=version, deadlineAt=NOW, state="completed",
+            result={"text": "x" * 3000},
+        )
+        for i in range(400)
+    ]
+    inventory = json.dumps([run.model_dump(by_alias=True, mode="json") for run in runs]).encode()
+    assert len(inventory) > 1024 * 1024
+
+    async def handler(req):
+        if req.url.path == "/runs":
+            return pod_response(200, content=inventory)
+        return pod_response(200, content=b" " * (1024 * 1024 + 1))
+
+    d = make_delivery(handler, public_config_fixture)
+    endpoint = Manager(public_config_fixture.agent.uid).endpoint
+    assert await d.list_runs(endpoint) == runs
+    with pytest.raises(DeliveryError, match="exceeds 1 MiB"):
+        await d.status(endpoint, "inv-0")
+    await d.close()
+
+
 async def test_recovered_delivery_status_validation(public_config_fixture):
     from ach_runtime.execution.wire import StartRequest
 

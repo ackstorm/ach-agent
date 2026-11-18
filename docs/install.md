@@ -28,12 +28,12 @@ kubectl apply --server-side -f https://github.com/kubernetes-sigs/agent-sandbox/
 kubectl -n agent-sandbox-system rollout status deploy/agent-sandbox-controller --timeout=300s
 ```
 
-## 3. OpenShell 0.1.8
+## 3. OpenShell 0.1.9
 
 ```bash
 kubectl create namespace openshell
 kubectl label namespace openshell istio.io/dataplane-mode=ambient
-helm upgrade --install openshell oci://ghcr.io/nvidia/openshell/helm-chart --version 0.1.8 \
+helm upgrade --install openshell oci://ghcr.io/nvidia/openshell/helm-chart --version 0.1.9 \
   -n openshell -f test/e2e/openshell-values.yaml --wait --timeout 6m
 ```
 
@@ -58,7 +58,7 @@ Label every Agent namespace `istio.io/dataplane-mode=ambient`.
 ## 5. Operator
 
 ```bash
-helm install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --version 0.8.1 \
+helm install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --version 0.8.2 \
   -n ach-agent-system --create-namespace \
   --set openshell.gateway=http://openshell.openshell.svc.cluster.local:8080
 ```
@@ -104,10 +104,10 @@ for any sandbox volume configuration: it must never be able to mount a Secret vo
    ```
 
 3. OpenShell with `test/e2e/openshell-tls-values.yaml` layered after `test/e2e/openshell-values.yaml`
-   (the values of [OpenShell](#3-openshell-017)):
+   (the values of [OpenShell](#3-openshell-019)):
 
    ```bash
-   helm upgrade --install openshell oci://ghcr.io/nvidia/openshell/helm-chart --version 0.1.8 \
+   helm upgrade --install openshell oci://ghcr.io/nvidia/openshell/helm-chart --version 0.1.9 \
      -n openshell -f test/e2e/openshell-values.yaml -f test/e2e/openshell-tls-values.yaml --wait --timeout 6m
    ```
 
@@ -331,11 +331,11 @@ kind: AgentProfile
 metadata: {name: default, namespace: demo}
 spec:
   control:
-    image: ghcr.io/ackstorm/ach-agent-control:0.8.1
+    image: ghcr.io/ackstorm/ach-agent-control:0.8.2
     terminationGracePeriodSeconds: 60
   sandbox:
     openshell:
-      image: ghcr.io/ackstorm/ach-agent-execution:0.8.1
+      image: ghcr.io/ackstorm/ach-agent-execution:0.8.2
       resources: {cpu: 500m, memory: 1Gi}
       readyTimeoutSeconds: 180
   defaults:
@@ -367,7 +367,7 @@ config and the rules the controller reports as conditions (for example the grace
 `kubectl apply --dry-run=server`.
 
 ```bash
-cat profile.yaml agent.yaml | docker run --rm -i ghcr.io/ackstorm/ach-agent-operator:0.8.1 validate -f -
+cat profile.yaml agent.yaml | docker run --rm -i ghcr.io/ackstorm/ach-agent-operator:0.8.2 validate -f -
 ```
 
 ### Engine
@@ -616,7 +616,7 @@ workspace:
 
 The runtime keeps its data under `/sandbox/ach`: the Workspace in `/sandbox/ach/workspace`, the
 session HOMEs in `/sandbox/ach/sessions`. With `none` and `s3` that is OpenShell's per-sandbox
-`/sandbox` PVC, deleted with the sandbox, so it is start-up cost only. OpenShell 0.1.8 cannot skip it per sandbox; the
+`/sandbox` PVC, deleted with the sandbox, so it is start-up cost only. OpenShell 0.1.9 cannot skip it per sandbox; the
 gateway-level `workspace_volume = "empty_dir"` setting proposed in NVIDIA/OpenShell#4473 replaces it
 with an emptyDir.
 

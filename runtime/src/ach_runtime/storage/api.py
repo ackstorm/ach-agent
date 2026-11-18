@@ -34,6 +34,11 @@ class SnapshotTransientFailure(Exception):
     """A supported transient backend failure may be retried within one close attempt."""
 
 
+class SnapshotRejected(Exception):
+    """The files cannot be archived as they stand (archive policy or size cap). Nothing was
+    committed and the unit is intact; the same files fail again."""
+
+
 class WriterFenced(Exception):
     """A stale writer epoch tried to persist after a newer epoch was acquired."""
 

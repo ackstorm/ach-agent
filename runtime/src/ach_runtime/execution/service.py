@@ -94,6 +94,8 @@ class Engine(Protocol):
 
     def result(self, invocation_id: str) -> str | None: ...
 
+    def error(self, invocation_id: str) -> str | None: ...
+
     async def cancel(
         self, invocation_id: str, reason: str, *, _halt_budget: _HaltBudget | None = None
     ) -> None: ...
@@ -638,9 +640,9 @@ class ExecutionService:
         # Claim cleanup (its own task runs independently) and exit immediately — never
         # await the worker that joins Start (Start must settle and exit, not be the thing
         # cleanup waits on).
-        self._ensure_cleanup(
-            inv, f"unconfirmed send: {exc}", "unknown" if ambiguous else "failed"
-        )
+        # A confirmed halt ends the run as failed whether or not native took the prompt;
+        # only a halt that cannot be proved leaves it `unknown`.
+        self._ensure_cleanup(inv, f"unconfirmed send: {exc}", "failed")
         if not inv.started.done():
             inv.started.set_exception(exc)
 
@@ -793,7 +795,9 @@ class ExecutionService:
                 return
             if inv.deadline_task is not None:
                 inv.deadline_task.cancel()
-            await self._ensure_cleanup(inv, f"settlement lost: {exc}", "unknown")
+            # The engine died or stopped reporting: once its halt is confirmed the run is
+            # over, as failed. Only a halt that cannot be proved leaves it `unknown`.
+            await self._ensure_cleanup(inv, f"settlement lost: {exc}", "failed")
             return
         if inv.terminal:
             # A retained cleanup (cancel/deadline/possible-send-failure) already claimed
@@ -807,6 +811,10 @@ class ExecutionService:
                 text = result_getter(inv.request.invocation_id)
                 if isinstance(text, str):
                     inv.result = {"text": text}
+        else:
+            error_getter = getattr(self._engine, "error", None)
+            if callable(error_getter):
+                inv.error = error_getter(inv.request.invocation_id)
         inv.terminal = True
         inv.terminal_at = time.monotonic()
         self._retain_reporting(inv)

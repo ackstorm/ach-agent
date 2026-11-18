@@ -616,7 +616,7 @@ class Control:
                     final = resumed
             except Exception as exc:  # noqa: BLE001 - the original outcome stays the answer
                 log.warning("resume of invocation %s did not run: %s", status.invocation_id, exc)
-        if self.result_delivery is not None and self._delivers(status):
+        if self.result_delivery is not None and self._delivers(final):
             # A resume settled by a later control answers the event its caller sent.
             self.result_delivery.send(status.channel, status.recovery_of or status.invocation_id, final, None)
         return final

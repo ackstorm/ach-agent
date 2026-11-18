@@ -3699,6 +3699,26 @@ async def test_a_stopping_control_delivers_an_outcome_its_own_read_marked(monkey
         await control.close()
 
 
+async def test_a_resume_read_while_stopping_is_delivered_once_under_the_original_id(monkeypatch) -> None:
+    control = await _control(_config())
+    resumed = _adopted(control, state="completed", invocation_id="resume-run", observed=True)
+    _resume_admit(control, monkeypatch, resumed)
+    plain_admit = control.admission.admit
+
+    def admit(routed, **kwargs):
+        control._stopping = True
+        return plain_admit(routed, **kwargs)
+
+    monkeypatch.setattr(control.admission, "admit", admit)
+    control.result_delivery = _RecordingDelivery()
+    control.runs_outlive_control = True
+    try:
+        assert await control._settle(_adopted(control)) is resumed
+        assert control.result_delivery.sends == [("gitlab-mr-review", "adopted", resumed, None)]
+    finally:
+        await control.close()
+
+
 async def test_a_run_tracked_twice_settles_once(monkeypatch) -> None:
     control = await _control(_config())
     settled: list[str] = []

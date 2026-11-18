@@ -185,7 +185,7 @@ async def run_control(
             # Stop new ingress first. Keep the facade server alive while admitted runners
             # settle so running mini processes can finish model/MCP calls.
             ingress.state.ready = False
-            control._stopping = True
+            control.begin_stopping()
             control.source.close()
             await _cancel_all(recoveries)
             await _stop_channel_sources(sources)
@@ -217,7 +217,7 @@ async def run_control(
             raise RuntimeError("a control listener stopped unexpectedly")
     finally:
         ingress.state.ready = False
-        control._stopping = True
+        control.begin_stopping()
         await _cancel_all(recoveries)
         await _stop_channel_sources(sources)
         sources.clear()

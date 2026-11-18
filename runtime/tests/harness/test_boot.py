@@ -221,6 +221,9 @@ async def _run_shutdown(
             async def adopt(self):
                 events.append(("discovery", None))
 
+            def stop(self):
+                events.append(("manager-stop", None))
+
         manager = Manager()
 
         class Lifecycle:
@@ -229,6 +232,10 @@ async def _run_shutdown(
                 events.append(("lifecycle-start", None))
 
         lifecycle = Lifecycle()
+
+        def begin_stopping(self):
+            self._stopping = True
+            self.manager.stop()
 
         async def close(self):
             events.append(("close", None))
@@ -284,6 +291,7 @@ async def test_run_control_keeps_root_signal_owner_and_facades_through_ingress_d
     # The host API is mounted once on the facade listener, before either listener starts.
     assert [path for path, _app in facades.mounts] == ["/host/v1"]
     assert events.index("source-close") < events.index(("listener-exit", 8080)), "the ready path closes the source with `_stopping`"
+    assert events.count(("manager-stop", None)) >= 1 and events.index(("manager-stop", None)) < events.index(("listener-exit", 8080))
 
 
 async def test_hosted_shutdown_does_not_wait_for_runs_the_next_control_adopts(tmp_path, monkeypatch) -> None:
@@ -405,6 +413,9 @@ async def test_recovered_boot_accounting_precedes_ingress(tmp_path: Path, monkey
                     events.append("lifecycle-start")
 
             self.lifecycle = Lifecycle()
+
+        def begin_stopping(self):
+            self._stopping = True
 
         async def close(self):
             events.append("close")
@@ -569,6 +580,9 @@ async def test_recovered_boot_failure_keeps_ingress_closed(tmp_path: Path, monke
 
             self.lifecycle = Lifecycle()
 
+        def begin_stopping(self):
+            self._stopping = True
+
         async def close(self):
             await self.admission.close()
 
@@ -705,6 +719,9 @@ async def test_all_channel_sources_start_after_discovery_and_stop_before_drain(
             self.manager = Manager()
             self.lifecycle = Lifecycle()
 
+        def begin_stopping(self):
+            self._stopping = True
+
         async def close(self):
             events.append("control-close")
 
@@ -818,6 +835,9 @@ async def test_source_start_failure_rolls_back_started_sources(tmp_path: Path, m
 
             self.lifecycle = Lifecycle()
 
+        def begin_stopping(self):
+            self._stopping = True
+
         async def close(self):
             events.append("close")
 
@@ -912,6 +932,9 @@ async def test_abnormal_listener_stops_sources_before_facade_shutdown(tmp_path: 
 
             self.manager = Manager()
             self.lifecycle = Lifecycle()
+
+        def begin_stopping(self):
+            self._stopping = True
 
         async def close(self):
             events.append("control-close")
@@ -1151,6 +1174,9 @@ async def test_pre_readiness_shutdown_closes_the_source_before_the_listeners_sto
                 await gate.wait()
 
         manager = Manager()
+
+        def begin_stopping(self):
+            self._stopping = True
 
         async def close(self):
             events.append("close")

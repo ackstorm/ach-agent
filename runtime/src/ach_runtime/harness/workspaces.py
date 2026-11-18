@@ -223,6 +223,7 @@ class WorkspaceManager:
         self._errors: dict[str, BaseException] = {}
         self._adoption: asyncio.Task[None] | None = None
         self._loss_tasks: set[asyncio.Task[Any]] = set()
+        self._stopping = False
         self._deferred_adoptions: set[asyncio.Task[Any]] = set()
         # ponytail: never pruned; one id per lost instance.
         self._lost_instances: set[str] = set()
@@ -559,6 +560,18 @@ class WorkspaceManager:
             )
 
     # -- loss and recovery -------------------------------------------------------------------
+    def stop(self) -> None:
+        """Shutdown: a stopping control replaces no unit. The next control replaces a lost
+        unit on demand; waiting here for a replacement would hold the old control past its
+        grace period and keep the next one from starting."""
+        self._stopping = True
+        for owner in self._owners.values():
+            task = owner.tasks.get("recover")
+            if task is not None and not task.done():
+                task.cancel()
+        for task in list(self._loss_tasks):
+            task.cancel()
+
     def report_lost(self, endpoint: WorkspaceEndpoint) -> None:
         """An instance-ID mismatch seen on a response from `endpoint`: recover in the background."""
         task = asyncio.ensure_future(self.recover(endpoint.ref, endpoint.instance_id))
@@ -584,6 +597,8 @@ class WorkspaceManager:
         published one. Ends without a new activation when the host does not confirm the
         old unit stopped: it may still be alive, and the late confirmation frees the slot."""
         self._validate_ref(ref)
+        if self._stopping:
+            return None
         key = ref.workspace_ref
         return await self._run(key, "recover", lambda: self._do_recover(ref, key, lost_instance_id))
 

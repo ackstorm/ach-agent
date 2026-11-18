@@ -1106,8 +1106,14 @@ class Control:
             usage=usage,
         ))
 
-    async def close(self) -> None:
+    def begin_stopping(self) -> None:
+        """Mark the control as stopping: no retry, resume, observing read or delivery for runs
+        that outlive it, and no unit replacement."""
         self._stopping = True
+        self.manager.stop()
+
+    async def close(self) -> None:
+        self.begin_stopping()
         for outcome in self._recovery_outcomes.values():
             outcome.cancel()
         self.source.close()

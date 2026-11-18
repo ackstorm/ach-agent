@@ -2360,6 +2360,7 @@ async def test_control_close_joins_lifecycle_before_clients() -> None:
 
     fake = SimpleNamespace(
         _stopping=False,
+        begin_stopping=lambda: None,
         _recovery_outcomes={},
         admission=SimpleNamespace(close=closer("admission")),
         lifecycle=SimpleNamespace(close=closer("lifecycle")),

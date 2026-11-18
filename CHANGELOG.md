@@ -7,10 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- OpenShell 0.1.9: the e2e cluster and `docs/install.md`. The operator keeps the 0.1.8 Go SDK
+  (`github.com/ai-openshell/sdk-go` has no 0.1.9 tag yet); the e2e suite passes against a 0.1.9
+  gateway. With 0.1.9 a wildcard egress endpoint no longer permits private IP literals
+  (NVIDIA/OpenShell#5522). Going back to 0.1.8 is not a chart revert: a 0.1.8 gateway refuses the
+  database migration 0.1.9 adds.
+
 ### Fixed
 
 - A failed run reports the engine's error (e.g. the gateway's "Budget has been exceeded!")
   in its run status and its A2A and OpenAI replies, which gave no reason before.
+
+## [0.8.2] - 2026-11-18
+
+### Fixed
+
+- A run whose opencode process dies mid-turn, or whose event stream drops, ends `failed` once the
+  engine is confirmed stopped, instead of staying `unknown`. The control also ends a run that still
+  reports `unknown` after its deadline, so it does not hold an invocation slot and its session's
+  queue until the sandbox is deleted.
+- The control reads a sandbox's run inventory up to 64 MiB instead of 1 MiB. A long-lived sandbox
+  with many answered requests does not fail its lifecycle tick, refuse new sessions, or get deleted
+  on the next control restart.
+- With `persistence: s3`, a Workspace whose files cannot be archived (an absolute symlink such as a
+  venv's, more than 10,000 files, or more than 512 MiB) keeps serving after the failed save instead
+  of refusing every later event. The save is retried every 30 s and counted as `persistence_failed`.
+- A Workspace or session whose saved snapshot is past `retentionDays` starts fresh on its next
+  event instead of failing every event with `restore_failed`.
 
 ## [0.8.1] - 2026-11-16
 

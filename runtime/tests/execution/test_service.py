@@ -284,8 +284,8 @@ async def test_ambiguous_native_send_never_replays(tmp_path, public_config_fixtu
     if inv.cancel_task is not None:
         await asyncio.wait_for(inv.cancel_task, timeout=5)
     status = await service.status(request.invocation_id)
-    assert status.state == "unknown"
-    assert status.result["reporting"] == {"duration_ms": None, "usage": None}
+    assert status.state == "failed"
+    assert status.result["reporting"]["usage"] is None
 
 
 def _with_session_start(public, script: str, timeout: int = 5):
@@ -1492,7 +1492,8 @@ async def test_all_cleanup_triggers_join_retained_owner(
 
     assert len(engine.cancel_calls) == 1
     status = await service.status(request.invocation_id)
-    assert status.state == "unknown"  # the first (settlement-loss) trigger's state wins
+    assert status.state == "failed"
+    assert status.error == "settlement lost: event stream lost"  # the first trigger's reason wins
     assert lock.release_count == 1
 
 
@@ -2042,9 +2043,32 @@ async def test_stream_loss_joins_single_cleanup(tmp_path, public_config_fixture)
     await asyncio.wait_for(inv.settle_task, timeout=5)
 
     status = await service.status(request.invocation_id)
-    assert status.state == "unknown"
+    assert status.state == "failed"
     assert len(engine.cancel_calls) == 1
     assert lock.release_count == 1
+
+
+async def test_stream_loss_with_a_confirmed_halt_ends_the_run_failed(
+    tmp_path, public_config_fixture
+) -> None:
+    """An engine that dies mid-run is halted and its session released, so the run is over:
+    it reports `failed`, and nothing about its session stays uncertain."""
+    engine = FakeEngine(
+        hang=frozenset({"inv-1"}), settle_raises={"inv-1": RuntimeError("event stream lost")}
+    )
+    service, engine = _service(tmp_path, public_config_fixture, engine)
+    request = _request(public_config_fixture.config_version)
+    await service.start(request)
+    inv = service._invocations[request.invocation_id]
+
+    engine._event(request.invocation_id).set()  # the (lost) stream's last signal
+    await asyncio.wait_for(inv.settle_task, timeout=5)
+
+    status = await service.status(request.invocation_id)
+    assert status.state == "failed"
+    assert status.error == "settlement lost: event stream lost"
+    assert len(engine.cancel_calls) == 1
+    assert (await service.session_info(request.session_ref))["uncertain"] is False
 
 
 async def test_ambiguous_send_settles_started_before_stalled_cleanup(

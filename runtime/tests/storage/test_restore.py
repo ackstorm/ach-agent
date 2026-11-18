@@ -878,3 +878,19 @@ async def test_current_writer_reads_registry_writer_or_none() -> None:
     assert await storage.current_writer(ref) == "pod-1"
     await storage.acquire_writer(ref, "pod-2")
     assert await storage.current_writer(ref) == "pod-2"
+
+
+async def test_current_writer_reports_an_unreachable_backend_as_transient(monkeypatch) -> None:
+    from botocore.exceptions import EndpointConnectionError
+    from ach_runtime.storage.api import SnapshotTransientFailure
+
+    client = FakeS3Client()
+    storage = S3Storage(bucket="b", prefix="pfx", client=client)
+
+    def unreachable(**kwargs):
+        raise EndpointConnectionError(endpoint_url="http://ach-agent-storage:8333")
+
+    monkeypatch.setattr(client, "get_object", unreachable)
+    with pytest.raises(SnapshotTransientFailure) as failure:
+        await storage.current_writer(_ref())
+    assert isinstance(failure.value.__cause__, EndpointConnectionError)

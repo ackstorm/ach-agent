@@ -35,7 +35,7 @@ from ach_runtime.harness.refs import workspace_name
 from ach_runtime.observability import alarm
 from ach_runtime.observability.metrics import WORKSPACE_START_SECONDS
 from ach_runtime.observability.runs import redact
-from ach_runtime.storage.api import PersistReceipt, SnapshotTransientFailure
+from ach_runtime.storage.api import PersistReceipt, SnapshotRejected, SnapshotTransientFailure
 
 _FULL_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 _LOG = logging.getLogger(__name__)
@@ -517,6 +517,12 @@ class WorkspaceManager:
                 alarm("pod_unhealthy", workspace_ref=key)  # "execution unit lost"
                 await self._retire(key, name)  # slot freed on DELETE, or the retire-timeout path
                 return
+            if isinstance(exc, SnapshotRejected):
+                # Nothing was committed and the unit is intact. Recording the error would
+                # refuse every later event for a save the same files fail again, so the
+                # unit keeps serving; Lifecycle retries the close after its cooldown.
+                self._active[key] = endpoint
+                raise
             self._errors[key] = exc
             raise
         # The commit is durable; a retire timeout is an anomaly, not a failed close.

@@ -872,6 +872,10 @@ class Control:
                 self.delivery._validate_status(status, expected)
                 if started_run_id is not None and status.run_id != started_run_id:
                     raise DeliveryError("RunStatus runId did not match Started")
+                if status.state == "unknown" and cancel_sent:
+                    # The unit could not prove how the run ended, and the cancel was the
+                    # last thing that could change its answer: the run ends as failed.
+                    status = status.model_copy(update={"state": "failed"})
                 if status.state in {"completed", "failed", "cancelled", "skipped"}:
                     # Delivery verified the response's instance header, so a terminal status
                     # is trustworthy even if the instance was lost in the meantime (T09).

@@ -90,8 +90,9 @@ class WorkspaceAssemblyUnavailable(Exception):
 
 class ReleaseMismatch(WorkspaceAssemblyUnavailable):
     """The execution unit runs another runtime release than this control process. Adoption
-    retires such a unit so an upgrade rolls every workspace onto the new image; a freshly
-    placed one runs with a warning, because a custom execution image can lag the control."""
+    keeps such a unit until it is idle, then retires it so an upgrade rolls every workspace
+    onto the new image; a freshly placed one runs with a warning, because a custom execution
+    image can lag the control."""
 
     def __init__(self, message: str, instance_id: str = "") -> None:
         super().__init__(message)
@@ -213,6 +214,7 @@ class WorkspaceManager:
         self._wait_mini_health = wait_mini_health
         self._capacity = config.limits.max_active_workspaces
         self._occupied: set[str] = set()
+        self._outdated: set[str] = set()
         self._slot_released = asyncio.Event()
         self._active: dict[str, WorkspaceEndpoint] = {}
         self._owners: dict[str, _RefOwner] = {}
@@ -276,8 +278,13 @@ class WorkspaceManager:
 
     def _release(self, key: str) -> None:
         self._occupied.discard(key)
+        self._outdated.discard(key)
         self._errors.pop(key, None)
         self._wake_slot_waiters()
+
+    def is_outdated(self, workspace_ref: str) -> bool:
+        """True from the adoption of a unit of another release until its slot is released."""
+        return workspace_ref in self._outdated
 
     async def _wait_for_slot(self, deadline_at: datetime | None) -> None:
         # ponytail: waiters are woken together, not FIFO; add a queue if starvation shows up.
@@ -671,7 +678,15 @@ class WorkspaceManager:
     async def _adopt_one(self, ref: WorkspaceRef, placement: Placement) -> None:
         key = ref.workspace_ref
         try:
-            endpoint = await self._probe(ref, placement, self._startup_deadline(None))
+            try:
+                endpoint = await self._probe(ref, placement, self._startup_deadline(None))
+            except ReleaseMismatch as exc:
+                if not exc.instance_id:
+                    raise
+                _LOG.info("Workspace adoption: adopting a unit of another release, retired once idle: "
+                          "workspace_ref=%s %s", key, exc)
+                endpoint = WorkspaceEndpoint(ref, placement.name, exc.instance_id, placement.base_url)
+                self._outdated.add(key)
             if not self._source.observed(placement, endpoint.instance_id):
                 raise WorkspaceConflict(f"{placement.name}: registration was replaced")
             await self._reconnect(endpoint)
@@ -680,6 +695,7 @@ class WorkspaceManager:
         except BaseException as exc:
             if isinstance(exc, asyncio.CancelledError):
                 raise
+            self._outdated.discard(key)
             if not self._source.gateway_available():
                 _LOG.warning("Workspace adoption deferred: gateway unavailable: workspace_ref=%s", key)
                 self._defer_adoption(ref, placement)

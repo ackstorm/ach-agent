@@ -23,6 +23,10 @@ class _Manager:
         self._restore = None
         self._commit = None
         self.lost: list = []
+        self.outdated: set = set()
+
+    def is_outdated(self, workspace_ref):
+        return workspace_ref in self.outdated
 
     def report_lost(self, endpoint):
         self.lost.append(endpoint)
@@ -994,6 +998,33 @@ def test_workspace_idle_timeout_zero_closes_at_once_and_minus_one_never(timeout,
             await lifecycle.tick(start + timedelta(seconds=offset))
             observed.append(endpoint.ref in control.manager.closed)
         assert observed == closed
+        await control.mini_client.aclose()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(("outdated", "closed"), [(True, True), (False, False)])
+def test_outdated_workspace_closes_once_idle_even_when_idle_close_is_off(outdated, closed) -> None:
+    import httpx
+    from ach_runtime.harness.workspaces import WorkspaceEndpoint, WorkspaceRef
+
+    async def scenario():
+        control = _Control()
+        control.config.workspace.idle_timeout_seconds = -1
+        control.manager.closed = []
+        control.manager.close = _close_record(control.manager)
+        endpoint = WorkspaceEndpoint(WorkspaceRef("ach", control.config.agent.uid, "a"*64), "ws", "pod", "http://mini")
+        control.manager._active = {"a"*64: endpoint}
+        if outdated:
+            control.manager.outdated.add("a"*64)
+        control.delivery = _Delivery()
+        control.mini_client = httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, headers={"X-ACH-Instance-Id": "pod"}, json=[])))
+        control._headers = lambda endpoint: {"X-ACH-Instance-Id": endpoint.instance_id}
+        control._mini_json = _mini_json(control)
+        lifecycle = Lifecycle(control)
+        await lifecycle.tick(datetime(2026, 10, 1, tzinfo=UTC))
+        await lifecycle.tick(datetime(2026, 10, 1, tzinfo=UTC))
+        assert (endpoint.ref in control.manager.closed) is closed
         await control.mini_client.aclose()
     asyncio.run(scenario())
 

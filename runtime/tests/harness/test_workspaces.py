@@ -517,23 +517,47 @@ def test_reconnect_callback_is_required() -> None:
                          commit_workspace=None, reconnect_workspace=None)
 
 
-async def test_adopting_a_unit_of_another_release_retires_it_without_an_anomaly(
+async def test_adopting_a_unit_of_another_release_keeps_it_until_idle(
     alarms: list[str], caplog: pytest.LogCaptureFixture,
 ) -> None:
     h = _Harness(_config())
     ref = _ref(h.config, "upgrade")
     h.adopt_unit(ref)
     name = _name(h.config, ref)
-    h.probe_error[name] = ws.ReleaseMismatch("execution unit runs release '0.1.1', control runs '0.1.2'")
+    h.probe_error[name] = ws.ReleaseMismatch(
+        "execution unit runs release '0.1.1', control runs '0.1.2'", "pod-old",
+    )
 
     with caplog.at_level(logging.INFO, logger=ws.__name__):
         await h.manager.adopt()
         await _settle()
 
     assert alarms == []
-    assert h.source.retire_calls == [name]
+    assert h.manager.active_endpoint(ref.workspace_ref).instance_id == "pod-old"
+    assert len(h.reconnected) == 1
+    assert h.source.retire_calls == []
+    assert h.manager.is_outdated(ref.workspace_ref)
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
     assert any("release '0.1.1'" in r.getMessage() for r in caplog.records)
+
+    await h.manager.close(ref)
+    assert h.source.retire_calls == [name]
+    assert not h.manager.is_outdated(ref.workspace_ref)
+
+
+async def test_adopting_a_release_mismatch_without_an_instance_id_retires_it(alarms: list[str]) -> None:
+    h = _Harness(_config())
+    ref = _ref(h.config, "upgrade-anon")
+    h.adopt_unit(ref)
+    name = _name(h.config, ref)
+    h.probe_error[name] = ws.ReleaseMismatch("execution unit runs release '0.1.1', control runs '0.1.2'")
+
+    await h.manager.adopt()
+    await _settle()
+
+    assert alarms == []
+    assert h.source.retire_calls == [name]
+    assert not h.manager.is_outdated(ref.workspace_ref)
 
 
 async def test_activating_a_unit_of_another_release_runs_with_a_warning(

@@ -762,7 +762,8 @@ class Lifecycle:
                 self._saw_activity = self._saw_activity or uncertain or queued
                 self._last_workspace.pop(workspace_ref, None)
                 return
-            timeout = self.control.config.workspace.idle_timeout_seconds
+            timeout = 0 if self.control.manager.is_outdated(workspace_ref) else \
+                self.control.config.workspace.idle_timeout_seconds
             if timeout < 0:
                 return
             last_idle = self._last_workspace.setdefault(workspace_ref, now)

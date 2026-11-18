@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- OpenShell 0.1.9: the e2e cluster and `docs/install.md`. The operator keeps the 0.1.8 Go SDK
+  (`github.com/ai-openshell/sdk-go` has no 0.1.9 tag yet); the e2e suite passes against a 0.1.9
+  gateway. With 0.1.9 a wildcard egress endpoint no longer permits private IP literals
+  (NVIDIA/OpenShell#5522). Going back to 0.1.8 is not a chart revert: a 0.1.8 gateway refuses the
+  database migration 0.1.9 adds.
+
 ## [0.8.2] - 2026-11-18
 
 ### Fixed

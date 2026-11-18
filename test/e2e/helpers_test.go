@@ -267,13 +267,13 @@ func waitChat(t *testing.T, port int, timeout time.Duration) []recorded {
 }
 
 // lostRunChats returns the streamed model calls of one lost-run fixture Agent (its x-e2e-agent
-// header) whose body contains text. Only the primary agent's calls carry e2e_stream_seconds.
+// header) whose body contains text.
 func lostRunChats(t *testing.T, agent, text string) []recorded {
 	t.Helper()
 	var out []recorded
 	for _, r := range chatRequests(t, 8090) {
 		if v := r.headerValues("x-e2e-agent"); len(v) == 1 && v[0] == agent &&
-			strings.Contains(r.Body, "e2e_stream_seconds") && strings.Contains(r.Body, text) {
+			len(r.headerValues("x-e2e-stream-seconds")) == 1 && strings.Contains(r.Body, text) {
 			out = append(out, r)
 		}
 	}

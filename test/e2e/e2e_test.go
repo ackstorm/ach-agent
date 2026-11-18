@@ -383,7 +383,7 @@ func TestE2E(t *testing.T) {
 			postAccepted(t, name, 2*time.Minute)
 		}
 		for _, name := range []string{on, off} {
-			until(t, 4*time.Minute, "no streamed model call from "+name+" (do model params reach the request body?)", agentYAML(name), func() bool {
+			until(t, 4*time.Minute, "no streamed model call from "+name+" (with headers x-e2e-agent and x-e2e-stream-seconds)", agentYAML(name), func() bool {
 				return len(lostRunChats(t, name, "")) >= 1
 			})
 		}

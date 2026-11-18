@@ -12,8 +12,8 @@ spec:
       headers:
         x-litellm-api-key: {secretKeyRef: {name: e2e-model, key: apiKey}}
         x-e2e-agent: {value: "${NAME}"}
-      # The stub streams the reply over this many seconds: the run is still going when its sandbox or control goes.
-      params: {e2e_stream_seconds: 90}
+        # The stub streams the reply over this many seconds: the run is still going when its sandbox or control goes.
+        x-e2e-stream-seconds: {value: "90"}
   channels:
     - name: hook
       type: webhook

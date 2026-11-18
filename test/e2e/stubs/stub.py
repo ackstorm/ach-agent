@@ -269,7 +269,7 @@ def handler_for(state, kind):
             except ValueError:
                 return self._send(400, {"error": "invalid JSON"})
             if kind != "mcp" and url.path.endswith("/chat/completions") and self.command == "POST":
-                seconds = int(doc.get("e2e_stream_seconds") or 0)
+                seconds = int(doc.get("e2e_stream_seconds") or headers.get("x-e2e-stream-seconds") or 0)
                 if doc.get("stream") and seconds:
                     return self._stream(doc.get("model", ""), seconds)
                 tool = _echo_tool(doc)

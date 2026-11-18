@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-11-18
+
+### Fixed
+
+- A run whose opencode process dies mid-turn, or whose event stream drops, ends `failed` once the
+  engine is confirmed stopped, instead of staying `unknown`. The control also ends a run that still
+  reports `unknown` after its deadline, so it does not hold an invocation slot and its session's
+  queue until the sandbox is deleted.
+- The control reads a sandbox's run inventory up to 64 MiB instead of 1 MiB. A long-lived sandbox
+  with many answered requests does not fail its lifecycle tick, refuse new sessions, or get deleted
+  on the next control restart.
+- With `persistence: s3`, a Workspace whose files cannot be archived (an absolute symlink such as a
+  venv's, more than 10,000 files, or more than 512 MiB) keeps serving after the failed save instead
+  of refusing every later event. The save is retried every 30 s and counted as `persistence_failed`.
+- A Workspace or session whose saved snapshot is past `retentionDays` starts fresh on its next
+  event instead of failing every event with `restore_failed`.
+
 ## [0.8.1] - 2026-11-16
 
 ### Added

@@ -28,8 +28,13 @@ async def _settle(stack, started, timeout: float = 20.0):
         while True:
             status = await stack.status_for(started)
             if status.state in {"completed", "failed", "cancelled"}:
-                return status
+                break
             await asyncio.sleep(0.05)
+        # The unit finishes before the control observes it; a fault in between makes the control retry the run.
+        ticket = stack.control.admission._tickets.get(started.invocation_id)
+        if ticket is not None:
+            await asyncio.wait([ticket.completed])
+    return status
 
 
 def _workspace_and_session(stack, started):

@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- A failed run's reason (the engine's error, or a `sessionStart` hook's exit code and stderr tail) is logged
+  by the control as `run failed: <reason> (channel …, event …)`, redacted and capped at 500 characters. It was
+  only in the run status, which is lost with the sandbox. The completion record stays free of text.
+
 ## [0.8.7] - 2026-11-26
 
 ### Changed

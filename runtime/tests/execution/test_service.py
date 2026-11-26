@@ -1992,6 +1992,26 @@ def test_builder_resolves_system_file_and_ach(tmp_path, public_config_fixture) -
         build(SystemAch(type="ach", ach="named"))
 
 
+
+def test_builder_appends_environment_instructions_to_every_prompt_form(tmp_path, public_config_fixture) -> None:
+    """ach-cli's order: the agent's prompt, then each instruction by name, blank lines between."""
+    workspace = tmp_path / "workspace"
+    state = workspace / ".ach-state"
+    for name, text in (("b-style", "second"), ("a-rules", "first")):
+        (state / "instructions" / name).mkdir(parents=True)
+        (state / "instructions" / name / f"{name}.md").write_text(text, encoding="utf-8")
+    (state / "system.md").write_text("persona", encoding="utf-8")
+    request = _request(public_config_fixture.config_version)
+
+    def build(system):
+        prompt = None if system is None else PromptBlock(system=system)
+        public = public_config_fixture.model_copy(update={"prompt": prompt})
+        return _build_fixture_invocation(request, public, workspace).resolved_system_prompt
+
+    assert build(SystemFile(type="file", file="system.md")) == "persona\n\nfirst\n\nsecond"
+    assert build(SystemText(type="text", text="inline")) == "inline\n\nfirst\n\nsecond"
+    assert build(None) == "first\n\nsecond"
+
 async def test_exact_receipt_retained_before_started(
     tmp_path, public_config_fixture
 ) -> None:

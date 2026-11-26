@@ -849,6 +849,7 @@ class Control:
                                              headers=with_identity_headers({}, identity)) as client:
                     await stage_context(
                         self.catalog, root, excluded_skills=self.config.capability.filter.exclude.skills,
+                        excluded_instructions=self.config.capability.filter.exclude.instructions,
                         client=client,
                     )
             source = self.local_context or root

@@ -177,13 +177,15 @@ def to_fixture(
         # no authority to perform — file/ach carry through as an explicit marker instead of
         # a silently-dropped value. See the Task 4 report's "Accepted limitations".
         system = public.prompt.system
-        if system.type == "text":
-            persona = system.text
-        elif resolved_system_prompt is not None:
+        if resolved_system_prompt is not None:
             persona = resolved_system_prompt
+        elif system.type == "text":
+            persona = system.text
         elif not lookup_only_prompt:
             raise ValueError(f"required {system.type} system prompt must be resolved before engine start")
         fixture["promptCompose"] = public.prompt.compose
+    elif resolved_system_prompt:
+        persona = resolved_system_prompt
     # I7: the active memory tools instructions, composed once with the resolved persona
     # (never erasing a required-file failure above, never mutating the base PublicConfig)
     # — present for the text/file/ACH persona forms above AND the no-persona form.

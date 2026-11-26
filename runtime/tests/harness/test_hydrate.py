@@ -809,7 +809,8 @@ _PLUGIN_ARCHIVE = {
 }
 
 
-def _stage(catalog: Any, excluded: list[str], archives: dict[str, bytes]) -> tuple[Any, list[str]]:
+def _stage(catalog: Any, excluded: list[str], archives: dict[str, bytes],
+           excluded_instructions: list[str] = ()) -> tuple[Any, list[str]]:
     """Stage `catalog` from `archives` (keyed by download path); return the root and the paths fetched."""
     import asyncio
     import tempfile
@@ -825,7 +826,8 @@ def _stage(catalog: Any, excluded: list[str], archives: dict[str, bytes]) -> tup
 
     async def scenario(root: Path) -> None:
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            await stage_context(catalog, root, excluded_skills=excluded, client=client)
+            await stage_context(catalog, root, excluded_skills=excluded,
+                                excluded_instructions=excluded_instructions, client=client)
 
     root = Path(tempfile.mkdtemp()) / "stage"
     asyncio.run(scenario(root))
@@ -884,3 +886,19 @@ def test_stage_context_fails_on_a_plugin_skill_that_clashes_with_a_context_skill
             "/content/skill/artifact-artifact": _tar({"SKILL.md": b"name: x\n"}),
             "/content/plugin/artifact@ackstorm-defaults": _tar(_PLUGIN_ARCHIVE),
         })
+
+
+
+def test_stage_context_stages_instructions_except_excluded_ones() -> None:
+    from ach_runtime.harness.hydrate import HydratedCatalog, HydratedModel, HydrationManifest
+
+    manifest = HydrationManifest.model_validate({"environment": "prod", "context": {"instructions": [
+        {"name": n, "id": n, "downloadUrl": f"https://ach/content/instruction/{n}"} for n in ("rules", "people-only")
+    ]}})
+    catalog = HydratedCatalog("prod", HydratedModel("m", "https://model", None), (), (), (), (),
+                              instructions=tuple(manifest.context.instructions))
+    root, fetched = _stage(catalog, [], {"/content/instruction/rules": _tar({"rules.md": b"Be brief.\n"})},
+                           excluded_instructions=["people-only"])
+
+    assert fetched == ["/content/instruction/rules"]
+    assert (root / "instructions" / "rules" / "rules.md").read_bytes() == b"Be brief.\n"

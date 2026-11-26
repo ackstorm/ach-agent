@@ -11,7 +11,7 @@ import pytest
 
 from ach_runtime.config.public import public_config
 from ach_runtime.config.schema import RuntimeConfig
-from ach_runtime.config.schema import PromptBlock, SystemAch, SystemFile, ThinkingBlock
+from ach_runtime.config.schema import PromptBlock, SystemAch, SystemFile, SystemText, ThinkingBlock
 from ach_runtime.engine.config import _ENGINE_ENV_ALLOWLIST, _thinking_options, build_env, managed_content, to_fixture
 from ach_runtime.engine.opencode import _expects_native_system
 
@@ -245,3 +245,11 @@ def test_to_fixture_carries_engine_deny_tools_and_denies_execute(public) -> None
 def test_to_fixture_code_mode_flag_keeps_execute(public, value, deny) -> None:
     public.engine.env["OPENCODE_ENABLE_CODE_MODE"] = value
     assert to_fixture(public)["denyTools"] == deny
+
+
+def test_resolved_prompt_carries_instructions_for_inline_and_absent_prompts(public):
+    inline = public.model_copy(update={"prompt": PromptBlock(system=SystemText(type="text", text="inline"))})
+    assert to_fixture(inline, resolved_system_prompt="inline\n\nrules")["systemPrompt"] == "inline\n\nrules"
+    fixture = to_fixture(public.model_copy(update={"prompt": None}), resolved_system_prompt="rules")
+    assert fixture["systemPrompt"] == "rules"
+    assert fixture["promptCompose"] == "append"

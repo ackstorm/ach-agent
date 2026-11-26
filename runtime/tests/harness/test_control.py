@@ -2286,7 +2286,7 @@ async def test_harness_hydrates_prompt_tar_before_real_mini_engine_start(monkeyp
 async def test_context_files_before_started(monkeypatch) -> None:
     from ach_runtime.harness.hydrate import ContextItem
     seen: list[str] = []
-    async def stage(catalog, root, *, excluded_skills, client):
+    async def stage(catalog, root, *, excluded_skills, excluded_instructions, client):
         (root / "skills").mkdir(parents=True)
         (root / "skills" / "demo").write_text("skill")
     monkeypatch.setattr("ach_runtime.harness.control.stage_context", stage)
@@ -2329,7 +2329,7 @@ async def test_context_download_carries_identity_headers(monkeypatch) -> None:
     # ACH rejects a pk_ (login) credential on /content/* without x-ach-environment.
     from ach_runtime.harness.hydrate import ContextItem
     headers: list[httpx.Headers] = []
-    async def stage(catalog, root, *, excluded_skills, client):
+    async def stage(catalog, root, *, excluded_skills, excluded_instructions, client):
         headers.append(client.headers)
     monkeypatch.setattr("ach_runtime.harness.control.stage_context", stage)
     control = await assemble(_config(), environ={"ACH_SANDBOX_KEY": "secret", "ACH_SECRET_IDENTITY": "ek"},

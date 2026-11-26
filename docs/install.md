@@ -28,12 +28,12 @@ kubectl apply --server-side -f https://github.com/kubernetes-sigs/agent-sandbox/
 kubectl -n agent-sandbox-system rollout status deploy/agent-sandbox-controller --timeout=300s
 ```
 
-## 3. OpenShell 0.1.9
+## 3. OpenShell 0.1.10
 
 ```bash
 kubectl create namespace openshell
 kubectl label namespace openshell istio.io/dataplane-mode=ambient
-helm upgrade --install openshell oci://ghcr.io/nvidia/openshell/helm-chart --version 0.1.9 \
+helm upgrade --install openshell oci://quay.io/ai-openshell/charts/openshell --version 0.1.10 \
   -n openshell -f test/e2e/openshell-values.yaml --wait --timeout 6m
 ```
 
@@ -46,6 +46,8 @@ The values (`test/e2e/openshell-values.yaml`):
   the agent and the sandbox to share one UID.
 - `pkiInitJob.serverDnsNames`: a wildcard SAN `*.<agent namespace>.svc.cluster.local` per Agent
   namespace, so the gateway routes the per-sandbox ExternalName Services the operator creates.
+- `gatewayConfig."openshell.gateway".enable_gateway_service_routing: true`: the operator reaches every
+  sandbox through those gateway-routed URLs, and the chart turns the routing off by default.
 
 ## 4. Mesh policy
 
@@ -104,10 +106,10 @@ for any sandbox volume configuration: it must never be able to mount a Secret vo
    ```
 
 3. OpenShell with `test/e2e/openshell-tls-values.yaml` layered after `test/e2e/openshell-values.yaml`
-   (the values of [OpenShell](#3-openshell-019)):
+   (the values of [OpenShell](#3-openshell-0110)):
 
    ```bash
-   helm upgrade --install openshell oci://ghcr.io/nvidia/openshell/helm-chart --version 0.1.9 \
+   helm upgrade --install openshell oci://quay.io/ai-openshell/charts/openshell --version 0.1.10 \
      -n openshell -f test/e2e/openshell-values.yaml -f test/e2e/openshell-tls-values.yaml --wait --timeout 6m
    ```
 
@@ -620,7 +622,7 @@ workspace:
 
 The runtime keeps its data under `/sandbox/ach`: the Workspace in `/sandbox/ach/workspace`, the
 session HOMEs in `/sandbox/ach/sessions`. With `none` and `s3` that is OpenShell's per-sandbox
-`/sandbox` PVC, deleted with the sandbox, so it is start-up cost only. OpenShell 0.1.9 cannot skip it per sandbox; the
+`/sandbox` PVC, deleted with the sandbox, so it is start-up cost only. OpenShell 0.1.10 cannot skip it per sandbox; the
 gateway-level `workspace_volume = "empty_dir"` setting proposed in NVIDIA/OpenShell#4473 replaces it
 with an emptyDir.
 

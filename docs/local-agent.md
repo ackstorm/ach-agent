@@ -26,7 +26,10 @@ FROM ${ACH_AGENT_IMAGE}
 
 ## Authoring flow
 
-1. Create an ACH environment in the Hub with the MCPs, skills, prompts and artifacts the agent needs.
+1. Create an ACH environment in the Hub with the MCPs, skills, plugins, prompts and artifacts the agent
+   needs. From a plugin the agent gets only its skills, named `<plugin>-<skill>` as `ach-cli hydrate`
+   names them for opencode and pi; a plugin's MCP servers must be in the environment too, and a
+   native-delivery plugin is skipped.
 2. Get a credential for it: `ach-cli login`, or an `ek-` key in `ACH_KEY` (see Credentials).
 3. Write `agent.yaml` and, optionally, its prompt (`AGENTS.md`).
 4. `cd` into the directory the agent works on, then run `ach-agent run --config <path>/agent.yaml`. Without

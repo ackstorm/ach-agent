@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- An agent gets the plugins of its ACH Environment (`context.plugins`) as `ach-cli hydrate` gives them to a
+  person on opencode or pi: each plugin skill is staged as `skills/<plugin>-<skill>/` with its `name:`
+  rewritten to match, and `filter.exclude.skills` takes that name. Only skills are staged: a plugin's MCP
+  servers must also be in the Environment, and a plugin with native delivery is skipped with a warning.
+  A plugin skill whose name another skill already has stops the run.
+
 ## [0.8.4] - 2026-11-18
 
 ### Changed

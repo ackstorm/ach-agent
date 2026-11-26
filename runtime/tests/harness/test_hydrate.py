@@ -781,3 +781,106 @@ def test_retries_outlast_a_platform_restart() -> None:
     from ach_runtime.harness import hydrate
 
     assert sum(hydrate._RETRY_DELAYS_SECONDS) >= 60
+
+
+# --- plugins --------------------------------------------------------------------
+
+
+def _tar(files: dict[str, bytes]) -> bytes:
+    import io
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, payload in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            tf.addfile(info, io.BytesIO(payload))
+    return buf.getvalue()
+
+
+_PLUGIN_ARCHIVE = {
+    ".claude-plugin/plugin.json": b'{"name": "artifact"}',
+    ".mcp.json": b'{"mcpServers": {"mcp-artifact": {"type": "http", "url": "https://x"}}}',
+    "skills/artifact/SKILL.md": b"---\nname: artifact\ndescription: Publish.\n---\n# Artifact\n",
+    "skills/artifact/references/voice.md": b"voice\n",
+    "skills/artifact-design/SKILL.md": b"---\r\ndescription: Design.\r\n---\r\nbody\r\n",
+    "skills/plain/SKILL.md": b"no frontmatter\n",
+}
+
+
+def _stage(catalog: Any, excluded: list[str], archives: dict[str, bytes]) -> tuple[Any, list[str]]:
+    """Stage `catalog` from `archives` (keyed by download path); return the root and the paths fetched."""
+    import asyncio
+    import tempfile
+    from pathlib import Path
+
+    from ach_runtime.harness.hydrate import stage_context
+
+    fetched: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        fetched.append(request.url.path)
+        return httpx.Response(200, content=archives[request.url.path])
+
+    async def scenario(root: Path) -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await stage_context(catalog, root, excluded_skills=excluded, client=client)
+
+    root = Path(tempfile.mkdtemp()) / "stage"
+    asyncio.run(scenario(root))
+    return root, fetched
+
+
+def _plugin_catalog(skills: tuple[Any, ...] = ()) -> Any:
+    from ach_runtime.harness.hydrate import HydratedCatalog, HydratedModel, HydrationManifest
+
+    manifest = HydrationManifest.model_validate({
+        "environment": "prod",
+        "context": {"plugins": [
+            {"name": "artifact@ackstorm-defaults", "id": "artifact@ackstorm-defaults",
+             "downloadUrl": "https://ach/content/plugin/artifact@ackstorm-defaults"},
+            {"name": "hooks", "id": "hooks", "downloadUrl": "https://ach/content/plugin/hooks", "delivery": "native"},
+        ]},
+    })
+    return HydratedCatalog("prod", HydratedModel("m", "https://model", None), (), skills, (), (),
+                           plugins=tuple(manifest.context.plugins))
+
+
+def test_stage_context_stages_plugin_skills_like_ach_cli() -> None:
+    """Each plugin skill lands under skills/<plugin>-<skill>/ with its name rewritten, as ach-cli projects
+    it for opencode and pi; nothing else of the plugin is staged and a native plugin is not fetched."""
+    root, fetched = _stage(_plugin_catalog(), ["artifact-plain"],
+                           {"/content/plugin/artifact@ackstorm-defaults": _tar(_PLUGIN_ARCHIVE)})
+
+    assert fetched == ["/content/plugin/artifact@ackstorm-defaults"]
+    staged = sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file())
+    assert staged == [
+        "skills/artifact-artifact-design/SKILL.md",
+        "skills/artifact-artifact/SKILL.md",
+        "skills/artifact-artifact/references/voice.md",
+    ]
+    skills = root / "skills"
+    assert (skills / "artifact-artifact/SKILL.md").read_text() == (
+        "---\nname: artifact-artifact\ndescription: Publish.\n---\n# Artifact\n")
+    assert (skills / "artifact-artifact-design/SKILL.md").read_bytes() == (
+        b"---\r\nname: artifact-artifact-design\r\ndescription: Design.\r\n---\r\nbody\r\n")
+
+
+def test_a_plugin_skill_without_frontmatter_gets_one_with_its_name() -> None:
+    from ach_runtime.harness.hydrate import _with_skill_name
+
+    assert _with_skill_name("body\n", "p-s") == "---\nname: p-s\n---\nbody\n"
+    assert _with_skill_name("---\r\nname: s\r\n---\r\n", "p-s") == "---\r\nname: p-s\r\n---\r\n"
+    assert _with_skill_name("---\nname: s\nbody\n", "p-s") == "---\nname: p-s\n---\n---\nname: s\nbody\n"
+
+
+def test_stage_context_fails_on_a_plugin_skill_that_clashes_with_a_context_skill() -> None:
+    from ach_runtime.harness.hydrate import ContextItem
+
+    skill = ContextItem(name="artifact-artifact", id="s", downloadUrl="https://ach/content/skill/artifact-artifact")
+    with pytest.raises(HydrationError, match="duplicate"):
+        _stage(_plugin_catalog((skill,)), [], {
+            "/content/skill/artifact-artifact": _tar({"SKILL.md": b"name: x\n"}),
+            "/content/plugin/artifact@ackstorm-defaults": _tar(_PLUGIN_ARCHIVE),
+        })

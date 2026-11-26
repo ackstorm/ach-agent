@@ -26,7 +26,9 @@ values).
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
+import re
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -39,6 +41,8 @@ from ach_runtime.facades._proxy import ProcessIdentity, with_identity_headers
 
 if TYPE_CHECKING:
     from ach_runtime.config.schema import RuntimeConfig
+
+log = logging.getLogger(__name__)
 
 _REQUEST_TIMEOUT_SECONDS = 30.0
 # A platform restart answers 502/503/504 or refuses connections for a while (17 s live,
@@ -92,6 +96,11 @@ class ContextItem(BaseModel):
     download_url: str = Field(default="", alias="downloadUrl")
 
 
+class PluginItem(ContextItem):
+    # "native": a plugin the tool's own plugin system loads whole (engine code), never staged.
+    delivery: str = ""
+
+
 class _RuntimeBlock(BaseModel):
     models: list[ModelEntry] = Field(default_factory=list)
     mcp_servers: list[McpServerEntry] = Field(default_factory=list, alias="mcpServers")
@@ -102,6 +111,7 @@ class _ContextBlock(BaseModel):
     skills: list[ContextItem] = Field(default_factory=list)
     prompts: list[ContextItem] = Field(default_factory=list)
     artifacts: list[ContextItem] = Field(default_factory=list)
+    plugins: list[PluginItem] = Field(default_factory=list)
 
 
 class HydrationManifest(BaseModel):
@@ -338,6 +348,7 @@ class HydratedCatalog:
     prompts: tuple[ContextItem, ...]
     artifacts: tuple[ContextItem, ...]
     a2a_agents: tuple[A2AAgentEntry, ...] = ()
+    plugins: tuple[PluginItem, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -414,6 +425,7 @@ class Hydrator:
             prompts=tuple(manifest.context.prompts),
             artifacts=tuple(manifest.context.artifacts),
             a2a_agents=tuple(manifest.runtime.a2a_agents),
+            plugins=tuple(manifest.context.plugins),
         )
 
 
@@ -432,9 +444,12 @@ async def stage_context(
 
     root.mkdir(parents=True, exist_ok=True)
     excluded = set(excluded_skills)
-    for kind in ("skills", "prompts", "artifacts"):
+    for kind in ("skills", "prompts", "artifacts", "plugins"):
         items = getattr(catalog, kind)
         for item in items:
+            if kind == "plugins" and item.delivery == "native":
+                log.warning("plugin %s uses native delivery, which an agent does not load: not installed", item.name)
+                continue
             if kind == "skills" and item.name in excluded:
                 continue
             if not item.download_url:
@@ -453,6 +468,9 @@ async def stage_context(
             try:
                 staged = scratch / "payload"
                 extract(archive, staged, max_expanded_bytes=4 * 1024**3, max_members=10_000)
+                if kind == "plugins":
+                    _stage_plugin_skills(staged, item.name, root / "skills", excluded)
+                    continue
                 target = root / kind / path
                 target.parent.mkdir(parents=True, exist_ok=True)
                 if kind == "skills":
@@ -481,3 +499,42 @@ async def stage_context(
             finally:
                 shutil.rmtree(scratch, ignore_errors=True)
                 archive.unlink(missing_ok=True)
+
+
+def _stage_plugin_skills(plugin: Path, name: str, skills: Path, excluded: set[str]) -> None:
+    """Stage only a plugin's skills, as ach-cli projects them for opencode and pi: skills/<s>/ becomes
+    <plugin>-<s>/ (the @marketplace suffix dropped) and its SKILL.md `name:` follows. MCP servers come
+    from runtime.mcpServers; commands, agents and hooks are tied to one engine."""
+    import shutil
+
+    if "/" in name:
+        raise HydrationError("hydrated plugin has an unsafe name")
+    source = plugin / "skills"
+    for skill in sorted(source.iterdir()) if source.is_dir() else ():
+        staged_name = f"{name.split('@', 1)[0]}-{skill.name}"
+        if not skill.is_dir() or staged_name in excluded:
+            continue
+        target = skills / staged_name
+        if target.exists():
+            raise HydrationError("hydrated skills contain a duplicate path")
+        shutil.copytree(skill, target)
+        manifest = target / "SKILL.md"
+        if manifest.is_file():
+            manifest.write_bytes(_with_skill_name(manifest.read_bytes().decode(), staged_name).encode())
+
+
+def _with_skill_name(text: str, name: str) -> str:
+    """`text` with its frontmatter `name:` set to `name`, every other byte kept; ach-cli's
+    route.renameFrontmatterName."""
+    lines = re.split(r"(?<=\n)", text)  # str.splitlines also breaks on \x85, \u2028…
+    if lines and lines[0].rstrip("\r\n") == "---":
+        close = next((i for i, line in enumerate(lines[1:], 1) if line.rstrip("\r\n") == "---"), None)
+        if close is not None:
+            for index in range(1, close):
+                if re.match(r"name\s*:", lines[index]):
+                    ending = lines[index][len(lines[index].rstrip("\r\n")):]
+                    lines[index] = f"name: {name}{ending}"
+                    return "".join(lines)
+            lines.insert(1, f"name: {name}{lines[0][3:]}")
+            return "".join(lines)
+    return f"---\nname: {name}\n---\n{text}"

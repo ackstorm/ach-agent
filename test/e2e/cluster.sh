@@ -7,7 +7,7 @@ set -euo pipefail
 CLUSTER=ach-agent-e2e
 CTX=kind-$CLUSTER
 ISTIO_VERSION=1.28.3
-OPENSHELL_VERSION=0.1.9
+OPENSHELL_VERSION=0.1.10
 SANDBOX_VERSION=v1.0.8
 CERT_MANAGER_VERSION=v1.19.1
 AGENT_NS=ach-agent-e2e
@@ -91,7 +91,7 @@ install_prereqs() {
   log "openshell $OPENSHELL_VERSION"
   local server_crt
   server_crt="$(k -n openshell get secret openshell-server-tls -o jsonpath='{.data.tls\.crt}')"
-  h upgrade --install openshell oci://ghcr.io/nvidia/openshell/helm-chart --version "$OPENSHELL_VERSION" \
+  h upgrade --install openshell oci://quay.io/ai-openshell/charts/openshell --version "$OPENSHELL_VERSION" \
     -n openshell -f "$HERE/openshell-values.yaml" -f "$HERE/openshell-tls-values.yaml" --wait --timeout 6m
   [ "$(k -n openshell get secret openshell-server-tls -o jsonpath='{.data.tls\.crt}')" = "$server_crt" ] ||
     { echo "FAIL: the OpenShell certgen hook replaced the cert-manager certificate in openshell-server-tls" >&2; exit 1; }

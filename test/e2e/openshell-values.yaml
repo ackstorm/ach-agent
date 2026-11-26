@@ -17,3 +17,8 @@ pkiInitJob:
   # (with or without TLS). One entry per Agent namespace; with TLS the openshell-server Certificate
   # carries the same names.
   serverDnsNames: ["*.ach-agent-e2e.svc.cluster.local"]
+gatewayConfig:
+  openshell.gateway:
+    # The operator reaches every sandbox through the gateway-routed URLs above; the chart turns this off
+    # by default.
+    enable_gateway_service_routing: true
